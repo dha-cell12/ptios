@@ -30,9 +30,24 @@ static dispatch_queue_t ipcQueue()
     return queue;
 }
 
+static const char *skipToTaskDigits(const char *buffer)
+{
+    if (!buffer) {
+        return NULL;
+    }
+    const char *cursor = buffer;
+    while (*cursor && !isdigit(*cursor)) {
+        cursor++;
+    }
+    return cursor;
+}
+
 static int getTaskTypeFromBuffer(const char *buffer)
 {
-    if (!buffer || !isdigit(buffer[0]) || !isdigit(buffer[1])) {
+    if (!buffer) {
+        return -1;
+    }
+    if (!isdigit(buffer[0]) || !isdigit(buffer[1])) {
         return -1;
     }
     return (buffer[0] - '0') * 10 + (buffer[1] - '0');
@@ -172,7 +187,8 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     const size_t taskPrefixLength = strlen(kZXTouchIPCCommandTaskPrefix);
     const bool hasTaskPrefix = strncmp(buffer, kZXTouchIPCCommandTaskPrefix, taskPrefixLength) == 0;
     const char *payload = hasTaskPrefix ? buffer + taskPrefixLength : buffer;
-    const int taskType = getTaskTypeFromBuffer(payload);
+    const char *taskStart = skipToTaskDigits(payload);
+    const int taskType = getTaskTypeFromBuffer(taskStart);
     bool isSpringBoardTask = taskType >= 0 && shouldRouteToSpringBoard(taskType);
 
     if (strcmp(payload, kZXTouchIPCCommandHome) == 0) {
@@ -221,7 +237,7 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     }
 
     // Daemon-side heavy tasks (refactor): template match, OCR, screenshot.
-    UInt8 *eventData = (UInt8 *)payload + 0x2;
+    UInt8 *eventData = (UInt8 *)taskStart + 0x2;
 
     auto writeCString = ^(const char *cstr) {
         if (!client || !cstr) { return; }
