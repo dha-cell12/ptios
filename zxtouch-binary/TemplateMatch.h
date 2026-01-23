@@ -1,6 +1,11 @@
+// OpenCV headers in this repo's opencv2.framework are exposed flat under:
+//   frameworks/opencv2.framework/Headers/
+// The original project code includes <opencv.hpp> and <imgcodecs/ios.h>.
+// For tool builds (zxtouchd/zxtouchb), we add explicit -I to that Headers/
+// directory in zxtouch-binary/Makefile, so these includes resolve reliably.
+
 #ifndef TEMPLATE_MATCH_H
 #define TEMPLATE_MATCH_H
-#endif 
 
 #ifdef __cplusplus
   // Keep the include style consistent with the previously working build.
@@ -11,7 +16,6 @@
   #import <opencv.hpp>
   #import <imgcodecs/ios.h>
 #endif
-
 
 
 //
@@ -41,3 +45,5 @@
 - (void)setMaxTryTimes:(int)mtt;
 
 @end
+
+#endif /* TEMPLATE_MATCH_H */

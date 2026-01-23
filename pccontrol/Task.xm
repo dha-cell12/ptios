@@ -5,9 +5,7 @@
 #include "Record.h"
 #include "Play.h"
 #include "SocketServer.h"
-#include "ScreenMatch.h"
 #include "Toast.h"
-#include "ColorPicker.h"
 #include "UIKeyboard.h"
 #include "DeviceInfo.h"
 #include "TouchIndicator/TouchIndicatorWindow.h"
@@ -16,7 +14,6 @@
 #include "RuntimeUtils.h"
 #import <mach/mach.h>
 #include <Foundation/NSDistributedNotificationCenter.h>
-#include <TextRecognization/TextRecognizer.h>
 #include "UpdateCache.h"
 #include "Screen.h"
 #include "NSTask.h"
@@ -189,19 +186,9 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
     }
     else if (taskType == TASK_TEMPLATE_MATCH)
     {
-        @autoreleasepool {
-            NSError *err = nil;
-            CGRect result = screenMatchFromRawData(eventData, &err);
-            if (err)
-            {
-                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
-            }
-            else
-            {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n", 
-                result.origin.x, result.origin.y, result.size.width, result.size.height] UTF8String], writeStreamRef);
-            }
-        }
+        // Refactored: template matching now runs inside zxtouchd to reduce SpringBoard RAM/CPU usage.
+        // If this branch is hit, the caller is likely using an older daemon.
+        notifyClient((UInt8*)"-1;;TASK_TEMPLATE_MATCH moved to zxtouchd. Please update daemon.\r\n", writeStreamRef);
     }
     else if (taskType == TASK_SHOW_TOAST)
     {
@@ -220,19 +207,8 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
     }
     else if (taskType == TASK_COLOR_PICKER)
     {
-        @autoreleasepool {
-            NSError *err = nil;
-            NSDictionary *rgb = getRGBFromRawData(eventData, &err); 
-            if (err)
-            {
-                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
-            }
-            else
-            {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%d;;%d;;%d\r\n", [rgb[@"red"] intValue], [rgb[@"green"] intValue], [rgb[@"blue"] intValue]] UTF8String], writeStreamRef);
-            }
-            rgb = nil;
-        }
+        // Refactored: color picking now runs inside zxtouchd to reduce SpringBoard RAM/CPU usage.
+    notifyClient((UInt8*)"-1;;TASK_COLOR_PICKER moved to zxtouchd. Please update daemon.\r\n", writeStreamRef);
     }
     else if (taskType == TASK_TEXT_INPUT)
     {
@@ -281,33 +257,13 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
     }
     else if (taskType == TASK_TEXT_RECOGNIZER)
     {
-        @autoreleasepool {
-            NSError *err = nil;
-            NSString *text = performTextRecognizerTextFromRawData(eventData,  &err);
-            if (err)
-            {
-                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
-            }
-            else
-            {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", text] UTF8String], writeStreamRef);
-            }
-        }
+        // Refactored: OCR now runs inside zxtouchd to reduce SpringBoard RAM/CPU usage.
+        notifyClient((UInt8*)"-1;;TASK_TEXT_RECOGNIZER moved to zxtouchd. Please update daemon.\r\n", writeStreamRef);
     }
     else if (taskType == TASK_COLOR_SEARCHER)
     {
-        @autoreleasepool {
-            NSError *err = nil;
-            NSString *returndata = searchRGBFromRawData(eventData,  &err);
-            if (err)
-            {
-                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
-            }
-            else
-            {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", returndata] UTF8String], writeStreamRef);
-            }
-        }
+        // Refactored: color searching now runs inside zxtouchd to reduce SpringBoard RAM/CPU usage.
+    notifyClient((UInt8*)"-1;;TASK_COLOR_SEARCHER moved to zxtouchd. Please update daemon.\r\n", writeStreamRef);
     }
     else if (taskType == TASK_HARDWARE_KEY)
     {

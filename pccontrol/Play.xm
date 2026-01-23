@@ -58,9 +58,8 @@ int playScript(UInt8* path, NSError **error)
     [scriptPlayer setInterval:sleepBetweenRun];
     [scriptPlayer setSwitchApp:switchAppBeforeRunScript];
 
-    [scriptPlayer play:error];
-
-    return 0;
+    int ret = [scriptPlayer play:error];
+    return ret;
 }
 
 

@@ -9,6 +9,27 @@
 
 static BOOL isPlaying = false;
 
+
+static NSString* ZXFindPython3Path(void) {
+    NSArray<NSString*> *candidates = @[
+        @"/usr/bin/python3",
+        @"/var/jb/usr/bin/python3",
+        @"/usr/local/bin/python3",
+        @"/bin/python3"
+    ];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *p in candidates) {
+        BOOL isDir = NO;
+        if ([fm fileExistsAtPath:p isDirectory:&isDir] && !isDir) {
+            // isExecutableFileAtPath checks X bit; access(X_OK) equivalent.
+            if ([fm isExecutableFileAtPath:p]) return p;
+            // exists but not executable
+        }
+    }
+    return nil;
+}
+
+
 @implementation ScriptPlayer
 {
     int repeatTime;
@@ -104,7 +125,9 @@ static BOOL isPlaying = false;
     if (!scriptBundlePath)
     {
         NSLog(@"com.zjx.springboard: Unable to run the script. ScriptBundlePath not set.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. ScriptBundlePath not set.\r\n"}];
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        }
         return -1;
     }
 
@@ -112,7 +135,9 @@ static BOOL isPlaying = false;
     if (![[NSFileManager defaultManager] fileExistsAtPath:scriptBundlePath isDirectory:&isDir] || !isDir)
     {
         NSLog(@"com.zjx.springboard: Unable to run the script. Path not found or it is not a directory.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Path not found or it is not a directory.\r\n"}];
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        }
         return -1;
     }
 
@@ -121,13 +146,29 @@ static BOOL isPlaying = false;
     if (![[NSFileManager defaultManager] fileExistsAtPath:infoFilePath isDirectory:&isDir])
     {
         NSLog(@"com.zjx.springboard: Unable to run the script. Info.plist not found.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Info.plist not found.\r\n"}];
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        }
         return -1;
     }
     NSDictionary *scriptInfo = [NSDictionary dictionaryWithContentsOfFile:infoFilePath];
     // get entry file extension
     NSString *entryFileName = scriptInfo[@"Entry"];
     NSString *fileExtension = [entryFileName pathExtension];
+
+    if (!entryFileName || [entryFileName length] == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ZXTouchScriptPlayer" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Script bundle is missing 'Entry' in info.plist"}];
+        }
+        return -1;
+    }
+
+    if (!fileExtension || [fileExtension length] == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ZXTouchScriptPlayer" code:-2 userInfo:@{NSLocalizedDescriptionKey: @"Script entry file has no extension"}];
+        }
+        return -2;
+    }
 
     NSString *foregroundApp = scriptInfo[@"FrontApp"];
     // call different functions depending on file extension
@@ -169,6 +210,7 @@ static BOOL isPlaying = false;
         });
         
     }
+    return 0;
 }
 
 // play the script
@@ -177,10 +219,12 @@ static BOOL isPlaying = false;
     if (isPlaying)
     {
         NSLog(@"com.zjx.springboard: Unable to run the script. Another script is currently running.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        }
         return -1;
     }
-   [self runScript:error];
+    return [self runScript:error];
 }
 
 
@@ -247,10 +291,11 @@ static BOOL isPlaying = false;
         bringAppForeground(foregroundApp);
     }
     
-    // check python exists
-    if (![[NSFileManager defaultManager] fileExistsAtPath:@"/bin/python3"])
+    // find python3 executable (different jailbreaks place it in different locations)
+    NSString *pythonPath = ZXFindPython3Path();
+    if (!pythonPath)
     {
-        showAlertBox(@"Error", @"Cannot play this script. /bin/python3 not found. Please install Python3.7 on your device.", 999);
+        showAlertBox(@"Error", @"Cannot play this script. python3 not found or not executable. Please install python3 (Procursus) or fix its permissions.", 999);
         isPlaying = false;
         return;
     }
@@ -261,7 +306,7 @@ static BOOL isPlaying = false;
         isPlaying = false;
         return;
     }
-    NSString *commandToRun = [NSString stringWithFormat:@"sudo zxtouchb -e \"python3 -u \\\"%@\\\" 2>&1 | /var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/add_datetime.sh\" >> /var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/output", filePath];
+    NSString *commandToRun = [NSString stringWithFormat:@"%@ -u \"%@\" 2>&1 | /var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/add_datetime.sh \"%@\" >> /var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/output", pythonPath, filePath, filePath];
     NSLog(@"com.zjx.springboard: command to run for running py file %@", commandToRun);
 
     // here I made it run in background because of a weird thing: ios objc cannot call second system() if the first system() does not return
@@ -336,7 +381,9 @@ static BOOL isPlaying = false;
     if (currentScriptType == -1)
     {
         NSLog(@"com.zjx.springboard: Cannot stop playing script. No script is playing.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. No script is playing.\r\n"}];
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        }
         return;
     }
 
@@ -359,7 +406,9 @@ static BOOL isPlaying = false;
     else
     {
         NSLog(@"com.zjx.springboard: unknown currently playing script type.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. Unkonwn currently playing script type.\r\n"}];
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        }
         return;
     }
 
