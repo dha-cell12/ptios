@@ -106,6 +106,17 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 + (CGImageRef)createScreenShotCGImageRef
 {
+    // Try using UIKit private API first as it handles IOSurface locking/lifecycle internally.
+    // This aligns with user feedback about UIKit working previously and avoids manual IOSurface deadlocks.
+    UIImage *uiImage = _UICreateScreenUIImage();
+    if (uiImage) {
+        CGImageRef img = [uiImage CGImage];
+        if (img) {
+            return CGImageRetain(img);
+        }
+    }
+    NSLog(@"com.zjx.springboard: _UICreateScreenUIImage failed or returned nil CGImage. Falling back to IOSurface.");
+
     Boolean isiPad8orUp = false;
 
     CGFloat scale = [UIScreen mainScreen].scale;
