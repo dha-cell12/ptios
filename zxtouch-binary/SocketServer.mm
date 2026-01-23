@@ -30,30 +30,34 @@ static dispatch_queue_t ipcQueue()
     return queue;
 }
 
-static const char *findTaskStart(const char *buffer)
+static bool parseTaskHeader(const char *buffer, int *taskType, const char **eventData)
 {
-    if (!buffer) {
-        return NULL;
+    if (!buffer || !taskType || !eventData) {
+        return false;
     }
     const char *cursor = buffer;
-    while (cursor[0] && cursor[1]) {
-        if (isdigit(cursor[0]) && isdigit(cursor[1])) {
-            return cursor;
-        }
+    while (*cursor && !isdigit(*cursor)) {
         cursor++;
     }
-    return NULL;
-}
-
-static int getTaskTypeFromBuffer(const char *buffer)
-{
-    if (!buffer) {
-        return -1;
+    if (!isdigit(*cursor)) {
+        return false;
     }
-    if (!isdigit(buffer[0]) || !isdigit(buffer[1])) {
-        return -1;
+    const char firstDigit = *cursor;
+    cursor++;
+    while (*cursor && !isdigit(*cursor)) {
+        cursor++;
     }
-    return (buffer[0] - '0') * 10 + (buffer[1] - '0');
+    if (!isdigit(*cursor)) {
+        return false;
+    }
+    const char secondDigit = *cursor;
+    *taskType = (firstDigit - '0') * 10 + (secondDigit - '0');
+    cursor++;
+    if (cursor[0] == ';' && cursor[1] == ';') {
+        cursor += 2;
+    }
+    *eventData = cursor;
+    return true;
 }
 
 static bool shouldRouteToSpringBoard(int taskType)
@@ -190,8 +194,9 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     const size_t taskPrefixLength = strlen(kZXTouchIPCCommandTaskPrefix);
     const bool hasTaskPrefix = strncmp(buffer, kZXTouchIPCCommandTaskPrefix, taskPrefixLength) == 0;
     const char *payload = hasTaskPrefix ? buffer + taskPrefixLength : buffer;
-    const char *taskStart = findTaskStart(payload);
-    const int taskType = getTaskTypeFromBuffer(taskStart);
+    int taskType = -1;
+    const char *eventDataCString = NULL;
+    parseTaskHeader(payload, &taskType, &eventDataCString);
     bool isSpringBoardTask = taskType >= 0 && shouldRouteToSpringBoard(taskType);
 
     if (strcmp(payload, kZXTouchIPCCommandHome) == 0) {
@@ -239,13 +244,17 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
         return;
     }
 
-    // Daemon-side heavy tasks (refactor): template match, OCR, screenshot.
-    UInt8 *eventData = (UInt8 *)taskStart + 0x2;
-
     auto writeCString = ^(const char *cstr) {
         if (!client || !cstr) { return; }
         CFWriteStreamWrite(client, (const UInt8 *)cstr, (CFIndex)strlen(cstr));
     };
+
+    // Daemon-side heavy tasks (refactor): template match, OCR, screenshot.
+    UInt8 *eventData = (UInt8 *)eventDataCString;
+    if (!eventData) {
+        writeCString("1;;invalid_task\r\n");
+        return;
+    }
 
     @autoreleasepool {
         switch (taskType) {
