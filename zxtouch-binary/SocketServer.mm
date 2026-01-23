@@ -169,25 +169,28 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     }
     NSLog(@"### com.zjx.zxtouchd: received task payload: %s", buff);
     const char *buffer = (const char *)buff;
-    const int taskType = getTaskTypeFromBuffer(buffer);
+    const size_t taskPrefixLength = strlen(kZXTouchIPCCommandTaskPrefix);
+    const bool hasTaskPrefix = strncmp(buffer, kZXTouchIPCCommandTaskPrefix, taskPrefixLength) == 0;
+    const char *payload = hasTaskPrefix ? buffer + taskPrefixLength : buffer;
+    const int taskType = getTaskTypeFromBuffer(payload);
     bool isSpringBoardTask = taskType >= 0 && shouldRouteToSpringBoard(taskType);
 
-    if (strcmp(buffer, kZXTouchIPCCommandHome) == 0) {
+    if (strcmp(payload, kZXTouchIPCCommandHome) == 0) {
         isSpringBoardTask = true;
     }
 
         if (isSpringBoardTask) {
             char ipcPayload[4096];
-            if (strcmp(buffer, kZXTouchIPCCommandHome) == 0) {
+            if (strcmp(payload, kZXTouchIPCCommandHome) == 0) {
                 snprintf(ipcPayload, sizeof(ipcPayload), "%s", kZXTouchIPCCommandHome);
             } else {
-                snprintf(ipcPayload, sizeof(ipcPayload), "%s%s", kZXTouchIPCCommandTaskPrefix, buffer);
+                snprintf(ipcPayload, sizeof(ipcPayload), "%s%s", kZXTouchIPCCommandTaskPrefix, payload);
             }
             NSString *payloadString = [NSString stringWithUTF8String:ipcPayload];
             if (!payloadString) {
                 return;
             }
-            bool waitForResponse = strcmp(buffer, kZXTouchIPCCommandHome) == 0
+            bool waitForResponse = strcmp(payload, kZXTouchIPCCommandHome) == 0
                 ? true
                 : shouldWaitForResponse(taskType);
             __block CFDataRef responseData = NULL;
@@ -218,7 +221,7 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     }
 
     // Daemon-side heavy tasks (refactor): template match, OCR, screenshot.
-    UInt8 *eventData = (UInt8 *)buffer + 0x2;
+    UInt8 *eventData = (UInt8 *)payload + 0x2;
 
     auto writeCString = ^(const char *cstr) {
         if (!client || !cstr) { return; }
