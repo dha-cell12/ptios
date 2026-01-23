@@ -68,7 +68,27 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         NSArray *languages = [languagesData componentsSeparatedByString:@",,"];
 
         // screen shot
-        CGImageRef screenshot = [Screen createScreenShotCGImageRef];
+        CGImageRef screenshotRaw = [Screen createScreenShotCGImageRef];
+
+        // Deep copy to decouple from IOSurface to prevent freezing
+        size_t width = CGImageGetWidth(screenshotRaw);
+        size_t height = CGImageGetHeight(screenshotRaw);
+
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
+
+        CGContextRef context = CGBitmapContextCreate(NULL, width, height, 8, 0, colorSpace, bitmapInfo);
+        CGColorSpaceRelease(colorSpace);
+
+        CGImageRef screenshot = nil;
+        if (context) {
+            CGContextDrawImage(context, CGRectMake(0, 0, width, height), screenshotRaw);
+            screenshot = CGBitmapContextCreateImage(context);
+            CGContextRelease(context);
+            CFRelease(screenshotRaw);
+        } else {
+            screenshot = screenshotRaw;
+        }
 
         int orientation = [Screen getScreenOrientation];
 
