@@ -22,7 +22,6 @@
 + (CGRect)getBounds;
 + (NSString*)screenShotAlwaysUp;
 + (UIImage*)screenShotUIImage;
-+ (void)releaseUIImage:(UIImage**)img;
 + (CGImageRef)createScreenShotCGImageRef;
 + (NSString*)screenShotToPath:(NSString*)filePath region:(CGRect)region error:(NSError**)error;
 + (void)saveToSystemAlbum:(NSString*)filePath error:(NSError**)error;
