@@ -249,6 +249,8 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
         return;
     }
 
+    NSLog(@"com.zjx.zxtouchd: processing internal task %d", taskType);
+
     @autoreleasepool {
         switch (taskType) {
             case 21: { // TASK_TEMPLATE_MATCH
