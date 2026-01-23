@@ -39,20 +39,13 @@ static bool parseTaskHeader(const char *buffer, int *taskType, const char **even
     while (*cursor && !isdigit(*cursor)) {
         cursor++;
     }
-    if (!isdigit(*cursor)) {
+    if (!isdigit(cursor[0]) || !isdigit(cursor[1])) {
         return false;
     }
-    const char firstDigit = *cursor;
-    cursor++;
-    while (*cursor && !isdigit(*cursor)) {
-        cursor++;
-    }
-    if (!isdigit(*cursor)) {
-        return false;
-    }
-    const char secondDigit = *cursor;
+    const char firstDigit = cursor[0];
+    const char secondDigit = cursor[1];
+    cursor += 2;
     *taskType = (firstDigit - '0') * 10 + (secondDigit - '0');
-    cursor++;
     if (cursor[0] == ';' && cursor[1] == ';') {
         cursor += 2;
     }
