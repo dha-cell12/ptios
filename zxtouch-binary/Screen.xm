@@ -159,6 +159,11 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
     IOSurfaceRef screenSurface = IOSurfaceCreate((__bridge CFDictionaryRef)(properties));
 
     properties = nil;
+
+    if (!screenSurface) {
+        NSLog(@"com.zjx.springboard: Failed to create IOSurface.");
+        return nil;
+    }
     
     IOSurfaceLock(screenSurface, 0, NULL);
     CARenderServerRenderDisplay(0, CFSTR("LCD"), screenSurface, 0, 0);

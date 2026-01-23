@@ -65,14 +65,21 @@
 
         recognizeRect = aarea;
 
+        CIImage *processedImage = image;
         if (aarea.origin.x != 0 || aarea.origin.y != 0 || aarea.size.width != 0 || aarea.size.height != 0)
         {
             CGFloat y = imageHeight - aarea.origin.y - aarea.size.height;
-            requestHandler = [[VNImageRequestHandler alloc] initWithCIImage:[image imageByCroppingToRect:CGRectMake(aarea.origin.x, y, aarea.size.width, aarea.size.height)] options:nil];
+            processedImage = [image imageByCroppingToRect:CGRectMake(aarea.origin.x, y, aarea.size.width, aarea.size.height)];
         }
-        else
-        {
-            requestHandler = [[VNImageRequestHandler alloc] initWithCIImage:image options:nil];
+
+        CIContext *context = [CIContext contextWithOptions:nil];
+        CGImageRef safeCGImage = [context createCGImage:processedImage fromRect:[processedImage extent]];
+
+        if (safeCGImage) {
+            requestHandler = [[VNImageRequestHandler alloc] initWithCGImage:safeCGImage options:nil];
+            CGImageRelease(safeCGImage);
+        } else {
+            requestHandler = [[VNImageRequestHandler alloc] initWithCIImage:processedImage options:nil];
         }
 
         request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *request, NSError *error){
