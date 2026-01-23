@@ -70,6 +70,12 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         // screen shot
         CGImageRef screenshotRaw = [Screen createScreenShotCGImageRef];
 
+        if (!screenshotRaw) {
+             NSLog(@"com.zjx.springboard: Failed to capture screenshot for OCR.");
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to capture screenshot for OCR.\r\n"}];
+            return nil;
+        }
+
         // Deep copy to decouple from IOSurface to prevent freezing
         size_t width = CGImageGetWidth(screenshotRaw);
         size_t height = CGImageGetHeight(screenshotRaw);
@@ -87,7 +93,14 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
             CGContextRelease(context);
             CFRelease(screenshotRaw);
         } else {
+            // Fallback if context creation fails (e.g. OOM), though this risks the original issue.
             screenshot = screenshotRaw;
+        }
+
+        if (!screenshot) {
+             NSLog(@"com.zjx.springboard: Failed to create screenshot copy for OCR.");
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to create screenshot copy for OCR.\r\n"}];
+            return nil;
         }
 
         int orientation = [Screen getScreenOrientation];
