@@ -4,6 +4,7 @@
 #include "IPCConstants.h"
 #import "ScreenMatch.h"
 #import "Screen.h"
+#import "ColorPicker.h"
 #import "TextRecognization/TextRecognizer.h"
 #include <string.h>
 #include <ctype.h>
@@ -234,6 +235,40 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
                 } else {
                     NSString *resp = [NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n",
                                       result.origin.x, result.origin.y, result.size.width, result.size.height];
+                    writeCString([resp UTF8String]);
+                }
+                break;
+            }
+            case 23: { // TASK_COLOR_PICKER
+                NSError *err = nil;
+                NSDictionary *color = getRGBFromRawData(eventData, &err);
+                if (err) {
+                    writeCString([[err localizedDescription] UTF8String]);
+                } else {
+                    NSString *resp = [NSString stringWithFormat:@"0;;%@;;%@;;%@\r\n",
+                                      color[@"red"], color[@"green"], color[@"blue"]];
+                    writeCString([resp UTF8String]);
+                }
+                break;
+            }
+            case 27: { // TASK_TEXT_RECOGNIZER
+                NSError *err = nil;
+                NSString *result = performTextRecognizerTextFromRawData(eventData, &err);
+                if (err) {
+                    writeCString([[err localizedDescription] UTF8String]);
+                } else {
+                    NSString *resp = [NSString stringWithFormat:@"0;;%@\r\n", result ?: @""];
+                    writeCString([resp UTF8String]);
+                }
+                break;
+            }
+            case 28: { // TASK_COLOR_SEARCHER
+                NSError *err = nil;
+                NSString *result = searchRGBFromRawData(eventData, &err);
+                if (err) {
+                    writeCString([[err localizedDescription] UTF8String]);
+                } else {
+                    NSString *resp = [NSString stringWithFormat:@"0;;%@\r\n", result ?: @""];
                     writeCString([resp UTF8String]);
                 }
                 break;
