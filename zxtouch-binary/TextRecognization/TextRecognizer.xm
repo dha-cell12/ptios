@@ -72,7 +72,9 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
 
         if (!screenshotRaw) {
              NSLog(@"com.zjx.springboard: Failed to capture screenshot for OCR.");
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to capture screenshot for OCR.\r\n"}];
+             if (error) {
+                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to capture screenshot for OCR.\r\n"}];
+             }
             return nil;
         }
 
@@ -99,7 +101,9 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
 
         if (!screenshot) {
              NSLog(@"com.zjx.springboard: Failed to create screenshot copy for OCR.");
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to create screenshot copy for OCR.\r\n"}];
+             if (error) {
+                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to create screenshot copy for OCR.\r\n"}];
+             }
             return nil;
         }
 

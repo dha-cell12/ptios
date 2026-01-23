@@ -165,8 +165,12 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
         return nil;
     }
     
-    IOSurfaceLock(screenSurface, 0, NULL);
+    // Do not lock the surface for CARenderServerRenderDisplay. It handles its own synchronization.
+    // Locking it here may cause deadlocks or prevent the Render Server from writing.
     CARenderServerRenderDisplay(0, CFSTR("LCD"), screenSurface, 0, 0);
+
+    // Lock for reading
+    IOSurfaceLock(screenSurface, 0, NULL);
         
     CGImageRef cgImageRef = nil;
     if (screenSurface) {
