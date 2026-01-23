@@ -30,16 +30,19 @@ static dispatch_queue_t ipcQueue()
     return queue;
 }
 
-static const char *skipToTaskDigits(const char *buffer)
+static const char *findTaskStart(const char *buffer)
 {
     if (!buffer) {
         return NULL;
     }
     const char *cursor = buffer;
-    while (*cursor && !isdigit(*cursor)) {
+    while (cursor[0] && cursor[1]) {
+        if (isdigit(cursor[0]) && isdigit(cursor[1])) {
+            return cursor;
+        }
         cursor++;
     }
-    return cursor;
+    return NULL;
 }
 
 static int getTaskTypeFromBuffer(const char *buffer)
@@ -187,7 +190,7 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     const size_t taskPrefixLength = strlen(kZXTouchIPCCommandTaskPrefix);
     const bool hasTaskPrefix = strncmp(buffer, kZXTouchIPCCommandTaskPrefix, taskPrefixLength) == 0;
     const char *payload = hasTaskPrefix ? buffer + taskPrefixLength : buffer;
-    const char *taskStart = skipToTaskDigits(payload);
+    const char *taskStart = findTaskStart(payload);
     const int taskType = getTaskTypeFromBuffer(taskStart);
     bool isSpringBoardTask = taskType >= 0 && shouldRouteToSpringBoard(taskType);
 
