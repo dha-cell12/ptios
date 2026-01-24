@@ -444,18 +444,17 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
 
 // Handle heavy image/OCR tasks inside daemon to reduce SpringBoard load.
 #ifdef ZX_DAEMON
-if (taskType == 21 || taskType == 27) {#ifdef ZX_DAEMON
-
-    const char *respC = (taskType == 21) ? handleTemplateMatchTaskInDaemon(buffer)
-                                         : handleTextRecognizerTaskInDaemon(buffer);
-#endif
-    if (client && respC) {
-        CFWriteStreamWrite(client, (const UInt8 *)respC, strlen(respC));
+    if (taskType == 21 || taskType == 27) {
+        const char *respC = (taskType == 21) ? handleTemplateMatchTaskInDaemon(buffer)
+                                             : handleTextRecognizerTaskInDaemon(buffer);
+        if (client && respC) {
+            CFWriteStreamWrite(client, (const UInt8 *)respC, strlen(respC));
+        }
+        if (respC) free((void *)respC);
+        return;
     }
 #endif
-    if (respC) free((void *)respC);
-    return;
-}
+
 
     bool isSpringBoardTask = taskType >= 0 && shouldRouteToSpringBoard(taskType);
 
