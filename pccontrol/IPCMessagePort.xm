@@ -4,6 +4,7 @@
 #include "Task.h"
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <UIKit/UIKit.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
