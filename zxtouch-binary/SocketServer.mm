@@ -6,6 +6,14 @@
 #include <ctype.h>
 #include <dispatch/dispatch.h>
 
+#import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
+#import <CoreImage/CoreImage.h>
+#import <Vision/Vision.h>
+#import "../pccontrol/TemplateMatch.h"
+#import "../pccontrol/TextRecognization/VKOcrManager.h"
+#import "../pccontrol/Common.h"
+
 CFSocketRef socketRef;
 CFWriteStreamRef writeStreamRef = NULL;
 CFReadStreamRef readStreamRef = NULL;
@@ -46,13 +54,13 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 17: // TASK_RAPID_FIRE_TAP
         case 19: // TASK_PLAY_SCRIPT
         case 20: // TASK_PLAY_SCRIPT_FORCE_STOP
-        case 21: // TASK_TEMPLATE_MATCH
+        // case 21: // TASK_TEMPLATE_MATCH (handled in zxtouchd)
         case 22: // TASK_SHOW_TOAST
         case 23: // TASK_COLOR_PICKER
         case 24: // TASK_TEXT_INPUT
         case 25: // TASK_GET_DEVICE_INFO
         case 26: // TASK_TOUCH_INDICATOR
-        case 27: // TASK_TEXT_RECOGNIZER
+        // case 27: // TASK_TEXT_RECOGNIZER (handled in zxtouchd)
         case 28: // TASK_COLOR_SEARCHER
         case 29: // TASK_SCREENSHOT
         case 30: // TASK_HARDWARE_KEY
@@ -171,6 +179,18 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     NSLog(@"### com.zjx.zxtouchd: received task payload: %s", buff);
     const char *buffer = (const char *)buff;
     const int taskType = getTaskTypeFromBuffer(buffer);
+
+// Handle heavy image/OCR tasks inside daemon to reduce SpringBoard load.
+if (taskType == 21 || taskType == 27) {
+    const char *respC = (taskType == 21) ? handleTemplateMatchTaskInDaemon(buffer)
+                                         : handleTextRecognizerTaskInDaemon(buffer);
+    if (client && respC) {
+        CFWriteStreamWrite(client, (const UInt8 *)respC, strlen(respC));
+    }
+    if (respC) free((void *)respC);
+    return;
+}
+
     bool isSpringBoardTask = taskType >= 0 && shouldRouteToSpringBoard(taskType);
 
     if (strcmp(buffer, kZXTouchIPCCommandHome) == 0) {
