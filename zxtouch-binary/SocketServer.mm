@@ -10,6 +10,7 @@
 #import <Foundation/Foundation.h>
 #import <CoreImage/CoreImage.h>
 #import <Vision/Vision.h>
+#import "../pccontrol/TextRecognization/TextRecognizer.h"
 #import "../pccontrol/TemplateMatch.h"
 #import "../pccontrol/TextRecognization/VKOcrManager.h"
 #import "../pccontrol/Common.h"
