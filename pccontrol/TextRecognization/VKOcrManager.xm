@@ -1,5 +1,7 @@
 #import "VKOcrManager.h"
+#ifndef ZX_DAEMON
 #import "../Screen.h"
+#endif
 #include "../Common.h"
 
 
@@ -158,6 +160,7 @@ Return area that contain text
 
 }
 
+#ifndef ZX_DAEMON
 - (void)outputDebugImage:(NSString*)imagePath error:(NSError**)error{
     inProgress = true;
 
@@ -302,4 +305,8 @@ Return area that contain text
 }
 
 
+#else
+- (void)outputDebugImage:(NSString*)imagePath error:(NSError**)error{ }
+- (UIImage *)drawDebugOutputfromArray:(NSArray*)arr error:(NSError**)error{ return nil; }
+#endif
 @end
