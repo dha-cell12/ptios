@@ -114,7 +114,7 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 + (CGImageRef)createScreenShotCGImageRef
 {
     @autoreleasepool {
-        NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (IOMobileFramebuffer/dlsym/IPC-Fallback Mode)");
+        NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (IOMobileFramebuffer/dlsym/IPC-Fallback Mode V3)");
 
         static void *iomfbHandle = NULL;
         static IOMobileFramebufferGetMainDisplay_t IOMobileFramebufferGetMainDisplay = NULL;

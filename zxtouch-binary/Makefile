@@ -53,3 +53,6 @@ zxtouchd_EXTRA_FRAMEWORKS = opencv2
 zxtouchb_EXTRA_FRAMEWORKS = opencv2
 
 include $(THEOS_MAKE_PATH)/tool.mk
+
+after-install::
+	install.exec "killall -9 zxtouchd"
