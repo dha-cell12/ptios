@@ -158,11 +158,12 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
         NSNumber *nheight = [NSNumber numberWithInteger:height];
         NSNumber *nwidth = [NSNumber numberWithInteger:width];
         NSNumber *IOSurfacePixelFormat = [NSNumber numberWithInteger:1111970369];
-        NSNumber *IOSurfaceIsGlobal = [NSNumber numberWithInteger:1];
+        // IOSurfaceIsGlobal removed to prevent crashes due to missing entitlements in daemon.
+        // NSNumber *IOSurfaceIsGlobal = [NSNumber numberWithInteger:1];
 
         NSDictionary *properties = [[NSDictionary alloc] initWithObjectsAndKeys:IOSurfaceAllocSize, @"IOSurfaceAllocSize"
                                     , IOSurfaceBytesPerElement, @"IOSurfaceBytesPerElement", IOSurfaceBytesPerRow, @"IOSurfaceBytesPerRow", nheight, @"IOSurfaceHeight",
-                                    IOSurfaceIsGlobal, @"IOSurfaceIsGlobal", IOSurfacePixelFormat, @"IOSurfacePixelFormat", nwidth, @"IOSurfaceWidth", nil];
+                                    IOSurfacePixelFormat, @"IOSurfacePixelFormat", nwidth, @"IOSurfaceWidth", nil];
 
         NSLog(@"com.zjx.springboard: DEBUG: Creating IOSurface with properties: %@", properties);
 
