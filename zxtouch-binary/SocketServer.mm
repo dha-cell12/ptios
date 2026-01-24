@@ -10,9 +10,13 @@
 #import <Foundation/Foundation.h>
 #import <CoreImage/CoreImage.h>
 #import <Vision/Vision.h>
-#import "../pccontrol/TextRecognization/TextRecognizer.h"
+#ifdef ZX_DAEMON
 #import "../pccontrol/TemplateMatch.h"
+// Needed for TextRecognizer subtask constants (e.g. TASK_TEXT_FROM_AREA, TASK_GET_SUPPORTED_LANGUAGE_LIST)
+#import "../pccontrol/TextRecognization/TextRecognizer.h"
 #import "../pccontrol/TextRecognization/VKOcrManager.h"
+#endif
+
 #import "../pccontrol/Common.h"
 
 CFSocketRef socketRef;
@@ -55,13 +59,17 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 17: // TASK_RAPID_FIRE_TAP
         case 19: // TASK_PLAY_SCRIPT
         case 20: // TASK_PLAY_SCRIPT_FORCE_STOP
-        // case 21: // TASK_TEMPLATE_MATCH (handled in zxtouchd)
+        #ifndef ZX_DAEMON
+        case 21: // TASK_TEMPLATE_MATCH
+#endif
         case 22: // TASK_SHOW_TOAST
         case 23: // TASK_COLOR_PICKER
         case 24: // TASK_TEXT_INPUT
         case 25: // TASK_GET_DEVICE_INFO
         case 26: // TASK_TOUCH_INDICATOR
-        // case 27: // TASK_TEXT_RECOGNIZER (handled in zxtouchd)
+        #ifndef ZX_DAEMON
+        case 27: // TASK_TEXT_RECOGNIZER
+#endif
         case 28: // TASK_COLOR_SEARCHER
         case 29: // TASK_SCREENSHOT
         case 30: // TASK_HARDWARE_KEY
@@ -177,8 +185,10 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
 // Strategy: ask SpringBoard to capture a screenshot via task 29, then process locally.
 // NOTE: Return value is a malloc'ed C-string that caller must free().
 
+#ifdef ZX_DAEMON
 static char *handleTemplateMatchTaskInDaemon(const char *buffer);
 static char *handleTextRecognizerTaskInDaemon(const char *buffer);
+#endif
 
 static char *zx_strdup_nsstring(NSString *s)
 {
@@ -270,6 +280,7 @@ static void zx_safeUnlink(NSString *path)
     [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
 }
 
+#ifdef ZX_DAEMON
 static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 {
     // buffer begins with "21..."; SpringBoard passes eventData = buff + 2
@@ -315,7 +326,10 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
     NSString *resp = [NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n", r.origin.x, r.origin.y, r.size.width, r.size.height];
     return zx_strdup_nsstring(resp);
 }
+#endif
 
+
+#ifdef ZX_DAEMON
 static char *handleTextRecognizerTaskInDaemon(const char *buffer)
 {
     const char *eventC = buffer ? buffer + 2 : NULL;
@@ -416,6 +430,8 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
     NSString *resp = [NSString stringWithFormat:@"0;;%@\r\n", result ?: @""];
     return zx_strdup_nsstring(resp);
 }
+#endif
+
 
 static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
 {
@@ -427,12 +443,16 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     const int taskType = getTaskTypeFromBuffer(buffer);
 
 // Handle heavy image/OCR tasks inside daemon to reduce SpringBoard load.
-if (taskType == 21 || taskType == 27) {
+#ifdef ZX_DAEMON
+if (taskType == 21 || taskType == 27) {#ifdef ZX_DAEMON
+
     const char *respC = (taskType == 21) ? handleTemplateMatchTaskInDaemon(buffer)
                                          : handleTextRecognizerTaskInDaemon(buffer);
+#endif
     if (client && respC) {
         CFWriteStreamWrite(client, (const UInt8 *)respC, strlen(respC));
     }
+#endif
     if (respC) free((void *)respC);
     return;
 }
