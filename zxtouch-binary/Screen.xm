@@ -14,10 +14,12 @@ OBJC_EXTERN kern_return_t IOSurfaceUnLock(IOSurfaceRef buffer, IOSurfaceLockOpti
 OBJC_EXTERN IOSurfaceRef IOSurfaceCreate(CFDictionaryRef dictionary);
 OBJC_EXTERN CGImageRef UICreateCGImageFromIOSurface(IOSurfaceRef surface);
 
-// IOMobileFramebuffer declarations
+#include <dlfcn.h>
+
+// IOMobileFramebuffer function pointers
 typedef void *IOMobileFramebufferRef;
-OBJC_EXTERN kern_return_t IOMobileFramebufferGetMainDisplay(IOMobileFramebufferRef *connection);
-OBJC_EXTERN kern_return_t IOMobileFramebufferGetLayerDefaultSurface(IOMobileFramebufferRef connection, int surface, IOSurfaceRef *buffer);
+typedef kern_return_t (*IOMobileFramebufferGetMainDisplay_t)(IOMobileFramebufferRef *connection);
+typedef kern_return_t (*IOMobileFramebufferGetLayerDefaultSurface_t)(IOMobileFramebufferRef connection, int surface, IOSurfaceRef *buffer);
 
 static CGFloat device_screen_width = 0;
 static CGFloat device_screen_height = 0;
@@ -112,9 +114,28 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 + (CGImageRef)createScreenShotCGImageRef
 {
     @autoreleasepool {
-        NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (IOMobileFramebuffer Mode)");
+        NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (IOMobileFramebuffer/dlsym Mode)");
 
-        IOMobileFramebufferRef connect;
+        static void *iomfbHandle = NULL;
+        static IOMobileFramebufferGetMainDisplay_t IOMobileFramebufferGetMainDisplay = NULL;
+        static IOMobileFramebufferGetLayerDefaultSurface_t IOMobileFramebufferGetLayerDefaultSurface = NULL;
+
+        if (!iomfbHandle) {
+            iomfbHandle = dlopen("/System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer", RTLD_LAZY);
+            if (!iomfbHandle) {
+                NSLog(@"com.zjx.springboard: Failed to open IOMobileFramebuffer framework: %s", dlerror());
+                return nil;
+            }
+            IOMobileFramebufferGetMainDisplay = (IOMobileFramebufferGetMainDisplay_t)dlsym(iomfbHandle, "IOMobileFramebufferGetMainDisplay");
+            IOMobileFramebufferGetLayerDefaultSurface = (IOMobileFramebufferGetLayerDefaultSurface_t)dlsym(iomfbHandle, "IOMobileFramebufferGetLayerDefaultSurface");
+        }
+
+        if (!IOMobileFramebufferGetMainDisplay || !IOMobileFramebufferGetLayerDefaultSurface) {
+            NSLog(@"com.zjx.springboard: Failed to resolve IOMobileFramebuffer symbols");
+            return nil;
+        }
+
+        IOMobileFramebufferRef connect = NULL;
         kern_return_t result = IOMobileFramebufferGetMainDisplay(&connect);
         if (result != 0 || connect == NULL) {
             NSLog(@"com.zjx.springboard: IOMobileFramebufferGetMainDisplay failed: %d", result);

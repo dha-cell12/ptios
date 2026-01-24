@@ -12,8 +12,8 @@ zxtouchb_FILES = main.mm SocketServer.mm SBIPC.mm Common.xm Screen.xm ScreenMatc
 zxtouchd_FRAMEWORKS = CoreFoundation UIKit CoreGraphics IOSurface Photos Vision CoreImage ImageIO
 zxtouchb_FRAMEWORKS = CoreFoundation UIKit CoreGraphics IOSurface Photos Vision CoreImage ImageIO
 
-zxtouchd_PRIVATE_FRAMEWORKS = IOKit MobileCoreServices IOMobileFramebuffer
-zxtouchb_PRIVATE_FRAMEWORKS = IOKit MobileCoreServices IOMobileFramebuffer
+zxtouchd_PRIVATE_FRAMEWORKS = IOKit MobileCoreServices
+zxtouchb_PRIVATE_FRAMEWORKS = IOKit MobileCoreServices
 zxtouchd_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG
 zxtouchb_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG
 
