@@ -106,7 +106,9 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 + (CGImageRef)createScreenShotCGImageRef
 {
-    NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (IOSurface Mode)");
+    NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (Forced IOSurface Mode)");
+
+    // _UICreateScreenUIImage removed because it causes crashes in the daemon and returns black images.
 
     Boolean isiPad8orUp = false;
 
