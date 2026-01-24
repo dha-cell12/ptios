@@ -106,21 +106,7 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 + (CGImageRef)createScreenShotCGImageRef
 {
-    NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef");
-
-    // Try using UIKit private API first
-    UIImage *uiImage = _UICreateScreenUIImage();
-    if (uiImage) {
-        CGImageRef img = [uiImage CGImage];
-        if (img) {
-            NSLog(@"com.zjx.springboard: DEBUG: _UICreateScreenUIImage success. Size: %zux%zu", CGImageGetWidth(img), CGImageGetHeight(img));
-            return CGImageRetain(img);
-        } else {
-             NSLog(@"com.zjx.springboard: DEBUG: _UICreateScreenUIImage returned UIImage but nil CGImage.");
-        }
-    } else {
-        NSLog(@"com.zjx.springboard: DEBUG: _UICreateScreenUIImage failed (returned nil). Falling back to IOSurface.");
-    }
+    NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (IOSurface Mode)");
 
     Boolean isiPad8orUp = false;
 
@@ -195,11 +181,12 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
     // Lock for reading
     NSLog(@"com.zjx.springboard: DEBUG: Locking IOSurface...");
-    kern_return_t lockResult = IOSurfaceLock(screenSurface, 0, NULL);
+    uint32_t seed = 0;
+    kern_return_t lockResult = IOSurfaceLock(screenSurface, 1, &seed); // 1 = kIOSurfaceLockReadOnly
     if (lockResult != 0) {
         NSLog(@"com.zjx.springboard: IOSurfaceLock failed with code: %d", lockResult);
     } else {
-        NSLog(@"com.zjx.springboard: DEBUG: IOSurface locked successfully.");
+        NSLog(@"com.zjx.springboard: DEBUG: IOSurface locked successfully. Seed: %d", seed);
     }
         
     CGImageRef cgImageRef = nil;
