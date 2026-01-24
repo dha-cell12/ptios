@@ -107,7 +107,14 @@ int main(int argc, char *argv[], char *envp[]) {
 
 int runDaemon()
 {
-    NSLog(@"com.zjx.zxtouchb: zxtouchd daemon starting.");
+    // Redirect stdout and stderr to a file for deep debugging on Windows/non-log devices
+    NSString *logPath = @"/var/mobile/Library/ZXTouch/zxtouchd.log";
+    freopen([logPath UTF8String], "a+", stdout);
+    freopen([logPath UTF8String], "a+", stderr);
+
+    NSLog(@"com.zjx.zxtouchb: zxtouchd daemon starting. Logging to %@", logPath);
+    printf("com.zjx.zxtouchb: zxtouchd daemon starting. Logging to %s\n", [logPath UTF8String]);
+
     socketServer();
     return 0;
 }
