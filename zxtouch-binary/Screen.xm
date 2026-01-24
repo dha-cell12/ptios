@@ -124,7 +124,8 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
             iomfbHandle = dlopen("/System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer", RTLD_LAZY);
             if (!iomfbHandle) {
                 NSLog(@"com.zjx.springboard: Failed to open IOMobileFramebuffer framework: %s", dlerror());
-                return nil;
+                // Fallback to IPC immediately if IOMFB missing
+                return [Screen screenShotFromSpringBoardIPC];
             }
             IOMobileFramebufferGetMainDisplay = (IOMobileFramebufferGetMainDisplay_t)dlsym(iomfbHandle, "IOMobileFramebufferGetMainDisplay");
             IOMobileFramebufferGetLayerDefaultSurface = (IOMobileFramebufferGetLayerDefaultSurface_t)dlsym(iomfbHandle, "IOMobileFramebufferGetLayerDefaultSurface");
@@ -132,7 +133,7 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
         if (!IOMobileFramebufferGetMainDisplay || !IOMobileFramebufferGetLayerDefaultSurface) {
             NSLog(@"com.zjx.springboard: Failed to resolve IOMobileFramebuffer symbols");
-            return nil;
+            return [Screen screenShotFromSpringBoardIPC];
         }
 
         IOMobileFramebufferRef connect = NULL;
