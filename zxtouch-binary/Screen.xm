@@ -106,16 +106,21 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 + (CGImageRef)createScreenShotCGImageRef
 {
-    // Try using UIKit private API first as it handles IOSurface locking/lifecycle internally.
-    // This aligns with user feedback about UIKit working previously and avoids manual IOSurface deadlocks.
+    NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef");
+
+    // Try using UIKit private API first
     UIImage *uiImage = _UICreateScreenUIImage();
     if (uiImage) {
         CGImageRef img = [uiImage CGImage];
         if (img) {
+            NSLog(@"com.zjx.springboard: DEBUG: _UICreateScreenUIImage success. Size: %zux%zu", CGImageGetWidth(img), CGImageGetHeight(img));
             return CGImageRetain(img);
+        } else {
+             NSLog(@"com.zjx.springboard: DEBUG: _UICreateScreenUIImage returned UIImage but nil CGImage.");
         }
+    } else {
+        NSLog(@"com.zjx.springboard: DEBUG: _UICreateScreenUIImage failed (returned nil). Falling back to IOSurface.");
     }
-    NSLog(@"com.zjx.springboard: _UICreateScreenUIImage failed or returned nil CGImage. Falling back to IOSurface.");
 
     Boolean isiPad8orUp = false;
 
@@ -124,6 +129,8 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
     int height = (int)(screenSize.height * scale);
     int width = (int)(screenSize.width * scale);
+
+    NSLog(@"com.zjx.springboard: DEBUG: Target dimensions: %dx%d", width, height);
 
     // check whether it is ipad8 or later
     NSString *searchText = getDeviceName();
@@ -178,15 +185,21 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
     
     // Do not lock the surface for CARenderServerRenderDisplay. It handles its own synchronization.
     // Locking it here may cause deadlocks or prevent the Render Server from writing.
+    NSLog(@"com.zjx.springboard: DEBUG: Calling CARenderServerRenderDisplay...");
     kern_return_t renderResult = (kern_return_t)CARenderServerRenderDisplay(0, CFSTR("LCD"), screenSurface, 0, 0);
     if (renderResult != 0) {
         NSLog(@"com.zjx.springboard: CARenderServerRenderDisplay failed with code: %d", renderResult);
+    } else {
+        NSLog(@"com.zjx.springboard: DEBUG: CARenderServerRenderDisplay success (0).");
     }
 
     // Lock for reading
+    NSLog(@"com.zjx.springboard: DEBUG: Locking IOSurface...");
     kern_return_t lockResult = IOSurfaceLock(screenSurface, 0, NULL);
     if (lockResult != 0) {
         NSLog(@"com.zjx.springboard: IOSurfaceLock failed with code: %d", lockResult);
+    } else {
+        NSLog(@"com.zjx.springboard: DEBUG: IOSurface locked successfully.");
     }
         
     CGImageRef cgImageRef = nil;

@@ -68,6 +68,7 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         NSArray *languages = [languagesData componentsSeparatedByString:@",,"];
 
         // screen shot
+        NSLog(@"com.zjx.springboard: DEBUG: Capturing screenshot for OCR...");
         CGImageRef screenshotRaw = [Screen createScreenShotCGImageRef];
 
         if (!screenshotRaw) {
@@ -77,6 +78,7 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
              }
             return nil;
         }
+        NSLog(@"com.zjx.springboard: DEBUG: Screenshot captured for OCR. Size: %zux%zu", CGImageGetWidth(screenshotRaw), CGImageGetHeight(screenshotRaw));
 
         // Deep copy to decouple from IOSurface to prevent freezing
         size_t width = CGImageGetWidth(screenshotRaw);
@@ -90,12 +92,15 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
 
         CGImageRef screenshot = nil;
         if (context) {
+            NSLog(@"com.zjx.springboard: DEBUG: Deep copying OCR screenshot...");
             CGContextDrawImage(context, CGRectMake(0, 0, width, height), screenshotRaw);
             screenshot = CGBitmapContextCreateImage(context);
             CGContextRelease(context);
             CFRelease(screenshotRaw);
+            NSLog(@"com.zjx.springboard: DEBUG: Deep copy complete.");
         } else {
             // Fallback if context creation fails (e.g. OOM), though this risks the original issue.
+            NSLog(@"com.zjx.springboard: DEBUG: Failed to create bitmap context for deep copy. Using raw image.");
             screenshot = screenshotRaw;
         }
 

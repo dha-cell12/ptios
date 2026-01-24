@@ -21,12 +21,20 @@ NSDictionary* getRGBFromRawData(UInt8 *eventData, NSError **error)
         *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to pick color. The data format should be \"x;;y\"\r\n"}];
         return @{@"blue": @(-1), @"red": @(-1), @"green": @(-1)};
     }
+    NSLog(@"com.zjx.springboard: DEBUG: Capturing screenshot for ColorPicker...");
     CGImageRef screen = [Screen createScreenShotCGImageRef];
+    if (!screen) {
+        NSLog(@"com.zjx.springboard: DEBUG: ColorPicker failed to capture screenshot.");
+        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot for Color Picker.\r\n"}];
+        return @{@"blue": @(-1), @"red": @(-1), @"green": @(-1)};
+    }
+    NSLog(@"com.zjx.springboard: DEBUG: ColorPicker screenshot captured. Size: %zux%zu", CGImageGetWidth(screen), CGImageGetHeight(screen));
     
     int x = [data[0] intValue];
     int y = [data[1] intValue];
 
     NSDictionary* result = [ColorPicker colorAtPositionFromCGImage:screen x:x andY:y];
+    NSLog(@"com.zjx.springboard: DEBUG: ColorPicker result at (%d, %d): %@", x, y, result);
 
     CGImageRelease(screen);
     return result;
