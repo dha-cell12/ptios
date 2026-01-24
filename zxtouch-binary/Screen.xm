@@ -239,67 +239,6 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
     }
 }
 
-    // Do not lock the surface for CARenderServerRenderDisplay. It handles its own synchronization.
-    // Locking it here may cause deadlocks or prevent the Render Server from writing.
-    NSLog(@"com.zjx.springboard: DEBUG: Calling CARenderServerRenderDisplay...");
-    kern_return_t renderResult = (kern_return_t)CARenderServerRenderDisplay(0, CFSTR("LCD"), screenSurface, 0, 0);
-    if (renderResult != 0) {
-        NSLog(@"com.zjx.springboard: CARenderServerRenderDisplay failed with code: %d", renderResult);
-    } else {
-        NSLog(@"com.zjx.springboard: DEBUG: CARenderServerRenderDisplay success (0).");
-    }
-
-    // Lock for reading
-    NSLog(@"com.zjx.springboard: DEBUG: Locking IOSurface...");
-    uint32_t seed = 0;
-    kern_return_t lockResult = IOSurfaceLock(screenSurface, 1, &seed); // 1 = kIOSurfaceLockReadOnly
-    if (lockResult != 0) {
-        NSLog(@"com.zjx.springboard: IOSurfaceLock failed with code: %d", lockResult);
-    } else {
-        NSLog(@"com.zjx.springboard: DEBUG: IOSurface locked successfully. Seed: %d", seed);
-    }
-        
-    CGImageRef cgImageRef = nil;
-    if (screenSurface) {
-        cgImageRef = UICreateCGImageFromIOSurface(screenSurface);
-        int targetWidth = CGImageGetWidth(cgImageRef);
-        int targetHeight = CGImageGetHeight(cgImageRef);
-
-        if (isiPad8orUp) // rotate 90 degrees counterclockwise
-        {
-            CGColorSpaceRef colorSpaceInfo = CGImageGetColorSpace(cgImageRef);
-            CGContextRef bitmap;
-
-            //if (sourceImage.imageOrientation == UIImageOrientationUp || sourceImage.imageOrientation == UIImageOrientationDown) {
-                bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(cgImageRef), colorSpaceInfo, kCGImageAlphaPremultipliedFirst);
-            //} else {
-                //bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(imageRef), colorSpaceInfo, bitmapInfo);
-
-            //}   
-
-            CGFloat degrees = -90.f;
-            CGFloat radians = degrees * (M_PI / 180.f);
-
-            CGContextTranslateCTM (bitmap, 0.5*targetHeight, 0.5*targetWidth);
-            CGContextRotateCTM (bitmap, radians);
-            CGContextTranslateCTM (bitmap, -0.5*targetWidth, -0.5*targetHeight);
-
-            CGContextDrawImage(bitmap, CGRectMake(0, 0, targetWidth, targetHeight), cgImageRef);
-            
-            CGImageRelease(cgImageRef);
-            cgImageRef = CGBitmapContextCreateImage(bitmap);
-
-            CGColorSpaceRelease(colorSpaceInfo);
-            CGContextRelease(bitmap);
-        }
-    }
-    IOSurfaceUnlock(screenSurface, 0, NULL);
-    CFRelease(screenSurface);
-    screenSurface = nil;
-
-    return cgImageRef;
-}
-
 
 + (NSString*)screenShotAlwaysUp
 {
