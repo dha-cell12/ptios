@@ -2,13 +2,17 @@
 
 #include "SocketServer.h"
 #include "IPCConstants.h"
-#import "ScreenMatch.h"
-#import "Screen.h"
-#import "ColorPicker.h"
-#import "TextRecognization/TextRecognizer.h"
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
+
+#import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
+#import <CoreImage/CoreImage.h>
+#import <Vision/Vision.h>
+#import "../pccontrol/TemplateMatch.h"
+#import "../pccontrol/TextRecognization/VKOcrManager.h"
+#import "../pccontrol/Common.h"
 
 CFSocketRef socketRef;
 CFWriteStreamRef writeStreamRef = NULL;
@@ -30,27 +34,12 @@ static dispatch_queue_t ipcQueue()
     return queue;
 }
 
-static bool parseTaskHeader(const char *buffer, int *taskType, const char **eventData)
+static int getTaskTypeFromBuffer(const char *buffer)
 {
-    if (!buffer || !taskType || !eventData) {
-        return false;
+    if (!buffer || !isdigit(buffer[0]) || !isdigit(buffer[1])) {
+        return -1;
     }
-    const char *cursor = buffer;
-    while (*cursor && !isdigit(*cursor)) {
-        cursor++;
-    }
-    if (!isdigit(cursor[0]) || !isdigit(cursor[1])) {
-        return false;
-    }
-    const char firstDigit = cursor[0];
-    const char secondDigit = cursor[1];
-    cursor += 2;
-    *taskType = (firstDigit - '0') * 10 + (secondDigit - '0');
-    if (cursor[0] == ';' && cursor[1] == ';') {
-        cursor += 2;
-    }
-    *eventData = cursor;
-    return true;
+    return (buffer[0] - '0') * 10 + (buffer[1] - '0');
 }
 
 static bool shouldRouteToSpringBoard(int taskType)
@@ -65,10 +54,15 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 17: // TASK_RAPID_FIRE_TAP
         case 19: // TASK_PLAY_SCRIPT
         case 20: // TASK_PLAY_SCRIPT_FORCE_STOP
+        // case 21: // TASK_TEMPLATE_MATCH (handled in zxtouchd)
         case 22: // TASK_SHOW_TOAST
+        case 23: // TASK_COLOR_PICKER
         case 24: // TASK_TEXT_INPUT
         case 25: // TASK_GET_DEVICE_INFO
         case 26: // TASK_TOUCH_INDICATOR
+        // case 27: // TASK_TEXT_RECOGNIZER (handled in zxtouchd)
+        case 28: // TASK_COLOR_SEARCHER
+        case 29: // TASK_SCREENSHOT
         case 30: // TASK_HARDWARE_KEY
         case 31: // TASK_APP_KILL
         case 32: // TASK_APP_STATE
@@ -184,30 +178,37 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     }
     NSLog(@"### com.zjx.zxtouchd: received task payload: %s", buff);
     const char *buffer = (const char *)buff;
-    const size_t taskPrefixLength = strlen(kZXTouchIPCCommandTaskPrefix);
-    const bool hasTaskPrefix = strncmp(buffer, kZXTouchIPCCommandTaskPrefix, taskPrefixLength) == 0;
-    const char *payload = hasTaskPrefix ? buffer + taskPrefixLength : buffer;
-    int taskType = -1;
-    const char *eventDataCString = NULL;
-    parseTaskHeader(payload, &taskType, &eventDataCString);
+    const int taskType = getTaskTypeFromBuffer(buffer);
+
+// Handle heavy image/OCR tasks inside daemon to reduce SpringBoard load.
+if (taskType == 21 || taskType == 27) {
+    const char *respC = (taskType == 21) ? handleTemplateMatchTaskInDaemon(buffer)
+                                         : handleTextRecognizerTaskInDaemon(buffer);
+    if (client && respC) {
+        CFWriteStreamWrite(client, (const UInt8 *)respC, strlen(respC));
+    }
+    if (respC) free((void *)respC);
+    return;
+}
+
     bool isSpringBoardTask = taskType >= 0 && shouldRouteToSpringBoard(taskType);
 
-    if (strcmp(payload, kZXTouchIPCCommandHome) == 0) {
+    if (strcmp(buffer, kZXTouchIPCCommandHome) == 0) {
         isSpringBoardTask = true;
     }
 
         if (isSpringBoardTask) {
             char ipcPayload[4096];
-            if (strcmp(payload, kZXTouchIPCCommandHome) == 0) {
+            if (strcmp(buffer, kZXTouchIPCCommandHome) == 0) {
                 snprintf(ipcPayload, sizeof(ipcPayload), "%s", kZXTouchIPCCommandHome);
             } else {
-                snprintf(ipcPayload, sizeof(ipcPayload), "%s%s", kZXTouchIPCCommandTaskPrefix, payload);
+                snprintf(ipcPayload, sizeof(ipcPayload), "%s%s", kZXTouchIPCCommandTaskPrefix, buffer);
             }
             NSString *payloadString = [NSString stringWithUTF8String:ipcPayload];
             if (!payloadString) {
                 return;
             }
-            bool waitForResponse = strcmp(payload, kZXTouchIPCCommandHome) == 0
+            bool waitForResponse = strcmp(buffer, kZXTouchIPCCommandHome) == 0
                 ? true
                 : shouldWaitForResponse(taskType);
             __block CFDataRef responseData = NULL;
@@ -237,73 +238,9 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
         return;
     }
 
-    auto writeCString = ^(const char *cstr) {
-        if (!client || !cstr) { return; }
-        CFWriteStreamWrite(client, (const UInt8 *)cstr, (CFIndex)strlen(cstr));
-    };
-
-    // Daemon-side heavy tasks (refactor): template match, OCR, screenshot.
-    UInt8 *eventData = (UInt8 *)eventDataCString;
-    if (!eventData) {
-        writeCString("1;;invalid_task\r\n");
-        return;
-    }
-
-    @autoreleasepool {
-        switch (taskType) {
-            case 21: { // TASK_TEMPLATE_MATCH
-                NSError *err = nil;
-                CGRect result = screenMatchFromRawData(eventData, &err);
-                if (err) {
-                    writeCString([[err localizedDescription] UTF8String]);
-                } else {
-                    NSString *resp = [NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n",
-                                      result.origin.x, result.origin.y, result.size.width, result.size.height];
-                    writeCString([resp UTF8String]);
-                }
-                break;
-            }
-            case 23: { // TASK_COLOR_PICKER
-                NSError *err = nil;
-                NSDictionary *color = getRGBFromRawData(eventData, &err);
-                if (err) {
-                    writeCString([[err localizedDescription] UTF8String]);
-                } else {
-                    NSString *resp = [NSString stringWithFormat:@"0;;%@;;%@;;%@\r\n",
-                                      color[@"red"], color[@"green"], color[@"blue"]];
-                    writeCString([resp UTF8String]);
-                }
-                break;
-            }
-            case 27: { // TASK_TEXT_RECOGNIZER
-                NSError *err = nil;
-                NSString *result = performTextRecognizerTextFromRawData(eventData, &err);
-                if (err) {
-                    writeCString([[err localizedDescription] UTF8String]);
-                } else {
-                    NSString *resp = [NSString stringWithFormat:@"0;;%@\r\n", result ?: @""];
-                    writeCString([resp UTF8String]);
-                }
-                break;
-            }
-            case 28: { // TASK_COLOR_SEARCHER
-                NSError *err = nil;
-                NSString *result = searchRGBFromRawData(eventData, &err);
-                if (err) {
-                    writeCString([[err localizedDescription] UTF8String]);
-                } else {
-                    NSString *resp = [NSString stringWithFormat:@"0;;%@\r\n", result ?: @""];
-                    writeCString([resp UTF8String]);
-                }
-                break;
-            }
-            default: {
-                if (client) {
-                    writeCString("1;;zxtouchd: task handling not implemented\r\n");
-                }
-                break;
-            }
-        }
+    if (client) {
+        const char *response = "1;;zxtouchd: task handling not implemented\r\n";
+        CFWriteStreamWrite(client, (const UInt8 *)response, strlen(response));
     }
 }
 
