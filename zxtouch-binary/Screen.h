@@ -23,6 +23,7 @@
 + (NSString*)screenShotAlwaysUp;
 + (UIImage*)screenShotUIImage;
 + (CGImageRef)createScreenShotCGImageRef;
++ (CGImageRef)screenShotFromSpringBoardIPC;
 + (NSString*)screenShotToPath:(NSString*)filePath region:(CGRect)region error:(NSError**)error;
 + (void)saveToSystemAlbum:(NSString*)filePath error:(NSError**)error;
 + (void)clearSystemAlbum:(NSError**)error;

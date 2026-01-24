@@ -138,15 +138,15 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
         IOMobileFramebufferRef connect = NULL;
         kern_return_t result = IOMobileFramebufferGetMainDisplay(&connect);
         if (result != 0 || connect == NULL) {
-            NSLog(@"com.zjx.springboard: IOMobileFramebufferGetMainDisplay failed: %d", result);
-            return nil;
+            NSLog(@"com.zjx.springboard: IOMobileFramebufferGetMainDisplay failed: %d. Trying IPC fallback...", result);
+            return [Screen screenShotFromSpringBoardIPC];
         }
 
         IOSurfaceRef screenSurface = NULL;
         result = IOMobileFramebufferGetLayerDefaultSurface(connect, 0, &screenSurface);
         if (result != 0 || screenSurface == NULL) {
-            NSLog(@"com.zjx.springboard: IOMobileFramebufferGetLayerDefaultSurface failed: %d", result);
-            return nil;
+            NSLog(@"com.zjx.springboard: IOMobileFramebufferGetLayerDefaultSurface failed: %d. Trying IPC fallback...", result);
+            return [Screen screenShotFromSpringBoardIPC];
         }
 
         NSLog(@"com.zjx.springboard: DEBUG: IOSurface retrieved successfully via IOMobileFramebuffer");
@@ -196,15 +196,26 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
             }
         }
         IOSurfaceUnlock(screenSurface, 0, NULL);
-        // Do NOT release screenSurface from IOMobileFramebufferGetLayerDefaultSurface as we don't own it?
-        // Actually, CoreFoundation rules usually apply. But GetLayerDefaultSurface implies we are getting a reference.
-        // Usage examples often don't release it if it's the 'default' one, but creating a CGImage retains it.
-        // If we release it and it's a singleton, bad. If we don't and it's a copy, leak.
-        // Usually 'Get' implies +0.
-        // screenSurface = nil;
-
         return cgImageRef;
     }
+}
+
++ (CGImageRef)screenShotFromSpringBoardIPC
+{
+    NSLog(@"com.zjx.springboard: DEBUG: Requesting screenshot from SpringBoard via IPC (Task 29)...");
+    NSString *resp = ZXSendSpringBoardTask(@"29", 3.0); // 3 seconds timeout
+    if (resp && [resp hasPrefix:@"0;;Success"]) {
+        NSString *path = @"/var/mobile/Library/ZXTouch/daemon_screenshot.png";
+        UIImage *img = [UIImage imageWithContentsOfFile:path];
+        if (img) {
+            NSLog(@"com.zjx.springboard: DEBUG: IPC Screenshot success.");
+            return CGImageRetain([img CGImage]);
+        }
+        NSLog(@"com.zjx.springboard: DEBUG: IPC Screenshot file not found or invalid.");
+    } else {
+        NSLog(@"com.zjx.springboard: DEBUG: IPC Screenshot request failed. Response: %@", resp);
+    }
+    return nil;
 }
 
 

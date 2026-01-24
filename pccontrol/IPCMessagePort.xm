@@ -13,6 +13,8 @@
 // File logging fallback for devices without unified logging CLI.
 static NSString *const kZXTouchIPCLogPath = @"/var/mobile/Library/ZXTouch/ipc_pccontrol.log";
 
+OBJC_EXTERN UIImage *_UICreateScreenUIImage();
+
 static void zx_append_ipc_log(NSString *line)
 {
     if (!line) return;
@@ -91,6 +93,23 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                     taskType = (int)(first - '0') * 10 + (int)(second - '0');
                 }
             }
+            // Handle Screenshot Request from Daemon (Task 29)
+            if (taskType == 29) {
+                NSLog(@"### com.zjx.springboard: Handling Daemon Screenshot Request (29)");
+                zx_append_ipc_log(@"Handling TASK 29 (Screenshot)");
+
+                UIImage *screenImage = _UICreateScreenUIImage();
+                if (screenImage) {
+                    NSString *path = @"/var/mobile/Library/ZXTouch/daemon_screenshot.png";
+                    [UIImagePNGRepresentation(screenImage) writeToFile:path atomically:YES];
+                    const char *resp = "0;;Success\r\n";
+                    return CFDataCreate(kCFAllocatorDefault, (const UInt8 *)resp, strlen(resp));
+                } else {
+                    const char *resp = "1;;Failed\r\n";
+                    return CFDataCreate(kCFAllocatorDefault, (const UInt8 *)resp, strlen(resp));
+                }
+            }
+
             if (taskType == TASK_TEMPLATE_MATCH
                 || taskType == TASK_COLOR_PICKER
                 || taskType == TASK_TEXT_RECOGNIZER
