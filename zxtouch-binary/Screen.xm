@@ -14,6 +14,11 @@ OBJC_EXTERN kern_return_t IOSurfaceUnLock(IOSurfaceRef buffer, IOSurfaceLockOpti
 OBJC_EXTERN IOSurfaceRef IOSurfaceCreate(CFDictionaryRef dictionary);
 OBJC_EXTERN CGImageRef UICreateCGImageFromIOSurface(IOSurfaceRef surface);
 
+// IOMobileFramebuffer declarations
+typedef void *IOMobileFramebufferRef;
+OBJC_EXTERN kern_return_t IOMobileFramebufferGetMainDisplay(IOMobileFramebufferRef *connection);
+OBJC_EXTERN kern_return_t IOMobileFramebufferGetLayerDefaultSurface(IOMobileFramebufferRef connection, int surface, IOSurfaceRef *buffer);
+
 static CGFloat device_screen_width = 0;
 static CGFloat device_screen_height = 0;
 static NSString *const kZXTouchAlbumName = @"ZXTouch";
@@ -107,114 +112,51 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 + (CGImageRef)createScreenShotCGImageRef
 {
     @autoreleasepool {
-        NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (Forced IOSurface Mode)");
+        NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (IOMobileFramebuffer Mode)");
 
-        Boolean isiPad8orUp = false;
-
-        CGFloat scale = [UIScreen mainScreen].scale;
-        CGSize screenSize = [UIScreen mainScreen].bounds.size;
-
-        int height = (int)(screenSize.height * scale);
-        int width = (int)(screenSize.width * scale);
-
-        NSLog(@"com.zjx.springboard: DEBUG: Target dimensions: %dx%d. Checking Device Name...", width, height);
-
-        // check whether it is ipad8 or later
-        NSString *searchText = getDeviceName();
-        NSLog(@"com.zjx.springboard: DEBUG: Device Name: %@", searchText);
-
-        NSRange range = [searchText rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
-        if (range.location != NSNotFound) { // ipad pro (3rd) or later
-            isiPad8orUp = true;
-        }
-
-        if (isiPad8orUp)
-        {
-            if (width < height)
-            {
-                int temp = width;
-                width = height;
-                height = temp;
-            }
-        }
-        else
-        {
-            if (width > height)
-            {
-                int temp = width;
-                width = height;
-                height = temp;
-            }
-        }
-
-        int bytesPerElement = 4;
-        int bytesPerRow = roundUp(bytesPerElement * width, 32);
-
-        NSLog(@"com.zjx.springboard: DEBUG: Calculating IOSurface properties. BytesPerRow: %d", bytesPerRow);
-
-        NSNumber *IOSurfaceBytesPerElement = [NSNumber numberWithInteger:bytesPerElement];
-        NSNumber *IOSurfaceBytesPerRow = [NSNumber numberWithInteger:bytesPerRow]; // don't know why but it should be a multiple of 32
-        NSNumber *IOSurfaceAllocSize = [NSNumber numberWithInteger:bytesPerRow * height];
-        NSNumber *nheight = [NSNumber numberWithInteger:height];
-        NSNumber *nwidth = [NSNumber numberWithInteger:width];
-        NSNumber *IOSurfacePixelFormat = [NSNumber numberWithInteger:1111970369];
-        // IOSurfaceIsGlobal removed to prevent crashes due to missing entitlements in daemon.
-        // NSNumber *IOSurfaceIsGlobal = [NSNumber numberWithInteger:1];
-
-        NSDictionary *properties = [[NSDictionary alloc] initWithObjectsAndKeys:IOSurfaceAllocSize, @"IOSurfaceAllocSize"
-                                    , IOSurfaceBytesPerElement, @"IOSurfaceBytesPerElement", IOSurfaceBytesPerRow, @"IOSurfaceBytesPerRow", nheight, @"IOSurfaceHeight",
-                                    IOSurfacePixelFormat, @"IOSurfacePixelFormat", nwidth, @"IOSurfaceWidth", nil];
-
-        NSLog(@"com.zjx.springboard: DEBUG: Creating IOSurface with properties: %@", properties);
-
-        IOSurfaceRef screenSurface = IOSurfaceCreate((__bridge CFDictionaryRef)(properties));
-
-        properties = nil;
-
-        if (!screenSurface) {
-            NSLog(@"com.zjx.springboard: Failed to create IOSurface.");
+        IOMobileFramebufferRef connect;
+        kern_return_t result = IOMobileFramebufferGetMainDisplay(&connect);
+        if (result != 0 || connect == NULL) {
+            NSLog(@"com.zjx.springboard: IOMobileFramebufferGetMainDisplay failed: %d", result);
             return nil;
         }
 
-        NSLog(@"com.zjx.springboard: DEBUG: IOSurface created successfully: %@", screenSurface);
-
-        // Do not lock the surface for CARenderServerRenderDisplay. It handles its own synchronization.
-        // Locking it here may cause deadlocks or prevent the Render Server from writing.
-        NSLog(@"com.zjx.springboard: DEBUG: Calling CARenderServerRenderDisplay...");
-        kern_return_t renderResult = (kern_return_t)CARenderServerRenderDisplay(0, CFSTR("LCD"), screenSurface, 0, 0);
-        if (renderResult != 0) {
-            NSLog(@"com.zjx.springboard: CARenderServerRenderDisplay failed with code: %d", renderResult);
-        } else {
-            NSLog(@"com.zjx.springboard: DEBUG: CARenderServerRenderDisplay success (0).");
+        IOSurfaceRef screenSurface = NULL;
+        result = IOMobileFramebufferGetLayerDefaultSurface(connect, 0, &screenSurface);
+        if (result != 0 || screenSurface == NULL) {
+            NSLog(@"com.zjx.springboard: IOMobileFramebufferGetLayerDefaultSurface failed: %d", result);
+            return nil;
         }
 
+        NSLog(@"com.zjx.springboard: DEBUG: IOSurface retrieved successfully via IOMobileFramebuffer");
+
         // Lock for reading
-        NSLog(@"com.zjx.springboard: DEBUG: Locking IOSurface...");
         uint32_t seed = 0;
         kern_return_t lockResult = IOSurfaceLock(screenSurface, 1, &seed); // 1 = kIOSurfaceLockReadOnly
         if (lockResult != 0) {
             NSLog(@"com.zjx.springboard: IOSurfaceLock failed with code: %d", lockResult);
-        } else {
-            NSLog(@"com.zjx.springboard: DEBUG: IOSurface locked successfully. Seed: %d", seed);
         }
 
         CGImageRef cgImageRef = nil;
         if (screenSurface) {
             cgImageRef = UICreateCGImageFromIOSurface(screenSurface);
-            int targetWidth = CGImageGetWidth(cgImageRef);
-            int targetHeight = CGImageGetHeight(cgImageRef);
+
+            // Handle iPad rotation if necessary
+            Boolean isiPad8orUp = false;
+            NSString *searchText = getDeviceName();
+            NSRange range = [searchText rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
+            if (range.location != NSNotFound) { // ipad pro (3rd) or later
+                isiPad8orUp = true;
+            }
 
             if (isiPad8orUp) // rotate 90 degrees counterclockwise
             {
+                int targetWidth = CGImageGetWidth(cgImageRef);
+                int targetHeight = CGImageGetHeight(cgImageRef);
                 CGColorSpaceRef colorSpaceInfo = CGImageGetColorSpace(cgImageRef);
                 CGContextRef bitmap;
 
-                //if (sourceImage.imageOrientation == UIImageOrientationUp || sourceImage.imageOrientation == UIImageOrientationDown) {
-                    bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(cgImageRef), colorSpaceInfo, kCGImageAlphaPremultipliedFirst);
-                //} else {
-                    //bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(imageRef), colorSpaceInfo, bitmapInfo);
-
-                //}
+                bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(cgImageRef), colorSpaceInfo, kCGImageAlphaPremultipliedFirst);
 
                 CGFloat degrees = -90.f;
                 CGFloat radians = degrees * (M_PI / 180.f);
@@ -233,8 +175,12 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
             }
         }
         IOSurfaceUnlock(screenSurface, 0, NULL);
-        CFRelease(screenSurface);
-        screenSurface = nil;
+        // Do NOT release screenSurface from IOMobileFramebufferGetLayerDefaultSurface as we don't own it?
+        // Actually, CoreFoundation rules usually apply. But GetLayerDefaultSurface implies we are getting a reference.
+        // Usage examples often don't release it if it's the 'default' one, but creating a CGImage retains it.
+        // If we release it and it's a singleton, bad. If we don't and it's a copy, leak.
+        // Usually 'Get' implies +0.
+        // screenSurface = nil;
 
         return cgImageRef;
     }
