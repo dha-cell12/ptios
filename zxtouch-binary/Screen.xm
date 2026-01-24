@@ -106,71 +106,139 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 + (CGImageRef)createScreenShotCGImageRef
 {
-    NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (Forced IOSurface Mode)");
+    @autoreleasepool {
+        NSLog(@"com.zjx.springboard: DEBUG: Starting createScreenShotCGImageRef (Forced IOSurface Mode)");
 
-    // _UICreateScreenUIImage removed because it causes crashes in the daemon and returns black images.
+        Boolean isiPad8orUp = false;
 
-    Boolean isiPad8orUp = false;
+        CGFloat scale = [UIScreen mainScreen].scale;
+        CGSize screenSize = [UIScreen mainScreen].bounds.size;
 
-    CGFloat scale = [UIScreen mainScreen].scale;
-    CGSize screenSize = [UIScreen mainScreen].bounds.size;
+        int height = (int)(screenSize.height * scale);
+        int width = (int)(screenSize.width * scale);
 
-    int height = (int)(screenSize.height * scale);
-    int width = (int)(screenSize.width * scale);
+        NSLog(@"com.zjx.springboard: DEBUG: Target dimensions: %dx%d. Checking Device Name...", width, height);
 
-    NSLog(@"com.zjx.springboard: DEBUG: Target dimensions: %dx%d", width, height);
+        // check whether it is ipad8 or later
+        NSString *searchText = getDeviceName();
+        NSLog(@"com.zjx.springboard: DEBUG: Device Name: %@", searchText);
 
-    // check whether it is ipad8 or later
-    NSString *searchText = getDeviceName();
-
-    NSRange range = [searchText rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
-    if (range.location != NSNotFound) { // ipad pro (3rd) or later
-        isiPad8orUp = true;
-    }
-
-    if (isiPad8orUp)
-    {
-        if (width < height)
-        {
-            int temp = width;
-            width = height;
-            height = temp;
+        NSRange range = [searchText rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
+        if (range.location != NSNotFound) { // ipad pro (3rd) or later
+            isiPad8orUp = true;
         }
-    }
-    else
-    {
-        if (width > height)
+
+        if (isiPad8orUp)
         {
-            int temp = width;
-            width = height;
-            height = temp;
+            if (width < height)
+            {
+                int temp = width;
+                width = height;
+                height = temp;
+            }
         }
+        else
+        {
+            if (width > height)
+            {
+                int temp = width;
+                width = height;
+                height = temp;
+            }
+        }
+
+        int bytesPerElement = 4;
+        int bytesPerRow = roundUp(bytesPerElement * width, 32);
+
+        NSLog(@"com.zjx.springboard: DEBUG: Calculating IOSurface properties. BytesPerRow: %d", bytesPerRow);
+
+        NSNumber *IOSurfaceBytesPerElement = [NSNumber numberWithInteger:bytesPerElement];
+        NSNumber *IOSurfaceBytesPerRow = [NSNumber numberWithInteger:bytesPerRow]; // don't know why but it should be a multiple of 32
+        NSNumber *IOSurfaceAllocSize = [NSNumber numberWithInteger:bytesPerRow * height];
+        NSNumber *nheight = [NSNumber numberWithInteger:height];
+        NSNumber *nwidth = [NSNumber numberWithInteger:width];
+        NSNumber *IOSurfacePixelFormat = [NSNumber numberWithInteger:1111970369];
+        NSNumber *IOSurfaceIsGlobal = [NSNumber numberWithInteger:1];
+
+        NSDictionary *properties = [[NSDictionary alloc] initWithObjectsAndKeys:IOSurfaceAllocSize, @"IOSurfaceAllocSize"
+                                    , IOSurfaceBytesPerElement, @"IOSurfaceBytesPerElement", IOSurfaceBytesPerRow, @"IOSurfaceBytesPerRow", nheight, @"IOSurfaceHeight",
+                                    IOSurfaceIsGlobal, @"IOSurfaceIsGlobal", IOSurfacePixelFormat, @"IOSurfacePixelFormat", nwidth, @"IOSurfaceWidth", nil];
+
+        NSLog(@"com.zjx.springboard: DEBUG: Creating IOSurface with properties: %@", properties);
+
+        IOSurfaceRef screenSurface = IOSurfaceCreate((__bridge CFDictionaryRef)(properties));
+
+        properties = nil;
+
+        if (!screenSurface) {
+            NSLog(@"com.zjx.springboard: Failed to create IOSurface.");
+            return nil;
+        }
+
+        NSLog(@"com.zjx.springboard: DEBUG: IOSurface created successfully: %@", screenSurface);
+
+        // Do not lock the surface for CARenderServerRenderDisplay. It handles its own synchronization.
+        // Locking it here may cause deadlocks or prevent the Render Server from writing.
+        NSLog(@"com.zjx.springboard: DEBUG: Calling CARenderServerRenderDisplay...");
+        kern_return_t renderResult = (kern_return_t)CARenderServerRenderDisplay(0, CFSTR("LCD"), screenSurface, 0, 0);
+        if (renderResult != 0) {
+            NSLog(@"com.zjx.springboard: CARenderServerRenderDisplay failed with code: %d", renderResult);
+        } else {
+            NSLog(@"com.zjx.springboard: DEBUG: CARenderServerRenderDisplay success (0).");
+        }
+
+        // Lock for reading
+        NSLog(@"com.zjx.springboard: DEBUG: Locking IOSurface...");
+        uint32_t seed = 0;
+        kern_return_t lockResult = IOSurfaceLock(screenSurface, 1, &seed); // 1 = kIOSurfaceLockReadOnly
+        if (lockResult != 0) {
+            NSLog(@"com.zjx.springboard: IOSurfaceLock failed with code: %d", lockResult);
+        } else {
+            NSLog(@"com.zjx.springboard: DEBUG: IOSurface locked successfully. Seed: %d", seed);
+        }
+
+        CGImageRef cgImageRef = nil;
+        if (screenSurface) {
+            cgImageRef = UICreateCGImageFromIOSurface(screenSurface);
+            int targetWidth = CGImageGetWidth(cgImageRef);
+            int targetHeight = CGImageGetHeight(cgImageRef);
+
+            if (isiPad8orUp) // rotate 90 degrees counterclockwise
+            {
+                CGColorSpaceRef colorSpaceInfo = CGImageGetColorSpace(cgImageRef);
+                CGContextRef bitmap;
+
+                //if (sourceImage.imageOrientation == UIImageOrientationUp || sourceImage.imageOrientation == UIImageOrientationDown) {
+                    bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(cgImageRef), colorSpaceInfo, kCGImageAlphaPremultipliedFirst);
+                //} else {
+                    //bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(imageRef), colorSpaceInfo, bitmapInfo);
+
+                //}
+
+                CGFloat degrees = -90.f;
+                CGFloat radians = degrees * (M_PI / 180.f);
+
+                CGContextTranslateCTM (bitmap, 0.5*targetHeight, 0.5*targetWidth);
+                CGContextRotateCTM (bitmap, radians);
+                CGContextTranslateCTM (bitmap, -0.5*targetWidth, -0.5*targetHeight);
+
+                CGContextDrawImage(bitmap, CGRectMake(0, 0, targetWidth, targetHeight), cgImageRef);
+
+                CGImageRelease(cgImageRef);
+                cgImageRef = CGBitmapContextCreateImage(bitmap);
+
+                CGColorSpaceRelease(colorSpaceInfo);
+                CGContextRelease(bitmap);
+            }
+        }
+        IOSurfaceUnlock(screenSurface, 0, NULL);
+        CFRelease(screenSurface);
+        screenSurface = nil;
+
+        return cgImageRef;
     }
+}
 
-    int bytesPerElement = 4;
-    int bytesPerRow = roundUp(bytesPerElement * width, 32);
-
-    NSNumber *IOSurfaceBytesPerElement = [NSNumber numberWithInteger:bytesPerElement]; 
-    NSNumber *IOSurfaceBytesPerRow = [NSNumber numberWithInteger:bytesPerRow]; // don't know why but it should be a multiple of 32
-    NSNumber *IOSurfaceAllocSize = [NSNumber numberWithInteger:bytesPerRow * height]; 
-    NSNumber *nheight = [NSNumber numberWithInteger:height]; 
-    NSNumber *nwidth = [NSNumber numberWithInteger:width]; 
-    NSNumber *IOSurfacePixelFormat = [NSNumber numberWithInteger:1111970369]; 
-    NSNumber *IOSurfaceIsGlobal = [NSNumber numberWithInteger:1]; 
-
-    NSDictionary *properties = [[NSDictionary alloc] initWithObjectsAndKeys:IOSurfaceAllocSize, @"IOSurfaceAllocSize"
-                                , IOSurfaceBytesPerElement, @"IOSurfaceBytesPerElement", IOSurfaceBytesPerRow, @"IOSurfaceBytesPerRow", nheight, @"IOSurfaceHeight", 
-                                IOSurfaceIsGlobal, @"IOSurfaceIsGlobal", IOSurfacePixelFormat, @"IOSurfacePixelFormat", nwidth, @"IOSurfaceWidth", nil];    
-
-    IOSurfaceRef screenSurface = IOSurfaceCreate((__bridge CFDictionaryRef)(properties));
-
-    properties = nil;
-
-    if (!screenSurface) {
-        NSLog(@"com.zjx.springboard: Failed to create IOSurface.");
-        return nil;
-    }
-    
     // Do not lock the surface for CARenderServerRenderDisplay. It handles its own synchronization.
     // Locking it here may cause deadlocks or prevent the Render Server from writing.
     NSLog(@"com.zjx.springboard: DEBUG: Calling CARenderServerRenderDisplay...");
