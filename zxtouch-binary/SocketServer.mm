@@ -5,6 +5,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
+#include <stdarg.h>
+#include <sys/stat.h>
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -23,6 +25,66 @@ CFSocketRef socketRef;
 CFWriteStreamRef writeStreamRef = NULL;
 CFReadStreamRef readStreamRef = NULL;
 static NSMutableDictionary *socketClients = NULL;
+
+// File logging for daemon debugging.
+// Logs are appended to: /var/mobile/Library/ZXTouch/zxtouchd.log
+static NSString *zx_logFilePath(void)
+{
+    return @"/var/mobile/Library/ZXTouch/zxtouchd.log";
+}
+
+static void zx_ensureLogDir(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSString *dir = @"/var/mobile/Library/ZXTouch";
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:nil];
+        NSString *path = zx_logFilePath();
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            [[NSData data] writeToFile:path atomically:YES];
+        }
+    });
+}
+
+static void zx_logf(const char *fmt, ...)
+{
+    zx_ensureLogDir();
+
+    char msg[2048];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, args);
+    va_end(args);
+
+    // Always mirror to system log as well.
+    NSLog(@"[zxtouchd] %s", msg);
+
+    // Append to file with timestamp.
+    NSDate *now = [NSDate date];
+    static NSDateFormatter *df = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        df = [[NSDateFormatter alloc] init];
+        df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        df.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+    });
+
+    NSString *line = [NSString stringWithFormat:@"%@ %s\n", [df stringFromDate:now], msg];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data) return;
+
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:zx_logFilePath()];
+    if (!fh) return;
+    @try {
+        [fh seekToEndOfFile];
+        [fh writeData:data];
+    } @catch (__unused NSException *e) {
+    }
+    @try { [fh closeFile]; } @catch (__unused NSException *e) {}
+}
 
 static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, void * clientCallBackInfo);
 static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType type, CFDataRef address, const void *data, void *info);
@@ -283,6 +345,7 @@ static void zx_safeUnlink(NSString *path)
 #ifdef ZX_DAEMON
 static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 {
+    zx_logf("Task21 enter: raw=%s", buffer ? buffer : "(null)");
     // buffer begins with "21..."; SpringBoard passes eventData = buff + 2
     const char *eventC = buffer ? buffer + 2 : NULL;
     if (!eventC) return (char *)strdup("-1;;Empty task payload.\r\n");
@@ -301,16 +364,29 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
     }
     if ([templatePath length] == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:templatePath]) {
         NSString *err = [NSString stringWithFormat:@"-1;;Template image not found for image matching. Template path: %@\r\n", templatePath];
+        zx_logf("Task21 error: template not found path=%s", [templatePath UTF8String]);
         return zx_strdup_nsstring(err);
     }
+
+    zx_logf("Task21 template=%s maxTry=%d acceptable=%.3f scale=%.3f", [templatePath UTF8String], maxTryTimes, acceptableValue, scaleRation);
 
     NSString *tmpPath = zx_makeTempScreenshotPath();
     NSString *errString = nil;
     NSString *shotPath = zx_ipcCaptureScreenshotToPath(tmpPath, &errString);
     if (!shotPath) {
+        zx_logf("Task21 screenshot capture failed: %s", errString ? [errString UTF8String] : "(no err)");
         zx_safeUnlink(tmpPath);
         return zx_strdup_nsstring(errString ?: @"-1;;Failed to capture screenshot.\r\n");
     }
+
+    // Wait briefly if file is not ready yet.
+    for (int i = 0; i < 3; i++) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
+        usleep(40000);
+    }
+    struct stat st;
+    long long fsz = (stat([shotPath fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
+    zx_logf("Task21 screenshot path=%s size=%lld", [shotPath UTF8String], fsz);
 
     NSError *err = nil;
     TemplateMatch *tm = [[TemplateMatch alloc] init];
@@ -321,8 +397,10 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
     zx_safeUnlink(shotPath);
 
     if (err) {
+        zx_logf("Task21 match error: %s", [[err localizedDescription] UTF8String]);
         return zx_strdup_nsstring([err localizedDescription]);
     }
+    zx_logf("Task21 match rect x=%.2f y=%.2f w=%.2f h=%.2f", r.origin.x, r.origin.y, r.size.width, r.size.height);
     NSString *resp = [NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n", r.origin.x, r.origin.y, r.size.width, r.size.height];
     return zx_strdup_nsstring(resp);
 }
@@ -332,6 +410,7 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 #ifdef ZX_DAEMON
 static char *handleTextRecognizerTaskInDaemon(const char *buffer)
 {
+    zx_logf("Task27 enter: raw=%s", buffer ? buffer : "(null)");
     const char *eventC = buffer ? buffer + 2 : NULL;
     if (!eventC) return (char *)strdup("-1;;Empty task payload.\r\n");
 
@@ -347,6 +426,7 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
 
     int subtask = [data[0] intValue];
     if (subtask == TASK_GET_SUPPORTED_LANGUAGE_LIST) {
+        zx_logf("Task27 subtask: GET_SUPPORTED_LANGUAGE_LIST");
         if (data.count < 2) {
             return (char *)strdup("-1;;Data not in good format. The format should be 2;;level\r\n");
         }
@@ -360,6 +440,7 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
             supported = [VNRecognizeTextRequest supportedRecognitionLanguagesForTextRecognitionLevel:level revision:2 error:&err];
         }
         if (err) {
+            zx_logf("Task27 supported languages error: %s", [[err description] UTF8String]);
             NSString *e = [NSString stringWithFormat:@"-1;;Error: %@\r\n", err];
             return zx_strdup_nsstring(e);
         }
@@ -369,6 +450,7 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
     }
 
     if (subtask != TASK_TEXT_FROM_AREA) {
+        zx_logf("Task27 unknown subtask=%d", subtask);
         return (char *)strdup("-1;;Text recognition unknown task type\r\n");
     }
 
@@ -396,14 +478,25 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
     NSArray *languages = [languagesData componentsSeparatedByString:@",,"];
 
     int orientation = zx_ipcGetFrontmostOrientation();
+    zx_logf("Task27 rect=%.2f,%.2f,%.2f,%.2f minH=%.4f level=%d correct=%d orientation=%d langs=%s", recognizeRect.origin.x, recognizeRect.origin.y, recognizeRect.size.width, recognizeRect.size.height, minimumHeight, (int)levelData, (int)correct, orientation, [languagesData UTF8String]);
 
     NSString *tmpPath = zx_makeTempScreenshotPath();
     NSString *errString = nil;
     NSString *shotPath = zx_ipcCaptureScreenshotToPath(tmpPath, &errString);
     if (!shotPath) {
+        zx_logf("Task27 screenshot capture failed: %s", errString ? [errString UTF8String] : "(no err)");
         zx_safeUnlink(tmpPath);
         return zx_strdup_nsstring(errString ?: @"-1;;Failed to capture screenshot.\r\n");
     }
+
+    // Wait briefly if file is not ready yet.
+    for (int i = 0; i < 3; i++) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
+        usleep(40000);
+    }
+    struct stat st;
+    long long fsz = (stat([shotPath fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
+    zx_logf("Task27 screenshot path=%s size=%lld", [shotPath UTF8String], fsz);
 
     NSError *err = nil;
     VKOcrManager *ocr = [[VKOcrManager alloc] initWithImagePath:shotPath area:recognizeRect orientation:orientation];
@@ -425,8 +518,10 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
     zx_safeUnlink(shotPath);
 
     if (err) {
+        zx_logf("Task27 recognize error: %s", [[err localizedDescription] UTF8String]);
         return zx_strdup_nsstring([err localizedDescription]);
     }
+    zx_logf("Task27 recognize ok: len=%lu", (unsigned long)(result ? [result length] : 0));
     NSString *resp = [NSString stringWithFormat:@"0;;%@\r\n", result ?: @""];
     return zx_strdup_nsstring(resp);
 }
@@ -438,7 +533,7 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
     if (!buff) {
         return;
     }
-    NSLog(@"### com.zjx.zxtouchd: received task payload: %s", buff);
+    zx_logf("received task payload: %s", buff);
     const char *buffer = (const char *)buff;
     const int taskType = getTaskTypeFromBuffer(buffer);
 
@@ -490,9 +585,9 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
                                                            length:(NSUInteger)responseLength];
                     NSString *responseString = [[NSString alloc] initWithData:responseNSData
                                                                      encoding:NSUTF8StringEncoding];
-                    NSLog(@"### com.zjx.zxtouchd: IPC response: %@", responseString);
+                    zx_logf("IPC response: %s", responseString ? [responseString UTF8String] : "(null)");
                 } else {
-                    NSLog(@"### com.zjx.zxtouchd: IPC response empty");
+                    zx_logf("IPC response empty");
                 }
                 CFRelease(responseData);
             } else {
