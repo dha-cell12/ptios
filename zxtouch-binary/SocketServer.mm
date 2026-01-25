@@ -1,5 +1,10 @@
 // TODO: multiple client write back support
 
+#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+#import <CoreImage/CoreImage.h>
+#import <Vision/Vision.h>
+
 #include "SocketServer.h"
 #include "IPCConstants.h"
 #include <string.h>
@@ -8,18 +13,14 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 
-#import <UIKit/UIKit.h>
-#import <Foundation/Foundation.h>
-#import <CoreImage/CoreImage.h>
-#import <Vision/Vision.h>
 #ifdef ZX_DAEMON
 #import "../pccontrol/TemplateMatch.h"
-// Needed for TextRecognizer subtask constants (e.g. TASK_TEXT_FROM_AREA, TASK_GET_SUPPORTED_LANGUAGE_LIST)
 #import "../pccontrol/TextRecognization/TextRecognizer.h"
 #import "../pccontrol/TextRecognization/VKOcrManager.h"
 #endif
 
 #import "../pccontrol/Common.h"
+
 
 CFSocketRef socketRef;
 CFWriteStreamRef writeStreamRef = NULL;
