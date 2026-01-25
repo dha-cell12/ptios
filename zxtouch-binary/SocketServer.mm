@@ -482,7 +482,7 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
 
     // Prefer debug image if provided (scripts/Debug/OCR-debug-image-*.jpg), otherwise capture screenshot via SB task 29.
     NSString *imagePathToUse = nil;
-    BOOL shouldDeleteAfter = NO;
+    bool shouldDeleteAfter = false;
     if (debugPath && debugPath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:debugPath]) {
         imagePathToUse = debugPath;
         zx_logf("Task27 using provided image path=%s", [imagePathToUse UTF8String]);
@@ -501,7 +501,7 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
             usleep(40000);
         }
         imagePathToUse = shotPath;
-        shouldDeleteAfter = YES;
+        shouldDeleteAfter = true;
         struct stat st;
         long long fsz = (stat([imagePathToUse fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
         zx_logf("Task27 screenshot path=%s size=%lld", [imagePathToUse UTF8String], fsz);
