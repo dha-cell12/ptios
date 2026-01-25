@@ -480,42 +480,83 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
     int orientation = zx_ipcGetFrontmostOrientation();
     zx_logf("Task27 rect=%.2f,%.2f,%.2f,%.2f minH=%.4f level=%d correct=%d orientation=%d langs=%s", recognizeRect.origin.x, recognizeRect.origin.y, recognizeRect.size.width, recognizeRect.size.height, minimumHeight, (int)levelData, (int)correct, orientation, [languagesData UTF8String]);
 
-    NSString *tmpPath = zx_makeTempScreenshotPath();
-    NSString *errString = nil;
-    NSString *shotPath = zx_ipcCaptureScreenshotToPath(tmpPath, &errString);
-    if (!shotPath) {
-        zx_logf("Task27 screenshot capture failed: %s", errString ? [errString UTF8String] : "(no err)");
-        zx_safeUnlink(tmpPath);
-        return zx_strdup_nsstring(errString ?: @"-1;;Failed to capture screenshot.\r\n");
+    // Prefer debug image if provided (scripts/Debug/OCR-debug-image-*.jpg), otherwise capture screenshot via SB task 29.
+    NSString *imagePathToUse = nil;
+    BOOL shouldDeleteAfter = NO;
+    if (debugPath && debugPath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:debugPath]) {
+        imagePathToUse = debugPath;
+        zx_logf("Task27 using provided image path=%s", [imagePathToUse UTF8String]);
+    } else {
+        NSString *tmpPath = zx_makeTempScreenshotPath();
+        NSString *errString = nil;
+        NSString *shotPath = zx_ipcCaptureScreenshotToPath(tmpPath, &errString);
+        if (!shotPath) {
+            zx_logf("Task27 screenshot capture failed: %s", errString ? [errString UTF8String] : "(no err)");
+            zx_safeUnlink(tmpPath);
+            return zx_strdup_nsstring(errString ?: @"-1;;Failed to capture screenshot.\r\n");
+        }
+        // Wait briefly if file is not ready yet.
+        for (int i = 0; i < 5; i++) {
+            if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
+            usleep(40000);
+        }
+        imagePathToUse = shotPath;
+        shouldDeleteAfter = YES;
+        struct stat st;
+        long long fsz = (stat([imagePathToUse fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
+        zx_logf("Task27 screenshot path=%s size=%lld", [imagePathToUse UTF8String], fsz);
     }
 
-    // Wait briefly if file is not ready yet.
-    for (int i = 0; i < 3; i++) {
-        if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
-        usleep(40000);
+    // Default language if empty
+    if (languages.count == 0 || (languages.count == 1 && [languages[0] length] == 0)) {
+        languages = @[ @"en-US" ];
+        zx_logf("Task27 languages empty -> default to en-US");
     }
-    struct stat st;
-    long long fsz = (stat([shotPath fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
-    zx_logf("Task27 screenshot path=%s size=%lld", [shotPath UTF8String], fsz);
 
-    NSError *err = nil;
-    VKOcrManager *ocr = [[VKOcrManager alloc] initWithImagePath:shotPath area:recognizeRect orientation:orientation];
-    if (customWords.count > 1 || (customWords.count == 1 && ![customWords[0] isEqualToString:@""])) {
-        [ocr setCustomWords:customWords];
-    }
-    [ocr setMinimumHeight:minimumHeight];
-    [ocr setRecognitionLevel:level];
-    if (languages.count > 1 || (languages.count == 1 && ![languages[0] isEqualToString:@""])) {
-        [ocr setLanguages:languages];
-    }
-    [ocr setCorrection:correct];
+    __block NSError *err = nil;
+    __block NSString *result = nil;
+    zx_logf("Task27 recognize begin");
 
-    NSString *result = [ocr recognize:&err];
+    // Run recognize off-thread with timeout to avoid hanging the socket client if Vision blocks in daemon context.
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            @try {
+                VKOcrManager *ocr = [[VKOcrManager alloc] initWithImagePath:imagePathToUse area:recognizeRect orientation:orientation];
+                if (customWords.count > 1 || (customWords.count == 1 && ![customWords[0] isEqualToString:@""])) {
+                    [ocr setCustomWords:customWords];
+                }
+                [ocr setMinimumHeight:minimumHeight];
+                [ocr setRecognitionLevel:level];
+                if (languages.count > 0) {
+                    [ocr setLanguages:languages];
+                }
+                [ocr setCorrection:correct];
+                result = [ocr recognize:&err];
+            } @catch (NSException *e) {
+                err = [NSError errorWithDomain:@"com.zjx.zxtouchd" code:1001 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;OCR exception: %@\r\n", e]}];
+            }
+            dispatch_semaphore_signal(sem);
+        }
+    });
+
+    long waitSec = 8;
+    long timed = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)waitSec * NSEC_PER_SEC));
+    if (timed != 0) {
+        zx_logf("Task27 recognize TIMEOUT after %ld seconds", waitSec);
+        if (shouldDeleteAfter && imagePathToUse) zx_safeUnlink(imagePathToUse);
+        return zx_strdup_nsstring([NSString stringWithFormat:@"-1;;OCR timeout after %ld seconds.\r\n", waitSec]);
+    }
+
+    zx_logf("Task27 recognize end");
+
     // Debug image output in daemon is risky because VKOcrManager's debug path uses Screen/UIScreen.
     // To keep daemon stable, we skip debug output here.
     (void)debugPath;
 
-    zx_safeUnlink(shotPath);
+    if (shouldDeleteAfter && imagePathToUse) {
+        zx_safeUnlink(imagePathToUse);
+    }
 
     if (err) {
         zx_logf("Task27 recognize error: %s", [[err localizedDescription] UTF8String]);
