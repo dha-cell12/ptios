@@ -144,9 +144,17 @@ using namespace std;
 
     //匹配不同大小的模板图
 
+    CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
+    const CFTimeInterval timeoutSeconds = 8.0;
+
     //创建结果矩阵，用于存放单次匹配到的位置信息(单次会匹配到很多，后面根据不同算法取最大或最小值)
         //匹配不同大小的模板图
     for (int i=0; i < _scaledTempls.size(); i++) {
+        if (CFAbsoluteTimeGetCurrent() - t0 > timeoutSeconds) {
+            NSLog(@"com.zjx.springboard: match timeout after %.2fs", timeoutSeconds);
+            return CGRect();
+        }
+
         Mat currentTemplate = _scaledTempls[i];
 
         // If template becomes larger than the screenshot, OpenCV will assert/crash.

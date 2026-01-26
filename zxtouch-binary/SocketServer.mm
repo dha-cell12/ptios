@@ -383,7 +383,10 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
     [tm setAcceptableValue:acceptableValue];
     [tm setMaxTryTimes:maxTryTimes];
     [tm setScaleRation:scaleRation];
+
+    zx_logf("Task21 start match (opencv) screenshot=%s template=%s", [shotPath UTF8String], [templatePath UTF8String]);
     CGRect r = [tm templateMatchWithPath:shotPath templatePath:templatePath error:&err];
+    zx_logf("Task21 end match (opencv)");
     zx_safeUnlink(shotPath);
 
     if (err) {
