@@ -11,6 +11,65 @@
 #include <vector>
 #include <math.h>
 
+#ifdef ZX_DAEMON
+#include <stdarg.h>
+
+// Minimal file logger for daemon builds.
+// We intentionally avoid depending on zxtouch-binary/SocketServer.mm static zx_logf().
+static NSString *zx_tm_logFilePath(void)
+{
+    return @"/var/mobile/Library/ZXTouch/zxtouchd.log";
+}
+
+static void zx_tm_logf(const char *fmt, ...)
+{
+    @autoreleasepool {
+        char msg[2048];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(msg, sizeof(msg), fmt, args);
+        va_end(args);
+
+        NSString *dir = @"/var/mobile/Library/ZXTouch";
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:true
+                                                   attributes:nil
+                                                        error:nil];
+
+        NSDate *now = [NSDate date];
+        static NSDateFormatter *df = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            df = [[NSDateFormatter alloc] init];
+            df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+            df.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+        });
+
+        NSString *line = [NSString stringWithFormat:@"%@ [TemplateMatch] %s\n", [df stringFromDate:now], msg];
+        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+        if (!data) return;
+
+        NSString *path = zx_tm_logFilePath();
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            [[NSData data] writeToFile:path atomically:true];
+        }
+
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+        if (!fh) return;
+        @try {
+            [fh seekToEndOfFile];
+            [fh writeData:data];
+        } @catch (__unused NSException *e) {
+        }
+        @try { [fh closeFile]; } @catch (__unused NSException *e) {}
+    }
+}
+
+#define TMLOGF(fmt, ...) zx_tm_logf((fmt), ##__VA_ARGS__)
+#else
+#define TMLOGF(fmt, ...) NSLog(@"com.zjx.springboard: " fmt, ##__VA_ARGS__)
+#endif
+
 
 
 using namespace cv;
@@ -86,8 +145,11 @@ using namespace std;
 }
 
 - (CGRect)templateMatchWithPath:(NSString*)imgPath templatePath:(NSString*)templatePath error:(NSError**)err {
+    TMLOGF("templateMatchWithPath start. imgPath=%s templatePath=%s", [imgPath UTF8String], [templatePath UTF8String]);
     Mat image = imread([imgPath UTF8String], IMREAD_GRAYSCALE); //[imgPath UTF8String]
     Mat templ = imread([templatePath UTF8String], IMREAD_GRAYSCALE); //[templatePath UTF8String]
+
+    TMLOGF("imread done. img=%dx%d templ=%dx%d", image.cols, image.rows, templ.cols, templ.rows);
     
     if (image.cols == 0 && image.rows == 0)
     {
@@ -116,6 +178,9 @@ using namespace std;
 //调用OpenCV进行匹配
 //此方法具体解释参考OpenCV官方文档: https://docs.opencv.org/3.2.0/de/da9/tutorial_template_matching.html
 - (CGRect)matchWithMat:(Mat)img andTemplate:(Mat)templ {
+    // OpenCV on iOS can behave better with fixed thread count.
+    cv::setNumThreads(1);
+
     double minVal;
     double maxVal;
     cv::Point minLoc;
@@ -142,6 +207,8 @@ using namespace std;
 
     }
 
+    TMLOGF("start matching. screen=%dx%d templates=%lu", img.cols, img.rows, (unsigned long)_scaledTempls.size());
+
     //匹配不同大小的模板图
 
     CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
@@ -151,7 +218,7 @@ using namespace std;
         //匹配不同大小的模板图
     for (int i=0; i < _scaledTempls.size(); i++) {
         if (CFAbsoluteTimeGetCurrent() - t0 > timeoutSeconds) {
-            NSLog(@"com.zjx.springboard: match timeout after %.2fs", timeoutSeconds);
+            TMLOGF("match timeout after %.2fs", (double)timeoutSeconds);
             return CGRect();
         }
 
@@ -172,7 +239,11 @@ using namespace std;
         result.create(result_rows, result_cols, CV_32FC1);
 
         //OpenCV匹配
+        CFAbsoluteTime one0 = CFAbsoluteTimeGetCurrent();
+        // Note: matchTemplate can be expensive on large images.
+        TMLOGF("matchTemplate #%d templ=%dx%d result=%dx%d", i, currentTemplate.cols, currentTemplate.rows, result_cols, result_rows);
         matchTemplate(img, currentTemplate, result, TM_CCOEFF_NORMED);
+        TMLOGF("matchTemplate #%d done in %.3fs", i, (double)(CFAbsoluteTimeGetCurrent() - one0));
 
         //整理出本次匹配的最大最小值
         minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
@@ -182,13 +253,13 @@ using namespace std;
 
         if (maxVal >= acceptableValue) {
             //NSLog(@"matched point:%d,%d maxVal:%f, tried times:%d",maxLoc.x,maxLoc.y,maxVal,i + 1);
-            NSLog(@"com.zjx.springboard: match success. x: %d, y: %d. width: %d, height: %d", maxLoc.x, maxLoc.y, currentTemplate.cols, currentTemplate.rows);
+            TMLOGF("match success. x=%d y=%d width=%d height=%d", maxLoc.x, maxLoc.y, currentTemplate.cols, currentTemplate.rows);
             return CGRectMake(maxLoc.x, maxLoc.y, currentTemplate.cols, currentTemplate.rows);
         }
     }
     
     //未匹配到，则返回空区域
-    NSLog(@"com.zjx.springboard: match failed");
+    TMLOGF("match failed");
     return CGRect();
 }
 
