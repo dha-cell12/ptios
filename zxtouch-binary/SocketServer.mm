@@ -26,6 +26,32 @@ CFWriteStreamRef writeStreamRef = NULL;
 CFReadStreamRef readStreamRef = NULL;
 static NSMutableDictionary *socketClients = NULL;
 
+typedef NS_ENUM(uint8_t, ZXWireProtocol) {
+    ZXWireProtocolUnknown = 0,
+    ZXWireProtocolLegacyV0 = 1,
+    ZXWireProtocolJSONV1 = 2,
+};
+
+@interface ZXClientContext : NSObject
+@property(nonatomic, assign) CFWriteStreamRef writeStream;
+@property(nonatomic, strong) NSMutableData *buffer;
+@property(nonatomic, assign) ZXWireProtocol protocol;
+@end
+
+@implementation ZXClientContext
+@end
+
+static const UInt8 kZXTPMagic[4] = {'Z', 'X', 'T', 'P'};
+static const UInt8 kZXTPVersion = 1;
+static const UInt32 kZXTPMaxBodySize = 1024 * 1024;
+static const size_t kZXTPHeaderSize = 10;
+
+static NSData *zx_handleLegacyRequestBytes(const char *buffer);
+static void zx_processClientBuffer(ZXClientContext *ctx);
+static void zx_writeAll(CFWriteStreamRef stream, NSData *data);
+static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId);
+static NSData *zx_frameJSONResponse(NSDictionary *obj);
+
 // File logging for daemon debugging.
 // Logs are appended to: /var/mobile/Library/ZXTouch/zxtouchd.log
 static NSString *zx_logFilePath(void)
@@ -412,24 +438,46 @@ static char *handleTextRecognizerTaskInDaemon(const char *buffer)
 }
 #endif
 
-static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
+static void zx_writeAll(CFWriteStreamRef stream, NSData *data)
 {
-    if (!buff) {
+    if (!stream || !data || data.length == 0) {
         return;
     }
-    zx_logf("received task payload: %s", buff);
-    const char *buffer = (const char *)buff;
+    const UInt8 *bytes = (const UInt8 *)data.bytes;
+    CFIndex remaining = (CFIndex)data.length;
+    while (remaining > 0) {
+        CFIndex wrote = CFWriteStreamWrite(stream, bytes, remaining);
+        if (wrote <= 0) {
+            break;
+        }
+        bytes += wrote;
+        remaining -= wrote;
+    }
+}
+
+static NSData *zx_dataFromCString(const char *cstr)
+{
+    if (!cstr) {
+        return nil;
+    }
+    return [NSData dataWithBytes:cstr length:strlen(cstr)];
+}
+
+static NSData *zx_handleLegacyRequestBytes(const char *buffer)
+{
+    if (!buffer) {
+        return nil;
+    }
+    zx_logf("received task payload: %s", buffer);
     const int taskType = getTaskTypeFromBuffer(buffer);
 
 #ifdef ZX_DAEMON
-    // ✅ FIX: daemon only handles task 21; task 27 routes to SpringBoard
+    // daemon only handles task 21; task 27 routes to SpringBoard
     if (taskType == 21) {
         const char *respC = handleTemplateMatchTaskInDaemon(buffer);
-        if (client && respC) {
-            CFWriteStreamWrite(client, (const UInt8 *)respC, strlen(respC));
-        }
+        NSData *resp = zx_dataFromCString(respC);
         if (respC) free((void *)respC);
-        return;
+        return resp;
     }
 #endif
 
@@ -448,7 +496,7 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
         }
         NSString *payloadString = [NSString stringWithUTF8String:ipcPayload];
         if (!payloadString) {
-            return;
+            return zx_dataFromCString("1;;invalid_payload\r\n");
         }
         bool waitForResponse = strcmp(buffer, kZXTouchIPCCommandHome) == 0
             ? true
@@ -457,33 +505,215 @@ static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
         dispatch_sync(ipcQueue(), ^{
             responseData = sendIPCMessage([payloadString UTF8String], waitForResponse);
         });
-        if (client) {
-            if (responseData) {
-                const UInt8 *responseBytes = CFDataGetBytePtr(responseData);
-                CFIndex responseLength = CFDataGetLength(responseData);
-                if (responseBytes && responseLength > 0) {
-                    CFWriteStreamWrite(client, responseBytes, responseLength);
-                    NSData *responseNSData = [NSData dataWithBytes:responseBytes
-                                                           length:(NSUInteger)responseLength];
-                    NSString *responseString = [[NSString alloc] initWithData:responseNSData
-                                                                     encoding:NSUTF8StringEncoding];
-                    zx_logf("IPC response: %s", responseString ? [responseString UTF8String] : "(null)");
-                } else {
-                    zx_logf("IPC response empty");
-                }
-                CFRelease(responseData);
+        if (responseData) {
+            const UInt8 *responseBytes = CFDataGetBytePtr(responseData);
+            CFIndex responseLength = CFDataGetLength(responseData);
+            NSData *response = nil;
+            if (responseBytes && responseLength > 0) {
+                response = [NSData dataWithBytes:responseBytes length:(NSUInteger)responseLength];
+                NSString *responseString = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding];
+                zx_logf("IPC response: %s", responseString ? [responseString UTF8String] : "(null)");
             } else {
-                const char *response = waitForResponse ? "1;;ipc_not_ready\r\n" : "0;;queued\r\n";
-                CFWriteStreamWrite(client, (const UInt8 *)response, strlen(response));
+                zx_logf("IPC response empty");
+                response = zx_dataFromCString("0\r\n");
             }
+            CFRelease(responseData);
+            return response;
         }
+
+        const char *fallback = waitForResponse ? "1;;ipc_not_ready\r\n" : "0;;queued\r\n";
+        return zx_dataFromCString(fallback);
+    }
+
+    return zx_dataFromCString("1;;zxtouchd: task handling not implemented\r\n");
+}
+
+static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId)
+{
+    NSString *s = legacy ? [[NSString alloc] initWithData:legacy encoding:NSUTF8StringEncoding] : @"";
+    if (!s) {
+        return @{@"id": reqId ?: @0, @"ok": @false, @"data": [NSNull null], @"error": @"invalid_response"};
+    }
+    s = [s stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    if ([s length] == 0) {
+        return @{@"id": reqId ?: @0, @"ok": @true, @"data": [NSNull null], @"error": [NSNull null]};
+    }
+
+    NSArray<NSString *> *parts = [s componentsSeparatedByString:@";;"];
+    NSString *status = parts.count > 0 ? parts[0] : @"1";
+    if (![status hasPrefix:@"0"]) {
+        NSString *err = parts.count >= 2 ? parts[1] : @"Unknown error";
+        return @{@"id": reqId ?: @0, @"ok": @false, @"data": [NSNull null], @"error": err};
+    }
+
+    NSArray *data = parts.count > 1 ? [parts subarrayWithRange:NSMakeRange(1, parts.count - 1)] : @[];
+    return @{@"id": reqId ?: @0, @"ok": @true, @"data": data, @"error": [NSNull null]};
+}
+
+static NSData *zx_frameJSONResponse(NSDictionary *obj)
+{
+    if (!obj) {
+        return nil;
+    }
+    NSError *err = nil;
+    NSData *body = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&err];
+    if (!body || err) {
+        return nil;
+    }
+    if (body.length > kZXTPMaxBodySize) {
+        return nil;
+    }
+    UInt8 header[kZXTPHeaderSize];
+    header[0] = kZXTPMagic[0];
+    header[1] = kZXTPMagic[1];
+    header[2] = kZXTPMagic[2];
+    header[3] = kZXTPMagic[3];
+    header[4] = kZXTPVersion;
+    header[5] = 0;
+    UInt32 len = (UInt32)body.length;
+    header[6] = (UInt8)((len >> 24) & 0xFF);
+    header[7] = (UInt8)((len >> 16) & 0xFF);
+    header[8] = (UInt8)((len >> 8) & 0xFF);
+    header[9] = (UInt8)(len & 0xFF);
+
+    NSMutableData *framed = [NSMutableData dataWithBytes:header length:sizeof(header)];
+    [framed appendData:body];
+    return framed;
+}
+
+static void zx_processClientBuffer(ZXClientContext *ctx)
+{
+    if (!ctx || !ctx.buffer) {
         return;
     }
 
-    if (client) {
-        const char *response = "1;;zxtouchd: task handling not implemented\r\n";
-        CFWriteStreamWrite(client, (const UInt8 *)response, strlen(response));
+    while (true) {
+        const UInt8 *bytes = (const UInt8 *)ctx.buffer.bytes;
+        const NSUInteger len = ctx.buffer.length;
+        if (len == 0) {
+            return;
+        }
+
+        if (ctx.protocol == ZXWireProtocolUnknown) {
+            if (len >= 4 && memcmp(bytes, kZXTPMagic, 4) == 0) {
+                ctx.protocol = ZXWireProtocolJSONV1;
+            } else if (len >= 2 && isdigit(bytes[0]) && isdigit(bytes[1])) {
+                ctx.protocol = ZXWireProtocolLegacyV0;
+            } else if (len >= 4) {
+                // Default to legacy if it doesn't look like ZXTP.
+                ctx.protocol = ZXWireProtocolLegacyV0;
+            } else {
+                return;
+            }
+        }
+
+        if (ctx.protocol == ZXWireProtocolLegacyV0) {
+            // Parse line-delimited requests.
+            NSUInteger nl = NSNotFound;
+            for (NSUInteger i = 0; i < len; i++) {
+                if (bytes[i] == '\n') {
+                    nl = i;
+                    break;
+                }
+            }
+            if (nl == NSNotFound) {
+                return;
+            }
+
+            NSUInteger lineLen = nl;
+            if (lineLen > 0 && bytes[lineLen - 1] == '\r') {
+                lineLen -= 1;
+            }
+
+            if (lineLen > 0) {
+                char *line = (char *)malloc(lineLen + 1);
+                memcpy(line, bytes, lineLen);
+                line[lineLen] = 0;
+                NSData *resp = zx_handleLegacyRequestBytes(line);
+                zx_writeAll(ctx.writeStream, resp);
+                free(line);
+            }
+
+            [ctx.buffer replaceBytesInRange:NSMakeRange(0, nl + 1) withBytes:NULL length:0];
+            continue;
+        }
+
+        // ZXTP v1
+        if (len < kZXTPHeaderSize) {
+            return;
+        }
+        if (memcmp(bytes, kZXTPMagic, 4) != 0) {
+            // Desync: fallback to legacy.
+            ctx.protocol = ZXWireProtocolLegacyV0;
+            continue;
+        }
+        if (bytes[4] != kZXTPVersion) {
+            // Unsupported version.
+            NSDictionary *respObj = @{@"id": @0, @"ok": @false, @"data": [NSNull null], @"error": @"unsupported_version"};
+            zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+            [ctx.buffer setLength:0];
+            return;
+        }
+
+        UInt32 bodyLen = ((UInt32)bytes[6] << 24) | ((UInt32)bytes[7] << 16) | ((UInt32)bytes[8] << 8) | (UInt32)bytes[9];
+        if (bodyLen > kZXTPMaxBodySize) {
+            NSDictionary *respObj = @{@"id": @0, @"ok": @false, @"data": [NSNull null], @"error": @"body_too_large"};
+            zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+            [ctx.buffer setLength:0];
+            return;
+        }
+        if (len < kZXTPHeaderSize + (NSUInteger)bodyLen) {
+            return;
+        }
+
+        NSData *body = [ctx.buffer subdataWithRange:NSMakeRange(kZXTPHeaderSize, (NSUInteger)bodyLen)];
+        NSError *jsonErr = nil;
+        id obj = [NSJSONSerialization JSONObjectWithData:body options:0 error:&jsonErr];
+        NSNumber *reqId = @0;
+        if (jsonErr || ![obj isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *respObj = @{@"id": reqId, @"ok": @false, @"data": [NSNull null], @"error": @"invalid_json"};
+            zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+        } else {
+            NSDictionary *dict = (NSDictionary *)obj;
+            reqId = [dict objectForKey:@"id"];
+            if (![reqId isKindOfClass:[NSNumber class]]) {
+                reqId = @0;
+            }
+            NSNumber *taskNum = [dict objectForKey:@"task"];
+            NSArray *args = [dict objectForKey:@"args"];
+            if (![taskNum isKindOfClass:[NSNumber class]]) {
+                NSDictionary *respObj = @{@"id": reqId, @"ok": @false, @"data": [NSNull null], @"error": @"missing_task"};
+                zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+            } else {
+                int task = [taskNum intValue];
+                NSMutableString *legacy = [NSMutableString stringWithFormat:@"%02d", task];
+                if ([args isKindOfClass:[NSArray class]] && args.count > 0) {
+                    id first = args[0];
+                    [legacy appendString:[first isKindOfClass:[NSString class]] ? (NSString *)first : [first description]];
+                    for (NSUInteger i = 1; i < args.count; i++) {
+                        id a = args[i];
+                        NSString *part = [a isKindOfClass:[NSString class]] ? (NSString *)a : [a description];
+                        [legacy appendFormat:@";;%@", part ?: @""];
+                    }
+                }
+
+                NSData *legacyResp = zx_handleLegacyRequestBytes([legacy UTF8String]);
+                NSDictionary *respObj = zx_jsonResponseFromLegacy(legacyResp, reqId);
+                zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+            }
+        }
+
+        [ctx.buffer replaceBytesInRange:NSMakeRange(0, kZXTPHeaderSize + (NSUInteger)bodyLen) withBytes:NULL length:0];
     }
+}
+
+static void handleDaemonMessage(UInt8 *buff, CFWriteStreamRef client)
+{
+    if (!buff) {
+        return;
+    }
+    NSData *resp = zx_handleLegacyRequestBytes((const char *)buff);
+    zx_writeAll(client, resp);
 }
 
 void socketServer()
@@ -544,16 +774,17 @@ static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, v
             CFIndex hasRead = CFReadStreamRead(readStream, readDataBuff, sizeof(readDataBuff));
 
             if (hasRead > 0) {
-                //don't know how it works, copied from https://www.educative.io/edpresso/splitting-a-string-using-strtok-in-c
-                for(char * charSep = strtok((char*)readDataBuff, "\r\n"); charSep != NULL; charSep = strtok(NULL, "\r\n")) {
-                    UInt8 *buff = (UInt8*)charSep;
-                    id temp = [socketClients objectForKey:@((long)readStream)];
-                    if (temp != nil) {
-                        handleDaemonMessage(buff, (CFWriteStreamRef)[temp longValue]);
-                    } else {
-                        handleDaemonMessage(buff, NULL);
-                    }
+                ZXClientContext *ctx = [socketClients objectForKey:@((long)readStream)];
+                if (!ctx) {
+                    // Backward compatibility: if context missing, create one.
+                    ctx = [[ZXClientContext alloc] init];
+                    ctx.writeStream = NULL;
+                    ctx.buffer = [NSMutableData data];
+                    ctx.protocol = ZXWireProtocolUnknown;
+                    [socketClients setObject:ctx forKey:@((long)readStream)];
                 }
+                [ctx.buffer appendBytes:readDataBuff length:(NSUInteger)hasRead];
+                zx_processClientBuffer(ctx);
             }
         }
     });
@@ -597,7 +828,11 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
 
             CFReadStreamScheduleWithRunLoop(readStreamRef, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
 
-            [socketClients setObject:@((long)writeStreamRef) forKey:@((long)readStreamRef)];
+            ZXClientContext *ctx = [[ZXClientContext alloc] init];
+            ctx.writeStream = writeStreamRef;
+            ctx.buffer = [NSMutableData data];
+            ctx.protocol = ZXWireProtocolUnknown;
+            [socketClients setObject:ctx forKey:@((long)readStreamRef)];
         }
         else
         {
