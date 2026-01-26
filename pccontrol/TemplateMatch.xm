@@ -75,6 +75,58 @@ static void zx_tm_logf(const char *fmt, ...)
 using namespace cv;
 using namespace std;
 
+static inline long long zx_absll(long long v) { return v < 0 ? -v : v; }
+
+static long long zx_sad_match_region(const Mat &img, const Mat &templ,
+                                    int x0, int y0, int x1, int y1,
+                                    int step, int *bestX, int *bestY)
+{
+    const int w = templ.cols;
+    const int h = templ.rows;
+
+    long long bestSad = LLONG_MAX;
+    int bx = 0;
+    int by = 0;
+
+    if (step <= 0) step = 1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    const int maxX = img.cols - w;
+    const int maxY = img.rows - h;
+    if (x1 > maxX) x1 = maxX;
+    if (y1 > maxY) y1 = maxY;
+    if (x0 > x1 || y0 > y1) {
+        if (bestX) *bestX = 0;
+        if (bestY) *bestY = 0;
+        return bestSad;
+    }
+
+    for (int y = y0; y <= y1; y += step) {
+        for (int x = x0; x <= x1; x += step) {
+            long long sad = 0;
+            for (int ty = 0; ty < h; ty++) {
+                const unsigned char *imgRow = img.ptr<unsigned char>(y + ty) + x;
+                const unsigned char *tRow = templ.ptr<unsigned char>(ty);
+                for (int tx = 0; tx < w; tx++) {
+                    sad += (long long)abs((int)imgRow[tx] - (int)tRow[tx]);
+                }
+                if (sad >= bestSad) {
+                    break;
+                }
+            }
+            if (sad < bestSad) {
+                bestSad = sad;
+                bx = x;
+                by = y;
+            }
+        }
+    }
+
+    if (bestX) *bestX = bx;
+    if (bestY) *bestY = by;
+    return bestSad;
+}
+
 
 
 @interface TemplateMatch() {
@@ -211,11 +263,6 @@ using namespace std;
         cv::resize(templ, templWork, cv::Size(0, 0), r, r, cv::INTER_AREA);
     }
 
-    double minVal;
-    double maxVal;
-    cv::Point minLoc;
-    cv::Point maxLoc;
-
     // New instance is usually created per request, but keep this method safe anyway.
     _scaledTempls.clear();
     _scaledTempls.push_back(templWork);
@@ -265,29 +312,44 @@ using namespace std;
         if (result_cols <= 0 || result_rows <= 0) {
             continue;
         }
-        Mat result;
-        result.create(result_rows, result_cols, CV_32FC1);
-
-        // OpenCV match
+        // Custom SAD-based template matching.
+        // Rationale: OpenCV matchTemplate() has been observed to hang on some devices/framework builds.
         CFAbsoluteTime one0 = CFAbsoluteTimeGetCurrent();
-        // Note: matchTemplate can be expensive on large images.
-        TMLOGF("matchTemplate #%d templ=%dx%d result=%dx%d", i, currentTemplate.cols, currentTemplate.rows, result_cols, result_rows);
-        // TM_CCOEFF_NORMED has been observed to hang on some devices/builds.
-        // TM_SQDIFF_NORMED is simpler and more robust; we invert the score to keep
-        // acceptableValue semantics (higher is better).
-        matchTemplate(imgWork, currentTemplate, result, TM_SQDIFF_NORMED);
-        TMLOGF("matchTemplate #%d done in %.3fs", i, (double)(CFAbsoluteTimeGetCurrent() - one0));
+        TMLOGF("sadMatch #%d templ=%dx%d result=%dx%d", i, currentTemplate.cols, currentTemplate.rows, result_cols, result_rows);
 
-        //整理出本次匹配的最大最小值
-        minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
+        int bx = 0;
+        int by = 0;
+        const int coarseStep = 4;
+        long long bestSad = zx_sad_match_region(imgWork, currentTemplate,
+                                               0, 0, imgWork.cols - currentTemplate.cols, imgWork.rows - currentTemplate.rows,
+                                               coarseStep, &bx, &by);
 
-        // TM_SQDIFF_NORMED: lower is better. Convert to "higher is better" score.
-        const double score = 1.0 - minVal;
+        // Refine around coarse best.
+        const int refineRadius = coarseStep * 2;
+        int rx0 = bx - refineRadius;
+        int ry0 = by - refineRadius;
+        int rx1 = bx + refineRadius;
+        int ry1 = by + refineRadius;
+        int rbx = bx;
+        int rby = by;
+        long long refinedSad = zx_sad_match_region(imgWork, currentTemplate,
+                                                   rx0, ry0, rx1, ry1,
+                                                   1, &rbx, &rby);
+        if (refinedSad < bestSad) {
+            bestSad = refinedSad;
+            bx = rbx;
+            by = rby;
+        }
+
+        const long long denom = 255LL * (long long)currentTemplate.cols * (long long)currentTemplate.rows;
+        const double score = (denom > 0) ? (1.0 - ((double)bestSad / (double)denom)) : 0.0;
+        TMLOGF("sadMatch #%d done in %.3fs score=%.4f", i, (double)(CFAbsoluteTimeGetCurrent() - one0), score);
+
         if (score >= acceptableValue) {
-            TMLOGF("match success. x=%d y=%d width=%d height=%d score=%.4f", minLoc.x, minLoc.y, currentTemplate.cols, currentTemplate.rows, score);
+            TMLOGF("match success. x=%d y=%d width=%d height=%d score=%.4f", bx, by, currentTemplate.cols, currentTemplate.rows, score);
 
             const CGFloat inv = (r == 0.0f) ? 1.0 : (1.0 / (CGFloat)r);
-            return CGRectMake(minLoc.x * inv, minLoc.y * inv,
+            return CGRectMake(bx * inv, by * inv,
                               currentTemplate.cols * inv, currentTemplate.rows * inv);
         }
     }
