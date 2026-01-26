@@ -68,16 +68,21 @@ static void zx_ensureLogDir(void)
                                   withIntermediateDirectories:true
                                                    attributes:nil
                                                         error:nil];
-        NSString *path = zx_logFilePath();
-        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            [[NSData data] writeToFile:path atomically:true];
-        }
     });
+}
+
+static void zx_ensureLogFile(void)
+{
+    zx_ensureLogDir();
+    NSString *path = zx_logFilePath();
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        [[NSData data] writeToFile:path atomically:true];
+    }
 }
 
 static void zx_logf(const char *fmt, ...)
 {
-    zx_ensureLogDir();
+    zx_ensureLogFile();
 
     char msg[2048];
     va_list args;
