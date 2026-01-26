@@ -268,25 +268,26 @@ using namespace std;
         Mat result;
         result.create(result_rows, result_cols, CV_32FC1);
 
-        //OpenCV匹配
+        // OpenCV match
         CFAbsoluteTime one0 = CFAbsoluteTimeGetCurrent();
         // Note: matchTemplate can be expensive on large images.
         TMLOGF("matchTemplate #%d templ=%dx%d result=%dx%d", i, currentTemplate.cols, currentTemplate.rows, result_cols, result_rows);
-        matchTemplate(imgWork, currentTemplate, result, TM_CCOEFF_NORMED);
+        // TM_CCOEFF_NORMED has been observed to hang on some devices/builds.
+        // TM_SQDIFF_NORMED is simpler and more robust; we invert the score to keep
+        // acceptableValue semantics (higher is better).
+        matchTemplate(imgWork, currentTemplate, result, TM_SQDIFF_NORMED);
         TMLOGF("matchTemplate #%d done in %.3fs", i, (double)(CFAbsoluteTimeGetCurrent() - one0));
 
         //整理出本次匹配的最大最小值
         minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
 
-        //TM_CCOEFF_NORMED算法，取最大值为最佳匹配
-        //当最大值符合要求，认为匹配成功
-
-        if (maxVal >= acceptableValue) {
-            //NSLog(@"matched point:%d,%d maxVal:%f, tried times:%d",maxLoc.x,maxLoc.y,maxVal,i + 1);
-            TMLOGF("match success. x=%d y=%d width=%d height=%d", maxLoc.x, maxLoc.y, currentTemplate.cols, currentTemplate.rows);
+        // TM_SQDIFF_NORMED: lower is better. Convert to "higher is better" score.
+        const double score = 1.0 - minVal;
+        if (score >= acceptableValue) {
+            TMLOGF("match success. x=%d y=%d width=%d height=%d score=%.4f", minLoc.x, minLoc.y, currentTemplate.cols, currentTemplate.rows, score);
 
             const CGFloat inv = (r == 0.0f) ? 1.0 : (1.0 / (CGFloat)r);
-            return CGRectMake(maxLoc.x * inv, maxLoc.y * inv,
+            return CGRectMake(minLoc.x * inv, minLoc.y * inv,
                               currentTemplate.cols * inv, currentTemplate.rows * inv);
         }
     }
