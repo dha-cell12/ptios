@@ -7,6 +7,109 @@
 
 #define COLOR_SEARCHER_SEARCH_SINGLE_POINT 1
 
+// Multi-point color operations
+#define COLOR_SEARCHER_IS_COLORS 2
+#define COLOR_SEARCHER_FIND_MULTI_POINT 3
+
+typedef struct {
+    int dx;
+    int dy;
+    int r;
+    int g;
+    int b;
+} ZXPointColor;
+
+static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *outPoints, NSError **error)
+{
+    if (!tableStr || [tableStr length] == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table is empty.\r\n"}];
+        }
+        return NO;
+    }
+
+    NSArray<NSString *> *items = [tableStr componentsSeparatedByString:@"|"];
+    for (NSString *item in items) {
+        if (!item || [item length] == 0) {
+            continue;
+        }
+        NSArray<NSString *> *parts = [item componentsSeparatedByString:@",,"];
+        if ([parts count] != 5) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid point table format. Expect dx,,dy,,r,,g,,b|...\r\n"}];
+            }
+            return NO;
+        }
+        ZXPointColor pc;
+        pc.dx = [parts[0] intValue];
+        pc.dy = [parts[1] intValue];
+        pc.r = [parts[2] intValue];
+        pc.g = [parts[3] intValue];
+        pc.b = [parts[4] intValue];
+        [outPoints addObject:[NSValue valueWithBytes:&pc objCType:@encode(ZXPointColor)]];
+    }
+
+    if ([outPoints count] == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table has no valid points.\r\n"}];
+        }
+        return NO;
+    }
+    return YES;
+}
+
+static inline BOOL zx_colorMatch(int r, int g, int b, int tr, int tg, int tb, int mode, double value)
+{
+    int dr = abs(r - tr);
+    int dg = abs(g - tg);
+    int db = abs(b - tb);
+    if (mode == 1) {
+        int dev = (int)value;
+        return dr <= dev && dg <= dev && db <= dev;
+    }
+    double sim = 1.0 - ((double)dr + (double)dg + (double)db) / (3.0 * 255.0);
+    return sim >= value;
+}
+
+static unsigned char *zx_copyRGBABufferFromCGImage(CGImageRef img, CGRect region, int *outW, int *outH)
+{
+    if (!img) {
+        return NULL;
+    }
+    int width = (int)region.size.width;
+    int height = (int)region.size.height;
+    if (width <= 0 || height <= 0) {
+        return NULL;
+    }
+
+    CGImageRef imageRef = CGImageCreateWithImageInRect(img, region);
+    if (!imageRef) {
+        return NULL;
+    }
+
+    int bytesPerElement = 4;
+    int bytesPerRow = bytesPerElement * width;
+    int totalBufferBytes = bytesPerRow * height;
+    unsigned char *buffer = (unsigned char *)malloc((size_t)totalBufferBytes);
+    if (!buffer) {
+        CGImageRelease(imageRef);
+        return NULL;
+    }
+    memset(buffer, 0, (size_t)totalBufferBytes);
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
+    CGContextRef context = CGBitmapContextCreate(buffer, width, height, 8, bytesPerRow, colorSpace, bitmapInfo);
+    CGColorSpaceRelease(colorSpace);
+    CGContextDrawImage(context, CGRectMake(0.f, 0.f, width, height), imageRef);
+    CGImageRelease(imageRef);
+    CGContextRelease(context);
+
+    if (outW) *outW = width;
+    if (outH) *outH = height;
+    return buffer;
+}
+
 void report_memory(void);
 
 
@@ -121,6 +224,191 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
         CGImageRelease(screen);
 
         return result;
+    }
+    else if (searchType == COLOR_SEARCHER_IS_COLORS)
+    {
+        if ([data count] < 4)
+        {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. The data format should be \"searchtype;;table;;mode;;value\"\r\n"}];
+            return @"";
+        }
+
+        NSString *tableStr = data[1];
+        int mode = [data[2] intValue];
+        double value = [data[3] doubleValue];
+        NSMutableArray<NSValue *> *points = [NSMutableArray array];
+        NSError *parseErr = nil;
+        if (!zx_parsePointTable(tableStr, points, &parseErr))
+        {
+            if (error) *error = parseErr;
+            return @"";
+        }
+
+        CGImageRef screen = [Screen createScreenShotCGImageRef];
+        if (!screen)
+        {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. Internal error! Screenshot is null.\r\n"}];
+            return @"";
+        }
+
+        int screenW = (int)CGImageGetWidth(screen);
+        int screenH = (int)CGImageGetHeight(screen);
+
+        int minX = INT_MAX, minY = INT_MAX, maxX = INT_MIN, maxY = INT_MIN;
+        for (NSValue *v in points) {
+            ZXPointColor pc;
+            [v getValue:&pc];
+            int x = pc.dx;
+            int y = pc.dy;
+            if (x < 0 || y < 0 || x >= screenW || y >= screenH) {
+                CGImageRelease(screen);
+                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point out of screen bounds.\r\n"}];
+                return @"";
+            }
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+        }
+
+        CGRect crop = CGRectMake(minX, minY, (maxX - minX + 1), (maxY - minY + 1));
+        int bufW = 0, bufH = 0;
+        unsigned char *buffer = zx_copyRGBABufferFromCGImage(screen, crop, &bufW, &bufH);
+        CGImageRelease(screen);
+        if (!buffer) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
+            return @"";
+        }
+
+        BOOL matched = YES;
+        for (NSValue *v in points) {
+            ZXPointColor pc;
+            [v getValue:&pc];
+            int lx = pc.dx - minX;
+            int ly = pc.dy - minY;
+            int base = (ly * bufW + lx) * 4;
+            int r = buffer[base];
+            int g = buffer[base + 1];
+            int b = buffer[base + 2];
+            if (!zx_colorMatch(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
+                matched = NO;
+                break;
+            }
+        }
+        free(buffer);
+
+        return matched ? @"1" : @"0";
+    }
+    else if (searchType == COLOR_SEARCHER_FIND_MULTI_POINT)
+    {
+        if ([data count] < 9)
+        {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to find multi-point color. The data format should be \"searchtype;;x;;y;;width;;height;;table;;mode;;value;;skip\"\r\n"}];
+            return @"";
+        }
+
+        int regionX = [data[1] intValue];
+        int regionY = [data[2] intValue];
+        int regionW = [data[3] intValue];
+        int regionH = [data[4] intValue];
+        NSString *tableStr = data[5];
+        int mode = [data[6] intValue];
+        double value = [data[7] doubleValue];
+        int skip = [data[8] intValue];
+
+        NSMutableArray<NSValue *> *points = [NSMutableArray array];
+        NSError *parseErr = nil;
+        if (!zx_parsePointTable(tableStr, points, &parseErr))
+        {
+            if (error) *error = parseErr;
+            return @"";
+        }
+
+        CGImageRef screen = [Screen createScreenShotCGImageRef];
+        if (!screen)
+        {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Internal error! Screenshot is null.\r\n"}];
+            return @"";
+        }
+
+        int screenW = (int)CGImageGetWidth(screen);
+        int screenH = (int)CGImageGetHeight(screen);
+
+        if (regionX < 0) regionX = 0;
+        if (regionY < 0) regionY = 0;
+        if (regionX >= screenW) regionX = screenW - 1;
+        if (regionY >= screenH) regionY = screenH - 1;
+
+        if (regionW <= 0 || regionX + regionW > screenW) {
+            regionW = screenW - regionX;
+        }
+        if (regionH <= 0 || regionY + regionH > screenH) {
+            regionH = screenH - regionY;
+        }
+
+        int minDx = INT_MAX, minDy = INT_MAX, maxDx = INT_MIN, maxDy = INT_MIN;
+        for (NSValue *v in points) {
+            ZXPointColor pc;
+            [v getValue:&pc];
+            if (pc.dx < minDx) minDx = pc.dx;
+            if (pc.dy < minDy) minDy = pc.dy;
+            if (pc.dx > maxDx) maxDx = pc.dx;
+            if (pc.dy > maxDy) maxDy = pc.dy;
+        }
+
+        int axStart = MAX(regionX, -minDx);
+        int ayStart = MAX(regionY, -minDy);
+        int axEnd = MIN(regionX + regionW - 1, screenW - 1 - maxDx);
+        int ayEnd = MIN(regionY + regionH - 1, screenH - 1 - maxDy);
+        if (axStart > axEnd || ayStart > ayEnd) {
+            CGImageRelease(screen);
+            return @"-1;;-1";
+        }
+
+        int cropX = axStart + minDx;
+        int cropY = ayStart + minDy;
+        int cropW = (axEnd - axStart + 1) + (maxDx - minDx);
+        int cropH = (ayEnd - ayStart + 1) + (maxDy - minDy);
+        CGRect crop = CGRectMake(cropX, cropY, cropW, cropH);
+
+        int bufW = 0, bufH = 0;
+        unsigned char *buffer = zx_copyRGBABufferFromCGImage(screen, crop, &bufW, &bufH);
+        CGImageRelease(screen);
+        if (!buffer) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
+            return @"";
+        }
+
+        int step = skip + 1;
+        if (step <= 0) step = 1;
+        for (int ay = ayStart; ay <= ayEnd; ay += step) {
+            for (int ax = axStart; ax <= axEnd; ax += step) {
+                BOOL ok = YES;
+                for (NSValue *v in points) {
+                    ZXPointColor pc;
+                    [v getValue:&pc];
+                    int px = ax + pc.dx;
+                    int py = ay + pc.dy;
+                    int lx = px - cropX;
+                    int ly = py - cropY;
+                    int base = (ly * bufW + lx) * 4;
+                    int r = buffer[base];
+                    int g = buffer[base + 1];
+                    int b = buffer[base + 2];
+                    if (!zx_colorMatch(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
+                        ok = NO;
+                        break;
+                    }
+                }
+                if (ok) {
+                    free(buffer);
+                    return [NSString stringWithFormat:@"%d;;%d", ax, ay];
+                }
+            }
+        }
+
+        free(buffer);
+        return @"-1;;-1";
     }
     else
     {
