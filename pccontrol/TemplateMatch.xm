@@ -69,12 +69,14 @@ using namespace std;
     CGContextDrawImage(contextRef, CGRectMake(0, 0, cols, rows), img);
 
     CGContextRelease(contextRef);
-    CGColorSpaceRelease(colorSpace);
+    // CGImageGetColorSpace() does not transfer ownership.
     
     Mat templ = imread([templatePath UTF8String], IMREAD_GRAYSCALE); //[templatePath UTF8String]
     if (templ.cols == 0 && templ.rows == 0)
     {
-        *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
+        if (err) {
+            *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
+        }
         return CGRect();    
     }
     cv::Mat greyMat;
@@ -89,12 +91,16 @@ using namespace std;
     
     if (image.cols == 0 && image.rows == 0)
     {
-        *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the screenshot photo is 0! Screenshot path: %@\r\n", imgPath]}];
+        if (err) {
+            *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the screenshot photo is 0! Screenshot path: %@\r\n", imgPath]}];
+        }
         return CGRect();    
     }
     if (templ.cols == 0 && templ.rows == 0)
     {
-        *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
+        if (err) {
+            *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
+        }
         return CGRect();    
     }
 
@@ -115,6 +121,8 @@ using namespace std;
     cv::Point minLoc;
     cv::Point maxLoc;
 
+    // New instance is usually created per request, but keep this method safe anyway.
+    _scaledTempls.clear();
     _scaledTempls.push_back(templ);
 
     Mat templResized;
@@ -141,8 +149,17 @@ using namespace std;
     for (int i=0; i < _scaledTempls.size(); i++) {
         Mat currentTemplate = _scaledTempls[i];
 
+        // If template becomes larger than the screenshot, OpenCV will assert/crash.
+        if (currentTemplate.cols <= 0 || currentTemplate.rows <= 0 ||
+            currentTemplate.cols > img.cols || currentTemplate.rows > img.rows) {
+            continue;
+        }
+
         int result_cols = img.cols - currentTemplate.cols + 1;
         int result_rows = img.rows - currentTemplate.rows + 1;
+        if (result_cols <= 0 || result_rows <= 0) {
+            continue;
+        }
         Mat result;
         result.create(result_rows, result_cols, CV_32FC1);
 
