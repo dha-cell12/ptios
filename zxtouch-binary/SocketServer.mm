@@ -622,6 +622,21 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                 }
             }
             if (nl == NSNotFound) {
+                // Backward compatibility:
+                // ZXTouch app (Play Script) sends task 19 without trailing CRLF.
+                // The legacy implementation processed whatever arrived in a single read.
+                if (len >= 2 && isdigit(bytes[0]) && isdigit(bytes[1])) {
+                    int taskType = getTaskTypeFromBuffer((const char *)bytes);
+                    if (taskType == 19 && len > 2) {
+                        char *line = (char *)malloc(len + 1);
+                        memcpy(line, bytes, len);
+                        line[len] = 0;
+                        NSData *resp = zx_handleLegacyRequestBytes(line);
+                        zx_writeAll(ctx.writeStream, resp);
+                        free(line);
+                        [ctx.buffer setLength:0];
+                    }
+                }
                 return;
             }
 
