@@ -41,6 +41,9 @@
 #define TASK_CURRENT_DIR 45
 #define TASK_BOT_PATH 46
 
+// Cache current screenshot frame
+#define TASK_SCREEN_KEEP 47
+
 
 #define TASK_UPDATE_CACHE 90
 

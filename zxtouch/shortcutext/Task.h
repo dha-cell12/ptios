@@ -29,5 +29,8 @@
 #define TASK_TEXT_RECOGNIZER 27
 #define TASK_COLOR_SEARCHER 28
 
+// Cache current screenshot frame
+#define TASK_SCREEN_KEEP 47
+
 
 #endif /* Task_h */

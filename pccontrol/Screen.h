@@ -25,11 +25,18 @@
 + (void)releaseUIImage:(UIImage**)img;
 + (CGImageRef)createScreenShotCGImageRef;
 + (NSString*)screenShotToPath:(NSString*)filePath region:(CGRect)region error:(NSError**)error;
+
+// Screen Keep state
++ (BOOL)keepScreen:(NSError**)error;
++ (void)unkeepScreen;
++ (BOOL)isKeeping;
 + (void)saveToSystemAlbum:(NSString*)filePath error:(NSError**)error;
 + (void)clearSystemAlbum:(NSError**)error;
 
 @end
 
 NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error);
+
+void handleScreenKeepTaskFromRawData(UInt8 *eventData, NSError **error);
 
 #endif

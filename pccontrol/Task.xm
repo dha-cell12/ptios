@@ -458,6 +458,21 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             }
         }
     }
+    else if (taskType == TASK_SCREEN_KEEP)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            handleScreenKeepTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)"0\r\n", writeStreamRef);
+            }
+        }
+    }
     else if (taskType == TASK_STOP_SCRIPT)
     {
         @autoreleasepool {

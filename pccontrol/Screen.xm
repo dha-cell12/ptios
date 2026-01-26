@@ -17,6 +17,13 @@ static CGFloat device_screen_width = 0;
 static CGFloat device_screen_height = 0;
 static NSString *const kZXTouchAlbumName = @"ZXTouch";
 
+// Screen Keep state
+static BOOL gKeepEnabled = NO;
+static CGImageRef gKeepImage = NULL;
+static NSString *const kZXTouchKeepPngPath = @"/tmp/zxtouch_keep.png";
+
+static CGImageRef zx_captureScreenCGImageRef(void);
+
 @implementation Screen
 {
     // device screen size
@@ -107,6 +114,17 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 }
 
 + (CGImageRef)createScreenShotCGImageRef
+{
+    @synchronized([Screen class]) {
+        if (gKeepEnabled && gKeepImage) {
+            return CGImageRetain(gKeepImage);
+        }
+    }
+
+    return zx_captureScreenCGImageRef();
+}
+
+static CGImageRef zx_captureScreenCGImageRef(void)
 {
     Boolean isiPad8orUp = false;
 
@@ -206,6 +224,65 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
     return cgImageRef;
 }
 
++ (BOOL)keepScreen:(NSError**)error
+{
+    @synchronized([Screen class]) {
+        gKeepEnabled = NO;
+        if (gKeepImage) {
+            CGImageRelease(gKeepImage);
+            gKeepImage = NULL;
+        }
+        [[NSFileManager defaultManager] removeItemAtPath:kZXTouchKeepPngPath error:nil];
+    }
+
+    CGImageRef img = zx_captureScreenCGImageRef();
+    if (!img) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+                                         code:999
+                                     userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot for keep state.\r\n"}];
+        }
+        return NO;
+    }
+
+    UIImage *ui = [UIImage imageWithCGImage:img];
+    NSData *png = UIImagePNGRepresentation(ui);
+    if (!png || ![png writeToFile:kZXTouchKeepPngPath atomically:NO]) {
+        CGImageRelease(img);
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+                                         code:999
+                                     userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to save keep screenshot cache.\r\n"}];
+        }
+        return NO;
+    }
+
+    @synchronized([Screen class]) {
+        gKeepImage = img; // own 1 ref
+        gKeepEnabled = YES;
+    }
+    return YES;
+}
+
++ (void)unkeepScreen
+{
+    @synchronized([Screen class]) {
+        gKeepEnabled = NO;
+        if (gKeepImage) {
+            CGImageRelease(gKeepImage);
+            gKeepImage = NULL;
+        }
+        [[NSFileManager defaultManager] removeItemAtPath:kZXTouchKeepPngPath error:nil];
+    }
+}
+
++ (BOOL)isKeeping
+{
+    @synchronized([Screen class]) {
+        return gKeepEnabled && gKeepImage != NULL;
+    }
+}
+
 
 + (NSString*)screenShotAlwaysUp
 {
@@ -240,6 +317,29 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 + (NSString*)screenShotToPath:(NSString*)filePath region:(CGRect)region error:(NSError**)error
 {
+    // Fast path: if keeping and asking for full screenshot, reuse cached PNG.
+    NSString *targetPath = filePath;
+    if (!targetPath || [targetPath length] == 0)
+    {
+        targetPath = [getDocumentRoot() stringByAppendingPathComponent:@"screenshot.png"];
+    }
+
+    BOOL shouldReuseKeep = NO;
+    @synchronized([Screen class]) {
+        shouldReuseKeep = gKeepEnabled;
+    }
+    if (shouldReuseKeep && CGRectIsEmpty(region) && [[NSFileManager defaultManager] fileExistsAtPath:kZXTouchKeepPngPath])
+    {
+        [[NSFileManager defaultManager] removeItemAtPath:targetPath error:nil];
+        NSError *copyErr = nil;
+        if ([[NSFileManager defaultManager] copyItemAtPath:kZXTouchKeepPngPath toPath:targetPath error:&copyErr])
+        {
+            return targetPath;
+        }
+        // Fall back to normal screenshot if copy fails.
+        (void)copyErr;
+    }
+
     CGImageRef screenshotRef = [Screen createScreenShotCGImageRef];
     if (!screenshotRef)
     {
@@ -283,12 +383,6 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
     UIImage *image = [UIImage imageWithCGImage:croppedRef];
     CGImageRelease(croppedRef);
-
-    NSString *targetPath = filePath;
-    if (!targetPath || [targetPath length] == 0)
-    {
-        targetPath = [getDocumentRoot() stringByAppendingPathComponent:@"screenshot.png"];
-    }
 
     if (![UIImagePNGRepresentation(image) writeToFile:targetPath atomically:NO])
     {
@@ -492,4 +586,15 @@ NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error)
                                  userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown screenshot action.\r\n"}];
     }
     return nil;
+}
+
+void handleScreenKeepTaskFromRawData(UInt8 *eventData, NSError **error)
+{
+    NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData];
+    int action = [raw intValue];
+    if (action == 1) {
+        [Screen keepScreen:error];
+    } else {
+        [Screen unkeepScreen];
+    }
 }
