@@ -83,6 +83,7 @@ using namespace std;
     int maxTryTimes;
     float acceptableValue;
     float scaleRation;
+    float resizeRatio;
 }
 
 @end
@@ -106,6 +107,14 @@ using namespace std;
 
 - (void)setMaxTryTimes:(int)mtt {
     maxTryTimes = mtt;
+}
+
+- (id)init {
+    self = [super init];
+    if (self) {
+        resizeRatio = 1.0f;
+    }
+    return self;
 }
 
 - (CGRect)templateMatchWithCGImage:(CGImageRef)img templatePath:(NSString*)templatePath error:(NSError**)err {
@@ -181,6 +190,27 @@ using namespace std;
     // OpenCV on iOS can behave better with fixed thread count.
     cv::setNumThreads(1);
 
+    // Downscale before matching to keep CPU usage reasonable.
+    // This avoids matchTemplate() appearing to "hang" on larger screens.
+    float r = resizeRatio;
+    if (r <= 0.0f || r > 1.0f) {
+        r = 1.0f;
+    }
+    if (r == 1.0f) {
+        const long long pixels = (long long)img.cols * (long long)img.rows;
+        if (pixels > 600000) {
+            r = 0.5f;
+        }
+    }
+    TMLOGF("using resizeRatio=%.3f", r);
+
+    Mat imgWork = img;
+    Mat templWork = templ;
+    if (r != 1.0f) {
+        cv::resize(img, imgWork, cv::Size(0, 0), r, r, cv::INTER_AREA);
+        cv::resize(templ, templWork, cv::Size(0, 0), r, r, cv::INTER_AREA);
+    }
+
     double minVal;
     double maxVal;
     cv::Point minLoc;
@@ -188,7 +218,7 @@ using namespace std;
 
     // New instance is usually created per request, but keep this method safe anyway.
     _scaledTempls.clear();
-    _scaledTempls.push_back(templ);
+    _scaledTempls.push_back(templWork);
 
     Mat templResized;
 
@@ -196,18 +226,18 @@ using namespace std;
     for(int i=0;i<maxTryTimes;i++) {
         //放大模板图
         float powIncreaRation = pow(2 - scaleRation, i+1);
-        resize(templ, templResized, cv::Size(0, 0), powIncreaRation, powIncreaRation);
+        resize(templWork, templResized, cv::Size(0, 0), powIncreaRation, powIncreaRation);
         _scaledTempls.push_back(templResized); //由于push_back方法执行值拷贝，所以可以复用templResized变量。
 
         //缩小模板图
         float powReduceRation = pow(scaleRation, i+1);
         NSLog(@"powReduceRation: %f", powReduceRation);
-        resize(templ, templResized, cv::Size(0, 0), powReduceRation, powReduceRation);
+        resize(templWork, templResized, cv::Size(0, 0), powReduceRation, powReduceRation);
         _scaledTempls.push_back(templResized);
 
     }
 
-    TMLOGF("start matching. screen=%dx%d templates=%lu", img.cols, img.rows, (unsigned long)_scaledTempls.size());
+    TMLOGF("start matching. screen=%dx%d templates=%lu", imgWork.cols, imgWork.rows, (unsigned long)_scaledTempls.size());
 
     //匹配不同大小的模板图
 
@@ -226,12 +256,12 @@ using namespace std;
 
         // If template becomes larger than the screenshot, OpenCV will assert/crash.
         if (currentTemplate.cols <= 0 || currentTemplate.rows <= 0 ||
-            currentTemplate.cols > img.cols || currentTemplate.rows > img.rows) {
+            currentTemplate.cols > imgWork.cols || currentTemplate.rows > imgWork.rows) {
             continue;
         }
 
-        int result_cols = img.cols - currentTemplate.cols + 1;
-        int result_rows = img.rows - currentTemplate.rows + 1;
+        int result_cols = imgWork.cols - currentTemplate.cols + 1;
+        int result_rows = imgWork.rows - currentTemplate.rows + 1;
         if (result_cols <= 0 || result_rows <= 0) {
             continue;
         }
@@ -242,7 +272,7 @@ using namespace std;
         CFAbsoluteTime one0 = CFAbsoluteTimeGetCurrent();
         // Note: matchTemplate can be expensive on large images.
         TMLOGF("matchTemplate #%d templ=%dx%d result=%dx%d", i, currentTemplate.cols, currentTemplate.rows, result_cols, result_rows);
-        matchTemplate(img, currentTemplate, result, TM_CCOEFF_NORMED);
+        matchTemplate(imgWork, currentTemplate, result, TM_CCOEFF_NORMED);
         TMLOGF("matchTemplate #%d done in %.3fs", i, (double)(CFAbsoluteTimeGetCurrent() - one0));
 
         //整理出本次匹配的最大最小值
@@ -254,7 +284,10 @@ using namespace std;
         if (maxVal >= acceptableValue) {
             //NSLog(@"matched point:%d,%d maxVal:%f, tried times:%d",maxLoc.x,maxLoc.y,maxVal,i + 1);
             TMLOGF("match success. x=%d y=%d width=%d height=%d", maxLoc.x, maxLoc.y, currentTemplate.cols, currentTemplate.rows);
-            return CGRectMake(maxLoc.x, maxLoc.y, currentTemplate.cols, currentTemplate.rows);
+
+            const CGFloat inv = (r == 0.0f) ? 1.0 : (1.0 / (CGFloat)r);
+            return CGRectMake(maxLoc.x * inv, maxLoc.y * inv,
+                              currentTemplate.cols * inv, currentTemplate.rows * inv);
         }
     }
     
