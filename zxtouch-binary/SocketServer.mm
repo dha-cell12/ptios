@@ -735,9 +735,15 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                     }
                 }
 
+                // Fire-and-forget tasks should not emit a JSON response frame,
+                // because many clients don't read responses for these tasks.
+                // Emitting a frame would desync subsequent request/response pairs.
+                bool fireAndForget = (task == 10 || task == 14 || task == 15 || task == 16 || task == 17 || task == 19 || task == 20 || task == 36 || task == 38 || task == 39 || task == 40);
                 NSData *legacyResp = zx_handleLegacyRequestBytes([legacy UTF8String]);
-                NSDictionary *respObj = zx_jsonResponseFromLegacy(legacyResp, reqId);
-                zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+                if (!fireAndForget) {
+                    NSDictionary *respObj = zx_jsonResponseFromLegacy(legacyResp, reqId);
+                    zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+                }
             }
         }
 
