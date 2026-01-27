@@ -186,6 +186,10 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 47: // TASK_SCREEN_KEEP
         case 48: // TASK_IMAGE_OBJECT
         case 49: // TASK_FIND_IMAGE
+        case 50: // TASK_APP_PID
+        case 51: // TASK_FRONTMOST_PID
+        case 52: // TASK_APP_PATHS
+        case 53: // TASK_LIST_BUNDLES
         case 90: // TASK_UPDATE_CACHE
             return true;
         default:

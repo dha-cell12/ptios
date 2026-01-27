@@ -14,4 +14,10 @@ NSString* appInfoFromRawData(UInt8 *eventData, NSError **error);
 NSString* frontMostAppId(void);
 NSString* frontMostAppOrientation(void);
 
+// App/process info extensions
+NSString* appPidFromRawData(UInt8 *eventData, NSError **error);
+NSString* frontMostPidFromRawData(UInt8 *eventData, NSError **error);
+NSString* appPathsFromRawData(UInt8 *eventData, NSError **error);
+NSString* listBundlesFromRawData(UInt8 *eventData, NSError **error);
+
 #endif

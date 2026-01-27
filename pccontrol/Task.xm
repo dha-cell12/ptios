@@ -459,6 +459,66 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             }
         }
     }
+    else if (taskType == TASK_APP_PID)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *pid = appPidFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", pid ?: @"0"] UTF8String], writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_FRONTMOST_PID)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *pid = frontMostPidFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", pid ?: @"0"] UTF8String], writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_APP_PATHS)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *paths = appPathsFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", paths ?: @";;"] UTF8String], writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_LIST_BUNDLES)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *result = listBundlesFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", result ?: @""] UTF8String], writeStreamRef);
+            }
+        }
+    }
     else if (taskType == TASK_SCREEN_KEEP)
     {
         @autoreleasepool {

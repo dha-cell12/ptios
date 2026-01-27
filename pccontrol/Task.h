@@ -48,6 +48,12 @@
 #define TASK_IMAGE_OBJECT 48
 #define TASK_FIND_IMAGE 49
 
+// App/process info extensions
+#define TASK_APP_PID 50
+#define TASK_FRONTMOST_PID 51
+#define TASK_APP_PATHS 52
+#define TASK_LIST_BUNDLES 53
+
 
 #define TASK_UPDATE_CACHE 90
 
