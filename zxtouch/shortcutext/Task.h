@@ -45,5 +45,12 @@
 // Open URL / URL scheme
 #define TASK_OPEN_URL 54
 
+// Connectivity & network
+#define TASK_WIFI 55
+#define TASK_BLUETOOTH 56
+#define TASK_AIRPLANE 57
+#define TASK_CELLULAR_DATA 58
+#define TASK_VPN 59
+
 
 #endif /* Task_h */
