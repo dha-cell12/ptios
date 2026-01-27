@@ -437,7 +437,14 @@ NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
         return nil;
     }
 
-    NSURL *url = [NSURL URLWithString:raw];
+    // Settings URLs: modern iOS commonly uses "App-Prefs:" instead of "prefs:".
+    NSString *primary = raw;
+    NSString *fallback = nil;
+    if ([[raw lowercaseString] hasPrefix:@"prefs:"]) {
+        fallback = [@"App-Prefs:" stringByAppendingString:[raw substringFromIndex:6]];
+    }
+
+    NSURL *url = [NSURL URLWithString:primary];
     if (!url) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid URL.\r\n"}];
@@ -445,23 +452,32 @@ NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
         return nil;
     }
 
-    __block BOOL opened = NO;
+    __block BOOL started = NO;
     dispatch_sync(dispatch_get_main_queue(), ^{
         UIApplication *app = [UIApplication sharedApplication];
         if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
-            dispatch_semaphore_t sema = dispatch_semaphore_create(0);
-            [app openURL:url options:@{} completionHandler:^(BOOL success) {
-                opened = success;
-                dispatch_semaphore_signal(sema);
+            started = YES;
+            [app openURL:url options:@{} completionHandler:^(__unused BOOL success) {
+                // Do not block waiting for completion; some handlers call back late.
             }];
-            // Wait briefly; prefs: schemes should return quickly.
-            dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
         } else {
-            opened = [app openURL:url];
+            started = [app openURL:url];
+        }
+
+        if (!started && fallback) {
+            NSURL *u2 = [NSURL URLWithString:fallback];
+            if (u2) {
+                if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+                    started = YES;
+                    [app openURL:u2 options:@{} completionHandler:^(__unused BOOL success) {}];
+                } else {
+                    started = [app openURL:u2];
+                }
+            }
         }
     });
 
-    if (!opened) {
+    if (!started) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to open URL.\r\n"}];
         }
