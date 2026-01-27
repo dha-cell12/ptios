@@ -26,6 +26,50 @@ IOHIDEventSystemClientRef ioHIDEventSystemForSenderID = NULL;
 // touch event sender id
 unsigned long long int senderID = 0x0;
 
+// File logger (SpringBoard doesn't always have accessible stdout logs).
+static void zx_touch_logf(const char *fmt, ...)
+{
+    @autoreleasepool {
+        NSString *dir = @"/var/mobile/Library/ZXTouch";
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:true
+                                                   attributes:nil
+                                                        error:nil];
+        NSString *path = @"/var/mobile/Library/ZXTouch/zxtouchd.log";
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            [[NSData data] writeToFile:path atomically:true];
+        }
+
+        char msg[1024];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(msg, sizeof(msg), fmt, args);
+        va_end(args);
+
+        NSDate *now = [NSDate date];
+        static NSDateFormatter *df = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            df = [[NSDateFormatter alloc] init];
+            df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+            df.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+        });
+
+        NSString *line = [NSString stringWithFormat:@"%@ [Touch] %s\n", [df stringFromDate:now], msg];
+        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+        if (!data) return;
+
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+        if (!fh) return;
+        @try {
+            [fh seekToEndOfFile];
+            [fh writeData:data];
+        } @catch (__unused NSException *e) {
+        }
+        @try { [fh closeFile]; } @catch (__unused NSException *e) {}
+    }
+}
+
 
 // valid type x y
 static int eventsToAppend[MAX_FINGER_INDEX][4];
@@ -224,13 +268,15 @@ static void postIOHIDEvent(IOHIDEventRef event)
     if (!ioSystemClient){
         ioSystemClient = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
     }
-	if (senderID != 0)
-    	IOHIDEventSetSenderID(event, senderID);
-	else
-	{		
-		NSLog(@"### com.zjx.springboard: sender id is 0!");
-		return;
-	}
+
+    // Historically this code required a non-zero senderID.
+    // On some devices / after reboot, senderID may not be available immediately.
+    // Fallback: dispatch the event without setting senderID so touch still works.
+    if (senderID != 0) {
+        IOHIDEventSetSenderID(event, senderID);
+    } else {
+        zx_touch_logf("senderID is 0; dispatching touch without senderID. screen=%.0fx%.0f", device_screen_width, device_screen_height);
+    }
     IOHIDEventSystemClientDispatchEvent(ioSystemClient, event);
 }
 
@@ -255,11 +301,13 @@ void initSenderId()
         {
             senderID = [data[@"senderID"] longLongValue];
             NSLog(@"com.zjx.springboard: since the device has not been rebooted. Read sender id from the file. SenderID get: %qX", senderID);
+            zx_touch_logf("initSenderId: loaded senderID=%llX", senderID);
             return;
         }
     }
     
     NSLog(@"com.zjx.springboard: cannot read the sender id from file because the file doesn't exist or the device has restarted. Start set senderid callback.");
+    zx_touch_logf("initSenderId: senderID not ready; start callback");
     startSetSenderIDCallBack();
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -306,7 +354,8 @@ static void setSenderIdCallback(void* target, void* refcon, IOHIDServiceRef serv
 
             [dict writeToFile:[NSString stringWithFormat:@"%@/coreutils/touching/%@", getDocumentRoot(), TOUCH_SENDER_ID_PLIST_FILE_NAME] atomically: YES];
 
-            NSLog(@"com.zjx.springboard: sender id is: %qX", senderID);
+			NSLog(@"com.zjx.springboard: sender id is: %qX", senderID);
+			zx_touch_logf("setSenderIdCallback: senderID=%llX", senderID);
         }
     }
 }
@@ -326,4 +375,5 @@ void initTouchGetScreenSize()
 {
     device_screen_width = [Screen getScreenWidth];
     device_screen_height = [Screen getScreenHeight];
+    zx_touch_logf("initTouchGetScreenSize: screen=%.0fx%.0f", device_screen_width, device_screen_height);
 }
