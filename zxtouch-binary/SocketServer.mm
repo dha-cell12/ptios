@@ -196,6 +196,7 @@ static bool shouldRouteToSpringBoard(int taskType)
 static bool shouldWaitForResponse(int taskType)
 {
     switch (taskType) {
+        case 10: // TASK_PERFORM_TOUCH
         case 14: // TASK_TOUCH_RECORDING_START
         case 15: // TASK_TOUCH_RECORDING_STOP
         case 16: // TASK_CRAZY_TAP
@@ -478,6 +479,14 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
     zx_logf("received task payload: %s", buffer);
     const int taskType = getTaskTypeFromBuffer(buffer);
 
+    // Touch is fire-and-forget: SpringBoard doesn't send a response.
+    // Also, many clients (including Python) don't read any response for touches.
+    // Returning no response prevents socket backpressure from building up.
+    if (taskType == 10) {
+        (void)shouldRouteToSpringBoard(taskType);
+        // Still route through IPC below.
+    }
+
 #ifdef ZX_DAEMON
     // daemon only handles task 21; task 27 routes to SpringBoard
     if (taskType == 21) {
@@ -512,6 +521,13 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         dispatch_sync(ipcQueue(), ^{
             responseData = sendIPCMessage([payloadString UTF8String], waitForResponse);
         });
+        if (!waitForResponse && taskType == 10) {
+            // No response for touch.
+            if (responseData) {
+                CFRelease(responseData);
+            }
+            return nil;
+        }
         if (responseData) {
             const UInt8 *responseBytes = CFDataGetBytePtr(responseData);
             CFIndex responseLength = CFDataGetLength(responseData);
