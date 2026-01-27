@@ -1,5 +1,4 @@
 #ifndef RUNTIME_UTILS_H
-#ifndef RUNTIME_UTILS_H
 #define RUNTIME_UTILS_H
 
 #import <Foundation/Foundation.h>
