@@ -182,7 +182,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
     int coarseStep = pixelSkip + 1;
     if (coarseStep < 4) coarseStep = 4;
 
-    double bestOverallScore = 0.0;
+    double bestOverallScore = -1.0;
     int bestX = -1, bestY = -1, bestW = 0, bestH = 0;
 
     if (scaleStep <= 0.0f) {
@@ -257,9 +257,14 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
         }
     }
 
-    if (outScore) *outScore = bestOverallScore;
-    if (outX) *outX = -1;
-    if (outY) *outY = -1;
+    if (bestX >= 0 && bestY >= 0 && bestW > 0 && bestH > 0) {
+        const double inv = (r == 0.0f) ? 1.0 : (1.0 / (double)r);
+        if (outX) *outX = (int)round(bestX * inv);
+        if (outY) *outY = (int)round(bestY * inv);
+        if (outW) *outW = (int)round(bestW * inv);
+        if (outH) *outH = (int)round(bestH * inv);
+    }
+    if (outScore) *outScore = (bestOverallScore < 0.0) ? 0.0 : bestOverallScore;
     return false;
 }
 
@@ -475,7 +480,8 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     BOOL match = zx_findTemplateSAD(imgGray, templObj.gray, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip,
                                    &mx, &my, &mw, &mh, &score);
     if (!match) {
-        return @"-1;;-1;;0;;0;;-1;;-1;;0";
+        // Provide best score to help tuning acceptable threshold.
+        return [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f", score];
     }
 
     int absX = rx + mx;
