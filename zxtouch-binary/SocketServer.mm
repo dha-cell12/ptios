@@ -196,6 +196,7 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 57: // TASK_AIRPLANE
         case 58: // TASK_CELLULAR_DATA
         case 59: // TASK_VPN
+        case 60: // TASK_HELLO_STATUS
         case 90: // TASK_UPDATE_CACHE
             return true;
         default:

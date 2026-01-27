@@ -16,6 +16,7 @@
 #include "HardwareKey.h"
 #include "Scheduler.h"
 #include "RuntimeUtils.h"
+#import "ScriptPlayer.h"
 #import <mach/mach.h>
 #include <Foundation/NSDistributedNotificationCenter.h>
 #include <TextRecognization/TextRecognizer.h>
@@ -24,6 +25,7 @@
 #include "NSTask.h"
 
 extern CFRunLoopRef recordRunLoop;
+extern ScriptPlayer *scriptPlayer;
 
 /*
 get task type
@@ -166,6 +168,7 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             playScript((UInt8*)eventData, &err);
             if (err)
             {
+                setLastScriptError([err localizedDescription]);
                 notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
             }
             else
@@ -593,6 +596,51 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             } else {
                 notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", state ?: @"0"] UTF8String], writeStreamRef);
             }
+        }
+    }
+    else if (taskType == TASK_HELLO_STATUS)
+    {
+        @autoreleasepool {
+            UIDevice *dev = [UIDevice currentDevice];
+            NSString *name = dev.name ?: @"";
+            NSString *systemName = dev.systemName ?: @"iOS";
+            NSString *systemVersion = dev.systemVersion ?: @"";
+            NSString *model = dev.model ?: @"";
+
+            BOOL playing = false;
+            NSString *bundlePath = @"";
+            if (scriptPlayer) {
+                playing = [scriptPlayer isPlaying];
+                bundlePath = [scriptPlayer getCurrentBundlePath] ?: @"";
+            }
+
+            NSDictionary *payload = @{
+                @"zxtouch": @{
+                    @"protocols": @[@"v0", @"v1"],
+                    @"port": @6000,
+                },
+                @"device": @{
+                    @"name": name,
+                    @"system_name": systemName,
+                    @"system_version": systemVersion,
+                    @"model": model,
+                },
+                @"script": @{
+                    @"is_playing": @(playing),
+                    @"bundle_path": bundlePath,
+                    @"last_error": getLastScriptError() ?: @"",
+                    @"last_error_ts": @(getLastScriptErrorTs()),
+                },
+            };
+
+            NSError *jsonErr = nil;
+            NSData *jsonData = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonErr];
+            if (!jsonData || jsonErr) {
+                notifyClient((UInt8*)"1;;Failed to encode hello status.\r\n", writeStreamRef);
+                return;
+            }
+            NSString *b64 = [jsonData base64EncodedStringWithOptions:0];
+            notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", b64 ?: @""] UTF8String], writeStreamRef);
         }
     }
     else if (taskType == TASK_SCREEN_KEEP)

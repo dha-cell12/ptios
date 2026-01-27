@@ -52,5 +52,8 @@
 #define TASK_CELLULAR_DATA 58
 #define TASK_VPN 59
 
+// Hello/status probe
+#define TASK_HELLO_STATUS 60
+
 
 #endif /* Task_h */

@@ -5,6 +5,44 @@
 
 static NSString *lastDialogValue = @"";
 
+static NSString *lastScriptError = @"";
+static long long lastScriptErrorTs = 0;
+
+static NSString *zx_trimErrorString(NSString *s)
+{
+    if (!s) return @"";
+    NSString *out = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([out hasPrefix:@"-1;;"]) {
+        out = [out substringFromIndex:4];
+        out = [out stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    }
+    // Truncate to 200 characters.
+    if ([out length] > 200) {
+        out = [out substringToIndex:200];
+    }
+    return out;
+}
+
+void setLastScriptError(NSString *message)
+{
+    NSString *m = zx_trimErrorString(message);
+    if (!m || [m length] == 0) {
+        return;
+    }
+    lastScriptError = m;
+    lastScriptErrorTs = (long long)[[NSDate date] timeIntervalSince1970];
+}
+
+NSString* getLastScriptError(void)
+{
+    return lastScriptError ?: @"";
+}
+
+long long getLastScriptErrorTs(void)
+{
+    return lastScriptErrorTs;
+}
+
 NSString* dialogFromRawData(UInt8 *eventData, NSError **error)
 {
     NSArray *data = [[NSString stringWithUTF8String:(char*)eventData] componentsSeparatedByString:@";;"];
