@@ -25,7 +25,7 @@ static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *ou
         if (error) {
             *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table is empty.\r\n"}];
         }
-        return NO;
+        return false;
     }
 
     NSArray<NSString *> *items = [tableStr componentsSeparatedByString:@"|"];
@@ -38,7 +38,7 @@ static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *ou
             if (error) {
                 *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid point table format. Expect dx,,dy,,r,,g,,b|...\r\n"}];
             }
-            return NO;
+            return false;
         }
         ZXPointColor pc;
         pc.dx = [parts[0] intValue];
@@ -53,9 +53,9 @@ static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *ou
         if (error) {
             *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table has no valid points.\r\n"}];
         }
-        return NO;
+        return false;
     }
-    return YES;
+    return true;
 }
 
 static inline BOOL zx_colorMatch(int r, int g, int b, int tr, int tg, int tb, int mode, double value)
@@ -280,7 +280,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
             return @"";
         }
 
-        BOOL matched = YES;
+        BOOL matched = true;
         for (NSValue *v in points) {
             ZXPointColor pc;
             [v getValue:&pc];
@@ -291,7 +291,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
             int g = buffer[base + 1];
             int b = buffer[base + 2];
             if (!zx_colorMatch(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
-                matched = NO;
+                matched = false;
                 break;
             }
         }
@@ -383,7 +383,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
         if (step <= 0) step = 1;
         for (int ay = ayStart; ay <= ayEnd; ay += step) {
             for (int ax = axStart; ax <= axEnd; ax += step) {
-                BOOL ok = YES;
+                BOOL ok = true;
                 for (NSValue *v in points) {
                     ZXPointColor pc;
                     [v getValue:&pc];
@@ -396,7 +396,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
                     int g = buffer[base + 1];
                     int b = buffer[base + 2];
                     if (!zx_colorMatch(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
-                        ok = NO;
+                        ok = false;
                         break;
                     }
                 }
