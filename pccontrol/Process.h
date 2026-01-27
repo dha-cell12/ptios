@@ -20,4 +20,7 @@ NSString* frontMostPidFromRawData(UInt8 *eventData, NSError **error);
 NSString* appPathsFromRawData(UInt8 *eventData, NSError **error);
 NSString* listBundlesFromRawData(UInt8 *eventData, NSError **error);
 
+// Open URL / URL scheme
+NSString* openUrlFromRawData(UInt8 *eventData, NSError **error);
+
 #endif

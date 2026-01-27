@@ -54,6 +54,9 @@
 #define TASK_APP_PATHS 52
 #define TASK_LIST_BUNDLES 53
 
+// Open URL / URL scheme
+#define TASK_OPEN_URL 54
+
 
 #define TASK_UPDATE_CACHE 90
 

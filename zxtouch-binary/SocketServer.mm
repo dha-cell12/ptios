@@ -190,6 +190,7 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 51: // TASK_FRONTMOST_PID
         case 52: // TASK_APP_PATHS
         case 53: // TASK_LIST_BUNDLES
+        case 54: // TASK_OPEN_URL
         case 90: // TASK_UPDATE_CACHE
             return true;
         default:

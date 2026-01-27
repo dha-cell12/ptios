@@ -426,3 +426,46 @@ NSString* listBundlesFromRawData(UInt8 *eventData, NSError **error)
     }
     return [jsonData base64EncodedStringWithOptions:0];
 }
+
+NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
+{
+    NSString *raw = [NSString stringWithFormat:@"%s", eventData ?: (UInt8*)""];
+    if ([raw length] == 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing URL.\r\n"}];
+        }
+        return nil;
+    }
+
+    NSURL *url = [NSURL URLWithString:raw];
+    if (!url) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid URL.\r\n"}];
+        }
+        return nil;
+    }
+
+    __block BOOL opened = NO;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        UIApplication *app = [UIApplication sharedApplication];
+        if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+            dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+            [app openURL:url options:@{} completionHandler:^(BOOL success) {
+                opened = success;
+                dispatch_semaphore_signal(sema);
+            }];
+            // Wait briefly; prefs: schemes should return quickly.
+            dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
+        } else {
+            opened = [app openURL:url];
+        }
+    });
+
+    if (!opened) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to open URL.\r\n"}];
+        }
+        return nil;
+    }
+    return @"";
+}
