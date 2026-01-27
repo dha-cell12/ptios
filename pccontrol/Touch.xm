@@ -310,6 +310,8 @@ void initSenderId()
     zx_touch_logf("initSenderId: senderID not ready; start callback");
     startSetSenderIDCallBack();
 
+    zx_touch_logf("initSenderId: waiting for a real user touch to learn senderID");
+
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         // I know the code here is bad here, change this later.
         while (true)
@@ -365,9 +367,21 @@ Start the callback for setting sender id
 */
 void startSetSenderIDCallBack()
 {
-    ioHIDEventSystemForSenderID = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
-    IOHIDEventSystemClientScheduleWithRunLoop(ioHIDEventSystemForSenderID, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-    IOHIDEventSystemClientRegisterEventCallback(ioHIDEventSystemForSenderID, (IOHIDEventSystemClientEventCallback)setSenderIdCallback, NULL, NULL);
+    // IMPORTANT: the callback needs an active runloop. Schedule it on the main runloop
+    // to ensure it continues to receive digitizer events.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (ioHIDEventSystemForSenderID != NULL) {
+            return;
+        }
+        ioHIDEventSystemForSenderID = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+        if (ioHIDEventSystemForSenderID == NULL) {
+            zx_touch_logf("startSetSenderIDCallBack: failed to create IOHIDEventSystemClient");
+            return;
+        }
+        IOHIDEventSystemClientScheduleWithRunLoop(ioHIDEventSystemForSenderID, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+        IOHIDEventSystemClientRegisterEventCallback(ioHIDEventSystemForSenderID, (IOHIDEventSystemClientEventCallback)setSenderIdCallback, NULL, NULL);
+        zx_touch_logf("startSetSenderIDCallBack: scheduled on main runloop");
+    });
 }
 
 /*!!!!!!!!! Here, all the functions here will be moved to a class instance. This function is just for temporary use.*/
