@@ -14,6 +14,9 @@ static void* sbServices = dlopen("/System/Library/PrivateFrameworks/SpringBoardS
 - (id)applicationWithBundleIdentifier:(NSString*)bundleIdentifier;
 @end
 
+// Forward declaration (used by helper functions below).
+static SBApplication *getApplicationForBundleId(NSString *bundleId);
+
 @interface LSApplicationProxy : NSObject
 + (instancetype)applicationProxyForIdentifier:(NSString*)identifier;
 @property (nonatomic, readonly) NSString *localizedName;
