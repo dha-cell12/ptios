@@ -8,6 +8,7 @@
 #include "ScreenMatch.h"
 #include "Toast.h"
 #include "ColorPicker.h"
+#include "Image.h"
 #include "UIKeyboard.h"
 #include "DeviceInfo.h"
 #include "TouchIndicator/TouchIndicatorWindow.h"
@@ -470,6 +471,40 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             else
             {
                 notifyClient((UInt8*)"0\r\n", writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_IMAGE_OBJECT)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *ret = handleImageObjectTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else if (ret && [ret length] > 0)
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", ret] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)"0\r\n", writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_FIND_IMAGE)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *ret = handleFindImageTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", ret ?: @"-1;;-1;;0;;0;;-1;;-1;;0"] UTF8String], writeStreamRef);
             }
         }
     }

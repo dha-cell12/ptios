@@ -21,4 +21,8 @@ using namespace std;
 
 @end
 
+// Image object tasks
+NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error);
+
 #endif

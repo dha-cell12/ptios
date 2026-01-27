@@ -44,6 +44,10 @@
 // Cache current screenshot frame
 #define TASK_SCREEN_KEEP 47
 
+// Image object + find image
+#define TASK_IMAGE_OBJECT 48
+#define TASK_FIND_IMAGE 49
+
 
 #define TASK_UPDATE_CACHE 90
 
