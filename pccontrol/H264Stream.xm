@@ -18,8 +18,8 @@
 #include <stdlib.h>
 
 static const int kH264StreamPort = 7001;
-static const int kH264TargetWidth = 1280;
-static const int kH264TargetHeight = 720;
+static const int kH264TargetWidth = 667;
+static const int kH264TargetHeight = 375;
 static const int kH264TargetFPS = 20;
 static const int kH264MinFPS = 10;
 static const int kH264KeyframeIntervalSeconds = 2;
