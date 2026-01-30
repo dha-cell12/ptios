@@ -138,8 +138,8 @@
     {
         [Util showAlertBoxWithOneOption:self
                                   title:@"ZXTouch"
-                                message:@"H.264 stream is available on port 7001 (raw Annex B). Use an H.264-capable client to connect."
-                           buttonString:@"OK"];
+                                 message:@"Screen stream (MPEG-TS over TCP) is available on:\n- 7001: Fast (lower latency, higher CPU/heat)\n- 7002: Eco (higher latency, lower CPU/heat)\nUse an MPEG-TS/H.264 capable client (ffplay, VLC, mpegts.js via a bridge)."
+                            buttonString:@"OK"];
         [s setOn:NO];
     }
 }

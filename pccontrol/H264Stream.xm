@@ -17,12 +17,38 @@
 #include <string.h>
 #include <stdlib.h>
 
-static const int kH264StreamPort = 7001;
-static const int kH264TargetWidth = 1280;
-static const int kH264TargetHeight = 720;
-static const int kH264TargetFPS = 20;
-static const int kH264MinFPS = 10;
-static const int kH264KeyframeIntervalSeconds = 2;
+typedef struct {
+    int port;
+    int width;
+    int height;
+    int targetFPS;
+    int minFPS;
+    int keyframeIntervalSeconds;
+    int averageBitrate;
+} ZXH264Profile;
+
+// Profiles:
+// - Fast: lower latency, higher CPU/heat.
+// - Eco: higher latency tolerated, lower CPU/heat.
+static const ZXH264Profile kH264ProfileFast = {
+    .port = 7001,
+    .width = 1280,
+    .height = 720,
+    .targetFPS = 20,
+    .minFPS = 10,
+    .keyframeIntervalSeconds = 1,
+    .averageBitrate = 2000000,
+};
+
+static const ZXH264Profile kH264ProfileEco = {
+    .port = 7002,
+    .width = 960,
+    .height = 540,
+    .targetFPS = 12,
+    .minFPS = 8,
+    .keyframeIntervalSeconds = 3,
+    .averageBitrate = 900000,
+};
 static const int kPCRIntervalFrames = 10;
 
 // TS PIDs
@@ -316,11 +342,11 @@ static void H264OutputCallback(void *outputCallbackRefCon,
     dispatch_semaphore_signal(f->sem);
 }
 
-static VTCompressionSessionRef createEncoder(void) {
+static VTCompressionSessionRef createEncoder(const ZXH264Profile *profile) {
     VTCompressionSessionRef s = NULL;
     OSStatus st = VTCompressionSessionCreate(kCFAllocatorDefault,
-                                             kH264TargetWidth,
-                                             kH264TargetHeight,
+                                             profile->width,
+                                             profile->height,
                                              kCMVideoCodecType_H264,
                                              NULL,
                                              NULL,
@@ -335,13 +361,13 @@ static VTCompressionSessionRef createEncoder(void) {
     VTSessionSetProperty(s, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
 
     VTSessionSetProperty(s, kVTCompressionPropertyKey_MaxKeyFrameInterval,
-                         (__bridge CFTypeRef)@(kH264TargetFPS * kH264KeyframeIntervalSeconds));
+                         (__bridge CFTypeRef)@(profile->targetFPS * profile->keyframeIntervalSeconds));
     VTSessionSetProperty(s, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
-                         (__bridge CFTypeRef)@(kH264KeyframeIntervalSeconds));
+                         (__bridge CFTypeRef)@(profile->keyframeIntervalSeconds));
     VTSessionSetProperty(s, kVTCompressionPropertyKey_ExpectedFrameRate,
-                         (__bridge CFTypeRef)@(kH264TargetFPS));
+                         (__bridge CFTypeRef)@(profile->targetFPS));
     VTSessionSetProperty(s, kVTCompressionPropertyKey_AverageBitRate,
-                         (__bridge CFTypeRef)@(2000000));
+                         (__bridge CFTypeRef)@(profile->averageBitrate));
 
     VTCompressionSessionPrepareToEncodeFrames(s);
     return s;
@@ -356,7 +382,7 @@ static void sendTables(int fd, uint8_t *patCC, uint8_t *pmtCC) {
     (void)sendAll(fd, (const uint8_t *)pmt.bytes, 188);
 }
 
-static void streamLoop(int fd) {
+static void streamLoop(int fd, const ZXH264Profile *profile) {
     @autoreleasepool {
         setClientSocketOptions(fd);
 
@@ -368,21 +394,21 @@ static void streamLoop(int fd) {
 
         uint8_t patCC = 0, pmtCC = 0, vidCC = 0;
         int64_t frame = 0;
-        int currentFPS = kH264TargetFPS;
+         int currentFPS = profile->targetFPS;
         double streamSeconds = 0.0;
 
         bool running = true;
 
-        enc = createEncoder();
+         enc = createEncoder(profile);
         if (!enc) running = false;
 
         if (running) {
-            CVReturn cr = CVPixelBufferCreate(kCFAllocatorDefault,
-                                              kH264TargetWidth,
-                                              kH264TargetHeight,
-                                              kCVPixelFormatType_32BGRA,
-                                              NULL,
-                                              &pb);
+             CVReturn cr = CVPixelBufferCreate(kCFAllocatorDefault,
+                                               profile->width,
+                                               profile->height,
+                                               kCVPixelFormatType_32BGRA,
+                                               NULL,
+                                               &pb);
             if (cr != kCVReturnSuccess || !pb) running = false;
         }
 
@@ -405,8 +431,8 @@ static void streamLoop(int fd) {
 
                 if (!cg) {
                     cg = CGBitmapContextCreate(CVPixelBufferGetBaseAddress(pb),
-                                               kH264TargetWidth,
-                                               kH264TargetHeight,
+                                               profile->width,
+                                               profile->height,
                                                8,
                                                CVPixelBufferGetBytesPerRow(pb),
                                                cs,
@@ -414,7 +440,7 @@ static void streamLoop(int fd) {
                 }
 
                 if (cg) {
-                    CGContextDrawImage(cg, CGRectMake(0, 0, kH264TargetWidth, kH264TargetHeight), img);
+                    CGContextDrawImage(cg, CGRectMake(0, 0, profile->width, profile->height), img);
                 }
 
                 CVPixelBufferUnlockBaseAddress(pb, 0);
@@ -518,7 +544,7 @@ static void streamLoop(int fd) {
                 frame++;
                 double budget = 1.0 / (double)currentFPS;
                 double elapsed = CFAbsoluteTimeGetCurrent() - frameStart;
-                if (elapsed > budget * 1.2 && currentFPS > kH264MinFPS) {
+                if (elapsed > budget * 1.2 && currentFPS > profile->minFPS) {
                     currentFPS--;
                 }
                 streamSeconds += 1.0 / (double)currentFPS;
@@ -548,44 +574,49 @@ static void streamLoop(int fd) {
 #pragma mark - Server
 
 void startH264StreamServer(void) {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        int s = socket(AF_INET, SOCK_STREAM, 0);
-        if (s < 0) return;
+    void (^startServer)(const ZXH264Profile *) = ^(const ZXH264Profile *profile) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            int s = socket(AF_INET, SOCK_STREAM, 0);
+            if (s < 0) return;
 
-        int yes = 1;
-        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+            int yes = 1;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
-        struct sockaddr_in a;
-        memset(&a, 0, sizeof(a));
-        a.sin_family = AF_INET;
-        a.sin_addr.s_addr = htonl(INADDR_ANY);
-        a.sin_port = htons(kH264StreamPort);
+            struct sockaddr_in a;
+            memset(&a, 0, sizeof(a));
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(INADDR_ANY);
+            a.sin_port = htons(profile->port);
 
-        if (bind(s, (struct sockaddr *)&a, sizeof(a)) != 0) {
-            close(s);
-            return;
-        }
-        if (listen(s, 16) != 0) {
-            close(s);
-            return;
-        }
-
-        while (1) {
-            int c = accept(s, NULL, NULL);
-            if (c < 0) continue;
-
-            int exp = -1;
-            if (!atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {
-                shutdown(c, SHUT_RDWR);
-                close(c);
-                continue;
+            if (bind(s, (struct sockaddr *)&a, sizeof(a)) != 0) {
+                close(s);
+                return;
+            }
+            if (listen(s, 16) != 0) {
+                close(s);
+                return;
             }
 
-            setClientSocketOptions(c);
+            while (1) {
+                int c = accept(s, NULL, NULL);
+                if (c < 0) continue;
 
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                streamLoop(c);
-            });
-        }
-    });
+                int exp = -1;
+                if (!atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {
+                    shutdown(c, SHUT_RDWR);
+                    close(c);
+                    continue;
+                }
+
+                setClientSocketOptions(c);
+
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                    streamLoop(c, profile);
+                });
+            }
+        });
+    };
+
+    startServer(&kH264ProfileFast);
+    startServer(&kH264ProfileEco);
 }
