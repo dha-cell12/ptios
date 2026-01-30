@@ -49,6 +49,24 @@ static const ZXH264Profile kH264ProfileEco = {
     .keyframeIntervalSeconds = 3,
     .averageBitrate = 900000,
 };
+
+static int zx_maxFpsForThermalState(int requested)
+{
+    // Throttle when device gets hot to avoid sustained overheating.
+    // iOS 11+: NSProcessInfo.thermalState
+    if (@available(iOS 11.0, *)) {
+        NSProcessInfoThermalState st = [[NSProcessInfo processInfo] thermalState];
+        // 0: nominal, 1: fair, 2: serious, 3: critical
+        if (st >= NSProcessInfoThermalStateSerious) {
+            // Keep UI usable but reduce load.
+            if (requested > 12) requested = 12;
+        }
+        if (st >= NSProcessInfoThermalStateCritical) {
+            if (requested > 8) requested = 8;
+        }
+    }
+    return requested;
+}
 static const int kPCRIntervalFrames = 10;
 
 // TS PIDs
@@ -394,7 +412,8 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
         uint8_t patCC = 0, pmtCC = 0, vidCC = 0;
         int64_t frame = 0;
-         int currentFPS = profile->targetFPS;
+        int currentFPS = profile->targetFPS;
+        int desiredFPS = profile->targetFPS;
         double streamSeconds = 0.0;
 
         bool running = true;
@@ -424,6 +443,17 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
         while (running) {
             @autoreleasepool {
+                // Thermal-aware FPS throttle (checked periodically).
+                if ((frame % 20) == 0) {
+                    desiredFPS = zx_maxFpsForThermalState(profile->targetFPS);
+                    if (desiredFPS < profile->minFPS) {
+                        desiredFPS = profile->minFPS;
+                    }
+                    if (currentFPS > desiredFPS) {
+                        currentFPS = desiredFPS;
+                    }
+                }
+
                 CGImageRef img = [Screen createScreenShotCGImageRef];
                 if (!img) { running = false; break; }
 
@@ -542,10 +572,19 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 }
 
                 frame++;
+                // Never exceed desiredFPS (thermal throttle).
+                if (currentFPS > desiredFPS) {
+                    currentFPS = desiredFPS;
+                }
+
                 double budget = 1.0 / (double)currentFPS;
                 double elapsed = CFAbsoluteTimeGetCurrent() - frameStart;
                 if (elapsed > budget * 1.2 && currentFPS > profile->minFPS) {
                     currentFPS--;
+                }
+                // If we are running cool and below desiredFPS, slowly recover.
+                if (elapsed < budget * 0.7 && currentFPS < desiredFPS) {
+                    currentFPS++;
                 }
                 streamSeconds += 1.0 / (double)currentFPS;
                 if (elapsed < budget) {
