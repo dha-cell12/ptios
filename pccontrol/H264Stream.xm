@@ -16,6 +16,7 @@
 #include <stdatomic.h>
 #include <string.h>
 #include <stdlib.h>
+#include <os/lock.h>
 
 typedef struct {
     int port;
@@ -66,6 +67,31 @@ static int zx_maxFpsForThermalState(int requested)
         }
     }
     return requested;
+}
+
+static int zx_maxBitrateForThermalState(int requested)
+{
+    if (@available(iOS 11.0, *)) {
+        NSProcessInfoThermalState st = [[NSProcessInfo processInfo] thermalState];
+        if (st >= NSProcessInfoThermalStateSerious) {
+            requested = requested / 2;
+        }
+        if (st >= NSProcessInfoThermalStateCritical) {
+            requested = requested / 2;
+        }
+    }
+    // Keep a sane floor.
+    if (requested < 200000) requested = 200000;
+    return requested;
+}
+
+static void zx_applyEncoderRate(VTCompressionSessionRef enc, int fps, int bitrate)
+{
+    if (!enc) return;
+    (void)VTSessionSetProperty(enc, kVTCompressionPropertyKey_ExpectedFrameRate,
+                               (__bridge CFTypeRef)@(fps));
+    (void)VTSessionSetProperty(enc, kVTCompressionPropertyKey_AverageBitRate,
+                               (__bridge CFTypeRef)@(bitrate));
 }
 static const int kPCRIntervalFrames = 10;
 
@@ -291,12 +317,69 @@ typedef struct {
     dispatch_semaphore_t sem;
     CFMutableDataRef data;   // Annex-B H264 (CF-only)
     bool key;
+    int poolIndex;
 } FrameCtx;
 
-static void FrameCtxFree(FrameCtx *f) {
+// Frame pool to avoid per-frame allocations.
+#define ZX_FRAME_POOL_SIZE 6
+static FrameCtx gFramePool[ZX_FRAME_POOL_SIZE];
+static int gFramePoolStack[ZX_FRAME_POOL_SIZE];
+static int gFramePoolTop = 0;
+static dispatch_semaphore_t gFramePoolSem = NULL;
+static os_unfair_lock gFramePoolLock = OS_UNFAIR_LOCK_INIT;
+
+static void initFramePoolOnce(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        gFramePoolSem = dispatch_semaphore_create(ZX_FRAME_POOL_SIZE);
+        gFramePoolTop = 0;
+        for (int i = 0; i < ZX_FRAME_POOL_SIZE; i++) {
+            gFramePool[i].sem = dispatch_semaphore_create(0);
+            // Pre-allocate capacity to reduce growth reallocations.
+            gFramePool[i].data = CFDataCreateMutable(kCFAllocatorDefault, 512 * 1024);
+            gFramePool[i].key = false;
+            gFramePool[i].poolIndex = i;
+            gFramePoolStack[gFramePoolTop++] = i;
+        }
+    });
+}
+
+static FrameCtx *acquireFrameCtx(void)
+{
+    initFramePoolOnce();
+    if (dispatch_semaphore_wait(gFramePoolSem, DISPATCH_TIME_NOW) != 0) {
+        return NULL; // drop frame when pool exhausted
+    }
+    os_unfair_lock_lock(&gFramePoolLock);
+    int idx = -1;
+    if (gFramePoolTop > 0) {
+        idx = gFramePoolStack[--gFramePoolTop];
+    }
+    os_unfair_lock_unlock(&gFramePoolLock);
+
+    if (idx < 0) {
+        dispatch_semaphore_signal(gFramePoolSem);
+        return NULL;
+    }
+
+    FrameCtx *f = &gFramePool[idx];
+    if (f->data) {
+        CFDataSetLength(f->data, 0);
+    }
+    f->key = false;
+    return f;
+}
+
+static void releaseFrameCtx(FrameCtx *f)
+{
     if (!f) return;
-    if (f->data) CFRelease(f->data);
-    free(f);
+    os_unfair_lock_lock(&gFramePoolLock);
+    if (gFramePoolTop < ZX_FRAME_POOL_SIZE) {
+        gFramePoolStack[gFramePoolTop++] = f->poolIndex;
+    }
+    os_unfair_lock_unlock(&gFramePoolLock);
+    dispatch_semaphore_signal(gFramePoolSem);
 }
 
 #pragma mark - Encoder callback
@@ -414,11 +497,14 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         int64_t frame = 0;
         int currentFPS = profile->targetFPS;
         int desiredFPS = profile->targetFPS;
+        int currentBitrate = profile->averageBitrate;
+        int desiredBitrate = profile->averageBitrate;
+        int currentEncFps = profile->targetFPS;
         double streamSeconds = 0.0;
 
         bool running = true;
 
-         enc = createEncoder(profile);
+        enc = createEncoder(profile);
         if (!enc) running = false;
 
         if (running) {
@@ -452,6 +538,13 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     if (currentFPS > desiredFPS) {
                         currentFPS = desiredFPS;
                     }
+
+                    desiredBitrate = zx_maxBitrateForThermalState(profile->averageBitrate);
+                    if (desiredBitrate != currentBitrate || desiredFPS != currentEncFps) {
+                        currentBitrate = desiredBitrate;
+                        currentEncFps = desiredFPS;
+                        zx_applyEncoderRate(enc, desiredFPS, desiredBitrate);
+                    }
                 }
 
                 CGImageRef img = [Screen createScreenShotCGImageRef];
@@ -476,12 +569,16 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 CVPixelBufferUnlockBaseAddress(pb, 0);
                 CGImageRelease(img);
 
-                FrameCtx *f = (FrameCtx *)calloc(1, sizeof(FrameCtx));
-                if (!f) { running = false; break; }
-
-                f->sem = dispatch_semaphore_create(0);
-                f->data = CFDataCreateMutable(kCFAllocatorDefault, 0);
-                f->key = false;
+                FrameCtx *f = acquireFrameCtx();
+                if (!f) {
+                    // Drop frame if pool exhausted.
+                    // Keep pacing consistent.
+                    double budget = 1.0 / (double)currentFPS;
+                    streamSeconds += budget;
+                    usleep((useconds_t)(budget * 1000000.0));
+                    frame++;
+                    continue;
+                }
 
                 // Force keyframe on first frame
                 CFMutableDictionaryRef opts = NULL;
@@ -505,20 +602,20 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 if (opts) CFRelease(opts);
 
                 if (st != noErr) {
-                    FrameCtxFree(f);
+                    releaseFrameCtx(f);
                     running = false;
                     break;
                 }
 
                 if (dispatch_semaphore_wait(f->sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC))) != 0) {
-                    FrameCtxFree(f);
+                    releaseFrameCtx(f);
                     running = false;
                     break;
                 }
 
                 CFIndex hlen = CFDataGetLength(f->data);
                 if (hlen <= 0) {
-                    FrameCtxFree(f);
+                    releaseFrameCtx(f);
                     running = false;
                     break;
                 }
@@ -542,29 +639,27 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     (uint8_t)(0x01 | ((pts << 1) & 0xFE))
                 };
 
-                size_t total = sizeof(pes) + (size_t)hlen;
-                uint8_t *buf = (uint8_t *)malloc(total);
-                if (!buf) {
-                    FrameCtxFree(f);
-                    running = false;
-                    break;
-                }
-
-                memcpy(buf, pes, sizeof(pes));
-                memcpy(buf + sizeof(pes), CFDataGetBytePtr(f->data), (size_t)hlen);
-
                 bool addPCR = ((frame % kPCRIntervalFrames) == 0);
                 bool ok = writeTSPackets(fd,
                                          kTSVideoPid,
-                                         buf,
-                                         total,
+                                         pes,
+                                         sizeof(pes),
                                          true,
                                          addPCR,
                                          pts,
                                          &vidCC);
+                if (ok) {
+                    ok = writeTSPackets(fd,
+                                        kTSVideoPid,
+                                        (const uint8_t *)CFDataGetBytePtr(f->data),
+                                        (size_t)hlen,
+                                        false,
+                                        false,
+                                        pts,
+                                        &vidCC);
+                }
 
-                free(buf);
-                FrameCtxFree(f);
+                releaseFrameCtx(f);
 
                 if (!ok) {
                     running = false;
