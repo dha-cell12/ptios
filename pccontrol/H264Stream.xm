@@ -32,18 +32,18 @@ typedef struct {
 // - Eco: higher latency tolerated, lower CPU/heat.
 static const ZXH264Profile kH264ProfileFast = {
     .port = 7001,
-    .width = 1280,
-    .height = 720,
-    .targetFPS = 20,
-    .minFPS = 10,
+    .width = 640,
+    .height = 360,
+    .targetFPS = 15,
+    .minFPS = 8,
     .keyframeIntervalSeconds = 1,
     .averageBitrate = 2000000,
 };
 
 static const ZXH264Profile kH264ProfileEco = {
     .port = 7002,
-    .width = 960,
-    .height = 540,
+    .width = 426,
+    .height = 240,
     .targetFPS = 12,
     .minFPS = 8,
     .keyframeIntervalSeconds = 3,
