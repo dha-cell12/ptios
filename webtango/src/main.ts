@@ -54,6 +54,7 @@ const iosModalDeviceTitle = document.getElementById('ios-modal-device-title') as
 const closeIosModalButton = document.getElementById('close-ios-modal') as HTMLButtonElement;
 const iosVideo = document.getElementById('ios-video') as HTMLVideoElement;
 const iosCanvas = document.getElementById('ios-canvas') as HTMLCanvasElement;
+const iosLatencyOverlay = document.getElementById('ios-latency-overlay') as HTMLDivElement;
 const iosStreamFrame = document.querySelector('.ios-stream-frame') as HTMLDivElement;
 const iosModeFastButton = document.getElementById('ios-mode-fast') as HTMLButtonElement;
 const iosModeEcoButton = document.getElementById('ios-mode-eco') as HTMLButtonElement;
@@ -110,6 +111,39 @@ let iosCurrentDevice: UnifiedDevice | undefined;
 let iosStreamProfile: 'fast' | 'eco' = 'fast';
 let iosH264Socket: WebSocket | undefined;
 let iosH264Decoder: VideoDecoder | undefined;
+
+type IosH264FrameMeta = {
+  version: 1 | 2;
+  frameId: number;
+  key: boolean;
+  timestamp: number;
+  captureStartUs?: number;
+  captureDoneUs?: number;
+  encodeDoneUs?: number;
+  deviceSendUs?: number;
+  browserRecvMs: number;
+  decodeSubmitMs?: number;
+  payloadBytes: number;
+};
+
+type IosLatencyStats = {
+  frames: number;
+  rendered: number;
+  dropped: number;
+  sourceMs: number;
+  captureMs: number;
+  encodeMs: number;
+  sendToBrowserMs: number;
+  browserMs: number;
+  totalApproxMs: number;
+  queue: number;
+  fps: number;
+  bytesPerSec: number;
+  lastFrameId: number;
+};
+
+let iosLatencyStats: IosLatencyStats | undefined;
+let iosLatencyLogAt = 0;
 
 function setIosMode(profile: 'fast' | 'eco') {
   iosStreamProfile = profile;
@@ -348,6 +382,12 @@ function destroyIosPlayer() {
     ctx?.clearRect(0, 0, iosCanvas.width || 1, iosCanvas.height || 1);
     iosCanvas.style.display = 'none';
   }
+  if (iosLatencyOverlay) {
+    iosLatencyOverlay.style.display = 'none';
+    iosLatencyOverlay.textContent = 'Waiting for metrics...';
+  }
+  iosLatencyStats = undefined;
+  iosLatencyLogAt = 0;
   if (iosVideo) iosVideo.style.display = 'block';
 }
 
@@ -357,6 +397,45 @@ function appendBytes(a: Uint8Array, b: Uint8Array) {
   out.set(a, 0);
   out.set(b, a.length);
   return out;
+}
+
+function msFromUsDelta(endUs?: number, startUs?: number) {
+  if (endUs === undefined || startUs === undefined) return 0;
+  return Math.max(0, (endUs - startUs) / 1000);
+}
+
+function smooth(previous: number, next: number, alpha = 0.18) {
+  if (!Number.isFinite(previous) || previous <= 0) return next;
+  return previous * (1 - alpha) + next * alpha;
+}
+
+function updateIosLatencyOverlay() {
+  if (!iosLatencyOverlay || !iosLatencyStats) return;
+  const s = iosLatencyStats;
+  iosLatencyOverlay.style.display = 'block';
+  iosLatencyOverlay.textContent =
+    `ZXH2 frame ${s.lastFrameId} | ${s.fps.toFixed(1)} fps | ${(s.bytesPerSec / 1024).toFixed(0)} KB/s\n` +
+    `source ${s.sourceMs.toFixed(1)} ms = capture ${s.captureMs.toFixed(1)} + encode ${s.encodeMs.toFixed(1)}\n` +
+    `net~ ${s.sendToBrowserMs.toFixed(1)} ms | browser ${s.browserMs.toFixed(1)} ms | total~ ${s.totalApproxMs.toFixed(1)} ms\n` +
+    `queue ${s.queue} | dropped ${s.dropped} | rendered ${s.rendered}/${s.frames}`;
+}
+
+function logIosLatencyStats() {
+  if (!iosLatencyStats) return;
+  console.table({
+    frame: iosLatencyStats.lastFrameId,
+    fps: Number(iosLatencyStats.fps.toFixed(1)),
+    source_ms: Number(iosLatencyStats.sourceMs.toFixed(1)),
+    capture_ms: Number(iosLatencyStats.captureMs.toFixed(1)),
+    encode_ms: Number(iosLatencyStats.encodeMs.toFixed(1)),
+    net_approx_ms: Number(iosLatencyStats.sendToBrowserMs.toFixed(1)),
+    browser_ms: Number(iosLatencyStats.browserMs.toFixed(1)),
+    total_approx_ms: Number(iosLatencyStats.totalApproxMs.toFixed(1)),
+    decode_queue: iosLatencyStats.queue,
+    dropped: iosLatencyStats.dropped,
+    rendered: iosLatencyStats.rendered,
+    kbps: Number(((iosLatencyStats.bytesPerSec * 8) / 1000).toFixed(0)),
+  });
 }
 
 async function startIosH264Player(streamUrl: string): Promise<boolean> {
@@ -373,6 +452,12 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
   let configured = false;
   let pending = new Uint8Array(0);
   let lastTimestamp = 0;
+  let fallbackFrameId = 0;
+  let deviceToBrowserOffsetMs: number | undefined;
+  let statWindowStarted = performance.now();
+  let statWindowFrames = 0;
+  let statWindowBytes = 0;
+  const metaByTimestamp = new Map<number, IosH264FrameMeta>();
   let settled = false;
   let sawFrame = false;
   let settleStart: (ok: boolean) => void = () => {};
@@ -392,6 +477,9 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
 
   iosH264Decoder = new VideoDecoderCtor({
     output(frame) {
+      const renderDoneMs = performance.now();
+      const meta = metaByTimestamp.get(frame.timestamp);
+      if (meta) metaByTimestamp.delete(frame.timestamp);
       try {
         const width = frame.displayWidth || frame.codedWidth;
         const height = frame.displayHeight || frame.codedHeight;
@@ -400,6 +488,16 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
           iosCanvas.height = height;
         }
         ctx.drawImage(frame, 0, 0, iosCanvas.width, iosCanvas.height);
+        if (meta && iosLatencyStats) {
+          iosLatencyStats.rendered += 1;
+          const browserMs = Math.max(0, renderDoneMs - (meta.decodeSubmitMs ?? meta.browserRecvMs));
+          iosLatencyStats.browserMs = smooth(iosLatencyStats.browserMs, browserMs);
+          iosLatencyStats.totalApproxMs = smooth(
+            iosLatencyStats.totalApproxMs,
+            iosLatencyStats.sourceMs + iosLatencyStats.sendToBrowserMs + browserMs
+          );
+          updateIosLatencyOverlay();
+        }
       } finally {
         frame.close();
       }
@@ -423,24 +521,48 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
   iosH264Socket.binaryType = 'arraybuffer';
 
   iosH264Socket.onmessage = (ev) => {
+    const browserRecvMs = performance.now();
     const chunk = new Uint8Array(ev.data as ArrayBuffer);
     pending = appendBytes(pending, chunk);
 
     while (pending.length >= 20) {
-      if (pending[0] !== 0x5a || pending[1] !== 0x58 || pending[2] !== 0x48 || pending[3] !== 0x31) {
+      if (pending[0] !== 0x5a || pending[1] !== 0x58 || pending[2] !== 0x48 || (pending[3] !== 0x31 && pending[3] !== 0x32)) {
         console.error('[ios-h264] bad frame magic');
         iosH264Socket?.close();
         return;
       }
 
       const view = new DataView(pending.buffer, pending.byteOffset, pending.byteLength);
+      const version = pending[3] === 0x32 ? 2 : 1;
       const flags = pending[4];
-      const timestamp = Number(view.getBigUint64(8, false));
-      const payloadLength = view.getUint32(16, false);
-      const frameLength = 20 + payloadLength;
+      const headerLength = version === 2 ? 48 : 20;
+      if (pending.length < headerLength) break;
+
+      let frameId = fallbackFrameId++;
+      let timestamp = 0;
+      let captureStartUs: number | undefined;
+      let captureDoneUs: number | undefined;
+      let encodeDoneUs: number | undefined;
+      let deviceSendUs: number | undefined;
+      let payloadLength: number;
+
+      if (version === 2) {
+        frameId = view.getUint32(8, false);
+        captureStartUs = Number(view.getBigUint64(16, false));
+        captureDoneUs = Number(view.getBigUint64(24, false));
+        encodeDoneUs = Number(view.getBigUint64(32, false));
+        deviceSendUs = Number(view.getBigUint64(40, false));
+        payloadLength = view.getUint32(44, false);
+        timestamp = captureStartUs;
+      } else {
+        timestamp = Number(view.getBigUint64(8, false));
+        payloadLength = view.getUint32(16, false);
+      }
+
+      const frameLength = headerLength + payloadLength;
       if (pending.length < frameLength) break;
 
-      const payload = pending.slice(20, frameLength);
+      const payload = pending.slice(headerLength, frameLength);
       pending = pending.slice(frameLength);
 
       const isKey = (flags & 1) !== 0;
@@ -457,9 +579,72 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
       }
 
       if (!iosH264Decoder || iosH264Decoder.state === 'closed') return;
-      if (!isKey && iosH264Decoder.decodeQueueSize > 2) continue;
+      if (!isKey && iosH264Decoder.decodeQueueSize > 2) {
+        if (iosLatencyStats) iosLatencyStats.dropped += 1;
+        continue;
+      }
 
       lastTimestamp = timestamp > lastTimestamp ? timestamp : lastTimestamp + 1;
+      const decodeSubmitMs = performance.now();
+      const meta: IosH264FrameMeta = {
+        version,
+        frameId,
+        key: isKey,
+        timestamp: lastTimestamp,
+        captureStartUs,
+        captureDoneUs,
+        encodeDoneUs,
+        deviceSendUs,
+        browserRecvMs,
+        decodeSubmitMs,
+        payloadBytes: payloadLength,
+      };
+
+      if (deviceSendUs !== undefined && deviceToBrowserOffsetMs === undefined) {
+        deviceToBrowserOffsetMs = browserRecvMs - deviceSendUs / 1000;
+      }
+
+      if (!iosLatencyStats) {
+        iosLatencyStats = {
+          frames: 0,
+          rendered: 0,
+          dropped: 0,
+          sourceMs: 0,
+          captureMs: 0,
+          encodeMs: 0,
+          sendToBrowserMs: 0,
+          browserMs: 0,
+          totalApproxMs: 0,
+          queue: 0,
+          fps: 0,
+          bytesPerSec: 0,
+          lastFrameId: frameId,
+        };
+      }
+
+      iosLatencyStats.frames += 1;
+      iosLatencyStats.lastFrameId = frameId;
+      iosLatencyStats.queue = iosH264Decoder.decodeQueueSize;
+      iosLatencyStats.captureMs = smooth(iosLatencyStats.captureMs, msFromUsDelta(captureDoneUs, captureStartUs));
+      iosLatencyStats.encodeMs = smooth(iosLatencyStats.encodeMs, msFromUsDelta(encodeDoneUs, captureDoneUs));
+      iosLatencyStats.sourceMs = smooth(iosLatencyStats.sourceMs, msFromUsDelta(deviceSendUs, captureStartUs));
+      if (deviceSendUs !== undefined && deviceToBrowserOffsetMs !== undefined) {
+        const networkApprox = Math.max(0, browserRecvMs - (deviceSendUs / 1000 + deviceToBrowserOffsetMs));
+        iosLatencyStats.sendToBrowserMs = smooth(iosLatencyStats.sendToBrowserMs, networkApprox);
+      }
+
+      statWindowFrames += 1;
+      statWindowBytes += payloadLength;
+      const statElapsed = browserRecvMs - statWindowStarted;
+      if (statElapsed >= 1000) {
+        iosLatencyStats.fps = (statWindowFrames * 1000) / statElapsed;
+        iosLatencyStats.bytesPerSec = (statWindowBytes * 1000) / statElapsed;
+        statWindowFrames = 0;
+        statWindowBytes = 0;
+        statWindowStarted = browserRecvMs;
+      }
+
+      metaByTimestamp.set(lastTimestamp, meta);
       try {
         iosH264Decoder.decode(new EncodedVideoChunkCtor({
           type: isKey ? 'key' : 'delta',
@@ -471,7 +656,13 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
           clearTimeout(startTimer);
           settleStart(true);
         }
+        updateIosLatencyOverlay();
+        if (browserRecvMs - iosLatencyLogAt > 3000) {
+          iosLatencyLogAt = browserRecvMs;
+          logIosLatencyStats();
+        }
       } catch (e) {
+        metaByTimestamp.delete(lastTimestamp);
         console.error('[ios-h264] decode submit failed', e);
         settleStart(false);
         iosH264Socket?.close();

@@ -1598,6 +1598,7 @@ body {
   overflow: hidden;
   box-shadow: 0 0 0 10px #000, 0 24px 60px rgba(0, 0, 0, 0.35);
   display: flex;
+  position: relative;
   touch-action: none;
 }
 
@@ -1615,6 +1616,23 @@ body {
   height: 100%;
   display: none;
   background: #000;
+}
+
+.ios-latency-overlay {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: none;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.72);
+  color: #dbeafe;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: pre-wrap;
 }
 
 .ios-mode-toggle {

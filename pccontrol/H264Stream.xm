@@ -152,20 +152,39 @@ static uint64_t zx_htonll(uint64_t v) {
     return ((uint64_t)lo << 32) | hi;
 }
 
-static bool writeRawAnnexBFrame(int fd, const uint8_t *payload, size_t len, bool key, uint64_t ptsUs) {
+static uint64_t zx_now_us(void) {
+    return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000000.0);
+}
+
+static bool writeRawAnnexBFrame(int fd,
+                                const uint8_t *payload,
+                                size_t len,
+                                bool key,
+                                uint32_t frameId,
+                                uint64_t captureStartUs,
+                                uint64_t captureDoneUs,
+                                uint64_t encodeDoneUs) {
     if (len > UINT32_MAX) return false;
 
-    uint8_t header[20] = {0};
+    uint8_t header[48] = {0};
     header[0] = 'Z';
     header[1] = 'X';
     header[2] = 'H';
-    header[3] = '1';
+    header[3] = '2';
     header[4] = key ? 1 : 0;
 
-    uint64_t ptsNet = zx_htonll(ptsUs);
+    uint32_t frameNet = htonl(frameId);
+    uint64_t captureStartNet = zx_htonll(captureStartUs);
+    uint64_t captureDoneNet = zx_htonll(captureDoneUs);
+    uint64_t encodeDoneNet = zx_htonll(encodeDoneUs);
+    uint64_t deviceSendNet = zx_htonll(zx_now_us());
     uint32_t lenNet = htonl((uint32_t)len);
-    memcpy(header + 8, &ptsNet, sizeof(ptsNet));
-    memcpy(header + 16, &lenNet, sizeof(lenNet));
+    memcpy(header + 8, &frameNet, sizeof(frameNet));
+    memcpy(header + 16, &captureStartNet, sizeof(captureStartNet));
+    memcpy(header + 24, &captureDoneNet, sizeof(captureDoneNet));
+    memcpy(header + 32, &encodeDoneNet, sizeof(encodeDoneNet));
+    memcpy(header + 40, &deviceSendNet, sizeof(deviceSendNet));
+    memcpy(header + 44, &lenNet, sizeof(lenNet));
 
     return sendAll(fd, header, sizeof(header)) && sendAll(fd, payload, len);
 }
@@ -358,6 +377,7 @@ typedef struct {
     CFMutableDataRef data;   // Annex-B H264 (CF-only)
     bool key;
     int poolIndex;
+    uint64_t encodeDoneUs;
 } FrameCtx;
 
 // Frame pool to avoid per-frame allocations.
@@ -380,6 +400,7 @@ static void initFramePoolOnce(void)
             gFramePool[i].data = CFDataCreateMutable(kCFAllocatorDefault, 512 * 1024);
             gFramePool[i].key = false;
             gFramePool[i].poolIndex = i;
+            gFramePool[i].encodeDoneUs = 0;
             gFramePoolStack[gFramePoolTop++] = i;
         }
     });
@@ -408,6 +429,7 @@ static FrameCtx *acquireFrameCtx(void)
         CFDataSetLength(f->data, 0);
     }
     f->key = false;
+    f->encodeDoneUs = 0;
     return f;
 }
 
@@ -480,6 +502,7 @@ static void H264OutputCallback(void *outputCallbackRefCon,
         }
     }
 
+    f->encodeDoneUs = zx_now_us();
     dispatch_semaphore_signal(f->sem);
 }
 
@@ -588,6 +611,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 }
 
                 CFAbsoluteTime frameStart = CFAbsoluteTimeGetCurrent();
+                uint64_t captureStartUs = zx_now_us();
                 CGImageRef img = [Screen createScreenShotCGImageRef];
                 if (!img) { running = false; break; }
 
@@ -609,6 +633,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 CVPixelBufferUnlockBaseAddress(pb, 0);
                 CGImageRelease(img);
+                uint64_t captureDoneUs = zx_now_us();
 
                 FrameCtx *f = acquireFrameCtx();
                 if (!f) {
@@ -664,12 +689,14 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 bool ok = true;
 
                 if (profile->rawAnnexB) {
-                    uint64_t ptsUs = (uint64_t)(streamSeconds * 1000000.0);
                     ok = writeRawAnnexBFrame(fd,
                                              (const uint8_t *)CFDataGetBytePtr(f->data),
                                              (size_t)hlen,
                                              f->key,
-                                             ptsUs);
+                                             (uint32_t)(frame & 0xFFFFFFFF),
+                                             captureStartUs,
+                                             captureDoneUs,
+                                             f->encodeDoneUs);
                 } else {
                     // Resend PAT/PMT on keyframes.
                     if (f->key) {
