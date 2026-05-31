@@ -53,6 +53,7 @@ const iosStreamModal = document.getElementById('ios-stream-modal') as HTMLDivEle
 const iosModalDeviceTitle = document.getElementById('ios-modal-device-title') as HTMLHeadingElement;
 const closeIosModalButton = document.getElementById('close-ios-modal') as HTMLButtonElement;
 const iosVideo = document.getElementById('ios-video') as HTMLVideoElement;
+const iosCanvas = document.getElementById('ios-canvas') as HTMLCanvasElement;
 const iosStreamFrame = document.querySelector('.ios-stream-frame') as HTMLDivElement;
 const iosModeFastButton = document.getElementById('ios-mode-fast') as HTMLButtonElement;
 const iosModeEcoButton = document.getElementById('ios-mode-eco') as HTMLButtonElement;
@@ -107,6 +108,8 @@ let iosPendingMove: { x: number; y: number } | undefined;
 let iosMovePumpTimer: number | undefined;
 let iosCurrentDevice: UnifiedDevice | undefined;
 let iosStreamProfile: 'fast' | 'eco' = 'fast';
+let iosH264Socket: WebSocket | undefined;
+let iosH264Decoder: VideoDecoder | undefined;
 
 function setIosMode(profile: 'fast' | 'eco') {
   iosStreamProfile = profile;
@@ -293,6 +296,16 @@ function renderIosDevices() {
 }
 
 function destroyIosPlayer() {
+  try {
+    iosH264Socket?.close();
+  } catch {}
+  iosH264Socket = undefined;
+
+  try {
+    iosH264Decoder?.close();
+  } catch {}
+  iosH264Decoder = undefined;
+
   // mpegts.js needs a full teardown to ensure the underlying WebSocket
   // closes promptly (the iOS stream server allows only one client).
   try {
@@ -329,6 +342,168 @@ function destroyIosPlayer() {
     iosVideo.removeAttribute('src');
     iosVideo.load();
   } catch {}
+
+  if (iosCanvas) {
+    const ctx = iosCanvas.getContext('2d');
+    ctx?.clearRect(0, 0, iosCanvas.width || 1, iosCanvas.height || 1);
+    iosCanvas.style.display = 'none';
+  }
+  if (iosVideo) iosVideo.style.display = 'block';
+}
+
+function appendBytes(a: Uint8Array, b: Uint8Array) {
+  if (a.length === 0) return b;
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+async function startIosH264Player(streamUrl: string): Promise<boolean> {
+  const VideoDecoderCtor = (window as any).VideoDecoder as typeof VideoDecoder | undefined;
+  const EncodedVideoChunkCtor = (window as any).EncodedVideoChunk as typeof EncodedVideoChunk | undefined;
+  if (!VideoDecoderCtor || !EncodedVideoChunkCtor || !iosCanvas) return false;
+
+  const ctx = iosCanvas.getContext('2d', { alpha: false });
+  if (!ctx) return false;
+
+  iosVideo.style.display = 'none';
+  iosCanvas.style.display = 'block';
+
+  let configured = false;
+  let pending = new Uint8Array(0);
+  let lastTimestamp = 0;
+  let settled = false;
+  let sawFrame = false;
+  let settleStart: (ok: boolean) => void = () => {};
+  const startPromise = new Promise<boolean>((resolve) => {
+    settleStart = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+  });
+  const startTimer = window.setTimeout(() => {
+    settleStart(false);
+    try {
+      iosH264Socket?.close();
+    } catch {}
+  }, 1500);
+
+  iosH264Decoder = new VideoDecoderCtor({
+    output(frame) {
+      try {
+        const width = frame.displayWidth || frame.codedWidth;
+        const height = frame.displayHeight || frame.codedHeight;
+        if (iosCanvas.width !== width || iosCanvas.height !== height) {
+          iosCanvas.width = width;
+          iosCanvas.height = height;
+        }
+        ctx.drawImage(frame, 0, 0, iosCanvas.width, iosCanvas.height);
+      } finally {
+        frame.close();
+      }
+    },
+    error(e) {
+      console.error('[ios-h264] decoder error', e);
+    },
+  });
+
+  const configureDecoder = () => {
+    if (configured || !iosH264Decoder) return;
+    iosH264Decoder.configure({
+      codec: 'avc1.42E01E',
+      optimizeForLatency: true,
+      avc: { format: 'annexb' },
+    } as any);
+    configured = true;
+  };
+
+  iosH264Socket = new WebSocket(streamUrl);
+  iosH264Socket.binaryType = 'arraybuffer';
+
+  iosH264Socket.onmessage = (ev) => {
+    const chunk = new Uint8Array(ev.data as ArrayBuffer);
+    pending = appendBytes(pending, chunk);
+
+    while (pending.length >= 20) {
+      if (pending[0] !== 0x5a || pending[1] !== 0x58 || pending[2] !== 0x48 || pending[3] !== 0x31) {
+        console.error('[ios-h264] bad frame magic');
+        iosH264Socket?.close();
+        return;
+      }
+
+      const view = new DataView(pending.buffer, pending.byteOffset, pending.byteLength);
+      const flags = pending[4];
+      const timestamp = Number(view.getBigUint64(8, false));
+      const payloadLength = view.getUint32(16, false);
+      const frameLength = 20 + payloadLength;
+      if (pending.length < frameLength) break;
+
+      const payload = pending.slice(20, frameLength);
+      pending = pending.slice(frameLength);
+
+      const isKey = (flags & 1) !== 0;
+      if (!configured) {
+        if (!isKey) continue;
+        try {
+          configureDecoder();
+        } catch (e) {
+          console.error('[ios-h264] configure failed', e);
+          settleStart(false);
+          iosH264Socket?.close();
+          return;
+        }
+      }
+
+      if (!iosH264Decoder || iosH264Decoder.state === 'closed') return;
+      if (!isKey && iosH264Decoder.decodeQueueSize > 2) continue;
+
+      lastTimestamp = timestamp > lastTimestamp ? timestamp : lastTimestamp + 1;
+      try {
+        iosH264Decoder.decode(new EncodedVideoChunkCtor({
+          type: isKey ? 'key' : 'delta',
+          timestamp: lastTimestamp,
+          data: payload,
+        }));
+        if (!sawFrame) {
+          sawFrame = true;
+          clearTimeout(startTimer);
+          settleStart(true);
+        }
+      } catch (e) {
+        console.error('[ios-h264] decode submit failed', e);
+        settleStart(false);
+        iosH264Socket?.close();
+        return;
+      }
+    }
+  };
+
+  iosH264Socket.onerror = (e) => {
+    console.error('[ios-h264] ws error', e);
+    clearTimeout(startTimer);
+    settleStart(false);
+  };
+
+  iosH264Socket.onclose = () => {
+    if (!sawFrame) {
+      clearTimeout(startTimer);
+      settleStart(false);
+    }
+  };
+
+  const ok = await startPromise;
+  if (!ok) {
+    try {
+      iosH264Decoder?.close();
+    } catch {}
+    iosH264Decoder = undefined;
+    iosH264Socket = undefined;
+    iosCanvas.style.display = 'none';
+    iosVideo.style.display = 'block';
+  }
+  return ok;
 }
 
 function startIosMovePump() {
@@ -370,74 +545,82 @@ async function openIosStream(device: UnifiedDevice, profile: 'fast' | 'eco' = 'f
   iosStreamModal.style.display = 'flex';
 
   setIosMode(profile);
-  const streamPath = profile === 'eco' ? 'stream-eco' : 'stream';
-  const streamUrl = `${wsBase}/ios/${encodeURIComponent(device.id)}/${streamPath}`;
   iosCurrentDeviceId = device.id;
   iosCurrentWsBase = wsBase;
   iosCurrentDevice = device;
   iosModalDeviceTitle.textContent = device.display_name || device.id;
 
-  if (!mpegts.isSupported()) {
-    console.error('mpegts.js not supported in this browser');
-    return;
+  let usingH264FastPath = false;
+  if (profile === 'fast') {
+    usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264`);
   }
 
-  const playerConfig: any =
-    profile === 'eco'
-      ? {
-          enableWorker: true,
-          // Eco: allow a bit more buffering; keyframe ~3s.
-          enableStashBuffer: true,
-          stashInitialSize: 256,
-          lazyLoad: true,
-          liveBufferLatencyChasing: false,
-          liveSync: false,
-          autoCleanupSourceBuffer: true,
-          autoCleanupMaxBackwardDuration: 10,
-          autoCleanupMinBackwardDuration: 5,
-        }
-      : {
-          enableWorker: true,
-          // Fast: minimize buffering for lower latency.
-          lazyLoad: false,
-          enableStashBuffer: false,
-          stashInitialSize: 32,
-          autoCleanupSourceBuffer: true,
-          autoCleanupMaxBackwardDuration: 2,
-          autoCleanupMinBackwardDuration: 1,
-          liveBufferLatencyChasing: true,
-          liveBufferLatencyMaxLatency: 0.8,
-          liveBufferLatencyMinRemain: 0.15,
-          liveSync: true,
-          liveSyncTargetLatency: 0.3,
-          liveSyncPlaybackRate: 1.5,
-        };
+  if (!usingH264FastPath) {
+    const streamPath = profile === 'eco' ? 'stream-eco' : 'stream';
+    const streamUrl = `${wsBase}/ios/${encodeURIComponent(device.id)}/${streamPath}`;
 
-  iosPlayer = mpegts.createPlayer(
-    {
-      type: 'mpegts',
-      isLive: true,
-      url: streamUrl,
-    },
-    playerConfig
-  ) as any;
-  iosPlayer.attachMediaElement(iosVideo);
+    if (!mpegts.isSupported()) {
+      console.error('mpegts.js not supported in this browser');
+      return;
+    }
 
-  iosVideo.playsInline = true;
-  iosVideo.muted = true;
-  iosVideo.preload = 'auto';
+    const playerConfig: any =
+      profile === 'eco'
+        ? {
+            enableWorker: true,
+            // Eco: allow a bit more buffering; keyframe ~3s.
+            enableStashBuffer: true,
+            stashInitialSize: 256,
+            lazyLoad: true,
+            liveBufferLatencyChasing: false,
+            liveSync: false,
+            autoCleanupSourceBuffer: true,
+            autoCleanupMaxBackwardDuration: 10,
+            autoCleanupMinBackwardDuration: 5,
+          }
+        : {
+            enableWorker: true,
+            // Fallback fast path: minimize buffering for lower latency.
+            lazyLoad: false,
+            enableStashBuffer: false,
+            stashInitialSize: 32,
+            autoCleanupSourceBuffer: true,
+            autoCleanupMaxBackwardDuration: 2,
+            autoCleanupMinBackwardDuration: 1,
+            liveBufferLatencyChasing: true,
+            liveBufferLatencyMaxLatency: 0.8,
+            liveBufferLatencyMinRemain: 0.15,
+            liveSync: true,
+            liveSyncTargetLatency: 0.3,
+            liveSyncPlaybackRate: 1.5,
+          };
 
-  iosPlayer.load();
+    iosPlayer = mpegts.createPlayer(
+      {
+        type: 'mpegts',
+        isLive: true,
+        url: streamUrl,
+      },
+      playerConfig
+    ) as any;
+    iosPlayer.attachMediaElement(iosVideo);
 
-  try {
-    iosPlayer.on?.(mpegts.Events.ERROR, (t: any, d: any) => {
-      console.error('[ios-stream]', profile, 'mpegts error', t, d);
+    iosVideo.playsInline = true;
+    iosVideo.muted = true;
+    iosVideo.preload = 'auto';
+
+    iosPlayer.load();
+
+    try {
+      iosPlayer.on?.(mpegts.Events.ERROR, (t: any, d: any) => {
+        console.error('[ios-stream]', profile, 'mpegts error', t, d);
+      });
+    } catch {}
+
+    iosVideo.play().catch(() => {
+      // Autoplay may be blocked; user can hit play.
     });
-  } catch {}
-
-  iosVideo.play().catch(() => {
-    // Autoplay may be blocked; user can hit play.
-  });
+  }
 
   startIosLiveChase();
 

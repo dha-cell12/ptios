@@ -1610,6 +1610,13 @@ body {
   object-fit: fill;
 }
 
+#ios-canvas {
+  width: 100%;
+  height: 100%;
+  display: none;
+  background: #000;
+}
+
 .ios-mode-toggle {
   display: flex;
   background: var(--secondary);

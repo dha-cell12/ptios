@@ -26,6 +26,7 @@ typedef struct {
     int minFPS;
     int keyframeIntervalSeconds;
     int averageBitrate;
+    bool rawAnnexB;
 } ZXH264Profile;
 
 // Profiles:
@@ -39,6 +40,7 @@ static const ZXH264Profile kH264ProfileFast = {
     .minFPS = 8,
     .keyframeIntervalSeconds = 1,
     .averageBitrate = 2000000,
+    .rawAnnexB = false,
 };
 
 static const ZXH264Profile kH264ProfileEco = {
@@ -49,6 +51,20 @@ static const ZXH264Profile kH264ProfileEco = {
     .minFPS = 8,
     .keyframeIntervalSeconds = 3,
     .averageBitrate = 900000,
+    .rawAnnexB = false,
+};
+
+// Raw Annex-B for browser WebCodecs/WebRTC ingestion. This bypasses MPEG-TS/MSE
+// buffering and is the aggressive low-latency path.
+static const ZXH264Profile kH264ProfileRaw = {
+    .port = 7003,
+    .width = 640,
+    .height = 360,
+    .targetFPS = 30,
+    .minFPS = 15,
+    .keyframeIntervalSeconds = 1,
+    .averageBitrate = 2500000,
+    .rawAnnexB = true,
 };
 
 static int zx_maxFpsForThermalState(int requested)
@@ -128,6 +144,30 @@ static bool sendAll(int fd, const uint8_t *buf, size_t len) {
         }
     }
     return true;
+}
+
+static uint64_t zx_htonll(uint64_t v) {
+    uint32_t hi = htonl((uint32_t)(v >> 32));
+    uint32_t lo = htonl((uint32_t)(v & 0xFFFFFFFFULL));
+    return ((uint64_t)lo << 32) | hi;
+}
+
+static bool writeRawAnnexBFrame(int fd, const uint8_t *payload, size_t len, bool key, uint64_t ptsUs) {
+    if (len > UINT32_MAX) return false;
+
+    uint8_t header[20] = {0};
+    header[0] = 'Z';
+    header[1] = 'X';
+    header[2] = 'H';
+    header[3] = '1';
+    header[4] = key ? 1 : 0;
+
+    uint64_t ptsNet = zx_htonll(ptsUs);
+    uint32_t lenNet = htonl((uint32_t)len);
+    memcpy(header + 8, &ptsNet, sizeof(ptsNet));
+    memcpy(header + 16, &lenNet, sizeof(lenNet));
+
+    return sendAll(fd, header, sizeof(header)) && sendAll(fd, payload, len);
 }
 
 static uint32_t mpegCrc32(const uint8_t *data, size_t len) {
@@ -522,7 +562,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
             if (!cs) running = false;
         }
 
-        if (running) {
+        if (running && !profile->rawAnnexB) {
             // Send PAT/PMT immediately to help ffmpeg detect TS packet size
             sendTables(fd, &patCC, &pmtCC);
         }
@@ -547,6 +587,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     }
                 }
 
+                CFAbsoluteTime frameStart = CFAbsoluteTimeGetCurrent();
                 CGImageRef img = [Screen createScreenShotCGImageRef];
                 if (!img) { running = false; break; }
 
@@ -589,7 +630,6 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     if (opts) CFDictionarySetValue(opts, kVTEncodeFrameOptionKey_ForceKeyFrame, kCFBooleanTrue);
                 }
 
-                CFAbsoluteTime frameStart = CFAbsoluteTimeGetCurrent();
                 CMTime frameTime = CMTimeMakeWithSeconds(streamSeconds, 90000);
                 OSStatus st = VTCompressionSessionEncodeFrame(enc,
                                                              pb,
@@ -620,43 +660,54 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     break;
                 }
 
-                // Resend PAT/PMT on keyframes
-                if (f->key) {
-                    sendTables(fd, &patCC, &pmtCC);
-                }
-
                 uint64_t pts = (uint64_t)(streamSeconds * 90000.0);
-                uint8_t pes[14] = {
-                    0x00, 0x00, 0x01, 0xE0,
-                    0x00, 0x00,
-                    0x80,
-                    0x80,
-                    0x05,
-                    (uint8_t)(0x21 | ((pts >> 29) & 0x0E)),
-                    (uint8_t)(pts >> 22),
-                    (uint8_t)(0x01 | ((pts >> 14) & 0xFE)),
-                    (uint8_t)(pts >> 7),
-                    (uint8_t)(0x01 | ((pts << 1) & 0xFE))
-                };
+                bool ok = true;
 
-                bool addPCR = ((frame % kPCRIntervalFrames) == 0);
-                bool ok = writeTSPackets(fd,
-                                         kTSVideoPid,
-                                         pes,
-                                         sizeof(pes),
-                                         true,
-                                         addPCR,
-                                         pts,
-                                         &vidCC);
-                if (ok) {
+                if (profile->rawAnnexB) {
+                    uint64_t ptsUs = (uint64_t)(streamSeconds * 1000000.0);
+                    ok = writeRawAnnexBFrame(fd,
+                                             (const uint8_t *)CFDataGetBytePtr(f->data),
+                                             (size_t)hlen,
+                                             f->key,
+                                             ptsUs);
+                } else {
+                    // Resend PAT/PMT on keyframes.
+                    if (f->key) {
+                        sendTables(fd, &patCC, &pmtCC);
+                    }
+
+                    uint8_t pes[14] = {
+                        0x00, 0x00, 0x01, 0xE0,
+                        0x00, 0x00,
+                        0x80,
+                        0x80,
+                        0x05,
+                        (uint8_t)(0x21 | ((pts >> 29) & 0x0E)),
+                        (uint8_t)(pts >> 22),
+                        (uint8_t)(0x01 | ((pts >> 14) & 0xFE)),
+                        (uint8_t)(pts >> 7),
+                        (uint8_t)(0x01 | ((pts << 1) & 0xFE))
+                    };
+
+                    bool addPCR = ((frame % kPCRIntervalFrames) == 0);
                     ok = writeTSPackets(fd,
                                         kTSVideoPid,
-                                        (const uint8_t *)CFDataGetBytePtr(f->data),
-                                        (size_t)hlen,
-                                        false,
-                                        false,
+                                        pes,
+                                        sizeof(pes),
+                                        true,
+                                        addPCR,
                                         pts,
                                         &vidCC);
+                    if (ok) {
+                        ok = writeTSPackets(fd,
+                                            kTSVideoPid,
+                                            (const uint8_t *)CFDataGetBytePtr(f->data),
+                                            (size_t)hlen,
+                                            false,
+                                            false,
+                                            pts,
+                                            &vidCC);
+                    }
                 }
 
                 releaseFrameCtx(f);
@@ -753,4 +804,5 @@ void startH264StreamServer(void) {
 
     startServer(&kH264ProfileFast);
     startServer(&kH264ProfileEco);
+    startServer(&kH264ProfileRaw);
 }
