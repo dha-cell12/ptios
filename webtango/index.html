@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tango Bridge Local Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script type="module" src="/src/main.ts"></script>
+</head>
+
+<body>
+  <div class="app-container">
+    <!-- Slim, Icon-only Sidebar matching demo -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">T</div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-item active" data-tab="devices" title="Devices Dashboard">
+          <span class="nav-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-layout-dashboard"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+          </span>
+          <span class="nav-label">Devices</span>
+        </div>
+        <div class="nav-item" data-tab="screen_view" title="Screen Viewer Grid">
+          <span class="nav-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-monitor"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+          </span>
+          <span class="nav-label">Screen View</span>
+        </div>
+      </nav>
+
+      <!-- Bottom items -->
+      <div class="sidebar-bottom">
+        <div class="sidebar-info-btn" title="Logs Viewer">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-text"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+        </div>
+        <div class="sidebar-info-btn" title="Information">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-info"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        </div>
+        <div class="sidebar-version">1.0.4</div>
+      </div>
+    </aside>
+
+    <!-- Main Workspace Wrapper -->
+    <div class="main-wrapper">
+      <!-- Premium Top Header -->
+      <header class="main-header">
+        <div class="header-left">
+          <!-- Mock left header menu from demo -->
+          <div class="header-menu">
+            <span class="header-menu-item">Folder</span>
+            <span class="header-menu-item">File</span>
+            <span class="header-menu-item">Toolbox</span>
+          </div>
+
+          <!-- Integrated address-bar style connection panel -->
+          <div class="header-connection-panel">
+            <div id="status" class="connection-status-dot offline" title="Offline"></div>
+            <input id="endpoint" type="text" value="ws://localhost:15037/bridge/" class="address-input" placeholder="ws://..." />
+            <div class="connection-actions">
+              <button id="connect" class="conn-btn btn-primary">Connect</button>
+              <button id="disconnect" class="conn-btn btn-secondary" disabled>Disconnect</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <!-- Notification Bell button from demo -->
+          <button class="action-btn header-utility-btn" title="Notifications">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bell"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          </button>
+          
+          <!-- Settings button from demo -->
+          <button class="action-btn header-utility-btn" title="Settings">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+          
+          <div class="user-profile">
+            <div class="user-avatar">AD</div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Content Layout -->
+      <div id="main-content" class="content-area">
+        
+        <!-- Spacious Device Grid Table (flex-1) -->
+        <section class="device-list-pane">
+          <div class="list-pane-header">
+            <div class="filter-pills">
+              <button class="filter-pill active" data-filter="all">All</button>
+              <button class="filter-pill" data-filter="online">Online</button>
+              <button class="filter-pill" data-filter="offline">Offline</button>
+              <button class="filter-pill" data-filter="usb">USB</button>
+              <button class="filter-pill" data-filter="wifi">WiFi</button>
+            </div>
+            
+            <div class="list-actions">
+              <!-- Instant Search Box -->
+              <div class="search-container">
+                <span class="search-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-search"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                </span>
+                <input id="search-query" type="text" placeholder="Search devices..." class="search-input" />
+              </div>
+
+              <!-- Refresh Connected Devices -->
+              <button id="refresh-devices" class="action-btn header-refresh-btn" title="Refresh Connected Devices">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+              </button>
+              
+              <div class="list-meta">
+                <span class="list-count" id="device-count">Android (0)</span>
+                <span class="auto-update">Auto-Sync ON</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Device Table Column Headers -->
+          <div class="table-header-row">
+            <div class="col-checkbox"><input type="checkbox" disabled class="table-checkbox" /></div>
+            <div class="col-no">No</div>
+            <div class="col-serial">Serial Number</div>
+            <div class="col-model">Device Model & Version</div>
+            <div class="col-platform">Platform</div>
+            <div class="col-status">Status</div>
+          </div>
+          
+          <!-- Dynamic Android Container -->
+          <div id="devices-container" class="device-list-table">
+            <div class="empty-state">
+              <div class="empty-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plug"><path d="m18 10 2.5-2.5a2.5 2.5 0 0 0-3.5-3.5L14.5 6.5"/><path d="m14 10 1.5-1.5"/><path d="M8.5 15.5 10 14"/><path d="m9 11-6 6a2 2 0 0 0 2 2h3l6-6"/><path d="M13 18h9"/></svg>
+              </div>
+              <h3>No Android Devices</h3>
+              <p>Verify WebSocket connection or connect an Android device via USB/Wi-Fi.</p>
+            </div>
+          </div>
+
+          <!-- iOS Discovery Sub-section -->
+          <div class="list-pane-header ios-divider-header">
+            <div class="list-meta">
+              <span class="list-count" id="ios-device-count">iOS (0)</span>
+              <span class="ios-badge">TCP 6000</span>
+            </div>
+          </div>
+
+          <!-- iOS Table Column Headers -->
+          <div class="table-header-row">
+            <div class="col-checkbox"><input type="checkbox" disabled class="table-checkbox" /></div>
+            <div class="col-no">No</div>
+            <div class="col-serial">Device ID</div>
+            <div class="col-model">Model & Meta</div>
+            <div class="col-platform">Platform</div>
+            <div class="col-status">Status</div>
+          </div>
+          
+          <!-- Dynamic iOS Container -->
+          <div id="ios-devices-container" class="device-list-table ios-table-container">
+            <div class="empty-state" id="ios-empty-state">
+              <div class="empty-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-smartphone"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+              </div>
+              <h3>No iOS Devices</h3>
+              <p>Make sure the iPhone service is reachable on TCP 6000.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Side Panel: Integrated Controls & Screen Canvas -->
+        <section class="device-detail-pane" id="device-detail">
+          <!-- Default View (No selection) -->
+          <div id="detail-empty" class="empty-state">
+            <div class="empty-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-smartphone"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+            </div>
+            <h3>No Device Selected</h3>
+            <p>Select a device from the grid table to control it in real-time.</p>
+          </div>
+
+          <!-- Control View (Visible upon selection) -->
+          <div id="detail-content" style="display: none;">
+            
+            <!-- Collapsible header info -->
+            <div class="detail-device-card">
+              <div class="detail-device-info">
+                <div class="detail-avatar">
+                  <span class="detail-phone-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-smartphone"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                  </span>
+                  <img id="detail-thumb" src="" alt="Thumb" class="card-thumb-img" style="display: none;" />
+                </div>
+                <div class="detail-titles">
+                  <h3 id="detail-name">Device Name</h3>
+                  <p class="detail-full-meta" id="detail-meta">Model • Brand • OS</p>
+                </div>
+                <div id="detail-live-status" class="live-badge shrink-0">
+                  <div class="pulse-dot"></div>
+                  ONLINE
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-sections-container">
+              
+              <!-- SECTION: Mirror & Controls -->
+              <div class="collapsible-section open">
+                <div class="collapsible-header">
+                  <span>Live Stream View</span>
+                  <span class="collapse-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>
+                  </span>
+                </div>
+                <div class="collapsible-content">
+                  <div class="mirror-section" style="flex-direction: row; gap: 20px;">
+                    <div class="screen-container">
+                      <canvas id="device-canvas"></canvas>
+                    </div>
+                    <!-- Control buttons next to screen -->
+                    <div class="control-bar-vertical">
+                      <button class="ctrl-btn" data-action="back" title="Back">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-left"><line x1="19" x2="5" y1="12" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                      </button>
+                      <button class="ctrl-btn" data-action="home" title="Home">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-home"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                      </button>
+                      <button class="ctrl-btn" data-action="wake" title="Wake Screen">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SECTION: Quick Actions -->
+              <div class="collapsible-section open">
+                <div class="collapsible-header">
+                  <span>Quick Actions</span>
+                  <span class="collapse-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>
+                  </span>
+                </div>
+                <div class="collapsible-content">
+                  <div class="detail-actions-bar">
+                    <button class="detail-action-btn btn-screenshot" data-serial="">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-camera"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                      Screenshot
+                    </button>
+                    <button class="detail-action-btn btn-install" data-serial="">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-download-cloud"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m8 17 4 4 4-4"/></svg>
+                      Install APK
+                    </button>
+                    <button class="detail-action-btn btn-upload" data-serial="">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-upload"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                      Push File
+                    </button>
+                    <button class="detail-action-btn btn-download" data-serial="">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-download"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                      Pull File
+                    </button>
+                    <button id="toggle-shell" class="detail-action-btn btn-shell">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-terminal"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
+                      Console Terminal
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SECTION: System Info -->
+              <div class="collapsible-section open">
+                <div class="collapsible-header">
+                  <span>System Info</span>
+                  <span class="collapse-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>
+                  </span>
+                </div>
+                <div class="collapsible-content">
+                  <div class="info-list-grid">
+                    <div class="info-item">
+                      <div class="info-label-group">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-usb"><circle cx="12" cy="6" r="1"/><path d="M12 2v20"/><path d="M12 12c-2.071 0-3.75-1.679-3.75-3.75V6.5h1.5"/><path d="M12 14c2.071 0 3.75 1.679 3.75 3.75V19h-1.5"/></svg>
+                        <span class="info-label">Connection</span>
+                      </div>
+                      <span class="info-value">USB</span>
+                    </div>
+                    <div class="info-item">
+                      <div class="info-label-group">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-cpu"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 15h3"/><path d="M1 9h3"/><path d="M1 15h3"/></svg>
+                        <span class="info-label">Arch</span>
+                      </div>
+                      <span id="stat-arch" class="info-value font-mono">arm64</span>
+                    </div>
+                    <div class="info-item">
+                      <div class="info-label-group">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-wifi"><path d="M12 20h.01"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M1.5 9.5a15 15 0 0 1 21 0"/></svg>
+                        <span class="info-label">IP Address</span>
+                      </div>
+                      <span id="stat-ip" class="info-value font-mono">-</span>
+                    </div>
+                    <div class="info-item">
+                      <div class="info-label-group">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <span class="info-label">OS Version</span>
+                      </div>
+                      <span id="stat-model" class="info-value">Android OS</span>
+                    </div>
+                    <div class="info-item full-width-info pt-2 border-t">
+                      <div class="info-label-group">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                        <span class="info-label">Serial Number</span>
+                      </div>
+                      <span id="stat-serial" class="info-value font-mono truncate">--------</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SECTION: Resources -->
+              <div class="collapsible-section open">
+                <div class="collapsible-header">
+                  <span>Resources</span>
+                  <span class="collapse-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down"><path d="m6 9 6 6 6-6"/></svg>
+                  </span>
+                </div>
+                <div class="collapsible-content space-y-4">
+                  <!-- Battery widget -->
+                  <div class="resource-row">
+                    <div class="resource-info">
+                      <span class="res-label">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-battery"><rect width="16" height="10" x="2" y="7" rx="2" ry="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>
+                        Battery Level
+                      </span>
+                      <span class="res-value" id="stat-battery">--%</span>
+                    </div>
+                    <div class="progress-bar-wrapper">
+                      <div class="progress-bar-bg">
+                        <div id="stat-battery-bar" class="progress-bar-fill progress-bar-fill-success" style="width: 85%;"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Storage widget -->
+                  <div class="resource-row">
+                    <div class="resource-info">
+                      <span class="res-label">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-hard-drive"><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M2 14v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4"/><line x1="6" x2="6" y1="18" y2="18"/><line x1="10" x2="10" y1="18" y2="18"/></svg>
+                        Storage Space
+                      </span>
+                      <span class="res-value" id="stat-memory">-- GB</span>
+                    </div>
+                    <div class="progress-bar-wrapper">
+                      <div class="progress-bar-bg">
+                        <div id="stat-storage-bar" class="progress-bar-fill" style="width: 65%;"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Collapsible ADB Console Terminal -->
+              <div id="shell-pane" class="shell-terminal-wrapper" style="display: none;">
+                <div class="shell-header">
+                  <span>ADB Shell Drawer</span>
+                </div>
+                <div class="shell-output-modern" id="shell-output"></div>
+                <div class="shell-input-group">
+                  <span class="shell-prompt">$</span>
+                  <input id="shell-command" type="text" placeholder="Enter adb shell command..." class="shell-input-modern" autocomplete="off" />
+                  <button id="run-shell" class="shell-run-btn" title="Run Command">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-send"><line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Collapsible Pull File Form -->
+              <div id="pull-file-pane" class="pull-file-wrapper" style="display: none;">
+                <div class="pull-header">
+                  <span>Pull File from Device</span>
+                </div>
+                <p class="pull-desc">
+                  Enter the absolute file path on Android device to download locally.
+                </p>
+                <div class="shell-input-group">
+                  <input id="pull-file-path" type="text" placeholder="/sdcard/Download/example.txt" class="pull-input" />
+                  <button id="run-pull-file" class="shell-run-btn" title="Download File">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-download"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                  </button>
+                </div>
+                <div id="pull-file-status" class="pull-status-log"></div>
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <!-- Screen View Grid Pane (Starts hidden, managed by main.ts) -->
+        <section id="screen-view-pane" class="screen-view-pane-modern" style="display: none; flex-direction: column; width: 100%; height: 100%; overflow: hidden; background: var(--background);">
+          <!-- Header Toolbar -->
+          <div class="screen-view-toolbar" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <div class="toolbar-left">
+              <span class="toolbar-title" style="font-weight: 600; font-size: 14px; color: var(--foreground);">Screen Mirroring Grid</span>
+            </div>
+            <div class="toolbar-right" style="display: flex; align-items: center; gap: 16px;">
+              <!-- View Mode Toggle -->
+              <div class="view-mode-toggle-group" style="background: var(--secondary); border: 1px solid var(--border); border-radius: 8px; padding: 3px; display: flex; gap: 2px;">
+                <button id="view-mode-grid" class="view-toggle-btn active" onclick="setScreenViewMode('grid')">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-layout-grid"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+                  Grid Mode
+                </button>
+                <button id="view-mode-focus" class="view-toggle-btn" onclick="setScreenViewMode('focus')">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-maximize-2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>
+                  Focus Mode
+                </button>
+              </div>
+              
+              <!-- Zoom slider -->
+              <div class="zoom-slider-container" style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; box-shadow: var(--shadow-sm); display: flex; align-items: center; gap: 8px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-search"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input id="screen-zoom" type="range" min="0.4" max="1.5" step="0.1" value="0.8" style="width: 80px;" />
+                <span id="screen-zoom-value" class="zoom-value-label" style="font-size: 11px; font-weight: 600; color: var(--muted-foreground); min-width: 32px; text-align: right;">80%</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Live Devices Grid -->
+          <div style="flex: 1; overflow-y: auto; width: 100%; padding: 24px; background: #f8fafc;">
+            <div id="screen-grid" class="screen-grid"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template for Android device card (Structured as standard table row) -->
+  <template id="device-card-template">
+    <div class="device-card table-row-item" data-serial="">
+      <!-- Keep required hidden thumbnail element to avoid JS binding crashes -->
+      <img src="" alt="Thumb" class="card-thumb-img" style="display: none;" />
+      
+      <div class="col-checkbox" onclick="event.stopPropagation()">
+        <input type="checkbox" class="table-checkbox" />
+      </div>
+      <div class="col-no table-index-cell">--</div>
+      <div class="col-serial font-mono card-name">Serial</div>
+      <div class="col-model font-medium device-meta">Model</div>
+      <div class="col-platform">
+        <span class="platform-badge badge-android">Android</span>
+      </div>
+      <div class="col-status">
+        <div class="status-cell">
+          <div class="status-indicator"></div>
+          <span class="status-badge">ONLINE</span>
+        </div>
+      </div>
+
+      <!-- Action buttons reveal on hover -->
+      <div class="row-hover-actions">
+        <button class="row-action-btn btn-power" title="Shut down / Disconnect device">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-power"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>
+        </button>
+      </div>
+    </div>
+  </template>
+
+  <!-- Template for iOS device card (Structured as standard table row) -->
+  <template id="ios-device-card-template">
+    <div class="device-card ios-card table-row-item" data-ios-id="">
+      <!-- Keep required hidden thumbnail element to avoid JS binding crashes -->
+      <img src="" alt="Thumb" class="card-thumb-img" style="display: none;" />
+
+      <div class="col-checkbox" onclick="event.stopPropagation()">
+        <input type="checkbox" class="table-checkbox" />
+      </div>
+      <div class="col-no table-index-cell">--</div>
+      <div class="col-serial font-mono card-name">iOS-ID</div>
+      <div class="col-model font-medium device-meta">Model</div>
+      <div class="col-platform">
+        <span class="platform-badge badge-ios">iOS</span>
+      </div>
+      <div class="col-status">
+        <div class="status-cell">
+          <div class="status-indicator"></div>
+          <span class="status-badge">ONLINE</span>
+        </div>
+      </div>
+
+      <!-- Action buttons reveal on hover -->
+      <div class="row-hover-actions">
+        <button class="row-action-btn btn-view-stream" title="Start iOS Stream">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+        </button>
+      </div>
+    </div>
+  </template>
+
+  <!-- Modal for enlarged device view -->
+  <div id="device-modal" class="modal" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-device-title">Device View</h2>
+        <button class="modal-close" id="close-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-canvas-container">
+          <canvas id="modal-canvas" class="modal-device-canvas"></canvas>
+        </div>
+        <div class="modal-controls">
+          <button class="modal-control-btn" data-action="back" title="Back">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-left"><line x1="19" x2="5" y1="12" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            <span class="btn-label">Back</span>
+          </button>
+          <button class="modal-control-btn" data-action="home" title="Home">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-home"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            <span class="btn-label">Home</span>
+          </button>
+          <button class="modal-control-btn" data-action="wake" title="Wake Screen">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+            <span class="btn-label">Wake</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for iOS streaming -->
+  <div id="ios-stream-modal" class="modal" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content ios-modal-content">
+      <div class="modal-header">
+        <h2 id="ios-modal-device-title">iOS Stream</h2>
+        <div class="ios-mode-toggle" aria-label="Stream mode">
+          <button class="ios-mode-btn" id="ios-mode-fast" type="button">Fast</button>
+          <button class="ios-mode-btn" id="ios-mode-eco" type="button">Eco</button>
+        </div>
+        <button class="modal-close" id="close-ios-modal">✕</button>
+      </div>
+      <div class="modal-body ios-modal-body">
+        <div class="ios-stream-frame">
+          <video id="ios-video" autoplay muted playsinline controls></video>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Collapse Section Controller Snippet -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      document.addEventListener('click', (e) => {
+        const header = e.target.closest('.collapsible-header');
+        if (header) {
+          const section = header.closest('.collapsible-section');
+          if (section) {
+            section.classList.toggle('open');
+          }
+        }
+      });
+    });
+  </script>
+</body>
+
+</html>

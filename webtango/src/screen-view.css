@@ -1,0 +1,310 @@
+/* Screen View Pane Styles */
+
+/* Header Toolbar Customization */
+#screen-view-pane > div:first-child {
+    background: var(--card) !important;
+    border-bottom: 1px solid var(--border) !important;
+    padding: 12px 24px !important;
+    height: 56px !important;
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(8px);
+    z-index: 10;
+}
+
+/* Toolbar elements */
+#screen-view-pane > div:first-child div[style*="background: var(--secondary)"] {
+    background: var(--secondary) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    padding: 3px !important;
+    display: flex;
+    gap: 2px;
+}
+
+#screen-view-pane > div:first-child div[style*="background: #fafbfd"] {
+    background: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    padding: 4px 12px !important;
+    box-shadow: var(--shadow-sm);
+}
+
+#screen-view-pane > div:first-child input[type="range"] {
+    accent-color: var(--primary) !important;
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--border);
+    outline: none;
+    transition: all 0.2s;
+}
+
+#screen-view-pane > div:first-child input[type="range"]:hover {
+    opacity: 0.9;
+}
+
+#sync-all {
+    background: var(--primary) !important;
+    color: white !important;
+    border: none !important;
+    font-family: var(--font-sans);
+    font-weight: 600 !important;
+    font-size: 12px !important;
+    padding: 8px 16px !important;
+    border-radius: 8px !important;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#sync-all:hover {
+    background: var(--primary-hover) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+}
+
+#sync-all:active {
+    transform: translateY(0);
+}
+
+/* Grid & Views Layout */
+.screen-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(calc(var(--card-width, 240px) * 1px), 1fr));
+    gap: 28px;
+    justify-items: center;
+    padding: 8px;
+}
+
+/* Toggle View Mode Button */
+.view-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.view-toggle-btn:hover {
+    color: var(--foreground);
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.view-toggle-btn.active {
+    background: var(--card) !important;
+    color: var(--primary) !important;
+    box-shadow: var(--shadow-sm);
+}
+
+/* Device screen card container */
+.device-screen-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    border-radius: 28px;
+    padding: 6px;
+}
+
+.device-screen-card:hover {
+    transform: translateY(-4px) scale(1.015);
+}
+
+/* Phone Mockup Frame */
+.screen-frame {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-radius: 26px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    aspect-ratio: 9/19;
+    width: 100%;
+    border: 5px solid #334155; /* Polished Slate border */
+    box-shadow: 
+        0 10px 25px -5px rgba(0, 0, 0, 0.2), 
+        0 8px 10px -6px rgba(0, 0, 0, 0.2),
+        inset 0 1px 1px rgba(255, 255, 255, 0.15);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    padding: 4px;
+}
+
+/* Focus view and selected highlights */
+.device-screen-card.selected .screen-frame {
+    border-color: var(--primary);
+    box-shadow: 
+        0 0 0 2px var(--background),
+        0 0 0 5px var(--primary),
+        0 20px 25px -5px rgba(59, 130, 246, 0.15), 
+        0 10px 10px -5px rgba(59, 130, 246, 0.1);
+}
+
+/* Notch / Dynamic Island */
+.screen-notch {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 38%;
+    height: 12px;
+    background: #000000;
+    border-radius: 9999px;
+    z-index: 20;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: inset 0 -1px 1px rgba(255, 255, 255, 0.1);
+}
+
+.screen-notch::after {
+    content: '';
+    width: 40%;
+    height: 2px;
+    background: #1e293b;
+    border-radius: 9999px;
+    opacity: 0.8;
+}
+
+/* Head-Up-Display Badge Layout */
+.screen-hud {
+    position: absolute;
+    top: 24px;
+    left: 12px;
+    right: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 10;
+    pointer-events: none;
+}
+
+/* Live Badge styling */
+.live-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 9999px;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    font-family: var(--font-sans);
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* Pulse status dot animation */
+.pulse-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--destructive);
+    border-radius: 50%;
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.7);
+    animation: pulse-glow 2s infinite;
+}
+
+@keyframes pulse-glow {
+    0% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.7);
+    }
+    
+    70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 4px rgba(244, 63, 94, 0);
+    }
+    
+    100% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(244, 63, 94, 0);
+    }
+}
+
+/* Screen canvas area inside the frame */
+.screen-canvas-wrapper {
+    flex: 1;
+    background: #0f172a;
+    border-radius: 20px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.screen-canvas-wrapper canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #090d16;
+    transition: opacity 0.3s;
+}
+
+/* Label indicating device model below the mock */
+.device-label {
+    margin-top: 12px;
+    text-align: center;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--foreground);
+    letter-spacing: 0.02em;
+    opacity: 0.75;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    transition: all 0.2s ease;
+}
+
+.device-screen-card:hover .device-label,
+.device-screen-card.selected .device-label {
+    opacity: 1;
+    color: var(--primary);
+}
+
+/* Selected Target Overlay Indicator */
+.selected-indicator {
+    position: absolute;
+    top: 0px;
+    right: 0px;
+    z-index: 25;
+    background: var(--primary);
+    color: white;
+    padding: 6px;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    box-shadow: var(--shadow-md);
+    border: 2px solid var(--card);
+    transform: translate(30%, -30%) scale(0);
+    transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.device-screen-card.selected .selected-indicator {
+    transform: translate(30%, -30%) scale(1);
+}
+
+/* Custom Scrollbar specifically for screen view main container */
+#screen-view-pane > div[style*="overflow-y: auto"] {
+    background: #f8fafc !important; /* Premium clean light gray base */
+    padding: 24px !important;
+}
