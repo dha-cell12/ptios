@@ -166,7 +166,7 @@ static bool writeRawAnnexBFrame(int fd,
                                 uint64_t encodeDoneUs) {
     if (len > UINT32_MAX) return false;
 
-    uint8_t header[48] = {0};
+    uint8_t header[52] = {0};
     header[0] = 'Z';
     header[1] = 'X';
     header[2] = 'H';
@@ -184,7 +184,7 @@ static bool writeRawAnnexBFrame(int fd,
     memcpy(header + 24, &captureDoneNet, sizeof(captureDoneNet));
     memcpy(header + 32, &encodeDoneNet, sizeof(encodeDoneNet));
     memcpy(header + 40, &deviceSendNet, sizeof(deviceSendNet));
-    memcpy(header + 44, &lenNet, sizeof(lenNet));
+    memcpy(header + 48, &lenNet, sizeof(lenNet));
 
     return sendAll(fd, header, sizeof(header)) && sendAll(fd, payload, len);
 }

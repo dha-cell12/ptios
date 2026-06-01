@@ -452,6 +452,7 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
   let configured = false;
   let pending = new Uint8Array(0);
   let lastTimestamp = 0;
+  let firstSourceTimestampUs: number | undefined;
   let fallbackFrameId = 0;
   let deviceToBrowserOffsetMs: number | undefined;
   let statWindowStarted = performance.now();
@@ -535,7 +536,7 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
       const view = new DataView(pending.buffer, pending.byteOffset, pending.byteLength);
       const version = pending[3] === 0x32 ? 2 : 1;
       const flags = pending[4];
-      const headerLength = version === 2 ? 48 : 20;
+      const headerLength = version === 2 ? 52 : 20;
       if (pending.length < headerLength) break;
 
       let frameId = fallbackFrameId++;
@@ -552,7 +553,7 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
         captureDoneUs = Number(view.getBigUint64(24, false));
         encodeDoneUs = Number(view.getBigUint64(32, false));
         deviceSendUs = Number(view.getBigUint64(40, false));
-        payloadLength = view.getUint32(44, false);
+        payloadLength = view.getUint32(48, false);
         timestamp = captureStartUs;
       } else {
         timestamp = Number(view.getBigUint64(8, false));
@@ -584,7 +585,11 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
         continue;
       }
 
-      lastTimestamp = timestamp > lastTimestamp ? timestamp : lastTimestamp + 1;
+      if (firstSourceTimestampUs === undefined) {
+        firstSourceTimestampUs = timestamp;
+      }
+      const relativeTimestamp = Math.max(0, timestamp - firstSourceTimestampUs);
+      lastTimestamp = relativeTimestamp > lastTimestamp ? relativeTimestamp : lastTimestamp + 1;
       const decodeSubmitMs = performance.now();
       const meta: IosH264FrameMeta = {
         version,
