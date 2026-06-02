@@ -54,6 +54,7 @@ const iosModalDeviceTitle = document.getElementById('ios-modal-device-title') as
 const closeIosModalButton = document.getElementById('close-ios-modal') as HTMLButtonElement;
 const iosVideo = document.getElementById('ios-video') as HTMLVideoElement;
 const iosCanvas = document.getElementById('ios-canvas') as HTMLCanvasElement;
+const iosWorkerCanvas = document.getElementById('ios-worker-canvas') as HTMLCanvasElement;
 const iosLatencyOverlay = document.getElementById('ios-latency-overlay') as HTMLDivElement;
 const iosStreamFrame = document.querySelector('.ios-stream-frame') as HTMLDivElement;
 const iosModeFastButton = document.getElementById('ios-mode-fast') as HTMLButtonElement;
@@ -115,7 +116,7 @@ let iosH264Socket: WebSocket | undefined;
 let iosH264Decoder: VideoDecoder | undefined;
 let iosH264Worker: Worker | undefined;
 let iosOffscreenCanvas: OffscreenCanvas | undefined;
-let iosCanvasTransferred = false;
+let iosWorkerCanvasTransferred = false;
 
 type IosH264FrameMeta = {
   version: 1 | 2;
@@ -392,11 +393,12 @@ function destroyIosPlayer() {
   } catch {}
 
   if (iosCanvas) {
-    if (!iosCanvasTransferred) {
-      const ctx = iosCanvas.getContext('2d');
-      ctx?.clearRect(0, 0, iosCanvas.width || 1, iosCanvas.height || 1);
-    }
+    const ctx = iosCanvas.getContext('2d');
+    ctx?.clearRect(0, 0, iosCanvas.width || 1, iosCanvas.height || 1);
     iosCanvas.style.display = 'none';
+  }
+  if (iosWorkerCanvas) {
+    iosWorkerCanvas.style.display = 'none';
   }
   if (iosLatencyOverlay) {
     iosLatencyOverlay.style.display = 'none';
@@ -489,15 +491,16 @@ function applyIosWorkerMetrics(m: any) {
 }
 
 async function startIosH264WorkerPlayer(streamUrl: string): Promise<boolean> {
-  if (!iosCanvas || !('transferControlToOffscreen' in iosCanvas) || !('Worker' in window)) return false;
+  if (!iosWorkerCanvas || !('transferControlToOffscreen' in iosWorkerCanvas) || !('Worker' in window)) return false;
 
   iosVideo.style.display = 'none';
-  iosCanvas.style.display = 'block';
+  iosCanvas.style.display = 'none';
+  iosWorkerCanvas.style.display = 'block';
 
   try {
     if (!iosOffscreenCanvas) {
-      iosOffscreenCanvas = iosCanvas.transferControlToOffscreen();
-      iosCanvasTransferred = true;
+      iosOffscreenCanvas = iosWorkerCanvas.transferControlToOffscreen();
+      iosWorkerCanvasTransferred = true;
     }
 
     if (!iosH264Worker) {
@@ -540,7 +543,7 @@ async function startIosH264WorkerPlayer(streamUrl: string): Promise<boolean> {
         }
       };
 
-      if (iosCanvasTransferred && iosOffscreenCanvas) {
+      if (iosWorkerCanvasTransferred && iosOffscreenCanvas) {
         iosH264Worker!.postMessage({ type: 'start', url: streamUrl, canvas: iosOffscreenCanvas }, [iosOffscreenCanvas]);
         iosOffscreenCanvas = undefined;
       } else {
@@ -550,7 +553,7 @@ async function startIosH264WorkerPlayer(streamUrl: string): Promise<boolean> {
 
     if (!started) {
       iosH264Worker?.postMessage({ type: 'stop' });
-      iosCanvas.style.display = 'none';
+      iosWorkerCanvas.style.display = 'none';
       iosVideo.style.display = 'block';
       return false;
     }
@@ -561,7 +564,7 @@ async function startIosH264WorkerPlayer(streamUrl: string): Promise<boolean> {
     try {
       iosH264Worker?.postMessage({ type: 'stop' });
     } catch {}
-    iosCanvas.style.display = 'none';
+    iosWorkerCanvas.style.display = 'none';
     iosVideo.style.display = 'block';
     return false;
   }
@@ -571,7 +574,6 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
   if (useWorker) {
     return startIosH264WorkerPlayer(streamUrl);
   }
-  if (iosCanvasTransferred) return false;
 
   const VideoDecoderCtor = (window as any).VideoDecoder as typeof VideoDecoder | undefined;
   const EncodedVideoChunkCtor = (window as any).EncodedVideoChunk as typeof EncodedVideoChunk | undefined;
@@ -581,6 +583,7 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
   if (!ctx) return false;
 
   iosVideo.style.display = 'none';
+  if (iosWorkerCanvas) iosWorkerCanvas.style.display = 'none';
   iosCanvas.style.display = 'block';
 
   let configured = false;
