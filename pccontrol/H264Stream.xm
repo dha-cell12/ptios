@@ -62,8 +62,19 @@ static const ZXH264Profile kH264ProfileRaw = {
     .height = 360,
     .targetFPS = 30,
     .minFPS = 15,
-    .keyframeIntervalSeconds = 1,
+    .keyframeIntervalSeconds = 0,
     .averageBitrate = 2500000,
+    .rawAnnexB = true,
+};
+
+static const ZXH264Profile kH264ProfileRawWorker = {
+    .port = 7004,
+    .width = 480,
+    .height = 270,
+    .targetFPS = 20,
+    .minFPS = 12,
+    .keyframeIntervalSeconds = 0,
+    .averageBitrate = 1200000,
     .rawAnnexB = true,
 };
 
@@ -524,10 +535,17 @@ static VTCompressionSessionRef createEncoder(const ZXH264Profile *profile) {
     VTSessionSetProperty(s, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_Baseline_AutoLevel);
     VTSessionSetProperty(s, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
 
+    int keyframeFrames = profile->targetFPS * profile->keyframeIntervalSeconds;
+    double keyframeDuration = (double)profile->keyframeIntervalSeconds;
+    if (profile->rawAnnexB && profile->keyframeIntervalSeconds == 0) {
+        keyframeFrames = profile->targetFPS / 2;
+        if (keyframeFrames < 1) keyframeFrames = 1;
+        keyframeDuration = 0.5;
+    }
     VTSessionSetProperty(s, kVTCompressionPropertyKey_MaxKeyFrameInterval,
-                         (__bridge CFTypeRef)@(profile->targetFPS * profile->keyframeIntervalSeconds));
+                         (__bridge CFTypeRef)@(keyframeFrames));
     VTSessionSetProperty(s, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
-                         (__bridge CFTypeRef)@(profile->keyframeIntervalSeconds));
+                         (__bridge CFTypeRef)@(keyframeDuration));
     VTSessionSetProperty(s, kVTCompressionPropertyKey_ExpectedFrameRate,
                          (__bridge CFTypeRef)@(profile->targetFPS));
     VTSessionSetProperty(s, kVTCompressionPropertyKey_AverageBitRate,
@@ -832,4 +850,5 @@ void startH264StreamServer(void) {
     startServer(&kH264ProfileFast);
     startServer(&kH264ProfileEco);
     startServer(&kH264ProfileRaw);
+    startServer(&kH264ProfileRawWorker);
 }

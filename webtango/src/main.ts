@@ -57,6 +57,7 @@ const iosCanvas = document.getElementById('ios-canvas') as HTMLCanvasElement;
 const iosLatencyOverlay = document.getElementById('ios-latency-overlay') as HTMLDivElement;
 const iosStreamFrame = document.querySelector('.ios-stream-frame') as HTMLDivElement;
 const iosModeFastButton = document.getElementById('ios-mode-fast') as HTMLButtonElement;
+const iosModeWorkerButton = document.getElementById('ios-mode-worker') as HTMLButtonElement;
 const iosModeEcoButton = document.getElementById('ios-mode-eco') as HTMLButtonElement;
 
 interface UnifiedDevice {
@@ -108,9 +109,13 @@ let iosLiveChaseTimer: number | undefined;
 let iosPendingMove: { x: number; y: number } | undefined;
 let iosMovePumpTimer: number | undefined;
 let iosCurrentDevice: UnifiedDevice | undefined;
-let iosStreamProfile: 'fast' | 'eco' = 'fast';
+type IosStreamProfile = 'fast' | 'worker' | 'eco';
+let iosStreamProfile: IosStreamProfile = 'fast';
 let iosH264Socket: WebSocket | undefined;
 let iosH264Decoder: VideoDecoder | undefined;
+let iosH264Worker: Worker | undefined;
+let iosOffscreenCanvas: OffscreenCanvas | undefined;
+let iosCanvasTransferred = false;
 
 type IosH264FrameMeta = {
   version: 1 | 2;
@@ -128,6 +133,7 @@ type IosH264FrameMeta = {
 
 type IosLatencyStats = {
   frames: number;
+  submitted: number;
   rendered: number;
   dropped: number;
   sourceMs: number;
@@ -135,8 +141,11 @@ type IosLatencyStats = {
   encodeMs: number;
   sendToBrowserMs: number;
   browserMs: number;
+  decodeMs: number;
+  drawMs: number;
   totalApproxMs: number;
   queue: number;
+  inFlight: number;
   fps: number;
   bytesPerSec: number;
   lastFrameId: number;
@@ -145,9 +154,10 @@ type IosLatencyStats = {
 let iosLatencyStats: IosLatencyStats | undefined;
 let iosLatencyLogAt = 0;
 
-function setIosMode(profile: 'fast' | 'eco') {
+function setIosMode(profile: IosStreamProfile) {
   iosStreamProfile = profile;
   iosModeFastButton?.classList.toggle('active', profile === 'fast');
+  iosModeWorkerButton?.classList.toggle('active', profile === 'worker');
   iosModeEcoButton?.classList.toggle('active', profile === 'eco');
 }
 
@@ -331,6 +341,10 @@ function renderIosDevices() {
 
 function destroyIosPlayer() {
   try {
+    iosH264Worker?.postMessage({ type: 'stop' });
+  } catch {}
+
+  try {
     iosH264Socket?.close();
   } catch {}
   iosH264Socket = undefined;
@@ -378,8 +392,10 @@ function destroyIosPlayer() {
   } catch {}
 
   if (iosCanvas) {
-    const ctx = iosCanvas.getContext('2d');
-    ctx?.clearRect(0, 0, iosCanvas.width || 1, iosCanvas.height || 1);
+    if (!iosCanvasTransferred) {
+      const ctx = iosCanvas.getContext('2d');
+      ctx?.clearRect(0, 0, iosCanvas.width || 1, iosCanvas.height || 1);
+    }
     iosCanvas.style.display = 'none';
   }
   if (iosLatencyOverlay) {
@@ -416,8 +432,9 @@ function updateIosLatencyOverlay() {
   iosLatencyOverlay.textContent =
     `ZXH2 frame ${s.lastFrameId} | ${s.fps.toFixed(1)} fps | ${(s.bytesPerSec / 1024).toFixed(0)} KB/s\n` +
     `source ${s.sourceMs.toFixed(1)} ms = capture ${s.captureMs.toFixed(1)} + encode ${s.encodeMs.toFixed(1)}\n` +
-    `net~ ${s.sendToBrowserMs.toFixed(1)} ms | browser ${s.browserMs.toFixed(1)} ms | total~ ${s.totalApproxMs.toFixed(1)} ms\n` +
-    `queue ${s.queue} | dropped ${s.dropped} | rendered ${s.rendered}/${s.frames}`;
+    `net~ ${s.sendToBrowserMs.toFixed(1)} ms | browser ${s.browserMs.toFixed(1)} = decode ${s.decodeMs.toFixed(1)} + draw ${s.drawMs.toFixed(1)}\n` +
+    `total~ ${s.totalApproxMs.toFixed(1)} ms | queue ${s.queue} | in-flight ${s.inFlight}\n` +
+    `dropped ${s.dropped} | submitted ${s.submitted} | rendered ${s.rendered}/${s.frames}`;
 }
 
 function logIosLatencyStats() {
@@ -430,15 +447,132 @@ function logIosLatencyStats() {
     encode_ms: Number(iosLatencyStats.encodeMs.toFixed(1)),
     net_approx_ms: Number(iosLatencyStats.sendToBrowserMs.toFixed(1)),
     browser_ms: Number(iosLatencyStats.browserMs.toFixed(1)),
+    decode_ms: Number(iosLatencyStats.decodeMs.toFixed(1)),
+    draw_ms: Number(iosLatencyStats.drawMs.toFixed(1)),
     total_approx_ms: Number(iosLatencyStats.totalApproxMs.toFixed(1)),
     decode_queue: iosLatencyStats.queue,
+    in_flight: iosLatencyStats.inFlight,
     dropped: iosLatencyStats.dropped,
+    submitted: iosLatencyStats.submitted,
     rendered: iosLatencyStats.rendered,
     kbps: Number(((iosLatencyStats.bytesPerSec * 8) / 1000).toFixed(0)),
   });
 }
 
-async function startIosH264Player(streamUrl: string): Promise<boolean> {
+function applyIosWorkerMetrics(m: any) {
+  iosLatencyStats = {
+    frames: m.frames ?? 0,
+    submitted: m.submitted ?? 0,
+    rendered: m.rendered ?? 0,
+    dropped: m.dropped ?? 0,
+    sourceMs: m.source_ms ?? 0,
+    captureMs: m.capture_ms ?? 0,
+    encodeMs: m.encode_ms ?? 0,
+    sendToBrowserMs: m.net_approx_ms ?? 0,
+    browserMs: m.browser_ms ?? 0,
+    decodeMs: m.decode_ms ?? 0,
+    drawMs: m.draw_ms ?? 0,
+    totalApproxMs: m.total_approx_ms ?? 0,
+    queue: m.decode_queue ?? 0,
+    inFlight: m.in_flight ?? 0,
+    fps: m.fps ?? 0,
+    bytesPerSec: ((m.kbps ?? 0) * 1000) / 8,
+    lastFrameId: m.frame ?? 0,
+  };
+  updateIosLatencyOverlay();
+
+  const now = performance.now();
+  if (now - iosLatencyLogAt > 3000) {
+    iosLatencyLogAt = now;
+    logIosLatencyStats();
+  }
+}
+
+async function startIosH264WorkerPlayer(streamUrl: string): Promise<boolean> {
+  if (!iosCanvas || !('transferControlToOffscreen' in iosCanvas) || !('Worker' in window)) return false;
+
+  iosVideo.style.display = 'none';
+  iosCanvas.style.display = 'block';
+
+  try {
+    if (!iosOffscreenCanvas) {
+      iosOffscreenCanvas = iosCanvas.transferControlToOffscreen();
+      iosCanvasTransferred = true;
+    }
+
+    if (!iosH264Worker) {
+      iosH264Worker = new Worker(new URL('./IosH264Worker.ts', import.meta.url), { type: 'module' });
+    }
+
+    const started = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const timer = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve(false);
+      }, 1500);
+
+      iosH264Worker!.onmessage = (event) => {
+        const data = event.data;
+        if (data?.type === 'metrics') {
+          applyIosWorkerMetrics(data.metrics);
+          return;
+        }
+        if (data?.type === 'decoder-error') {
+          console.error('[ios-h264-worker] decoder error', data.error);
+          return;
+        }
+        if (data?.type === 'start-failed') {
+          console.error('[ios-h264-worker] start failed', data.reason);
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(false);
+          }
+          return;
+        }
+        if (data?.type === 'started') {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(true);
+          }
+        }
+      };
+
+      if (iosCanvasTransferred && iosOffscreenCanvas) {
+        iosH264Worker!.postMessage({ type: 'start', url: streamUrl, canvas: iosOffscreenCanvas }, [iosOffscreenCanvas]);
+        iosOffscreenCanvas = undefined;
+      } else {
+        iosH264Worker!.postMessage({ type: 'start', url: streamUrl });
+      }
+    });
+
+    if (!started) {
+      iosH264Worker?.postMessage({ type: 'stop' });
+      iosCanvas.style.display = 'none';
+      iosVideo.style.display = 'block';
+      return false;
+    }
+
+    return true;
+  } catch (e) {
+    console.error('[ios-h264-worker] unavailable', e);
+    try {
+      iosH264Worker?.postMessage({ type: 'stop' });
+    } catch {}
+    iosCanvas.style.display = 'none';
+    iosVideo.style.display = 'block';
+    return false;
+  }
+}
+
+async function startIosH264Player(streamUrl: string, useWorker = false): Promise<boolean> {
+  if (useWorker) {
+    return startIosH264WorkerPlayer(streamUrl);
+  }
+  if (iosCanvasTransferred) return false;
+
   const VideoDecoderCtor = (window as any).VideoDecoder as typeof VideoDecoder | undefined;
   const EncodedVideoChunkCtor = (window as any).EncodedVideoChunk as typeof EncodedVideoChunk | undefined;
   if (!VideoDecoderCtor || !EncodedVideoChunkCtor || !iosCanvas) return false;
@@ -459,6 +593,7 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
   let statWindowFrames = 0;
   let statWindowBytes = 0;
   const metaByTimestamp = new Map<number, IosH264FrameMeta>();
+  let inFlightFrames = 0;
   let settled = false;
   let sawFrame = false;
   let settleStart: (ok: boolean) => void = () => {};
@@ -478,7 +613,7 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
 
   iosH264Decoder = new VideoDecoderCtor({
     output(frame) {
-      const renderDoneMs = performance.now();
+      const outputStartMs = performance.now();
       const meta = metaByTimestamp.get(frame.timestamp);
       if (meta) metaByTimestamp.delete(frame.timestamp);
       try {
@@ -489,9 +624,14 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
           iosCanvas.height = height;
         }
         ctx.drawImage(frame, 0, 0, iosCanvas.width, iosCanvas.height);
+        const renderDoneMs = performance.now();
         if (meta && iosLatencyStats) {
           iosLatencyStats.rendered += 1;
-          const browserMs = Math.max(0, renderDoneMs - (meta.decodeSubmitMs ?? meta.browserRecvMs));
+          const decodeMs = Math.max(0, outputStartMs - (meta.decodeSubmitMs ?? meta.browserRecvMs));
+          const drawMs = Math.max(0, renderDoneMs - outputStartMs);
+          const browserMs = decodeMs + drawMs;
+          iosLatencyStats.decodeMs = smooth(iosLatencyStats.decodeMs, decodeMs);
+          iosLatencyStats.drawMs = smooth(iosLatencyStats.drawMs, drawMs);
           iosLatencyStats.browserMs = smooth(iosLatencyStats.browserMs, browserMs);
           iosLatencyStats.totalApproxMs = smooth(
             iosLatencyStats.totalApproxMs,
@@ -500,6 +640,8 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
           updateIosLatencyOverlay();
         }
       } finally {
+        inFlightFrames = Math.max(0, inFlightFrames - 1);
+        if (iosLatencyStats) iosLatencyStats.inFlight = inFlightFrames;
         frame.close();
       }
     },
@@ -510,11 +652,24 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
 
   const configureDecoder = () => {
     if (configured || !iosH264Decoder) return;
-    iosH264Decoder.configure({
+    const realtimeConfig = {
       codec: 'avc1.42E01E',
       optimizeForLatency: true,
+      latencyMode: 'realtime',
+      hardwareAcceleration: 'prefer-hardware',
       avc: { format: 'annexb' },
-    } as any);
+    } as any;
+
+    try {
+      iosH264Decoder.configure(realtimeConfig);
+    } catch (e) {
+      console.warn('[ios-h264] realtime decoder config failed, using fallback', e);
+      iosH264Decoder.configure({
+        codec: 'avc1.42E01E',
+        optimizeForLatency: true,
+        avc: { format: 'annexb' },
+      } as any);
+    }
     configured = true;
   };
 
@@ -579,12 +734,6 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
         }
       }
 
-      if (!iosH264Decoder || iosH264Decoder.state === 'closed') return;
-      if (!isKey && iosH264Decoder.decodeQueueSize > 2) {
-        if (iosLatencyStats) iosLatencyStats.dropped += 1;
-        continue;
-      }
-
       if (firstSourceTimestampUs === undefined) {
         firstSourceTimestampUs = timestamp;
       }
@@ -612,6 +761,7 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
       if (!iosLatencyStats) {
         iosLatencyStats = {
           frames: 0,
+          submitted: 0,
           rendered: 0,
           dropped: 0,
           sourceMs: 0,
@@ -619,8 +769,11 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
           encodeMs: 0,
           sendToBrowserMs: 0,
           browserMs: 0,
+          decodeMs: 0,
+          drawMs: 0,
           totalApproxMs: 0,
           queue: 0,
+          inFlight: 0,
           fps: 0,
           bytesPerSec: 0,
           lastFrameId: frameId,
@@ -629,7 +782,6 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
 
       iosLatencyStats.frames += 1;
       iosLatencyStats.lastFrameId = frameId;
-      iosLatencyStats.queue = iosH264Decoder.decodeQueueSize;
       iosLatencyStats.captureMs = smooth(iosLatencyStats.captureMs, msFromUsDelta(captureDoneUs, captureStartUs));
       iosLatencyStats.encodeMs = smooth(iosLatencyStats.encodeMs, msFromUsDelta(encodeDoneUs, captureDoneUs));
       iosLatencyStats.sourceMs = smooth(iosLatencyStats.sourceMs, msFromUsDelta(deviceSendUs, captureStartUs));
@@ -637,6 +789,10 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
         const networkApprox = Math.max(0, browserRecvMs - (deviceSendUs / 1000 + deviceToBrowserOffsetMs));
         iosLatencyStats.sendToBrowserMs = smooth(iosLatencyStats.sendToBrowserMs, networkApprox);
       }
+
+      if (!iosH264Decoder || iosH264Decoder.state === 'closed') return;
+      iosLatencyStats.queue = iosH264Decoder.decodeQueueSize;
+      iosLatencyStats.inFlight = inFlightFrames;
 
       statWindowFrames += 1;
       statWindowBytes += payloadLength;
@@ -651,6 +807,9 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
 
       metaByTimestamp.set(lastTimestamp, meta);
       try {
+        inFlightFrames += 1;
+        iosLatencyStats.inFlight = inFlightFrames;
+        iosLatencyStats.submitted += 1;
         iosH264Decoder.decode(new EncodedVideoChunkCtor({
           type: isKey ? 'key' : 'delta',
           timestamp: lastTimestamp,
@@ -667,6 +826,8 @@ async function startIosH264Player(streamUrl: string): Promise<boolean> {
           logIosLatencyStats();
         }
       } catch (e) {
+        inFlightFrames = Math.max(0, inFlightFrames - 1);
+        iosLatencyStats.inFlight = inFlightFrames;
         metaByTimestamp.delete(lastTimestamp);
         console.error('[ios-h264] decode submit failed', e);
         settleStart(false);
@@ -723,7 +884,7 @@ function closeIosStream() {
   iosStreamModal.style.display = 'none';
 }
 
-async function openIosStream(device: UnifiedDevice, profile: 'fast' | 'eco' = 'fast') {
+async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 'fast') {
   const bridgeWsUrl = endpointInput?.value?.trim();
   if (!bridgeWsUrl) return;
 
@@ -748,11 +909,13 @@ async function openIosStream(device: UnifiedDevice, profile: 'fast' | 'eco' = 'f
 
   let usingH264FastPath = false;
   if (profile === 'fast') {
-    usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264`);
+    usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264`, false);
+  } else if (profile === 'worker') {
+    usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264-worker`, true);
   }
 
   if (!usingH264FastPath) {
-    const streamPath = profile === 'eco' ? 'stream-eco' : 'stream';
+    const streamPath = profile === 'eco' || profile === 'worker' ? 'stream-eco' : 'stream';
     const streamUrl = `${wsBase}/ios/${encodeURIComponent(device.id)}/${streamPath}`;
 
     if (!mpegts.isSupported()) {
@@ -2191,6 +2354,11 @@ iosModeFastButton?.addEventListener('click', () => {
   if (!iosCurrentDevice) return;
   if (iosStreamProfile === 'fast') return;
   openIosStream(iosCurrentDevice, 'fast');
+});
+iosModeWorkerButton?.addEventListener('click', () => {
+  if (!iosCurrentDevice) return;
+  if (iosStreamProfile === 'worker') return;
+  openIosStream(iosCurrentDevice, 'worker');
 });
 iosModeEcoButton?.addEventListener('click', () => {
   if (!iosCurrentDevice) return;
