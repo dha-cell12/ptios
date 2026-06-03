@@ -120,6 +120,17 @@ let iosH264Worker: Worker | undefined;
 let iosOffscreenCanvas: OffscreenCanvas | undefined;
 let iosWorkerCanvasTransferred = false;
 let iosRtcPeer: RTCPeerConnection | undefined;
+let iosRtcHttpBase: string | undefined;
+let iosRtcDeviceId: string | undefined;
+let iosRtcSelectedProfile = 'auto';
+let iosRtcSelectedPort = 0;
+let iosRtcStatsTimer: number | undefined;
+let iosRtcStatsLogAt = 0;
+let iosRtcLastStats: {
+  at: number;
+  framesDecoded: number;
+  bytesReceived: number;
+} | undefined;
 
 type IosH264FrameMeta = {
   version: 1 | 2;
@@ -373,10 +384,7 @@ function renderIosDevices() {
 }
 
 function destroyIosPlayer() {
-  try {
-    iosRtcPeer?.close();
-  } catch {}
-  iosRtcPeer = undefined;
+  stopIosRtcPlayer();
 
   try {
     iosH264Worker?.postMessage({ type: 'stop' });
@@ -424,6 +432,10 @@ function destroyIosPlayer() {
   }
 
   try {
+    if (iosVideo.srcObject instanceof MediaStream) {
+      for (const track of iosVideo.srcObject.getTracks()) track.stop();
+      iosVideo.srcObject = null;
+    }
     iosVideo.pause();
     iosVideo.removeAttribute('src');
     iosVideo.load();
@@ -919,6 +931,124 @@ async function waitIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 3000)
   ]);
 }
 
+function stopIosRtcPlayer() {
+  const closeUrl = iosRtcHttpBase && iosRtcDeviceId
+    ? `${iosRtcHttpBase}/ios/${encodeURIComponent(iosRtcDeviceId)}/rtc/close`
+    : undefined;
+  iosRtcHttpBase = undefined;
+  iosRtcDeviceId = undefined;
+  iosRtcSelectedProfile = 'auto';
+  iosRtcSelectedPort = 0;
+
+  if (closeUrl) {
+    try {
+      if (!navigator.sendBeacon(closeUrl, new Blob())) {
+        fetch(closeUrl, { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    } catch {
+      fetch(closeUrl, { method: 'POST', keepalive: true }).catch(() => {});
+    }
+  }
+
+  if (iosRtcStatsTimer !== undefined) {
+    clearInterval(iosRtcStatsTimer);
+    iosRtcStatsTimer = undefined;
+  }
+  iosRtcStatsLogAt = 0;
+  iosRtcLastStats = undefined;
+
+  const pc = iosRtcPeer;
+  iosRtcPeer = undefined;
+  if (pc) {
+    try {
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.oniceconnectionstatechange = null;
+    } catch {}
+    try {
+      for (const receiver of pc.getReceivers()) receiver.track?.stop();
+    } catch {}
+    try {
+      for (const sender of pc.getSenders()) sender.track?.stop();
+    } catch {}
+    try {
+      pc.close();
+    } catch {}
+  }
+
+  try {
+    if (iosVideo.srcObject instanceof MediaStream) {
+      for (const track of iosVideo.srcObject.getTracks()) track.stop();
+      iosVideo.srcObject = null;
+    }
+  } catch {}
+}
+
+function startIosRtcStats(pc: RTCPeerConnection) {
+  if (iosRtcStatsTimer !== undefined) clearInterval(iosRtcStatsTimer);
+  iosRtcLastStats = undefined;
+  iosRtcStatsLogAt = 0;
+  if (iosLatencyOverlay) {
+    iosLatencyOverlay.style.display = 'block';
+    iosLatencyOverlay.textContent = 'RTC waiting for stats...';
+  }
+
+  iosRtcStatsTimer = window.setInterval(async () => {
+    if (pc !== iosRtcPeer || pc.connectionState === 'closed') return;
+
+    try {
+      const stats = await pc.getStats();
+      let inbound: any;
+      stats.forEach((report: any) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'video' && !report.isRemote) {
+          inbound = report;
+        }
+      });
+      if (!inbound) return;
+
+      const now = performance.now();
+      const framesDecoded = inbound.framesDecoded ?? 0;
+      const bytesReceived = inbound.bytesReceived ?? 0;
+      const elapsedSec = iosRtcLastStats ? Math.max(0.001, (now - iosRtcLastStats.at) / 1000) : 0;
+      const fps = iosRtcLastStats ? (framesDecoded - iosRtcLastStats.framesDecoded) / elapsedSec : 0;
+      const bitrateKbps = iosRtcLastStats ? ((bytesReceived - iosRtcLastStats.bytesReceived) * 8) / elapsedSec / 1000 : 0;
+      iosRtcLastStats = { at: now, framesDecoded, bytesReceived };
+
+      const jitterMs = (inbound.jitter ?? 0) * 1000;
+      const dropped = inbound.framesDropped ?? 0;
+      const freezes = inbound.freezeCount ?? 0;
+      const decodeMs = framesDecoded > 0 ? ((inbound.totalDecodeTime ?? 0) * 1000) / framesDecoded : 0;
+
+      if (iosLatencyOverlay) {
+        iosLatencyOverlay.style.display = 'block';
+        iosLatencyOverlay.textContent =
+          `RTC ${iosRtcSelectedProfile.toUpperCase()} ${fps.toFixed(1)} fps | ${(bitrateKbps / 1000).toFixed(2)} Mbps | state ${pc.connectionState}\n` +
+          `decoded ${framesDecoded} | dropped ${dropped} | freezes ${freezes}\n` +
+          `jitter ${jitterMs.toFixed(1)} ms | avg decode ${decodeMs.toFixed(2)} ms | port ${iosRtcSelectedPort || '--'}`;
+      }
+
+      if (now - iosRtcStatsLogAt > 3000) {
+        iosRtcStatsLogAt = now;
+        console.table({
+          rtc_state: pc.connectionState,
+          ice_state: pc.iceConnectionState,
+          profile: iosRtcSelectedProfile,
+          port: iosRtcSelectedPort,
+          fps: Number(fps.toFixed(1)),
+          mbps: Number((bitrateKbps / 1000).toFixed(2)),
+          frames_decoded: framesDecoded,
+          frames_dropped: dropped,
+          freeze_count: freezes,
+          jitter_ms: Number(jitterMs.toFixed(1)),
+          avg_decode_ms: Number(decodeMs.toFixed(2)),
+        });
+      }
+    } catch (e) {
+      console.error('[ios-rtc] stats failed', e);
+    }
+  }, 1000);
+}
+
 async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<boolean> {
   if (!('RTCPeerConnection' in window)) return false;
 
@@ -936,6 +1066,8 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
       rtcpMuxPolicy: 'require',
     });
     iosRtcPeer = pc;
+    iosRtcHttpBase = httpBase;
+    iosRtcDeviceId = deviceId;
 
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.ontrack = (event) => {
@@ -948,6 +1080,9 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
     pc.onconnectionstatechange = () => {
       console.log('[ios-rtc] connection', pc.connectionState);
     };
+    pc.oniceconnectionstatechange = () => {
+      console.log('[ios-rtc] ice', pc.iceConnectionState);
+    };
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -959,20 +1094,20 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
     const resp = await fetch(`${httpBase}/ios/${encodeURIComponent(deviceId)}/rtc/offer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(localDescription),
+      body: JSON.stringify({ sdp: localDescription, profile: 'auto' }),
     });
     if (!resp.ok) throw new Error(`rtc offer failed: HTTP ${resp.status}`);
 
     const answer = await resp.json();
-    await pc.setRemoteDescription(answer);
+    iosRtcSelectedProfile = answer.profile || 'auto';
+    iosRtcSelectedPort = answer.port || 0;
+    console.log('[ios-rtc] selected profile', iosRtcSelectedProfile, 'port', iosRtcSelectedPort);
+    await pc.setRemoteDescription(answer.sdp);
+    startIosRtcStats(pc);
     return true;
   } catch (e) {
     console.error('[ios-rtc] start failed', e);
-    try {
-      iosRtcPeer?.close();
-    } catch {}
-    iosRtcPeer = undefined;
-    iosVideo.srcObject = null;
+    stopIosRtcPlayer();
     return false;
   }
 }
@@ -1082,8 +1217,8 @@ async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 
 
   // Switching devices/profiles should not clear the new selection.
   destroyIosPlayer();
-  // Give the previous TCP client a moment to disconnect.
-  await new Promise((r) => setTimeout(r, 150));
+  // Give the previous TCP/RTC client a moment to disconnect; iOS allows one active stream client.
+  await new Promise((r) => setTimeout(r, 350));
   iosStreamModal.style.display = 'flex';
 
   setIosMode(profile);

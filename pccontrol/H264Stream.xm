@@ -78,6 +78,28 @@ static const ZXH264Profile kH264ProfileRawWorker = {
     .rawAnnexB = true,
 };
 
+static const ZXH264Profile kH264ProfileRtcLan = {
+    .port = 7005,
+    .width = 640,
+    .height = 360,
+    .targetFPS = 45,
+    .minFPS = 24,
+    .keyframeIntervalSeconds = 0,
+    .averageBitrate = 4000000,
+    .rawAnnexB = true,
+};
+
+static const ZXH264Profile kH264ProfileRtcWan = {
+    .port = 7006,
+    .width = 640,
+    .height = 360,
+    .targetFPS = 30,
+    .minFPS = 18,
+    .keyframeIntervalSeconds = 0,
+    .averageBitrate = 2000000,
+    .rawAnnexB = true,
+};
+
 static int zx_maxFpsForThermalState(int requested)
 {
     // Throttle when device gets hot to avoid sustained overheating.
@@ -851,4 +873,6 @@ void startH264StreamServer(void) {
     startServer(&kH264ProfileEco);
     startServer(&kH264ProfileRaw);
     startServer(&kH264ProfileRawWorker);
+    startServer(&kH264ProfileRtcLan);
+    startServer(&kH264ProfileRtcWan);
 }
