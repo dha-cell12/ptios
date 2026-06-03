@@ -254,6 +254,14 @@
     transition: opacity 0.3s;
 }
 
+.ios-screen-card .screen-frame {
+    aspect-ratio: 9 / 16;
+}
+
+.ios-screen-card .screen-canvas-wrapper canvas {
+    object-fit: fill;
+}
+
 /* Label indicating device model below the mock */
 .device-label {
     margin-top: 12px;

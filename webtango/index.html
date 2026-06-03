@@ -407,6 +407,12 @@
               <span class="toolbar-title" style="font-weight: 600; font-size: 14px; color: var(--foreground);">Screen Mirroring Grid</span>
             </div>
             <div class="toolbar-right" style="display: flex; align-items: center; gap: 16px;">
+              <!-- Platform Toggle -->
+              <div class="view-mode-toggle-group" style="background: var(--secondary); border: 1px solid var(--border); border-radius: 8px; padding: 3px; display: flex; gap: 2px;">
+                <button id="screen-platform-android" class="view-toggle-btn active" onclick="setScreenPlatform('android')">Android</button>
+                <button id="screen-platform-ios" class="view-toggle-btn" onclick="setScreenPlatform('ios')">iOS</button>
+              </div>
+
               <!-- View Mode Toggle -->
               <div class="view-mode-toggle-group" style="background: var(--secondary); border: 1px solid var(--border); border-radius: 8px; padding: 3px; display: flex; gap: 2px;">
                 <button id="view-mode-grid" class="view-toggle-btn active" onclick="setScreenViewMode('grid')">
@@ -537,6 +543,7 @@
         <h2 id="ios-modal-device-title">iOS Stream</h2>
         <div class="ios-mode-toggle" aria-label="Stream mode">
           <button class="ios-mode-btn" id="ios-mode-fast" type="button">Fast</button>
+          <button class="ios-mode-btn" id="ios-mode-rtc" type="button">RTC</button>
           <button class="ios-mode-btn" id="ios-mode-worker" type="button">Worker</button>
           <button class="ios-mode-btn" id="ios-mode-eco" type="button">Eco</button>
         </div>

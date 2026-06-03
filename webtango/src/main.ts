@@ -58,6 +58,7 @@ const iosWorkerCanvas = document.getElementById('ios-worker-canvas') as HTMLCanv
 const iosLatencyOverlay = document.getElementById('ios-latency-overlay') as HTMLDivElement;
 const iosStreamFrame = document.querySelector('.ios-stream-frame') as HTMLDivElement;
 const iosModeFastButton = document.getElementById('ios-mode-fast') as HTMLButtonElement;
+const iosModeRtcButton = document.getElementById('ios-mode-rtc') as HTMLButtonElement;
 const iosModeWorkerButton = document.getElementById('ios-mode-worker') as HTMLButtonElement;
 const iosModeEcoButton = document.getElementById('ios-mode-eco') as HTMLButtonElement;
 
@@ -98,6 +99,7 @@ let scrcpyServerBinary: Uint8Array | null = null;
 const syncDisabledForDevice = new Set<string>();
 
 let iosDevices: UnifiedDevice[] = [];
+let iosDevicesSignature = '';
 let iosPollTimer: number | undefined;
 let iosPlayer: any | undefined;
 let iosZx: ZxTouchWsClient | undefined;
@@ -110,13 +112,14 @@ let iosLiveChaseTimer: number | undefined;
 let iosPendingMove: { x: number; y: number } | undefined;
 let iosMovePumpTimer: number | undefined;
 let iosCurrentDevice: UnifiedDevice | undefined;
-type IosStreamProfile = 'fast' | 'worker' | 'eco';
+type IosStreamProfile = 'fast' | 'rtc' | 'worker' | 'eco';
 let iosStreamProfile: IosStreamProfile = 'fast';
 let iosH264Socket: WebSocket | undefined;
 let iosH264Decoder: VideoDecoder | undefined;
 let iosH264Worker: Worker | undefined;
 let iosOffscreenCanvas: OffscreenCanvas | undefined;
 let iosWorkerCanvasTransferred = false;
+let iosRtcPeer: RTCPeerConnection | undefined;
 
 type IosH264FrameMeta = {
   version: 1 | 2;
@@ -158,6 +161,7 @@ let iosLatencyLogAt = 0;
 function setIosMode(profile: IosStreamProfile) {
   iosStreamProfile = profile;
   iosModeFastButton?.classList.toggle('active', profile === 'fast');
+  iosModeRtcButton?.classList.toggle('active', profile === 'rtc');
   iosModeWorkerButton?.classList.toggle('active', profile === 'worker');
   iosModeEcoButton?.classList.toggle('active', profile === 'eco');
 }
@@ -209,11 +213,22 @@ let isConnecting = false;
 // Screen View State
 // ============================================================================
 let screenViewMode: 'grid' | 'focus' = 'grid';
+let screenPlatform: 'android' | 'ios' = 'android';
 let screenScale = 0.8;
 const screenViewPane = document.getElementById('screen-view-pane') as HTMLElement;
 const screenGrid = document.getElementById('screen-grid') as HTMLDivElement;
 const screenZoomInput = document.getElementById('screen-zoom') as HTMLInputElement;
 const screenZoomValue = document.getElementById('screen-zoom-value') as HTMLElement;
+
+type IosGridStream = {
+  worker: Worker;
+  canvas: HTMLCanvasElement;
+  deviceId: string;
+};
+
+const iosGridStreams = new Map<string, IosGridStream>();
+const iosGridSuspendedForControl = new Set<string>();
+let iosModalOpenedFromGridDeviceId: string | undefined;
 
 function updateVisibilityState() {
   const activeTab = document.querySelector('.nav-item[data-tab="screen_view"]');
@@ -282,12 +297,29 @@ async function refreshIosDevices() {
     const resp = await fetch(`${httpBase}/devices`, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const devices = (await resp.json()) as UnifiedDevice[];
-    iosDevices = devices.filter(d => d.platform === 'ios');
-    renderIosDevices();
+    const nextIosDevices = devices.filter(d => d.platform === 'ios');
+    const nextSignature = iosDeviceSignature(nextIosDevices);
+    if (nextSignature !== iosDevicesSignature) {
+      iosDevices = nextIosDevices;
+      iosDevicesSignature = nextSignature;
+      renderIosDevices();
+      if (screenPlatform === 'ios' && isScreenViewVisible) renderScreenView();
+    }
   } catch (e) {
-    iosDevices = [];
-    renderIosDevices();
+    if (iosDevicesSignature !== '') {
+      iosDevices = [];
+      iosDevicesSignature = '';
+      renderIosDevices();
+      if (screenPlatform === 'ios' && isScreenViewVisible) renderScreenView();
+    }
   }
+}
+
+function iosDeviceSignature(devices: UnifiedDevice[]) {
+  return devices
+    .map(d => `${d.id}|${d.status}|${d.display_name}|${d.meta?.ip || ''}|${d.meta?.device?.system_version || ''}`)
+    .sort()
+    .join('\n');
 }
 
 function renderIosDevices() {
@@ -341,6 +373,11 @@ function renderIosDevices() {
 }
 
 function destroyIosPlayer() {
+  try {
+    iosRtcPeer?.close();
+  } catch {}
+  iosRtcPeer = undefined;
+
   try {
     iosH264Worker?.postMessage({ type: 'stop' });
   } catch {}
@@ -866,6 +903,80 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
   return ok;
 }
 
+async function waitIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 3000) {
+  if (pc.iceGatheringState === 'complete') return;
+  await Promise.race([
+    new Promise<void>((resolve) => {
+      const handler = () => {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', handler);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', handler);
+    }),
+    new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<boolean> {
+  if (!('RTCPeerConnection' in window)) return false;
+
+  iosVideo.style.display = 'block';
+  iosVideo.muted = true;
+  iosVideo.playsInline = true;
+  iosVideo.autoplay = true;
+  if (iosCanvas) iosCanvas.style.display = 'none';
+  if (iosWorkerCanvas) iosWorkerCanvas.style.display = 'none';
+
+  try {
+    const pc = new RTCPeerConnection({
+      iceServers: [],
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    });
+    iosRtcPeer = pc;
+
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.ontrack = (event) => {
+      const [stream] = event.streams;
+      if (stream) {
+        iosVideo.srcObject = stream;
+        iosVideo.play().catch(() => {});
+      }
+    };
+    pc.onconnectionstatechange = () => {
+      console.log('[ios-rtc] connection', pc.connectionState);
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitIceGatheringComplete(pc);
+
+    const localDescription = pc.localDescription;
+    if (!localDescription) throw new Error('missing rtc local description');
+
+    const resp = await fetch(`${httpBase}/ios/${encodeURIComponent(deviceId)}/rtc/offer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(localDescription),
+    });
+    if (!resp.ok) throw new Error(`rtc offer failed: HTTP ${resp.status}`);
+
+    const answer = await resp.json();
+    await pc.setRemoteDescription(answer);
+    return true;
+  } catch (e) {
+    console.error('[ios-rtc] start failed', e);
+    try {
+      iosRtcPeer?.close();
+    } catch {}
+    iosRtcPeer = undefined;
+    iosVideo.srcObject = null;
+    return false;
+  }
+}
+
 function startIosMovePump() {
   if (iosMovePumpTimer !== undefined) return;
   iosMovePumpTimer = window.setInterval(() => {
@@ -883,17 +994,88 @@ function startIosMovePump() {
 }
 
 function closeIosStream() {
+  const resumeGridDeviceId = iosModalOpenedFromGridDeviceId;
   destroyIosPlayer();
   iosStreamModal.style.display = 'none';
+  iosModalOpenedFromGridDeviceId = undefined;
+
+  if (resumeGridDeviceId && screenPlatform === 'ios' && isScreenViewVisible) {
+    iosGridSuspendedForControl.delete(resumeGridDeviceId);
+    renderScreenView();
+  }
+}
+
+function stopIosGridStream(deviceId: string) {
+  const stream = iosGridStreams.get(deviceId);
+  if (!stream) return;
+  try {
+    stream.worker.postMessage({ type: 'stop' });
+  } catch {}
+  try {
+    stream.worker.terminate();
+  } catch {}
+  iosGridStreams.delete(deviceId);
+}
+
+function stopAllIosGridStreams() {
+  for (const id of Array.from(iosGridStreams.keys())) {
+    stopIosGridStream(id);
+  }
+}
+
+function startIosGridWorkerStream(device: UnifiedDevice, canvas: HTMLCanvasElement) {
+  if (!iosCurrentWsBase && endpointInput?.value?.trim()) {
+    try {
+      iosCurrentWsBase = deriveBridgeBases(endpointInput.value.trim()).wsBase;
+    } catch {}
+  }
+
+  const bridgeWsUrl = endpointInput?.value?.trim();
+  if (!bridgeWsUrl) return;
+
+  let httpBase: string;
+  let wsBase: string;
+  try {
+    ({ httpBase, wsBase } = deriveBridgeBases(bridgeWsUrl));
+  } catch {
+    return;
+  }
+
+  stopIosGridStream(device.id);
+
+  if (!('transferControlToOffscreen' in canvas) || !('Worker' in window)) return;
+
+  try {
+    const offscreen = canvas.transferControlToOffscreen();
+    const worker = new Worker(new URL('./IosH264Worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (event) => {
+      const data = event.data;
+      if (data?.type === 'start-failed') {
+        console.error('[ios-grid-worker] start failed', device.id, data.reason);
+      }
+      if (data?.type === 'decoder-error') {
+        console.error('[ios-grid-worker] decoder error', device.id, data.error);
+      }
+    };
+    worker.postMessage({
+      type: 'start',
+      url: `${wsBase}/ios/${encodeURIComponent(device.id)}/h264-worker`,
+      canvas: offscreen,
+    }, [offscreen]);
+    iosGridStreams.set(device.id, { worker, canvas, deviceId: device.id });
+  } catch (e) {
+    console.error('[ios-grid-worker] unavailable', device.id, e);
+  }
 }
 
 async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 'fast') {
   const bridgeWsUrl = endpointInput?.value?.trim();
   if (!bridgeWsUrl) return;
 
+  let httpBase: string;
   let wsBase: string;
   try {
-    ({ wsBase } = deriveBridgeBases(bridgeWsUrl));
+    ({ httpBase, wsBase } = deriveBridgeBases(bridgeWsUrl));
   } catch {
     return;
   }
@@ -913,6 +1095,8 @@ async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 
   let usingH264FastPath = false;
   if (profile === 'fast') {
     usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264`, false);
+  } else if (profile === 'rtc') {
+    usingH264FastPath = await startIosRtcPlayer(httpBase, device.id);
   } else if (profile === 'worker') {
     usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264-worker`, true);
   }
@@ -2358,6 +2542,11 @@ iosModeFastButton?.addEventListener('click', () => {
   if (iosStreamProfile === 'fast') return;
   openIosStream(iosCurrentDevice, 'fast');
 });
+iosModeRtcButton?.addEventListener('click', () => {
+  if (!iosCurrentDevice) return;
+  if (iosStreamProfile === 'rtc') return;
+  openIosStream(iosCurrentDevice, 'rtc');
+});
 iosModeWorkerButton?.addEventListener('click', () => {
   if (!iosCurrentDevice) return;
   if (iosStreamProfile === 'worker') return;
@@ -2422,6 +2611,17 @@ if (iosDevicesContainer) {
   renderScreenView();
 };
 
+(window as any).setScreenPlatform = (platform: 'android' | 'ios') => {
+  if (screenPlatform === platform) return;
+  screenPlatform = platform;
+  document.getElementById('screen-platform-android')?.classList.toggle('active', platform === 'android');
+  document.getElementById('screen-platform-ios')?.classList.toggle('active', platform === 'ios');
+  if (platform === 'android') {
+    stopAllIosGridStreams();
+  }
+  renderScreenView();
+};
+
 screenZoomInput?.addEventListener('input', (e) => {
   screenScale = parseFloat((e.target as HTMLInputElement).value);
   screenZoomValue.textContent = `${Math.round(screenScale * 100)}%`;
@@ -2430,6 +2630,7 @@ screenZoomInput?.addEventListener('input', (e) => {
 
 function renderScreenView() {
   if (!screenGrid) return;
+  stopAllIosGridStreams();
   screenGrid.innerHTML = ''; // Clear existing
 
   // Apply grid logic
@@ -2443,6 +2644,21 @@ function renderScreenView() {
     screenGrid.style.display = 'grid';
   }
 
+  if (screenPlatform === 'ios') {
+    renderIosScreenViewCards();
+  } else {
+    renderAndroidScreenViewCards();
+  }
+}
+
+function renderAndroidScreenViewCards() {
+  if (!screenGrid) return;
+
+  if (connectedDevices.size === 0) {
+    screenGrid.innerHTML = '<div class="empty-state"><h3>No Android Devices</h3><p>Connect Android devices to show live mirrors.</p></div>';
+    return;
+  }
+
   connectedDevices.forEach((device) => {
     const card = document.createElement('div');
     card.className = 'device-screen-card';
@@ -2452,6 +2668,10 @@ function renderScreenView() {
       document.querySelectorAll('.device-screen-card').forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');
       updateDeviceDetail(device.serial); // Also update detail view
+    };
+    card.ondblclick = (e) => {
+      e.preventDefault();
+      openDeviceModal(device.serial);
     };
 
     const isMini = screenScale < 0.6;
@@ -2486,6 +2706,64 @@ function renderScreenView() {
   });
 }
 
+function renderIosScreenViewCards() {
+  if (!screenGrid) return;
+
+  if (iosDevices.length === 0) {
+    screenGrid.innerHTML = '<div class="empty-state"><h3>No iOS Devices</h3><p>Switch on ZXTouch and wait for discovery.</p></div>';
+    return;
+  }
+
+  for (const device of iosDevices) {
+    const card = document.createElement('div');
+    card.className = 'device-screen-card ios-screen-card';
+    card.style.width = screenViewMode === 'focus' ? '360px' : `${240 * screenScale}px`;
+
+    card.onclick = () => {
+      document.querySelectorAll('.device-screen-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+    };
+    card.ondblclick = (e) => {
+      e.preventDefault();
+      iosModalOpenedFromGridDeviceId = device.id;
+      iosGridSuspendedForControl.add(device.id);
+      stopIosGridStream(device.id);
+      openIosStream(device, 'fast');
+    };
+
+    const isMini = screenScale < 0.6;
+    const safeId = device.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const canvasId = `ios-screen-canvas-${safeId}`;
+    const meta = device.meta?.device;
+    const label = device.display_name || meta?.name || device.id;
+
+    card.innerHTML = `
+      <div class="screen-frame">
+        ${!isMini ? `
+        <div class="screen-notch"></div>
+        <div class="screen-hud">
+          <div class="live-badge ios-live-badge">
+            <div class="pulse-dot"></div> iOS Worker
+          </div>
+        </div>
+        ` : ''}
+        <div class="screen-canvas-wrapper">
+          <canvas id="${canvasId}"></canvas>
+        </div>
+      </div>
+      <div class="device-label">${label}</div>
+      <div class="selected-indicator">🎯</div>
+    `;
+
+    screenGrid.appendChild(card);
+
+    const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
+    if (canvas && !iosGridSuspendedForControl.has(device.id) && isScreenViewVisible) {
+      startIosGridWorkerStream(device, canvas);
+    }
+  }
+}
+
 function updateScreenViewVisibility() {
   const activeTab = document.querySelector('.nav-item[data-tab="screen_view"]');
   if (activeTab && activeTab.classList.contains('active')) {
@@ -2501,6 +2779,7 @@ function updateScreenViewVisibility() {
     }
   } else {
     screenViewPane.style.display = 'none';
+    stopAllIosGridStreams();
   }
   updateVisibilityState();
 }
@@ -2530,6 +2809,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     } else if (tab === 'screen_view') {
       if (screenView) {
         screenView.style.display = 'flex';
+        updateVisibilityState();
         renderScreenView();
       }
     } else {
