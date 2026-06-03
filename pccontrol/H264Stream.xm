@@ -82,10 +82,10 @@ static const ZXH264Profile kH264ProfileRtcLan = {
     .port = 7005,
     .width = 640,
     .height = 360,
-    .targetFPS = 45,
-    .minFPS = 24,
+    .targetFPS = 30,
+    .minFPS = 20,
     .keyframeIntervalSeconds = 0,
-    .averageBitrate = 4000000,
+    .averageBitrate = 2500000,
     .rawAnnexB = true,
 };
 
