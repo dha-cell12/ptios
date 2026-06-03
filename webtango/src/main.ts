@@ -112,6 +112,8 @@ let iosLiveChaseTimer: number | undefined;
 let iosPendingMove: { x: number; y: number } | undefined;
 let iosMovePumpTimer: number | undefined;
 let iosCurrentDevice: UnifiedDevice | undefined;
+let iosLastSentMove: { x: number; y: number } | undefined;
+let iosLastMoveSentAt = 0;
 type IosStreamProfile = 'fast' | 'rtc' | 'worker' | 'eco';
 let iosStreamProfile: IosStreamProfile = 'fast';
 let iosH264Socket: WebSocket | undefined;
@@ -426,6 +428,8 @@ function destroyIosPlayer() {
   iosCurrentWsBase = undefined;
   iosCurrentDevice = undefined;
   iosPendingMove = undefined;
+  iosLastSentMove = undefined;
+  iosLastMoveSentAt = 0;
   if (iosMovePumpTimer !== undefined) {
     clearInterval(iosMovePumpTimer);
     iosMovePumpTimer = undefined;
@@ -1017,14 +1021,23 @@ function startIosRtcStats(pc: RTCPeerConnection) {
       const jitterMs = (inbound.jitter ?? 0) * 1000;
       const dropped = inbound.framesDropped ?? 0;
       const freezes = inbound.freezeCount ?? 0;
+      const framesReceived = inbound.framesReceived ?? 0;
+      const keyFramesDecoded = inbound.keyFramesDecoded ?? 0;
+      const pliCount = inbound.pliCount ?? 0;
+      const nackCount = inbound.nackCount ?? 0;
+      const firCount = inbound.firCount ?? 0;
+      const packetsLost = inbound.packetsLost ?? 0;
+      const jitterBufferMs = inbound.jitterBufferEmittedCount > 0
+        ? ((inbound.jitterBufferDelay ?? 0) * 1000) / inbound.jitterBufferEmittedCount
+        : 0;
       const decodeMs = framesDecoded > 0 ? ((inbound.totalDecodeTime ?? 0) * 1000) / framesDecoded : 0;
 
       if (iosLatencyOverlay) {
         iosLatencyOverlay.style.display = 'block';
         iosLatencyOverlay.textContent =
           `RTC ${iosRtcSelectedProfile.toUpperCase()} ${fps.toFixed(1)} fps | ${(bitrateKbps / 1000).toFixed(2)} Mbps | state ${pc.connectionState}\n` +
-          `decoded ${framesDecoded} | dropped ${dropped} | freezes ${freezes}\n` +
-          `jitter ${jitterMs.toFixed(1)} ms | avg decode ${decodeMs.toFixed(2)} ms | port ${iosRtcSelectedPort || '--'}`;
+          `recv ${framesReceived} | decoded ${framesDecoded} | key ${keyFramesDecoded} | drop ${dropped} | freeze ${freezes}\n` +
+          `jitter ${jitterMs.toFixed(1)} ms | jb ${jitterBufferMs.toFixed(1)} ms | decode ${decodeMs.toFixed(2)} ms | PLI ${pliCount} NACK ${nackCount}`;
       }
 
       if (now - iosRtcStatsLogAt > 3000) {
@@ -1036,10 +1049,17 @@ function startIosRtcStats(pc: RTCPeerConnection) {
           port: iosRtcSelectedPort,
           fps: Number(fps.toFixed(1)),
           mbps: Number((bitrateKbps / 1000).toFixed(2)),
+          frames_received: framesReceived,
           frames_decoded: framesDecoded,
+          keyframes_decoded: keyFramesDecoded,
           frames_dropped: dropped,
           freeze_count: freezes,
+          pli_count: pliCount,
+          nack_count: nackCount,
+          fir_count: firCount,
+          packets_lost: packetsLost,
           jitter_ms: Number(jitterMs.toFixed(1)),
+          jitter_buffer_ms: Number(jitterBufferMs.toFixed(1)),
           avg_decode_ms: Number(decodeMs.toFixed(2)),
         });
       }
@@ -1118,14 +1138,26 @@ function startIosMovePump() {
     if (!iosPointerActive) return;
     if (!iosPendingMove) return;
     if (!iosZx || !iosZx.isOpen()) return;
+    const now = performance.now();
+    if (now - iosLastMoveSentAt < 50) return;
 
     // Only send the latest MOVE; drop backlog to avoid "rubber band" delay.
     const { x, y } = iosPendingMove;
+    if (iosLastSentMove) {
+      const dx = x - iosLastSentMove.x;
+      const dy = y - iosLastSentMove.y;
+      if (dx * dx + dy * dy < 9) {
+        iosPendingMove = undefined;
+        return;
+      }
+    }
     const sent = iosZx.tryTouchMove(0, x, y);
     if (sent) {
+      iosLastSentMove = { x, y };
+      iosLastMoveSentAt = now;
       iosPendingMove = undefined;
     }
-  }, 16);
+  }, 25);
 }
 
 function closeIosStream() {
@@ -1332,6 +1364,9 @@ function setupIosControlListeners() {
     const ok = await ensureIosZxOpen(800);
     if (!ok) return;
     iosPointerActive = true;
+    iosLastSentMove = undefined;
+    iosLastMoveSentAt = 0;
+    iosPendingMove = undefined;
     startIosMovePump();
     iosStreamFrame.setPointerCapture(e.pointerId);
     const { x, y } = mapPoint(e);
@@ -1341,8 +1376,8 @@ function setupIosControlListeners() {
   iosStreamFrame.addEventListener('pointermove', (e) => {
     if (!iosPointerActive) return;
     const now = performance.now();
-    // Throttle to 30 FPS; keep latest position in a single slot.
-    if (now - iosLastMoveAt < 33) return;
+    // Throttle control to reduce zxtouch pressure while keeping gestures responsive.
+    if (now - iosLastMoveAt < 50) return;
     iosLastMoveAt = now;
     const { x, y } = mapPoint(e);
     iosPendingMove = { x, y };
@@ -1352,6 +1387,8 @@ function setupIosControlListeners() {
     if (!iosPointerActive) return;
     iosPointerActive = false;
     iosPendingMove = undefined;
+    iosLastSentMove = undefined;
+    iosLastMoveSentAt = 0;
     try {
       iosStreamFrame.releasePointerCapture(e.pointerId);
     } catch {}
@@ -1361,10 +1398,7 @@ function setupIosControlListeners() {
 
   iosStreamFrame.addEventListener('pointerup', end);
   iosStreamFrame.addEventListener('pointercancel', end);
-  iosStreamFrame.addEventListener('pointerleave', (e) => {
-    if (!iosPointerActive) return;
-    end(e);
-  });
+  iosStreamFrame.addEventListener('lostpointercapture', end);
 }
 
 async function getScrcpyServer() {

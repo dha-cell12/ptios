@@ -18,6 +18,7 @@ export class ZxTouchWsClient {
   private keepaliveTimer: number | undefined;
   private lastTx = 0;
   private lastRx = 0;
+  private suppressKeepaliveUntil = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -52,6 +53,7 @@ export class ZxTouchWsClient {
       this.keepaliveTimer = window.setInterval(() => {
         if (this.ws.readyState !== WebSocket.OPEN) return;
         const now = Date.now();
+        if (now < this.suppressKeepaliveUntil) return;
         if (now - this.lastTx < 6000) return;
         try {
           // TASK_CURRENT_DIR (45) is safe and lightweight.
@@ -70,6 +72,10 @@ export class ZxTouchWsClient {
 
   bufferedAmount() {
     return this.ws.bufferedAmount;
+  }
+
+  suppressKeepalive(ms = 1500) {
+    this.suppressKeepaliveUntil = Math.max(this.suppressKeepaliveUntil, Date.now() + ms);
   }
 
   isStale(staleAfterMs = 20000) {
@@ -175,6 +181,7 @@ export class ZxTouchWsClient {
   }
 
   touch(type: number, fingerIndex: number, x: number, y: number) {
+    this.suppressKeepalive();
     // TASK_PERFORM_TOUCH (10)
     // legacy payload: "1{type}{finger:02}{x*10:05}{y*10:05}"
     const xi = Math.max(0, Math.round(x * 10));
@@ -184,6 +191,7 @@ export class ZxTouchWsClient {
   }
 
   tryTouchMove(fingerIndex: number, x: number, y: number) {
+    this.suppressKeepalive(1000);
     const xi = Math.max(0, Math.round(x * 10));
     const yi = Math.max(0, Math.round(y * 10));
     const payload = `12${String(fingerIndex).padStart(2, '0')}${String(xi).padStart(5, '0')}${String(yi).padStart(5, '0')}`;
