@@ -132,7 +132,10 @@ let iosRtcLastStats: {
   at: number;
   framesDecoded: number;
   bytesReceived: number;
+  freezes: number;
 } | undefined;
+let iosRtcRecoveryTimer: number | undefined;
+let iosRtcLastRecoveryAt = 0;
 
 type IosH264FrameMeta = {
   version: 1 | 2;
@@ -936,6 +939,10 @@ async function waitIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 3000)
 }
 
 function stopIosRtcPlayer() {
+  if (iosRtcRecoveryTimer !== undefined) {
+    clearTimeout(iosRtcRecoveryTimer);
+    iosRtcRecoveryTimer = undefined;
+  }
   const closeUrl = iosRtcHttpBase && iosRtcDeviceId
     ? `${iosRtcHttpBase}/ios/${encodeURIComponent(iosRtcDeviceId)}/rtc/close`
     : undefined;
@@ -988,6 +995,21 @@ function stopIosRtcPlayer() {
   } catch {}
 }
 
+function scheduleIosRtcRecovery(reason: string) {
+  if (iosStreamProfile !== 'rtc') return;
+  if (!iosCurrentDevice) return;
+  const now = performance.now();
+  if (iosRtcRecoveryTimer !== undefined) return;
+  if (now - iosRtcLastRecoveryAt < 5000) return;
+  iosRtcLastRecoveryAt = now;
+  console.warn('[ios-rtc] recovery scheduled', reason);
+  iosRtcRecoveryTimer = window.setTimeout(() => {
+    iosRtcRecoveryTimer = undefined;
+    if (iosStreamProfile !== 'rtc' || !iosCurrentDevice) return;
+    openIosStream(iosCurrentDevice, 'rtc');
+  }, 250);
+}
+
 function startIosRtcStats(pc: RTCPeerConnection) {
   if (iosRtcStatsTimer !== undefined) clearInterval(iosRtcStatsTimer);
   iosRtcLastStats = undefined;
@@ -1016,11 +1038,11 @@ function startIosRtcStats(pc: RTCPeerConnection) {
       const elapsedSec = iosRtcLastStats ? Math.max(0.001, (now - iosRtcLastStats.at) / 1000) : 0;
       const fps = iosRtcLastStats ? (framesDecoded - iosRtcLastStats.framesDecoded) / elapsedSec : 0;
       const bitrateKbps = iosRtcLastStats ? ((bytesReceived - iosRtcLastStats.bytesReceived) * 8) / elapsedSec / 1000 : 0;
-      iosRtcLastStats = { at: now, framesDecoded, bytesReceived };
 
       const jitterMs = (inbound.jitter ?? 0) * 1000;
       const dropped = inbound.framesDropped ?? 0;
       const freezes = inbound.freezeCount ?? 0;
+      const previousFreezes = iosRtcLastStats?.freezes ?? freezes;
       const framesReceived = inbound.framesReceived ?? 0;
       const keyFramesDecoded = inbound.keyFramesDecoded ?? 0;
       const pliCount = inbound.pliCount ?? 0;
@@ -1031,6 +1053,11 @@ function startIosRtcStats(pc: RTCPeerConnection) {
         ? ((inbound.jitterBufferDelay ?? 0) * 1000) / inbound.jitterBufferEmittedCount
         : 0;
       const decodeMs = framesDecoded > 0 ? ((inbound.totalDecodeTime ?? 0) * 1000) / framesDecoded : 0;
+      iosRtcLastStats = { at: now, framesDecoded, bytesReceived, freezes };
+
+      if (freezes > previousFreezes) {
+        console.warn('[ios-rtc] freeze detected', `${previousFreezes}->${freezes}`);
+      }
 
       if (iosLatencyOverlay) {
         iosLatencyOverlay.style.display = 'block';
