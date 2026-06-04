@@ -197,6 +197,7 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 58: // TASK_CELLULAR_DATA
         case 59: // TASK_VPN
         case 60: // TASK_HELLO_STATUS
+        case 61: // TASK_PERFORM_TOUCH_ACK
         case 90: // TASK_UPDATE_CACHE
             return true;
         default:
@@ -490,7 +491,7 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
     zx_logf("received task payload: %s", buffer);
     const int taskType = getTaskTypeFromBuffer(buffer);
 
-    // Touch is fire-and-forget: SpringBoard doesn't send a response.
+    // Legacy touch task 10 is fire-and-forget. ACK touch task 61 waits for SpringBoard.
     // Also, many clients (including Python) don't read any response for touches.
     // Returning no response prevents socket backpressure from building up.
     if (taskType == 10) {

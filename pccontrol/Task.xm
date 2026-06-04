@@ -56,6 +56,25 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             performTouchFromRawData(eventData);
         }
     }
+    else if (taskType == TASK_PERFORM_TOUCH_ACK)
+    {
+        @autoreleasepool{
+            CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+            char *sep = strstr((char *)eventData, ";;");
+            if (!sep) {
+                notifyClient((UInt8*)"1;;touch_ack_bad_payload\r\n", writeStreamRef);
+                return;
+            }
+
+            *sep = '\0';
+            char *seq = (char *)eventData;
+            UInt8 *touchData = (UInt8 *)(sep + 2);
+            performTouchFromRawData(touchData);
+            int dispatchUs = (int)((CFAbsoluteTimeGetCurrent() - start) * 1000000.0);
+            NSString *response = [NSString stringWithFormat:@"0;;%s;;%d\r\n", seq, dispatchUs];
+            notifyClient((UInt8*)[response UTF8String], writeStreamRef);
+        }
+    }
     else if (taskType == TASK_PROCESS_BRING_FOREGROUND) //bring to foreground
     {
         @autoreleasepool{   

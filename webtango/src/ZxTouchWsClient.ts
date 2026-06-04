@@ -19,6 +19,7 @@ export class ZxTouchWsClient {
   private lastTx = 0;
   private lastRx = 0;
   private suppressKeepaliveUntil = 0;
+  private touchSeq = 1;
 
   constructor(url: string) {
     this.url = url;
@@ -188,6 +189,30 @@ export class ZxTouchWsClient {
     const yi = Math.max(0, Math.round(y * 10));
     const payload = `1${type}${String(fingerIndex).padStart(2, '0')}${String(xi).padStart(5, '0')}${String(yi).padStart(5, '0')}`;
     this.sendRaw(`10${payload}\r\n`);
+  }
+
+  async touchAck(type: number, fingerIndex: number, x: number, y: number): Promise<{ seq: number; latencyMs: number; dispatchUs?: number }> {
+    this.suppressKeepalive();
+    await this.waitOpen();
+    const xi = Math.max(0, Math.round(x * 10));
+    const yi = Math.max(0, Math.round(y * 10));
+    const payload = `1${type}${String(fingerIndex).padStart(2, '0')}${String(xi).padStart(5, '0')}${String(yi).padStart(5, '0')}`;
+    const seq = this.touchSeq++;
+    const started = performance.now();
+    this.lastTx = Date.now();
+    this.ws.send(`61${seq};;${payload}\r\n`);
+
+    while (true) {
+      const line = await this.nextLine(1000);
+      const response = this.decodeResponse(line);
+      if (!response.ok || response.parts[0] !== String(seq)) continue;
+      const dispatchUs = Number(response.parts[1]);
+      return {
+        seq,
+        latencyMs: performance.now() - started,
+        dispatchUs: Number.isFinite(dispatchUs) ? dispatchUs : undefined,
+      };
+    }
   }
 
   tryTouchMove(fingerIndex: number, x: number, y: number) {

@@ -61,6 +61,15 @@ const iosModeFastButton = document.getElementById('ios-mode-fast') as HTMLButton
 const iosModeRtcButton = document.getElementById('ios-mode-rtc') as HTMLButtonElement;
 const iosModeWorkerButton = document.getElementById('ios-mode-worker') as HTMLButtonElement;
 const iosModeEcoButton = document.getElementById('ios-mode-eco') as HTMLButtonElement;
+const initialUrlParams = new URLSearchParams(window.location.search);
+const iosDisableControlForTest = initialUrlParams.get('iosNoControl') === '1';
+const iosControlMode = initialUrlParams.get('iosControlMode') === 'ephemeral' ? 'ephemeral' : 'persistent';
+const iosAckTouch = initialUrlParams.get('iosAckTouch') === '1';
+const iosAutoTouchMode = initialUrlParams.get('iosAutoTouch') || '';
+const iosAutoTouchCount = Number(initialUrlParams.get('iosAutoTouchCount') || 200);
+const iosAutoTouchSteps = Number(initialUrlParams.get('iosAutoTouchSteps') || 20);
+const iosAutoTouchMoveIntervalMs = Number(initialUrlParams.get('iosAutoTouchMoveIntervalMs') || 16);
+const iosAutoTouchPauseMs = Number(initialUrlParams.get('iosAutoTouchPauseMs') || 200);
 
 interface UnifiedDevice {
   id: string;
@@ -105,16 +114,22 @@ let iosPlayer: any | undefined;
 let iosZx: ZxTouchWsClient | undefined;
 let iosScreenSize: { width: number; height: number } = { width: 375, height: 667 };
 let iosPointerActive = false;
+let iosActivePointerId: number | undefined;
+let iosGestureSeq = 0;
+let iosGestureMoveCount = 0;
 let iosLastMoveAt = 0;
 let iosCurrentDeviceId: string | undefined;
 let iosCurrentWsBase: string | undefined;
 let iosLiveChaseTimer: number | undefined;
 let iosPendingMove: { x: number; y: number } | undefined;
 let iosMovePumpTimer: number | undefined;
+let iosEphemeralCloseTimer: number | undefined;
+let iosAutoTouchRunId = 0;
+let iosAutoTouchRunning = false;
 let iosCurrentDevice: UnifiedDevice | undefined;
 let iosLastSentMove: { x: number; y: number } | undefined;
 let iosLastMoveSentAt = 0;
-let iosTouchMoveIntervalMs = 100;
+let iosTouchMoveIntervalMs = 16;
 let iosRtcTouchThrottleUntil = 0;
 type IosStreamProfile = 'fast' | 'rtc' | 'worker' | 'eco';
 let iosStreamProfile: IosStreamProfile = 'fast';
@@ -185,19 +200,38 @@ function setIosMode(profile: IosStreamProfile) {
 }
 
 async function ensureIosZxOpen(timeoutMs = 800): Promise<boolean> {
+  if (iosEphemeralCloseTimer !== undefined) {
+    clearTimeout(iosEphemeralCloseTimer);
+    iosEphemeralCloseTimer = undefined;
+  }
   if (iosZx && iosZx.isOpen() && !iosZx.isStale()) return true;
   if (!iosCurrentWsBase || !iosCurrentDeviceId) return false;
 
   try {
     try {
-      iosZx?.close();
+    iosZx?.close();
     } catch {}
     iosZx = new ZxTouchWsClient(`${iosCurrentWsBase}/ios/${encodeURIComponent(iosCurrentDeviceId)}/zxtouch`);
     await iosZx.waitOpen(timeoutMs);
+    console.log('[ios-zxtouch] connected', iosControlMode);
     return true;
   } catch {
+    console.error('[ios-zxtouch] connect failed', iosControlMode);
     return false;
   }
+}
+
+function scheduleIosEphemeralControlClose(delayMs = 500) {
+  if (iosControlMode !== 'ephemeral') return;
+  if (iosEphemeralCloseTimer !== undefined) clearTimeout(iosEphemeralCloseTimer);
+  iosEphemeralCloseTimer = window.setTimeout(() => {
+    iosEphemeralCloseTimer = undefined;
+    try {
+      iosZx?.close();
+      console.log('[ios-zxtouch] closed ephemeral');
+    } catch {}
+    iosZx = undefined;
+  }, delayMs);
 }
 
 function startIosLiveChase() {
@@ -391,6 +425,8 @@ function renderIosDevices() {
 }
 
 function destroyIosPlayer() {
+  iosAutoTouchRunId += 1;
+  iosAutoTouchRunning = false;
   stopIosRtcPlayer();
 
   try {
@@ -429,13 +465,20 @@ function destroyIosPlayer() {
     iosZx?.close();
   } catch {}
   iosZx = undefined;
+  if (iosEphemeralCloseTimer !== undefined) {
+    clearTimeout(iosEphemeralCloseTimer);
+    iosEphemeralCloseTimer = undefined;
+  }
   iosCurrentDeviceId = undefined;
   iosCurrentWsBase = undefined;
   iosCurrentDevice = undefined;
+  iosPointerActive = false;
+  iosActivePointerId = undefined;
   iosPendingMove = undefined;
   iosLastSentMove = undefined;
   iosLastMoveSentAt = 0;
-  iosTouchMoveIntervalMs = 100;
+  iosGestureMoveCount = 0;
+  iosTouchMoveIntervalMs = 16;
   iosRtcTouchThrottleUntil = 0;
   if (iosMovePumpTimer !== undefined) {
     clearInterval(iosMovePumpTimer);
@@ -1076,14 +1119,6 @@ function startIosRtcStats(pc: RTCPeerConnection) {
         console.warn('[ios-rtc] freeze detected', `${previousFreezes}->${freezes}`);
       }
 
-      const sourceUnderPressure = fps > 0 && (fps < 22 || interFrameDelayMs > 55 || freezes > previousFreezes);
-      if (sourceUnderPressure) {
-        iosTouchMoveIntervalMs = 150;
-        iosRtcTouchThrottleUntil = now + 5000;
-      } else if (now > iosRtcTouchThrottleUntil) {
-        iosTouchMoveIntervalMs = 100;
-      }
-
       if (iosLatencyOverlay) {
         iosLatencyOverlay.style.display = 'block';
         iosLatencyOverlay.textContent =
@@ -1205,21 +1240,117 @@ function startIosMovePump() {
 
     // Only send the latest MOVE; drop backlog to avoid "rubber band" delay.
     const { x, y } = iosPendingMove;
-    if (iosLastSentMove) {
-      const dx = x - iosLastSentMove.x;
-      const dy = y - iosLastSentMove.y;
-      if (dx * dx + dy * dy < 9) {
-        iosPendingMove = undefined;
-        return;
-      }
-    }
-    const sent = iosZx.tryTouchMove(0, x, y);
+    const sent = iosZx.tryTouchMove(1, x, y);
     if (sent) {
       iosLastSentMove = { x, y };
       iosLastMoveSentAt = now;
+      iosGestureMoveCount += 1;
       iosPendingMove = undefined;
     }
   }, 25);
+}
+
+function delayMs(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function runIosAutoSwipePoints(runId: number, startY: number, endY: number) {
+  if (!iosZx?.isOpen()) return;
+  const x = iosScreenSize.width / 2;
+  iosZx.touch(1, 1, x, startY);
+  await delayMs(30);
+
+  const steps = Math.max(1, iosAutoTouchSteps);
+  for (let i = 1; i <= steps; i += 1) {
+    if (runId !== iosAutoTouchRunId || !iosZx?.isOpen()) return;
+    const t = i / steps;
+    const y = startY + (endY - startY) * t;
+    iosZx.touch(2, 1, x, y);
+    await delayMs(iosAutoTouchMoveIntervalMs);
+  }
+
+  if (runId === iosAutoTouchRunId && iosZx?.isOpen()) {
+    iosZx.touch(0, 1, x, endY);
+  }
+}
+
+async function runIosAutoTouchTest() {
+  if (!iosAutoTouchMode || iosAutoTouchRunning || iosDisableControlForTest) return;
+  if (iosStreamProfile !== 'rtc') return;
+
+  const runId = ++iosAutoTouchRunId;
+  iosAutoTouchRunning = true;
+  console.warn('[ios-auto-touch] started', {
+    mode: iosAutoTouchMode,
+    count: iosAutoTouchCount,
+    steps: iosAutoTouchSteps,
+    moveIntervalMs: iosAutoTouchMoveIntervalMs,
+    pauseMs: iosAutoTouchPauseMs,
+  });
+
+  try {
+    const ok = await ensureIosZxOpen(1200);
+    if (!ok) {
+      console.error('[ios-auto-touch] zxtouch unavailable');
+      return;
+    }
+    const size = await iosZx?.getScreenSize();
+    if (size) iosScreenSize = size;
+
+    const startY = iosScreenSize.height * 0.85;
+    const endY = iosScreenSize.height * 0.25;
+    const tapY = iosScreenSize.height * 0.5;
+    const x = iosScreenSize.width / 2;
+
+    for (let i = 0; i < iosAutoTouchCount; i += 1) {
+      if (runId !== iosAutoTouchRunId || iosStreamProfile !== 'rtc') break;
+      if (!iosZx?.isOpen()) {
+        const reopened = await ensureIosZxOpen(1200);
+        if (!reopened) {
+          console.error('[ios-auto-touch] reconnect failed at', i + 1);
+          break;
+        }
+      }
+
+      if (iosAutoTouchMode === 'tap') {
+        iosZx?.touch(1, 1, x, tapY);
+        await delayMs(80);
+        iosZx?.touch(0, 1, x, tapY);
+      } else if (iosAutoTouchMode === 'pan') {
+        iosZx?.touch(1, 1, x, startY);
+        await delayMs(30);
+        let currentY = startY;
+        for (let cycle = 0; cycle < 4; cycle += 1) {
+          const targetY = cycle % 2 === 0 ? endY : startY;
+          for (let step = 1; step <= Math.max(1, iosAutoTouchSteps); step += 1) {
+            if (runId !== iosAutoTouchRunId || !iosZx?.isOpen()) break;
+            const t = step / Math.max(1, iosAutoTouchSteps);
+            const y = currentY + (targetY - currentY) * t;
+            iosZx.touch(2, 1, x, y);
+            await delayMs(iosAutoTouchMoveIntervalMs);
+          }
+          currentY = targetY;
+          await delayMs(120);
+        }
+        iosZx?.touch(0, 1, x, currentY);
+      } else if (iosAutoTouchMode === 'bounce') {
+        await runIosAutoSwipePoints(runId, startY, endY);
+        await delayMs(120);
+        await runIosAutoSwipePoints(runId, endY, startY);
+      } else {
+        await runIosAutoSwipePoints(runId, startY, endY);
+      }
+
+      console.log('[ios-auto-touch]', iosAutoTouchMode, `${i + 1}/${iosAutoTouchCount}`);
+      await delayMs(iosAutoTouchPauseMs);
+    }
+  } finally {
+    if (runId === iosAutoTouchRunId) {
+      iosAutoTouchRunning = false;
+      scheduleIosEphemeralControlClose();
+      console.warn('[ios-auto-touch] finished');
+    }
+  }
 }
 
 function closeIosStream() {
@@ -1399,15 +1530,28 @@ async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 
 
   startIosLiveChase();
 
-  // Control channel: WS -> TCP 6000 (ZXTouch legacy framing)
-  const zxUrl = `${wsBase}/ios/${encodeURIComponent(device.id)}/zxtouch`;
-  iosZx = new ZxTouchWsClient(zxUrl);
-  iosZx.waitOpen().then(async () => {
-    const size = await iosZx?.getScreenSize();
-    if (size) iosScreenSize = size;
-  }).catch(() => {
-    // Control is optional; stream still works.
-  });
+  if (!iosDisableControlForTest && iosControlMode === 'persistent') {
+    // Control channel: WS -> TCP 6000 (ZXTouch legacy framing)
+    const zxUrl = `${wsBase}/ios/${encodeURIComponent(device.id)}/zxtouch`;
+    iosZx = new ZxTouchWsClient(zxUrl);
+    iosZx.waitOpen().then(async () => {
+      console.log('[ios-zxtouch] connected persistent');
+      const size = await iosZx?.getScreenSize();
+      if (size) iosScreenSize = size;
+    }).catch(() => {
+      // Control is optional; stream still works.
+    });
+  } else if (!iosDisableControlForTest) {
+    console.warn('[ios] zxtouch control using ephemeral mode');
+  } else {
+    console.warn('[ios] zxtouch control disabled by iosNoControl=1');
+  }
+
+  if (profile === 'rtc' && iosAutoTouchMode) {
+    window.setTimeout(() => {
+      runIosAutoTouchTest().catch((e) => console.error('[ios-auto-touch] failed', e));
+    }, 500);
+  }
 }
 
 function setupIosControlListeners() {
@@ -1423,31 +1567,48 @@ function setupIosControlListeners() {
   };
 
   iosStreamFrame.addEventListener('pointerdown', async (e) => {
+    if (iosDisableControlForTest) return;
+    if (iosPointerActive) return;
     const ok = await ensureIosZxOpen(800);
     if (!ok) return;
     iosPointerActive = true;
+    iosActivePointerId = e.pointerId;
+    iosGestureSeq += 1;
+    iosGestureMoveCount = 0;
     iosLastSentMove = undefined;
     iosLastMoveSentAt = 0;
+    iosLastMoveAt = 0;
     iosPendingMove = undefined;
     startIosMovePump();
-    iosStreamFrame.setPointerCapture(e.pointerId);
+    try {
+      iosStreamFrame.setPointerCapture(e.pointerId);
+    } catch {}
     const { x, y } = mapPoint(e);
-    iosZx?.touch(1, 0, x, y); // DOWN
+    if (iosAckTouch) {
+      iosZx?.touchAck(1, 1, x, y).then((ack) => {
+        console.log('[ios-manual-touch] down ack', { seq: iosGestureSeq, ackSeq: ack.seq, latencyMs: ack.latencyMs.toFixed(1), dispatchUs: ack.dispatchUs });
+      }).catch((err) => {
+        console.error('[ios-manual-touch] down ack failed', err);
+      });
+    } else {
+      iosZx?.touch(1, 1, x, y); // DOWN
+    }
+    console.log('[ios-manual-touch] down', { seq: iosGestureSeq, pointerId: e.pointerId, x: Math.round(x), y: Math.round(y), mode: iosControlMode, ack: iosAckTouch });
   });
 
   iosStreamFrame.addEventListener('pointermove', (e) => {
     if (!iosPointerActive) return;
-    const now = performance.now();
-    // Throttle control to reduce zxtouch/render-lock pressure while keeping gestures responsive.
-    if (now - iosLastMoveAt < iosTouchMoveIntervalMs) return;
-    iosLastMoveAt = now;
+    if (iosActivePointerId !== e.pointerId) return;
     const { x, y } = mapPoint(e);
     iosPendingMove = { x, y };
   });
 
-  const end = (e: PointerEvent) => {
+  const end = (e: PointerEvent, reason: string) => {
     if (!iosPointerActive) return;
+    if (iosActivePointerId !== e.pointerId) return;
+    const seq = iosGestureSeq;
     iosPointerActive = false;
+    iosActivePointerId = undefined;
     iosPendingMove = undefined;
     iosLastSentMove = undefined;
     iosLastMoveSentAt = 0;
@@ -1455,12 +1616,22 @@ function setupIosControlListeners() {
       iosStreamFrame.releasePointerCapture(e.pointerId);
     } catch {}
     const { x, y } = mapPoint(e);
-    iosZx?.touch(0, 0, x, y); // UP
+    if (iosAckTouch) {
+      iosZx?.touchAck(0, 1, x, y).then((ack) => {
+        console.log('[ios-manual-touch] up ack', { seq, ackSeq: ack.seq, latencyMs: ack.latencyMs.toFixed(1), dispatchUs: ack.dispatchUs });
+      }).catch((err) => {
+        console.error('[ios-manual-touch] up ack failed', err);
+      });
+    } else {
+      iosZx?.touch(0, 1, x, y); // UP
+    }
+    console.log('[ios-manual-touch] up', { seq, pointerId: e.pointerId, reason, x: Math.round(x), y: Math.round(y), moves: iosGestureMoveCount, mode: iosControlMode, ack: iosAckTouch });
+    iosGestureMoveCount = 0;
+    scheduleIosEphemeralControlClose();
   };
 
-  iosStreamFrame.addEventListener('pointerup', end);
-  iosStreamFrame.addEventListener('pointercancel', end);
-  iosStreamFrame.addEventListener('lostpointercapture', end);
+  iosStreamFrame.addEventListener('pointerup', (e) => end(e, 'pointerup'));
+  iosStreamFrame.addEventListener('pointercancel', (e) => end(e, 'pointercancel'));
 }
 
 async function getScrcpyServer() {

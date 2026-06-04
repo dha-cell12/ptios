@@ -67,6 +67,9 @@
 // Hello/status probe
 #define TASK_HELLO_STATUS 60
 
+// Touch with delivery ACK: seq;;legacy_touch_payload
+#define TASK_PERFORM_TOUCH_ACK 61
+
 
 #define TASK_UPDATE_CACHE 90
 
