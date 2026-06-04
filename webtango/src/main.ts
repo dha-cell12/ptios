@@ -1052,6 +1052,19 @@ function startIosRtcStats(pc: RTCPeerConnection) {
       const jitterBufferMs = inbound.jitterBufferEmittedCount > 0
         ? ((inbound.jitterBufferDelay ?? 0) * 1000) / inbound.jitterBufferEmittedCount
         : 0;
+      const jitterBufferTargetMs = inbound.jitterBufferEmittedCount > 0
+        ? ((inbound.jitterBufferTargetDelay ?? 0) * 1000) / inbound.jitterBufferEmittedCount
+        : 0;
+      const jitterBufferMinMs = inbound.jitterBufferEmittedCount > 0
+        ? ((inbound.jitterBufferMinimumDelay ?? 0) * 1000) / inbound.jitterBufferEmittedCount
+        : 0;
+      const interFrameDelayMs = framesDecoded > 0
+        ? ((inbound.totalInterFrameDelay ?? 0) * 1000) / framesDecoded
+        : 0;
+      const freezeDurationMs = (inbound.totalFreezesDuration ?? 0) * 1000;
+      const estimatedPlayoutMs = inbound.estimatedPlayoutTimestamp
+        ? inbound.estimatedPlayoutTimestamp - performance.timeOrigin
+        : 0;
       const decodeMs = framesDecoded > 0 ? ((inbound.totalDecodeTime ?? 0) * 1000) / framesDecoded : 0;
       iosRtcLastStats = { at: now, framesDecoded, bytesReceived, freezes };
 
@@ -1064,7 +1077,7 @@ function startIosRtcStats(pc: RTCPeerConnection) {
         iosLatencyOverlay.textContent =
           `RTC ${iosRtcSelectedProfile.toUpperCase()} ${fps.toFixed(1)} fps | ${(bitrateKbps / 1000).toFixed(2)} Mbps | state ${pc.connectionState}\n` +
           `recv ${framesReceived} | decoded ${framesDecoded} | key ${keyFramesDecoded} | drop ${dropped} | freeze ${freezes}\n` +
-          `jitter ${jitterMs.toFixed(1)} ms | jb ${jitterBufferMs.toFixed(1)} ms | decode ${decodeMs.toFixed(2)} ms | PLI ${pliCount} NACK ${nackCount}`;
+          `jitter ${jitterMs.toFixed(1)} ms | jb ${jitterBufferMs.toFixed(1)}/${jitterBufferTargetMs.toFixed(1)} ms | inter ${interFrameDelayMs.toFixed(1)} ms | decode ${decodeMs.toFixed(2)} ms`;
       }
 
       if (now - iosRtcStatsLogAt > 3000) {
@@ -1087,6 +1100,11 @@ function startIosRtcStats(pc: RTCPeerConnection) {
           packets_lost: packetsLost,
           jitter_ms: Number(jitterMs.toFixed(1)),
           jitter_buffer_ms: Number(jitterBufferMs.toFixed(1)),
+          jitter_buffer_target_ms: Number(jitterBufferTargetMs.toFixed(1)),
+          jitter_buffer_min_ms: Number(jitterBufferMinMs.toFixed(1)),
+          inter_frame_delay_ms: Number(interFrameDelayMs.toFixed(1)),
+          freeze_duration_ms: Number(freezeDurationMs.toFixed(1)),
+          estimated_playout_ms: Number(estimatedPlayoutMs.toFixed(1)),
           avg_decode_ms: Number(decodeMs.toFixed(2)),
         });
       }
@@ -1118,6 +1136,10 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
 
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.ontrack = (event) => {
+      try {
+        const receiver = event.receiver as RTCRtpReceiver & { jitterBufferTarget?: number };
+        if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0.01;
+      } catch {}
       const [stream] = event.streams;
       if (stream) {
         iosVideo.srcObject = stream;
