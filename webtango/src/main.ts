@@ -114,6 +114,8 @@ let iosMovePumpTimer: number | undefined;
 let iosCurrentDevice: UnifiedDevice | undefined;
 let iosLastSentMove: { x: number; y: number } | undefined;
 let iosLastMoveSentAt = 0;
+let iosTouchMoveIntervalMs = 100;
+let iosRtcTouchThrottleUntil = 0;
 type IosStreamProfile = 'fast' | 'rtc' | 'worker' | 'eco';
 let iosStreamProfile: IosStreamProfile = 'fast';
 let iosH264Socket: WebSocket | undefined;
@@ -433,6 +435,8 @@ function destroyIosPlayer() {
   iosPendingMove = undefined;
   iosLastSentMove = undefined;
   iosLastMoveSentAt = 0;
+  iosTouchMoveIntervalMs = 100;
+  iosRtcTouchThrottleUntil = 0;
   if (iosMovePumpTimer !== undefined) {
     clearInterval(iosMovePumpTimer);
     iosMovePumpTimer = undefined;
@@ -1072,6 +1076,14 @@ function startIosRtcStats(pc: RTCPeerConnection) {
         console.warn('[ios-rtc] freeze detected', `${previousFreezes}->${freezes}`);
       }
 
+      const sourceUnderPressure = fps > 0 && (fps < 22 || interFrameDelayMs > 55 || freezes > previousFreezes);
+      if (sourceUnderPressure) {
+        iosTouchMoveIntervalMs = 150;
+        iosRtcTouchThrottleUntil = now + 5000;
+      } else if (now > iosRtcTouchThrottleUntil) {
+        iosTouchMoveIntervalMs = 100;
+      }
+
       if (iosLatencyOverlay) {
         iosLatencyOverlay.style.display = 'block';
         iosLatencyOverlay.textContent =
@@ -1088,6 +1100,7 @@ function startIosRtcStats(pc: RTCPeerConnection) {
           profile: iosRtcSelectedProfile,
           port: iosRtcSelectedPort,
           fps: Number(fps.toFixed(1)),
+          touch_move_interval_ms: iosTouchMoveIntervalMs,
           mbps: Number((bitrateKbps / 1000).toFixed(2)),
           frames_received: framesReceived,
           frames_decoded: framesDecoded,
@@ -1188,7 +1201,7 @@ function startIosMovePump() {
     if (!iosPendingMove) return;
     if (!iosZx || !iosZx.isOpen()) return;
     const now = performance.now();
-    if (now - iosLastMoveSentAt < 50) return;
+    if (now - iosLastMoveSentAt < iosTouchMoveIntervalMs) return;
 
     // Only send the latest MOVE; drop backlog to avoid "rubber band" delay.
     const { x, y } = iosPendingMove;
@@ -1425,8 +1438,8 @@ function setupIosControlListeners() {
   iosStreamFrame.addEventListener('pointermove', (e) => {
     if (!iosPointerActive) return;
     const now = performance.now();
-    // Throttle control to reduce zxtouch pressure while keeping gestures responsive.
-    if (now - iosLastMoveAt < 50) return;
+    // Throttle control to reduce zxtouch/render-lock pressure while keeping gestures responsive.
+    if (now - iosLastMoveAt < iosTouchMoveIntervalMs) return;
     iosLastMoveAt = now;
     const { x, y } = mapPoint(e);
     iosPendingMove = { x, y };

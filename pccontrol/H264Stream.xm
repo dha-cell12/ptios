@@ -61,7 +61,7 @@ static const ZXH264Profile kH264ProfileRaw = {
     .width = 640,
     .height = 360,
     .targetFPS = 30,
-    .minFPS = 15,
+    .minFPS = 24,
     .keyframeIntervalSeconds = 0,
     .averageBitrate = 2500000,
     .rawAnnexB = true,
@@ -83,7 +83,7 @@ static const ZXH264Profile kH264ProfileRtcLan = {
     .width = 640,
     .height = 360,
     .targetFPS = 30,
-    .minFPS = 15,
+    .minFPS = 24,
     .keyframeIntervalSeconds = 0,
     .averageBitrate = 2500000,
     .rawAnnexB = true,
@@ -792,7 +792,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 double budget = 1.0 / (double)currentFPS;
                 double elapsed = CFAbsoluteTimeGetCurrent() - frameStart;
-                if (elapsed > budget * 1.2 && currentFPS > profile->minFPS) {
+                if (!profile->rawAnnexB && elapsed > budget * 1.2 && currentFPS > profile->minFPS) {
                     currentFPS--;
                 }
                 // If we are running cool and below desiredFPS, slowly recover.
