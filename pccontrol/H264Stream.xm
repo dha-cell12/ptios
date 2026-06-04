@@ -862,7 +862,8 @@ void startH264StreamServer(void) {
 
                 setClientSocketOptions(c);
 
-                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                long priority = profile->rawAnnexB ? DISPATCH_QUEUE_PRIORITY_HIGH : DISPATCH_QUEUE_PRIORITY_DEFAULT;
+                dispatch_async(dispatch_get_global_queue(priority, 0), ^{
                     streamLoop(c, profile);
                 });
             }

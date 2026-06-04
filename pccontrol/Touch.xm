@@ -17,6 +17,8 @@
 #define EVENT_X_INDEX 2
 #define EVENT_Y_INDEX 3
 
+#define ZX_TOUCH_MOVE_MIN_INTERVAL_US 120000ULL
+
 // device screen size
 static CGFloat device_screen_width = 0;
 static CGFloat device_screen_height = 0;
@@ -73,6 +75,7 @@ static void zx_touch_logf(const char *fmt, ...)
 
 // valid type x y
 static int eventsToAppend[MAX_FINGER_INDEX][4];
+static uint64_t gLastInjectedMoveUs = 0;
 
 /*
 get count from data array by socket
@@ -130,6 +133,25 @@ static float getTouchYFromDataArray(UInt8* dataArray, int index)
 		y += (dataArray[i+index*TOUCH_DATA_LEN] - '0')*pow(10, 13-i);
 	}
 	return y/10.0;
+}
+
+static uint64_t zx_touch_now_us(void)
+{
+    return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000000.0);
+}
+
+static bool zx_should_throttle_move(UInt8 *eventData)
+{
+    int count = getTouchCountFromDataArray(eventData);
+    if (count != 1) return false;
+    if (getTouchTypeFromDataArray(eventData, 0) != TOUCH_MOVE) return false;
+
+    uint64_t now = zx_touch_now_us();
+    if (gLastInjectedMoveUs != 0 && now - gLastInjectedMoveUs < ZX_TOUCH_MOVE_MIN_INTERVAL_US) {
+        return true;
+    }
+    gLastInjectedMoveUs = now;
+    return false;
 }
 
 /*
@@ -201,6 +223,10 @@ Perform touch events with data received from socket
 */
 void performTouchFromRawData(UInt8 *eventData)
 {
+    if (zx_should_throttle_move(eventData)) {
+        return;
+    }
+
     // generate a parent event
 	IOHIDEventRef parent = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), 3, 99, 1, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0); 
     IOHIDEventSetIntegerValue(parent , 0xb0019, 1); //set flags of parent event   flags: 0x20001 -> 0xa0001
