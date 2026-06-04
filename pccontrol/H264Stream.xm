@@ -61,7 +61,7 @@ static const ZXH264Profile kH264ProfileRaw = {
     .width = 640,
     .height = 360,
     .targetFPS = 30,
-    .minFPS = 24,
+    .minFPS = 15,
     .keyframeIntervalSeconds = 0,
     .averageBitrate = 2500000,
     .rawAnnexB = true,
@@ -83,7 +83,7 @@ static const ZXH264Profile kH264ProfileRtcLan = {
     .width = 640,
     .height = 360,
     .targetFPS = 30,
-    .minFPS = 24,
+    .minFPS = 15,
     .keyframeIntervalSeconds = 0,
     .averageBitrate = 2500000,
     .rawAnnexB = true,
@@ -792,7 +792,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 double budget = 1.0 / (double)currentFPS;
                 double elapsed = CFAbsoluteTimeGetCurrent() - frameStart;
-                if (!profile->rawAnnexB && elapsed > budget * 1.2 && currentFPS > profile->minFPS) {
+                if (elapsed > budget * 1.2 && currentFPS > profile->minFPS) {
                     currentFPS--;
                 }
                 // If we are running cool and below desiredFPS, slowly recover.
@@ -862,8 +862,7 @@ void startH264StreamServer(void) {
 
                 setClientSocketOptions(c);
 
-                long priority = profile->rawAnnexB ? DISPATCH_QUEUE_PRIORITY_HIGH : DISPATCH_QUEUE_PRIORITY_DEFAULT;
-                dispatch_async(dispatch_get_global_queue(priority, 0), ^{
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                     streamLoop(c, profile);
                 });
             }
