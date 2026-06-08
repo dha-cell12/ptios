@@ -54,6 +54,7 @@ static void zx_processClientBuffer(ZXClientContext *ctx);
 static void zx_writeAll(CFWriteStreamRef stream, NSData *data);
 static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId);
 static NSData *zx_frameJSONResponse(NSDictionary *obj);
+static void zx_logf(const char *fmt, ...);
 
 static dispatch_queue_t socketQueue()
 {
