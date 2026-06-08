@@ -33,7 +33,9 @@ typedef NS_ENUM(uint8_t, ZXWireProtocol) {
 };
 
 @interface ZXClientContext : NSObject
+@property(nonatomic, assign) CFReadStreamRef readStream;
 @property(nonatomic, assign) CFWriteStreamRef writeStream;
+@property(nonatomic, assign) CFRunLoopRef runLoop;
 @property(nonatomic, strong) NSMutableData *buffer;
 @property(nonatomic, assign) ZXWireProtocol protocol;
 @end
@@ -44,6 +46,7 @@ typedef NS_ENUM(uint8_t, ZXWireProtocol) {
 static const UInt8 kZXTPMagic[4] = {'Z', 'X', 'T', 'P'};
 static const UInt8 kZXTPVersion = 1;
 static const UInt32 kZXTPMaxBodySize = 1024 * 1024;
+static const NSUInteger kZXLegacyMaxBufferSize = 64 * 1024;
 static const size_t kZXTPHeaderSize = 10;
 
 static NSData *zx_handleLegacyRequestBytes(const char *buffer);
@@ -51,6 +54,45 @@ static void zx_processClientBuffer(ZXClientContext *ctx);
 static void zx_writeAll(CFWriteStreamRef stream, NSData *data);
 static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId);
 static NSData *zx_frameJSONResponse(NSDictionary *obj);
+
+static dispatch_queue_t socketQueue()
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = dispatch_queue_create("com.zjx.zxtouchd.socket", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+static void zx_cleanupClient(CFReadStreamRef readStream)
+{
+    if (!readStream || !socketClients) {
+        return;
+    }
+
+    NSNumber *key = @((long)readStream);
+    ZXClientContext *ctx = [socketClients objectForKey:key];
+    if (ctx) {
+        CFWriteStreamRef writeStream = ctx.writeStream;
+        CFRunLoopRef runLoop = ctx.runLoop ? ctx.runLoop : CFRunLoopGetCurrent();
+        [socketClients removeObjectForKey:key];
+
+        CFReadStreamSetClient(readStream, 0, NULL, NULL);
+        CFReadStreamUnscheduleFromRunLoop(readStream, runLoop, kCFRunLoopCommonModes);
+        CFReadStreamClose(readStream);
+        CFRelease(readStream);
+
+        if (writeStream) {
+            CFWriteStreamClose(writeStream);
+            CFRelease(writeStream);
+        }
+        zx_logf("client closed");
+        return;
+    }
+
+    // Already cleaned up. Avoid double-closing/releasing the CF stream from queued events.
+}
 
 // File logging for daemon debugging.
 // Logs are appended to: /var/mobile/Library/ZXTouch/zxtouchd.log
@@ -488,8 +530,10 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
     if (!buffer) {
         return nil;
     }
-    zx_logf("received task payload: %s", buffer);
     const int taskType = getTaskTypeFromBuffer(buffer);
+    if (taskType != 10 && taskType != 61) {
+        zx_logf("received task payload: %s", buffer);
+    }
 
     // Legacy touch task 10 is fire-and-forget. ACK touch task 61 waits for SpringBoard.
     // Also, many clients (including Python) don't read any response for touches.
@@ -547,7 +591,9 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
             if (responseBytes && responseLength > 0) {
                 response = [NSData dataWithBytes:responseBytes length:(NSUInteger)responseLength];
                 NSString *responseString = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding];
-                zx_logf("IPC response: %s", responseString ? [responseString UTF8String] : "(null)");
+                if (taskType != 61) {
+                    zx_logf("IPC response: %s", responseString ? [responseString UTF8String] : "(null)");
+                }
             } else {
                 zx_logf("IPC response empty");
                 response = zx_dataFromCString("0\r\n");
@@ -643,6 +689,12 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
         }
 
         if (ctx.protocol == ZXWireProtocolLegacyV0) {
+            if (ctx.buffer.length > kZXLegacyMaxBufferSize) {
+                zx_logf("legacy buffer too large; clearing client buffer");
+                [ctx.buffer setLength:0];
+                return;
+            }
+
             // Parse line-delimited requests.
             NSUInteger nl = NSNotFound;
             for (NSUInteger i = 0; i < len; i++) {
@@ -684,7 +736,14 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                 free(line);
             }
 
-            [ctx.buffer replaceBytesInRange:NSMakeRange(0, nl + 1) withBytes:NULL length:0];
+            NSUInteger removeLen = nl + 1;
+            if (ctx.buffer.length >= removeLen) {
+                [ctx.buffer replaceBytesInRange:NSMakeRange(0, removeLen) withBytes:NULL length:0];
+            } else {
+                zx_logf("legacy buffer changed during parse; clearing client buffer");
+                [ctx.buffer setLength:0];
+                return;
+            }
             continue;
         }
 
@@ -759,7 +818,14 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
             }
         }
 
-        [ctx.buffer replaceBytesInRange:NSMakeRange(0, kZXTPHeaderSize + (NSUInteger)bodyLen) withBytes:NULL length:0];
+        NSUInteger removeLen = kZXTPHeaderSize + (NSUInteger)bodyLen;
+        if (ctx.buffer.length >= removeLen) {
+            [ctx.buffer replaceBytesInRange:NSMakeRange(0, removeLen) withBytes:NULL length:0];
+        } else {
+            zx_logf("v1 buffer changed during parse; clearing client buffer");
+            [ctx.buffer setLength:0];
+            return;
+        }
     }
 }
 
@@ -805,6 +871,14 @@ void socketServer()
 
             _socket = NULL;
         }
+        if (address) {
+            CFRelease(address);
+        }
+
+        if (_socket == NULL) {
+            NSLog(@"### com.zjx.zxtouchd: failed to bind socket.");
+            return;
+        }
 
         socketClients = [[NSMutableDictionary alloc] init];
 
@@ -822,8 +896,16 @@ void socketServer()
 
 static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, void * clientCallBackInfo)
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    dispatch_async(socketQueue(), ^{
         @autoreleasepool{
+            if (eventype == kCFStreamEventEndEncountered || eventype == kCFStreamEventErrorOccurred) {
+                zx_cleanupClient(readStream);
+                return;
+            }
+            if (eventype != kCFStreamEventHasBytesAvailable) {
+                return;
+            }
+
             UInt8 readDataBuff[2048];
             memset(readDataBuff, 0, sizeof(readDataBuff));
 
@@ -832,15 +914,13 @@ static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, v
             if (hasRead > 0) {
                 ZXClientContext *ctx = [socketClients objectForKey:@((long)readStream)];
                 if (!ctx) {
-                    // Backward compatibility: if context missing, create one.
-                    ctx = [[ZXClientContext alloc] init];
-                    ctx.writeStream = NULL;
-                    ctx.buffer = [NSMutableData data];
-                    ctx.protocol = ZXWireProtocolUnknown;
-                    [socketClients setObject:ctx forKey:@((long)readStream)];
+                    zx_logf("read event for unknown client; ignoring");
+                    return;
                 }
                 [ctx.buffer appendBytes:readDataBuff length:(NSUInteger)hasRead];
                 zx_processClientBuffer(ctx);
+            } else {
+                zx_cleanupClient(readStream);
             }
         }
     });
@@ -872,26 +952,46 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
         CFStreamCreatePairWithSocket(kCFAllocatorDefault, nativeSocketHandle, &readStreamRef, &writeStreamRef);
 
         if (readStreamRef && writeStreamRef) {
+            CFReadStreamSetProperty(readStreamRef, kCFStreamPropertyShouldCloseNativeSocket, kCFBooleanTrue);
+            CFWriteStreamSetProperty(writeStreamRef, kCFStreamPropertyShouldCloseNativeSocket, kCFBooleanTrue);
+
             CFReadStreamOpen(readStreamRef);
             CFWriteStreamOpen(writeStreamRef);
 
             CFStreamClientContext context = {0, NULL, NULL, NULL };
 
-            if (!CFReadStreamSetClient(readStreamRef, kCFStreamEventHasBytesAvailable, readStream, &context)) {
+            CFOptionFlags events = kCFStreamEventHasBytesAvailable | kCFStreamEventEndEncountered | kCFStreamEventErrorOccurred;
+            if (!CFReadStreamSetClient(readStreamRef, events, readStream, &context)) {
                 NSLog(@"### com.zjx.zxtouchd: error 1");
+                CFReadStreamClose(readStreamRef);
+                CFWriteStreamClose(writeStreamRef);
+                CFRelease(readStreamRef);
+                CFRelease(writeStreamRef);
                 return;
             }
 
-            CFReadStreamScheduleWithRunLoop(readStreamRef, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
-
             ZXClientContext *ctx = [[ZXClientContext alloc] init];
+            ctx.readStream = readStreamRef;
             ctx.writeStream = writeStreamRef;
+            ctx.runLoop = CFRunLoopGetCurrent();
             ctx.buffer = [NSMutableData data];
             ctx.protocol = ZXWireProtocolUnknown;
-            [socketClients setObject:ctx forKey:@((long)readStreamRef)];
+            dispatch_sync(socketQueue(), ^{
+                [socketClients setObject:ctx forKey:@((long)readStreamRef)];
+            });
+
+            CFReadStreamScheduleWithRunLoop(readStreamRef, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
         }
         else
         {
+            if (readStreamRef) {
+                CFReadStreamClose(readStreamRef);
+                CFRelease(readStreamRef);
+            }
+            if (writeStreamRef) {
+                CFWriteStreamClose(writeStreamRef);
+                CFRelease(writeStreamRef);
+            }
             close(nativeSocketHandle);
         }
 
