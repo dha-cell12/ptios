@@ -68,12 +68,12 @@ static NSArray<NSString *> *zx_splitTaskParts(UInt8 *eventData)
     return [raw componentsSeparatedByString:@";;"];
 }
 
-static BOOL zx_handleNativeTap(UInt8 *eventData, NSError **err)
+static bool zx_handleNativeTap(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
     if (parts.count < 2) {
         if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native tap format: x;;y[;;duration_ms;;finger]\r\n"}];
-        return NO;
+        return false;
     }
     CGFloat x = [parts[0] floatValue];
     CGFloat y = [parts[1] floatValue];
@@ -83,15 +83,15 @@ static BOOL zx_handleNativeTap(UInt8 *eventData, NSError **err)
     zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
     if (durationMs > 0) usleep((useconds_t)durationMs * 1000);
     zx_performSingleTouch(TOUCH_UP, finger, x, y);
-    return YES;
+    return true;
 }
 
-static BOOL zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
+static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
     if (parts.count < 5) {
         if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native swipe format: x1;;y1;;x2;;y2;;duration_ms[;;finger;;steps]\r\n"}];
-        return NO;
+        return false;
     }
     CGFloat x1 = [parts[0] floatValue];
     CGFloat y1 = [parts[1] floatValue];
@@ -113,38 +113,38 @@ static BOOL zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
     }
     if (sleepPerStep > 0) usleep((useconds_t)sleepPerStep);
     zx_performSingleTouch(TOUCH_UP, finger, x2, y2);
-    return YES;
+    return true;
 }
 
-static BOOL zx_parseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
+static bool zx_parseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
 {
     NSArray<NSString *> *xy = [text componentsSeparatedByString:@","];
-    if (xy.count != 2) return NO;
+    if (xy.count != 2) return false;
     if (x) *x = [xy[0] floatValue];
     if (y) *y = [xy[1] floatValue];
-    return YES;
+    return true;
 }
 
-static BOOL zx_handleNativeGesture(UInt8 *eventData, NSError **err)
+static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
     if (parts.count < 3) {
         if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture format: finger;;duration_ms;;x,y|x,y|...\r\n"}];
-        return NO;
+        return false;
     }
     int finger = [parts[0] intValue];
     int durationMs = [parts[1] intValue];
     NSArray<NSString *> *pointTexts = [parts[2] componentsSeparatedByString:@"|"];
     if (pointTexts.count < 2) {
         if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture requires at least two points.\r\n"}];
-        return NO;
+        return false;
     }
     if (durationMs < 0) durationMs = 0;
 
     CGFloat x = 0, y = 0;
     if (!zx_parseGesturePoint(pointTexts[0], &x, &y)) {
         if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid first gesture point.\r\n"}];
-        return NO;
+        return false;
     }
     zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
 
@@ -154,21 +154,21 @@ static BOOL zx_handleNativeGesture(UInt8 *eventData, NSError **err)
         if (!zx_parseGesturePoint(pointTexts[i], &x, &y)) {
             zx_performSingleTouch(TOUCH_UP, finger, x, y);
             if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid gesture point.\r\n"}];
-            return NO;
+            return false;
         }
         zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
         if (sleepPerInterval > 0) usleep((useconds_t)sleepPerInterval);
     }
     zx_performSingleTouch(TOUCH_UP, finger, x, y);
-    return YES;
+    return true;
 }
 
-static BOOL zx_handleNativeBatch(UInt8 *eventData, NSError **err)
+static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
 {
     NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData];
     if (!raw || raw.length == 0) {
         if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native batch format: command||command, command starts with 10/62/63/64.\r\n"}];
-        return NO;
+        return false;
     }
 
     NSArray<NSString *> *commands = [raw componentsSeparatedByString:@"||"];
@@ -180,17 +180,17 @@ static BOOL zx_handleNativeBatch(UInt8 *eventData, NSError **err)
         if (task == TASK_PERFORM_TOUCH) {
             performTouchFromRawData(payloadBytes);
         } else if (task == TASK_NATIVE_TAP) {
-            if (!zx_handleNativeTap(payloadBytes, err)) return NO;
+            if (!zx_handleNativeTap(payloadBytes, err)) return false;
         } else if (task == TASK_NATIVE_SWIPE) {
-            if (!zx_handleNativeSwipe(payloadBytes, err)) return NO;
+            if (!zx_handleNativeSwipe(payloadBytes, err)) return false;
         } else if (task == TASK_NATIVE_GESTURE) {
-            if (!zx_handleNativeGesture(payloadBytes, err)) return NO;
+            if (!zx_handleNativeGesture(payloadBytes, err)) return false;
         } else {
             if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported batch task: %d\r\n", task]}];
-            return NO;
+            return false;
         }
     }
-    return YES;
+    return true;
 }
 
 /**
