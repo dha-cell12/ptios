@@ -70,6 +70,12 @@
 // Touch with delivery ACK: seq;;legacy_touch_payload
 #define TASK_PERFORM_TOUCH_ACK 61
 
+// Native high-level touch commands executed inside SpringBoard.
+#define TASK_NATIVE_TAP 62
+#define TASK_NATIVE_SWIPE 63
+#define TASK_NATIVE_GESTURE 64
+#define TASK_NATIVE_BATCH 65
+
 
 #define TASK_UPDATE_CACHE 90
 

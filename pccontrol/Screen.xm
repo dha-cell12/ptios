@@ -368,9 +368,12 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         return nil;
     }
 
-    CGImageRef croppedRef = CGImageCreateWithImageInRect(screenshotRef, targetRegion);
-    CGImageRelease(screenshotRef);
-    if (!croppedRef)
+    BOOL isFullFrame = CGRectEqualToRect(targetRegion, bounds);
+    CGImageRef outputRef = isFullFrame ? screenshotRef : CGImageCreateWithImageInRect(screenshotRef, targetRegion);
+    if (!isFullFrame) {
+        CGImageRelease(screenshotRef);
+    }
+    if (!outputRef)
     {
         if (error)
         {
@@ -381,10 +384,15 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         return nil;
     }
 
-    UIImage *image = [UIImage imageWithCGImage:croppedRef];
-    CGImageRelease(croppedRef);
+    UIImage *image = [UIImage imageWithCGImage:outputRef];
+    CGImageRelease(outputRef);
 
-    if (![UIImagePNGRepresentation(image) writeToFile:targetPath atomically:NO])
+    NSString *ext = [[targetPath pathExtension] lowercaseString];
+    NSData *encoded = ([ext isEqualToString:@"jpg"] || [ext isEqualToString:@"jpeg"])
+        ? UIImageJPEGRepresentation(image, 0.75)
+        : UIImagePNGRepresentation(image);
+
+    if (!encoded || ![encoded writeToFile:targetPath atomically:NO])
     {
         if (error)
         {

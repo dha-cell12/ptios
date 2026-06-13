@@ -65,6 +65,7 @@ const initialUrlParams = new URLSearchParams(window.location.search);
 const iosDisableControlForTest = initialUrlParams.get('iosNoControl') === '1';
 const iosControlMode = initialUrlParams.get('iosControlMode') === 'ephemeral' ? 'ephemeral' : 'persistent';
 const iosAckTouch = initialUrlParams.get('iosAckTouch') === '1';
+const iosRtcForceRelay = initialUrlParams.get('rtcForceRelay') === '1';
 const iosAutoTouchMode = initialUrlParams.get('iosAutoTouch') || '';
 const iosAutoTouchCount = Number(initialUrlParams.get('iosAutoTouchCount') || 200);
 const iosAutoTouchSteps = Number(initialUrlParams.get('iosAutoTouchSteps') || 20);
@@ -79,6 +80,11 @@ interface UnifiedDevice {
   meta: any;
   capabilities: string[];
 }
+
+type RtcIceConfig = {
+  iceServers: RTCIceServer[];
+  iceTransportPolicy?: RTCIceTransportPolicy;
+};
 
 interface DeviceConnection {
   serial: string;
@@ -132,7 +138,7 @@ let iosLastMoveSentAt = 0;
 let iosTouchMoveIntervalMs = 16;
 let iosRtcTouchThrottleUntil = 0;
 type IosStreamProfile = 'fast' | 'rtc' | 'worker' | 'eco';
-let iosStreamProfile: IosStreamProfile = 'fast';
+let iosStreamProfile: IosStreamProfile = 'rtc';
 let iosH264Socket: WebSocket | undefined;
 let iosH264Decoder: VideoDecoder | undefined;
 let iosH264Worker: Worker | undefined;
@@ -197,6 +203,19 @@ function setIosMode(profile: IosStreamProfile) {
   iosModeRtcButton?.classList.toggle('active', profile === 'rtc');
   iosModeWorkerButton?.classList.toggle('active', profile === 'worker');
   iosModeEcoButton?.classList.toggle('active', profile === 'eco');
+}
+
+function iosBrowserSupportsRtc() {
+  return typeof RTCPeerConnection !== 'undefined';
+}
+
+function iosDeviceSupportsRtc(device?: UnifiedDevice) {
+  if (!device) return true;
+  return device.capabilities?.includes('stream_rtc_auto') === true;
+}
+
+function getDefaultIosControlProfile(device?: UnifiedDevice): IosStreamProfile {
+  return iosBrowserSupportsRtc() && iosDeviceSupportsRtc(device) ? 'rtc' : 'fast';
 }
 
 async function ensureIosZxOpen(timeoutMs = 800): Promise<boolean> {
@@ -318,8 +337,8 @@ function updateIosDeviceCount() {
 
 function deriveBridgeBases(bridgeWsUrl: string): { httpBase: string; wsBase: string } {
   const u = new URL(bridgeWsUrl);
-  const wsProto = u.protocol; // ws: | wss:
-  const httpProto = wsProto === 'wss:' ? 'https:' : 'http:';
+  const httpProto = u.protocol === 'wss:' || u.protocol === 'https:' ? 'https:' : 'http:';
+  const wsProto = u.protocol === 'wss:' || u.protocol === 'https:' ? 'wss:' : 'ws:';
 
   // If deployed behind a reverse proxy with a prefix, keep it.
   // Example: wss://example.com/prefix/bridge/ -> basePath = /prefix
@@ -331,6 +350,15 @@ function deriveBridgeBases(bridgeWsUrl: string): { httpBase: string; wsBase: str
     httpBase: `${httpProto}//${u.host}${basePath}`,
     wsBase: `${wsProto}//${u.host}${basePath}`,
   };
+}
+
+function normalizeBridgeWebSocketUrl(bridgeUrl: string): string {
+  const u = new URL(bridgeUrl.trim());
+  u.protocol = u.protocol === 'https:' || u.protocol === 'wss:' ? 'wss:' : 'ws:';
+  if (u.pathname.endsWith('/bridge/')) {
+    u.pathname = u.pathname.slice(0, -1);
+  }
+  return u.toString().replace(/\/$/, '');
 }
 
 async function refreshIosDevices() {
@@ -412,10 +440,10 @@ function renderIosDevices() {
     badge.className = `status-badge ${online ? 'badge-online' : 'badge-offline'}`;
     thumb.src = "https://images.unsplash.com/photo-1616348436168-de43ad0db179?auto=format&fit=crop&q=80&w=400";
 
-    card.addEventListener('dblclick', () => openIosStream(d, 'fast'));
+    card.addEventListener('dblclick', () => openIosStream(d, getDefaultIosControlProfile(d)));
     viewBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openIosStream(d, 'fast');
+      openIosStream(d, getDefaultIosControlProfile(d));
     });
 
     iosDevicesContainer.appendChild(clone);
@@ -985,6 +1013,25 @@ async function waitIceGatheringComplete(pc: RTCPeerConnection, timeoutMs = 3000)
   ]);
 }
 
+async function fetchRtcIceConfig(httpBase: string): Promise<RtcIceConfig> {
+  try {
+    const url = `${httpBase}/rtc/config${iosRtcForceRelay ? '?forceRelay=1' : ''}`;
+    console.log('[ios-rtc] fetching ICE config', url);
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const config = await resp.json();
+    const iceServers = Array.isArray(config.iceServers) ? config.iceServers : [];
+    const policy = config.iceTransportPolicy === 'relay' ? 'relay' : 'all';
+    return { iceServers, iceTransportPolicy: policy };
+  } catch (e) {
+    console.warn('[ios-rtc] ICE config unavailable, using local defaults', e);
+    return {
+      iceServers: [],
+      iceTransportPolicy: iosRtcForceRelay ? 'relay' : 'all',
+    };
+  }
+}
+
 function stopIosRtcPlayer() {
   if (iosRtcRecoveryTimer !== undefined) {
     clearTimeout(iosRtcRecoveryTimer);
@@ -1069,15 +1116,30 @@ function startIosRtcStats(pc: RTCPeerConnection) {
   iosRtcStatsTimer = window.setInterval(async () => {
     if (pc !== iosRtcPeer || pc.connectionState === 'closed') return;
 
-    try {
-      const stats = await pc.getStats();
-      let inbound: any;
-      stats.forEach((report: any) => {
-        if (report.type === 'inbound-rtp' && report.kind === 'video' && !report.isRemote) {
-          inbound = report;
-        }
-      });
-      if (!inbound) return;
+      try {
+        const stats = await pc.getStats();
+        let inbound: any;
+        let selectedPair: any;
+        const reports = new Map<string, any>();
+        stats.forEach((report: any) => {
+          reports.set(report.id, report);
+          if (report.type === 'inbound-rtp' && report.kind === 'video' && !report.isRemote) {
+            inbound = report;
+          }
+          if (report.type === 'transport' && report.selectedCandidatePairId) {
+            selectedPair = stats.get(report.selectedCandidatePairId);
+          }
+          if (report.type === 'candidate-pair' && report.selected) {
+            selectedPair = report;
+          }
+        });
+        if (!inbound) return;
+
+        const localCandidate = selectedPair?.localCandidateId ? reports.get(selectedPair.localCandidateId) : undefined;
+        const remoteCandidate = selectedPair?.remoteCandidateId ? reports.get(selectedPair.remoteCandidateId) : undefined;
+        const localCandidateType = localCandidate?.candidateType || '--';
+        const remoteCandidateType = remoteCandidate?.candidateType || '--';
+        const roundTripMs = selectedPair?.currentRoundTripTime ? selectedPair.currentRoundTripTime * 1000 : 0;
 
       const now = performance.now();
       const framesDecoded = inbound.framesDecoded ?? 0;
@@ -1124,6 +1186,7 @@ function startIosRtcStats(pc: RTCPeerConnection) {
         iosLatencyOverlay.textContent =
           `RTC ${iosRtcSelectedProfile.toUpperCase()} ${fps.toFixed(1)} fps | ${(bitrateKbps / 1000).toFixed(2)} Mbps | state ${pc.connectionState}\n` +
           `recv ${framesReceived} | decoded ${framesDecoded} | key ${keyFramesDecoded} | drop ${dropped} | freeze ${freezes}\n` +
+          `ice ${localCandidateType}->${remoteCandidateType} | rtt ${roundTripMs.toFixed(1)} ms\n` +
           `jitter ${jitterMs.toFixed(1)} ms | jb ${jitterBufferMs.toFixed(1)}/${jitterBufferTargetMs.toFixed(1)} ms | inter ${interFrameDelayMs.toFixed(1)} ms | decode ${decodeMs.toFixed(2)} ms`;
       }
 
@@ -1134,6 +1197,10 @@ function startIosRtcStats(pc: RTCPeerConnection) {
           ice_state: pc.iceConnectionState,
           profile: iosRtcSelectedProfile,
           port: iosRtcSelectedPort,
+          local_candidate_type: localCandidateType,
+          remote_candidate_type: remoteCandidateType,
+          candidate_pair_state: selectedPair?.state || '--',
+          current_round_trip_time_ms: Number(roundTripMs.toFixed(1)),
           fps: Number(fps.toFixed(1)),
           touch_move_interval_ms: iosTouchMoveIntervalMs,
           mbps: Number((bitrateKbps / 1000).toFixed(2)),
@@ -1173,8 +1240,15 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
   if (iosWorkerCanvas) iosWorkerCanvas.style.display = 'none';
 
   try {
+    const iceConfig = await fetchRtcIceConfig(httpBase);
+    console.log('[ios-rtc] ice config', {
+      servers: iceConfig.iceServers.length,
+      policy: iceConfig.iceTransportPolicy,
+      forceRelay: iosRtcForceRelay,
+    });
     const pc = new RTCPeerConnection({
-      iceServers: [],
+      iceServers: iceConfig.iceServers,
+      iceTransportPolicy: iceConfig.iceTransportPolicy ?? 'all',
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
     });
@@ -1211,9 +1285,12 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
     const resp = await fetch(`${httpBase}/ios/${encodeURIComponent(deviceId)}/rtc/offer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sdp: localDescription, profile: 'auto' }),
+      body: JSON.stringify({ sdp: localDescription, profile: 'auto', iceTransportPolicy: iceConfig.iceTransportPolicy ?? 'all' }),
     });
-    if (!resp.ok) throw new Error(`rtc offer failed: HTTP ${resp.status}`);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new Error(`rtc offer failed: HTTP ${resp.status}${body ? `: ${body}` : ''}`);
+    }
 
     const answer = await resp.json();
     iosRtcSelectedProfile = answer.profile || 'auto';
@@ -1428,7 +1505,7 @@ function startIosGridWorkerStream(device: UnifiedDevice, canvas: HTMLCanvasEleme
   }
 }
 
-async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 'fast') {
+async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = getDefaultIosControlProfile(device)) {
   const bridgeWsUrl = endpointInput?.value?.trim();
   if (!bridgeWsUrl) return;
 
@@ -1446,6 +1523,11 @@ async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 
   await new Promise((r) => setTimeout(r, 350));
   iosStreamModal.style.display = 'flex';
 
+  if (profile === 'rtc' && (!iosBrowserSupportsRtc() || !iosDeviceSupportsRtc(device))) {
+    console.warn('[ios-rtc] unavailable, opening Fast instead');
+    profile = 'fast';
+  }
+
   setIosMode(profile);
   iosCurrentDeviceId = device.id;
   iosCurrentWsBase = wsBase;
@@ -1457,6 +1539,12 @@ async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 
     usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264`, false);
   } else if (profile === 'rtc') {
     usingH264FastPath = await startIosRtcPlayer(httpBase, device.id);
+    if (!usingH264FastPath) {
+      console.warn('[ios-rtc] signaling/start failed, falling back to Fast');
+      profile = 'fast';
+      setIosMode(profile);
+      usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264`, false);
+    }
   } else if (profile === 'worker') {
     usingH264FastPath = await startIosH264Player(`${wsBase}/ios/${encodeURIComponent(device.id)}/h264-worker`, true);
   }
@@ -1815,7 +1903,7 @@ async function connectToDevice(device: AdbServerClient.Device) {
       console.log(`[${device.serial}] Server client healthy`);
     } catch (e) {
       console.warn(`[${device.serial}] Server client stale, recreating...`, e);
-      const url = endpointInput.value.trim();
+      const url = normalizeBridgeWebSocketUrl(endpointInput.value.trim());
       const connector = new AdbWebSocketConnector(url);
       serverClient = new AdbServerClient(connector);
     }
@@ -2341,7 +2429,7 @@ async function startMirrorForDevice(deviceConnection: DeviceConnection) {
       if (errorMessage.includes('timeout')) {
         console.warn(`[${serial}] Timeout detected, recreating connection and retrying...`);
 
-        const url = endpointInput.value.trim();
+        const url = normalizeBridgeWebSocketUrl(endpointInput.value.trim());
         const connector = new AdbWebSocketConnector(url);
         serverClient = new AdbServerClient(connector);
         const freshAdb = await serverClient.createAdb({ serial: serial });
@@ -2648,7 +2736,7 @@ async function connect() {
 
   try {
     isConnecting = true;
-    const url = endpointInput.value.trim();
+    const url = normalizeBridgeWebSocketUrl(endpointInput.value.trim());
     connectSessionStart = performance.now();
     setStatus('Connecting…', false);
 
@@ -2983,14 +3071,14 @@ const bridgeParam = urlParams.get('bridge');
 if (bridgeParam) {
   endpointInput.value = bridgeParam;
 } else {
-  endpointInput.value = `${defaultHost.replace('8000', '15037')}/bridge/`;
+      endpointInput.value = `${defaultHost.replace('8000', '15037')}/bridge`;
 }
 
 setStatus('Disconnected', false);
 
 setupIosControlListeners();
 
-setIosMode('fast');
+setIosMode(getDefaultIosControlProfile());
 
 // iOS discovery runs independently from Android ADB connect.
 if (iosDevicesContainer) {
@@ -3130,7 +3218,7 @@ function renderIosScreenViewCards() {
       iosModalOpenedFromGridDeviceId = device.id;
       iosGridSuspendedForControl.add(device.id);
       stopIosGridStream(device.id);
-      openIosStream(device, 'fast');
+      openIosStream(device, getDefaultIosControlProfile(device));
     };
 
     const isMini = screenScale < 0.6;

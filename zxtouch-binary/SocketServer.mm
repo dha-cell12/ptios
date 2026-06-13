@@ -7,6 +7,7 @@
 #include <dispatch/dispatch.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <netinet/tcp.h>
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -55,6 +56,7 @@ static void zx_writeAll(CFWriteStreamRef stream, NSData *data);
 static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId);
 static NSData *zx_frameJSONResponse(NSDictionary *obj);
 static void zx_logf(const char *fmt, ...);
+static bool zx_isHotPathPayload(const char *payload);
 
 static dispatch_queue_t socketQueue()
 {
@@ -175,6 +177,20 @@ static dispatch_queue_t ipcQueue()
     return queue;
 }
 
+static bool zx_isHotPathPayload(const char *payload)
+{
+    if (!payload) return false;
+    const char *task = strstr(payload, kZXTouchIPCCommandTaskPrefix);
+    if (!task) return false;
+    task += strlen(kZXTouchIPCCommandTaskPrefix);
+    return strncmp(task, "10", 2) == 0 ||
+           strncmp(task, "61", 2) == 0 ||
+           strncmp(task, "62", 2) == 0 ||
+           strncmp(task, "63", 2) == 0 ||
+           strncmp(task, "64", 2) == 0 ||
+           strncmp(task, "65", 2) == 0;
+}
+
 static int getTaskTypeFromBuffer(const char *buffer)
 {
     if (!buffer || !isdigit(buffer[0]) || !isdigit(buffer[1])) {
@@ -241,6 +257,10 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 59: // TASK_VPN
         case 60: // TASK_HELLO_STATUS
         case 61: // TASK_PERFORM_TOUCH_ACK
+        case 62: // TASK_NATIVE_TAP
+        case 63: // TASK_NATIVE_SWIPE
+        case 64: // TASK_NATIVE_GESTURE
+        case 65: // TASK_NATIVE_BATCH
         case 90: // TASK_UPDATE_CACHE
             return true;
         default:
@@ -310,7 +330,10 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
     }
 
     CFDataRef messageData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)payload, strlen(payload));
-    NSLog(@"### com.zjx.zxtouchd: IPC send payload: %s", payload);
+    bool hotPathPayload = zx_isHotPathPayload(payload);
+    if (!hotPathPayload) {
+        NSLog(@"### com.zjx.zxtouchd: IPC send payload: %s", payload);
+    }
     CFDataRef *responseTarget = waitForResponse ? &responseData : NULL;
     const CFTimeInterval sendTimeout = waitForResponse ? 5.0 : 1.5;
     SInt32 result = CFMessagePortSendRequest(remotePort,
@@ -322,7 +345,7 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
                                              responseTarget);
     if (result != kCFMessagePortSuccess) {
         NSLog(@"### com.zjx.zxtouchd: IPC send failed with code %d", (int)result);
-    } else {
+    } else if (!hotPathPayload) {
         NSLog(@"### com.zjx.zxtouchd: IPC send success");
     }
 
@@ -933,6 +956,8 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
     if (kCFSocketAcceptCallBack == type) {
 
         CFSocketNativeHandle  nativeSocketHandle = *(CFSocketNativeHandle *)data;
+        int one = 1;
+        setsockopt(nativeSocketHandle, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
         uint8_t name[SOCK_MAXADDRLEN];
         socklen_t namelen = sizeof(name);

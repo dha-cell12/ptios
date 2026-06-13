@@ -79,8 +79,27 @@ get count from data array by socket
 */
 static int getTouchCountFromDataArray(UInt8* dataArray)
 {
+	if (!dataArray || dataArray[0] < '0' || dataArray[0] > '9') {
+        return 0;
+    }
 	int count = (dataArray[0] - '0');
+	if (count > MAX_FINGER_INDEX) {
+        count = MAX_FINGER_INDEX;
+    }
 	return count;
+}
+
+static inline int zx_parseFixedDigits(UInt8 *dataArray, int start, int count)
+{
+    int value = 0;
+    for (int i = 0; i < count; i++) {
+        UInt8 ch = dataArray[start + i];
+        if (ch < '0' || ch > '9') {
+            return 0;
+        }
+        value = value * 10 + (ch - '0');
+    }
+    return value;
 }
 
 /*
@@ -97,11 +116,7 @@ get index from data array by socket
 */
 static int getTouchIndexFromDataArray(UInt8* dataArray, int index)
 {
-	int touchIndex = 0;
-	for (int i = 2; i <= 3; i++)
-	{
-		touchIndex += (dataArray[i+index*TOUCH_DATA_LEN] - '0')*pow(10, 3-i);
-	}
+	int touchIndex = zx_parseFixedDigits(dataArray, 2 + index * TOUCH_DATA_LEN, 2);
 	return touchIndex;
 }
 
@@ -110,11 +125,7 @@ get x from data array by socket
 */
 static float getTouchXFromDataArray(UInt8* dataArray, int index)
 {
-	int x = 0;
-	for (int i = 4; i <= 8; i++)
-	{
-		x += (dataArray[i+index*TOUCH_DATA_LEN] - '0')*pow(10, 8-i);
-	}
+	int x = zx_parseFixedDigits(dataArray, 4 + index * TOUCH_DATA_LEN, 5);
 	return x/10.0;
 }
 
@@ -124,11 +135,7 @@ get y from data array by socket
 */
 static float getTouchYFromDataArray(UInt8* dataArray, int index)
 {
-	int y = 0;
-	for (int i = 9; i <= 13; i++)
-	{
-		y += (dataArray[i+index*TOUCH_DATA_LEN] - '0')*pow(10, 13-i);
-	}
+	int y = zx_parseFixedDigits(dataArray, 9 + index * TOUCH_DATA_LEN, 5);
 	return y/10.0;
 }
 
@@ -201,18 +208,26 @@ Perform touch events with data received from socket
 */
 void performTouchFromRawData(UInt8 *eventData)
 {
+    int touchCount = getTouchCountFromDataArray(eventData);
+    if (touchCount <= 0) {
+        return;
+    }
+
     // generate a parent event
 	IOHIDEventRef parent = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), 3, 99, 1, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0); 
     IOHIDEventSetIntegerValue(parent , 0xb0019, 1); //set flags of parent event   flags: 0x20001 -> 0xa0001
     IOHIDEventSetIntegerValue(parent , 0x4, 1); //set flags of parent event   flags: 0xa0001 -> 0xa0011
 
-    for (int i = 0; i < getTouchCountFromDataArray(eventData); i++)
+    for (int i = 0; i < touchCount; i++)
     {
         //NSLog(@"### com.zjx.springboard: get data. index: %d. type: %d. touchIndex: %d. x: %f. y: %f", i, getTouchTypeFromDataArray(eventData, i), getTouchIndexFromDataArray(eventData, i), getTouchXFromDataArray(eventData, i), getTouchYFromDataArray(eventData, i));
         int touchType = getTouchTypeFromDataArray(eventData, i);
         int x = getTouchXFromDataArray(eventData, i);
         int y = getTouchYFromDataArray(eventData, i);
         int index = getTouchIndexFromDataArray(eventData, i);
+        if (index < 0 || index >= MAX_FINGER_INDEX) {
+            continue;
+        }
 
         appendChildEvent(parent, touchType, index, x, y); // append child event to parent
 
@@ -275,7 +290,12 @@ static void postIOHIDEvent(IOHIDEventRef event)
     if (senderID != 0) {
         IOHIDEventSetSenderID(event, senderID);
     } else {
-        zx_touch_logf("senderID is 0; dispatching touch without senderID. screen=%.0fx%.0f", device_screen_width, device_screen_height);
+        static CFAbsoluteTime lastSenderWarning = 0;
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        if (now - lastSenderWarning > 5.0) {
+            lastSenderWarning = now;
+            zx_touch_logf("senderID is 0; dispatching touch without senderID. screen=%.0fx%.0f", device_screen_width, device_screen_height);
+        }
     }
     IOHIDEventSystemClientDispatchEvent(ioSystemClient, event);
 }

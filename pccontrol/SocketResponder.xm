@@ -3,11 +3,23 @@
 
 int notifyClient(UInt8* msg, CFWriteStreamRef client)
 {
-    int result;
-    if (client != 0)
+    if (client == 0 || msg == NULL)
     {
-        result = CFWriteStreamWrite(client, msg, strlen((char*)msg));
+        return -1;
     }
-    result = -1;
-    return result;
+
+    const UInt8 *cursor = msg;
+    CFIndex remaining = (CFIndex)strlen((char*)msg);
+    CFIndex total = remaining;
+    while (remaining > 0)
+    {
+        CFIndex wrote = CFWriteStreamWrite(client, cursor, remaining);
+        if (wrote <= 0)
+        {
+            return -1;
+        }
+        cursor += wrote;
+        remaining -= wrote;
+    }
+    return (int)total;
 }
