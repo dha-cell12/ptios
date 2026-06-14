@@ -90,6 +90,7 @@ python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite touch
 python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite gesture
 python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite screenshot
 python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite match
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame
 ```
 
 The PC script measures round-trip latency for acknowledged tasks, send overhead for fire-and-forget task `10`, native gesture latency, screenshot latency, and optional JSON output.
@@ -137,6 +138,98 @@ Useful match tuning flags:
 ```
 
 For cleaner CPU/RAM correlation, start `benchmark_ios_device.sh` on the iPhone before running the match suite from the PC.
+
+## Manual Frame Lifecycle
+
+Phase 2 adds manual frame lifecycle tasks for cached image/color checks. The default coordinate system is `pixel`, the pixel format is `BGRA`, and task `70` batch is intentionally deferred.
+
+Defaults:
+
+```text
+coord_default= pixel
+pixel_format = BGRA
+max_frames = 3
+default_ttl_ms = 1000
+hard_ttl_ms = 5000
+auto_cleanup = true
+```
+
+Task `66`: capture frame.
+
+```text
+66gray;;bgra;;ttl_ms
+```
+
+Example:
+
+```text
+661;;1;;1000\r\n
+```
+
+Response:
+
+```text
+0;;frame_id;;width;;height;;bytes_per_row;;scale;;coord;;pixel_format;;has_bgra;;has_gray;;created_at_ms;;capture_ms;;bgra_ms;;gray_ms;;total_ms
+```
+
+Task `67`: release frame.
+
+```text
+67frame_id
+67all
+```
+
+Task `68`: find cached image object in frame.
+
+```text
+68frame_id;;image_id;;x;;y;;w;;h;;threshold;;scale_min;;scale_max;;scale_step;;pixel_skip;;coord;;max_age_ms
+```
+
+Response:
+
+```text
+0;;x;;y;;w;;h;;center_x;;center_y;;score;;frame_age_ms;;match_ms;;total_ms
+```
+
+Task `69`: color operation in frame.
+
+```text
+69frame_id;;pick;;x;;y;;coord;;max_age_ms
+69frame_id;;search_single;;x;;y;;w;;h;;rmin;;rmax;;gmin;;gmax;;bmin;;bmax;;skip;;coord;;max_age_ms
+69frame_id;;is_colors;;table;;mode;;value;;coord;;max_age_ms
+69frame_id;;find_multi_point;;x;;y;;w;;h;;table;;mode;;value;;skip;;coord;;max_age_ms
+```
+
+Color reads use BGRA channel order internally:
+
+```text
+b = p[0]
+g = p[1]
+r = p[2]
+a = p[3]
+```
+
+Frame benchmark:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --frame-count 30 --scenario-count 10 --json-out benchmark_frame.json --debug
+```
+
+Frame benchmark with image matching:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/ZXTouch/scripts/button.png --image-match-count 20 --json-out benchmark_frame.json --debug
+```
+
+Recommended lifecycle in automation:
+
+```text
+1. 66 capture frame
+2. 68/69 run image/color checks on the same frame_id
+3. 67 release frame
+4. tap/wait
+5. capture the next frame
+```
 
 iOS-side CPU/RAM sampler:
 

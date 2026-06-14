@@ -885,6 +885,66 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             }
         }
     }
+    else if (taskType == TASK_FRAME_CAPTURE)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *ret = handleFrameCaptureTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", ret ?: @""] UTF8String], writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_FRAME_RELEASE)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *ret = handleFrameReleaseTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", ret ?: @""] UTF8String], writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_FIND_IMAGE_IN_FRAME)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *ret = handleFindImageInFrameTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", ret ?: @"-1;;-1;;0;;0;;-1;;-1;;0;;0;;0;;0"] UTF8String], writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_COLOR_IN_FRAME)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *ret = handleColorInFrameTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", ret ?: @""] UTF8String], writeStreamRef);
+            }
+        }
+    }
     else if (taskType == TASK_FIND_IMAGE)
     {
         @autoreleasepool {

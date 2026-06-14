@@ -76,6 +76,12 @@
 #define TASK_NATIVE_GESTURE 64
 #define TASK_NATIVE_BATCH 65
 
+// Manual frame lifecycle for cached image/color checks.
+#define TASK_FRAME_CAPTURE 66
+#define TASK_FRAME_RELEASE 67
+#define TASK_FIND_IMAGE_IN_FRAME 68
+#define TASK_COLOR_IN_FRAME 69
+
 
 #define TASK_UPDATE_CACHE 90
 

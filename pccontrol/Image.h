@@ -24,5 +24,9 @@ using namespace std;
 // Image object tasks
 NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error);
 
 #endif

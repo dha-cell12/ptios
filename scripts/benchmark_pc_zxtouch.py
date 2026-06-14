@@ -430,13 +430,237 @@ def run_match_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
     return results
 
 
+def capture_frame(client: ZXTouchClient, gray: int = 1, bgra: int = 1, ttl_ms: int = 1000) -> tuple[str, list[Any]]:
+    resp = client.request(66, gray, bgra, ttl_ms)
+    data = require_ok(resp)
+    if len(data) < 1:
+        raise RuntimeError(f"bad frame capture response: {resp}")
+    return str(data[0]), data
+
+
+def release_frame(client: ZXTouchClient, frame_id: str) -> None:
+    try:
+        client.request(67, frame_id)
+    except Exception:
+        pass
+
+
+def load_template_object(client: ZXTouchClient, template_path: str) -> str:
+    resp = client.request(48, 2, template_path)
+    data = require_ok(resp)
+    if len(data) < 1:
+        raise RuntimeError(f"bad image object response: {resp}")
+    return str(data[0])
+
+
+def release_template_object(client: ZXTouchClient, image_id: str) -> None:
+    try:
+        client.request(48, 3, image_id)
+    except Exception:
+        pass
+
+
+def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    color_x = args.color_x if args.color_x is not None else args.x
+    color_y = args.color_y if args.color_y is not None else args.y
+    sampled = parse_rgb_response(client.request(23, color_x, color_y))
+    red, green, blue = sampled
+    tolerance = max(0, min(255, args.color_tolerance))
+    red_min, red_max = max(0, red - tolerance), min(255, red + tolerance)
+    green_min, green_max = max(0, green - tolerance), min(255, green + tolerance)
+    blue_min, blue_max = max(0, blue - tolerance), min(255, blue + tolerance)
+    if args.debug:
+        print(f"frame suite sampled color at ({color_x},{color_y}) r={red} g={green} b={blue}")
+
+    def frame_capture_bgra() -> dict[str, Any]:
+        fid, data = capture_frame(client, gray=0, bgra=1, ttl_ms=args.frame_ttl_ms)
+        release_frame(client, fid)
+        return {"extra": {"last_frame_bgra": data}}
+
+    def frame_capture_gray() -> dict[str, Any]:
+        fid, data = capture_frame(client, gray=1, bgra=0, ttl_ms=args.frame_ttl_ms)
+        release_frame(client, fid)
+        return {"extra": {"last_frame_gray": data}}
+
+    def frame_capture_both() -> dict[str, Any]:
+        fid, data = capture_frame(client, gray=1, bgra=1, ttl_ms=args.frame_ttl_ms)
+        release_frame(client, fid)
+        return {"extra": {"last_frame_both": data}}
+
+    results.append(measure("task66_frame_capture_bgra", args.frame_count, frame_capture_bgra))
+    results.append(measure("task66_frame_capture_gray", args.frame_count, frame_capture_gray))
+    results.append(measure("task66_frame_capture_bgra_gray", args.frame_count, frame_capture_both))
+
+    def color_pick_in_frame() -> dict[str, Any]:
+        fid, _ = capture_frame(client, gray=0, bgra=1, ttl_ms=args.frame_ttl_ms)
+        try:
+            resp = client.request(69, fid, "pick", color_x, color_y, "pixel", args.frame_max_age_ms)
+            data = require_ok(resp)
+            return {"extra": {"last_color_pick_frame": data}}
+        finally:
+            release_frame(client, fid)
+
+    def color_search_in_frame() -> dict[str, Any]:
+        fid, _ = capture_frame(client, gray=0, bgra=1, ttl_ms=args.frame_ttl_ms)
+        try:
+            resp = client.request(
+                69,
+                fid,
+                "search_single",
+                args.color_region_x,
+                args.color_region_y,
+                args.color_region_w,
+                args.color_region_h,
+                red_min,
+                red_max,
+                green_min,
+                green_max,
+                blue_min,
+                blue_max,
+                args.color_skip,
+                "pixel",
+                args.frame_max_age_ms,
+            )
+            data = require_ok(resp)
+            return {"extra": {"last_color_search_frame": data}}
+        finally:
+            release_frame(client, fid)
+
+    def is_colors_in_frame() -> dict[str, Any]:
+        fid, _ = capture_frame(client, gray=0, bgra=1, ttl_ms=args.frame_ttl_ms)
+        try:
+            table = f"{int(color_x)},,{int(color_y)},,{red},,{green},,{blue}"
+            resp = client.request(69, fid, "is_colors", table, 1, tolerance, "pixel", args.frame_max_age_ms)
+            data = require_ok(resp)
+            return {"extra": {"last_is_colors_frame": data}}
+        finally:
+            release_frame(client, fid)
+
+    def find_multi_in_frame() -> dict[str, Any]:
+        fid, _ = capture_frame(client, gray=0, bgra=1, ttl_ms=args.frame_ttl_ms)
+        try:
+            table = f"0,,0,,{red},,{green},,{blue}"
+            resp = client.request(
+                69,
+                fid,
+                "find_multi_point",
+                args.color_region_x,
+                args.color_region_y,
+                args.color_region_w,
+                args.color_region_h,
+                table,
+                1,
+                tolerance,
+                args.color_skip,
+                "pixel",
+                args.frame_max_age_ms,
+            )
+            data = require_ok(resp)
+            return {"extra": {"last_find_multi_frame": data}}
+        finally:
+            release_frame(client, fid)
+
+    results.append(measure("task69_color_pick_in_frame_with_capture", args.frame_count, color_pick_in_frame))
+    results.append(measure("task69_color_search_in_frame_with_capture", args.frame_count, color_search_in_frame))
+    results.append(measure("task69_is_colors_in_frame_with_capture", args.frame_count, is_colors_in_frame))
+    results.append(measure("task69_find_multi_point_in_frame_with_capture", args.frame_count, find_multi_in_frame))
+
+    def scenario_10_color_picks_old() -> None:
+        for _ in range(10):
+            parse_rgb_response(client.request(23, color_x, color_y))
+
+    def scenario_10_color_picks_frame() -> dict[str, Any]:
+        fid, _ = capture_frame(client, gray=0, bgra=1, ttl_ms=args.frame_ttl_ms)
+        try:
+            last = []
+            for _ in range(10):
+                last = require_ok(client.request(69, fid, "pick", color_x, color_y, "pixel", args.frame_max_age_ms))
+            return {"extra": {"last_10_color_frame": last}}
+        finally:
+            release_frame(client, fid)
+
+    results.append(measure("scenario_10_color_picks_old", args.scenario_count, scenario_10_color_picks_old))
+    results.append(measure("scenario_10_color_picks_frame", args.scenario_count, scenario_10_color_picks_frame))
+
+    if not args.template_path:
+        print("\n[frame image] skipped: pass --template-path <path_on_ios> to benchmark task68 image in frame")
+        return results
+
+    image_id: str | None = None
+    try:
+        image_id = load_template_object(client, args.template_path)
+        if args.debug:
+            print(f"loaded template image object for frame suite id={image_id}")
+
+        def find_image_in_frame() -> dict[str, Any]:
+            fid, _ = capture_frame(client, gray=1, bgra=0, ttl_ms=args.frame_ttl_ms)
+            try:
+                resp = client.request(
+                    68,
+                    fid,
+                    image_id,
+                    args.match_region_x,
+                    args.match_region_y,
+                    args.match_region_w,
+                    args.match_region_h,
+                    args.match_acceptable,
+                    args.match_scale_min,
+                    args.match_scale_max,
+                    args.match_scale_step,
+                    args.match_pixel_skip,
+                    "pixel",
+                    args.frame_max_age_ms,
+                )
+                data = require_ok(resp)
+                return {"extra": {"last_find_image_frame": data}}
+            finally:
+                release_frame(client, fid)
+
+        def scenario_2_image_5_color_frame() -> dict[str, Any]:
+            fid, _ = capture_frame(client, gray=1, bgra=1, ttl_ms=args.frame_ttl_ms)
+            try:
+                last_img = []
+                for _ in range(2):
+                    last_img = require_ok(client.request(
+                        68,
+                        fid,
+                        image_id,
+                        args.match_region_x,
+                        args.match_region_y,
+                        args.match_region_w,
+                        args.match_region_h,
+                        args.match_acceptable,
+                        args.match_scale_min,
+                        args.match_scale_max,
+                        args.match_scale_step,
+                        args.match_pixel_skip,
+                        "pixel",
+                        args.frame_max_age_ms,
+                    ))
+                last_color = []
+                for _ in range(5):
+                    last_color = require_ok(client.request(69, fid, "pick", color_x, color_y, "pixel", args.frame_max_age_ms))
+                return {"extra": {"last_scenario_image": last_img, "last_scenario_color": last_color}}
+            finally:
+                release_frame(client, fid)
+
+        results.append(measure("task68_find_image_in_frame_with_capture", args.image_match_count, find_image_in_frame))
+        results.append(measure("scenario_2_image_5_color_frame", args.scenario_count, scenario_2_image_5_color_frame))
+    finally:
+        if image_id:
+            release_template_object(client, image_id)
+
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark zxtouch command latency from PC")
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, default=6000)
     parser.add_argument("--protocol", choices=["auto", "v1", "v0"], default="auto")
     parser.add_argument("--timeout", type=float, default=5.0)
-    parser.add_argument("--suite", choices=["touch", "gesture", "screenshot", "match", "all"], default="all")
+    parser.add_argument("--suite", choices=["touch", "gesture", "screenshot", "match", "frame", "all"], default="all")
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--gesture-count", type=int, default=20)
     parser.add_argument("--screenshot-count", type=int, default=10)
@@ -474,6 +698,10 @@ def main() -> int:
     parser.add_argument("--color-region-h", type=int, default=0)
     parser.add_argument("--color-tolerance", type=int, default=10)
     parser.add_argument("--color-skip", type=int, default=0)
+    parser.add_argument("--frame-count", type=int, default=30)
+    parser.add_argument("--frame-ttl-ms", type=int, default=1000)
+    parser.add_argument("--frame-max-age-ms", type=int, default=1000)
+    parser.add_argument("--scenario-count", type=int, default=10)
     args = parser.parse_args()
 
     client = ZXTouchClient(args.host, args.port, args.protocol, args.timeout)
@@ -490,6 +718,8 @@ def main() -> int:
             all_results.extend(run_screenshot_suite(client, args))
         if args.suite in ("match", "all"):
             all_results.extend(run_match_suite(client, args))
+        if args.suite in ("frame", "all"):
+            all_results.extend(run_frame_suite(client, args))
     finally:
         client.close()
 
