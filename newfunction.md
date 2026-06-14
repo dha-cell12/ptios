@@ -72,3 +72,94 @@ tap/swipe/gesture/batch
 ```
 
 instead of streaming every `down/move/up` event individually. Use raw task `10` only when low-level control is required.
+
+## Benchmark Scripts
+
+Two benchmark scripts were added under `scripts/`.
+
+PC-side latency benchmark:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite all --count 100 --json-out benchmark_pc.json
+```
+
+Useful PC-side modes:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite touch
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite gesture
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite screenshot
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite match
+```
+
+The PC script measures round-trip latency for acknowledged tasks, send overhead for fire-and-forget task `10`, native gesture latency, screenshot latency, and optional JSON output.
+
+Image/color match benchmark:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite match --match-count 50 --json-out benchmark_match.json --debug
+```
+
+The match suite always measures:
+
+```text
+task23_color_pick
+task28_color_search_single
+task28_color_is_colors
+task28_color_find_multi_point
+```
+
+To also measure image matching, pass a template path that exists on the iOS device:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite match --template-path /var/mobile/Library/ZXTouch/Scripts/button.png --image-match-count 20 --match-region-x 0 --match-region-y 0 --match-region-w 0 --match-region-h 0 --json-out benchmark_match.json --debug
+```
+
+Image match benchmark measures both paths:
+
+```text
+task21_template_match_legacy
+task49_find_image_cached_template
+```
+
+Useful match tuning flags:
+
+```text
+--match-acceptable 0.8
+--match-scale-min 1.0
+--match-scale-max 1.0
+--match-scale-step 0.1
+--match-pixel-skip 0
+--color-x 120 --color-y 300
+--color-region-x 0 --color-region-y 0 --color-region-w 0 --color-region-h 0
+--color-tolerance 10
+--color-skip 0
+```
+
+For cleaner CPU/RAM correlation, start `benchmark_ios_device.sh` on the iPhone before running the match suite from the PC.
+
+iOS-side CPU/RAM sampler:
+
+```sh
+sh scripts/benchmark_ios_device.sh 120 1 /var/mobile/Library/ZXTouch/benchmark_ios.csv
+```
+
+Arguments:
+
+```text
+benchmark_ios_device.sh <duration_seconds> <interval_seconds> <output_csv> [process_names]
+```
+
+Example with custom processes:
+
+```sh
+sh scripts/benchmark_ios_device.sh 120 1 /var/mobile/Library/ZXTouch/benchmark_ios.csv "SpringBoard zxtouchd"
+```
+
+Recommended test flow:
+
+```text
+1. Start benchmark_ios_device.sh on the iPhone.
+2. Run benchmark_pc_zxtouch.py from the PC while the iOS sampler is running.
+3. Compare task10 raw touch vs task62 native tap, streamed moves vs task63/task64 native gestures, and PNG vs JPG screenshot latency.
+```

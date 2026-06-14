@@ -11,7 +11,11 @@
 #include <vector>
 #include <math.h>
 
-#ifdef ZX_DAEMON
+#ifndef ZX_TEMPLATE_MATCH_DEBUG
+#define ZX_TEMPLATE_MATCH_DEBUG 0
+#endif
+
+#if ZX_TEMPLATE_MATCH_DEBUG && defined(ZX_DAEMON)
 #include <stdarg.h>
 
 // Minimal file logger for daemon builds.
@@ -66,8 +70,10 @@ static void zx_tm_logf(const char *fmt, ...)
 }
 
 #define TMLOGF(fmt, ...) zx_tm_logf((fmt), ##__VA_ARGS__)
-#else
+#elif ZX_TEMPLATE_MATCH_DEBUG
 #define TMLOGF(fmt, ...) NSLog(@"com.zjx.springboard: " fmt, ##__VA_ARGS__)
+#else
+#define TMLOGF(fmt, ...) do { } while (0)
 #endif
 
 
@@ -278,7 +284,6 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
 
         //缩小模板图
         float powReduceRation = pow(scaleRation, i+1);
-        NSLog(@"powReduceRation: %f", powReduceRation);
         resize(templWork, templResized, cv::Size(0, 0), powReduceRation, powReduceRation);
         _scaledTempls.push_back(templResized);
 
