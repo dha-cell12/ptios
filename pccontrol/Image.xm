@@ -77,6 +77,16 @@ static NSError *zx_frameError(NSString *message)
                            userInfo:@{NSLocalizedDescriptionKey:message ?: @"1;;frame_error\r\n"}];
 }
 
+static void zx_cleanupFramesLocked(uint64_t nowMs);
+static uint32_t zx_storeFrameLocked(ZXFrameObject &frame);
+static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData);
+static bool zx_stringIsPointCoord(NSString *coord);
+static int zx_coordToPixel(double value, double scale, bool pointCoord);
+static bool zx_frameTooOld(const ZXFrameObject &frame, uint64_t maxAgeMs, uint64_t nowMs, NSError **error);
+static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, int *outW, int *outH, int *outBpr);
+static bool zx_parsePointTableVector(NSString *tableStr, std::vector<ZXPointColor> &points, NSError **error);
+static inline void zx_readBGRA(const ZXFrameObject &frame, int x, int y, int *r, int *g, int *b);
+
 static NSString *zx_currentScriptDir(void)
 {
     if (scriptPlayer) {
@@ -446,19 +456,19 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
             return;
         }
         uint64_t ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
-        rx = zx_coordToPixel(rx, frame.scale, pointCoord);
-        ry = zx_coordToPixel(ry, frame.scale, pointCoord);
-        rw = zx_coordToPixel(rw, frame.scale, pointCoord);
-        rh = zx_coordToPixel(rh, frame.scale, pointCoord);
-        if (rx < 0) rx = 0;
-        if (ry < 0) ry = 0;
-        if (rx >= frame.width) rx = frame.width - 1;
-        if (ry >= frame.height) ry = frame.height - 1;
-        if (rw <= 0 || rx + rw > frame.width) rw = frame.width - rx;
-        if (rh <= 0 || ry + rh > frame.height) rh = frame.height - ry;
+        int workX = zx_coordToPixel(rx, frame.scale, pointCoord);
+        int workY = zx_coordToPixel(ry, frame.scale, pointCoord);
+        int workW = zx_coordToPixel(rw, frame.scale, pointCoord);
+        int workH = zx_coordToPixel(rh, frame.scale, pointCoord);
+        if (workX < 0) workX = 0;
+        if (workY < 0) workY = 0;
+        if (workX >= frame.width) workX = frame.width - 1;
+        if (workY >= frame.height) workY = frame.height - 1;
+        if (workW <= 0 || workX + workW > frame.width) workW = frame.width - workX;
+        if (workH <= 0 || workY + workH > frame.height) workH = frame.height - workY;
 
         CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
-        cv::Rect roi(rx, ry, rw, rh);
+        cv::Rect roi(workX, workY, workW, workH);
         cv::Mat region = frame.gray(roi);
         int mx = -1, my = -1, mw = 0, mh = 0;
         double score = 0.0;
@@ -469,8 +479,8 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
             ret = [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f;;%llu;;%.3f;;%.3f", score, (unsigned long long)ageMs, totalMs, totalMs];
             return;
         }
-        int absX = rx + mx;
-        int absY = ry + my;
+        int absX = workX + mx;
+        int absY = workY + my;
         double cx = absX + mw / 2.0;
         double cy = absY + mh / 2.0;
         ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f;;%llu;;%.3f;;%.3f",
