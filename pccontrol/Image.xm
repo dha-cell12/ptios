@@ -78,12 +78,13 @@ static NSError *zx_frameError(NSString *message)
 }
 
 static void zx_cleanupFramesLocked(uint64_t nowMs);
-static uint32_t zx_storeFrameLocked(ZXFrameObject &frame);
+static uint32_t zx_storeFrameLocked(const ZXFrameObject &frame);
 static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData);
 static bool zx_stringIsPointCoord(NSString *coord);
 static int zx_coordToPixel(double value, double scale, bool pointCoord);
 static bool zx_frameTooOld(const ZXFrameObject &frame, uint64_t maxAgeMs, uint64_t nowMs, NSError **error);
 static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, int *outW, int *outH, int *outBpr);
+static inline bool zx_bgraColorMatch(int r, int g, int b, int tr, int tg, int tb, int mode, double value);
 static bool zx_parsePointTableVector(NSString *tableStr, std::vector<ZXPointColor> &points, NSError **error);
 static inline void zx_readBGRA(const ZXFrameObject &frame, int x, int y, int *r, int *g, int *b);
 
@@ -697,15 +698,16 @@ static void zx_trimFramesLocked(void)
     }
 }
 
-static uint32_t zx_storeFrameLocked(ZXFrameObject &frame)
+static uint32_t zx_storeFrameLocked(const ZXFrameObject &frame)
 {
     uint64_t nowMs = zx_nowMs();
     zx_cleanupFramesLocked(nowMs);
     zx_trimFramesLocked();
     uint32_t frameId = gNextFrameId++;
     if (frameId == 0) frameId = gNextFrameId++;
-    frame.frameId = frameId;
-    gFrameStore[frameId] = frame;
+    ZXFrameObject stored = frame;
+    stored.frameId = frameId;
+    gFrameStore[frameId] = stored;
     return frameId;
 }
 
