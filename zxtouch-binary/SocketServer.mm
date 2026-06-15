@@ -192,7 +192,8 @@ static bool zx_isHotPathPayload(const char *payload)
            strncmp(task, "66", 2) == 0 ||
            strncmp(task, "67", 2) == 0 ||
            strncmp(task, "68", 2) == 0 ||
-           strncmp(task, "69", 2) == 0;
+           strncmp(task, "69", 2) == 0 ||
+           strncmp(task, "70", 2) == 0;
 }
 
 static int getTaskTypeFromBuffer(const char *buffer)
@@ -269,6 +270,7 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 67: // TASK_FRAME_RELEASE
         case 68: // TASK_FIND_IMAGE_IN_FRAME
         case 69: // TASK_COLOR_IN_FRAME
+        case 70: // TASK_FRAME_BATCH
         case 90: // TASK_UPDATE_CACHE
             return true;
         default:

@@ -141,7 +141,7 @@ For cleaner CPU/RAM correlation, start `benchmark_ios_device.sh` on the iPhone b
 
 ## Manual Frame Lifecycle
 
-Phase 2 adds manual frame lifecycle tasks for cached image/color checks. The default coordinate system is `pixel`, the pixel format is `BGRA`, and task `70` batch is intentionally deferred.
+Phase 2 adds manual frame lifecycle tasks for cached image/color checks. The default coordinate system is `pixel`, the pixel format is `BGRA`, and task `70` batches multiple checks on one frame to reduce IPC round-trips.
 
 Defaults:
 
@@ -209,6 +209,39 @@ Task `69`: color operation in frame.
 
 Use `pick_many` when reading multiple pixels from the same frame. It avoids many repeated `69 pick` IPC round-trips.
 
+Task `70`: batch frame checks.
+
+```text
+70frame_id;;op@@op@@op;;coord;;max_age_ms
+```
+
+Initial supported ops:
+
+```text
+img,image_id,x,y,w,h,acceptable,scale,pixel_skip
+pick_many,x1:y1|x2:y2|x3:y3
+```
+
+Response:
+
+```text
+0;;op_result@@op_result@@op_result;;frame_age_ms;;native_total_ms
+```
+
+Image op result:
+
+```text
+img:x,y,w,h,center_x,center_y,score,match_ms
+```
+
+Color op result:
+
+```text
+pick_many:x,y,r,g,b|x,y,r,g,b|...,scan_ms
+```
+
+Use task `70` when a frame needs multiple image checks and color reads. It preserves the same frame lifecycle as tasks `68` and `69` but collapses multiple checks into one request.
+
 Color reads use BGRA channel order internally:
 
 ```text
@@ -251,9 +284,99 @@ scenario_10_color_picks_frame_many
 scenario_2_image_5_color_old
 scenario_2_image_5_color_frame
 scenario_2_image_5_color_frame_many
+scenario_fixed_frame_checks_only
+scenario_fixed_frame_full_lifecycle
+scenario_fixed_frame_batch_checks_only
+scenario_fixed_frame_batch_full_lifecycle
 ```
 
 `frame_many` scenarios use `pick_many` to reduce repeated task `69` requests.
+
+Fixed-frame scenarios run in the frame suite when `--template-path` is set. They probe the template once, freeze a fixed pixel region with `--image-tune-fixed-pad`, then use `--fixed-scenario-image-count` task `68` checks and `--fixed-scenario-color-count` task `69 pick_many` color picks.
+
+`scenario_fixed_frame_checks_only` measures checks on an already captured frame and excludes capture/release from `avg_ms`.
+
+`scenario_fixed_frame_full_lifecycle` measures the full automation loop: capture one gray+BGRA frame, run fixed-region image checks, run `pick_many`, and release the frame.
+
+`scenario_fixed_frame_batch_checks_only` and `scenario_fixed_frame_batch_full_lifecycle` run the same checks through task `70` to measure the IPC savings from batching.
+
+Example:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/ZXTouch/scripts/button.png --image-tune-fixed-pad 50 --image-tune-fixed-skip 1 --image-tune-fixed-scale 1.0 --fixed-scenario-image-count 2 --fixed-scenario-color-count 5 --json-out benchmark_frame.json --debug
+```
+
+Fixed-frame output includes scope-specific metrics such as `capture_wall_avg_ms`, `release_wall_avg_ms`, `checks_total_avg_ms`, `image_match_total_avg_ms`, `image_match_each_avg_ms`, `image1_match_avg_ms`, `image2_match_avg_ms`, and `color_scan_avg_ms`.
+
+Default automation lifecycle:
+
+```text
+Only color: 66 gray=0 bgra=1 -> 69 pick_many/is_colors/find_multi_point -> 67 release
+Only image: 66 gray=1 bgra=0 -> 68 image checks -> 67 release
+Image + color: 66 gray=1 bgra=1 -> 68 image checks -> 69 pick_many -> 67 release
+Color precheck: 66 gray=1 bgra=1 -> 69 color precheck -> if pass then 68 image -> 67 release
+```
+
+Image tuning benchmark:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite image-tune --template-path /var/mobile/Library/ZXTouch/scripts/button.png --json-out benchmark_image_tune.json --debug
+```
+
+Useful image tuning flags:
+
+```text
+--image-tune-count 5
+--image-tune-regions full,50%,25%,custom,found_pad_100
+--image-tune-skips 0,1,2,3,4
+--image-tune-scales 1.0
+--image-tune-fixed-pad 50
+--image-tune-fixed-skip 1
+--image-tune-fixed-scale 1.0
+```
+
+`image-tune` captures and releases a fresh frame for each `region + skip + scale` config so large tuning matrices do not outlive the native frame TTL.
+
+Custom region uses `--match-region-x/y/w/h`:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite image-tune --template-path /var/mobile/Library/ZXTouch/scripts/button.png --match-region-x 100 --match-region-y 600 --match-region-w 500 --match-region-h 300 --image-tune-regions custom --image-tune-skips 0,1,2,3,4 --json-out benchmark_image_tune.json --debug
+```
+
+Named region format:
+
+```text
+--image-tune-regions full,button:100/600/500/300
+```
+
+Auto region around the real full-screen match:
+
+```text
+--image-tune-regions full,found_pad_50,found_pad_100,found_pad_200
+```
+
+`found_pad_N` runs one full-screen probe first, then builds a pixel region around the matched template box with `N` pixels of padding. Percent regions such as `50%` and `25%` are centered regions, so they can miss templates outside the screen center.
+
+Practical fixed-region scenario:
+
+```text
+scenario_image_fixed_region_capture_match
+```
+
+This scenario runs after the tuning matrix when the full-screen probe finds the template. It freezes a pixel region from the probe result using `--image-tune-fixed-pad`, then measures the real loop: capture frame, run task `68` in the fixed region, release frame. Use `--image-tune-fixed-skip` and `--image-tune-fixed-scale` for the fixed-region check. For the current button benchmark, `--image-tune-fixed-pad 50 --image-tune-fixed-skip 1 --image-tune-fixed-scale 1.0` is the recommended starting point.
+
+Image tuning output includes:
+
+```text
+region_pixels
+pixel_skip
+scale_min/scale_max
+match_avg_ms
+found_rate
+score_avg/score_min/score_max
+```
+
+Use this benchmark before changing SAD logic. Prefer the smallest stable region, fixed scale `1.0`, and the largest `pixel_skip` that keeps `found_rate` and score stable.
 
 Recommended lifecycle in automation:
 

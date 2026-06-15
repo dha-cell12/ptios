@@ -675,6 +675,119 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
     return ret;
 }
 
+NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
+{
+    NSArray<NSString *> *data = zx_splitEventData(eventData);
+    if ([data count] < 2) {
+        if (error) *error = zx_frameError(@"1;;Frame batch format should be frame_id;;op@@op...[;;coord;;max_age_ms]\r\n");
+        return nil;
+    }
+    uint32_t frameId = (uint32_t)[data[0] intValue];
+    NSString *opsRaw = data[1];
+    bool pointCoord = ([data count] >= 3) ? zx_stringIsPointCoord(data[2]) : false;
+    uint64_t maxAgeMs = ([data count] >= 4) ? (uint64_t)MAX(0, [data[3] longLongValue]) : kDefaultFrameTtlMs;
+
+    __block NSString *ret = nil;
+    __block NSError *blockErr = nil;
+    dispatch_sync(zx_imageQueue(), ^{
+        uint64_t nowMs = zx_nowMs();
+        zx_cleanupFramesLocked(nowMs);
+        auto fit = gFrameStore.find(frameId);
+        if (fit == gFrameStore.end()) {
+            blockErr = zx_frameError(@"1;;frame_not_found\r\n");
+            return;
+        }
+        ZXFrameObject &frame = fit->second;
+        if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
+        uint64_t ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
+        CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
+        NSMutableArray<NSString *> *results = [NSMutableArray array];
+
+        NSArray<NSString *> *ops = [opsRaw componentsSeparatedByString:@"@@"];
+        for (NSString *opRaw in ops) {
+            if (!opRaw || [opRaw length] == 0) continue;
+            NSArray<NSString *> *fields = [opRaw componentsSeparatedByString:@","];
+            if ([fields count] < 1) { blockErr = zx_frameError(@"1;;invalid_batch_op\r\n"); return; }
+            NSString *kind = [[fields[0] lowercaseString] copy];
+
+            if ([kind isEqualToString:@"img"]) {
+                if ([fields count] < 9) { blockErr = zx_frameError(@"1;;batch img format should be img,image_id,x,y,w,h,acceptable,scale,pixel_skip\r\n"); return; }
+                if (!frame.hasGray || frame.gray.empty()) { blockErr = zx_frameError(@"1;;frame_missing_gray\r\n"); return; }
+                uint32_t imageId = (uint32_t)[fields[1] intValue];
+                auto iit = gImageStore.find(imageId);
+                if (iit == gImageStore.end() || iit->second.gray.empty()) { blockErr = zx_frameError(@"1;;image_not_found\r\n"); return; }
+
+                int workX = zx_coordToPixel([fields[2] doubleValue], frame.scale, pointCoord);
+                int workY = zx_coordToPixel([fields[3] doubleValue], frame.scale, pointCoord);
+                int workW = zx_coordToPixel([fields[4] doubleValue], frame.scale, pointCoord);
+                int workH = zx_coordToPixel([fields[5] doubleValue], frame.scale, pointCoord);
+                if (workX < 0) workX = 0;
+                if (workY < 0) workY = 0;
+                if (workX >= frame.width) workX = frame.width - 1;
+                if (workY >= frame.height) workY = frame.height - 1;
+                if (workW <= 0 || workX + workW > frame.width) workW = frame.width - workX;
+                if (workH <= 0 || workY + workH > frame.height) workH = frame.height - workY;
+
+                double acceptable = [fields[6] doubleValue];
+                float scale = [fields[7] floatValue];
+                int pixelSkip = [fields[8] intValue];
+                CFAbsoluteTime op0 = CFAbsoluteTimeGetCurrent();
+                cv::Rect roi(workX, workY, workW, workH);
+                cv::Mat region = frame.gray(roi);
+                int mx = -1, my = -1, mw = 0, mh = 0;
+                double score = 0.0;
+                bool match = zx_findTemplateSAD(region, iit->second.gray, acceptable, scale, scale, 1.0f, pixelSkip,
+                                                &mx, &my, &mw, &mh, &score);
+                double opMs = (CFAbsoluteTimeGetCurrent() - op0) * 1000.0;
+                if (!match) {
+                    [results addObject:[NSString stringWithFormat:@"img:-1,-1,0,0,-1,-1,%.4f,%.3f", score, opMs]];
+                } else {
+                    int absX = workX + mx;
+                    int absY = workY + my;
+                    double cx = absX + mw / 2.0;
+                    double cy = absY + mh / 2.0;
+                    [results addObject:[NSString stringWithFormat:@"img:%d,%d,%d,%d,%.2f,%.2f,%.4f,%.3f", absX, absY, mw, mh, cx, cy, score, opMs]];
+                }
+                continue;
+            }
+
+            if ([kind isEqualToString:@"pick_many"]) {
+                if ([fields count] < 2) { blockErr = zx_frameError(@"1;;batch pick_many format should be pick_many,x,y|x,y\r\n"); return; }
+                if (!frame.hasBGRA || frame.bgra.empty()) { blockErr = zx_frameError(@"1;;frame_missing_bgra\r\n"); return; }
+                CFAbsoluteTime op0 = CFAbsoluteTimeGetCurrent();
+                NSArray<NSString *> *items = [fields[1] componentsSeparatedByString:@"|"];
+                NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithCapacity:[items count]];
+                for (NSString *item in items) {
+                    if (!item || [item length] == 0) continue;
+                    NSArray<NSString *> *xy = [item componentsSeparatedByString:@":"];
+                    if ([xy count] != 2) xy = [item componentsSeparatedByString:@"/"];
+                    if ([xy count] != 2) { blockErr = zx_frameError(@"1;;invalid_batch_pick_many_point\r\n"); return; }
+                    int x = zx_coordToPixel([xy[0] doubleValue], frame.scale, pointCoord);
+                    int y = zx_coordToPixel([xy[1] doubleValue], frame.scale, pointCoord);
+                    if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
+                    int r = 0, g = 0, b = 0;
+                    zx_readBGRA(frame, x, y, &r, &g, &b);
+                    [parts addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
+                }
+                double opMs = (CFAbsoluteTimeGetCurrent() - op0) * 1000.0;
+                [results addObject:[NSString stringWithFormat:@"pick_many:%@,%.3f", [parts componentsJoinedByString:@"|"], opMs]];
+                continue;
+            }
+
+            blockErr = zx_frameError(@"1;;unknown_batch_op\r\n");
+            return;
+        }
+
+        double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+        ret = [NSString stringWithFormat:@"%@;;%llu;;%.3f", [results componentsJoinedByString:@"@@"], (unsigned long long)ageMs, totalMs];
+    });
+    if (blockErr) {
+        if (error) *error = blockErr;
+        return nil;
+    }
+    return ret;
+}
+
 @implementation Image
 @end
 

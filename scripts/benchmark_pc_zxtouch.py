@@ -181,16 +181,31 @@ def print_summary(result: dict[str, Any]) -> None:
         )
     metric_keys = [
         "native_total_avg_ms",
+        "capture_wall_avg_ms",
         "capture_avg_ms",
         "bgra_avg_ms",
         "gray_avg_ms",
+        "release_wall_avg_ms",
+        "release_avg_ms",
+        "scenario_total_avg_ms",
+        "checks_total_avg_ms",
+        "checks_native_total_avg_ms",
+        "image_match_total_avg_ms",
+        "image_match_each_avg_ms",
+        "image1_match_avg_ms",
+        "image2_match_avg_ms",
         "match_avg_ms",
+        "color_scan_avg_ms",
         "scan_avg_ms",
         "ipc_overhead_est_avg_ms",
     ]
     shown = [k for k in metric_keys if k in result]
     if shown:
         print(" ".join(f"{k}={result[k]:.3f}" for k in shown))
+    if "found_rate" in result:
+        print(
+            "found_rate={found_rate:.2f} score_avg={score_avg:.4f} score_min={score_min:.4f} score_max={score_max:.4f}".format(**result)
+        )
 
 
 def measure(name: str, count: int, fn) -> dict[str, Any]:
@@ -281,6 +296,98 @@ def image_frame_metrics(data: list[Any], roundtrip_ms: float | None = None) -> d
     if roundtrip_ms is not None:
         metrics["ipc_overhead_est"] = max(0.0, roundtrip_ms - native_total)
     return metrics
+
+
+def frame_batch_metrics(data: list[Any], roundtrip_ms: float | None = None) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    try:
+        results = str(data[0])
+        native_total = float(data[-1])
+    except (IndexError, TypeError, ValueError):
+        return metrics
+    image_matches: list[float] = []
+    color_scan = 0.0
+    for op in results.split("@@"):
+        if op.startswith("img:"):
+            fields = op[4:].split(",")
+            try:
+                image_matches.append(float(fields[-1]))
+            except (IndexError, ValueError):
+                pass
+        elif op.startswith("pick_many:"):
+            try:
+                color_scan += float(op.rsplit(",", 1)[1])
+            except (IndexError, ValueError):
+                pass
+    metrics["native_total"] = native_total
+    metrics["checks_native_total"] = native_total
+    metrics["image_match_total"] = sum(image_matches)
+    metrics["image_match_each"] = (sum(image_matches) / len(image_matches)) if image_matches else 0.0
+    metrics["color_scan"] = color_scan
+    if len(image_matches) >= 1:
+        metrics["image1_match"] = image_matches[0]
+    if len(image_matches) >= 2:
+        metrics["image2_match"] = image_matches[1]
+    if roundtrip_ms is not None:
+        metrics["ipc_overhead_est"] = max(0.0, roundtrip_ms - native_total)
+    return metrics
+
+
+def parse_float_list(text: str) -> list[float]:
+    return [float(x.strip()) for x in text.split(",") if x.strip()]
+
+
+def parse_int_list(text: str) -> list[int]:
+    return [int(x.strip()) for x in text.split(",") if x.strip()]
+
+
+def parse_region_specs(
+    text: str,
+    frame_w: int,
+    frame_h: int,
+    args: argparse.Namespace,
+    found_box: tuple[int, int, int, int] | None = None,
+) -> list[tuple[str, int, int, int, int]]:
+    specs: list[tuple[str, int, int, int, int]] = []
+    for raw in text.split(","):
+        name = raw.strip().lower()
+        if not name:
+            continue
+        if name == "full":
+            specs.append(("full", 0, 0, 0, 0))
+        elif name == "custom":
+            specs.append(("custom", args.match_region_x, args.match_region_y, args.match_region_w, args.match_region_h))
+        elif name.endswith("%"):
+            pct = max(1.0, min(100.0, float(name[:-1]))) / 100.0
+            w = max(1, int(frame_w * pct))
+            h = max(1, int(frame_h * pct))
+            x = max(0, (frame_w - w) // 2)
+            y = max(0, (frame_h - h) // 2)
+            specs.append((name, x, y, w, h))
+        elif name.startswith("found_pad_"):
+            if found_box is None:
+                raise ValueError(f"{raw} requires a successful full-screen probe")
+            pad = max(0, int(float(name.removeprefix("found_pad_"))))
+            x, y, w, h = padded_box(found_box, frame_w, frame_h, pad)
+            specs.append((name, x, y, w, h))
+        elif ":" in name:
+            label, coords = name.split(":", 1)
+            vals = [int(float(x)) for x in coords.split("/") if x]
+            if len(vals) != 4:
+                raise ValueError(f"bad region spec: {raw}; expected label:x/y/w/h")
+            specs.append((label, vals[0], vals[1], vals[2], vals[3]))
+        else:
+            raise ValueError(f"unknown region spec: {raw}")
+    return specs or [("full", 0, 0, 0, 0)]
+
+
+def padded_box(box: tuple[int, int, int, int], frame_w: int, frame_h: int, pad: int) -> tuple[int, int, int, int]:
+    fx, fy, fw, fh = box
+    x = max(0, fx - pad)
+    y = max(0, fy - pad)
+    right = min(frame_w, fx + fw + pad)
+    bottom = min(frame_h, fy + fh + pad)
+    return x, y, max(1, right - x), max(1, bottom - y)
 
 
 def run_touch_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -681,6 +788,50 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
         if args.debug:
             print(f"loaded template image object for frame suite id={image_id}")
 
+        fixed_region: tuple[int, int, int, int] | None = None
+        probe_fid, probe_frame = capture_frame(client, gray=1, bgra=0, ttl_ms=args.frame_ttl_ms)
+        try:
+            probe_w = int(float(probe_frame[1]))
+            probe_h = int(float(probe_frame[2]))
+            probe_data = require_ok(client.request(
+                68,
+                probe_fid,
+                image_id,
+                0,
+                0,
+                0,
+                0,
+                args.match_acceptable,
+                args.image_tune_fixed_scale,
+                args.image_tune_fixed_scale,
+                1.0,
+                args.image_tune_fixed_skip,
+                "pixel",
+                args.frame_max_age_ms,
+            ))
+            if int(float(probe_data[0])) >= 0 and int(float(probe_data[1])) >= 0:
+                fixed_region = padded_box(
+                    (
+                        int(float(probe_data[0])),
+                        int(float(probe_data[1])),
+                        int(float(probe_data[2])),
+                        int(float(probe_data[3])),
+                    ),
+                    probe_w,
+                    probe_h,
+                    args.image_tune_fixed_pad,
+                )
+                if args.debug:
+                    print(
+                        "frame suite fixed image region="
+                        f"{fixed_region[0]},{fixed_region[1]},{fixed_region[2]},{fixed_region[3]} "
+                        f"skip={args.image_tune_fixed_skip} scale={args.image_tune_fixed_scale}"
+                    )
+            elif args.debug:
+                print(f"frame suite fixed image region skipped: probe not found data={probe_data}")
+        finally:
+            release_frame(client, probe_fid)
+
         def find_image_in_frame() -> dict[str, Any]:
             fid, _ = capture_frame(client, gray=1, bgra=0, ttl_ms=args.frame_ttl_ms)
             try:
@@ -783,14 +934,463 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
             finally:
                 release_frame(client, fid)
 
+        def run_fixed_frame_checks(fid: str) -> tuple[dict[str, Any], dict[str, float]]:
+            if fixed_region is None:
+                raise RuntimeError("fixed image region unavailable; full-screen probe did not find template")
+            fx, fy, fw, fh = fixed_region
+            last_img: list[Any] = []
+            image_match_total = 0.0
+            image_native_total = 0.0
+            image_matches: list[float] = []
+            for _ in range(args.fixed_scenario_image_count):
+                data = require_ok(client.request(
+                    68,
+                    fid,
+                    image_id,
+                    fx,
+                    fy,
+                    fw,
+                    fh,
+                    args.match_acceptable,
+                    args.image_tune_fixed_scale,
+                    args.image_tune_fixed_scale,
+                    1.0,
+                    args.image_tune_fixed_skip,
+                    "pixel",
+                    args.frame_max_age_ms,
+                ))
+                last_img = data
+                m = image_frame_metrics(data)
+                match_ms = m.get("match", 0.0)
+                image_matches.append(match_ms)
+                image_match_total += match_ms
+                image_native_total += m.get("native_total", 0.0)
+
+            last_color: list[Any] = []
+            color_native_total = 0.0
+            if args.fixed_scenario_color_count > 0:
+                points = "|".join(f"{color_x},{color_y}" for _ in range(args.fixed_scenario_color_count))
+                last_color = require_ok(client.request(69, fid, "pick_many", points, "pixel", args.frame_max_age_ms))
+                color_metrics = color_frame_metrics(last_color)
+                color_native_total = color_metrics.get("native_total", 0.0)
+
+            metrics = {
+                "checks_native_total": image_native_total + color_native_total,
+                "image_match_total": image_match_total,
+                "image_match_each": image_match_total / args.fixed_scenario_image_count if args.fixed_scenario_image_count > 0 else 0.0,
+                "color_scan": color_native_total,
+            }
+            if len(image_matches) >= 1:
+                metrics["image1_match"] = image_matches[0]
+            if len(image_matches) >= 2:
+                metrics["image2_match"] = image_matches[1]
+
+            extra = {
+                "fixed_region": [fx, fy, fw, fh],
+                "image_checks": args.fixed_scenario_image_count,
+                "color_picks": args.fixed_scenario_color_count,
+                "last_fixed_scenario_image": last_img,
+                "last_fixed_scenario_color": last_color,
+            }
+            return extra, metrics
+
+        def build_fixed_frame_batch_ops() -> str:
+            if fixed_region is None:
+                raise RuntimeError("fixed image region unavailable; full-screen probe did not find template")
+            fx, fy, fw, fh = fixed_region
+            ops: list[str] = []
+            for _ in range(args.fixed_scenario_image_count):
+                ops.append(
+                    "img,{image_id},{x},{y},{w},{h},{acceptable},{scale},{skip}".format(
+                        image_id=image_id,
+                        x=fx,
+                        y=fy,
+                        w=fw,
+                        h=fh,
+                        acceptable=args.match_acceptable,
+                        scale=args.image_tune_fixed_scale,
+                        skip=args.image_tune_fixed_skip,
+                    )
+                )
+            if args.fixed_scenario_color_count > 0:
+                points = "|".join(f"{color_x}:{color_y}" for _ in range(args.fixed_scenario_color_count))
+                ops.append(f"pick_many,{points}")
+            return "@@".join(ops)
+
+        def measure_fixed_frame_checks_only() -> dict[str, Any]:
+            values: list[float] = []
+            failures = 0
+            extras: dict[str, Any] = {}
+            metric_values: dict[str, list[float]] = {}
+            for _ in range(args.scenario_count):
+                fid = ""
+                try:
+                    fid, _ = capture_frame(client, gray=1, bgra=1, ttl_ms=args.frame_ttl_ms)
+                    started = time.perf_counter()
+                    extra, metrics = run_fixed_frame_checks(fid)
+                    elapsed = (time.perf_counter() - started) * 1000.0
+                    values.append(elapsed)
+                    extras.update(extra)
+                    metrics["checks_total"] = elapsed
+                    for key, value in metrics.items():
+                        metric_values.setdefault(key, []).append(value)
+                except Exception as exc:
+                    failures += 1
+                    if args.debug:
+                        print(f"fixed-frame checks-only failed: {exc}")
+                finally:
+                    if fid:
+                        release_frame(client, fid)
+            for key, vals in metric_values.items():
+                if vals:
+                    extras[f"{key}_avg_ms"] = statistics.fmean(vals)
+                    extras[f"{key}_p95_ms"] = percentile(vals, 95)
+            extras["frame_pre_captured"] = True
+            return summarize("scenario_fixed_frame_checks_only", values, failures, extras)
+
+        def scenario_fixed_frame_full_lifecycle() -> dict[str, Any]:
+            fid = ""
+            scenario_started = time.perf_counter()
+            capture_wall_ms = 0.0
+            release_wall_ms = 0.0
+            try:
+                capture_resp, capture_wall_ms = timed_request(client, 66, 1, 1, args.frame_ttl_ms)
+                capture_data = require_ok(capture_resp)
+                fid = str(capture_data[0])
+                extra, metrics = run_fixed_frame_checks(fid)
+                release_started = time.perf_counter()
+                client.request(67, fid)
+                release_wall_ms = (time.perf_counter() - release_started) * 1000.0
+                fid = ""
+                scenario_total_ms = (time.perf_counter() - scenario_started) * 1000.0
+                capture_metrics = frame_capture_metrics(capture_data)
+                metrics.update({
+                    "capture_wall": capture_wall_ms,
+                    "capture": capture_metrics.get("capture", 0.0),
+                    "bgra": capture_metrics.get("bgra", 0.0),
+                    "gray": capture_metrics.get("gray", 0.0),
+                    "release_wall": release_wall_ms,
+                    "release": release_wall_ms,
+                    "scenario_total": scenario_total_ms,
+                })
+                return {
+                    "extra": extra,
+                    "metrics": metrics,
+                }
+            finally:
+                if fid:
+                    release_frame(client, fid)
+
+        def measure_fixed_frame_batch_checks_only() -> dict[str, Any]:
+            values: list[float] = []
+            failures = 0
+            extras: dict[str, Any] = {}
+            metric_values: dict[str, list[float]] = {}
+            ops = build_fixed_frame_batch_ops()
+            for _ in range(args.scenario_count):
+                fid = ""
+                try:
+                    fid, _ = capture_frame(client, gray=1, bgra=1, ttl_ms=args.frame_ttl_ms)
+                    resp, elapsed = timed_request(client, 70, fid, ops, "pixel", args.frame_max_age_ms)
+                    data = require_ok(resp)
+                    values.append(elapsed)
+                    extras.update({
+                        "fixed_region": list(fixed_region) if fixed_region else [],
+                        "image_checks": args.fixed_scenario_image_count,
+                        "color_picks": args.fixed_scenario_color_count,
+                        "last_fixed_batch": data,
+                    })
+                    metrics = frame_batch_metrics(data, elapsed)
+                    metrics["checks_total"] = elapsed
+                    for key, value in metrics.items():
+                        metric_values.setdefault(key, []).append(value)
+                except Exception as exc:
+                    failures += 1
+                    if args.debug:
+                        print(f"fixed-frame batch checks-only failed: {exc}")
+                finally:
+                    if fid:
+                        release_frame(client, fid)
+            for key, vals in metric_values.items():
+                if vals:
+                    extras[f"{key}_avg_ms"] = statistics.fmean(vals)
+                    extras[f"{key}_p95_ms"] = percentile(vals, 95)
+            extras["frame_pre_captured"] = True
+            return summarize("scenario_fixed_frame_batch_checks_only", values, failures, extras)
+
+        def scenario_fixed_frame_batch_full_lifecycle() -> dict[str, Any]:
+            fid = ""
+            scenario_started = time.perf_counter()
+            capture_wall_ms = 0.0
+            release_wall_ms = 0.0
+            ops = build_fixed_frame_batch_ops()
+            try:
+                capture_resp, capture_wall_ms = timed_request(client, 66, 1, 1, args.frame_ttl_ms)
+                capture_data = require_ok(capture_resp)
+                fid = str(capture_data[0])
+                resp, checks_wall_ms = timed_request(client, 70, fid, ops, "pixel", args.frame_max_age_ms)
+                data = require_ok(resp)
+                release_started = time.perf_counter()
+                client.request(67, fid)
+                release_wall_ms = (time.perf_counter() - release_started) * 1000.0
+                fid = ""
+                scenario_total_ms = (time.perf_counter() - scenario_started) * 1000.0
+                capture_metrics = frame_capture_metrics(capture_data)
+                metrics = frame_batch_metrics(data, checks_wall_ms)
+                metrics.update({
+                    "checks_total": checks_wall_ms,
+                    "capture_wall": capture_wall_ms,
+                    "capture": capture_metrics.get("capture", 0.0),
+                    "bgra": capture_metrics.get("bgra", 0.0),
+                    "gray": capture_metrics.get("gray", 0.0),
+                    "release_wall": release_wall_ms,
+                    "release": release_wall_ms,
+                    "scenario_total": scenario_total_ms,
+                })
+                return {
+                    "extra": {
+                        "fixed_region": list(fixed_region) if fixed_region else [],
+                        "image_checks": args.fixed_scenario_image_count,
+                        "color_picks": args.fixed_scenario_color_count,
+                        "last_fixed_batch": data,
+                    },
+                    "metrics": metrics,
+                }
+            finally:
+                if fid:
+                    release_frame(client, fid)
+
         results.append(measure("task68_find_image_in_frame_with_capture", args.image_match_count, find_image_in_frame))
         results.append(measure("scenario_2_image_5_color_old", args.scenario_count, scenario_2_image_5_color_old))
         results.append(measure("scenario_2_image_5_color_frame", args.scenario_count, scenario_2_image_5_color_frame))
         results.append(measure("scenario_2_image_5_color_frame_many", args.scenario_count, scenario_2_image_5_color_frame_many))
+        if fixed_region is not None:
+            results.append(measure_fixed_frame_checks_only())
+            results.append(measure("scenario_fixed_frame_full_lifecycle", args.scenario_count, scenario_fixed_frame_full_lifecycle))
+            results.append(measure_fixed_frame_batch_checks_only())
+            results.append(measure("scenario_fixed_frame_batch_full_lifecycle", args.scenario_count, scenario_fixed_frame_batch_full_lifecycle))
     finally:
         if image_id:
             release_template_object(client, image_id)
 
+    return results
+
+
+def run_image_tune_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dict[str, Any]]:
+    if not args.template_path:
+        raise RuntimeError("--suite image-tune requires --template-path <path_on_ios>")
+
+    image_id = load_template_object(client, args.template_path)
+    results: list[dict[str, Any]] = []
+    try:
+        frame_id, frame_data = capture_frame(client, gray=1, bgra=0, ttl_ms=5000)
+        try:
+            frame_w = int(float(frame_data[1]))
+            frame_h = int(float(frame_data[2]))
+            skips = parse_int_list(args.image_tune_skips)
+            scales = parse_float_list(args.image_tune_scales)
+            if not skips:
+                skips = [0, 1, 2, 3, 4]
+            if not scales:
+                scales = [1.0]
+            if args.debug:
+                print(f"image-tune frame_id={frame_id} frame={frame_w}x{frame_h} template_id={image_id}")
+
+            found_box: tuple[int, int, int, int] | None = None
+            probe_resp = client.request(
+                68,
+                frame_id,
+                image_id,
+                0,
+                0,
+                0,
+                0,
+                args.match_acceptable,
+                scales[0],
+                scales[0],
+                1.0,
+                skips[0],
+                "pixel",
+                5000,
+            )
+            probe_data = require_ok(probe_resp)
+            if int(float(probe_data[0])) >= 0 and int(float(probe_data[1])) >= 0:
+                found_box = (
+                    int(float(probe_data[0])),
+                    int(float(probe_data[1])),
+                    int(float(probe_data[2])),
+                    int(float(probe_data[3])),
+                )
+                if args.debug:
+                    print(f"image-tune found probe box={found_box} score={probe_data[6]}")
+            elif "found_pad_" in args.image_tune_regions.lower():
+                raise RuntimeError(f"found_pad_N requires a successful full-screen probe: {probe_data}")
+
+            regions = parse_region_specs(args.image_tune_regions, frame_w, frame_h, args, found_box)
+        finally:
+            release_frame(client, frame_id)
+
+        for region_name, rx, ry, rw, rh in regions:
+            for skip in skips:
+                for scale in scales:
+                    values: list[float] = []
+                    match_values: list[float] = []
+                    scores: list[float] = []
+                    failures = 0
+                    found_count = 0
+                    last_data: list[Any] = []
+                    config_frame_id, _ = capture_frame(client, gray=1, bgra=0, ttl_ms=5000)
+                    if args.debug:
+                        print(f"image-tune config frame_id={config_frame_id} region={region_name} skip={skip} scale={scale}")
+                    try:
+                        for _ in range(args.image_tune_count):
+                            started = time.perf_counter()
+                            try:
+                                resp = client.request(
+                                    68,
+                                    config_frame_id,
+                                    image_id,
+                                    rx,
+                                    ry,
+                                    rw,
+                                    rh,
+                                    args.match_acceptable,
+                                    scale,
+                                    scale,
+                                    1.0,
+                                    skip,
+                                    "pixel",
+                                    5000,
+                                )
+                                elapsed = (time.perf_counter() - started) * 1000.0
+                                data = require_ok(resp)
+                                last_data = data
+                                values.append(elapsed)
+                                try:
+                                    score = float(data[6])
+                                    scores.append(score)
+                                    if int(float(data[0])) >= 0 and int(float(data[1])) >= 0:
+                                        found_count += 1
+                                except (IndexError, ValueError):
+                                    pass
+                                m = image_frame_metrics(data, elapsed)
+                                if "match" in m:
+                                    match_values.append(m["match"])
+                            except Exception as exc:
+                                failures += 1
+                                if failures <= 3:
+                                    print(f"image-tune failed region={region_name} skip={skip} scale={scale}: {exc}")
+                    finally:
+                        release_frame(client, config_frame_id)
+                    region_pixels = (rw if rw > 0 else frame_w) * (rh if rh > 0 else frame_h)
+                    name = f"image_tune_region={region_name}_skip={skip}_scale={scale:.2f}"
+                    extra = {
+                        "region_name": region_name,
+                        "region_x": rx,
+                        "region_y": ry,
+                        "region_w": rw if rw > 0 else frame_w,
+                        "region_h": rh if rh > 0 else frame_h,
+                        "region_pixels": region_pixels,
+                        "pixel_skip": skip,
+                        "scale_min": scale,
+                        "scale_max": scale,
+                        "found_count": found_count,
+                        "found_rate": (found_count / len(values)) if values else 0.0,
+                        "score_avg": statistics.fmean(scores) if scores else 0.0,
+                        "score_p50": percentile(scores, 50) if scores else 0.0,
+                        "score_min": min(scores) if scores else 0.0,
+                        "score_max": max(scores) if scores else 0.0,
+                        "match_avg_ms": statistics.fmean(match_values) if match_values else 0.0,
+                        "match_p95_ms": percentile(match_values, 95) if match_values else 0.0,
+                        "last_task68": last_data,
+                    }
+                    results.append(summarize(name, values, failures, extra))
+
+        if found_box is not None:
+            fixed_x, fixed_y, fixed_w, fixed_h = padded_box(found_box, frame_w, frame_h, args.image_tune_fixed_pad)
+            fixed_values: list[float] = []
+            fixed_match_values: list[float] = []
+            fixed_scores: list[float] = []
+            fixed_failures = 0
+            fixed_found_count = 0
+            fixed_last_data: list[Any] = []
+            if args.debug:
+                print(
+                    "image-tune practical fixed_region="
+                    f"{fixed_x},{fixed_y},{fixed_w},{fixed_h} skip={args.image_tune_fixed_skip} "
+                    f"scale={args.image_tune_fixed_scale}"
+                )
+            for _ in range(args.image_tune_count):
+                practical_frame_id = ""
+                started = time.perf_counter()
+                try:
+                    practical_frame_id, _ = capture_frame(client, gray=1, bgra=0, ttl_ms=5000)
+                    resp = client.request(
+                        68,
+                        practical_frame_id,
+                        image_id,
+                        fixed_x,
+                        fixed_y,
+                        fixed_w,
+                        fixed_h,
+                        args.match_acceptable,
+                        args.image_tune_fixed_scale,
+                        args.image_tune_fixed_scale,
+                        1.0,
+                        args.image_tune_fixed_skip,
+                        "pixel",
+                        5000,
+                    )
+                    elapsed = (time.perf_counter() - started) * 1000.0
+                    data = require_ok(resp)
+                    fixed_last_data = data
+                    fixed_values.append(elapsed)
+                    try:
+                        score = float(data[6])
+                        fixed_scores.append(score)
+                        if int(float(data[0])) >= 0 and int(float(data[1])) >= 0:
+                            fixed_found_count += 1
+                    except (IndexError, ValueError):
+                        pass
+                    m = image_frame_metrics(data, elapsed)
+                    if "match" in m:
+                        fixed_match_values.append(m["match"])
+                except Exception as exc:
+                    fixed_failures += 1
+                    if fixed_failures <= 3:
+                        print(f"image-tune practical fixed-region failed: {exc}")
+                finally:
+                    if practical_frame_id:
+                        release_frame(client, practical_frame_id)
+            results.append(
+                summarize(
+                    "scenario_image_fixed_region_capture_match",
+                    fixed_values,
+                    fixed_failures,
+                    {
+                        "region_name": f"found_pad_{args.image_tune_fixed_pad}",
+                        "region_x": fixed_x,
+                        "region_y": fixed_y,
+                        "region_w": fixed_w,
+                        "region_h": fixed_h,
+                        "region_pixels": fixed_w * fixed_h,
+                        "pixel_skip": args.image_tune_fixed_skip,
+                        "scale_min": args.image_tune_fixed_scale,
+                        "scale_max": args.image_tune_fixed_scale,
+                        "found_count": fixed_found_count,
+                        "found_rate": (fixed_found_count / len(fixed_values)) if fixed_values else 0.0,
+                        "score_avg": statistics.fmean(fixed_scores) if fixed_scores else 0.0,
+                        "score_p50": percentile(fixed_scores, 50) if fixed_scores else 0.0,
+                        "score_min": min(fixed_scores) if fixed_scores else 0.0,
+                        "score_max": max(fixed_scores) if fixed_scores else 0.0,
+                        "match_avg_ms": statistics.fmean(fixed_match_values) if fixed_match_values else 0.0,
+                        "match_p95_ms": percentile(fixed_match_values, 95) if fixed_match_values else 0.0,
+                        "last_task68": fixed_last_data,
+                    },
+                )
+            )
+    finally:
+        release_template_object(client, image_id)
     return results
 
 
@@ -800,7 +1400,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=6000)
     parser.add_argument("--protocol", choices=["auto", "v1", "v0"], default="auto")
     parser.add_argument("--timeout", type=float, default=5.0)
-    parser.add_argument("--suite", choices=["touch", "gesture", "screenshot", "match", "frame", "all"], default="all")
+    parser.add_argument("--suite", choices=["touch", "gesture", "screenshot", "match", "frame", "image-tune", "all"], default="all")
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--gesture-count", type=int, default=20)
     parser.add_argument("--screenshot-count", type=int, default=10)
@@ -842,6 +1442,15 @@ def main() -> int:
     parser.add_argument("--frame-ttl-ms", type=int, default=1000)
     parser.add_argument("--frame-max-age-ms", type=int, default=1000)
     parser.add_argument("--scenario-count", type=int, default=10)
+    parser.add_argument("--image-tune-count", type=int, default=5)
+    parser.add_argument("--image-tune-regions", default="full,50%,25%,custom", help="Comma list: full, custom, 50%%, found_pad_100, or label:x/y/w/h")
+    parser.add_argument("--image-tune-skips", default="0,1,2,3,4")
+    parser.add_argument("--image-tune-scales", default="1.0")
+    parser.add_argument("--image-tune-fixed-pad", type=int, default=50)
+    parser.add_argument("--image-tune-fixed-skip", type=int, default=1)
+    parser.add_argument("--image-tune-fixed-scale", type=float, default=1.0)
+    parser.add_argument("--fixed-scenario-image-count", type=int, default=2)
+    parser.add_argument("--fixed-scenario-color-count", type=int, default=5)
     args = parser.parse_args()
 
     client = ZXTouchClient(args.host, args.port, args.protocol, args.timeout)
@@ -860,6 +1469,8 @@ def main() -> int:
             all_results.extend(run_match_suite(client, args))
         if args.suite in ("frame", "all"):
             all_results.extend(run_frame_suite(client, args))
+        if args.suite == "image-tune" or (args.suite == "all" and args.template_path):
+            all_results.extend(run_image_tune_suite(client, args))
     finally:
         client.close()
 

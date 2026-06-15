@@ -28,5 +28,6 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error);
 
 #endif
