@@ -679,13 +679,14 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     NSArray<NSString *> *data = zx_splitEventData(eventData);
     if ([data count] < 2) {
-        if (error) *error = zx_frameError(@"1;;Frame batch format should be frame_id;;op@@op...[;;coord;;max_age_ms]\r\n");
+        if (error) *error = zx_frameError(@"1;;Frame batch format should be frame_id;;op@@op...[;;coord;;max_age_ms;;auto_release]\r\n");
         return nil;
     }
     uint32_t frameId = (uint32_t)[data[0] intValue];
     NSString *opsRaw = data[1];
     bool pointCoord = ([data count] >= 3) ? zx_stringIsPointCoord(data[2]) : false;
     uint64_t maxAgeMs = ([data count] >= 4) ? (uint64_t)MAX(0, [data[3] longLongValue]) : kDefaultFrameTtlMs;
+    bool autoRelease = ([data count] >= 5) ? ([data[4] intValue] != 0) : false;
 
     __block NSString *ret = nil;
     __block NSError *blockErr = nil;
@@ -780,6 +781,9 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
 
         double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
         ret = [NSString stringWithFormat:@"%@;;%llu;;%.3f", [results componentsJoinedByString:@"@@"], (unsigned long long)ageMs, totalMs];
+        if (autoRelease) {
+            gFrameStore.erase(frameId);
+        }
     });
     if (blockErr) {
         if (error) *error = blockErr;

@@ -1122,17 +1122,13 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
             fid = ""
             scenario_started = time.perf_counter()
             capture_wall_ms = 0.0
-            release_wall_ms = 0.0
             ops = build_fixed_frame_batch_ops()
             try:
                 capture_resp, capture_wall_ms = timed_request(client, 66, 1, 1, args.frame_ttl_ms)
                 capture_data = require_ok(capture_resp)
                 fid = str(capture_data[0])
-                resp, checks_wall_ms = timed_request(client, 70, fid, ops, "pixel", args.frame_max_age_ms)
+                resp, checks_wall_ms = timed_request(client, 70, fid, ops, "pixel", args.frame_max_age_ms, 1)
                 data = require_ok(resp)
-                release_started = time.perf_counter()
-                client.request(67, fid)
-                release_wall_ms = (time.perf_counter() - release_started) * 1000.0
                 fid = ""
                 scenario_total_ms = (time.perf_counter() - scenario_started) * 1000.0
                 capture_metrics = frame_capture_metrics(capture_data)
@@ -1143,8 +1139,8 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
                     "capture": capture_metrics.get("capture", 0.0),
                     "bgra": capture_metrics.get("bgra", 0.0),
                     "gray": capture_metrics.get("gray", 0.0),
-                    "release_wall": release_wall_ms,
-                    "release": release_wall_ms,
+                    "release_wall": 0.0,
+                    "release": 0.0,
                     "scenario_total": scenario_total_ms,
                 })
                 return {
@@ -1152,6 +1148,7 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
                         "fixed_region": list(fixed_region) if fixed_region else [],
                         "image_checks": args.fixed_scenario_image_count,
                         "color_picks": args.fixed_scenario_color_count,
+                        "auto_release": 1,
                         "last_fixed_batch": data,
                     },
                     "metrics": metrics,

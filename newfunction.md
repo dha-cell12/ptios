@@ -212,7 +212,7 @@ Use `pick_many` when reading multiple pixels from the same frame. It avoids many
 Task `70`: batch frame checks.
 
 ```text
-70frame_id;;op@@op@@op;;coord;;max_age_ms
+70frame_id;;op@@op@@op;;coord;;max_age_ms;;auto_release
 ```
 
 Initial supported ops:
@@ -240,7 +240,7 @@ Color op result:
 pick_many:x,y,r,g,b|x,y,r,g,b|...,scan_ms
 ```
 
-Use task `70` when a frame needs multiple image checks and color reads. It preserves the same frame lifecycle as tasks `68` and `69` but collapses multiple checks into one request.
+Use task `70` when a frame needs multiple image checks and color reads. It preserves the same frame lifecycle as tasks `68` and `69` but collapses multiple checks into one request. Set `auto_release=1` to release the frame inside task `70` after a successful batch, allowing the lifecycle `66 capture -> 70 batch` without a separate task `67` request.
 
 Color reads use BGRA channel order internally:
 
@@ -298,7 +298,7 @@ Fixed-frame scenarios run in the frame suite when `--template-path` is set. They
 
 `scenario_fixed_frame_full_lifecycle` measures the full automation loop: capture one gray+BGRA frame, run fixed-region image checks, run `pick_many`, and release the frame.
 
-`scenario_fixed_frame_batch_checks_only` and `scenario_fixed_frame_batch_full_lifecycle` run the same checks through task `70` to measure the IPC savings from batching.
+`scenario_fixed_frame_batch_checks_only` and `scenario_fixed_frame_batch_full_lifecycle` run the same checks through task `70` to measure the IPC savings from batching. The full-lifecycle batch scenario uses `auto_release=1`, so it measures `66 capture -> 70 batch+release` instead of `66 -> 70 -> 67`.
 
 Example:
 
