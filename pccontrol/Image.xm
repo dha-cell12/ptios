@@ -537,6 +537,30 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             return;
         }
 
+        if ([mode isEqualToString:@"pick_many"]) {
+            if ([data count] < 3) { blockErr = zx_frameError(@"1;;pick_many format should be frame_id;;pick_many;;x,y|x,y|...[;;coord;;max_age_ms]\r\n"); return; }
+            bool pointCoord = ([data count] >= 4) ? zx_stringIsPointCoord(data[3]) : false;
+            uint64_t maxAgeMs = ([data count] >= 5) ? (uint64_t)MAX(0, [data[4] longLongValue]) : kDefaultFrameTtlMs;
+            if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
+
+            NSArray<NSString *> *items = [data[2] componentsSeparatedByString:@"|"];
+            NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithCapacity:[items count]];
+            for (NSString *item in items) {
+                if (!item || [item length] == 0) continue;
+                NSArray<NSString *> *xy = [item componentsSeparatedByString:@","];
+                if ([xy count] != 2) { blockErr = zx_frameError(@"1;;invalid_pick_many_point\r\n"); return; }
+                int x = zx_coordToPixel([xy[0] doubleValue], frame.scale, pointCoord);
+                int y = zx_coordToPixel([xy[1] doubleValue], frame.scale, pointCoord);
+                if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
+                int r = 0, g = 0, b = 0;
+                zx_readBGRA(frame, x, y, &r, &g, &b);
+                [parts addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
+            }
+            double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+            ret = [NSString stringWithFormat:@"%@;;%llu;;%.3f;;%.3f", [parts componentsJoinedByString:@"|"], (unsigned long long)ageMs, totalMs, totalMs];
+            return;
+        }
+
         if ([mode isEqualToString:@"search_single"]) {
             if ([data count] < 13) { blockErr = zx_frameError(@"1;;search_single format should be frame_id;;search_single;;x;;y;;w;;h;;rmin;;rmax;;gmin;;gmax;;bmin;;bmax;;skip[;;coord;;max_age_ms]\r\n"); return; }
             bool pointCoord = ([data count] >= 14) ? zx_stringIsPointCoord(data[13]) : false;

@@ -195,10 +195,19 @@ Task `69`: color operation in frame.
 
 ```text
 69frame_id;;pick;;x;;y;;coord;;max_age_ms
+69frame_id;;pick_many;;x1,y1|x2,y2|x3,y3;;coord;;max_age_ms
 69frame_id;;search_single;;x;;y;;w;;h;;rmin;;rmax;;gmin;;gmax;;bmin;;bmax;;skip;;coord;;max_age_ms
 69frame_id;;is_colors;;table;;mode;;value;;coord;;max_age_ms
 69frame_id;;find_multi_point;;x;;y;;w;;h;;table;;mode;;value;;skip;;coord;;max_age_ms
 ```
+
+`pick_many` returns one field containing pipe-separated color results, then frame metrics:
+
+```text
+0;;x,y,r,g,b|x,y,r,g,b|...;;frame_age_ms;;scan_ms;;total_ms
+```
+
+Use `pick_many` when reading multiple pixels from the same frame. It avoids many repeated `69 pick` IPC round-trips.
 
 Color reads use BGRA channel order internally:
 
@@ -220,6 +229,31 @@ Frame benchmark with image matching:
 ```sh
 python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/ZXTouch/scripts/button.png --image-match-count 20 --json-out benchmark_frame.json --debug
 ```
+
+The frame benchmark reports native metrics when available:
+
+```text
+capture_avg_ms
+bgra_avg_ms
+gray_avg_ms
+match_avg_ms
+scan_avg_ms
+native_total_avg_ms
+ipc_overhead_est_avg_ms
+```
+
+Important scenarios:
+
+```text
+scenario_10_color_picks_old
+scenario_10_color_picks_frame
+scenario_10_color_picks_frame_many
+scenario_2_image_5_color_old
+scenario_2_image_5_color_frame
+scenario_2_image_5_color_frame_many
+```
+
+`frame_many` scenarios use `pick_many` to reduce repeated task `69` requests.
 
 Recommended lifecycle in automation:
 
