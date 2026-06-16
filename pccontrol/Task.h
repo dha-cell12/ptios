@@ -85,6 +85,7 @@
 
 
 #define TASK_UPDATE_CACHE 90
+#define TASK_OCR_TESSERACT_REGION 91
 
 #define TASK_TEST 99
 

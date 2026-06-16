@@ -2,6 +2,7 @@
 #define IMAGE_H
 
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 #undef NO
@@ -29,5 +30,18 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error);
+
+#ifdef __cplusplus
+bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
+                                  int rx,
+                                  int ry,
+                                  int rw,
+                                  int rh,
+                                  NSString *coord,
+                                  uint64_t maxAgeMs,
+                                  cv::Mat &outGray,
+                                  uint64_t *outAgeMs,
+                                  NSError **error);
+#endif
 
 #endif

@@ -21,6 +21,7 @@
 #include <Foundation/NSDistributedNotificationCenter.h>
 #include <TextRecognization/TextRecognizer.h>
 #include "UpdateCache.h"
+#include "TesseractOCRTask.h"
 #include "Screen.h"
 #include "NSTask.h"
 
@@ -950,6 +951,21 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
         @autoreleasepool {
             NSError *err = nil;
             NSString *ret = handleFrameBatchTaskFromRawData(eventData, &err);
+            if (err)
+            {
+                notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
+            }
+            else
+            {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", ret ?: @""] UTF8String], writeStreamRef);
+            }
+        }
+    }
+    else if (taskType == TASK_OCR_TESSERACT_REGION)
+    {
+        @autoreleasepool {
+            NSError *err = nil;
+            NSString *ret = handleTesseractOCRTaskFromRawData(eventData, &err);
             if (err)
             {
                 notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);

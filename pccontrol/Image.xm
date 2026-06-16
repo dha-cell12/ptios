@@ -792,6 +792,79 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
     return ret;
 }
 
+bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
+                                  int rx,
+                                  int ry,
+                                  int rw,
+                                  int rh,
+                                  NSString *coord,
+                                  uint64_t maxAgeMs,
+                                  cv::Mat &outGray,
+                                  uint64_t *outAgeMs,
+                                  NSError **error)
+{
+    __block bool ok = false;
+    __block NSError *blockErr = nil;
+    __block cv::Mat copied;
+    __block uint64_t ageMs = 0;
+    bool pointCoord = zx_stringIsPointCoord(coord ?: @"");
+
+    dispatch_sync(zx_imageQueue(), ^{
+        uint64_t nowMs = zx_nowMs();
+        zx_cleanupFramesLocked(nowMs);
+        auto fit = gFrameStore.find(frameId);
+        if (fit == gFrameStore.end()) {
+            blockErr = zx_frameError(@"1;;frame_not_found\r\n");
+            return;
+        }
+
+        ZXFrameObject &frame = fit->second;
+        if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
+        ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
+
+        int workX = zx_coordToPixel(rx, frame.scale, pointCoord);
+        int workY = zx_coordToPixel(ry, frame.scale, pointCoord);
+        int workW = zx_coordToPixel(rw, frame.scale, pointCoord);
+        int workH = zx_coordToPixel(rh, frame.scale, pointCoord);
+        if (workX < 0) workX = 0;
+        if (workY < 0) workY = 0;
+        if (workX >= frame.width) workX = frame.width - 1;
+        if (workY >= frame.height) workY = frame.height - 1;
+        if (workW <= 0 || workX + workW > frame.width) workW = frame.width - workX;
+        if (workH <= 0 || workY + workH > frame.height) workH = frame.height - workY;
+        if (workW <= 0 || workH <= 0) {
+            blockErr = zx_frameError(@"1;;empty_ocr_region\r\n");
+            return;
+        }
+
+        cv::Rect roi(workX, workY, workW, workH);
+        if (frame.hasGray && !frame.gray.empty()) {
+            copied = frame.gray(roi).clone();
+            ok = !copied.empty();
+            return;
+        }
+
+        if (frame.hasBGRA && !frame.bgra.empty()) {
+            cv::Mat bgra(frame.height, frame.width, CV_8UC4, frame.bgra.data(), frame.bytesPerRow);
+            cv::Mat region = bgra(roi);
+            cv::cvtColor(region, copied, COLOR_BGRA2GRAY);
+            ok = !copied.empty();
+            return;
+        }
+
+        blockErr = zx_frameError(@"1;;frame_missing_gray_bgra\r\n");
+    });
+
+    if (!ok) {
+        if (error) *error = blockErr ?: zx_frameError(@"1;;ocr_region_copy_failed\r\n");
+        return false;
+    }
+
+    outGray = copied;
+    if (outAgeMs) *outAgeMs = ageMs;
+    return true;
+}
+
 @implementation Image
 @end
 

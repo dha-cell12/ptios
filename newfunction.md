@@ -411,6 +411,107 @@ Let the device cool down before OCR benchmarks because Vision is CPU-heavy.
 
 Native note: the default `minimum_height` now uses `1.0 / 32.0`; previously `1/32` evaluated to zero in native code.
 
+### Task `91`: Tesseract OCR region in captured frame
+
+Task `91` runs Tesseract OCR against a region from a frame created by task `66`. It must run in the same SpringBoard process that owns the frame cache, so the normal lifecycle is:
+
+```text
+66 capture gray=1 or bgra=1 -> 91 OCR region -> 67 release
+```
+
+Format:
+
+```text
+91frame_id;;x;;y;;w;;h;;lang;;oem;;psm;;whitelist_b64;;scale_up;;threshold_mode;;coord;;max_age_ms
+```
+
+Defaults for Vietnamese UI automation:
+
+```text
+lang=vie
+fallback_lang=vie+eng
+oem=1
+psm=7
+scale_up=2
+threshold_mode=0
+coord=pixel
+max_age_ms=1000
+```
+
+Fields:
+
+```text
+lang = vie | eng | vie+eng
+oem = 1 for LSTM-only
+psm = 6 single_block, 7 single_line, 8 single_word
+whitelist_b64 = optional UTF-8 whitelist encoded as base64
+scale_up = 1..4, usually 2 for small mobile UI text
+threshold_mode = 0 none, 1 binary/Otsu, 2 adaptive
+coord = pixel or point
+```
+
+Response:
+
+```text
+0;;base64_text;;confidence;;frame_age_ms;;ocr_ms;;preprocess_ms;;total_ms
+```
+
+Error response:
+
+```text
+1;;error_code;;base64_message
+```
+
+Debug language check:
+
+```text
+91check_langs
+```
+
+Response data is:
+
+```text
+0;;check_langs;;base64_csv_languages
+```
+
+Tesseract data files are loaded from:
+
+```text
+/var/mobile/Library/ZXTouch/tessdata/vie.traineddata
+/var/mobile/Library/ZXTouch/tessdata/eng.traineddata
+```
+
+Use `lang=vie` first for Vietnamese-only screens. Retry with `vie+eng` at the client level when the target text mixes English and Vietnamese or confidence is low.
+
+PSM guidance:
+
+```text
+psm=7 single_line for labels/buttons/amounts
+psm=8 single_word for one word or short code
+psm=6 single_block for a small paragraph
+```
+
+Numeric OCR example uses a base64 whitelist for `0123456789.,%`:
+
+```text
+91frame_id;;x;;y;;w;;h;;vie;;1;;7;;MDEyMzQ1Njc4OS4sJQ==;;2;;1;;pixel;;1000
+```
+
+Benchmark Tesseract OCR immediately after MVP:
+
+```text
+ocr_tess_first_run
+ocr_tess_warm_run
+ocr_tess_vie_small_region
+ocr_tess_vie_eng_small_region
+ocr_tess_scale_1_2_3
+ocr_tess_psm_6_7_8
+ocr_tess_threshold_0_1_2
+ocr_tess_whitelist_number
+```
+
+Track `preprocess_ms`, `ocr_ms`, `total_ms`, `text`, and `confidence`. First-run time should be reported separately because loading traineddata can be much slower than warm OCR.
+
 Image tuning benchmark:
 
 ```sh
