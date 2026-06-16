@@ -58,7 +58,7 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         // parse minimum_height part
         if (minimumHeight <= 0)
         {
-            minimumHeight = 1/32;
+            minimumHeight = 1.0f / 32.0f;
         }
 
         // parse level

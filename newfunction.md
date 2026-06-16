@@ -317,6 +317,100 @@ Image + color: 66 gray=1 bgra=1 -> 68 image checks -> 69 pick_many -> 67 release
 Color precheck: 66 gray=1 bgra=1 -> 69 color precheck -> if pass then 68 image -> 67 release
 ```
 
+Preferred automation lifecycle for image+color checks:
+
+```text
+66 gray=1 bgra=1 -> 70 img/pick_many ops with auto_release=1 -> tap/wait -> repeat
+```
+
+Use the non-batch lifecycle when you need an operation not yet supported by task `70`. For the current fixed-region path, task `70` is the default because it collapses repeated task `68` and task `69` IPC into one request and can release the frame without task `67`.
+
+Python wrapper helper:
+
+```python
+ok, result = z.screen.batch_checks_auto_release(
+    image_checks=[{
+        "template": template,
+        "region": (0, 2, 232, 236),
+        "acceptable": 0.8,
+        "scale": 1.0,
+        "pixel_skip": 1,
+    }],
+    color_points=[(120, 300), (121, 300)],
+)
+```
+
+Task70 scale benchmark:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/ZXTouch/scripts/button.png --image-tune-fixed-pad 50 --image-tune-fixed-skip 1 --image-tune-fixed-scale 1.0 --fixed-scenario-image-counts 1,2,3,5 --fixed-scenario-color-counts 0,5,10 --json-out benchmark_frame.json --debug
+```
+
+Scale benchmark rows use this name format:
+
+```text
+scenario_fixed_frame_batch_scale_i<image_count>_c<color_count>
+```
+
+## OCR / Text Recognition
+
+OCR uses Apple's Vision framework (`VNRecognizeTextRequest`) through task `27`, and is supported on iOS 13 or newer. OCR is always routed to SpringBoard because Vision is more stable there.
+
+Supported languages are not hardcoded. They are queried dynamically from the device:
+
+```text
+27 2;;level
+```
+
+`level` values:
+
+```text
+0 = accurate
+1 = fast
+```
+
+Text recognition format:
+
+```text
+27 1;;x,,y,,w,,h;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path
+```
+
+OCR benchmark:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite ocr --ocr-region-x 0 --ocr-region-y 0 --ocr-region-w 0 --ocr-region-h 0 --ocr-level both --ocr-count 5 --json-out benchmark_ocr.json --debug
+```
+
+Benchmark a small region with explicit languages:
+
+```sh
+python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite ocr --ocr-region-x 50 --ocr-region-y 200 --ocr-region-w 600 --ocr-region-h 300 --ocr-level fast --ocr-languages en-US,vi-VN --ocr-auto-correct 0 --ocr-count 5 --json-out benchmark_ocr.json --debug
+```
+
+OCR benchmark output includes:
+
+```text
+ocr_supported_languages_fast/accurate
+ocr_fast_region_...
+ocr_accurate_region_...
+text_count_avg
+chars_avg
+last_ocr_result
+```
+
+OCR optimization guidance:
+
+```text
+Use the smallest practical region.
+Prefer recognition_level=1 fast for automation checks.
+Pass explicit languages such as en-US or vi-VN instead of leaving languages empty when possible.
+Keep auto_correct=0 unless correction improves your specific target text.
+Keep debug_image_path empty during benchmark and automation.
+Let the device cool down before OCR benchmarks because Vision is CPU-heavy.
+```
+
+Native note: the default `minimum_height` now uses `1.0 / 32.0`; previously `1/32` evaluated to zero in native code.
+
 Image tuning benchmark:
 
 ```sh

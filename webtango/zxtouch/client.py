@@ -341,7 +341,7 @@ class zxtouch:
             Result tuple: (success?, error_message/list_of_entries)
         """
         self.s.send(datahandler.format_socket_data(tasktypes.TASK_LIST_AUTO_LAUNCH))
-        result = datahandler.decode_socket_data(self.s.recv(2048))
+        result = datahandler.decode_socket_data(self.s.recv(1024 * 1024))
         if not result[0]:
             return False, result[1]
 

@@ -206,6 +206,10 @@ def print_summary(result: dict[str, Any]) -> None:
         print(
             "found_rate={found_rate:.2f} score_avg={score_avg:.4f} score_min={score_min:.4f} score_max={score_max:.4f}".format(**result)
         )
+    if "text_count_avg" in result:
+        print("text_count_avg={text_count_avg:.1f} chars_avg={chars_avg:.1f}".format(**result))
+    if "language_count" in result:
+        print(f"language_count={result['language_count']}")
 
 
 def measure(name: str, count: int, fn) -> dict[str, Any]:
@@ -331,6 +335,19 @@ def frame_batch_metrics(data: list[Any], roundtrip_ms: float | None = None) -> d
     if roundtrip_ms is not None:
         metrics["ipc_overhead_est"] = max(0.0, roundtrip_ms - native_total)
     return metrics
+
+
+def ocr_result_stats(data: list[Any]) -> dict[str, float]:
+    text_count = 0
+    char_count = 0
+    for item in data:
+        if not item:
+            continue
+        text = str(item).split(",,", 1)[0]
+        if text:
+            text_count += 1
+            char_count += len(text)
+    return {"text_count": float(text_count), "chars": float(char_count)}
 
 
 def parse_float_list(text: str) -> list[float]:
@@ -994,12 +1011,14 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
             }
             return extra, metrics
 
-        def build_fixed_frame_batch_ops() -> str:
+        def build_fixed_frame_batch_ops(image_count: int | None = None, color_count: int | None = None) -> str:
             if fixed_region is None:
                 raise RuntimeError("fixed image region unavailable; full-screen probe did not find template")
             fx, fy, fw, fh = fixed_region
+            image_count = args.fixed_scenario_image_count if image_count is None else image_count
+            color_count = args.fixed_scenario_color_count if color_count is None else color_count
             ops: list[str] = []
-            for _ in range(args.fixed_scenario_image_count):
+            for _ in range(image_count):
                 ops.append(
                     "img,{image_id},{x},{y},{w},{h},{acceptable},{scale},{skip}".format(
                         image_id=image_id,
@@ -1012,8 +1031,8 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
                         skip=args.image_tune_fixed_skip,
                     )
                 )
-            if args.fixed_scenario_color_count > 0:
-                points = "|".join(f"{color_x}:{color_y}" for _ in range(args.fixed_scenario_color_count))
+            if color_count > 0:
+                points = "|".join(f"{color_x}:{color_y}" for _ in range(color_count))
                 ops.append(f"pick_many,{points}")
             return "@@".join(ops)
 
@@ -1157,6 +1176,60 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
                 if fid:
                     release_frame(client, fid)
 
+        def measure_fixed_frame_batch_scale(image_count: int, color_count: int) -> dict[str, Any]:
+            values: list[float] = []
+            failures = 0
+            extras: dict[str, Any] = {
+                "image_checks": image_count,
+                "color_picks": color_count,
+            }
+            metric_values: dict[str, list[float]] = {}
+            ops = build_fixed_frame_batch_ops(image_count, color_count)
+            for _ in range(args.scenario_count):
+                fid = ""
+                scenario_started = time.perf_counter()
+                try:
+                    capture_resp, capture_wall_ms = timed_request(client, 66, 1, 1, args.frame_ttl_ms)
+                    capture_data = require_ok(capture_resp)
+                    fid = str(capture_data[0])
+                    resp, checks_wall_ms = timed_request(client, 70, fid, ops, "pixel", args.frame_max_age_ms, 1)
+                    data = require_ok(resp)
+                    fid = ""
+                    scenario_total_ms = (time.perf_counter() - scenario_started) * 1000.0
+                    values.append(scenario_total_ms)
+                    extras.update({
+                        "fixed_region": list(fixed_region) if fixed_region else [],
+                        "auto_release": 1,
+                        "last_fixed_batch_scale": data,
+                    })
+                    capture_metrics = frame_capture_metrics(capture_data)
+                    metrics = frame_batch_metrics(data, checks_wall_ms)
+                    metrics.update({
+                        "checks_total": checks_wall_ms,
+                        "capture_wall": capture_wall_ms,
+                        "capture": capture_metrics.get("capture", 0.0),
+                        "bgra": capture_metrics.get("bgra", 0.0),
+                        "gray": capture_metrics.get("gray", 0.0),
+                        "release_wall": 0.0,
+                        "release": 0.0,
+                        "scenario_total": scenario_total_ms,
+                    })
+                    for key, value in metrics.items():
+                        metric_values.setdefault(key, []).append(value)
+                except Exception as exc:
+                    failures += 1
+                    if args.debug:
+                        print(f"fixed-frame batch scale failed images={image_count} colors={color_count}: {exc}")
+                finally:
+                    if fid:
+                        release_frame(client, fid)
+            for key, vals in metric_values.items():
+                if vals:
+                    extras[f"{key}_avg_ms"] = statistics.fmean(vals)
+                    extras[f"{key}_p95_ms"] = percentile(vals, 95)
+            name = f"scenario_fixed_frame_batch_scale_i{image_count}_c{color_count}"
+            return summarize(name, values, failures, extras)
+
         results.append(measure("task68_find_image_in_frame_with_capture", args.image_match_count, find_image_in_frame))
         results.append(measure("scenario_2_image_5_color_old", args.scenario_count, scenario_2_image_5_color_old))
         results.append(measure("scenario_2_image_5_color_frame", args.scenario_count, scenario_2_image_5_color_frame))
@@ -1166,6 +1239,16 @@ def run_frame_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dic
             results.append(measure("scenario_fixed_frame_full_lifecycle", args.scenario_count, scenario_fixed_frame_full_lifecycle))
             results.append(measure_fixed_frame_batch_checks_only())
             results.append(measure("scenario_fixed_frame_batch_full_lifecycle", args.scenario_count, scenario_fixed_frame_batch_full_lifecycle))
+            image_counts = parse_int_list(args.fixed_scenario_image_counts) if args.fixed_scenario_image_counts else []
+            color_counts = parse_int_list(args.fixed_scenario_color_counts) if args.fixed_scenario_color_counts else []
+            if image_counts or color_counts:
+                if not image_counts:
+                    image_counts = [args.fixed_scenario_image_count]
+                if not color_counts:
+                    color_counts = [args.fixed_scenario_color_count]
+                for image_count in image_counts:
+                    for color_count in color_counts:
+                        results.append(measure_fixed_frame_batch_scale(max(0, image_count), max(0, color_count)))
     finally:
         if image_id:
             release_template_object(client, image_id)
@@ -1391,13 +1474,100 @@ def run_image_tune_suite(client: ZXTouchClient, args: argparse.Namespace) -> lis
     return results
 
 
+def run_ocr_suite(client: ZXTouchClient, args: argparse.Namespace) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    region = (args.ocr_region_x, args.ocr_region_y, args.ocr_region_w, args.ocr_region_h)
+    rect_data = ",,".join(str(int(x)) for x in region)
+    custom_words = ",,".join(x.strip() for x in args.ocr_custom_words.split(",") if x.strip())
+    languages = ",,".join(x.strip() for x in args.ocr_languages.split(",") if x.strip())
+    levels = []
+    if args.ocr_level in ("accurate", "both"):
+        levels.append(("accurate", 0))
+    if args.ocr_level in ("fast", "both"):
+        levels.append(("fast", 1))
+
+    for label, level in levels:
+        try:
+            data = require_ok(client.request(27, 2, level))
+            results.append(
+                summarize(
+                    f"ocr_supported_languages_{label}",
+                    [],
+                    0,
+                    {
+                        "language_count": len(data),
+                        "languages": data,
+                    },
+                )
+            )
+            if args.debug:
+                print(f"ocr {label} supported_languages={','.join(str(x) for x in data)}")
+        except Exception as exc:
+            results.append(summarize(f"ocr_supported_languages_{label}", [], 1, {"error": str(exc)}))
+
+        values: list[float] = []
+        failures = 0
+        text_counts: list[float] = []
+        chars: list[float] = []
+        last_data: list[Any] = []
+        for i in range(args.ocr_count):
+            debug_path = ""
+            if args.ocr_debug_image_path:
+                suffix = f"-{label}-{i}.jpg" if args.ocr_count > 1 else ""
+                debug_path = args.ocr_debug_image_path + suffix
+            started = time.perf_counter()
+            try:
+                data = require_ok(
+                    client.request(
+                        27,
+                        1,
+                        rect_data,
+                        custom_words,
+                        args.ocr_min_height,
+                        level,
+                        languages,
+                        args.ocr_auto_correct,
+                        debug_path,
+                    )
+                )
+                elapsed = (time.perf_counter() - started) * 1000.0
+                values.append(elapsed)
+                last_data = data
+                stats = ocr_result_stats(data)
+                text_counts.append(stats["text_count"])
+                chars.append(stats["chars"])
+            except Exception as exc:
+                failures += 1
+                if failures <= 3:
+                    print(f"ocr {label} failed: {exc}")
+        region_name = "full" if region[2] <= 0 or region[3] <= 0 else f"{region[0]}_{region[1]}_{region[2]}_{region[3]}"
+        results.append(
+            summarize(
+                f"ocr_{label}_region_{region_name}",
+                values,
+                failures,
+                {
+                    "ocr_level": label,
+                    "ocr_region": list(region),
+                    "ocr_languages": [x for x in args.ocr_languages.split(",") if x.strip()],
+                    "ocr_auto_correct": args.ocr_auto_correct,
+                    "ocr_min_height": args.ocr_min_height,
+                    "text_count_avg": statistics.fmean(text_counts) if text_counts else 0.0,
+                    "chars_avg": statistics.fmean(chars) if chars else 0.0,
+                    "last_ocr_result": last_data,
+                },
+            )
+        )
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark zxtouch command latency from PC")
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, default=6000)
     parser.add_argument("--protocol", choices=["auto", "v1", "v0"], default="auto")
     parser.add_argument("--timeout", type=float, default=5.0)
-    parser.add_argument("--suite", choices=["touch", "gesture", "screenshot", "match", "frame", "image-tune", "all"], default="all")
+    parser.add_argument("--suite", choices=["touch", "gesture", "screenshot", "match", "frame", "image-tune", "ocr", "all"], default="all")
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--gesture-count", type=int, default=20)
     parser.add_argument("--screenshot-count", type=int, default=10)
@@ -1448,6 +1618,19 @@ def main() -> int:
     parser.add_argument("--image-tune-fixed-scale", type=float, default=1.0)
     parser.add_argument("--fixed-scenario-image-count", type=int, default=2)
     parser.add_argument("--fixed-scenario-color-count", type=int, default=5)
+    parser.add_argument("--fixed-scenario-image-counts", default="", help="Optional comma list for task70 scale benchmark, e.g. 1,2,3,5")
+    parser.add_argument("--fixed-scenario-color-counts", default="", help="Optional comma list for task70 scale benchmark, e.g. 0,5,10")
+    parser.add_argument("--ocr-count", type=int, default=5)
+    parser.add_argument("--ocr-region-x", type=int, default=0)
+    parser.add_argument("--ocr-region-y", type=int, default=0)
+    parser.add_argument("--ocr-region-w", type=int, default=0)
+    parser.add_argument("--ocr-region-h", type=int, default=0)
+    parser.add_argument("--ocr-level", choices=["fast", "accurate", "both"], default="both")
+    parser.add_argument("--ocr-languages", default="", help="Comma list, e.g. en-US,vi-VN. Empty lets Vision choose.")
+    parser.add_argument("--ocr-custom-words", default="")
+    parser.add_argument("--ocr-min-height", default="")
+    parser.add_argument("--ocr-auto-correct", type=int, default=0)
+    parser.add_argument("--ocr-debug-image-path", default="")
     args = parser.parse_args()
 
     client = ZXTouchClient(args.host, args.port, args.protocol, args.timeout)
@@ -1468,6 +1651,8 @@ def main() -> int:
             all_results.extend(run_frame_suite(client, args))
         if args.suite == "image-tune" or (args.suite == "all" and args.template_path):
             all_results.extend(run_image_tune_suite(client, args))
+        if args.suite in ("ocr", "all"):
+            all_results.extend(run_ocr_suite(client, args))
     finally:
         client.close()
 

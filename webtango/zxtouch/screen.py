@@ -157,6 +157,81 @@ class Screen:
             return False, res
         return True, ""
 
+    def batch_checks_auto_release(self, image_checks=None, color_points=None, coord="pixel", max_age_ms=1000, ttl_ms=1000):
+        """Capture one frame, run task70 checks, and release the frame inside task70.
+
+        Args:
+            image_checks: list of dicts with template, region, acceptable, scale, pixel_skip.
+            color_points: list of (x, y) points for one pick_many op.
+            coord: "pixel" or "point".
+            max_age_ms: maximum frame age accepted by task70.
+            ttl_ms: frame TTL for task66 capture.
+
+        Returns:
+            (True, raw_task70_response_list) or (False, error).
+        """
+        image_checks = image_checks or []
+        color_points = color_points or []
+        need_gray = 1 if image_checks else 0
+        need_bgra = 1 if color_points else 0
+        if not need_gray and not need_bgra:
+            return False, "image_checks or color_points is required"
+
+        ops = []
+        for check in image_checks:
+            template = check.get("template") or check.get("image")
+            if template is None:
+                return False, "image check requires template"
+            region = check.get("region", (0, 0, 0, 0))
+            if len(region) != 4:
+                return False, "image check region must be (x, y, width, height)"
+            acceptable = check.get("acceptable", 0.8)
+            scale = check.get("scale", 1.0)
+            pixel_skip = check.get("pixel_skip", 0)
+            ops.append(
+                "img,{},{},{},{},{},{},{},{}".format(
+                    int(template.id),
+                    int(region[0]),
+                    int(region[1]),
+                    int(region[2]),
+                    int(region[3]),
+                    float(acceptable),
+                    float(scale),
+                    int(pixel_skip),
+                )
+            )
+
+        if color_points:
+            points = []
+            for point in color_points:
+                if len(point) != 2:
+                    return False, "color point must be (x, y)"
+                points.append(f"{int(point[0])}:{int(point[1])}")
+            ops.append("pick_many," + "|".join(points))
+
+        self._client.s.send(datahandler.format_socket_data(tasktypes.TASK_FRAME_CAPTURE, need_gray, need_bgra, int(ttl_ms)))
+        ok, frame = datahandler.decode_socket_data(self._client.s.recv(1024))
+        if not ok:
+            return False, frame
+        if not isinstance(frame, list) or len(frame) < 1:
+            return False, "Invalid frame capture response"
+        frame_id = frame[0]
+
+        self._client.s.send(
+            datahandler.format_socket_data(
+                tasktypes.TASK_FRAME_BATCH,
+                frame_id,
+                "@@".join(ops),
+                coord,
+                int(max_age_ms),
+                1,
+            )
+        )
+        ok, res = datahandler.decode_socket_data(self._client.s.recv(4096))
+        if not ok:
+            return False, res
+        return True, res
+
     def find_image(self, template: ImageObject, region=(0, 0, 0, 0), acceptable=0.9,
                    scale_min=0.2, scale_max=1.0, scale_step=0.1, pixel_skip=0):
         if len(region) != 4:

@@ -61,3 +61,10 @@ TASK_VPN = 59
 
 # Hello/status probe
 TASK_HELLO_STATUS = 60
+
+# Manual frame lifecycle and batched frame checks
+TASK_FRAME_CAPTURE = 66
+TASK_FRAME_RELEASE = 67
+TASK_FIND_IMAGE_IN_FRAME = 68
+TASK_COLOR_IN_FRAME = 69
+TASK_FRAME_BATCH = 70
