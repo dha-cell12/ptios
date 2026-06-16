@@ -50,7 +50,7 @@
 #define HAVE_INTTYPES_H 1
 
 /* Enable libarchive */
-#define HAVE_LIBARCHIVE 1
+/* #undef HAVE_LIBARCHIVE */
 
 /* Enable libcurl */
 /* #undef HAVE_LIBCURL */

@@ -6,26 +6,23 @@
     {
       "name": "ocr_supported_languages_accurate",
       "count": 0,
-      "failures": 0,
+      "failures": 1,
       "avg_ms": 0.0,
       "p50_ms": 0.0,
       "p95_ms": 0.0,
       "p99_ms": 0.0,
       "max_ms": 0.0,
-      "language_count": 1,
-      "languages": [
-        "en-US"
-      ]
+      "error": "ipc_not_ready"
     },
     {
       "name": "ocr_accurate_region_50_200_600_300",
-      "count": 5,
-      "failures": 0,
-      "avg_ms": 942.129319999367,
-      "p50_ms": 838.5650999844074,
-      "p95_ms": 1250.7297600037418,
-      "p99_ms": 1331.2313120043837,
-      "max_ms": 1351.356700004544,
+      "count": 0,
+      "failures": 5,
+      "avg_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "p99_ms": 0.0,
+      "max_ms": 0.0,
       "ocr_level": "accurate",
       "ocr_region": [
         50,
@@ -36,40 +33,30 @@
       "ocr_languages": [],
       "ocr_auto_correct": 0,
       "ocr_min_height": "",
-      "text_count_avg": 6.0,
-      "chars_avg": 27.0,
-      "last_ocr_result": [
-        "mo,,67,,247,,96,,44",
-        "mo,,67,,291,,95,,41",
-        "MoMo,,77,,366,,72,,18",
-        "MyVIB,,251,,366,,75,,22",
-        "Proton VPN,,395,,366,,133,,18",
-        "Surc,,600,,366,,50,,21"
-      ]
+      "text_count_avg": 0.0,
+      "chars_avg": 0.0,
+      "last_ocr_result": []
     },
     {
       "name": "ocr_supported_languages_fast",
       "count": 0,
-      "failures": 0,
+      "failures": 1,
       "avg_ms": 0.0,
       "p50_ms": 0.0,
       "p95_ms": 0.0,
       "p99_ms": 0.0,
       "max_ms": 0.0,
-      "language_count": 1,
-      "languages": [
-        "en-US"
-      ]
+      "error": "ipc_not_ready"
     },
     {
       "name": "ocr_fast_region_50_200_600_300",
-      "count": 5,
-      "failures": 0,
-      "avg_ms": 41.568040009588,
-      "p50_ms": 43.468700023368,
-      "p95_ms": 52.96559998532757,
-      "p99_ms": 53.59495998127386,
-      "max_ms": 53.75229998026043,
+      "count": 0,
+      "failures": 5,
+      "avg_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "p99_ms": 0.0,
+      "max_ms": 0.0,
       "ocr_level": "fast",
       "ocr_region": [
         50,
@@ -80,16 +67,9 @@
       "ocr_languages": [],
       "ocr_auto_correct": 0,
       "ocr_min_height": "",
-      "text_count_avg": 6.0,
-      "chars_avg": 33.0,
-      "last_ocr_result": [
-        "Proton VPN,,397,,368,,130,,17",
-        "fflo,,72,,252,,87,,38",
-        "fflo ?r,,72,,281,,261,,52",
-        "MoMo,,80,,368,,68,,17",
-        "MyVIB,,253,,368,,70,,22",
-        "Sur,,602,,368,,38,,18"
-      ]
+      "text_count_avg": 0.0,
+      "chars_avg": 0.0,
+      "last_ocr_result": []
     }
   ]
 }
