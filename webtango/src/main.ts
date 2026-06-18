@@ -11,6 +11,17 @@ import { AdbWebSocketConnector } from './AdbWebSocketConnector';
 import { ScrcpyBatchController } from './ScrcpyBatchController';
 import { ZxTouchWsClient } from './ZxTouchWsClient';
 
+let automationIdeMounted = false;
+
+async function ensureAutomationIdeMounted() {
+  if (automationIdeMounted) return;
+  const root = document.getElementById('automation-ide-root');
+  if (!root) return;
+  const { mountAutomationIde } = await import('./ide/mountAutomationIde');
+  mountAutomationIde(root);
+  automationIdeMounted = true;
+}
+
 // UI Elements
 const statusBadge = document.getElementById('status') as HTMLSpanElement;
 const endpointInput = document.getElementById('endpoint') as HTMLInputElement;
@@ -3287,11 +3298,13 @@ document.querySelectorAll('.nav-item').forEach(item => {
     const deviceList = document.querySelector('.device-list-pane') as HTMLElement;
     const deviceDetail = document.querySelector('.device-detail-pane') as HTMLElement;
     const screenView = document.getElementById('screen-view-pane') as HTMLElement;
+    const automationIde = document.getElementById('automation-ide-pane') as HTMLElement;
 
     // Default state: hide all
     if (deviceList) deviceList.style.display = 'none';
     if (deviceDetail) deviceDetail.style.display = 'none';
     if (screenView) screenView.style.display = 'none';
+    if (automationIde) automationIde.style.display = 'none';
 
     if (tab === 'devices') {
       if (deviceList) deviceList.style.display = 'block';
@@ -3301,6 +3314,11 @@ document.querySelectorAll('.nav-item').forEach(item => {
         screenView.style.display = 'flex';
         updateVisibilityState();
         renderScreenView();
+      }
+    } else if (tab === 'automation_ide') {
+      if (automationIde) {
+        automationIde.style.display = 'block';
+        ensureAutomationIdeMounted().catch((e) => console.error('[automation-ide] mount failed', e));
       }
     } else {
       // Placeholder for other tabs

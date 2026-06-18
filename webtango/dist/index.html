@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <script type="module" crossorigin src="/assets/index-0-sYz8fI.js"></script>
+  <script type="module" crossorigin src="/assets/index-CmVTzAm0.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-AZvDTgOr.css">
 </head>
 
@@ -32,6 +32,12 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-monitor"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
           </span>
           <span class="nav-label">Screen View</span>
+        </div>
+        <div class="nav-item" data-tab="automation_ide" title="Automation IDE">
+          <span class="nav-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-code-2"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+          </span>
+          <span class="nav-label">IDE</span>
         </div>
       </nav>
 
@@ -439,6 +445,11 @@
           <div style="flex: 1; overflow-y: auto; width: 100%; padding: 24px; background: #f8fafc;">
             <div id="screen-grid" class="screen-grid"></div>
           </div>
+        </section>
+
+        <!-- Automation IDE Pane (React mounted lazily by main.ts) -->
+        <section id="automation-ide-pane" style="display: none; width: 100%; height: 100%; overflow: hidden; background: var(--background);">
+          <div id="automation-ide-root" style="width: 100%; height: 100%;"></div>
         </section>
       </div>
     </div>
