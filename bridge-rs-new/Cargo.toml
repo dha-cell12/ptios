@@ -1,0 +1,43 @@
+[package]
+name = "tango_bridge"
+description = "Tango ADB Desktop Application"
+version = "0.3.0"
+edition = "2021"
+build = "build.rs"
+
+[package.metadata.winresource]
+ProductName = "Tango ADB"
+OriginalFilename = "tango-bridge.exe"
+LegalCopyright = "Copyright © 2024-2025 Tango ADB"
+
+[profile.release]
+strip = true
+lto = true
+
+[dependencies]
+auto-launch = "0.5.0"
+open = "5.1.3"
+tao = "0.28.0"
+tray-icon = { version = "0.14.0", default-features = false, features = [] }
+tokio = { version = "1.37.0", features = ["full"] }
+futures-util = "0.3.30"
+image = { version = "0.25.1", default-features = false, features = ["png"] }
+single-instance = "0.3.3"
+reqwest = { version = "0.12.4", features = ["json", "stream"] }
+axum = { version = "0.8.1", features = ["macros", "ws", "tracing"] }
+tower-http = { version = "0.6.2", features = ["cors"] }
+http = "1.2.0"
+tokio-util = "0.7.14"
+tracing-subscriber = "0.3.19"
+tracing = "0.1.41"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+base64 = "0.22.1"
+bytes = "1.9.0"
+webrtc = "0.11.0"
+
+[build-dependencies]
+winresource = "0.1"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+core-foundation = "0.9"
