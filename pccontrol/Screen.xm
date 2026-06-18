@@ -392,13 +392,36 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         ? UIImageJPEGRepresentation(image, 0.75)
         : UIImagePNGRepresentation(image);
 
+    NSString *parentDir = [targetPath stringByDeletingLastPathComponent];
+    if ([parentDir length] > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir])
+    {
+        NSError *mkdirErr = nil;
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:parentDir
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:&mkdirErr])
+        {
+            if (error)
+            {
+                NSString *message = [NSString stringWithFormat:@"-1;;Failed to create screenshot directory: %@ (%@)\r\n",
+                                     parentDir,
+                                     [mkdirErr localizedDescription] ?: @"unknown error"];
+                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+                                             code:999
+                                         userInfo:@{NSLocalizedDescriptionKey:message}];
+            }
+            return nil;
+        }
+    }
+
     if (!encoded || ![encoded writeToFile:targetPath atomically:NO])
     {
         if (error)
         {
+            NSString *message = [NSString stringWithFormat:@"-1;;Failed to save screenshot: %@\r\n", targetPath];
             *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
                                          code:999
-                                     userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to save screenshot.\r\n"}];
+                                     userInfo:@{NSLocalizedDescriptionKey:message}];
         }
         return nil;
     }

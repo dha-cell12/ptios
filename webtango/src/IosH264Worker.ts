@@ -47,6 +47,8 @@ let socket: WebSocket | undefined;
 let decoder: VideoDecoder | undefined;
 let stopped = false;
 let renderCanvas: OffscreenCanvas | undefined;
+let lastPostedWidth = 0;
+let lastPostedHeight = 0;
 
 function appendBytes(a: Uint8Array, b: Uint8Array) {
   if (a.length === 0) return b;
@@ -76,6 +78,8 @@ function stop() {
     decoder?.close();
   } catch {}
   decoder = undefined;
+  lastPostedWidth = 0;
+  lastPostedHeight = 0;
 }
 
 function postMetrics(metrics: Metrics) {
@@ -143,6 +147,11 @@ function start(url: string, canvas?: OffscreenCanvas) {
       try {
         const width = frame.displayWidth || frame.codedWidth;
         const height = frame.displayHeight || frame.codedHeight;
+        if (width !== lastPostedWidth || height !== lastPostedHeight) {
+          lastPostedWidth = width;
+          lastPostedHeight = height;
+          self.postMessage({ type: 'frame-size', width, height });
+        }
         if (renderCanvas!.width !== width || renderCanvas!.height !== height) {
           renderCanvas!.width = width;
           renderCanvas!.height = height;

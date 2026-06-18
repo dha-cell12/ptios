@@ -2,10 +2,11 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getBridgeBasesFromPage, type BridgeBases } from '../services/bridgeBase';
 import { deviceLabel, listDevices, type UnifiedDevice } from '../services/deviceRegistry';
-import { defaultScriptPath, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, type FileEntry } from '../services/fileManager';
+import { defaultScriptPath, deleteWorkspacePath, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, type FileEntry } from '../services/fileManager';
 import { formatLogTime, type IdeLog, type LogLevel } from '../services/logBus';
 import { runBrowserScript } from '../services/scriptRuntime';
 import { ZxTouchDeviceSdk } from '../services/zxtouchSdk';
+import { IdeScreenPanel } from './IdeScreenPanel';
 
 const defaultScript = `log("start");
 await device.tap(100, 200);
@@ -23,6 +24,34 @@ declare const device: {
   tap(x: number, y: number, holdMs?: number): Promise<void>;
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs?: number): Promise<void>;
   getScreenSize(): Promise<{ width: number; height: number } | null>;
+  screenshot(path: string, region?: [number, number, number, number]): Promise<string>;
+  pickColor(x: number, y: number): Promise<{ red: number; green: number; blue: number; hex: string }>;
+  colorEquals(x: number, y: number, hex: string, tolerance?: number): Promise<boolean>;
+  findImage(imagePath: string, options?: {
+    region?: [number, number, number, number];
+    acceptable?: number;
+    scaleMin?: number;
+    scaleMax?: number;
+    scaleStep?: number;
+    pixelSkip?: number;
+  }): Promise<{ x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>;
+  captureImage(region: [number, number, number, number]): Promise<{ id: number; width: number; height: number; region?: [number, number, number, number] }>;
+  findImageObject(image: { id: number } | number, options?: {
+    region?: [number, number, number, number];
+    acceptable?: number;
+    scaleMin?: number;
+    scaleMax?: number;
+    scaleStep?: number;
+    pixelSkip?: number;
+  }): Promise<{ x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>;
+  releaseImage(image: { id: number } | number): Promise<void>;
+  ocr(options: {
+    region: [number, number, number, number];
+    lang?: string;
+    psm?: number;
+    scaleUp?: number;
+    whitelist?: string;
+  }): Promise<{ text: string; raw: string[] }>;
   request(task: number, ...args: Array<string | number>): Promise<{ ok: boolean; parts: string[]; raw: string }>;
 };
 declare function sleep(ms: number): Promise<void>;
@@ -46,6 +75,36 @@ const completionSnippets = [
     label: 'device.getScreenSize',
     detail: 'Read iOS screen size',
     insertText: 'const size = await device.getScreenSize();\nlog(size);',
+  },
+  {
+    label: 'device.screenshot',
+    detail: 'Save screenshot or region PNG on device',
+    insertText: 'const path = await device.screenshot("${1:/var/mobile/Library/ZXTouch/templates/template.png}", [${2:x}, ${3:y}, ${4:w}, ${5:h}]);\nlog(path);',
+  },
+  {
+    label: 'device.pickColor',
+    detail: 'Pick RGB/HEX color at coordinate',
+    insertText: 'const color = await device.pickColor(${1:x}, ${2:y});\nlog(color);',
+  },
+  {
+    label: 'device.colorEquals',
+    detail: 'Compare picked color with tolerance',
+    insertText: 'const ok = await device.colorEquals(${1:x}, ${2:y}, "${3:#FFFFFF}", ${4:10});',
+  },
+  {
+    label: 'device.findImage',
+    detail: 'Find template image in region',
+    insertText: 'const found = await device.findImage("${1:/var/mobile/Library/ZXTouch/templates/template.png}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  acceptable: ${6:0.8},\n  pixelSkip: ${7:1}\n});\nlog(found);',
+  },
+  {
+    label: 'device.captureImage',
+    detail: 'Capture region as in-memory template image',
+    insertText: 'const template = await device.captureImage([${1:x}, ${2:y}, ${3:w}, ${4:h}]);\ntry {\n  const found = await device.findImageObject(template, {\n    region: [${5:0}, ${6:0}, ${7:0}, ${8:0}],\n    acceptable: ${9:0.8},\n    pixelSkip: ${10:1}\n  });\n  log(found);\n} finally {\n  await device.releaseImage(template);\n}',
+  },
+  {
+    label: 'device.ocr',
+    detail: 'Run Tesseract OCR on region',
+    insertText: 'const text = await device.ocr({\n  region: [${1:x}, ${2:y}, ${3:w}, ${4:h}],\n  lang: "${5:vie}",\n  psm: ${6:7},\n  scaleUp: ${7:2}\n});\nlog(text);',
   },
   {
     label: 'device.request',
@@ -77,12 +136,18 @@ export function AutomationIdeApp() {
   const [scriptEntries, setScriptEntries] = useState<FileEntry[]>([]);
   const [selectedFilePath, setSelectedFilePath] = useState('/demo.js');
   const [isDirty, setIsDirty] = useState(false);
+  const [screenSize, setScreenSize] = useState<{ width: number; height: number } | null>(null);
+  const [tapPoint, setTapPoint] = useState({ x: 120, y: 500 });
+  const [swipePoint, setSwipePoint] = useState({ x1: 100, y1: 700, x2: 100, y2: 200, duration: 300 });
+  const [colorPoint, setColorPoint] = useState({ x: 120, y: 500, tolerance: 10 });
+  const [pickedColor, setPickedColor] = useState<{ red: number; green: number; blue: number; hex: string } | null>(null);
   const [logs, setLogs] = useState<IdeLog[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState('Ready');
   const runnerAbort = useRef<AbortController | null>(null);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<MonacoEditor | null>(null);
+  const saveScriptRef = useRef<() => void>(() => {});
 
   const iosDevices = useMemo(() => devices.filter((d) => d.platform === 'ios' && d.status === 'online'), [devices]);
   const selectedDevice = useMemo(
@@ -148,6 +213,114 @@ export function AutomationIdeApp() {
     }
   };
 
+  saveScriptRef.current = () => {
+    saveScript();
+  };
+
+  const newScript = async () => {
+    if (isDirty && !window.confirm('Current script has unsaved changes. Create a new script anyway?')) return;
+    const rawName = window.prompt('New script path under scripts/', 'new-script.js');
+    if (!rawName) return;
+    const path = normalizeScriptPath(rawName);
+    try {
+      const content = `log("${path} start");\n`;
+      await writeWorkspaceFile(bases.httpBase, 'scripts', path, content);
+      await refreshScripts();
+      setSelectedFilePath(path);
+      setScript(content);
+      setIsDirty(false);
+      setStatus(`Created ${path}`);
+      addLog('info', 'files', `created ${path}`);
+    } catch (error) {
+      addLog('error', 'files', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const deleteScript = async () => {
+    if (!selectedFilePath) return;
+    if (!window.confirm(`Delete ${selectedFilePath}?`)) return;
+    try {
+      await deleteWorkspacePath(bases.httpBase, 'scripts', selectedFilePath);
+      addLog('warn', 'files', `deleted ${selectedFilePath}`);
+      setSelectedFilePath('/demo.js');
+      setScript(defaultScript);
+      setIsDirty(false);
+      await refreshScripts();
+      setStatus('Deleted');
+    } catch (error) {
+      addLog('error', 'files', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const fetchScreenSize = async () => {
+    if (!selectedDevice) {
+      addLog('warn', 'tools', 'Select an online iOS device first.');
+      return;
+    }
+    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    try {
+      const size = await device.getScreenSize();
+      if (!size) throw new Error('device did not return screen size');
+      setScreenSize(size);
+      setStatus(`Screen ${size.width}x${size.height}`);
+      addLog('info', 'tools', `screen ${size.width}x${size.height}`);
+    } catch (error) {
+      addLog('error', 'tools', error instanceof Error ? error.message : String(error));
+    } finally {
+      device.close();
+    }
+  };
+
+  const runQuickTap = async () => {
+    if (!selectedDevice) {
+      addLog('warn', 'tools', 'Select an online iOS device first.');
+      return;
+    }
+    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    try {
+      await device.tap(tapPoint.x, tapPoint.y);
+      addLog('info', 'tools', `tap ${tapPoint.x},${tapPoint.y}`);
+    } catch (error) {
+      addLog('error', 'tools', error instanceof Error ? error.message : String(error));
+    } finally {
+      device.close();
+    }
+  };
+
+  const runQuickSwipe = async () => {
+    if (!selectedDevice) {
+      addLog('warn', 'tools', 'Select an online iOS device first.');
+      return;
+    }
+    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    try {
+      await device.swipe(swipePoint.x1, swipePoint.y1, swipePoint.x2, swipePoint.y2, swipePoint.duration);
+      addLog('info', 'tools', `swipe ${swipePoint.x1},${swipePoint.y1} -> ${swipePoint.x2},${swipePoint.y2}`);
+    } catch (error) {
+      addLog('error', 'tools', error instanceof Error ? error.message : String(error));
+    } finally {
+      device.close();
+    }
+  };
+
+  const pickColor = async () => {
+    if (!selectedDevice) {
+      addLog('warn', 'tools', 'Select an online iOS device first.');
+      return;
+    }
+    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    try {
+      const color = await device.pickColor(colorPoint.x, colorPoint.y);
+      setPickedColor(color);
+      setStatus(`Color ${color.hex}`);
+      addLog('info', 'tools', `color ${colorPoint.x},${colorPoint.y} = ${color.hex} rgb(${color.red},${color.green},${color.blue})`);
+    } catch (error) {
+      addLog('error', 'tools', error instanceof Error ? error.message : String(error));
+    } finally {
+      device.close();
+    }
+  };
+
   const runScript = async () => {
     if (!selectedDevice) {
       addLog('warn', 'runner', 'Select an online iOS device first.');
@@ -192,8 +365,8 @@ export function AutomationIdeApp() {
   const insertSnippet = (snippet: string) => {
     const editor = editorRef.current;
     if (!editor) {
-    setScript((current) => `${current.trimEnd()}\n${snippet}\n`);
-    setIsDirty(true);
+      setScript((current) => `${current.trimEnd()}\n${snippet}\n`);
+      setIsDirty(true);
       return;
     }
 
@@ -208,6 +381,9 @@ export function AutomationIdeApp() {
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     configureMonaco(monaco);
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      saveScriptRef.current();
+    });
   };
 
   useEffect(() => {
@@ -246,7 +422,9 @@ export function AutomationIdeApp() {
         <aside className="automation-ide-panel file-panel">
           <div className="panel-title">Workspace</div>
           <div className="file-panel-actions">
+            <button type="button" onClick={newScript}>New</button>
             <button type="button" onClick={refreshScripts}>Refresh</button>
+            <button type="button" className="danger" onClick={deleteScript}>Delete</button>
           </div>
           {scriptEntries.length === 0 ? <div className="file-row muted">scripts/ is empty</div> : null}
           {scriptEntries.map((entry) => (
@@ -299,12 +477,82 @@ export function AutomationIdeApp() {
         </section>
 
         <aside className="automation-ide-panel tools-panel">
-          <div className="panel-title">Insert</div>
-          <button type="button" onClick={() => insertSnippet('await device.tap(120, 500);')}>tap(x, y)</button>
-          <button type="button" onClick={() => insertSnippet('await device.swipe(100, 700, 100, 200, 300);')}>swipe(...)</button>
-          <button type="button" onClick={() => insertSnippet('const size = await device.getScreenSize();\nlog(size);')}>screen size</button>
-          <button type="button" onClick={() => insertSnippet('const response = await device.request(25, 1);\nlog(response);')}>raw task</button>
-          <div className="panel-note">Next slices: screen click coordinates, native color picker, template crop, OCR region.</div>
+          <div className="panel-title">Device Tools</div>
+
+          <IdeScreenPanel
+            device={selectedDevice}
+            httpBase={bases.httpBase}
+            wsBase={bases.wsBase}
+            insertSnippet={insertSnippet}
+            addLog={addLog}
+          />
+
+          <div className="tool-card">
+            <div className="tool-card-title">Screen</div>
+            <button type="button" onClick={fetchScreenSize}>Get screen size</button>
+            <button type="button" onClick={() => insertSnippet('const size = await device.getScreenSize();\nlog(size);')}>Insert size code</button>
+            <div className="tool-readout">{screenSize ? `${screenSize.width} x ${screenSize.height}` : 'Unknown'}</div>
+          </div>
+
+          <div className="tool-card">
+            <div className="tool-card-title">Tap</div>
+            <div className="tool-grid two">
+              <label>X<input type="number" value={tapPoint.x} onChange={(e) => setTapPoint((p) => ({ ...p, x: numberValue(e.target.value) }))} /></label>
+              <label>Y<input type="number" value={tapPoint.y} onChange={(e) => setTapPoint((p) => ({ ...p, y: numberValue(e.target.value) }))} /></label>
+            </div>
+            <div className="tool-actions-row">
+              <button type="button" onClick={runQuickTap}>Run tap</button>
+              <button type="button" onClick={() => insertSnippet(`await device.tap(${tapPoint.x}, ${tapPoint.y});`)}>Insert</button>
+            </div>
+          </div>
+
+          <div className="tool-card">
+            <div className="tool-card-title">Swipe</div>
+            <div className="tool-grid two">
+              <label>X1<input type="number" value={swipePoint.x1} onChange={(e) => setSwipePoint((p) => ({ ...p, x1: numberValue(e.target.value) }))} /></label>
+              <label>Y1<input type="number" value={swipePoint.y1} onChange={(e) => setSwipePoint((p) => ({ ...p, y1: numberValue(e.target.value) }))} /></label>
+              <label>X2<input type="number" value={swipePoint.x2} onChange={(e) => setSwipePoint((p) => ({ ...p, x2: numberValue(e.target.value) }))} /></label>
+              <label>Y2<input type="number" value={swipePoint.y2} onChange={(e) => setSwipePoint((p) => ({ ...p, y2: numberValue(e.target.value) }))} /></label>
+              <label>MS<input type="number" value={swipePoint.duration} onChange={(e) => setSwipePoint((p) => ({ ...p, duration: numberValue(e.target.value) }))} /></label>
+            </div>
+            <div className="tool-actions-row">
+              <button type="button" onClick={runQuickSwipe}>Run swipe</button>
+              <button type="button" onClick={() => insertSnippet(`await device.swipe(${swipePoint.x1}, ${swipePoint.y1}, ${swipePoint.x2}, ${swipePoint.y2}, ${swipePoint.duration});`)}>Insert</button>
+            </div>
+          </div>
+
+          <div className="tool-card">
+            <div className="tool-card-title">Color</div>
+            <div className="tool-grid two">
+              <label>X<input type="number" value={colorPoint.x} onChange={(e) => setColorPoint((p) => ({ ...p, x: numberValue(e.target.value) }))} /></label>
+              <label>Y<input type="number" value={colorPoint.y} onChange={(e) => setColorPoint((p) => ({ ...p, y: numberValue(e.target.value) }))} /></label>
+              <label>Tol<input type="number" value={colorPoint.tolerance} onChange={(e) => setColorPoint((p) => ({ ...p, tolerance: numberValue(e.target.value) }))} /></label>
+            </div>
+            <div className="color-readout-row">
+              <div className="color-swatch" style={{ background: pickedColor?.hex || 'transparent' }} />
+              <div className="tool-readout">
+                {pickedColor ? `${pickedColor.hex} rgb(${pickedColor.red}, ${pickedColor.green}, ${pickedColor.blue})` : 'No color picked'}
+              </div>
+            </div>
+            <div className="tool-actions-row">
+              <button type="button" onClick={pickColor}>Pick</button>
+              <button type="button" onClick={() => insertSnippet(`const color = await device.pickColor(${colorPoint.x}, ${colorPoint.y});\nlog(color);`)}>Insert pick</button>
+            </div>
+            <button
+              type="button"
+              disabled={!pickedColor}
+              onClick={() => pickedColor && insertSnippet(`const ok = await device.colorEquals(${colorPoint.x}, ${colorPoint.y}, "${pickedColor.hex}", ${colorPoint.tolerance});`)}
+            >
+              Insert colorEquals
+            </button>
+          </div>
+
+          <div className="tool-card">
+            <div className="tool-card-title">Raw</div>
+            <button type="button" onClick={() => insertSnippet('const response = await device.request(25, 1);\nlog(response);')}>Insert raw task</button>
+          </div>
+
+          <div className="panel-note">Next slices: native color picker, template crop, OCR region.</div>
         </aside>
       </main>
 
@@ -378,3 +626,14 @@ function configureMonaco(monaco: Monaco) {
 
 let apiTypesDisposable: { dispose: () => void } | undefined;
 let completionProviderDisposable: { dispose: () => void } | undefined;
+
+function normalizeScriptPath(path: string) {
+  const normalized = path.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  const withExt = normalized.endsWith('.js') ? normalized : `${normalized}.js`;
+  return `/${withExt}`;
+}
+
+function numberValue(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}

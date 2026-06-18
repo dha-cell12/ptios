@@ -44,6 +44,13 @@ export async function writeWorkspaceFile(httpBase: string, root: WorkspaceRoot, 
   return (await resp.json()) as { ok: boolean; backupPath?: string };
 }
 
+export async function deleteWorkspacePath(httpBase: string, root: WorkspaceRoot, path: string) {
+  const params = new URLSearchParams({ root, path });
+  const resp = await fetch(`${httpBase}/api/file?${params}`, { method: 'DELETE' });
+  if (!resp.ok) throw new Error(`Failed to delete ${path}: HTTP ${resp.status}`);
+  return (await resp.json()) as { ok: boolean };
+}
+
 export function defaultScriptPath(entries: FileEntry[]): string {
   return entries.find((entry) => entry.kind === 'file' && entry.name.endsWith('.js'))?.path || '/demo.js';
 }
