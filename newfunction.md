@@ -512,6 +512,71 @@ ocr_tess_whitelist_number
 
 Track `preprocess_ms`, `ocr_ms`, `total_ms`, `text`, and `confidence`. First-run time should be reported separately because loading traineddata can be much slower than warm OCR.
 
+Recommended usage for UI automation:
+
+```text
+Use coord=pixel by default with task 66 frames.
+Use the smallest stable ROI that contains the text.
+Use psm=7 for one label/button line.
+Use psm=8 for one short word/code.
+Use psm=6 only for a compact multi-line block.
+Use lang=vie first; retry with vie+eng only when text mixes English and Vietnamese.
+Keep threshold_mode=0 first; try 1 or 2 only when the background is noisy or contrast is poor.
+Keep scale_up=2 first; try 3 only for very small text after ROI is correct.
+```
+
+Coordinate guidance:
+
+Task `66` returns frame dimensions in pixels, for example an iPhone 6s can return `750x1334`. Because task `91` OCR runs on that captured pixel frame, `coord=pixel` avoids accidental scaling mistakes and is the recommended default. Use `coord=point` only when the caller intentionally passes UIKit point coordinates; the native handler will multiply by the captured frame scale.
+
+Example: if the frame is `750x1334`, this pixel ROI reads a small label around the top-left app icons:
+
+```sh
+python scripts/debug_tesseract_ocr.py --host <iphone_ip> --check-langs --x 20 --y 100 --w 335 --h 120 --coord pixel --lang vie --psm 7 --scale-up 2 --threshold-mode 0
+```
+
+Typical output for a correct small ROI:
+
+```text
+text='Z Google'
+confidence=87.04
+ocr_ms=68.122
+preprocess_ms=1.481
+```
+
+Large regions work but are slower and may include unrelated text/icons. For example `750x300` with `psm=6` can take around `300ms+` on an iPhone 6s, while a focused `335x120` single-line ROI can be around `70-100ms` warm-run. Prefer fixed, narrow regions in automation loops.
+
+Bad OCR result patterns and fixes:
+
+```text
+Only symbols like "- - | `" -> ROI is probably wrong, too high/low, or using point when pixel was intended.
+Text contains many unrelated app names -> ROI is too large; shrink it before tuning threshold or language.
+Confidence low but ROI is correct -> try threshold_mode=1, then scale_up=3, then lang=vie+eng.
+Numeric/OTP/money text unstable -> use psm=7 and a whitelist such as 0123456789.,%.
+```
+
+Recommended tuning order:
+
+```text
+1. Confirm languages with 91check_langs.
+2. Capture one frame and note pixel size.
+3. Find the correct pixel ROI with a larger region.
+4. Shrink ROI until it contains only target text.
+5. Choose psm=7/8/6 based on layout.
+6. Try scale_up=2, then 3 only if text is small.
+7. Try threshold_mode=1 or 2 only after ROI and PSM are correct.
+8. Add whitelist for numeric/code targets.
+9. Benchmark first-run and warm-run separately.
+```
+
+Debug helper:
+
+```sh
+python scripts/debug_tesseract_ocr.py --host <iphone_ip> --check-langs --x 20 --y 100 --w 335 --h 120 --coord pixel --lang vie --psm 7 --scale-up 2 --threshold-mode 0 --count 5
+```
+
+The debug script prints decoded text, confidence, `frame_age_ms`, `ocr_ms`, `preprocess_ms`, native total time, socket roundtrip time, and always releases the captured frame.
+
 Image tuning benchmark:
 
 ```sh
