@@ -325,7 +325,7 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             NSTask *task = [[NSTask alloc] init];
 
             [task setLaunchPath:@"/usr/bin/sudo"];
-            NSString *command = [NSString stringWithUTF8String:eventData] ?: @"";
+            NSString *command = [NSString stringWithUTF8String:(const char *)eventData] ?: @"";
             [task setArguments:@[@"/usr/bin/tlinkautob", @"-e", command]];
 
             NSPipe *pipe = [NSPipe pipe];

@@ -3,6 +3,8 @@ rm -rf /Applications/zxtouch.app
 mkdir -p /var/mobile/Library/TLinkauto
 chmod +x /Applications/TLinkauto.app/TLinkauto 2>/dev/null
 chmod +x /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
+chmod +x /usr/bin/tlinkautod 2>/dev/null
+chmod +x /usr/bin/tlinkautob 2>/dev/null
 if [ -f /var/mobile/Library/TLinkauto/force_ldid_resign ] && command -v ldid >/dev/null 2>&1; then
     rm -rf /Applications/TLinkauto.app/_CodeSignature 2>/dev/null
     rm -rf /Applications/TLinkauto.app/PlugIns/shortcutext.appex/_CodeSignature 2>/dev/null
@@ -19,6 +21,10 @@ fi
 {
     echo "postinst $(date)"
     echo "app_path=/Applications/TLinkauto.app/TLinkauto"
+    echo "daemon_path=/usr/bin/tlinkautod"
+    ls -l /usr/bin/tlinkautod 2>/dev/null || true
+    echo "helper_path=/usr/bin/tlinkautob"
+    ls -l /usr/bin/tlinkautob 2>/dev/null || true
     ls -l /Applications/TLinkauto.app/TLinkauto 2>/dev/null || true
     grep -a "TLinkauto-main.log" /Applications/TLinkauto.app/TLinkauto >/dev/null 2>&1 && echo "main_log_string=present" || echo "main_log_string=missing"
     grep -a "TLinkauto-app.log" /Applications/TLinkauto.app/TLinkauto >/dev/null 2>&1 && echo "app_log_string=present" || echo "app_log_string=missing"
@@ -39,3 +45,7 @@ chown root:wheel /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 chmod 644 /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 launchctl unload /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist 2>/dev/null
 launchctl load -w /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
+{
+    echo "launchctl_load_status=$?"
+    launchctl list | grep com.tlinkauto.tlinkautod || true
+} >> /var/mobile/Library/TLinkauto/install_app_check.log 2>&1
