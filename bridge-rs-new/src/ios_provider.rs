@@ -9,30 +9,42 @@ use crate::{
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HelloStatusPayload {
+    #[serde(alias = "TLinkauto")]
     pub tlinkauto: TLinkauto,
+    #[serde(default)]
     pub device: IosDeviceInfo,
+    #[serde(default)]
     pub script: ScriptStatus,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TLinkauto {
     pub port: u16,
+    #[serde(default)]
     pub protocols: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct IosDeviceInfo {
+    #[serde(default)]
     pub system_name: String,
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub system_version: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ScriptStatus {
+    #[serde(default)]
     pub is_playing: bool,
+    #[serde(default)]
     pub last_error: String,
+    #[serde(default)]
     pub last_error_ts: i64,
+    #[serde(default)]
     pub bundle_path: String,
 }
 

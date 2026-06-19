@@ -160,6 +160,7 @@ static BOOL isPlaying = false;
             NSError *err = nil;
             [self playFromRawFile:entryFilePath foregroundApp:foregroundApp err:&err];
         }); 
+        return 0;
     }
     else if ([fileExtension isEqualToString:@"py"])
     {
@@ -168,8 +169,13 @@ static BOOL isPlaying = false;
             NSError *err = nil;
             [self playFromPythonFile:entryFilePath foregroundApp:foregroundApp err:&err];
         });
-        
+        return 0;
     }
+
+    if (error) {
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
+    }
+    return -1;
 }
 
 // play the script
@@ -181,7 +187,7 @@ static BOOL isPlaying = false;
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
         return -1;
     }
-   [self runScript:error];
+   return [self runScript:error];
 }
 
 
@@ -265,7 +271,7 @@ static BOOL isPlaying = false;
         isPlaying = false;
         return;
     }
-    NSString *commandToRun = [NSString stringWithFormat:@"sudo tlinkautob -e \"python3 -u \\\"%@\\\" 2>&1 | /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/add_datetime.sh\" >> /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output", filePath];
+    NSString *commandToRun = [NSString stringWithFormat:@"/usr/bin/tlinkautob -e \"PYTHONPATH=/usr/lib/python3.7/site-packages /bin/python3 -u \\\"%@\\\" 2>&1 | /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/add_datetime.sh\" >> /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output", filePath];
     NSLog(@"com.tlinkauto.springboard: command to run for running py file %@", commandToRun);
 
     // here I made it run in background because of a weird thing: ios objc cannot call second system() if the first system() does not return
@@ -400,7 +406,7 @@ static BOOL isPlaying = false;
     else if (currentScriptType == 2)
     {
         // kill all python3 process
-        system2("sudo tlinkautob -e \"killall -9 python3\"", NULL, NULL);
+        system2("/usr/bin/tlinkautob -e \"killall -9 python3\"", NULL, NULL);
         [self clear];
     }
     else

@@ -324,28 +324,29 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
         @autoreleasepool{
             NSTask *task = [[NSTask alloc] init];
 
-            // 设置执行的命令和参数
             [task setLaunchPath:@"/usr/bin/sudo"];
-            [task setArguments:@[[NSString stringWithFormat:@"sudo tlinkautob -e \"%s\"", eventData]]];
+            NSString *command = [NSString stringWithUTF8String:eventData] ?: @"";
+            [task setArguments:@[@"/usr/bin/tlinkautob", @"-e", command]];
 
-            // 设置输出管道，如果需要获取命令的输出
             NSPipe *pipe = [NSPipe pipe];
             [task setStandardOutput:pipe];
+            [task setStandardError:pipe];
 
-            // 启动任务
             [task launch];
-
-            // 等待任务完成
             [task waitUntilExit];
 
-            // 如果需要获取命令的输出，可以使用以下代码
             NSFileHandle *fileHandle = [pipe fileHandleForReading];
             NSData *data = [fileHandle readDataToEndOfFile];
             NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             NSLog(@"Command Output:\n%@", output);
+            NSString *safeOutput = [[output ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"] stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
 
-//            system([[NSString stringWithFormat:@"sudo tlinkautob -e \"%s\"", eventData] UTF8String]);
-            notifyClient((UInt8*)"0\r\n", writeStreamRef);
+            int status = [task terminationStatus];
+            if (status == 0) {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", safeOutput] UTF8String], writeStreamRef);
+            } else {
+                notifyClient((UInt8*)[[NSString stringWithFormat:@"-1;;Shell command failed (%d): %@\r\n", status, safeOutput] UTF8String], writeStreamRef);
+            }
         }
     }
     else if (taskType == TASK_TOUCH_RECORDING_START)
@@ -824,7 +825,7 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             }
 
             NSDictionary *payload = @{
-                @"TLinkauto": @{
+                @"tlinkauto": @{
                     @"protocols": @[@"v0", @"v1"],
                     @"port": @6000,
                 },
