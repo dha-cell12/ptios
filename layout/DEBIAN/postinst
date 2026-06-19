@@ -1,13 +1,13 @@
 #!/bin/sh
 rm -rf /Applications/zxtouch.app
 mkdir -p /var/mobile/Library/TLinkauto
-rm -rf /Applications/TLinkauto.app/_CodeSignature 2>/dev/null
-rm -rf /Applications/TLinkauto.app/PlugIns/shortcutext.appex/_CodeSignature 2>/dev/null
-rm -f /Applications/TLinkauto.app/embedded.mobileprovision 2>/dev/null
-rm -f /Applications/TLinkauto.app/PlugIns/shortcutext.appex/embedded.mobileprovision 2>/dev/null
 chmod +x /Applications/TLinkauto.app/TLinkauto 2>/dev/null
 chmod +x /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
-if command -v ldid >/dev/null 2>&1; then
+if [ -f /var/mobile/Library/TLinkauto/force_ldid_resign ] && command -v ldid >/dev/null 2>&1; then
+    rm -rf /Applications/TLinkauto.app/_CodeSignature 2>/dev/null
+    rm -rf /Applications/TLinkauto.app/PlugIns/shortcutext.appex/_CodeSignature 2>/dev/null
+    rm -f /Applications/TLinkauto.app/embedded.mobileprovision 2>/dev/null
+    rm -f /Applications/TLinkauto.app/PlugIns/shortcutext.appex/embedded.mobileprovision 2>/dev/null
     if [ -f /entitlements.plist ]; then
         ldid -S/entitlements.plist /Applications/TLinkauto.app/TLinkauto 2>/dev/null
         ldid -S/entitlements.plist /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null

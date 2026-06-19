@@ -77,11 +77,11 @@ jobs:
           chmod +x layout/Applications/TLinkauto.app/TLinkauto
           if [ -f layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext ]; then
             chmod +x layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
-            ldid -Slayout/entitlements.plist layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
+            codesign --force --sign - --entitlements layout/entitlements.plist layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex
           fi
-          ldid -Slayout/entitlements.plist layout/Applications/TLinkauto.app/TLinkauto
+          codesign --force --sign - --entitlements layout/entitlements.plist layout/Applications/TLinkauto.app
 
-          ldid -e layout/Applications/TLinkauto.app/TLinkauto | grep platform-application
+          codesign -d --entitlements :- layout/Applications/TLinkauto.app | grep platform-application
 
           strings layout/Applications/TLinkauto.app/TLinkauto | grep TLinkauto-app.log
           strings layout/Applications/TLinkauto.app/TLinkauto | grep TLinkauto-main.log
