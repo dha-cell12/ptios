@@ -7,22 +7,6 @@
 
 #import "AppDelegate.h"
 
-static void TLinkautoAppLog(NSString *message) {
-    NSString *dir = @"/var/mobile/Library/TLinkauto";
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSString *line = [NSString stringWithFormat:@"%@\n", message];
-    [line writeToFile:@"/tmp/TLinkauto-app.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSString *path = [dir stringByAppendingPathComponent:@"app.log"];
-    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
-    if (!handle) {
-        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-        return;
-    }
-    [handle seekToEndOfFile];
-    [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-    [handle closeFile];
-}
-
 @interface AppDelegate ()
 {
 
@@ -34,7 +18,6 @@ static void TLinkautoAppLog(NSString *message) {
 
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    TLinkautoAppLog(@"AppDelegate didFinishLaunching");
     // Override point for customization after application launch.
 
     if (@available(iOS 13.0, *)) {

@@ -277,49 +277,6 @@ static BOOL isPlaying = false;
     // here I made it run in background because of a weird thing: ios objc cannot call second system() if the first system() does not return
     //scriptPlayForceStop = true;
     system2([commandToRun UTF8String], NULL, NULL);
-
-    // Best-effort: detect Python traceback/error from ScriptRuntime output log.
-    NSString *outPath = @"/var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output";
-    if ([[NSFileManager defaultManager] fileExistsAtPath:outPath])
-    {
-        NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:outPath];
-        if (fh) {
-            @try {
-                unsigned long long size = [fh seekToEndOfFile];
-                unsigned long long tail = 8192;
-                unsigned long long start = size > tail ? (size - tail) : 0;
-                [fh seekToFileOffset:start];
-                NSData *data = [fh readDataToEndOfFile];
-                NSString *txt = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
-                if (txt && [txt length] > 0) {
-                    NSArray<NSString *> *lines = [txt componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-                    NSString *errLine = nil;
-                    for (NSInteger i = (NSInteger)lines.count - 1; i >= 0; i--) {
-                        NSString *line = [lines[i] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                        if ([line length] == 0) continue;
-                        NSString *lower = [line lowercaseString];
-                        if ([lower containsString:@"traceback"] ||
-                            [lower containsString:@"exception"] ||
-                            [lower containsString:@"error"] ||
-                            [lower containsString:@"importerror"] ||
-                            [lower containsString:@"nameerror"] ||
-                            [lower containsString:@"typeerror"] ||
-                            [lower containsString:@"valueerror"] ||
-                            [lower containsString:@"oserror"])
-                        {
-                            errLine = line;
-                            break;
-                        }
-                    }
-                    if (errLine) {
-                        setLastScriptError(errLine);
-                    }
-                }
-            } @catch (__unused NSException *e) {
-            }
-            @try { [fh closeFile]; } @catch (__unused NSException *e) {}
-        }
-    }
     // add force stop
     [self playHasStopped];
 }
