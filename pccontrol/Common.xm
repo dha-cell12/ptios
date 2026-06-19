@@ -54,7 +54,7 @@ int getRandomNumberInt(int min, int max)
 
 	if (max < min)
 	{
-		NSLog(@"### com.zjx.springboard: Max is less than min in getRandomNumberInt(). max: %d, min: %d", max, min);
+		NSLog(@"### com.tlinkauto.springboard: Max is less than min in getRandomNumberInt(). max: %d, min: %d", max, min);
 	}
 	return arc4random_uniform(abs(max-min)) + min;
 }
@@ -72,7 +72,7 @@ float getRandomNumberFloat(float min, float max)
 
 	if (max < min)
 	{
-		NSLog(@"### com.zjx.springboard: Max is less than min in getRandomNumberFloat(). max: %f, min: %f", max, min);
+		NSLog(@"### com.tlinkauto.springboard: Max is less than min in getRandomNumberFloat(). max: %f, min: %f", max, min);
 	}
 
 	

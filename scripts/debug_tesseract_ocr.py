@@ -13,7 +13,7 @@ VERSION = 1
 HEADER = struct.Struct(">4sBBI")
 
 
-class ZXTouchClient:
+class TLinkautoClient:
     def __init__(self, host: str, port: int, protocol: str, timeout: float):
         self.host = host
         self.port = port
@@ -136,7 +136,7 @@ def print_resp(label: str, resp: dict[str, Any], verbose: bool) -> None:
         print(f"  raw={resp}")
 
 
-def run_once(client: ZXTouchClient, args: argparse.Namespace, iteration: int) -> dict[str, Any]:
+def run_once(client: TLinkautoClient, args: argparse.Namespace, iteration: int) -> dict[str, Any]:
     cap = client.request(66, args.capture_gray, args.capture_bgra, args.ttl_ms)
     print_resp(f"capture[{iteration}]", cap, args.verbose)
     cap_data = require_ok(cap, "capture")
@@ -195,7 +195,7 @@ def run_once(client: ZXTouchClient, args: argparse.Namespace, iteration: int) ->
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Debug zxtouch task 91 Tesseract OCR against a captured frame.")
+    parser = argparse.ArgumentParser(description="Debug TLinkauto task 91 Tesseract OCR against a captured frame.")
     parser.add_argument("--host", required=True, help="iPhone IP address")
     parser.add_argument("--port", type=int, default=6000)
     parser.add_argument("--protocol", choices=["auto", "v0", "v1"], default="auto")
@@ -220,7 +220,7 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    client = ZXTouchClient(args.host, args.port, args.protocol, args.timeout)
+    client = TLinkautoClient(args.host, args.port, args.protocol, args.timeout)
     client.connect()
     print(f"connected protocol={client.protocol} host={args.host}:{args.port}")
     try:

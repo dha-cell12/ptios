@@ -38,7 +38,7 @@ int sendHardwareKeyEventFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Hardware key task missing action or key type.\r\n"}];
         }
@@ -55,7 +55,7 @@ int sendHardwareKeyEventFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown hardware key type.\r\n"}];
         }
@@ -71,7 +71,7 @@ int sendHardwareKeyEventFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to create HID event client.\r\n"}];
         }
@@ -88,7 +88,7 @@ int sendHardwareKeyEventFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to create hardware key event.\r\n"}];
         }

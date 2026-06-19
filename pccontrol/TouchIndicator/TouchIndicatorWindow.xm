@@ -45,10 +45,10 @@ void report_memory(void) {
                                  (task_info_t)&info,
                                  &size);
   if( kerr == KERN_SUCCESS ) {
-    NSLog(@"com.zjx.springboard: Memory in use (in bytes): %lu", info.resident_size);
-    NSLog(@"com.zjx.springboard: Memory in use (in MiB): %f", ((CGFloat)info.resident_size / 1048576));
+    NSLog(@"com.tlinkauto.springboard: Memory in use (in bytes): %lu", info.resident_size);
+    NSLog(@"com.tlinkauto.springboard: Memory in use (in MiB): %f", ((CGFloat)info.resident_size / 1048576));
   } else {
-    NSLog(@"com.zjx.springboard: Error with task_info(): %s", mach_error_string(kerr));
+    NSLog(@"com.tlinkauto.springboard: Error with task_info(): %s", mach_error_string(kerr));
   }
 }
 
@@ -67,7 +67,7 @@ void handleTouchIndicatorTaskWithRawData(UInt8* eventData, NSError **error)
     {
         if (!isShowing)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot reload config file because the touch indicator is not showing.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot reload config file because the touch indicator is not showing.\r\n"}];
             return;
         }
         // check whether config file exist
@@ -75,8 +75,8 @@ void handleTouchIndicatorTaskWithRawData(UInt8* eventData, NSError **error)
 
         if (![[NSFileManager defaultManager] fileExistsAtPath:configFilePath])
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to show touch indicator because the configuration file is missing. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.\r\n"}];
-            showAlertBox(@"Error", @"Unable to show touch indicator because the configuration file is missing. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.", 999);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n"}];
+            showAlertBox(@"Error", @"Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", 999);
             return;
         }
         // read indicator color from the config file
@@ -92,11 +92,11 @@ void handleTouchIndicatorTaskWithRawData(UInt8* eventData, NSError **error)
             green = [config[@"touch_indicator"][@"color"][@"g"] floatValue];
             blue = [config[@"touch_indicator"][@"color"][@"b"] floatValue];
             alpha = [config[@"touch_indicator"][@"color"][@"alpha"] floatValue];
-            NSLog(@"com.zjx.springboard: reload touch indicator. Read color: red: %f, g: %f, b: %f", red, green, blue);
+            NSLog(@"com.tlinkauto.springboard: reload touch indicator. Read color: red: %f, g: %f, b: %f", red, green, blue);
         }
         @catch (NSException *exception) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to show touch indicator because key error in configuration file: %@. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.\r\n", exception]}];
-            showAlertBox(@"Error", [NSString stringWithFormat:@"Unable to show touch indicator because key error in configuration file: %@. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.", exception], 999);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n", exception]}];
+            showAlertBox(@"Error", [NSString stringWithFormat:@"Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", exception], 999);
             return;
         }
 
@@ -104,8 +104,8 @@ void handleTouchIndicatorTaskWithRawData(UInt8* eventData, NSError **error)
     }
     else
     {
-        NSLog(@"com.zjx.springboard: Unknown touch indicator data");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown touch indicator data\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Unknown touch indicator data");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown touch indicator data\r\n"}];
         return;
     }
 
@@ -113,7 +113,7 @@ void handleTouchIndicatorTaskWithRawData(UInt8* eventData, NSError **error)
 
 void stopTouchIndicator(NSError **error)
 {
-    NSLog(@"com.zjx.springboard: Touch indicator turn off request");
+    NSLog(@"com.tlinkauto.springboard: Touch indicator turn off request");
     // set touch indicator window to nil
     touchIndicatorWindow = nil;
     // unregister callback
@@ -137,12 +137,12 @@ void startTouchIndicator(NSError **error)
 {
     if (isShowing)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Touch indicator is already showing\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Touch indicator is already showing\r\n"}];
         showAlertBox(@"Error", @"Touch indicator is already showing", 999);
         return;
     }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSLog(@"com.zjx.springboard: Touch indicator turn on request");
+        NSLog(@"com.tlinkauto.springboard: Touch indicator turn on request");
 
         // check whether config file exist
         NSString *configFilePath = getCommonConfigFilePath();
@@ -155,8 +155,8 @@ void startTouchIndicator(NSError **error)
         if ([[NSFileManager defaultManager] fileExistsAtPath:configFilePath])
         {
             /*
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to show touch indicator because the configuration file is missing. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.\r\n"}];
-            showAlertBox(@"Error", @"Unable to show touch indicator because the configuration file is missing. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.", 999);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n"}];
+            showAlertBox(@"Error", @"Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", 999);
             return;
             */
                     // read indicator color from the config file
@@ -167,12 +167,12 @@ void startTouchIndicator(NSError **error)
                 green = [config[@"touch_indicator"][@"color"][@"g"] floatValue];
                 blue = [config[@"touch_indicator"][@"color"][@"b"] floatValue];
                 alpha = [config[@"touch_indicator"][@"color"][@"alpha"] floatValue];
-                NSLog(@"com.zjx.springboard: red: %f, g: %f, b: %f", red, green, blue);
+                NSLog(@"com.tlinkauto.springboard: red: %f, g: %f, b: %f", red, green, blue);
             }
             @catch (NSException *exception) {
-                NSLog(@"com.zjx.springboard: 123123");
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to show touch indicator because key error in configuration file: %@. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.\r\n", exception]}];
-                showAlertBox(@"Error", [NSString stringWithFormat:@"Unable to show touch indicator because key error in configuration file: %@. Please go to \"zxtouch - settings - fix configuration\" to fix this problem.", exception], 999);
+                NSLog(@"com.tlinkauto.springboard: 123123");
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n", exception]}];
+                showAlertBox(@"Error", [NSString stringWithFormat:@"Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", exception], 999);
                 return;
             }
         }
@@ -190,7 +190,7 @@ void startTouchIndicator(NSError **error)
         if (screenBoundsWidth == 0 || screenBoundsHeight == 0)
         {
             showAlertBox(@"Error", @"Cannot get screen bound.", 999);
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot get screen bound\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot get screen bound\r\n"}];
             return;
         }
 
@@ -239,8 +239,8 @@ static void IOHIDEventCallbackForTouchIndicator(void* target, void* refcon, IOHI
             int range = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerRange);
             int touch = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerTouch);
             int index = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerIndex);
-            //NSLog(@"### com.zjx.springboard: x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d", x, y, eventMask, index, range, touch);
-            //NSLog(@"### com.zjx.springboard:  x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d.", x, y, eventMask, index, range, touch);
+            //NSLog(@"### com.tlinkauto.springboard: x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d", x, y, eventMask, index, range, touch);
+            //NSLog(@"### com.tlinkauto.springboard:  x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d.", x, y, eventMask, index, range, touch);
 
             IOHIDFloat majorRadius = IOHIDEventGetFloatValue(event, 0xb0014);
 

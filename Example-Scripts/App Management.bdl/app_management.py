@@ -1,8 +1,8 @@
-from zxtouch.client import zxtouch
+from tlinkauto.client import TLinkauto
 
 
 def main():
-    device = zxtouch("127.0.0.1")
+    device = TLinkauto("127.0.0.1")
 
     # Replace with a bundle identifier installed on your device.
     target_bundle = "com.apple.springboard"

@@ -38,6 +38,6 @@ void updateCacheFromRawData(UInt8* eventData, NSError **error)
     }
     else
     {
-        NSLog(@"com.zjx.springboard: unknown task type for updating cache.");
+        NSLog(@"com.tlinkauto.springboard: unknown task type for updating cache.");
     }
 }

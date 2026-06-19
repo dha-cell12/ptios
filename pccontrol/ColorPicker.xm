@@ -23,7 +23,7 @@ static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *ou
 {
     if (!tableStr || [tableStr length] == 0) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table is empty.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table is empty.\r\n"}];
         }
         return false;
     }
@@ -36,7 +36,7 @@ static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *ou
         NSArray<NSString *> *parts = [item componentsSeparatedByString:@",,"];
         if ([parts count] != 5) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid point table format. Expect dx,,dy,,r,,g,,b|...\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid point table format. Expect dx,,dy,,r,,g,,b|...\r\n"}];
             }
             return false;
         }
@@ -51,7 +51,7 @@ static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *ou
 
     if ([outPoints count] == 0) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table has no valid points.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table has no valid points.\r\n"}];
         }
         return false;
     }
@@ -121,7 +121,7 @@ NSDictionary* getRGBFromRawData(UInt8 *eventData, NSError **error)
     NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
     if ([data count] < 2)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to pick color. The data format should be \"x;;y\"\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to pick color. The data format should be \"x;;y\"\r\n"}];
         return @{@"blue": @(-1), @"red": @(-1), @"green": @(-1)};
     }
     CGImageRef screen = [Screen createScreenShotCGImageRef];
@@ -147,14 +147,14 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
         
         if ([data count] < 12)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. The data format should be \"searchtype;;x;;y;;width;;height;;redMin;;redMax;;greenMin;;greenMax;;blueMin;;blueMax;;skip\"\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. The data format should be \"searchtype;;x;;y;;width;;height;;redMin;;redMax;;greenMin;;greenMax;;blueMin;;blueMax;;skip\"\r\n"}];
             return @"";
         }
         CGImageRef screen = [Screen createScreenShotCGImageRef];
 
         if (!screen)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Internal error! Screenshot is null.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Internal error! Screenshot is null.\r\n"}];
             return @"";
         }
 
@@ -176,38 +176,38 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
 
         if (x > screenWidth)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;The range of the x coordinate should be less than the width of your screen. The width of your screen is %d. Your x: %d\r\n", screenWidth, x]}];
-            NSLog(@"com.zjx.springboard: %@", *error);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;The range of the x coordinate should be less than the width of your screen. The width of your screen is %d. Your x: %d\r\n", screenWidth, x]}];
+            NSLog(@"com.tlinkauto.springboard: %@", *error);
             return @"";
         }
         if (y > screenHeight)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;The range of the y coordinate should be less than the height of your screen. The height of your screen is %d. Your y: %d\r\n", screenHeight, y]}];
-            NSLog(@"com.zjx.springboard: %@", *error);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;The range of the y coordinate should be less than the height of your screen. The height of your screen is %d. Your y: %d\r\n", screenHeight, y]}];
+            NSLog(@"com.tlinkauto.springboard: %@", *error);
             return @"";
         }
         if (redMax < 0 || redMin < 0 || redMax > 255 || redMin > 255 || redMax < redMin)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max red rgb and min reb rgb should <= 255  && >= 0 and max red rgb should be <= red min rgb. You redMax: %d, redMin: %d\r\n", redMax, redMin]}];
-            NSLog(@"com.zjx.springboard: %@", *error);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max red rgb and min reb rgb should <= 255  && >= 0 and max red rgb should be <= red min rgb. You redMax: %d, redMin: %d\r\n", redMax, redMin]}];
+            NSLog(@"com.tlinkauto.springboard: %@", *error);
             return @"";
         }
         if (greenMax < 0 || greenMin < 0 || greenMax > 255 || greenMin > 255 || greenMax < greenMin)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max green rgb and min green rgb should <= 255 && >= 0 and max green rgb should be <= green min rgb. You greenMax: %d, greenMin: %d\r\n", greenMax, greenMin]}];
-            NSLog(@"com.zjx.springboard: %@", *error);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max green rgb and min green rgb should <= 255 && >= 0 and max green rgb should be <= green min rgb. You greenMax: %d, greenMin: %d\r\n", greenMax, greenMin]}];
+            NSLog(@"com.tlinkauto.springboard: %@", *error);
             return @"";
         }
         if (blueMax < 0 || blueMin < 0 || blueMax > 255 || blueMin > 255 || blueMax < blueMin)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max blue rgb and min blue rgb should <= 255 && >= 0  and max blue rgb should be <= blue min rgb. You blueMax: %d, blueMin: %d\r\n", blueMax, blueMin]}];
-            NSLog(@"com.zjx.springboard: %@", *error);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max blue rgb and min blue rgb should <= 255 && >= 0  and max blue rgb should be <= blue min rgb. You blueMax: %d, blueMin: %d\r\n", blueMax, blueMin]}];
+            NSLog(@"com.tlinkauto.springboard: %@", *error);
             return @"";
         }
         if (skip < 0)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Skip cannot be negative\r\n", skip]}];
-            NSLog(@"com.zjx.springboard: %@", *error);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Skip cannot be negative\r\n", skip]}];
+            NSLog(@"com.tlinkauto.springboard: %@", *error);
             return @"";
         }
 
@@ -229,7 +229,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
     {
         if ([data count] < 4)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. The data format should be \"searchtype;;table;;mode;;value\"\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. The data format should be \"searchtype;;table;;mode;;value\"\r\n"}];
             return @"";
         }
 
@@ -247,7 +247,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
         CGImageRef screen = [Screen createScreenShotCGImageRef];
         if (!screen)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. Internal error! Screenshot is null.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. Internal error! Screenshot is null.\r\n"}];
             return @"";
         }
 
@@ -262,7 +262,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
             int y = pc.dy;
             if (x < 0 || y < 0 || x >= screenW || y >= screenH) {
                 CGImageRelease(screen);
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point out of screen bounds.\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point out of screen bounds.\r\n"}];
                 return @"";
             }
             if (x < minX) minX = x;
@@ -276,7 +276,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
         unsigned char *buffer = zx_copyRGBABufferFromCGImage(screen, crop, &bufW, &bufH);
         CGImageRelease(screen);
         if (!buffer) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
             return @"";
         }
 
@@ -303,7 +303,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
     {
         if ([data count] < 9)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to find multi-point color. The data format should be \"searchtype;;x;;y;;width;;height;;table;;mode;;value;;skip\"\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to find multi-point color. The data format should be \"searchtype;;x;;y;;width;;height;;table;;mode;;value;;skip\"\r\n"}];
             return @"";
         }
 
@@ -327,7 +327,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
         CGImageRef screen = [Screen createScreenShotCGImageRef];
         if (!screen)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Internal error! Screenshot is null.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Internal error! Screenshot is null.\r\n"}];
             return @"";
         }
 
@@ -375,7 +375,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
         unsigned char *buffer = zx_copyRGBABufferFromCGImage(screen, crop, &bufW, &bufH);
         CGImageRelease(screen);
         if (!buffer) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
             return @"";
         }
 
@@ -412,8 +412,8 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
     }
     else
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Unknown search color task type.\r\n"}];
-        NSLog(@"com.zjx.springboard: %@", *error);
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Unknown search color task type.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: %@", *error);
         return nil;
     }
 }
@@ -447,14 +447,14 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
 
 /*
 + (NSDictionary*) getRgbFromMat:(Mat)img x:(int)x y:(int)y {
-    //NSLog(@"com.zjx.springboard: height: %d, width: %d, channels: %d. scale: %f", img.rows, img.cols, img.channels(), [Screen getScale]);
+    //NSLog(@"com.tlinkauto.springboard: height: %d, width: %d, channels: %d. scale: %f", img.rows, img.cols, img.channels(), [Screen getScale]);
 
     Vec3b intensity = img.at<Vec3b>(y, x);
     // Don't know why. This version of opencv stores read at [0] rather than [2]
     uchar blue = intensity.val[0];
     uchar green = intensity.val[1];
     uchar red = intensity.val[2];
-    //NSLog(@"com.zjx.springboard: blue: %u, green: %u, red: %u.", blue, green, red);
+    //NSLog(@"com.tlinkauto.springboard: blue: %u, green: %u, red: %u.", blue, green, red);
 
     NSDictionary *result = @{@"blue": @(blue), @"red": @(red), @"green": @(green)};
     return result;
@@ -463,7 +463,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
 
 /*
 + (NSString*) searchRGBFromMat:(Mat)img region:(CGRect)region redMin:(int)redMin redMax:(int)redMax greenMin:(int)greenMin greenMax:(int)greenMax blueMin:(int)blueMin blueMax:(int)blueMax skip:(int)skip {
-    //NSLog(@"com.zjx.springboard: image height: %d, width: %d, channels: %d. scale: %f. Rect: %@. skip: %d. redSearch: (%d, %d), greenSearch: (%d, %d), blueSearch: (%d, %d)", img.rows, img.cols, img.channels(), [Screen getScale], NSStringFromCGRect(region), skip, redMin, redMax, greenMin, greenMax, blueMin, blueMax);
+    //NSLog(@"com.tlinkauto.springboard: image height: %d, width: %d, channels: %d. scale: %f. Rect: %@. skip: %d. redSearch: (%d, %d), greenSearch: (%d, %d), blueSearch: (%d, %d)", img.rows, img.cols, img.channels(), [Screen getScale], NSStringFromCGRect(region), skip, redMin, redMax, greenMin, greenMax, blueMin, blueMax);
     
     int x = region.origin.x;
     int y = region.origin.y;
@@ -483,7 +483,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
             uchar green = intensity.val[1];
             uchar red = intensity.val[2];
 
-            //NSLog(@"com.zjx.springboard: x: %d, y: %d, blue: %u, green: %u, red: %u.", currentX, currentY, blue, green, red);
+            //NSLog(@"com.tlinkauto.springboard: x: %d, y: %d, blue: %u, green: %u, red: %u.", currentX, currentY, blue, green, red);
             if (red >= redMin && red <= redMax && green >= greenMin && green <= greenMax && blue >= blueMin && blue <= blueMax)
             {
                 return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d", currentX, currentY, red, green, blue];
@@ -528,7 +528,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
 
             if (baseAddress >= totalBufferBytes-3)
             {
-                NSLog(@"com.zjx.springboard: cannot search rgb from cgimage. Internal error. start coordinate on img: (%d, %d). current coordinate: (%d, %d), baseaddress: %d, totalBufferBytes: %d", x, y, currentX, currentY, baseAddress, totalBufferBytes);
+                NSLog(@"com.tlinkauto.springboard: cannot search rgb from cgimage. Internal error. start coordinate on img: (%d, %d). current coordinate: (%d, %d), baseaddress: %d, totalBufferBytes: %d", x, y, currentX, currentY, baseAddress, totalBufferBytes);
                 return @"-1;;-1;;-1;;-1;;-1";
             }
 
@@ -537,7 +537,7 @@ NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
             uchar blue = buffer[baseAddress+2];
 
 
-            //NSLog(@"com.zjx.springboard: x: %d, y: %d, blue: %u, green: %u, red: %u.", currentX, currentY, blue, green, red);
+            //NSLog(@"com.tlinkauto.springboard: x: %d, y: %d, blue: %u, green: %u, red: %u.", currentX, currentY, blue, green, red);
             if (red >= redMin && red <= redMax && green >= greenMin && green <= greenMax && blue >= blueMin && blue <= blueMax)
             {
                 free(buffer);

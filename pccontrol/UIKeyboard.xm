@@ -11,7 +11,7 @@ NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
     NSString *taskContent = @"";
     if ([data count] < 1)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event length error. You have to specify the task id.\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event length error. You have to specify the task id.\r\n"}];
         return nil;
     }
     int taskType = [data[0] intValue];
@@ -28,7 +28,7 @@ NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
     {  
         if ([data count] < 2)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event error. You have to specify the content you want to paste to clipboard.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event error. You have to specify the content you want to paste to clipboard.\r\n"}];
             return nil;
         }
         
@@ -42,7 +42,7 @@ NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
     {
         taskContent = data[1];
     }
-    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"com.zjx.zxtouch.keyboardcontrol" object:NULL userInfo:@{@"task_id": data[0], @"task_content": taskContent} deliverImmediately: true];
+    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"com.tlinkauto.tlinkauto.keyboardcontrol" object:NULL userInfo:@{@"task_id": data[0], @"task_content": taskContent} deliverImmediately: true];
     return @"Successfully notify the appdelegate tweak. But not sure whether it works...";
 
 }

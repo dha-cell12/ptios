@@ -17,7 +17,7 @@ CGRect screenMatchFromRawData(UInt8 *eventData, NSError **error)
     }
     else if ([data count] != 1)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;The data format should be \"template_path[;;max_try_times;;acceptable_value;;scaleRation]\"\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;The data format should be \"template_path[;;max_try_times;;acceptable_value;;scaleRation]\"\r\n"}];
         return CGRect();
     }
     return [ScreenMatch matchCurrentScreenWithTemplate:templatePath maxTryTimes:maxTryTimes acceptableValue:acceptableValue scaleRation:scaleRation error:error];
@@ -28,7 +28,7 @@ CGRect screenMatchFromRawData(UInt8 *eventData, NSError **error)
 + (CGRect)matchCurrentScreenWithTemplate:(NSString*)templatePath maxTryTimes:(int)mtt acceptableValue:(float)av scaleRation:(float)sr error:(NSError**)err {
     if (![[NSFileManager defaultManager] fileExistsAtPath:templatePath])
     {
-        *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Template image not found for image matching. Template path: %@\r\n", templatePath]}];
+        *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Template image not found for image matching. Template path: %@\r\n", templatePath]}];
         return CGRect();
     }
     TemplateMatch *templateMatch = [[TemplateMatch alloc] init];
@@ -38,8 +38,8 @@ CGRect screenMatchFromRawData(UInt8 *eventData, NSError **error)
     CGImageRef screen = [Screen createScreenShotCGImageRef];
     if (!screen)
     {
-        *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Error happens when template matching. Screenshot is nil.\r\n"}];
-        NSLog(@"com.zjx.springboard: -1;;Error happens when template matching. Screenshot is nil.\r\n");
+        *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Error happens when template matching. Screenshot is nil.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: -1;;Error happens when template matching. Screenshot is nil.\r\n");
         return CGRect();
     }
 

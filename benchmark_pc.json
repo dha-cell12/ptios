@@ -74,7 +74,7 @@
       "p95_ms": 69.42087000061294,
       "p99_ms": 75.27425400039647,
       "max_ms": 76.73760000034235,
-      "last_png_path": "/tmp/zxtouch_bench.png"
+      "last_png_path": "/tmp/TLinkauto_bench.png"
     },
     {
       "name": "task29_screenshot_jpg",
@@ -85,7 +85,7 @@
       "p95_ms": 49.038659987854786,
       "p99_ms": 54.03229197894689,
       "max_ms": 55.280699976719916,
-      "last_jpg_path": "/tmp/zxtouch_bench.jpg"
+      "last_jpg_path": "/tmp/TLinkauto_bench.jpg"
     }
   ]
 }

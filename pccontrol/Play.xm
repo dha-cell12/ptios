@@ -24,8 +24,8 @@ int playScript(UInt8* path, NSError **error)
 {
     if (!scriptPlayer)
     {
-        NSLog(@"com.zjx.springboard: Unable to run the script. Internal error. scriptPlayer is null.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Internal error. scriptPlayer is null.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Unable to run the script. Internal error. scriptPlayer is null.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Internal error. scriptPlayer is null.\r\n"}];
         return -1;
     }
     // read config file to get repeat time etc
@@ -33,7 +33,7 @@ int playScript(UInt8* path, NSError **error)
     float sleepBetweenRun = 0;
     float playSpeed = 1.0f;
     
-    NSLog(@"com.zjx.springboard: path: %s", path);
+    NSLog(@"com.tlinkauto.springboard: path: %s", path);
     NSMutableDictionary *config;
     if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH])
     {

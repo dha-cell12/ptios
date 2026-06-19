@@ -5,7 +5,7 @@ import { deviceLabel, listDevices, type UnifiedDevice } from '../services/device
 import { defaultScriptPath, deleteWorkspacePath, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, type FileEntry } from '../services/fileManager';
 import { formatLogTime, type IdeLog, type LogLevel } from '../services/logBus';
 import { runBrowserScript } from '../services/scriptRuntime';
-import { ZxTouchDeviceSdk } from '../services/zxtouchSdk';
+import { TLinkautoDeviceSdk } from '../services/tlinkautoSdk';
 import { IdeScreenPanel } from './IdeScreenPanel';
 
 const defaultScript = `log("start");
@@ -79,7 +79,7 @@ const completionSnippets = [
   {
     label: 'device.screenshot',
     detail: 'Save screenshot or region PNG on device',
-    insertText: 'const path = await device.screenshot("${1:/var/mobile/Library/ZXTouch/templates/template.png}", [${2:x}, ${3:y}, ${4:w}, ${5:h}]);\nlog(path);',
+    insertText: 'const path = await device.screenshot("${1:/var/mobile/Library/TLinkauto/templates/template.png}", [${2:x}, ${3:y}, ${4:w}, ${5:h}]);\nlog(path);',
   },
   {
     label: 'device.pickColor',
@@ -94,7 +94,7 @@ const completionSnippets = [
   {
     label: 'device.findImage',
     detail: 'Find template image in region',
-    insertText: 'const found = await device.findImage("${1:/var/mobile/Library/ZXTouch/templates/template.png}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  acceptable: ${6:0.9},\n  scaleMin: ${7:1},\n  scaleMax: ${8:1},\n  pixelSkip: ${9:1}\n});\nlog(found);',
+    insertText: 'const found = await device.findImage("${1:/var/mobile/Library/TLinkauto/templates/template.png}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  acceptable: ${6:0.9},\n  scaleMin: ${7:1},\n  scaleMax: ${8:1},\n  pixelSkip: ${9:1}\n});\nlog(found);',
   },
   {
     label: 'device.captureImage',
@@ -108,7 +108,7 @@ const completionSnippets = [
   },
   {
     label: 'device.request',
-    detail: 'Raw zxtouch task request',
+    detail: 'Raw TLinkauto task request',
     insertText: 'const response = await device.request(${1:25}, ${2:1});\nlog(response);',
   },
   {
@@ -257,7 +257,7 @@ export function AutomationIdeApp() {
       addLog('warn', 'tools', 'Select an online iOS device first.');
       return;
     }
-    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    const device = new TLinkautoDeviceSdk(bases.wsBase, selectedDevice.id);
     try {
       const size = await device.getScreenSize();
       if (!size) throw new Error('device did not return screen size');
@@ -276,7 +276,7 @@ export function AutomationIdeApp() {
       addLog('warn', 'tools', 'Select an online iOS device first.');
       return;
     }
-    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    const device = new TLinkautoDeviceSdk(bases.wsBase, selectedDevice.id);
     try {
       await device.tap(tapPoint.x, tapPoint.y);
       addLog('info', 'tools', `tap ${tapPoint.x},${tapPoint.y}`);
@@ -292,7 +292,7 @@ export function AutomationIdeApp() {
       addLog('warn', 'tools', 'Select an online iOS device first.');
       return;
     }
-    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    const device = new TLinkautoDeviceSdk(bases.wsBase, selectedDevice.id);
     try {
       await device.swipe(swipePoint.x1, swipePoint.y1, swipePoint.x2, swipePoint.y2, swipePoint.duration);
       addLog('info', 'tools', `swipe ${swipePoint.x1},${swipePoint.y1} -> ${swipePoint.x2},${swipePoint.y2}`);
@@ -308,7 +308,7 @@ export function AutomationIdeApp() {
       addLog('warn', 'tools', 'Select an online iOS device first.');
       return;
     }
-    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    const device = new TLinkautoDeviceSdk(bases.wsBase, selectedDevice.id);
     try {
       const color = await device.pickColor(colorPoint.x, colorPoint.y);
       setPickedColor(color);
@@ -328,7 +328,7 @@ export function AutomationIdeApp() {
     }
 
     const abort = new AbortController();
-    const device = new ZxTouchDeviceSdk(bases.wsBase, selectedDevice.id);
+    const device = new TLinkautoDeviceSdk(bases.wsBase, selectedDevice.id);
     runnerAbort.current = abort;
     setIsRunning(true);
     setStatus(`Running on ${deviceLabel(selectedDevice)}`);

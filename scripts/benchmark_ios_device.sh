@@ -2,8 +2,8 @@
 
 DURATION=${1:-60}
 INTERVAL=${2:-1}
-OUT=${3:-/var/mobile/Library/ZXTouch/benchmark_ios.csv}
-PROCS=${4:-"SpringBoard zxtouchd"}
+OUT=${3:-/var/mobile/Library/TLinkauto/benchmark_ios.csv}
+PROCS=${4:-"SpringBoard tlinkautod"}
 
 mkdir -p "$(dirname "$OUT")" 2>/dev/null || true
 echo "timestamp,process,pid,cpu_percent,rss_kb" > "$OUT"

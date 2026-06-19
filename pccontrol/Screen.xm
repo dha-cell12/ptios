@@ -15,12 +15,12 @@ OBJC_EXTERN CGImageRef UICreateCGImageFromIOSurface(IOSurfaceRef surface);
 
 static CGFloat device_screen_width = 0;
 static CGFloat device_screen_height = 0;
-static NSString *const kZXTouchAlbumName = @"ZXTouch";
+static NSString *const kTLinkautoAlbumName = @"TLinkauto";
 
 // Screen Keep state
 static BOOL gKeepEnabled = NO;
 static CGImageRef gKeepImage = NULL;
-static NSString *const kZXTouchKeepPngPath = @"/tmp/zxtouch_keep.png";
+static NSString *const kTLinkautoKeepPngPath = @"/tmp/TLinkauto_keep.png";
 
 static CGImageRef zx_captureScreenCGImageRef(void);
 
@@ -40,11 +40,11 @@ Get the size of the screen and set them.
 
 	if (device_screen_width == 0 || device_screen_height == 0 || device_screen_width > 10000 || device_screen_height > 10000)
 	{
-		NSLog(@"com.zjx.springboard: Unable to initialze the screen size. screen width: %f, screen height: %f", device_screen_width, device_screen_height);
+		NSLog(@"com.tlinkauto.springboard: Unable to initialze the screen size. screen width: %f, screen height: %f", device_screen_width, device_screen_height);
 	}
 	else
 	{
-		NSLog(@"com.zjx.springboard: successfully initialize the screen size. screen width: %f, screen height: %f", device_screen_width, device_screen_height);
+		NSLog(@"com.tlinkauto.springboard: successfully initialize the screen size. screen width: %f, screen height: %f", device_screen_width, device_screen_height);
 	}
 }
 
@@ -56,10 +56,10 @@ Get the size of the screen and set them.
         @try{
             SpringBoard *springboard = (SpringBoard*)[%c(SpringBoard) sharedApplication];
             screenOrientation = [springboard _frontMostAppOrientation];
-            //NSLog(@"com.zjx.springboard: orientation %d", screenOrientation);
+            //NSLog(@"com.tlinkauto.springboard: orientation %d", screenOrientation);
         }
         @catch (NSException *exception) {
-            NSLog(@"com.zjx.springboard: Debug: %@", exception.reason);
+            NSLog(@"com.tlinkauto.springboard: Debug: %@", exception.reason);
         }
     }   
     );
@@ -71,7 +71,7 @@ Get the size of the screen and set them.
 {
     if (device_screen_width == 0)
     {
-        NSLog(@"com.zjx.springboard: Cannot get screen width. Maybe you call [Screen getScreenWidth] before springboard getting the screen size.");
+        NSLog(@"com.tlinkauto.springboard: Cannot get screen width. Maybe you call [Screen getScreenWidth] before springboard getting the screen size.");
     }
     return device_screen_width;
 }
@@ -80,7 +80,7 @@ Get the size of the screen and set them.
 {
     if (device_screen_height == 0)
     {
-        NSLog(@"com.zjx.springboard: Cannot get screen height. Maybe you call [Screen getScreenHeight] before springboard getting the screen size.");
+        NSLog(@"com.tlinkauto.springboard: Cannot get screen height. Maybe you call [Screen getScreenHeight] before springboard getting the screen size.");
     }
     return device_screen_height;
 }
@@ -232,13 +232,13 @@ static CGImageRef zx_captureScreenCGImageRef(void)
             CGImageRelease(gKeepImage);
             gKeepImage = NULL;
         }
-        [[NSFileManager defaultManager] removeItemAtPath:kZXTouchKeepPngPath error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:kTLinkautoKeepPngPath error:nil];
     }
 
     CGImageRef img = zx_captureScreenCGImageRef();
     if (!img) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot for keep state.\r\n"}];
         }
@@ -247,10 +247,10 @@ static CGImageRef zx_captureScreenCGImageRef(void)
 
     UIImage *ui = [UIImage imageWithCGImage:img];
     NSData *png = UIImagePNGRepresentation(ui);
-    if (!png || ![png writeToFile:kZXTouchKeepPngPath atomically:NO]) {
+    if (!png || ![png writeToFile:kTLinkautoKeepPngPath atomically:NO]) {
         CGImageRelease(img);
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to save keep screenshot cache.\r\n"}];
         }
@@ -272,7 +272,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
             CGImageRelease(gKeepImage);
             gKeepImage = NULL;
         }
-        [[NSFileManager defaultManager] removeItemAtPath:kZXTouchKeepPngPath error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:kTLinkautoKeepPngPath error:nil];
     }
 }
 
@@ -328,11 +328,11 @@ static CGImageRef zx_captureScreenCGImageRef(void)
     @synchronized([Screen class]) {
         shouldReuseKeep = gKeepEnabled;
     }
-    if (shouldReuseKeep && CGRectIsEmpty(region) && [[NSFileManager defaultManager] fileExistsAtPath:kZXTouchKeepPngPath])
+    if (shouldReuseKeep && CGRectIsEmpty(region) && [[NSFileManager defaultManager] fileExistsAtPath:kTLinkautoKeepPngPath])
     {
         [[NSFileManager defaultManager] removeItemAtPath:targetPath error:nil];
         NSError *copyErr = nil;
-        if ([[NSFileManager defaultManager] copyItemAtPath:kZXTouchKeepPngPath toPath:targetPath error:&copyErr])
+        if ([[NSFileManager defaultManager] copyItemAtPath:kTLinkautoKeepPngPath toPath:targetPath error:&copyErr])
         {
             return targetPath;
         }
@@ -345,7 +345,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot.\r\n"}];
         }
@@ -361,7 +361,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         CGImageRelease(screenshotRef);
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid screenshot region.\r\n"}];
         }
@@ -377,7 +377,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to crop screenshot.\r\n"}];
         }
@@ -406,7 +406,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
                 NSString *message = [NSString stringWithFormat:@"-1;;Failed to create screenshot directory: %@ (%@)\r\n",
                                      parentDir,
                                      [mkdirErr localizedDescription] ?: @"unknown error"];
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                              code:999
                                          userInfo:@{NSLocalizedDescriptionKey:message}];
             }
@@ -419,7 +419,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         if (error)
         {
             NSString *message = [NSString stringWithFormat:@"-1;;Failed to save screenshot: %@\r\n", targetPath];
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:message}];
         }
@@ -429,30 +429,30 @@ static CGImageRef zx_captureScreenCGImageRef(void)
     return targetPath;
 }
 
-+ (PHAssetCollection*)fetchZXTouchAlbum
++ (PHAssetCollection*)fetchTLinkautoAlbum
 {
     PHFetchOptions *fetchOptions = [[PHFetchOptions alloc] init];
-    fetchOptions.predicate = [NSPredicate predicateWithFormat:@"title = %@", kZXTouchAlbumName];
+    fetchOptions.predicate = [NSPredicate predicateWithFormat:@"title = %@", kTLinkautoAlbumName];
     PHFetchResult<PHAssetCollection*> *result = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeAlbum
                                                                                          subtype:PHAssetCollectionSubtypeAlbumRegular
                                                                                          options:fetchOptions];
     return result.firstObject;
 }
 
-+ (PHAssetCollection*)ensureZXTouchAlbumWithError:(NSError**)error
++ (PHAssetCollection*)ensureTLinkautoAlbumWithError:(NSError**)error
 {
     if (!NSClassFromString(@"PHPhotoLibrary"))
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Photos framework is unavailable.\r\n"}];
         }
         return nil;
     }
 
-    PHAssetCollection *album = [self fetchZXTouchAlbum];
+    PHAssetCollection *album = [self fetchTLinkautoAlbum];
     if (album)
     {
         return album;
@@ -460,24 +460,24 @@ static CGImageRef zx_captureScreenCGImageRef(void)
 
     NSError *creationError = nil;
     [[PHPhotoLibrary sharedPhotoLibrary] performChangesAndWait:^{
-        [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:kZXTouchAlbumName];
+        [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:kTLinkautoAlbumName];
     } error:&creationError];
 
     if (creationError)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to create album: %@\r\n", creationError.localizedDescription]}];
         }
         return nil;
     }
 
-    album = [self fetchZXTouchAlbum];
+    album = [self fetchTLinkautoAlbum];
     if (!album && error)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                      code:999
                                  userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to fetch created album.\r\n"}];
     }
@@ -491,14 +491,14 @@ static CGImageRef zx_captureScreenCGImageRef(void)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image not found at path.\r\n"}];
         }
         return;
     }
 
-    PHAssetCollection *album = [self ensureZXTouchAlbumWithError:error];
+    PHAssetCollection *album = [self ensureTLinkautoAlbumWithError:error];
     if (!album)
     {
         return;
@@ -513,7 +513,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
 
     if (saveError && error)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                      code:999
                                  userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to save to album: %@\r\n", saveError.localizedDescription]}];
     }
@@ -521,7 +521,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
 
 + (void)clearSystemAlbum:(NSError**)error
 {
-    PHAssetCollection *album = [self fetchZXTouchAlbum];
+    PHAssetCollection *album = [self fetchTLinkautoAlbum];
     if (!album)
     {
         return;
@@ -540,7 +540,7 @@ static CGImageRef zx_captureScreenCGImageRef(void)
 
     if (deleteError && error)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                      code:999
                                  userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to clear album: %@\r\n", deleteError.localizedDescription]}];
     }
@@ -554,7 +554,7 @@ NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Screenshot task missing action.\r\n"}];
         }
@@ -568,7 +568,7 @@ NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error)
         {
             if (error)
             {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                              code:999
                                          userInfo:@{NSLocalizedDescriptionKey:@"-1;;Screenshot task missing output path.\r\n"}];
             }
@@ -594,7 +594,7 @@ NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error)
         {
             if (error)
             {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                              code:999
                                          userInfo:@{NSLocalizedDescriptionKey:@"-1;;Save to album missing file path.\r\n"}];
             }
@@ -612,7 +612,7 @@ NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error)
 
     if (error)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                      code:999
                                  userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown screenshot action.\r\n"}];
     }

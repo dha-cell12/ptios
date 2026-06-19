@@ -1,8 +1,8 @@
-Package: com.zjx.appdelegate
-Name: ZXTouch-appdelegate
+Package: com.tlinkauto.appdelegate
+Name: TLinkauto-appdelegate
 Version: 0.0.1
 Architecture: iphoneos-arm
-Description: A component of zxtouch inside apps that works for zxtouch
+Description: A component of TLinkauto inside apps that works for TLinkauto
 Maintainer: Jason Z
 Author: Jason Z
 Section: Tweaks

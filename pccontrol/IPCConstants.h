@@ -1,13 +1,13 @@
-#ifndef ZXTOUCH_IPC_CONSTANTS_H
-#define ZXTOUCH_IPC_CONSTANTS_H
+#ifndef TLinkauto_IPC_CONSTANTS_H
+#define TLinkauto_IPC_CONSTANTS_H
 
 #include <CoreFoundation/CoreFoundation.h>
 
-static CFStringRef const kZXTouchIPCPortName = CFSTR("com.zjx.zxtouchd.springboard");
-static const char *const kZXTouchIPCCommandHome = "CMD_HOME";
-static const char *const kZXTouchIPCCommandPing = "CMD_PING";
-static const char *const kZXTouchIPCCommandTaskPrefix = "TASK::";
-static NSString *const kZXTouchIPCReadyMarkerPath = @"/var/mobile/Library/ZXTouch/ipc_ready";
-static NSString *const kZXTouchTweakLoadedMarkerPath = @"/var/mobile/Library/ZXTouch/tweak_loaded";
+static CFStringRef const kTLinkautoIPCPortName = CFSTR("com.tlinkauto.tlinkautod.springboard");
+static const char *const kTLinkautoIPCCommandHome = "CMD_HOME";
+static const char *const kTLinkautoIPCCommandPing = "CMD_PING";
+static const char *const kTLinkautoIPCCommandTaskPrefix = "TASK::";
+static NSString *const kTLinkautoIPCReadyMarkerPath = @"/var/mobile/Library/TLinkauto/ipc_ready";
+static NSString *const kTLinkautoTweakLoadedMarkerPath = @"/var/mobile/Library/TLinkauto/tweak_loaded";
 
 #endif

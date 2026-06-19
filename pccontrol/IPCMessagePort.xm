@@ -27,8 +27,8 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
         return NULL;
     }
 
-    NSLog(@"### com.zjx.springboard: IPC received command: %@", command);
-    if ([command isEqualToString:[NSString stringWithUTF8String:kZXTouchIPCCommandHome]]) {
+    NSLog(@"### com.tlinkauto.springboard: IPC received command: %@", command);
+    if ([command isEqualToString:[NSString stringWithUTF8String:kTLinkautoIPCCommandHome]]) {
         NSError *error = nil;
         sendHardwareKeyEventFromRawData((UInt8 *)"1;;1", &error);
         sendHardwareKeyEventFromRawData((UInt8 *)"0;;1", &error);
@@ -36,17 +36,17 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
         return CFDataCreate(kCFAllocatorDefault, (const UInt8 *)response, strlen(response));
     }
 
-    if ([command isEqualToString:[NSString stringWithUTF8String:kZXTouchIPCCommandPing]]) {
+    if ([command isEqualToString:[NSString stringWithUTF8String:kTLinkautoIPCCommandPing]]) {
         const char *response = "0\r\n";
         return CFDataCreate(kCFAllocatorDefault, (const UInt8 *)response, strlen(response));
     }
 
-    NSString *taskPrefix = [NSString stringWithUTF8String:kZXTouchIPCCommandTaskPrefix];
+    NSString *taskPrefix = [NSString stringWithUTF8String:kTLinkautoIPCCommandTaskPrefix];
     if ([command hasPrefix:taskPrefix]) {
         NSString *rawTask = [command substringFromIndex:[taskPrefix length]];
         if ([rawTask length] > 0) {
             CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
-            NSLog(@"### com.zjx.springboard: IPC task start: %@", rawTask);
+            NSLog(@"### com.tlinkauto.springboard: IPC task start: %@", rawTask);
             CFWriteStreamRef responseStream = CFWriteStreamCreateWithAllocatedBuffers(kCFAllocatorDefault,
                                                                                       kCFAllocatorDefault);
             if (responseStream) {
@@ -65,7 +65,7 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                                                            length:(NSUInteger)CFDataGetLength(responseData)];
                     NSString *responseString = [[NSString alloc] initWithData:responseNSData
                                                                      encoding:NSUTF8StringEncoding];
-                    NSLog(@"### com.zjx.springboard: IPC task response in %.3fs: %@", duration, responseString);
+                    NSLog(@"### com.tlinkauto.springboard: IPC task response in %.3fs: %@", duration, responseString);
                     return responseData;
                 }
                 if (responseProperty) {
@@ -75,7 +75,7 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                 processTask((UInt8 *)[rawTask UTF8String]);
             }
             CFAbsoluteTime duration = CFAbsoluteTimeGetCurrent() - startTime;
-            NSLog(@"### com.zjx.springboard: IPC task finished in %.3fs without response", duration);
+            NSLog(@"### com.tlinkauto.springboard: IPC task finished in %.3fs without response", duration);
         }
         const char *response = "0\r\n";
         return CFDataCreate(kCFAllocatorDefault, (const UInt8 *)response, strlen(response));
@@ -88,25 +88,25 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
 void startIPCServer()
 {
     if (ipcLocalPort) {
-        NSLog(@"### com.zjx.springboard: IPC server already running.");
+        NSLog(@"### com.tlinkauto.springboard: IPC server already running.");
         return;
     }
 
     CFMessagePortContext context = {0, NULL, NULL, NULL, NULL};
     Boolean shouldFree = false;
     ipcLocalPort = CFMessagePortCreateLocal(kCFAllocatorDefault,
-                                            kZXTouchIPCPortName,
+                                            kTLinkautoIPCPortName,
                                             handleIPCMessage,
                                             &context,
                                             &shouldFree);
     if (!ipcLocalPort) {
-        NSLog(@"### com.zjx.springboard: failed to create IPC message port.");
+        NSLog(@"### com.tlinkauto.springboard: failed to create IPC message port.");
         return;
     }
 
     ipcRunLoopSource = CFMessagePortCreateRunLoopSource(kCFAllocatorDefault, ipcLocalPort, 0);
     if (!ipcRunLoopSource) {
-        NSLog(@"### com.zjx.springboard: failed to create IPC run loop source.");
+        NSLog(@"### com.tlinkauto.springboard: failed to create IPC run loop source.");
         CFRelease(ipcLocalPort);
         ipcLocalPort = NULL;
         return;
@@ -114,22 +114,22 @@ void startIPCServer()
 
     CFRunLoopAddSource(CFRunLoopGetCurrent(), ipcRunLoopSource, kCFRunLoopCommonModes);
     NSData *markerData = [@"ready" dataUsingEncoding:NSUTF8StringEncoding];
-    if (![markerData writeToFile:kZXTouchIPCReadyMarkerPath atomically:YES]) {
-        NSLog(@"### com.zjx.springboard: failed to write IPC ready marker.");
+    if (![markerData writeToFile:kTLinkautoIPCReadyMarkerPath atomically:YES]) {
+        NSLog(@"### com.tlinkauto.springboard: failed to write IPC ready marker.");
     } else {
-        NSLog(@"### com.zjx.springboard: IPC ready marker written.");
+        NSLog(@"### com.tlinkauto.springboard: IPC ready marker written.");
     }
-    NSLog(@"### com.zjx.springboard: IPC message port started.");
+    NSLog(@"### com.tlinkauto.springboard: IPC message port started.");
 }
 
 void startIPCServerOnBackgroundThread()
 {
     if (ipcThreadStarted) {
-        NSLog(@"### com.zjx.springboard: IPC server thread already started.");
+        NSLog(@"### com.tlinkauto.springboard: IPC server thread already started.");
         return;
     }
     ipcThreadStarted = YES;
-    NSLog(@"### com.zjx.springboard: starting IPC server thread.");
+    NSLog(@"### com.tlinkauto.springboard: starting IPC server thread.");
     NSThread *ipcThread = [[NSThread alloc] initWithBlock:^{
         @autoreleasepool {
             startIPCServer();

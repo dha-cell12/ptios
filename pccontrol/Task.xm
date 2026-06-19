@@ -73,7 +73,7 @@ static bool zx_handleNativeTap(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
     if (parts.count < 2) {
-        if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native tap format: x;;y[;;duration_ms;;finger]\r\n"}];
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native tap format: x;;y[;;duration_ms;;finger]\r\n"}];
         return false;
     }
     CGFloat x = [parts[0] floatValue];
@@ -91,7 +91,7 @@ static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
     if (parts.count < 5) {
-        if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native swipe format: x1;;y1;;x2;;y2;;duration_ms[;;finger;;steps]\r\n"}];
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native swipe format: x1;;y1;;x2;;y2;;duration_ms[;;finger;;steps]\r\n"}];
         return false;
     }
     CGFloat x1 = [parts[0] floatValue];
@@ -130,21 +130,21 @@ static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
     if (parts.count < 3) {
-        if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture format: finger;;duration_ms;;x,y|x,y|...\r\n"}];
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture format: finger;;duration_ms;;x,y|x,y|...\r\n"}];
         return false;
     }
     int finger = [parts[0] intValue];
     int durationMs = [parts[1] intValue];
     NSArray<NSString *> *pointTexts = [parts[2] componentsSeparatedByString:@"|"];
     if (pointTexts.count < 2) {
-        if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture requires at least two points.\r\n"}];
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture requires at least two points.\r\n"}];
         return false;
     }
     if (durationMs < 0) durationMs = 0;
 
     CGFloat x = 0, y = 0;
     if (!zx_parseGesturePoint(pointTexts[0], &x, &y)) {
-        if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid first gesture point.\r\n"}];
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid first gesture point.\r\n"}];
         return false;
     }
     zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
@@ -154,7 +154,7 @@ static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
     for (NSUInteger i = 1; i < pointTexts.count; i++) {
         if (!zx_parseGesturePoint(pointTexts[i], &x, &y)) {
             zx_performSingleTouch(TOUCH_UP, finger, x, y);
-            if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid gesture point.\r\n"}];
+            if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid gesture point.\r\n"}];
             return false;
         }
         zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
@@ -168,7 +168,7 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
 {
     NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData];
     if (!raw || raw.length == 0) {
-        if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native batch format: command||command, command starts with 10/62/63/64.\r\n"}];
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native batch format: command||command, command starts with 10/62/63/64.\r\n"}];
         return false;
     }
 
@@ -187,7 +187,7 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
         } else if (task == TASK_NATIVE_GESTURE) {
             if (!zx_handleNativeGesture(payloadBytes, err)) return false;
         } else {
-            if (err) *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported batch task: %d\r\n", task]}];
+            if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported batch task: %d\r\n", task]}];
             return false;
         }
     }
@@ -199,7 +199,7 @@ Process Task
 */
 void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
 {
-    //NSLog(@"### com.zjx.springboard: task type: %d. Data: %s", getTaskType(buff), buff);
+    //NSLog(@"### com.tlinkauto.springboard: task type: %d. Data: %s", getTaskType(buff), buff);
     UInt8 *eventData = buff + 0x2;
     int taskType = getTaskType(buff);
 
@@ -296,10 +296,10 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
                 usleepTime = atoi((char*)eventData);
             }
             @catch (NSException *exception) {
-                NSLog(@"com.zjx.springboard: Debug: %@", exception.reason);
+                NSLog(@"com.tlinkauto.springboard: Debug: %@", exception.reason);
                 return;
             }
-            //NSLog(@"com.zjx.springboard: sleep %d microseconds", usleepTime);
+            //NSLog(@"com.tlinkauto.springboard: sleep %d microseconds", usleepTime);
             usleep(usleepTime);
             notifyClient((UInt8*)"0;;Sleep ends\r\n", writeStreamRef); 
         }
@@ -311,10 +311,10 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
                 usleepTime = atoi((char*)eventData);
             }
             @catch (NSException *exception) {
-                NSLog(@"com.zjx.springboard: Debug: %@", exception.reason);
+                NSLog(@"com.tlinkauto.springboard: Debug: %@", exception.reason);
                 return;
             }
-            //NSLog(@"com.zjx.springboard: sleep %d microseconds", usleepTime);
+            //NSLog(@"com.tlinkauto.springboard: sleep %d microseconds", usleepTime);
             usleep(usleepTime);
         }
 
@@ -326,7 +326,7 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
 
             // 设置执行的命令和参数
             [task setLaunchPath:@"/usr/bin/sudo"];
-            [task setArguments:@[[NSString stringWithFormat:@"sudo zxtouchb -e \"%s\"", eventData]]];
+            [task setArguments:@[[NSString stringWithFormat:@"sudo tlinkautob -e \"%s\"", eventData]]];
 
             // 设置输出管道，如果需要获取命令的输出
             NSPipe *pipe = [NSPipe pipe];
@@ -344,7 +344,7 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             NSLog(@"Command Output:\n%@", output);
 
-//            system([[NSString stringWithFormat:@"sudo zxtouchb -e \"%s\"", eventData] UTF8String]);
+//            system([[NSString stringWithFormat:@"sudo tlinkautob -e \"%s\"", eventData] UTF8String]);
             notifyClient((UInt8*)"0\r\n", writeStreamRef);
         }
     }
@@ -824,7 +824,7 @@ void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
             }
 
             NSDictionary *payload = @{
-                @"zxtouch": @{
+                @"TLinkauto": @{
                     @"protocols": @[@"v0", @"v1"],
                     @"port": @6000,
                 },

@@ -39,7 +39,7 @@ static BOOL isPlaying = false;
 - (void)setPath:(NSString*)path {
     if (isPlaying)
     {
-        NSLog(@"com.zjx.springboard: cannot change script path because a script is playing.");
+        NSLog(@"com.tlinkauto.springboard: cannot change script path because a script is playing.");
         return;
     }
     scriptBundlePath = path;
@@ -48,7 +48,7 @@ static BOOL isPlaying = false;
 - (void)setRepeatTime:(int)rt {
     if (isPlaying)
     {
-        NSLog(@"com.zjx.springboard: cannot change repeat time because a script is playing.");
+        NSLog(@"com.tlinkauto.springboard: cannot change repeat time because a script is playing.");
         return;
     }
     repeatTime = rt;
@@ -57,7 +57,7 @@ static BOOL isPlaying = false;
 - (void)setInterval:(float)intv {
     if (isPlaying)
     {
-        NSLog(@"com.zjx.springboard: cannot change interval because a script is playing.");
+        NSLog(@"com.tlinkauto.springboard: cannot change interval because a script is playing.");
         return;
     }
     interval = intv;
@@ -66,7 +66,7 @@ static BOOL isPlaying = false;
 - (void)setSpeed:(float)sp {
     if (isPlaying)
     {
-        NSLog(@"com.zjx.springboard: cannot change speed because a script is playing.");
+        NSLog(@"com.tlinkauto.springboard: cannot change speed because a script is playing.");
         return;
     }
     speed = sp;
@@ -75,7 +75,7 @@ static BOOL isPlaying = false;
 - (void)setSwitchApp:(BOOL)value {
     if (isPlaying)
     {
-        NSLog(@"com.zjx.springboard: cannot change speed because a script is playing.");
+        NSLog(@"com.tlinkauto.springboard: cannot change speed because a script is playing.");
         return;
     }
     switchAppBeforePlaying = value;
@@ -104,16 +104,16 @@ static BOOL isPlaying = false;
 -(int)runScript:(NSError**)error {
     if (!scriptBundlePath)
     {
-        NSLog(@"com.zjx.springboard: Unable to run the script. ScriptBundlePath not set.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. ScriptBundlePath not set.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Unable to run the script. ScriptBundlePath not set.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. ScriptBundlePath not set.\r\n"}];
         return -1;
     }
 
     BOOL isDir;
     if (![[NSFileManager defaultManager] fileExistsAtPath:scriptBundlePath isDirectory:&isDir] || !isDir)
     {
-        NSLog(@"com.zjx.springboard: Unable to run the script. Path not found or it is not a directory.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Path not found or it is not a directory.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Unable to run the script. Path not found or it is not a directory.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Path not found or it is not a directory.\r\n"}];
         return -1;
     }
 
@@ -121,8 +121,8 @@ static BOOL isPlaying = false;
     NSString *infoFilePath = [NSString stringWithFormat:@"%@/info.plist", scriptBundlePath];
     if (![[NSFileManager defaultManager] fileExistsAtPath:infoFilePath isDirectory:&isDir])
     {
-        NSLog(@"com.zjx.springboard: Unable to run the script. Info.plist not found.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Info.plist not found.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Unable to run the script. Info.plist not found.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Info.plist not found.\r\n"}];
         return -1;
     }
     NSDictionary *scriptInfo = [NSDictionary dictionaryWithContentsOfFile:infoFilePath];
@@ -150,7 +150,7 @@ static BOOL isPlaying = false;
     });
 
     NSString *entryFilePath = [scriptBundlePath stringByAppendingPathComponent:entryFileName];
-    NSLog(@"com.zjx.sprinboard: currently playing: %@. Repeat time: %d", entryFilePath, repeatTime);
+    NSLog(@"com.tlinkauto.sprinboard: currently playing: %@. Repeat time: %d", entryFilePath, repeatTime);
     
 
     if ([fileExtension isEqualToString:@"raw"])
@@ -177,8 +177,8 @@ static BOOL isPlaying = false;
 {
     if (isPlaying)
     {
-        NSLog(@"com.zjx.springboard: Unable to run the script. Another script is currently running.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Unable to run the script. Another script is currently running.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
         return -1;
     }
    [self runScript:error];
@@ -197,7 +197,7 @@ static BOOL isPlaying = false;
 
     if (!file)
     {
-        showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script because zxtouch cannot open the file. File path: %@", filePath], 999);
+        showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script because TLinkauto cannot open the file. File path: %@", filePath], 999);
         setLastScriptError([NSString stringWithFormat:@"Cannot open raw script: %@", filePath]);
         isPlaying = false;
         return;
@@ -265,15 +265,15 @@ static BOOL isPlaying = false;
         isPlaying = false;
         return;
     }
-    NSString *commandToRun = [NSString stringWithFormat:@"sudo zxtouchb -e \"python3 -u \\\"%@\\\" 2>&1 | /var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/add_datetime.sh\" >> /var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/output", filePath];
-    NSLog(@"com.zjx.springboard: command to run for running py file %@", commandToRun);
+    NSString *commandToRun = [NSString stringWithFormat:@"sudo tlinkautob -e \"python3 -u \\\"%@\\\" 2>&1 | /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/add_datetime.sh\" >> /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output", filePath];
+    NSLog(@"com.tlinkauto.springboard: command to run for running py file %@", commandToRun);
 
     // here I made it run in background because of a weird thing: ios objc cannot call second system() if the first system() does not return
     //scriptPlayForceStop = true;
     system2([commandToRun UTF8String], NULL, NULL);
 
     // Best-effort: detect Python traceback/error from ScriptRuntime output log.
-    NSString *outPath = @"/var/mobile/Library/ZXTouch/coreutils/ScriptRuntime/output";
+    NSString *outPath = @"/var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output";
     if ([[NSFileManager defaultManager] fileExistsAtPath:outPath])
     {
         NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:outPath];
@@ -319,7 +319,7 @@ static BOOL isPlaying = false;
 }
 
 - (void)replay:(NSTimer*)nstimer {
-    NSLog(@"com.zjx.springboard: script is replaying...");
+    NSLog(@"com.tlinkauto.springboard: script is replaying...");
     NSError *err = nil;
 
     [self runScript:&err];
@@ -329,7 +329,7 @@ static BOOL isPlaying = false;
 
 -(void) playHasStopped
 {
-    NSLog(@"com.zjx.springboard: script has finished");
+    NSLog(@"com.tlinkauto.springboard: script has finished");
 
     // check whether need to replay
     if (repeatTime != 0)
@@ -338,7 +338,7 @@ static BOOL isPlaying = false;
             circleView.backgroundColor = [UIColor orangeColor];
         });
 
-        NSLog(@"com.zjx.springboard: need replay. Replay time: %d", repeatTime);
+        NSLog(@"com.tlinkauto.springboard: need replay. Replay time: %d", repeatTime);
 
         replayTimer = [NSTimer scheduledTimerWithTimeInterval:interval
          target:self selector:@selector(replay:) 
@@ -382,8 +382,8 @@ static BOOL isPlaying = false;
 - (void)forceStop:(NSError**)error {
     if (currentScriptType == -1)
     {
-        NSLog(@"com.zjx.springboard: Cannot stop playing script. No script is playing.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. No script is playing.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Cannot stop playing script. No script is playing.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. No script is playing.\r\n"}];
         return;
     }
 
@@ -400,13 +400,13 @@ static BOOL isPlaying = false;
     else if (currentScriptType == 2)
     {
         // kill all python3 process
-        system2("sudo zxtouchb -e \"killall -9 python3\"", NULL, NULL);
+        system2("sudo tlinkautob -e \"killall -9 python3\"", NULL, NULL);
         [self clear];
     }
     else
     {
-        NSLog(@"com.zjx.springboard: unknown currently playing script type.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. Unkonwn currently playing script type.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: unknown currently playing script type.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. Unkonwn currently playing script type.\r\n"}];
         return;
     }
 

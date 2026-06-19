@@ -18,8 +18,8 @@ Simply grab the deb package in **release** page if you don't want to struggle wi
 0. prerequisite: of course install your favourite versions of python, theos and xcode in your mac
 1. git clone https://github.com/opencv/opencv (4.x branch) into somewhere
 2. build it with ```python platforms/ios/build_framework.py ios --iphoneos_archs "arm64,arm64e" --iphoneos_deployment_target "14.0" --disable-bitcode --static --build_only_specified_archs --legacy_build```
-3. git clone https://github.com/mnihyc/ZXTouch into somewhere, create a directory inside named frameworks
-4. copy generated opencv/ios/opencv2.framework exactly to ZXTouch/frameworks/opencv2.framework
+3. git clone https://github.com/mnihyc/TLinkauto into somewhere, create a directory inside named frameworks
+4. copy generated opencv/ios/opencv2.framework exactly to TLinkauto/frameworks/opencv2.framework
 5. run ```make package FINALPACKAGE=1``` and find your deb in packages folder
 
 If would like to build for iOS < 14.0, switch to a compatible Xcode version, and replace the target in Makefile with 11.0 or something.
@@ -46,7 +46,7 @@ Read this in other languages（send email to me if you want to help to translate
 This library enables you to simulate touch events on iOS 11.0 - 14 with just one line of code! Currently, the repository is mainly for programmers. In the future, I will make it suitable for people who do not understand how to code.
 
 ## Notice
-I am a Computer Science student in University of Pittsburgh, and my spring 2021 term has started. My workload for this semester is pretty heavy. **Although this semester is extremely boring because I didn't enroll in any of the CS courses this semester, I still have to focus on studying. So, I have to reduce the amount of time spending on updating ZXTouch.** But I will still update it when I am free.
+I am a Computer Science student in University of Pittsburgh, and my spring 2021 term has started. My workload for this semester is pretty heavy. **Although this semester is extremely boring because I didn't enroll in any of the CS courses this semester, I still have to focus on studying. So, I have to reduce the amount of time spending on updating TLinkauto.** But I will still update it when I am free.
 
 
 
@@ -79,12 +79,12 @@ Submit suggestions on discord!
 ## Installation
 
 ### Through Cydia:
-1. Open Cydia - Sources - Edit - Add - https://zxtouch.net (backup server: http://47.114.83.227  ("http" instead of "https"!!! Please double check this.))
-2. Install ***"ZXTouch"*** tweak
+1. Open Cydia - Sources - Edit - Add - https://TLinkauto.net (backup server: http://47.114.83.227  ("http" instead of "https"!!! Please double check this.))
+2. Install ***"TLinkauto"*** tweak
 3. Done
 
 ### Through Github:
-1. Download **com.zjx.ioscontrol_0.0.6_iphoneos-arm.deb** from **release**
+1. Download **com.tlinkauto.ioscontrol_0.0.6_iphoneos-arm.deb** from **release**
 2. Copy the deb file to your iOS device
 3. SSH to your iOS device and install the deb file by typing "dpkg -i /PATH/TO/om.zjx.pccontrol_0.0.2_iphoneos-arm.deb"
 
@@ -127,18 +127,18 @@ See python version of documentation below. But you can also use ANY language to 
 
 ### Installation
 
-1. **On Your iOS Device**: ZXTouch python module will be automatically installed on your iOS device.
+1. **On Your iOS Device**: TLinkauto python module will be automatically installed on your iOS device.
 
 
-2. **On Computers**: If you want to install ZXTouch python module on your computer for remote controlling, download the source code from [github](https://github.com/xuan32546/IOS13-SimulateTouch/tree/0.0.6/layout/usr/lib/python3.7/site-packages) and copy the zxtouch folder to your "site-packages" folder of your python on your computer.
+2. **On Computers**: If you want to install TLinkauto python module on your computer for remote controlling, download the source code from [github](https://github.com/xuan32546/IOS13-SimulateTouch/tree/0.0.6/layout/usr/lib/python3.7/site-packages) and copy the TLinkauto folder to your "site-packages" folder of your python on your computer.
 
-### Create A ZXTouch Instance
+### Create A TLinkauto Instance
 
-To create a instance, use zxtouch(ip) where ip is the ip address of your device. If you want to run the script locally on your iOS device, just input "127.0.0.1".
+To create a instance, use TLinkauto(ip) where ip is the ip address of your device. If you want to run the script locally on your iOS device, just input "127.0.0.1".
 
 ```python
-from zxtouch.client import zxtouch # import module
-device = zxtouch("127.0.0.1") # create instance
+from TLinkauto.client import TLinkauto # import module
+device = TLinkauto("127.0.0.1") # create instance
 ```
 
 ### Instance Methods
@@ -207,7 +207,7 @@ def touch(type, finger_index, x, y):
 	"""Perform a touch event
 	
 	Args:
-		type: touch event type. For touch event types, please insert "from zxtouch.touchtypes import *" at top of your script.
+		type: touch event type. For touch event types, please insert "from TLinkauto.touchtypes import *" at top of your script.
 		finger_index: the finger index of the touch event. The range should be 1-19
 		x: x coordinate of the screen
 		y: y coordinate of the screen
@@ -236,20 +236,20 @@ def touch_with_list(self, touch_list: list):
 
 ```python
 # code example
-from zxtouch.client import zxtouch
-from zxtouch.touchtypes import *
+from TLinkauto.client import TLinkauto
+from TLinkauto.touchtypes import *
 import time
 
-device = zxtouch("127.0.0.1") # create instance
+device = TLinkauto("127.0.0.1") # create instance
 
 # finger "5" touch (400, 400)
-device.touch(TOUCH_DOWN, 5, 400, 400) # TOUCH_DOWN is imported from zxtouch.touchtypes
+device.touch(TOUCH_DOWN, 5, 400, 400) # TOUCH_DOWN is imported from TLinkauto.touchtypes
 time.sleep(1)
 # move to (400, 600)
-device.touch(TOUCH_MOVE, 5, 400, 600) # TOUCH_MOVE is imported from zxtouch.touchtypes
+device.touch(TOUCH_MOVE, 5, 400, 600) # TOUCH_MOVE is imported from TLinkauto.touchtypes
 time.sleep(1)
 # touch up
-device.touch(TOUCH_UP, 5, 400, 600) # TOUCH_UP is imported from zxtouch.touchtypes
+device.touch(TOUCH_UP, 5, 400, 600) # TOUCH_UP is imported from TLinkauto.touchtypes
 time.sleep(1)
 
 # multitouch point (300, 300) and (500, 500) at the same time
@@ -274,14 +274,14 @@ def screenshot(filePath, region=None):
 	"""
 ```
 
-Save and clear screenshots in the ZXTouch album.
+Save and clear screenshots in the TLinkauto album.
 
 ```python
 def save_to_system_album(filePath):
-	"""Save the image at filePath to the ZXTouch Photos album."""
+	"""Save the image at filePath to the TLinkauto Photos album."""
 
 def clear_system_album():
-	"""Delete all images stored in the ZXTouch Photos album."""
+	"""Delete all images stored in the TLinkauto Photos album."""
 ```
 
 ## Hardware Key Events
@@ -299,7 +299,7 @@ def key_up(key_type):
 Key type constants:
 
 ```python
-from zxtouch.hardwarekeytypes import (
+from TLinkauto.hardwarekeytypes import (
 	HARDWARE_KEY_HOME,
 	HARDWARE_KEY_VOLUME_UP,
 	HARDWARE_KEY_VOLUME_DOWN,
@@ -417,9 +417,9 @@ def switch_to_app(bundle_identifier):
 **Code Example**
 
 ```python
-from zxtouch.client import zxtouch
+from TLinkauto.client import TLinkauto
 
-device = zxtouch("127.0.0.1") # create instance
+device = TLinkauto("127.0.0.1") # create instance
 device.switch_to_app("com.apple.springboard") # return to home screen
 
 device.disconnect()
@@ -448,9 +448,9 @@ def show_alert_box(title, content, duration):
 **Code Example**
 
 ```python
-from zxtouch.client import zxtouch
+from TLinkauto.client import TLinkauto
 
-device = zxtouch("127.0.0.1") # create instance
+device = TLinkauto("127.0.0.1") # create instance
 device.show_alert_box("Alert", "This is a system-wide alert box that lasts for 3 seconds", 3)
 
 device.disconnect()
@@ -503,10 +503,10 @@ def image_match(template_path, acceptable_value=0.8, max_try_times=4, scaleRatio
 **Code Example**
 
 ```Python
-from zxtouch.client import zxtouch
+from TLinkauto.client import TLinkauto
 
-device = zxtouch("127.0.0.1") # create instance
-result_tuple = device.image_match("/var/mobile/Library/ZXTouch/scripts/examples/Image Matching.bdl/examples_folder.jpg", 0.8, 5, 0.85) # try 5 times with acceptable value 0.8. Each time  make template image size*1.5 AND size/1.5 then match again.
+device = TLinkauto("127.0.0.1") # create instance
+result_tuple = device.image_match("/var/mobile/Library/TLinkauto/scripts/examples/Image Matching.bdl/examples_folder.jpg", 0.8, 5, 0.85) # try 5 times with acceptable value 0.8. Each time  make template image size*1.5 AND size/1.5 then match again.
 
 if not result_tuple[0]:
 	print("Error happens while matching template image. Error info: " + result_tuple[1])
@@ -527,10 +527,10 @@ def show_toast(toast_type, content, duration, position=0, fontSize=0):
 	"""show a toast
 	
 	Args:
-        type: type of the toast. Please import zxtouch.toasttypes for the constant.
+        type: type of the toast. Please import TLinkauto.toasttypes for the constant.
         content: content of the toast
         duration: how long the toast will appear before disappearing
-        position: position of the toast. Please import zxtouch.toasttypes for the constant.
+        position: position of the toast. Please import TLinkauto.toasttypes for the constant.
         
         For more information about the constants, please see code example below
 	
@@ -545,11 +545,11 @@ def show_toast(toast_type, content, duration, position=0, fontSize=0):
 **Code Example**
 
 ```python
-from zxtouch.client import zxtouch
-from zxtouch.toasttypes import *
+from TLinkauto.client import TLinkauto
+from TLinkauto.toasttypes import *
 import time
 
-device = zxtouch("127.0.0.1") # create instance
+device = TLinkauto("127.0.0.1") # create instance
 device.show_toast(TOAST_SUCCESS, "This is an success message toast", 1.5)
 time.sleep(1.5)
 
@@ -590,10 +590,10 @@ def pick_color(x, y):
 **Code Example**
 
 ```Python
-from zxtouch.client import zxtouch
+from TLinkauto.client import TLinkauto
 import time
 
-device = zxtouch("127.0.0.1")
+device = TLinkauto("127.0.0.1")
 print("Picking color from 100, 100 after 1.5 seconds...")
 time.sleep(1.5)
 result_tuple = device.pick_color(100, 100)
@@ -609,7 +609,7 @@ device.disconnect()
 
 ## Accurate Sleep
 
-I don't know the why, but if you call `time.sleep` in python, the sleep time will not be accurate. However you can use accurate_sleep method in zxtouch to sleep for an accurate time.
+I don't know the why, but if you call `time.sleep` in python, the sleep time will not be accurate. However you can use accurate_sleep method in TLinkauto to sleep for an accurate time.
 
  
 ```python
@@ -704,11 +704,11 @@ def move_cursor(offset):
 
 ## Play A Script
 
-Play a zxtouch script on iOS device.
+Play a TLinkauto script on iOS device.
 
 ```python
 def play_script(script_absolute_path):
-    """Play a zxtouch script on iOS device.
+    """Play a TLinkauto script on iOS device.
 		
 	Args:
     	script_absolute_path: absolute path of the script

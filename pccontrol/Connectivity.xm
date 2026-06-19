@@ -9,7 +9,7 @@ static BOOL zx_parseActionValue(UInt8 *eventData, int *outAction, int *outValue,
     NSArray *parts = [raw componentsSeparatedByString:@";;"];
     if ([parts count] < 1) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing action.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing action.\r\n"}];
         }
         return false;
     }
@@ -18,7 +18,7 @@ static BOOL zx_parseActionValue(UInt8 *eventData, int *outAction, int *outValue,
     if (action == 1) {
         if ([parts count] < 2) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing value.\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing value.\r\n"}];
             }
             return false;
         }
@@ -75,14 +75,14 @@ NSString* wifiTaskFromRawData(UInt8 *eventData, NSError **error)
 
     BOOL enabled = NO;
     if (!mgr) {
-        if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;SBWiFiManager unavailable.\r\n"}];
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;SBWiFiManager unavailable.\r\n"}];
         return nil;
     }
 
     if (action == 1) {
         // set
         if (!(zx_setBool(mgr, "setWiFiEnabled:", (BOOL)value) || zx_setBool(mgr, "setWifiEnabled:", (BOOL)value))) {
-            if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Wi-Fi state.\r\n"}];
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Wi-Fi state.\r\n"}];
             return nil;
         }
     }
@@ -103,13 +103,13 @@ NSString* bluetoothTaskFromRawData(UInt8 *eventData, NSError **error)
     Class cls = NSClassFromString(@"BluetoothManager");
     id mgr = zx_sharedInstance(cls);
     if (!mgr) {
-        if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;BluetoothManager unavailable.\r\n"}];
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;BluetoothManager unavailable.\r\n"}];
         return nil;
     }
 
     if (action == 1) {
         if (!(zx_setBool(mgr, "setPowered:", (BOOL)value) || zx_setBool(mgr, "setEnabled:", (BOOL)value))) {
-            if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Bluetooth state.\r\n"}];
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Bluetooth state.\r\n"}];
             return nil;
         }
     }
@@ -137,13 +137,13 @@ NSString* airplaneTaskFromRawData(UInt8 *eventData, NSError **error)
     }
 
     if (!pref) {
-        if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Airplane mode controller unavailable.\r\n"}];
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Airplane mode controller unavailable.\r\n"}];
         return nil;
     }
 
     if (action == 1) {
         if (!(zx_setBool(pref, "setAirplaneMode:", (BOOL)value) || zx_setBool(pref, "setAirplaneModeEnabled:", (BOOL)value))) {
-            if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Airplane mode.\r\n"}];
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Airplane mode.\r\n"}];
             return nil;
         }
     }
@@ -164,13 +164,13 @@ NSString* cellularDataTaskFromRawData(UInt8 *eventData, NSError **error)
     Class cls = NSClassFromString(@"RadiosPreferences");
     id pref = zx_sharedInstance(cls);
     if (!pref) {
-        if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cellular data control unavailable.\r\n"}];
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cellular data control unavailable.\r\n"}];
         return nil;
     }
 
     if (action == 1) {
         if (!zx_setBool(pref, "setCellularDataEnabled:", (BOOL)value)) {
-            if (error) *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Cellular Data.\r\n"}];
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to set Cellular Data.\r\n"}];
             return nil;
         }
     }
@@ -189,7 +189,7 @@ NSString* vpnTaskFromRawData(UInt8 *eventData, NSError **error)
     if (!zx_parseActionValue(eventData, &action, &value, error)) return nil;
 
     if (error) {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;VPN control not implemented on this build.\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;VPN control not implemented on this build.\r\n"}];
     }
     return nil;
 }

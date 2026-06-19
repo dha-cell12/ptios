@@ -9,13 +9,13 @@ use crate::{
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HelloStatusPayload {
-    pub zxtouch: ZxTouch,
+    pub tlinkauto: TLinkauto,
     pub device: IosDeviceInfo,
     pub script: ScriptStatus,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ZxTouch {
+pub struct TLinkauto {
     pub port: u16,
     pub protocols: Vec<String>,
 }

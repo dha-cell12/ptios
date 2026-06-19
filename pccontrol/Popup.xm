@@ -42,7 +42,7 @@ static int windowHeight = 250;
             _window.layer.borderWidth = 2.0f;
             _window.layer.cornerRadius = 15.0f;
             // Add header
-            NSString *headerText = @"ZXTouch Panel";
+            NSString *headerText = @"TLinkauto Panel";
 
             UIFont * font = [UIFont systemFontOfSize:30];
             CGSize headerSize = [headerText sizeWithFont:font];
@@ -86,7 +86,7 @@ static int windowHeight = 250;
             forControlEvents:UIControlEventTouchUpInside];
 
             recordButton.backgroundColor = [UIColor clearColor];
-            [recordButton setImage:[UIImage imageWithContentsOfFile:@"/Library/Application Support/zxtouch/start-recording.png"] forState:UIControlStateNormal];
+            [recordButton setImage:[UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/start-recording.png"] forState:UIControlStateNormal];
 
             recordButton.frame = CGRectMake(30, headerSize.height + 10, 50, 50);
             [_window addSubview:recordButton];
@@ -98,7 +98,7 @@ static int windowHeight = 250;
             forControlEvents:UIControlEventTouchUpInside];
 
             stopButton.backgroundColor = [UIColor clearColor];
-            [stopButton setImage:[UIImage imageWithContentsOfFile:@"/Library/Application Support/zxtouch/stop-playing.png"] forState:UIControlStateNormal];
+            [stopButton setImage:[UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/stop-playing.png"] forState:UIControlStateNormal];
 
             stopButton.frame = CGRectMake(100, headerSize.height + 10, 50, 50);
             [_window addSubview:stopButton];

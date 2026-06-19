@@ -35,7 +35,7 @@
 }
 
 -(void) test{
-    NSLog(@"com.zjx.springboard: window test");
+    NSLog(@"com.tlinkauto.springboard: window test");
 }
 
 @end

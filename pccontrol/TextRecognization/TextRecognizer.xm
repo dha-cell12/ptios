@@ -8,7 +8,7 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
 {
     if (SYSTEM_VERSION_LESS_THAN(@"13.0"))
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;OCR only supports iOS13 or newer version of iOS. iOS12 or older may be supported in the future.\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;OCR only supports iOS13 or newer version of iOS. iOS12 or older may be supported in the future.\r\n"}];
         showAlertBox(@"Not Supported", @"OCR only supports iOS13 or newer version of iOS. iOS12 and older may be supported in the future.", 99);
         return nil;
     }
@@ -16,8 +16,8 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
     NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
     if ([data count] == 0)
     {
-        NSLog(@"com.zjx.springboard: Data not in good format.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Data not in good format.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Data not in good format.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Data not in good format.\r\n"}];
         return nil;
     }
 
@@ -27,8 +27,8 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
     {
         if ([data count] < 8)
         {
-            NSLog(@"com.zjx.springboard: Data not in good format. The format should be 1;;x1,,y1,,width,,height;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path.");
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Data not in good format. The format should be 1;;x1,,y1,,width,,height;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path\r\n"}];
+            NSLog(@"com.tlinkauto.springboard: Data not in good format. The format should be 1;;x1,,y1,,width,,height;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path.");
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Data not in good format. The format should be 1;;x1,,y1,,width,,height;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path\r\n"}];
             return nil;
         }
 
@@ -46,8 +46,8 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         NSArray *rect = [rectData componentsSeparatedByString:@",,"];
         if ([rect count] < 4)
         {
-            NSLog(@"com.zjx.springboard: Rect data not in good format. The format should be x1,,y1,,width,,height");
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Rect data not in good format. The format should be x1,,y1,,width,,height\r\n"}];
+            NSLog(@"com.tlinkauto.springboard: Rect data not in good format. The format should be x1,,y1,,width,,height");
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Rect data not in good format. The format should be x1,,y1,,width,,height\r\n"}];
             return nil;
         }
     
@@ -80,14 +80,14 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         // set properties
         if ([customWords count] > 1 || ![customWords[0] isEqualToString:@""])
         {
-            NSLog(@"com.zjx.springboard: custom words set. Count: %d", [customWords count]);
+            NSLog(@"com.tlinkauto.springboard: custom words set. Count: %d", [customWords count]);
             [ocrManager setCustomWords:customWords];
         }
         [ocrManager setMinimumHeight:minimumHeight];
         [ocrManager setRecognitionLevel:level];
         if ([languages count] > 1 || ![languages[0] isEqualToString:@""])
         {
-            NSLog(@"com.zjx.springboard: languages set.");
+            NSLog(@"com.tlinkauto.springboard: languages set.");
             [ocrManager setLanguages:languages];
         }
         [ocrManager setCorrection:correct];
@@ -107,8 +107,8 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
     {
         if ([data count] < 2)
         {
-            NSLog(@"com.zjx.springboard: Data not in good format. The format should be 2;;level data:%@", data);
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Data not in good format. The format should be 2;;level\r\n"}];
+            NSLog(@"com.tlinkauto.springboard: Data not in good format. The format should be 2;;level data:%@", data);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Data not in good format. The format should be 2;;level\r\n"}];
             return nil;
         }
         VNRequestTextRecognitionLevel level = VNRequestTextRecognitionLevelAccurate;
@@ -133,8 +133,8 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
     }
     else 
     {
-        NSLog(@"com.zjx.springboard: Text recognition unknown task type");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Text recognition unknown task type\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: Text recognition unknown task type");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Text recognition unknown task type\r\n"}];
         return nil;
     }
 }

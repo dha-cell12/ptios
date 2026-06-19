@@ -15,7 +15,7 @@ Discord: https://discord.gg/acSXfyz
 这个**开源，永久免费的**库作为一个iOS底层与应用层的桥梁，实现iOS11 - 4的模拟触摸。在应用层一行代码即可进行模拟点击，简洁方便（下文会有代码案例）。并且支持所有编程语言编写的应用层脚本或应用程序。同时，本库支持实时控制，0延迟控制你的iOS设备。
 
 ## 脚本作者招募
-如果你对制作脚本并出售感兴趣，请在Discord上面联系我。虽然ZXTouch是一个免费的软件，脚本作者依然可以对他们的脚本收取费用。
+如果你对制作脚本并出售感兴趣，请在Discord上面联系我。虽然TLinkauto是一个免费的软件，脚本作者依然可以对他们的脚本收取费用。
 
 ## 特性
 * 模拟触控
@@ -38,8 +38,8 @@ Discord: https://discord.gg/acSXfyz
 
 
 ## 安装方法
-1. 打开Cydia - 源 - 编辑 - 添加 - https://zxtouch.net （备用服务器 http://47.114.83.227 http而不是https）
-2. 安装**ZXTouch**插件
+1. 打开Cydia - 源 - 编辑 - 添加 - https://TLinkauto.net （备用服务器 http://47.114.83.227 http而不是https）
+2. 安装**TLinkauto**插件
 3. 完成
 
 
@@ -62,7 +62,7 @@ Record touch events and playback
 
 1. 在安装后，插件会持续监听6000端口
 
-2. 如果要控制你的设备，发送一定格式的数据到你手机的6000端口。这里不会写格式是怎样的，但是你可以查看zxtouch python模块去反推格式。
+2. 如果要控制你的设备，发送一定格式的数据到你手机的6000端口。这里不会写格式是怎样的，但是你可以查看TLinkauto python模块去反推格式。
 
 
 ## Documentation (Python)

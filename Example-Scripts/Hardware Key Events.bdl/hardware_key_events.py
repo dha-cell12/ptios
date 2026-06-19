@@ -1,11 +1,11 @@
-from zxtouch.client import zxtouch
-from zxtouch.hardwarekeytypes import (
+from tlinkauto.client import TLinkauto
+from tlinkauto.hardwarekeytypes import (
     HARDWARE_KEY_HOME,
     HARDWARE_KEY_VOLUME_UP,
     HARDWARE_KEY_VOLUME_DOWN,
     HARDWARE_KEY_LOCK,
 )
-from zxtouch.toasttypes import TOAST_WARNING
+from tlinkauto.toasttypes import TOAST_WARNING
 import time
 
 
@@ -16,7 +16,7 @@ def press_key(device, key_type, delay=0.2):
 
 
 def main():
-    device = zxtouch("127.0.0.1")
+    device = TLinkauto("127.0.0.1")
 
     device.show_toast(TOAST_WARNING, "Testing hardware key events...", 2)
     time.sleep(2)

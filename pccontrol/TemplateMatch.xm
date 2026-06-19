@@ -19,10 +19,10 @@
 #include <stdarg.h>
 
 // Minimal file logger for daemon builds.
-// We intentionally avoid depending on zxtouch-binary/SocketServer.mm static zx_logf().
+// We intentionally avoid depending on tlinkauto-binary/SocketServer.mm static zx_logf().
 static NSString *zx_tm_logFilePath(void)
 {
-    return @"/var/mobile/Library/ZXTouch/zxtouchd.log";
+    return @"/var/mobile/Library/TLinkauto/tlinkautod.log";
 }
 
 static void zx_tm_logf(const char *fmt, ...)
@@ -34,7 +34,7 @@ static void zx_tm_logf(const char *fmt, ...)
         vsnprintf(msg, sizeof(msg), fmt, args);
         va_end(args);
 
-        NSString *dir = @"/var/mobile/Library/ZXTouch";
+        NSString *dir = @"/var/mobile/Library/TLinkauto";
         [[NSFileManager defaultManager] createDirectoryAtPath:dir
                                   withIntermediateDirectories:true
                                                    attributes:nil
@@ -71,7 +71,7 @@ static void zx_tm_logf(const char *fmt, ...)
 
 #define TMLOGF(fmt, ...) zx_tm_logf((fmt), ##__VA_ARGS__)
 #elif ZX_TEMPLATE_MATCH_DEBUG
-#define TMLOGF(fmt, ...) NSLog(@"com.zjx.springboard: " fmt, ##__VA_ARGS__)
+#define TMLOGF(fmt, ...) NSLog(@"com.tlinkauto.springboard: " fmt, ##__VA_ARGS__)
 #else
 #define TMLOGF(fmt, ...) do { } while (0)
 #endif
@@ -201,7 +201,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     if (templ.cols == 0 && templ.rows == 0)
     {
         if (err) {
-            *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
+            *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
         }
         return CGRect();    
     }
@@ -221,14 +221,14 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     if (image.cols == 0 && image.rows == 0)
     {
         if (err) {
-            *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the screenshot photo is 0! Screenshot path: %@\r\n", imgPath]}];
+            *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the screenshot photo is 0! Screenshot path: %@\r\n", imgPath]}];
         }
         return CGRect();    
     }
     if (templ.cols == 0 && templ.rows == 0)
     {
         if (err) {
-            *err = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
+            *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
         }
         return CGRect();    
     }

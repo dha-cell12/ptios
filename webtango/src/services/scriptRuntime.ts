@@ -1,7 +1,7 @@
-import { sleep as sdkSleep, ZxTouchDeviceSdk } from './zxtouchSdk';
+import { sleep as sdkSleep, TLinkautoDeviceSdk } from './tlinkautoSdk';
 
 export type ScriptRuntimeApi = {
-  device: ZxTouchDeviceSdk;
+  device: TLinkautoDeviceSdk;
   signal: AbortSignal;
   log: (message: unknown) => void;
 };

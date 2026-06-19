@@ -33,7 +33,7 @@ static BOOL saveAutoLaunchConfig(NSMutableDictionary *config, NSError **error)
     BOOL ok = [config writeToFile:path atomically:YES];
     if (!ok && error)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                      code:999
                                  userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to save auto launch config.\r\n"}];
     }
@@ -47,7 +47,7 @@ NSString* setAutoLaunchFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Auto launch requires name, script, enabled.\r\n"}];
         }
@@ -119,7 +119,7 @@ NSString* setTimerFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Timer requires name, interval, repeat, script.\r\n"}];
         }
@@ -135,7 +135,7 @@ NSString* setTimerFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Timer interval must be > 0.\r\n"}];
         }
@@ -170,7 +170,7 @@ NSString* removeTimerFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Timer name is required.\r\n"}];
         }

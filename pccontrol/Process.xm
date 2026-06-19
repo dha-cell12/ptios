@@ -100,7 +100,7 @@ int bringAppForeground(NSString *appIdentifier)
 {
     CFStringRef appBundleName = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@"), appIdentifier);
     //[NSString stringWithFormat:@"%s", eventData];
-    NSLog(@"### com.zjx.springboard: Switch to application: %@", appBundleName);
+    NSLog(@"### com.tlinkauto.springboard: Switch to application: %@", appBundleName);
     if (!openApp)
         openApp = (int(*)(CFStringRef, Boolean))dlsym(sbServices,"SBSLaunchApplicationWithIdentifier");
 
@@ -115,10 +115,10 @@ id getFrontMostApplication()
         @try{
             SpringBoard *springboard = (SpringBoard*)[%c(SpringBoard) sharedApplication];
             app = [springboard _accessibilityFrontMostApplication];
-            //NSLog(@"com.zjx.springboard: app: %@, id: %@", app, [app displayIdentifier]);
+            //NSLog(@"com.tlinkauto.springboard: app: %@, id: %@", app, [app displayIdentifier]);
         }
         @catch (NSException *exception) {
-            NSLog(@"com.zjx.springboard: Debug: %@", exception.reason);
+            NSLog(@"com.tlinkauto.springboard: Debug: %@", exception.reason);
         }
         });
     return app;
@@ -184,7 +184,7 @@ NSString* killAppFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];
         }
@@ -196,7 +196,7 @@ NSString* killAppFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to terminate app.\r\n"}];
         }
@@ -213,7 +213,7 @@ NSString* appStateFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];
         }
@@ -250,7 +250,7 @@ NSString* appInfoFromRawData(UInt8 *eventData, NSError **error)
     {
         if (error)
         {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                          code:999
                                      userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];
         }
@@ -271,7 +271,7 @@ NSString* appPidFromRawData(UInt8 *eventData, NSError **error)
     NSString *bundleId = [NSString stringWithFormat:@"%s", eventData];
     if ([bundleId length] == 0) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];
         }
         return nil;
     }
@@ -292,7 +292,7 @@ NSString* appPathsFromRawData(UInt8 *eventData, NSError **error)
     NSString *bundleId = [NSString stringWithFormat:@"%s", eventData];
     if ([bundleId length] == 0) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];
         }
         return nil;
     }
@@ -336,14 +336,14 @@ NSString* listBundlesFromRawData(UInt8 *eventData, NSError **error)
     Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
     if (!wsCls || ![wsCls respondsToSelector:@selector(defaultWorkspace)]) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;LSApplicationWorkspace unavailable.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;LSApplicationWorkspace unavailable.\r\n"}];
         }
         return nil;
     }
     id ws = ((id (*)(id, SEL))objc_msgSend)(wsCls, @selector(defaultWorkspace));
     if (!ws) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to get LSApplicationWorkspace.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to get LSApplicationWorkspace.\r\n"}];
         }
         return nil;
     }
@@ -420,7 +420,7 @@ NSString* listBundlesFromRawData(UInt8 *eventData, NSError **error)
     NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&jsonErr];
     if (!jsonData || jsonErr) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to encode bundles JSON.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to encode bundles JSON.\r\n"}];
         }
         return nil;
     }
@@ -432,7 +432,7 @@ NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
     NSString *raw = [NSString stringWithFormat:@"%s", eventData ?: (UInt8*)""];
     if ([raw length] == 0) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing URL.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing URL.\r\n"}];
         }
         return nil;
     }
@@ -447,7 +447,7 @@ NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
     NSURL *url = [NSURL URLWithString:primary];
     if (!url) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid URL.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid URL.\r\n"}];
         }
         return nil;
     }
@@ -479,7 +479,7 @@ NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
 
     if (!started) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to open URL.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to open URL.\r\n"}];
         }
         return nil;
     }

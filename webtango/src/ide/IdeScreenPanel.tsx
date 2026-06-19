@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import type { UnifiedDevice } from '../services/deviceRegistry';
 import { listWorkspaceFiles, type FileEntry } from '../services/fileManager';
-import { ZxTouchDeviceSdk, type CoordinateDiagnostics, type FindImageResult, type OcrResult, type PickedColor } from '../services/zxtouchSdk';
+import { TLinkautoDeviceSdk, type CoordinateDiagnostics, type FindImageResult, type OcrResult, type PickedColor } from '../services/tlinkautoSdk';
 
 type ScreenMode = 'coordinate' | 'color' | 'region';
 type ToolTab = 'interaction' | 'vision' | 'assertions';
@@ -36,7 +36,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
   const [point, setPoint] = useState<Point | null>(null);
   const [region, setRegion] = useState<Region | null>(null);
   const [pickedColor, setPickedColor] = useState<PickedColor | null>(null);
-  const [templatePath, setTemplatePath] = useState('/var/mobile/Library/ZXTouch/templates/template.png');
+  const [templatePath, setTemplatePath] = useState('/var/mobile/Library/TLinkauto/templates/template.png');
   const [templateEntries, setTemplateEntries] = useState<FileEntry[]>([]);
   const [findResult, setFindResult] = useState<FindImageResult | null>(null);
   const [matchOptions, setMatchOptions] = useState({ acceptable: 0.9, pixelSkip: 1 });
@@ -67,7 +67,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
     setStatus('Starting stream...');
 
     const loadDiagnostics = async () => {
-      const sdk = new ZxTouchDeviceSdk(wsBase, device.id);
+      const sdk = new TLinkautoDeviceSdk(wsBase, device.id);
       try {
         const diagnostics = await sdk.getCoordinateDiagnostics();
         if (!disposed) applyDiagnostics(diagnostics);
@@ -145,7 +145,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
 
   const refreshDiagnostics = async () => {
     if (!device) return null;
-    const sdk = new ZxTouchDeviceSdk(wsBase, device.id);
+    const sdk = new TLinkautoDeviceSdk(wsBase, device.id);
     try {
       const diagnostics = await sdk.getCoordinateDiagnostics();
       applyDiagnostics(diagnostics);
@@ -161,7 +161,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
 
   const selectTemplate = (path: string) => {
     const name = path.split('/').filter(Boolean).pop() || path;
-    setTemplatePath(`/var/mobile/Library/ZXTouch/templates/${name}`);
+    setTemplatePath(`/var/mobile/Library/TLinkauto/templates/${name}`);
   };
 
   const startWorker = (deviceId: string) => {
@@ -317,7 +317,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
 
   const pickColorAt = async (target: Point) => {
     if (!device) return;
-    const sdk = new ZxTouchDeviceSdk(wsBase, device.id);
+    const sdk = new TLinkautoDeviceSdk(wsBase, device.id);
     try {
       const color = await sdk.pickColor(target.x, target.y);
       setPickedColor(color);
@@ -338,7 +338,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
       addLog('warn', 'screen', 'Select a region first.');
       return;
     }
-    const sdk = new ZxTouchDeviceSdk(wsBase, device.id);
+    const sdk = new TLinkautoDeviceSdk(wsBase, device.id);
     try {
       setStatus('Testing image...');
       const path = pathOverride || templatePath;
@@ -370,7 +370,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
       addLog('warn', 'screen', 'Select a region first.');
       return;
     }
-    const sdk = new ZxTouchDeviceSdk(wsBase, device.id);
+    const sdk = new TLinkautoDeviceSdk(wsBase, device.id);
     try {
       setStatus('Capturing template...');
       const template = await sdk.captureImage([region.x, region.y, region.width, region.height]);
@@ -420,8 +420,8 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
       : window.prompt('Template file name', templatePath.split('/').pop() || 'template.png');
     if (!rawName) return null;
     const fileName = rawName.endsWith('.png') ? rawName : `${rawName}.png`;
-    const path = `/var/mobile/Library/ZXTouch/templates/${fileName}`;
-    const sdk = new ZxTouchDeviceSdk(wsBase, device.id);
+    const path = `/var/mobile/Library/TLinkauto/templates/${fileName}`;
+    const sdk = new TLinkautoDeviceSdk(wsBase, device.id);
     try {
       setStatus('Saving template...');
       const savedPath = await sdk.screenshot(path, [region.x, region.y, region.width, region.height]);
@@ -447,7 +447,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
       addLog('warn', 'screen', 'Select a region first.');
       return;
     }
-    const sdk = new ZxTouchDeviceSdk(wsBase, device.id);
+    const sdk = new TLinkautoDeviceSdk(wsBase, device.id);
     try {
       setStatus('Running OCR...');
       const result = await sdk.ocr({
@@ -595,7 +595,7 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
               <button type="button" disabled={!point} onClick={() => point && insertSnippet(`await device.tap(${point.x}, ${point.y}, 650);`)}><span>Long Press</span></button>
               <button type="button" onClick={() => insertSnippet(swipeSnippet())}><span>Swipe</span></button>
               <button type="button" onClick={() => insertSnippet(scrollUpSnippet())}><span>Scroll up</span></button>
-              <button type="button" onClick={() => insertSnippet('// input text via raw zxtouch task if needed') }><span>Input Text</span></button>
+              <button type="button" onClick={() => insertSnippet('// input text via raw TLinkauto task if needed') }><span>Input Text</span></button>
               <button type="button" onClick={() => insertSnippet('const response = await device.request(25, 1);\nlog(response);')}><span>Raw Task</span></button>
             </div>
           ) : null}

@@ -9,7 +9,7 @@ import { ReadableStream, WrapReadableStream, type MaybeConsumable } from '@yume-
 import * as mpegts from 'mpegts.js';
 import { AdbWebSocketConnector } from './AdbWebSocketConnector';
 import { ScrcpyBatchController } from './ScrcpyBatchController';
-import { ZxTouchWsClient } from './ZxTouchWsClient';
+import { TLinkautoWsClient } from './TLinkautoWsClient';
 
 let automationIdeMounted = false;
 
@@ -128,7 +128,7 @@ let iosDevices: UnifiedDevice[] = [];
 let iosDevicesSignature = '';
 let iosPollTimer: number | undefined;
 let iosPlayer: any | undefined;
-let iosZx: ZxTouchWsClient | undefined;
+let iosZx: TLinkautoWsClient | undefined;
 let iosScreenSize: { width: number; height: number } = { width: 375, height: 667 };
 let iosPointerActive = false;
 let iosActivePointerId: number | undefined;
@@ -243,12 +243,12 @@ async function ensureIosZxOpen(timeoutMs = 800): Promise<boolean> {
     try {
     iosZx?.close();
     } catch {}
-    iosZx = new ZxTouchWsClient(`${iosCurrentWsBase}/ios/${encodeURIComponent(iosCurrentDeviceId)}/zxtouch`);
+    iosZx = new TLinkautoWsClient(`${iosCurrentWsBase}/ios/${encodeURIComponent(iosCurrentDeviceId)}/tlinkauto`);
     await iosZx.waitOpen(timeoutMs);
-    console.log('[ios-zxtouch] connected', iosControlMode);
+    console.log('[ios-tlinkauto] connected', iosControlMode);
     return true;
   } catch {
-    console.error('[ios-zxtouch] connect failed', iosControlMode);
+    console.error('[ios-tlinkauto] connect failed', iosControlMode);
     return false;
   }
 }
@@ -260,7 +260,7 @@ function scheduleIosEphemeralControlClose(delayMs = 500) {
     iosEphemeralCloseTimer = undefined;
     try {
       iosZx?.close();
-      console.log('[ios-zxtouch] closed ephemeral');
+      console.log('[ios-tlinkauto] closed ephemeral');
     } catch {}
     iosZx = undefined;
   }, delayMs);
@@ -1405,7 +1405,7 @@ async function runIosAutoTouchTest() {
   try {
     const ok = await ensureIosZxOpen(1200);
     if (!ok) {
-      console.error('[ios-auto-touch] zxtouch unavailable');
+      console.error('[ios-auto-touch] TLinkauto unavailable');
       return;
     }
     const size = await iosZx?.getScreenSize();
@@ -1656,20 +1656,20 @@ async function openIosStream(device: UnifiedDevice, profile: IosStreamProfile = 
   startIosLiveChase();
 
   if (!iosDisableControlForTest && iosControlMode === 'persistent') {
-    // Control channel: WS -> TCP 6000 (ZXTouch legacy framing)
-    const zxUrl = `${wsBase}/ios/${encodeURIComponent(device.id)}/zxtouch`;
-    iosZx = new ZxTouchWsClient(zxUrl);
+    // Control channel: WS -> TCP 6000 (TLinkauto legacy framing)
+    const zxUrl = `${wsBase}/ios/${encodeURIComponent(device.id)}/tlinkauto`;
+    iosZx = new TLinkautoWsClient(zxUrl);
     iosZx.waitOpen().then(async () => {
-      console.log('[ios-zxtouch] connected persistent');
+      console.log('[ios-tlinkauto] connected persistent');
       const size = await iosZx?.getScreenSize();
       if (size) iosScreenSize = size;
     }).catch(() => {
       // Control is optional; stream still works.
     });
   } else if (!iosDisableControlForTest) {
-    console.warn('[ios] zxtouch control using ephemeral mode');
+    console.warn('[ios] TLinkauto control using ephemeral mode');
   } else {
-    console.warn('[ios] zxtouch control disabled by iosNoControl=1');
+    console.warn('[ios] TLinkauto control disabled by iosNoControl=1');
   }
 
   if (profile === 'rtc' && iosAutoTouchMode) {
@@ -3237,7 +3237,7 @@ function renderIosScreenViewCards() {
   if (!screenGrid) return;
 
   if (iosDevices.length === 0) {
-    screenGrid.innerHTML = '<div class="empty-state"><h3>No iOS Devices</h3><p>Switch on ZXTouch and wait for discovery.</p></div>';
+    screenGrid.innerHTML = '<div class="empty-state"><h3>No iOS Devices</h3><p>Switch on TLinkauto and wait for discovery.</p></div>';
     return;
   }
 

@@ -139,7 +139,7 @@ static void stopCrazyTapCallback()
 
 void crazyTapTimeUpCallback(int sig)
 {
-    NSLog(@"com.zjx.springboard: crazy tap stop.");
+    NSLog(@"com.tlinkauto.springboard: crazy tap stop.");
     stopCrazyTap();
 }
 
@@ -181,7 +181,7 @@ static void popupWindowCallBack(void* target, void* refcon, IOHIDServiceRef serv
             if (isRecordingStart())
             {
                 stopRecording();
-                showAlertBox(@"Recording stopped", [NSString stringWithFormat:@"Your touch record has been saved. Please open zxtouch app to see your script list. This record script is located at %@recording", getScriptsFolder()], 999);
+                showAlertBox(@"Recording stopped", [NSString stringWithFormat:@"Your touch record has been saved. Please open TLinkauto app to see your script list. This record script is located at %@recording", getScriptsFolder()], 999);
                 [popupWindow show];
                 return;
             }
@@ -203,15 +203,15 @@ Start the callback for setting sender id
 void startPopupListeningCallBack()
 {
     if (ioHIDEventSystemForPopupDectect) {
-        NSLog(@"### com.zjx.springboard: popup listener already active.");
+        NSLog(@"### com.tlinkauto.springboard: popup listener already active.");
         return;
     }
     ioHIDEventSystemForPopupDectect = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
 
     IOHIDEventSystemClientScheduleWithRunLoop(ioHIDEventSystemForPopupDectect, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
     IOHIDEventSystemClientRegisterEventCallback(ioHIDEventSystemForPopupDectect, (IOHIDEventSystemClientEventCallback)popupWindowCallBack, NULL, NULL);
-    NSLog(@"### com.zjx.springboard: popup listener scheduled on main runloop.");
-    //NSLog(@"### com.zjx.springboard: screen width: %f, screen height: %f", device_screen_width, device_screen_height);
+    NSLog(@"### com.tlinkauto.springboard: popup listener scheduled on main runloop.");
+    //NSLog(@"### com.tlinkauto.springboard: screen width: %f, screen height: %f", device_screen_width, device_screen_height);
 }
 
 Boolean initActivatorInstance()
@@ -224,9 +224,9 @@ Boolean initActivatorInstance()
         LAActivator* activator = [la sharedInstance];
         if (activator.isRunningInsideSpringBoard)
         {
-            //[activator unregisterListenerWithName:@"com.zjx.zxtouch"];
+            //[activator unregisterListenerWithName:@"com.tlinkauto.tlinkauto"];
             [activator registerListener:activatorInstance 
-                                            forName:@"com.zjx.zxtouch"];
+                                            forName:@"com.tlinkauto.tlinkauto"];
         }
 
     }
@@ -244,7 +244,7 @@ Boolean initConfig()
     if (![[NSFileManager defaultManager] fileExistsAtPath:configFilePath]) // if missing, then use the default value
     {
         //showAlertBox(@"Error", configFilePath, 999);
-        NSLog(@"com.zjx.springboard: unable to get config file. File not found. Using default value. Path: %@", configFilePath);
+        NSLog(@"com.tlinkauto.springboard: unable to get config file. File not found. Using default value. Path: %@", configFilePath);
         return true;
     }
     // read indicator color from the config file
@@ -261,7 +261,7 @@ Boolean initConfig()
 
     if (config[@"double_click_volume_show_popup"])
     {
-        NSLog(@"com.zjx.springboard: show popup %d", [config[@"double_click_volume_show_popup"] boolValue]);
+        NSLog(@"com.tlinkauto.springboard: show popup %d", [config[@"double_click_volume_show_popup"] boolValue]);
         openPopUpByDoubleVolumnDown = [config[@"double_click_volume_show_popup"] boolValue];
     }
 
@@ -294,19 +294,19 @@ Boolean init()
     %orig;
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSLog(@"### com.zjx.springboard: tweak launch init begin");
+        NSLog(@"### com.tlinkauto.springboard: tweak launch init begin");
         NSData *tweakMarkerData = [@"loaded" dataUsingEncoding:NSUTF8StringEncoding];
-        if (![tweakMarkerData writeToFile:kZXTouchTweakLoadedMarkerPath atomically:true]) {
-            NSLog(@"### com.zjx.springboard: failed to write tweak marker.");
+        if (![tweakMarkerData writeToFile:kTLinkautoTweakLoadedMarkerPath atomically:true]) {
+            NSLog(@"### com.tlinkauto.springboard: failed to write tweak marker.");
         } else {
-            NSLog(@"### com.zjx.springboard: tweak marker written.");
+            NSLog(@"### com.tlinkauto.springboard: tweak marker written.");
         }
-        if ([[NSFileManager defaultManager] fileExistsAtPath:kZXTouchIPCReadyMarkerPath]) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:kTLinkautoIPCReadyMarkerPath]) {
             NSError *removeError = nil;
-            if (![[NSFileManager defaultManager] removeItemAtPath:kZXTouchIPCReadyMarkerPath error:&removeError]) {
-                NSLog(@"### com.zjx.springboard: failed to remove IPC marker: %@", removeError);
+            if (![[NSFileManager defaultManager] removeItemAtPath:kTLinkautoIPCReadyMarkerPath error:&removeError]) {
+                NSLog(@"### com.tlinkauto.springboard: failed to remove IPC marker: %@", removeError);
             } else {
-                NSLog(@"### com.zjx.springboard: cleared stale IPC marker.");
+                NSLog(@"### com.tlinkauto.springboard: cleared stale IPC marker.");
             }
         }
         Boolean isExpired = false;
@@ -329,26 +329,26 @@ Boolean init()
 
         // check for an error
         if (error != nil) {
-            NSLog(@"com.zjx.springboard: Error check tweak expiring status. Error info: %@", error);
+            NSLog(@"com.tlinkauto.springboard: Error check tweak expiring status. Error info: %@", error);
         }
         else if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
             NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
             if (httpResponse.statusCode == 404) {
-                NSLog(@"com.zjx.springboard: status code: %ld", (long)httpResponse.statusCode);
+                NSLog(@"com.tlinkauto.springboard: status code: %ld", (long)httpResponse.statusCode);
                 isExpired = true;
             }     
         }
 
         if (isExpired) //
         {
-            NSLog(@"### com.zjx.springboard: expired");
+            NSLog(@"### com.tlinkauto.springboard: expired");
             showAlertBox(@"Version Outdated", @"ZJXTouchSimulation: This version of ZJXSimulateTouch library is too old and I highly recommend you to update it on Cydia.", 999);
         }
 
 
     });
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSLog(@"### com.zjx.springboard: init UI services");
+        NSLog(@"### com.tlinkauto.springboard: init UI services");
         CGFloat screen_scale = [[UIScreen mainScreen] scale];
 
         CGFloat width = [UIScreen mainScreen].bounds.size.width * screen_scale;
@@ -356,15 +356,15 @@ Boolean init()
 
         [Screen setScreenSize:(width<height?width:height) height:(width>height?width:height)];    
 
-        //CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)stopCrazyTapCallback, CFSTR("com.zjx.crazytap.stop"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        //CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, (CFNotificationCallback)stopCrazyTapCallback, CFSTR("com.tlinkauto.crazytap.stop"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         popupWindow = [[PopupWindow alloc] init];
-        NSLog(@"### com.zjx.springboard: popup window created");
+        NSLog(@"### com.tlinkauto.springboard: popup window created");
 
         initSenderId();
         startPopupListeningCallBack();
         startIPCServerOnBackgroundThread();
-        NSLog(@"### com.zjx.springboard: IPC server started on background runloop");
-        NSLog(@"### com.zjx.springboard: popup listener started");
+        NSLog(@"### com.tlinkauto.springboard: IPC server started on background runloop");
+        NSLog(@"### com.tlinkauto.springboard: popup listener started");
 
         // init touch screensize. Temporarily put this line here. Will be removed.
         initTouchGetScreenSize();
@@ -372,10 +372,10 @@ Boolean init()
         // init other things
         if (!init())
         {
-            NSLog(@"### com.zjx.springboard: init failed");
+            NSLog(@"### com.tlinkauto.springboard: init failed");
             return;
         }
-        NSLog(@"### com.zjx.springboard: init complete");
+        NSLog(@"### com.tlinkauto.springboard: init complete");
 
      /*
         
@@ -391,13 +391,13 @@ Boolean init()
         
         // Start server on port 8080
         //[_webServer startWithPort:8080 bonjourName:nil];
-        //NSLog(@"com.zjx.springboard: Visit %@ in your web browser", _webServer.serverURL);
+        //NSLog(@"com.tlinkauto.springboard: Visit %@ in your web browser", _webServer.serverURL);
 
-        //system("sudo zxtouchb -e \"chown -R mobile:mobile /var/mobile/Documents/com.zjx.zxtouchsp\"");
-        //system("sudo zxtouchb -e \"chown -R mobile:mobile /var/mobile/Library/ZXTouch\"");
+        //system("sudo tlinkautob -e \"chown -R mobile:mobile /var/mobile/Documents/com.tlinkauto.tlinkautosp\"");
+        //system("sudo tlinkautob -e \"chown -R mobile:mobile /var/mobile/Library/TLinkauto\"");
 
         startH264StreamServer();
-        NSLog(@"### com.zjx.springboard: H264 stream server started");
+        NSLog(@"### com.tlinkauto.springboard: H264 stream server started");
     });
 }
 %end

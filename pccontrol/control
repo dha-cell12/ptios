@@ -1,4 +1,4 @@
-Package: com.zjx.pccontrol
+Package: com.tlinkauto.pccontrol
 Name: ZJXSimulateTouch
 Depends: mobilesubstrate, firmware(>=11.0)
 Version: 0.0.2

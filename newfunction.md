@@ -56,12 +56,12 @@ Native batch:
 ## IPC And Socket Optimizations
 
 - `pccontrol/SocketResponder.xm`: `notifyClient` now writes until the whole response is sent and returns the correct byte count.
-- `zxtouch-binary/SocketServer.mm`: command TCP sockets now enable `TCP_NODELAY` for lower latency on small control packets.
-- `zxtouch-binary/SocketServer.mm`: IPC payload/success logs are suppressed for hot-path touch tasks `10`, `61`, `62`, `63`, `64`, and `65`.
+- `tlinkauto-binary/SocketServer.mm`: command TCP sockets now enable `TCP_NODELAY` for lower latency on small control packets.
+- `tlinkauto-binary/SocketServer.mm`: IPC payload/success logs are suppressed for hot-path touch tasks `10`, `61`, `62`, `63`, `64`, and `65`.
 
 ## Daemon Routing
 
-The daemon now routes task `62` to `65` to SpringBoard through the existing IPC path in `zxtouch-binary/SocketServer.mm`.
+The daemon now routes task `62` to `65` to SpringBoard through the existing IPC path in `tlinkauto-binary/SocketServer.mm`.
 
 ## Recommended Usage
 
@@ -80,17 +80,17 @@ Two benchmark scripts were added under `scripts/`.
 PC-side latency benchmark:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite all --count 100 --json-out benchmark_pc.json
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite all --count 100 --json-out benchmark_pc.json
 ```
 
 Useful PC-side modes:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite touch
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite gesture
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite screenshot
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite match
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite touch
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite gesture
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite screenshot
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite match
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite frame
 ```
 
 The PC script measures round-trip latency for acknowledged tasks, send overhead for fire-and-forget task `10`, native gesture latency, screenshot latency, and optional JSON output.
@@ -98,7 +98,7 @@ The PC script measures round-trip latency for acknowledged tasks, send overhead 
 Image/color match benchmark:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite match --match-count 50 --json-out benchmark_match.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite match --match-count 50 --json-out benchmark_match.json --debug
 ```
 
 The match suite always measures:
@@ -113,7 +113,7 @@ task28_color_find_multi_point
 To also measure image matching, pass a template path that exists on the iOS device:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite match --template-path /var/mobile/Library/ZXTouch/Scripts/button.png --image-match-count 20 --match-region-x 0 --match-region-y 0 --match-region-w 0 --match-region-h 0 --json-out benchmark_match.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite match --template-path /var/mobile/Library/TLinkauto/Scripts/button.png --image-match-count 20 --match-region-x 0 --match-region-y 0 --match-region-w 0 --match-region-h 0 --json-out benchmark_match.json --debug
 ```
 
 Image match benchmark measures both paths:
@@ -254,13 +254,13 @@ a = p[3]
 Frame benchmark:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --frame-count 30 --scenario-count 10 --json-out benchmark_frame.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite frame --frame-count 30 --scenario-count 10 --json-out benchmark_frame.json --debug
 ```
 
 Frame benchmark with image matching:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/ZXTouch/scripts/button.png --image-match-count 20 --json-out benchmark_frame.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/TLinkauto/scripts/button.png --image-match-count 20 --json-out benchmark_frame.json --debug
 ```
 
 The frame benchmark reports native metrics when available:
@@ -303,7 +303,7 @@ Fixed-frame scenarios run in the frame suite when `--template-path` is set. They
 Example:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/ZXTouch/scripts/button.png --image-tune-fixed-pad 50 --image-tune-fixed-skip 1 --image-tune-fixed-scale 1.0 --fixed-scenario-image-count 2 --fixed-scenario-color-count 5 --json-out benchmark_frame.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/TLinkauto/scripts/button.png --image-tune-fixed-pad 50 --image-tune-fixed-skip 1 --image-tune-fixed-scale 1.0 --fixed-scenario-image-count 2 --fixed-scenario-color-count 5 --json-out benchmark_frame.json --debug
 ```
 
 Fixed-frame output includes scope-specific metrics such as `capture_wall_avg_ms`, `release_wall_avg_ms`, `checks_total_avg_ms`, `image_match_total_avg_ms`, `image_match_each_avg_ms`, `image1_match_avg_ms`, `image2_match_avg_ms`, and `color_scan_avg_ms`.
@@ -343,7 +343,7 @@ ok, result = z.screen.batch_checks_auto_release(
 Task70 scale benchmark:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/ZXTouch/scripts/button.png --image-tune-fixed-pad 50 --image-tune-fixed-skip 1 --image-tune-fixed-scale 1.0 --fixed-scenario-image-counts 1,2,3,5 --fixed-scenario-color-counts 0,5,10 --json-out benchmark_frame.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite frame --template-path /var/mobile/Library/TLinkauto/scripts/button.png --image-tune-fixed-pad 50 --image-tune-fixed-skip 1 --image-tune-fixed-scale 1.0 --fixed-scenario-image-counts 1,2,3,5 --fixed-scenario-color-counts 0,5,10 --json-out benchmark_frame.json --debug
 ```
 
 Scale benchmark rows use this name format:
@@ -378,13 +378,13 @@ Text recognition format:
 OCR benchmark:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite ocr --ocr-region-x 0 --ocr-region-y 0 --ocr-region-w 0 --ocr-region-h 0 --ocr-level both --ocr-count 5 --json-out benchmark_ocr.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite ocr --ocr-region-x 0 --ocr-region-y 0 --ocr-region-w 0 --ocr-region-h 0 --ocr-level both --ocr-count 5 --json-out benchmark_ocr.json --debug
 ```
 
 Benchmark a small region with explicit languages:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite ocr --ocr-region-x 50 --ocr-region-y 200 --ocr-region-w 600 --ocr-region-h 300 --ocr-level fast --ocr-languages en-US,vi-VN --ocr-auto-correct 0 --ocr-count 5 --json-out benchmark_ocr.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite ocr --ocr-region-x 50 --ocr-region-y 200 --ocr-region-w 600 --ocr-region-h 300 --ocr-level fast --ocr-languages en-US,vi-VN --ocr-auto-correct 0 --ocr-count 5 --json-out benchmark_ocr.json --debug
 ```
 
 OCR benchmark output includes:
@@ -477,8 +477,8 @@ Response data is:
 Tesseract data files are loaded from:
 
 ```text
-/var/mobile/Library/ZXTouch/tessdata/vie.traineddata
-/var/mobile/Library/ZXTouch/tessdata/eng.traineddata
+/var/mobile/Library/TLinkauto/tessdata/vie.traineddata
+/var/mobile/Library/TLinkauto/tessdata/eng.traineddata
 ```
 
 Use `lang=vie` first for Vietnamese-only screens. Retry with `vie+eng` at the client level when the target text mixes English and Vietnamese or confidence is low.
@@ -580,7 +580,7 @@ The debug script prints decoded text, confidence, `frame_age_ms`, `ocr_ms`, `pre
 Image tuning benchmark:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite image-tune --template-path /var/mobile/Library/ZXTouch/scripts/button.png --json-out benchmark_image_tune.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite image-tune --template-path /var/mobile/Library/TLinkauto/scripts/button.png --json-out benchmark_image_tune.json --debug
 ```
 
 Useful image tuning flags:
@@ -600,7 +600,7 @@ Useful image tuning flags:
 Custom region uses `--match-region-x/y/w/h`:
 
 ```sh
-python scripts/benchmark_pc_zxtouch.py --host <iphone_ip> --suite image-tune --template-path /var/mobile/Library/ZXTouch/scripts/button.png --match-region-x 100 --match-region-y 600 --match-region-w 500 --match-region-h 300 --image-tune-regions custom --image-tune-skips 0,1,2,3,4 --json-out benchmark_image_tune.json --debug
+python scripts/benchmark_pc_tlinkauto.py --host <iphone_ip> --suite image-tune --template-path /var/mobile/Library/TLinkauto/scripts/button.png --match-region-x 100 --match-region-y 600 --match-region-w 500 --match-region-h 300 --image-tune-regions custom --image-tune-skips 0,1,2,3,4 --json-out benchmark_image_tune.json --debug
 ```
 
 Named region format:
@@ -651,7 +651,7 @@ Recommended lifecycle in automation:
 iOS-side CPU/RAM sampler:
 
 ```sh
-sh scripts/benchmark_ios_device.sh 120 1 /var/mobile/Library/ZXTouch/benchmark_ios.csv
+sh scripts/benchmark_ios_device.sh 120 1 /var/mobile/Library/TLinkauto/benchmark_ios.csv
 ```
 
 Arguments:
@@ -663,13 +663,13 @@ benchmark_ios_device.sh <duration_seconds> <interval_seconds> <output_csv> [proc
 Example with custom processes:
 
 ```sh
-sh scripts/benchmark_ios_device.sh 120 1 /var/mobile/Library/ZXTouch/benchmark_ios.csv "SpringBoard zxtouchd"
+sh scripts/benchmark_ios_device.sh 120 1 /var/mobile/Library/TLinkauto/benchmark_ios.csv "SpringBoard tlinkautod"
 ```
 
 Recommended test flow:
 
 ```text
 1. Start benchmark_ios_device.sh on the iPhone.
-2. Run benchmark_pc_zxtouch.py from the PC while the iOS sampler is running.
+2. Run benchmark_pc_tlinkauto.py from the PC while the iOS sampler is running.
 3. Compare task10 raw touch vs task62 native tap, streamed moves vs task63/task64 native gestures, and PNG vs JPG screenshot latency.
 ```

@@ -51,10 +51,10 @@
 		NSDistributedNotificationCenter *center = [NSDistributedNotificationCenter defaultCenter];
 		[center addObserver: self
 					selector: @selector(handleKeyboardNotification:)
-					name: @"com.zjx.zxtouch.keyboardcontrol"
+					name: @"com.tlinkauto.tlinkauto.keyboardcontrol"
 					object: nil];
 
-		//NSLog(@"com.zjx.appdelegate: UIKeyboardImpl instance allocated");
+		//NSLog(@"com.tlinkauto.appdelegate: UIKeyboardImpl instance allocated");
 		return %orig;
     }
 
@@ -62,22 +62,22 @@
 		NSDistributedNotificationCenter *center = [NSDistributedNotificationCenter defaultCenter];
 		[center addObserver: self
 					selector: @selector(handleKeyboardNotification:)
-					name: @"com.zjx.zxtouch.keyboardcontrol"
+					name: @"com.tlinkauto.tlinkauto.keyboardcontrol"
 					object: nil];
 
-		//NSLog(@"com.zjx.appdelegate: UIKeyboardImpl instance allocated");
+		//NSLog(@"com.tlinkauto.appdelegate: UIKeyboardImpl instance allocated");
 		return %orig;
 	}
 
 	- (void)dealloc {
-        [[NSDistributedNotificationCenter defaultCenter] removeObserver:self name:@"com.zjx.zxtouch.textinput" object:nil];
-		//NSLog(@"com.zjx.appdelegate: UIKeyboardImpl instance deallocated");
+        [[NSDistributedNotificationCenter defaultCenter] removeObserver:self name:@"com.tlinkauto.tlinkauto.textinput" object:nil];
+		//NSLog(@"com.tlinkauto.appdelegate: UIKeyboardImpl instance deallocated");
 		return %orig;
 	}
 
     %new
 	- (void)handleKeyboardNotification:(NSNotification *)notification {
-		//NSLog(@"com.zjx.appdelegate: keyboard related notification received. %@", notification);
+		//NSLog(@"com.tlinkauto.appdelegate: keyboard related notification received. %@", notification);
 		NSDictionary *data = (NSDictionary*)notification.userInfo;
 
         int taskId = [data[@"task_id"] intValue];
@@ -85,7 +85,7 @@
 		{
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self insertText:data[@"task_content"]];
-                NSLog(@"com.zjx.appdelegate: insert text: %@", data[@"task_content"]);
+                NSLog(@"com.tlinkauto.appdelegate: insert text: %@", data[@"task_content"]);
             });
 		}
         else if (taskId == VIRTUAL_KEYBOARD)
@@ -94,23 +94,23 @@
             if (status == VIRTUAL_KEYBOARD_HIDE)
             {
                 [self hideKeyboard];
-                NSLog(@"com.zjx.appdelegate: hide keyboard");
+                NSLog(@"com.tlinkauto.appdelegate: hide keyboard");
             }
             else if (status == VIRTUAL_KEYBOARD_SHOW)
             {
                 [self showKeyboard];
-                NSLog(@"com.zjx.appdelegate: show keyboard");
+                NSLog(@"com.tlinkauto.appdelegate: show keyboard");
             }
             else
             {
-                NSLog(@"com.zjx.appdelegate: task id is virtual_keyboard but unknown task content. Task content: %d", status);
+                NSLog(@"com.tlinkauto.appdelegate: task id is virtual_keyboard but unknown task content. Task content: %d", status);
             }
         }
         else if (taskId == MOVE_CURSOR)
         {
             long long moveAmount = [data[@"task_content"] longLongValue];
             [self moveCursorByAmount:moveAmount];
-            NSLog(@"com.zjx.appdelegate: move cursor by amount: %lld", moveAmount);
+            NSLog(@"com.tlinkauto.appdelegate: move cursor by amount: %lld", moveAmount);
         }
         else if (taskId == DELETE_CHARACTER)
         {
@@ -119,7 +119,7 @@
             {
                 [self deleteBackward];
             }
-            NSLog(@"com.zjx.appdelegate: delete characters by amount: %d", numOfCharacterToDel);
+            NSLog(@"com.tlinkauto.appdelegate: delete characters by amount: %d", numOfCharacterToDel);
         }
         else if (taskId == PASTE_FROM_CLIPBOARD)
         {

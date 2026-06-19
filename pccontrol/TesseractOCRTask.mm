@@ -11,7 +11,7 @@
 #include <dispatch/dispatch.h>
 #include <math.h>
 
-static NSString *const kZXTessdataRoot = @"/var/mobile/Library/ZXTouch";
+static NSString *const kZXTessdataRoot = @"/var/mobile/Library/TLinkauto";
 
 static NSArray<NSString *> *zx_tessSplitEventData(UInt8 *eventData)
 {
@@ -36,7 +36,7 @@ static NSString *zx_tessDecodeBase64(NSString *s)
 static NSError *zx_tessError(NSString *code, NSString *message)
 {
     NSString *resp = [NSString stringWithFormat:@"1;;%@;;%@\r\n", code ?: @"ocr_error", zx_tessBase64(message ?: @"")];
-    return [NSError errorWithDomain:@"com.zjx.zxtouchsp.ocr"
+    return [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp.ocr"
                                code:999
                            userInfo:@{NSLocalizedDescriptionKey:resp}];
 }
@@ -61,7 +61,7 @@ static dispatch_queue_t zx_tessQueue(void)
     static dispatch_queue_t q;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        q = dispatch_queue_create("com.zjx.zxtouch.tesseractOCR", DISPATCH_QUEUE_SERIAL);
+        q = dispatch_queue_create("com.tlinkauto.tlinkauto.tesseractOCR", DISPATCH_QUEUE_SERIAL);
     });
     return q;
 }

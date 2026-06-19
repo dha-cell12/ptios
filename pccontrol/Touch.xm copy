@@ -157,7 +157,7 @@ static void appendChildEvent(IOHIDEventRef parent, int type, int index, float x,
             IOHIDEventAppendEvent(parent, generateChildEventTouchUp(index, x, y));
             break;
         default:
-            NSLog(@"com.zjx.springboard: Unknown touch event type in appendChildEvent, type: %d", type);
+            NSLog(@"com.tlinkauto.springboard: Unknown touch event type in appendChildEvent, type: %d", type);
     }
 }
 
@@ -175,7 +175,7 @@ void performTouchFromRawData(UInt8 *eventData)
     // append new events
     for (int i = 0; i < getTouchCountFromDataArray(eventData); i++)
     {
-        //NSLog(@"### com.zjx.springboard: get data. index: %d. type: %d. touchIndex: %d. x: %f. y: %f", i, getTouchTypeFromDataArray(eventData, i), getTouchIndexFromDataArray(eventData, i), getTouchXFromDataArray(eventData, i), getTouchYFromDataArray(eventData, i));
+        //NSLog(@"### com.tlinkauto.springboard: get data. index: %d. type: %d. touchIndex: %d. x: %f. y: %f", i, getTouchTypeFromDataArray(eventData, i), getTouchIndexFromDataArray(eventData, i), getTouchXFromDataArray(eventData, i), getTouchYFromDataArray(eventData, i));
         appendChildEvent(parent, getTouchTypeFromDataArray(eventData, i), getTouchIndexFromDataArray(eventData, i), getTouchXFromDataArray(eventData, i), getTouchYFromDataArray(eventData, i));
     }
 
@@ -211,7 +211,7 @@ static void postIOHIDEvent(IOHIDEventRef event)
     	IOHIDEventSetSenderID(event, senderID);
 	else
 	{		
-		NSLog(@"### com.zjx.springboard: sender id is 0!");
+		NSLog(@"### com.tlinkauto.springboard: sender id is 0!");
 		return;
 	}
     IOHIDEventSystemClientDispatchEvent(ioSystemClient, event);
@@ -229,7 +229,7 @@ void initSenderId()
         NSInteger currentTime = [[NSDate date] timeIntervalSince1970];
         NSInteger timeSinceReboot = [NSProcessInfo processInfo].systemUptime;
         NSInteger thisRebootTime = currentTime - timeSinceReboot;
-        NSLog(@"com.zjx.springboard: currentTime: %ld, time since reboot: %ld, last reboot time: %ld", currentTime, timeSinceReboot, thisRebootTime);
+        NSLog(@"com.tlinkauto.springboard: currentTime: %ld, time since reboot: %ld, last reboot time: %ld", currentTime, timeSinceReboot, thisRebootTime);
         
         NSDictionary *data = [NSDictionary dictionaryWithContentsOfFile:plistPath];
         NSInteger lastRebootTime = [data[@"lastReboot"] longValue];
@@ -237,12 +237,12 @@ void initSenderId()
         if (abs(lastRebootTime - thisRebootTime) <= 3)
         {
             senderID = [data[@"senderID"] longLongValue];
-            NSLog(@"com.zjx.springboard: since the device has not been rebooted. Read sender id from the file. SenderID get: %qX", senderID);
+            NSLog(@"com.tlinkauto.springboard: since the device has not been rebooted. Read sender id from the file. SenderID get: %qX", senderID);
             return;
         }
     }
     
-    NSLog(@"com.zjx.springboard: cannot read the sender id from file because the file doesn't exist or the device has restarted. Start set senderid callback.");
+    NSLog(@"com.tlinkauto.springboard: cannot read the sender id from file because the file doesn't exist or the device has restarted. Start set senderid callback.");
     startSetSenderIDCallBack();
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -255,7 +255,7 @@ void initSenderId()
             {
                 IOHIDEventSystemClientUnregisterEventCallback(ioHIDEventSystemForSenderID);
                 IOHIDEventSystemClientUnscheduleWithRunLoop(ioHIDEventSystemForSenderID, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-                NSLog(@"com.zjx.springboard: unregister get sender id callback!");
+                NSLog(@"com.tlinkauto.springboard: unregister get sender id callback!");
                 break;
             }
         }
@@ -289,7 +289,7 @@ static void setSenderIdCallback(void* target, void* refcon, IOHIDServiceRef serv
 
             [dict writeToFile:[NSString stringWithFormat:@"%@/coreutils/touching/%@", getDocumentRoot(), TOUCH_SENDER_ID_PLIST_FILE_NAME] atomically: YES];
 
-            NSLog(@"com.zjx.springboard: sender id is: %qX", senderID);
+            NSLog(@"com.tlinkauto.springboard: sender id is: %qX", senderID);
         }
     }
 }

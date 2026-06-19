@@ -19,17 +19,17 @@ extern PopupWindow *popupWindow;
 - (void)activator:(LAActivator *)activator receiveEvent:(LAEvent *)event {
 	// read config file
     NSDictionary* config = [[NSDictionary alloc] initWithContentsOfFile:ACTIVATOR_CONFIG_PATH];
-    NSLog(@"com.zjx.springboard: 123");
+    NSLog(@"com.tlinkauto.springboard: 123");
     if (!config)
     {
-        NSLog(@"com.zjx.springboard: activator config file not found!");
+        NSLog(@"com.tlinkauto.springboard: activator config file not found!");
         return;
     }
 
     NSDictionary* eventInfo = [config objectForKey:event.name];
     if (!eventInfo)
     {
-        NSLog(@"com.zjx.springboard: config file found but no entry for current event!");
+        NSLog(@"com.tlinkauto.springboard: config file found but no entry for current event!");
         return;
     }
 
@@ -42,7 +42,7 @@ extern PopupWindow *popupWindow;
         NSString* scriptPath = [eventInfo objectForKey:@"user_info"];
         if (!scriptPath || [scriptPath isEqualToString:@""])
         {
-            NSLog(@"com.zjx.springboard: activator event not assigned to any script!");
+            NSLog(@"com.tlinkauto.springboard: activator event not assigned to any script!");
             return;
         }
 
@@ -74,7 +74,7 @@ extern PopupWindow *popupWindow;
     }
     else
     {
-        NSLog(@"com.zjx.springboard: activator unknown event type.");
+        NSLog(@"com.tlinkauto.springboard: activator unknown event type.");
         [event setHandled:NO];
     }
 }
@@ -94,16 +94,16 @@ extern PopupWindow *popupWindow;
         LAActivator* activator = [la sharedInstance];
         if (activator.isRunningInsideSpringBoard)
         {
-            [activator unregisterListenerWithName:@"com.zjx.zxtouch"];
+            [activator unregisterListenerWithName:@"com.tlinkauto.tlinkauto"];
             [activator registerListener:activatorInstance 
-                                            forName:@"com.zjx.zxtouch"];
+                                            forName:@"com.tlinkauto.tlinkauto"];
         }
 
     }
     
 
 	if ([LASharedActivator isRunningInsideSpringBoard]) {
-		[LASharedActivator registerListener:[self new] forName:@"com.zjx.zxtouch"];
+		[LASharedActivator registerListener:[self new] forName:@"com.tlinkauto.tlinkauto"];
 	}
     */
 }

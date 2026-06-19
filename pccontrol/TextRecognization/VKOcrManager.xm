@@ -112,8 +112,8 @@ Return the string from a area
 - (NSString*)recognize:(NSError**)error{
     if (inProgress)
     {
-        NSLog(@"com.zjx.springboard: cannot start recognize text from this instance: %@ because another task is running.", self);
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Cannot start recognize text from this instance: %@ because another task is running.\r\n", self]}];
+        NSLog(@"com.tlinkauto.springboard: cannot start recognize text from this instance: %@ because another task is running.", self);
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Cannot start recognize text from this instance: %@ because another task is running.\r\n", self]}];
         return nil;
     }
     inProgress = true;
@@ -123,8 +123,8 @@ Return the string from a area
 
     if (err)
     {
-        NSLog(@"com.zjx.springboard: error happened while performing ocr. %@", err);
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Error happened while performing ocr. Error: %@\r\n", err]}];
+        NSLog(@"com.tlinkauto.springboard: error happened while performing ocr. %@", err);
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Error happened while performing ocr. Error: %@\r\n", err]}];
         return nil;
     }
     
@@ -169,7 +169,7 @@ Return area that contain text
 
     if (err)
     {
-        NSLog(@"com.zjx.springboard: error while outputing debug image.");
+        NSLog(@"com.tlinkauto.springboard: error while outputing debug image.");
         return;
     }
 
@@ -241,8 +241,8 @@ Return area that contain text
 
         if (err)
         {
-            NSLog(@"com.zjx.springboard: unable to output debug image for text recognization. Error: %@", err);
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to output debug image for text recognization. Error: %@", err]}];
+            NSLog(@"com.tlinkauto.springboard: unable to output debug image for text recognization. Error: %@", err);
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to output debug image for text recognization. Error: %@", err]}];
             return nil;
         }
 
@@ -254,7 +254,7 @@ Return area that contain text
         float recty = (1 - boundingBox.topLeft.y) * recognizeRect.size.height + recognizeRect.origin.y;
 
         CGRect rect = CGRectMake(rectx, recty, rectWidth, rectHeight);
-        //NSLog(@"com.zjx.springboard: rect: recognizeRect: %f, boundingBox: %f", recognizeRect.origin.y, boundingBox.topLeft.y);
+        //NSLog(@"com.tlinkauto.springboard: rect: recognizeRect: %f, boundingBox: %f", recognizeRect.origin.y, boundingBox.topLeft.y);
         // draw text rectangles
         [self drawRectangle:rect inContext:ctx withColor:[UIColor greenColor]];
         
@@ -268,7 +268,7 @@ Return area that contain text
         rect.origin.y = rect.origin.y + rect.size.height; // draw
         [textString drawInRect:CGRectIntegral(rect) withFont:font]; 
 
-        //NSLog(@"com.zjx.springboard: string: %@, topLeft: %f, topright:%f", textString, boundingBox.topLeft.x, boundingBox.topRight.x);
+        //NSLog(@"com.tlinkauto.springboard: string: %@, topLeft: %f, topright:%f", textString, boundingBox.topLeft.x, boundingBox.topRight.x);
 
     }
 

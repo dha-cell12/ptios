@@ -24,8 +24,8 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
 {
    if (isRecording)
     {
-        NSLog(@"com.zjx.springboard: recording has already started.");
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Recording has already started.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: recording has already started.");
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Recording has already started.\r\n"}];
         return;
     }
 
@@ -35,7 +35,7 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
 
     if (device_screen_width == 0 || device_screen_width == 0)
     {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to start recording. Cannot get screen size.\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to start recording. Cannot get screen size.\r\n"}];
         showAlertBox(@"Error", @"Unable to start recording. Cannot get screen size.", 999);
         return;
     }
@@ -55,8 +55,8 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
     
     if (err)
     {
-        NSLog(@"com.zjx.springboard: create script recording folder error. Error: %@", err);
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Create script recording folder error.\r\n"}];
+        NSLog(@"com.tlinkauto.springboard: create script recording folder error. Error: %@", err);
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Create script recording folder error.\r\n"}];
         showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot create script. Error info: %@", err], 999);
         return;
     }
@@ -74,12 +74,12 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
 
     if (frontMostApp == nil)
     {
-        //NSLog(@"com.zjx.springboard: foreground is springboard");
+        //NSLog(@"com.tlinkauto.springboard: foreground is springboard");
         [infoDict setObject:@"com.apple.springboard" forKey:@"FrontApp"];
     }
     else
     {
-        NSLog(@"com.zjx.springboard: bundle identifier of front most application: %@", frontMostApp);
+        NSLog(@"com.tlinkauto.springboard: bundle identifier of front most application: %@", frontMostApp);
         [infoDict setObject:frontMostApp.bundleIdentifier forKey:@"FrontApp"]; //[frontMostApp displayIdentifier]
     }
 
@@ -94,7 +94,7 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
 
         // start recording
-        NSLog(@"com.zjx.springboard: start recording.");
+        NSLog(@"com.tlinkauto.springboard: start recording.");
         
         notifyClient((UInt8*)[scriptDirectory UTF8String], requestClient);
 
@@ -136,7 +136,7 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
 //TODO: multi-touch support! get touch index automatically, rather than set to 7.
 static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef parentEvent) 
 {
-    //NSLog(@"### com.zjx.springboard: handle_event : %d", IOHIDEventGetType(event));
+    //NSLog(@"### com.tlinkauto.springboard: handle_event : %d", IOHIDEventGetType(event));
     if (!scriptRecordingFileHandle)
     {
         isRecording = false;
@@ -158,8 +158,8 @@ static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef
             int range = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerRange);
             int touch = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerTouch);
             int index = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerIndex);
-            //NSLog(@"### com.zjx.springboard: x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d", x, y, eventMask, index, range, touch);
-            //NSLog(@"### com.zjx.springboard:  x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d.", x, y, eventMask, index, range, touch);
+            //NSLog(@"### com.tlinkauto.springboard: x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d", x, y, eventMask, index, range, touch);
+            //NSLog(@"### com.tlinkauto.springboard:  x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d.", x, y, eventMask, index, range, touch);
             float sleepusecs = (CFAbsoluteTimeGetCurrent() - lastEventTimeStampForRecording)*1000000;
             float xToWrite =  x*device_screen_width*10;
             float yToWrite =  y*device_screen_height*10;
@@ -167,7 +167,7 @@ static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef
             if ( touch == 1 && eventMask & 2 )
             {
                 // touch down
-                //NSLog(@"com.zjx.springboard: Touch down. x %f : y %f. index: %d.  eventmask: %d, range: %d, touch: %d", x*device_screen_width, y*device_screen_height, index, eventMask, range, touch);
+                //NSLog(@"com.tlinkauto.springboard: Touch down. x %f : y %f. index: %d.  eventmask: %d, range: %d, touch: %d", x*device_screen_width, y*device_screen_height, index, eventMask, range, touch);
                 [scriptRecordingFileHandle writeData:[[NSString stringWithFormat:@"18%.0f\n1011%02d%05.0f%05.0f\n", sleepusecs, index, xToWrite, yToWrite] dataUsingEncoding:NSUTF8StringEncoding]];
                 lastEventTimeStampForRecording = CFAbsoluteTimeGetCurrent();
                 print = true;
@@ -175,7 +175,7 @@ static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef
             else if ( touch == 1 && eventMask & 4 )
             {
                 // touch move
-                //NSLog(@"com.zjx.springboard: touch moved to (%f, %f). index: %d. eventmask: %d, range: %d, touch: %d", x*device_screen_width, y*device_screen_height, index, eventMask, range, touch);
+                //NSLog(@"com.tlinkauto.springboard: touch moved to (%f, %f). index: %d. eventmask: %d, range: %d, touch: %d", x*device_screen_width, y*device_screen_height, index, eventMask, range, touch);
                 [scriptRecordingFileHandle writeData:[[NSString stringWithFormat:@"18%.0f\n1012%02d%05.0f%05.0f\n", sleepusecs, index, xToWrite, yToWrite] dataUsingEncoding:NSUTF8StringEncoding]];
                 lastEventTimeStampForRecording = CFAbsoluteTimeGetCurrent();
                 print = true;
@@ -183,7 +183,7 @@ static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef
             else if (!touch && (eventMask & 2) )
             {
                 // touch up
-                //NSLog(@"com.zjx.springboard: Touch up. x %f : y %f. index: %d.  eventmask: %d, range: %d, touch: %d", x*device_screen_width, y*device_screen_height, index, eventMask, range, touch);
+                //NSLog(@"com.tlinkauto.springboard: Touch up. x %f : y %f. index: %d.  eventmask: %d, range: %d, touch: %d", x*device_screen_width, y*device_screen_height, index, eventMask, range, touch);
                 [scriptRecordingFileHandle writeData:[[NSString stringWithFormat:@"18%.0f\n1010%02d%05.0f%05.0f\n", sleepusecs, index, xToWrite, yToWrite] dataUsingEncoding:NSUTF8StringEncoding]];
                 lastEventTimeStampForRecording = CFAbsoluteTimeGetCurrent();
                 print = true;
@@ -200,13 +200,13 @@ static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef
     }
     else if (IOHIDEventGetType(parentEvent) == kIOHIDEventTypeButton)
     {
-        NSLog(@"### com.zjx.springboard: type: button, senderID: %qX", IOHIDEventGetType(parentEvent), IOHIDEventGetSenderID(parentEvent));
+        NSLog(@"### com.tlinkauto.springboard: type: button, senderID: %qX", IOHIDEventGetType(parentEvent), IOHIDEventGetSenderID(parentEvent));
     }
 }
 
 void stopRecording()
 {
-    NSLog(@"com.zjx.springboard: stop recording.");
+    NSLog(@"com.tlinkauto.springboard: stop recording.");
 
     // remove indicator
     dispatch_async(dispatch_get_main_queue(), ^{

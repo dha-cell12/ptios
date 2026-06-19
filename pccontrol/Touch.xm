@@ -30,12 +30,12 @@ unsigned long long int senderID = 0x0;
 static void zx_touch_logf(const char *fmt, ...)
 {
     @autoreleasepool {
-        NSString *dir = @"/var/mobile/Library/ZXTouch";
+        NSString *dir = @"/var/mobile/Library/TLinkauto";
         [[NSFileManager defaultManager] createDirectoryAtPath:dir
                                   withIntermediateDirectories:true
                                                    attributes:nil
                                                         error:nil];
-        NSString *path = @"/var/mobile/Library/ZXTouch/zxtouchd.log";
+        NSString *path = @"/var/mobile/Library/TLinkauto/tlinkautod.log";
         if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
             [[NSData data] writeToFile:path atomically:true];
         }
@@ -198,7 +198,7 @@ static void appendChildEvent(IOHIDEventRef parent, int type, int index, float x,
             IOHIDEventAppendEvent(parent, generateChildEventTouchUp(index, x, y));
             break;
         default:
-            NSLog(@"com.zjx.springboard: Unknown touch event type in appendChildEvent, type: %d", type);
+            NSLog(@"com.tlinkauto.springboard: Unknown touch event type in appendChildEvent, type: %d", type);
     }
 }
 
@@ -220,7 +220,7 @@ void performTouchFromRawData(UInt8 *eventData)
 
     for (int i = 0; i < touchCount; i++)
     {
-        //NSLog(@"### com.zjx.springboard: get data. index: %d. type: %d. touchIndex: %d. x: %f. y: %f", i, getTouchTypeFromDataArray(eventData, i), getTouchIndexFromDataArray(eventData, i), getTouchXFromDataArray(eventData, i), getTouchYFromDataArray(eventData, i));
+        //NSLog(@"### com.tlinkauto.springboard: get data. index: %d. type: %d. touchIndex: %d. x: %f. y: %f", i, getTouchTypeFromDataArray(eventData, i), getTouchIndexFromDataArray(eventData, i), getTouchXFromDataArray(eventData, i), getTouchYFromDataArray(eventData, i));
         int touchType = getTouchTypeFromDataArray(eventData, i);
         int x = getTouchXFromDataArray(eventData, i);
         int y = getTouchYFromDataArray(eventData, i);
@@ -256,12 +256,12 @@ void performTouchFromRawData(UInt8 *eventData)
     {
         if (eventsToAppend[i][EVENT_VALID_INDEX] == VALID)
         {
-            //NSLog(@"com.zjx.springboard: appending event for finger: %d. type: %d. x: %d. y: %d", i, eventsToAppend[i][EVENT_TYPE_INDEX], eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
+            //NSLog(@"com.tlinkauto.springboard: appending event for finger: %d. type: %d. x: %d. y: %d", i, eventsToAppend[i][EVENT_TYPE_INDEX], eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
             appendChildEvent(parent, eventsToAppend[i][EVENT_TYPE_INDEX], i, eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
         }
         else if (eventsToAppend[i][EVENT_VALID_INDEX] == VALID_AT_NEXT_APPEND) // make it valid
         {
-            //NSLog(@"com.zjx.springboard:  finger: %d to become valid. type: %d. x: %d. y: %d", i, eventsToAppend[i][EVENT_TYPE_INDEX], eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
+            //NSLog(@"com.tlinkauto.springboard:  finger: %d to become valid. type: %d. x: %d. y: %d", i, eventsToAppend[i][EVENT_TYPE_INDEX], eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
             eventsToAppend[i][EVENT_VALID_INDEX] = VALID;
         }
     }
@@ -312,7 +312,7 @@ void initSenderId()
         NSInteger currentTime = [[NSDate date] timeIntervalSince1970];
         NSInteger timeSinceReboot = [NSProcessInfo processInfo].systemUptime;
         NSInteger thisRebootTime = currentTime - timeSinceReboot;
-        NSLog(@"com.zjx.springboard: currentTime: %ld, time since reboot: %ld, last reboot time: %ld", currentTime, timeSinceReboot, thisRebootTime);
+        NSLog(@"com.tlinkauto.springboard: currentTime: %ld, time since reboot: %ld, last reboot time: %ld", currentTime, timeSinceReboot, thisRebootTime);
         
         NSDictionary *data = [NSDictionary dictionaryWithContentsOfFile:plistPath];
         NSInteger lastRebootTime = [data[@"lastReboot"] longValue];
@@ -320,13 +320,13 @@ void initSenderId()
         if (abs(lastRebootTime - thisRebootTime) <= 3)
         {
             senderID = [data[@"senderID"] longLongValue];
-            NSLog(@"com.zjx.springboard: since the device has not been rebooted. Read sender id from the file. SenderID get: %qX", senderID);
+            NSLog(@"com.tlinkauto.springboard: since the device has not been rebooted. Read sender id from the file. SenderID get: %qX", senderID);
             zx_touch_logf("initSenderId: loaded senderID=%llX", senderID);
             return;
         }
     }
     
-    NSLog(@"com.zjx.springboard: cannot read the sender id from file because the file doesn't exist or the device has restarted. Start set senderid callback.");
+    NSLog(@"com.tlinkauto.springboard: cannot read the sender id from file because the file doesn't exist or the device has restarted. Start set senderid callback.");
     zx_touch_logf("initSenderId: senderID not ready; start callback");
     startSetSenderIDCallBack();
 
@@ -342,7 +342,7 @@ void initSenderId()
             {
                 IOHIDEventSystemClientUnregisterEventCallback(ioHIDEventSystemForSenderID);
                 IOHIDEventSystemClientUnscheduleWithRunLoop(ioHIDEventSystemForSenderID, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-                NSLog(@"com.zjx.springboard: unregister get sender id callback!");
+                NSLog(@"com.tlinkauto.springboard: unregister get sender id callback!");
                 break;
             }
         }
@@ -376,7 +376,7 @@ static void setSenderIdCallback(void* target, void* refcon, IOHIDServiceRef serv
 
             [dict writeToFile:[NSString stringWithFormat:@"%@/coreutils/touching/%@", getDocumentRoot(), TOUCH_SENDER_ID_PLIST_FILE_NAME] atomically: YES];
 
-			NSLog(@"com.zjx.springboard: sender id is: %qX", senderID);
+			NSLog(@"com.tlinkauto.springboard: sender id is: %qX", senderID);
 			zx_touch_logf("setSenderIdCallback: senderID=%llX", senderID);
         }
     }

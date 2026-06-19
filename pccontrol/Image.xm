@@ -50,7 +50,7 @@ static dispatch_queue_t zx_imageQueue(void)
     static dispatch_queue_t q;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        q = dispatch_queue_create("com.zjx.zxtouch.imageStore", DISPATCH_QUEUE_SERIAL);
+        q = dispatch_queue_create("com.tlinkauto.tlinkauto.imageStore", DISPATCH_QUEUE_SERIAL);
     });
     return q;
 }
@@ -72,7 +72,7 @@ static uint64_t zx_nowMs(void)
 
 static NSError *zx_frameError(NSString *message)
 {
-    return [NSError errorWithDomain:@"com.zjx.zxtouchsp"
+    return [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                code:999
                            userInfo:@{NSLocalizedDescriptionKey:message ?: @"1;;frame_error\r\n"}];
 }
@@ -142,7 +142,7 @@ static cv::Mat zx_cvMatGrayFromCGImage(CGImageRef img, NSError **error)
     }
     if (!ctx) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to create bitmap context.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to create bitmap context.\r\n"}];
         }
         return cv::Mat();
     }
@@ -1042,7 +1042,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
     NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
     if ([data count] < 1) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image task missing action.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image task missing action.\r\n"}];
         }
         return nil;
     }
@@ -1050,7 +1050,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
     if (action == 1) {
         if ([data count] < 5) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image capture format should be action;;x;;y;;w;;h\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image capture format should be action;;x;;y;;w;;h\r\n"}];
             }
             return nil;
         }
@@ -1062,7 +1062,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         CGImageRef screen = [Screen createScreenShotCGImageRef];
         if (!screen) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot.\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot.\r\n"}];
             }
             return nil;
         }
@@ -1080,7 +1080,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         CGImageRelease(screen);
         if (!cropped) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to crop screenshot.\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to crop screenshot.\r\n"}];
             }
             return nil;
         }
@@ -1089,7 +1089,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         CGImageRelease(cropped);
         if (gray.empty()) {
             if (error) {
-                *error = convErr ?: [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to convert screenshot to mat.\r\n"}];
+                *error = convErr ?: [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to convert screenshot to mat.\r\n"}];
             }
             return nil;
         }
@@ -1100,7 +1100,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         });
         if (imageId == 0) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image object limit reached. Release unused images.\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image object limit reached. Release unused images.\r\n"}];
             }
             return nil;
         }
@@ -1109,21 +1109,21 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
     else if (action == 2) {
         if ([data count] < 2) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image open format should be action;;path\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image open format should be action;;path\r\n"}];
             }
             return nil;
         }
         NSString *path = zx_resolveImagePath(data[1]);
         if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Image not found. Path: %@\r\n", path ?: data[1]]}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Image not found. Path: %@\r\n", path ?: data[1]]}];
             }
             return nil;
         }
         Mat gray = imread([path UTF8String], IMREAD_GRAYSCALE);
         if (gray.empty()) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to read image. Path: %@\r\n", path]}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to read image. Path: %@\r\n", path]}];
             }
             return nil;
         }
@@ -1133,7 +1133,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         });
         if (imageId == 0) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image object limit reached. Release unused images.\r\n"}];
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image object limit reached. Release unused images.\r\n"}];
             }
             return nil;
         }
@@ -1151,7 +1151,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
     }
 
     if (error) {
-        *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown image task action.\r\n"}];
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown image task action.\r\n"}];
     }
     return nil;
 }
@@ -1161,7 +1161,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
     if ([data count] < 10) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Find image format should be template_id;;x;;y;;w;;h;;acceptable;;scale_min;;scale_max;;scale_step;;pixel_skip\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Find image format should be template_id;;x;;y;;w;;h;;acceptable;;scale_min;;scale_max;;scale_step;;pixel_skip\r\n"}];
         }
         return nil;
     }
@@ -1187,7 +1187,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     });
     if (!found || templObj.gray.empty()) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Template image object not found.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Template image object not found.\r\n"}];
         }
         return nil;
     }
@@ -1195,7 +1195,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     CGImageRef screen = [Screen createScreenShotCGImageRef];
     if (!screen) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to capture screenshot.\r\n"}];
         }
         return nil;
     }
@@ -1213,7 +1213,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     CGImageRelease(screen);
     if (!cropped) {
         if (error) {
-            *error = [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to crop screenshot.\r\n"}];
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to crop screenshot.\r\n"}];
         }
         return nil;
     }
@@ -1222,7 +1222,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     CGImageRelease(cropped);
     if (imgGray.empty()) {
         if (error) {
-            *error = convErr ?: [NSError errorWithDomain:@"com.zjx.zxtouchsp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to convert screenshot to mat.\r\n"}];
+            *error = convErr ?: [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to convert screenshot to mat.\r\n"}];
         }
         return nil;
     }
