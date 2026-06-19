@@ -31,7 +31,7 @@
         <scene sceneID="E2O-J8-BEx">
             <objects>
                 <viewController storyboardIdentifier="scriptBundleContent" id="8jf-LX-yKd" customClass="ScriptListViewController" sceneMemberID="viewController">
-                    <view key="view" contentMode="scaleToFill" id="qdG-Zh-pMZ" customClass="viewController">
+                    <view key="view" contentMode="scaleToFill" id="qdG-Zh-pMZ">
                         <rect key="frame" x="0.0" y="0.0" width="414" height="896"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>

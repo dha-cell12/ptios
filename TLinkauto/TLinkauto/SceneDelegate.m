@@ -7,6 +7,21 @@
 
 #import "SceneDelegate.h"
 
+static void TLinkautoSceneLog(NSString *message) {
+    NSString *dir = @"/var/mobile/Library/TLinkauto";
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *path = [dir stringByAppendingPathComponent:@"app.log"];
+    NSString *line = [NSString stringWithFormat:@"%@\n", message];
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) {
+        [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        return;
+    }
+    [handle seekToEndOfFile];
+    [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+    [handle closeFile];
+}
+
 @interface SceneDelegate ()
 
 @end
@@ -15,9 +30,53 @@
 
 
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+    TLinkautoSceneLog(@"SceneDelegate willConnectToSession");
     // Use this method to optionally configure and attach the UIWindow `window` to the provided UIWindowScene `scene`.
     // If using a storyboard, the `window` property will automatically be initialized and attached to the scene.
     // This delegate does not imply the connecting scene or session are new (see `application:configurationForConnectingSceneSession` instead).
+    if (![scene isKindOfClass:[UIWindowScene class]]) {
+        return;
+    }
+
+    if (self.window && self.window.rootViewController) {
+        return;
+    }
+
+    UIWindowScene *windowScene = (UIWindowScene *)scene;
+    UIWindow *window = [[UIWindow alloc] initWithWindowScene:windowScene];
+
+    UIViewController *rootViewController = nil;
+    @try {
+        UIStoryboard *storyboard = [UIStoryboard storyboardWithName:@"Main" bundle:nil];
+        rootViewController = [storyboard instantiateInitialViewController];
+        TLinkautoSceneLog(rootViewController ? @"Main storyboard loaded" : @"Main storyboard returned nil root");
+    } @catch (NSException *exception) {
+        TLinkautoSceneLog([NSString stringWithFormat:@"Main storyboard exception: %@", exception]);
+        NSLog(@"[TLinkauto] failed to load Main storyboard: %@", exception);
+    }
+
+    if (!rootViewController) {
+        UIViewController *fallback = [[UIViewController alloc] init];
+        fallback.view.backgroundColor = [UIColor whiteColor];
+        UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
+        label.translatesAutoresizingMaskIntoConstraints = NO;
+        label.text = @"TLinkauto loaded. Main storyboard failed to load.";
+        label.textColor = [UIColor blackColor];
+        label.textAlignment = NSTextAlignmentCenter;
+        label.numberOfLines = 0;
+        [fallback.view addSubview:label];
+        [NSLayoutConstraint activateConstraints:@[
+            [label.leadingAnchor constraintEqualToAnchor:fallback.view.leadingAnchor constant:24],
+            [label.trailingAnchor constraintEqualToAnchor:fallback.view.trailingAnchor constant:-24],
+            [label.centerYAnchor constraintEqualToAnchor:fallback.view.centerYAnchor]
+        ]];
+        rootViewController = fallback;
+    }
+
+    window.rootViewController = rootViewController;
+    self.window = window;
+    [window makeKeyAndVisible];
+    TLinkautoSceneLog(@"Window made key and visible");
 }
 
 
