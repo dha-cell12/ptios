@@ -43,6 +43,43 @@ jobs:
             exit 1
           fi
 
+      - name: Build TLinkauto app bundle
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project TLinkauto/TLinkauto.xcodeproj \
+            -target TLinkauto \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+          APP_PATH="$PWD/build/Release-iphoneos/TLinkauto.app"
+          if [ -z "$APP_PATH" ]; then
+            echo "TLinkauto.app was not produced by xcodebuild"
+            exit 1
+          fi
+          if [ ! -d "$APP_PATH" ]; then
+            echo "TLinkauto.app was not produced at $APP_PATH"
+            exit 1
+          fi
+
+          rm -rf layout/Applications/TLinkauto.app
+          mkdir -p layout/Applications
+          cp -R "$APP_PATH" layout/Applications/TLinkauto.app
+
+          chmod +x layout/Applications/TLinkauto.app/TLinkauto
+          if [ -f layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext ]; then
+            chmod +x layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
+            ldid -Slayout/entitlements.plist layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
+          fi
+          ldid -Slayout/entitlements.plist layout/Applications/TLinkauto.app/TLinkauto
+
+          strings layout/Applications/TLinkauto.app/TLinkauto | grep TLinkauto-app.log
+
       - name: Build package
         run: |
           export PATH="${DPKG_BIN}:$PATH"
