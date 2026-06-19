@@ -86,7 +86,13 @@ static int windowHeight = 250;
             forControlEvents:UIControlEventTouchUpInside];
 
             recordButton.backgroundColor = [UIColor clearColor];
-            [recordButton setImage:[UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/start-recording.png"] forState:UIControlStateNormal];
+            UIImage *recordImage = [UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/start-recording.png"];
+            if (recordImage) {
+                [recordButton setImage:recordImage forState:UIControlStateNormal];
+            } else {
+                [recordButton setTitle:@"REC" forState:UIControlStateNormal];
+                [recordButton setTitleColor:[UIColor blueColor] forState:UIControlStateNormal];
+            }
 
             recordButton.frame = CGRectMake(30, headerSize.height + 10, 50, 50);
             [_window addSubview:recordButton];
@@ -98,7 +104,13 @@ static int windowHeight = 250;
             forControlEvents:UIControlEventTouchUpInside];
 
             stopButton.backgroundColor = [UIColor clearColor];
-            [stopButton setImage:[UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/stop-playing.png"] forState:UIControlStateNormal];
+            UIImage *stopImage = [UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/stop-playing.png"];
+            if (stopImage) {
+                [stopButton setImage:stopImage forState:UIControlStateNormal];
+            } else {
+                [stopButton setTitle:@"STOP" forState:UIControlStateNormal];
+                [stopButton setTitleColor:[UIColor blueColor] forState:UIControlStateNormal];
+            }
 
             stopButton.frame = CGRectMake(100, headerSize.height + 10, 50, 50);
             [_window addSubview:stopButton];
