@@ -1156,7 +1156,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/TLinkauto/lib";
 				MARKETING_VERSION = 0.0.7;
-				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkautoasdfas;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkauto;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1180,7 +1180,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/TLinkauto/lib";
 				MARKETING_VERSION = 0.0.7;
-				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkautoasdfas;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkauto;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1199,7 +1199,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = con.zjx.TLinkautoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.TLinkautoTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TLinkauto.app/TLinkauto";
@@ -1218,7 +1218,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = con.zjx.TLinkautoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.TLinkautoTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TLinkauto.app/TLinkauto";
@@ -1235,7 +1235,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = con.zjx.TLinkautoUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.TLinkautoUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = TLinkauto;
@@ -1252,7 +1252,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = con.zjx.TLinkautoUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.TLinkautoUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = TLinkauto;
@@ -1275,7 +1275,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.7;
-				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkautoasdfas.shortcutext;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkauto.shortcutext;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1298,7 +1298,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.7;
-				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkautoasdfas.shortcutext;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tlinkauto.tlinkauto.shortcutext;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
