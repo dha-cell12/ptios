@@ -34,7 +34,7 @@ declare const device: {
     scaleMax?: number;
     scaleStep?: number;
     pixelSkip?: number;
-  }): Promise<{ x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>;
+  }): Promise<{ found: boolean; x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>;
   captureImage(region: [number, number, number, number]): Promise<{ id: number; width: number; height: number; region?: [number, number, number, number] }>;
   findImageObject(image: { id: number } | number, options?: {
     region?: [number, number, number, number];
@@ -43,7 +43,7 @@ declare const device: {
     scaleMax?: number;
     scaleStep?: number;
     pixelSkip?: number;
-  }): Promise<{ x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>;
+  }): Promise<{ found: boolean; x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>;
   releaseImage(image: { id: number } | number): Promise<void>;
   ocr(options: {
     region: [number, number, number, number];
@@ -94,12 +94,12 @@ const completionSnippets = [
   {
     label: 'device.findImage',
     detail: 'Find template image in region',
-    insertText: 'const found = await device.findImage("${1:/var/mobile/Library/ZXTouch/templates/template.png}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  acceptable: ${6:0.8},\n  pixelSkip: ${7:1}\n});\nlog(found);',
+    insertText: 'const found = await device.findImage("${1:/var/mobile/Library/ZXTouch/templates/template.png}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  acceptable: ${6:0.9},\n  scaleMin: ${7:1},\n  scaleMax: ${8:1},\n  pixelSkip: ${9:1}\n});\nlog(found);',
   },
   {
     label: 'device.captureImage',
     detail: 'Capture region as in-memory template image',
-    insertText: 'const template = await device.captureImage([${1:x}, ${2:y}, ${3:w}, ${4:h}]);\ntry {\n  const found = await device.findImageObject(template, {\n    region: [${5:0}, ${6:0}, ${7:0}, ${8:0}],\n    acceptable: ${9:0.8},\n    pixelSkip: ${10:1}\n  });\n  log(found);\n} finally {\n  await device.releaseImage(template);\n}',
+    insertText: 'const template = await device.captureImage([${1:x}, ${2:y}, ${3:w}, ${4:h}]);\ntry {\n  const found = await device.findImageObject(template, {\n    region: [${5:0}, ${6:0}, ${7:0}, ${8:0}],\n    acceptable: ${9:0.9},\n    scaleMin: ${10:1},\n    scaleMax: ${11:1},\n    pixelSkip: ${12:1}\n  });\n  log(found);\n} finally {\n  await device.releaseImage(template);\n}',
   },
   {
     label: 'device.ocr',
@@ -402,7 +402,6 @@ export function AutomationIdeApp() {
       <header className="automation-ide-topbar">
         <div>
           <div className="automation-ide-title">Automation IDE</div>
-          <div className="automation-ide-subtitle">Browser runner via bridge-rs-new and zxtouch</div>
         </div>
         <div className="automation-ide-actions">
           <select value={selectedDeviceId} onChange={(e) => setSelectedDeviceId(e.target.value)}>
@@ -477,8 +476,6 @@ export function AutomationIdeApp() {
         </section>
 
         <aside className="automation-ide-panel tools-panel">
-          <div className="panel-title">Device Tools</div>
-
           <IdeScreenPanel
             device={selectedDevice}
             httpBase={bases.httpBase}
@@ -486,73 +483,6 @@ export function AutomationIdeApp() {
             insertSnippet={insertSnippet}
             addLog={addLog}
           />
-
-          <div className="tool-card">
-            <div className="tool-card-title">Screen</div>
-            <button type="button" onClick={fetchScreenSize}>Get screen size</button>
-            <button type="button" onClick={() => insertSnippet('const size = await device.getScreenSize();\nlog(size);')}>Insert size code</button>
-            <div className="tool-readout">{screenSize ? `${screenSize.width} x ${screenSize.height}` : 'Unknown'}</div>
-          </div>
-
-          <div className="tool-card">
-            <div className="tool-card-title">Tap</div>
-            <div className="tool-grid two">
-              <label>X<input type="number" value={tapPoint.x} onChange={(e) => setTapPoint((p) => ({ ...p, x: numberValue(e.target.value) }))} /></label>
-              <label>Y<input type="number" value={tapPoint.y} onChange={(e) => setTapPoint((p) => ({ ...p, y: numberValue(e.target.value) }))} /></label>
-            </div>
-            <div className="tool-actions-row">
-              <button type="button" onClick={runQuickTap}>Run tap</button>
-              <button type="button" onClick={() => insertSnippet(`await device.tap(${tapPoint.x}, ${tapPoint.y});`)}>Insert</button>
-            </div>
-          </div>
-
-          <div className="tool-card">
-            <div className="tool-card-title">Swipe</div>
-            <div className="tool-grid two">
-              <label>X1<input type="number" value={swipePoint.x1} onChange={(e) => setSwipePoint((p) => ({ ...p, x1: numberValue(e.target.value) }))} /></label>
-              <label>Y1<input type="number" value={swipePoint.y1} onChange={(e) => setSwipePoint((p) => ({ ...p, y1: numberValue(e.target.value) }))} /></label>
-              <label>X2<input type="number" value={swipePoint.x2} onChange={(e) => setSwipePoint((p) => ({ ...p, x2: numberValue(e.target.value) }))} /></label>
-              <label>Y2<input type="number" value={swipePoint.y2} onChange={(e) => setSwipePoint((p) => ({ ...p, y2: numberValue(e.target.value) }))} /></label>
-              <label>MS<input type="number" value={swipePoint.duration} onChange={(e) => setSwipePoint((p) => ({ ...p, duration: numberValue(e.target.value) }))} /></label>
-            </div>
-            <div className="tool-actions-row">
-              <button type="button" onClick={runQuickSwipe}>Run swipe</button>
-              <button type="button" onClick={() => insertSnippet(`await device.swipe(${swipePoint.x1}, ${swipePoint.y1}, ${swipePoint.x2}, ${swipePoint.y2}, ${swipePoint.duration});`)}>Insert</button>
-            </div>
-          </div>
-
-          <div className="tool-card">
-            <div className="tool-card-title">Color</div>
-            <div className="tool-grid two">
-              <label>X<input type="number" value={colorPoint.x} onChange={(e) => setColorPoint((p) => ({ ...p, x: numberValue(e.target.value) }))} /></label>
-              <label>Y<input type="number" value={colorPoint.y} onChange={(e) => setColorPoint((p) => ({ ...p, y: numberValue(e.target.value) }))} /></label>
-              <label>Tol<input type="number" value={colorPoint.tolerance} onChange={(e) => setColorPoint((p) => ({ ...p, tolerance: numberValue(e.target.value) }))} /></label>
-            </div>
-            <div className="color-readout-row">
-              <div className="color-swatch" style={{ background: pickedColor?.hex || 'transparent' }} />
-              <div className="tool-readout">
-                {pickedColor ? `${pickedColor.hex} rgb(${pickedColor.red}, ${pickedColor.green}, ${pickedColor.blue})` : 'No color picked'}
-              </div>
-            </div>
-            <div className="tool-actions-row">
-              <button type="button" onClick={pickColor}>Pick</button>
-              <button type="button" onClick={() => insertSnippet(`const color = await device.pickColor(${colorPoint.x}, ${colorPoint.y});\nlog(color);`)}>Insert pick</button>
-            </div>
-            <button
-              type="button"
-              disabled={!pickedColor}
-              onClick={() => pickedColor && insertSnippet(`const ok = await device.colorEquals(${colorPoint.x}, ${colorPoint.y}, "${pickedColor.hex}", ${colorPoint.tolerance});`)}
-            >
-              Insert colorEquals
-            </button>
-          </div>
-
-          <div className="tool-card">
-            <div className="tool-card-title">Raw</div>
-            <button type="button" onClick={() => insertSnippet('const response = await device.request(25, 1);\nlog(response);')}>Insert raw task</button>
-          </div>
-
-          <div className="panel-note">Next slices: native color picker, template crop, OCR region.</div>
         </aside>
       </main>
 

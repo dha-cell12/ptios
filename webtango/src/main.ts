@@ -152,10 +152,12 @@ type IosStreamProfile = 'fast' | 'rtc' | 'worker' | 'eco';
 let iosStreamProfile: IosStreamProfile = 'rtc';
 let iosH264Socket: WebSocket | undefined;
 let iosH264Decoder: VideoDecoder | undefined;
+let iosH264RunId = 0;
 let iosH264Worker: Worker | undefined;
 let iosOffscreenCanvas: OffscreenCanvas | undefined;
 let iosWorkerCanvasTransferred = false;
 let iosRtcPeer: RTCPeerConnection | undefined;
+let iosRtcRunId = 0;
 let iosRtcHttpBase: string | undefined;
 let iosRtcDeviceId: string | undefined;
 let iosRtcSelectedProfile = 'auto';
@@ -465,6 +467,8 @@ function renderIosDevices() {
 
 function destroyIosPlayer() {
   iosAutoTouchRunId += 1;
+  iosH264RunId += 1;
+  iosRtcRunId += 1;
   iosAutoTouchRunning = false;
   stopIosRtcPlayer();
 
@@ -717,6 +721,8 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
     return startIosH264WorkerPlayer(streamUrl);
   }
 
+  const runId = ++iosH264RunId;
+
   const VideoDecoderCtor = (window as any).VideoDecoder as typeof VideoDecoder | undefined;
   const EncodedVideoChunkCtor = (window as any).EncodedVideoChunk as typeof EncodedVideoChunk | undefined;
   if (!VideoDecoderCtor || !EncodedVideoChunkCtor || !iosCanvas) return false;
@@ -750,14 +756,19 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
     };
   });
   const startTimer = window.setTimeout(() => {
+    if (runId !== iosH264RunId) return;
     settleStart(false);
     try {
-      iosH264Socket?.close();
+      socket.close();
     } catch {}
   }, 1500);
 
-  iosH264Decoder = new VideoDecoderCtor({
+  const decoder = new VideoDecoderCtor({
     output(frame) {
+      if (runId !== iosH264RunId) {
+        frame.close();
+        return;
+      }
       const outputStartMs = performance.now();
       const meta = metaByTimestamp.get(frame.timestamp);
       if (meta) metaByTimestamp.delete(frame.timestamp);
@@ -794,9 +805,10 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
       console.error('[ios-h264] decoder error', e);
     },
   });
+  iosH264Decoder = decoder;
 
   const configureDecoder = () => {
-    if (configured || !iosH264Decoder) return;
+    if (configured || runId !== iosH264RunId) return;
     const realtimeConfig = {
       codec: 'avc1.42E01E',
       optimizeForLatency: true,
@@ -806,10 +818,10 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
     } as any;
 
     try {
-      iosH264Decoder.configure(realtimeConfig);
+      decoder.configure(realtimeConfig);
     } catch (e) {
       console.warn('[ios-h264] realtime decoder config failed, using fallback', e);
-      iosH264Decoder.configure({
+      decoder.configure({
         codec: 'avc1.42E01E',
         optimizeForLatency: true,
         avc: { format: 'annexb' },
@@ -818,10 +830,12 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
     configured = true;
   };
 
-  iosH264Socket = new WebSocket(streamUrl);
-  iosH264Socket.binaryType = 'arraybuffer';
+  const socket = new WebSocket(streamUrl);
+  iosH264Socket = socket;
+  socket.binaryType = 'arraybuffer';
 
-  iosH264Socket.onmessage = (ev) => {
+  socket.onmessage = (ev) => {
+    if (runId !== iosH264RunId || socket !== iosH264Socket || decoder !== iosH264Decoder) return;
     const browserRecvMs = performance.now();
     const chunk = new Uint8Array(ev.data as ArrayBuffer);
     pending = appendBytes(pending, chunk);
@@ -829,7 +843,7 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
     while (pending.length >= 20) {
       if (pending[0] !== 0x5a || pending[1] !== 0x58 || pending[2] !== 0x48 || (pending[3] !== 0x31 && pending[3] !== 0x32)) {
         console.error('[ios-h264] bad frame magic');
-        iosH264Socket?.close();
+        socket.close();
         return;
       }
 
@@ -874,7 +888,7 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
         } catch (e) {
           console.error('[ios-h264] configure failed', e);
           settleStart(false);
-          iosH264Socket?.close();
+          socket.close();
           return;
         }
       }
@@ -935,8 +949,8 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
         iosLatencyStats.sendToBrowserMs = smooth(iosLatencyStats.sendToBrowserMs, networkApprox);
       }
 
-      if (!iosH264Decoder || iosH264Decoder.state === 'closed') return;
-      iosLatencyStats.queue = iosH264Decoder.decodeQueueSize;
+      if (decoder.state !== 'configured') return;
+      iosLatencyStats.queue = decoder.decodeQueueSize;
       iosLatencyStats.inFlight = inFlightFrames;
 
       statWindowFrames += 1;
@@ -955,7 +969,7 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
         inFlightFrames += 1;
         iosLatencyStats.inFlight = inFlightFrames;
         iosLatencyStats.submitted += 1;
-        iosH264Decoder.decode(new EncodedVideoChunkCtor({
+        decoder.decode(new EncodedVideoChunkCtor({
           type: isKey ? 'key' : 'delta',
           timestamp: lastTimestamp,
           data: payload,
@@ -976,19 +990,21 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
         metaByTimestamp.delete(lastTimestamp);
         console.error('[ios-h264] decode submit failed', e);
         settleStart(false);
-        iosH264Socket?.close();
+        socket.close();
         return;
       }
     }
   };
 
-  iosH264Socket.onerror = (e) => {
+  socket.onerror = (e) => {
+    if (runId !== iosH264RunId || socket !== iosH264Socket) return;
     console.error('[ios-h264] ws error', e);
     clearTimeout(startTimer);
     settleStart(false);
   };
 
-  iosH264Socket.onclose = () => {
+  socket.onclose = () => {
+    if (runId !== iosH264RunId || socket !== iosH264Socket) return;
     if (!sawFrame) {
       clearTimeout(startTimer);
       settleStart(false);
@@ -998,10 +1014,10 @@ async function startIosH264Player(streamUrl: string, useWorker = false): Promise
   const ok = await startPromise;
   if (!ok) {
     try {
-      iosH264Decoder?.close();
+      decoder.close();
     } catch {}
-    iosH264Decoder = undefined;
-    iosH264Socket = undefined;
+    if (iosH264Decoder === decoder) iosH264Decoder = undefined;
+    if (iosH264Socket === socket) iosH264Socket = undefined;
     iosCanvas.style.display = 'none';
     iosVideo.style.display = 'block';
   }
@@ -1044,6 +1060,7 @@ async function fetchRtcIceConfig(httpBase: string): Promise<RtcIceConfig> {
 }
 
 function stopIosRtcPlayer() {
+  iosRtcRunId += 1;
   if (iosRtcRecoveryTimer !== undefined) {
     clearTimeout(iosRtcRecoveryTimer);
     iosRtcRecoveryTimer = undefined;
@@ -1242,6 +1259,7 @@ function startIosRtcStats(pc: RTCPeerConnection) {
 
 async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<boolean> {
   if (!('RTCPeerConnection' in window)) return false;
+  const runId = ++iosRtcRunId;
 
   iosVideo.style.display = 'block';
   iosVideo.muted = true;
@@ -1269,6 +1287,7 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
 
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.ontrack = (event) => {
+      if (runId !== iosRtcRunId || pc !== iosRtcPeer) return;
       try {
         const receiver = event.receiver as RTCRtpReceiver & { jitterBufferTarget?: number };
         if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0.01;
@@ -1280,9 +1299,11 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
       }
     };
     pc.onconnectionstatechange = () => {
+      if (runId !== iosRtcRunId || pc !== iosRtcPeer) return;
       console.log('[ios-rtc] connection', pc.connectionState);
     };
     pc.oniceconnectionstatechange = () => {
+      if (runId !== iosRtcRunId || pc !== iosRtcPeer) return;
       console.log('[ios-rtc] ice', pc.iceConnectionState);
     };
 
@@ -1304,10 +1325,15 @@ async function startIosRtcPlayer(httpBase: string, deviceId: string): Promise<bo
     }
 
     const answer = await resp.json();
+    if (runId !== iosRtcRunId || pc !== iosRtcPeer || pc.signalingState === 'closed') {
+      try { pc.close(); } catch {}
+      return false;
+    }
     iosRtcSelectedProfile = answer.profile || 'auto';
     iosRtcSelectedPort = answer.port || 0;
     console.log('[ios-rtc] selected profile', iosRtcSelectedProfile, 'port', iosRtcSelectedPort);
     await pc.setRemoteDescription(answer.sdp);
+    if (runId !== iosRtcRunId || pc !== iosRtcPeer || pc.connectionState === 'closed') return false;
     startIosRtcStats(pc);
     return true;
   } catch (e) {
@@ -3293,6 +3319,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
     item.classList.add('active');
     const tab = item.getAttribute('data-tab');
+    window.dispatchEvent(new CustomEvent('automation-ide-visibility', { detail: { visible: tab === 'automation_ide' } }));
 
     // Type-safe references
     const deviceList = document.querySelector('.device-list-pane') as HTMLElement;

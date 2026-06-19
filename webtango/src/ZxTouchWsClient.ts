@@ -181,6 +181,19 @@ export class ZxTouchWsClient {
     }
   }
 
+  async getScreenScale(): Promise<number | null> {
+    // TASK_GET_DEVICE_INFO (25) subtask screen_scale (3)
+    try {
+      const r = await this.request(25, 3);
+      if (!r.ok || r.parts.length < 1) return null;
+      const scale = Number(r.parts[0]);
+      if (!Number.isFinite(scale) || scale <= 0) return null;
+      return scale;
+    } catch {
+      return null;
+    }
+  }
+
   touch(type: number, fingerIndex: number, x: number, y: number) {
     this.suppressKeepalive();
     // TASK_PERFORM_TOUCH (10)
