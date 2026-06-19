@@ -71,12 +71,17 @@ jobs:
           mkdir -p layout/Applications
           cp -R "$APP_PATH" layout/Applications/TLinkauto.app
 
+          find layout/Applications/TLinkauto.app -name _CodeSignature -type d -prune -exec rm -rf {} +
+          find layout/Applications/TLinkauto.app -name embedded.mobileprovision -type f -delete
+
           chmod +x layout/Applications/TLinkauto.app/TLinkauto
           if [ -f layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext ]; then
             chmod +x layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
             ldid -Slayout/entitlements.plist layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
           fi
           ldid -Slayout/entitlements.plist layout/Applications/TLinkauto.app/TLinkauto
+
+          ldid -e layout/Applications/TLinkauto.app/TLinkauto | grep platform-application
 
           strings layout/Applications/TLinkauto.app/TLinkauto | grep TLinkauto-app.log
           strings layout/Applications/TLinkauto.app/TLinkauto | grep TLinkauto-main.log

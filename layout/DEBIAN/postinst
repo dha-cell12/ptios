@@ -1,13 +1,10 @@
 #!/bin/sh
 rm -rf /Applications/zxtouch.app
 mkdir -p /var/mobile/Library/TLinkauto
-{
-    echo "postinst $(date)"
-    echo "app_path=/Applications/TLinkauto.app/TLinkauto"
-    ls -l /Applications/TLinkauto.app/TLinkauto 2>/dev/null || true
-    grep -a "TLinkauto-main.log" /Applications/TLinkauto.app/TLinkauto >/dev/null 2>&1 && echo "main_log_string=present" || echo "main_log_string=missing"
-    grep -a "TLinkauto-app.log" /Applications/TLinkauto.app/TLinkauto >/dev/null 2>&1 && echo "app_log_string=present" || echo "app_log_string=missing"
-} > /var/mobile/Library/TLinkauto/install_app_check.log 2>&1
+rm -rf /Applications/TLinkauto.app/_CodeSignature 2>/dev/null
+rm -rf /Applications/TLinkauto.app/PlugIns/shortcutext.appex/_CodeSignature 2>/dev/null
+rm -f /Applications/TLinkauto.app/embedded.mobileprovision 2>/dev/null
+rm -f /Applications/TLinkauto.app/PlugIns/shortcutext.appex/embedded.mobileprovision 2>/dev/null
 chmod +x /Applications/TLinkauto.app/TLinkauto 2>/dev/null
 chmod +x /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
 if command -v ldid >/dev/null 2>&1; then
@@ -19,6 +16,20 @@ if command -v ldid >/dev/null 2>&1; then
         ldid -S /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
     fi
 fi
+{
+    echo "postinst $(date)"
+    echo "app_path=/Applications/TLinkauto.app/TLinkauto"
+    ls -l /Applications/TLinkauto.app/TLinkauto 2>/dev/null || true
+    grep -a "TLinkauto-main.log" /Applications/TLinkauto.app/TLinkauto >/dev/null 2>&1 && echo "main_log_string=present" || echo "main_log_string=missing"
+    grep -a "TLinkauto-app.log" /Applications/TLinkauto.app/TLinkauto >/dev/null 2>&1 && echo "app_log_string=present" || echo "app_log_string=missing"
+    if command -v ldid >/dev/null 2>&1; then
+        echo "ldid_entitlements_begin"
+        ldid -e /Applications/TLinkauto.app/TLinkauto 2>/dev/null || true
+        echo "ldid_entitlements_end"
+    else
+        echo "ldid=missing"
+    fi
+} > /var/mobile/Library/TLinkauto/install_app_check.log 2>&1
 su mobile -c uicache
 uicache -p /Applications/TLinkauto.app 2>/dev/null
 echo "mobile ALL=(root) NOPASSWD:/usr/bin/tlinkautob" >> /etc/sudoers
