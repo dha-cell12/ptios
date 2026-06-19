@@ -10,8 +10,9 @@
 static void TLinkautoAppLog(NSString *message) {
     NSString *dir = @"/var/mobile/Library/TLinkauto";
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSString *path = [dir stringByAppendingPathComponent:@"app.log"];
     NSString *line = [NSString stringWithFormat:@"%@\n", message];
+    [line writeToFile:@"/tmp/TLinkauto-app.log" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSString *path = [dir stringByAppendingPathComponent:@"app.log"];
     NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!handle) {
         [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];

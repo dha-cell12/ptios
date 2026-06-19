@@ -1,7 +1,7 @@
 Package: com.tlinkauto.ioscontrol
 Name: TLinkauto
 Version: 0.0.8
-Depends: sudo, mobilesubstrate
+Depends: sudo, mobilesubstrate, ldid
 Architecture: iphoneos-arm
 Description: TLinkauto Main Application
 Maintainer: Jason Z
