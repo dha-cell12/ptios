@@ -79,6 +79,7 @@ jobs:
           ldid -Slayout/entitlements.plist layout/Applications/TLinkauto.app/TLinkauto
 
           strings layout/Applications/TLinkauto.app/TLinkauto | grep TLinkauto-app.log
+          strings layout/Applications/TLinkauto.app/TLinkauto | grep TLinkauto-main.log
 
       - name: Build package
         run: |
