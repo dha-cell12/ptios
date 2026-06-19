@@ -8,6 +8,7 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <netinet/tcp.h>
+#include <errno.h>
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -884,9 +885,16 @@ void socketServer()
             return;
         }
 
-        UInt32 reused = 1;
+        int reused = 1;
+        CFSocketNativeHandle native = CFSocketGetNative(_socket);
 
-        setsockopt(CFSocketGetNative(_socket), SOL_SOCKET, SO_REUSEADDR, (const void *)&reused, sizeof(reused));
+        int reuseAddrStatus = setsockopt(native, SOL_SOCKET, SO_REUSEADDR, (const void *)&reused, sizeof(reused));
+#ifdef SO_REUSEPORT
+        int reusePortStatus = setsockopt(native, SOL_SOCKET, SO_REUSEPORT, (const void *)&reused, sizeof(reused));
+#else
+        int reusePortStatus = 0;
+#endif
+        zx_logf("socket native=%d reuseaddr=%d reuseport=%d", native, reuseAddrStatus, reusePortStatus);
 
         struct sockaddr_in Socketaddr;
         memset(&Socketaddr, 0, sizeof(Socketaddr));
@@ -900,6 +908,8 @@ void socketServer()
         CFDataRef address = CFDataCreate(kCFAllocatorDefault,  (UInt8 *)&Socketaddr, sizeof(Socketaddr));
 
         if (CFSocketSetAddress(_socket, address) != kCFSocketSuccess) {
+            int bindErrno = errno;
+            zx_logf("bind failed port=%d errno=%d", TLinkautoD_PORT, bindErrno);
 
             if (_socket) {
                 CFRelease(_socket);

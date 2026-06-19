@@ -43,7 +43,12 @@ chown -R mobile:mobile /var/mobile/Library/TLinkauto
 chmod +x /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/add_datetime.sh
 chown root:wheel /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 chmod 644 /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
+launchctl unload /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 launchctl unload /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist 2>/dev/null
+killall -9 zxtouchd 2>/dev/null
+killall -9 tlinkautod 2>/dev/null
+rm -f /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
+rm -f /usr/bin/zxtouchd /usr/bin/zxtouchb 2>/dev/null
 launchctl load -w /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 {
     echo "launchctl_load_status=$?"
