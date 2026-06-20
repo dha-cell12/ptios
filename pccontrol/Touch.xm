@@ -4,6 +4,10 @@
 #include "AlertBox.h"
 #include "Task.h"
 
+#ifndef TLINKAUTO_TOUCH_FILE_LOG
+#define TLINKAUTO_TOUCH_FILE_LOG 0
+#endif
+
 #define TOUCH_SENDER_ID_PLIST_FILE_NAME @"senderid.plist"
 
 #define MAX_FINGER_INDEX 20
@@ -29,6 +33,7 @@ unsigned long long int senderID = 0x0;
 // File logger (SpringBoard doesn't always have accessible stdout logs).
 static void zx_touch_logf(const char *fmt, ...)
 {
+#if TLINKAUTO_TOUCH_FILE_LOG
     @autoreleasepool {
         NSString *dir = @"/var/mobile/Library/TLinkauto";
         [[NSFileManager defaultManager] createDirectoryAtPath:dir
@@ -68,6 +73,22 @@ static void zx_touch_logf(const char *fmt, ...)
         }
         @try { [fh closeFile]; } @catch (__unused NSException *e) {}
     }
+#else
+    (void)fmt;
+#endif
+}
+
+static void stopSetSenderIDCallBack(void)
+{
+    if (ioHIDEventSystemForSenderID == NULL) {
+        return;
+    }
+
+    IOHIDEventSystemClientUnregisterEventCallback(ioHIDEventSystemForSenderID);
+    IOHIDEventSystemClientUnscheduleWithRunLoop(ioHIDEventSystemForSenderID, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+    CFRelease(ioHIDEventSystemForSenderID);
+    ioHIDEventSystemForSenderID = NULL;
+    NSLog(@"com.tlinkauto.springboard: unregister get sender id callback!");
 }
 
 
@@ -329,25 +350,6 @@ void initSenderId()
     NSLog(@"com.tlinkauto.springboard: cannot read the sender id from file because the file doesn't exist or the device has restarted. Start set senderid callback.");
     zx_touch_logf("initSenderId: senderID not ready; start callback");
     startSetSenderIDCallBack();
-
-    zx_touch_logf("initSenderId: waiting for a real user touch to learn senderID");
-
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // I know the code here is bad here, change this later.
-        while (true)
-        {
-            [NSThread sleepForTimeInterval:2.0f];
-
-            if (ioHIDEventSystemForSenderID != NULL && senderID != 0x0) // unregister the callback
-            {
-                IOHIDEventSystemClientUnregisterEventCallback(ioHIDEventSystemForSenderID);
-                IOHIDEventSystemClientUnscheduleWithRunLoop(ioHIDEventSystemForSenderID, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-                NSLog(@"com.tlinkauto.springboard: unregister get sender id callback!");
-                break;
-            }
-        }
-    });
-
 }
 
 
@@ -366,7 +368,11 @@ static void setSenderIdCallback(void* target, void* refcon, IOHIDServiceRef serv
                 NSLog(@"Cannot save senderid for future use, but the tweak should work fine. Error: %@", err);
             }
 
-			senderID = IOHIDEventGetSenderID(event);
+			unsigned long long int capturedSenderID = IOHIDEventGetSenderID(event);
+            if (capturedSenderID == 0x0) {
+                return;
+            }
+            senderID = capturedSenderID;
 
             NSInteger currentTime = [[NSDate date] timeIntervalSince1970];
             NSInteger timeSinceReboot = [NSProcessInfo processInfo].systemUptime;
@@ -378,6 +384,9 @@ static void setSenderIdCallback(void* target, void* refcon, IOHIDServiceRef serv
 
 			NSLog(@"com.tlinkauto.springboard: sender id is: %qX", senderID);
 			zx_touch_logf("setSenderIdCallback: senderID=%llX", senderID);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                stopSetSenderIDCallBack();
+            });
         }
     }
 }

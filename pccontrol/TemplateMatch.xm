@@ -9,7 +9,10 @@
 
 #import "TemplateMatch.h"
 #include <vector>
+#include <map>
+#include <string>
 #include <math.h>
+#include <sys/stat.h>
 
 #ifndef ZX_TEMPLATE_MATCH_DEBUG
 #define ZX_TEMPLATE_MATCH_DEBUG 0
@@ -81,6 +84,108 @@ static void zx_tm_logf(const char *fmt, ...)
 using namespace cv;
 using namespace std;
 
+struct ZXTemplateCacheEntry {
+    time_t mtime;
+    off_t size;
+    Mat templ;
+};
+
+static bool zx_templateFileInfo(NSString *path, time_t *mtime, off_t *size)
+{
+    if (!path) return false;
+    struct stat st;
+    if (stat([path fileSystemRepresentation], &st) != 0) {
+        return false;
+    }
+    if (mtime) *mtime = st.st_mtime;
+    if (size) *size = st.st_size;
+    return true;
+}
+
+static string zx_templateCacheKey(NSString *path, time_t mtime, off_t size)
+{
+    const char *p = path ? [path UTF8String] : "";
+    char suffix[96];
+    snprintf(suffix, sizeof(suffix), "|%lld|%lld", (long long)mtime, (long long)size);
+    string key = p ? p : "";
+    key += suffix;
+    return key;
+}
+
+static Mat zx_cachedTemplateForPath(NSString *path)
+{
+    time_t mtime = 0;
+    off_t size = 0;
+    if (!zx_templateFileInfo(path, &mtime, &size)) {
+        return Mat();
+    }
+
+    const string key = zx_templateCacheKey(path, mtime, size);
+    static map<string, ZXTemplateCacheEntry> cache;
+    @synchronized([TemplateMatch class]) {
+        map<string, ZXTemplateCacheEntry>::iterator it = cache.find(key);
+        if (it != cache.end()) {
+            return it->second.templ;
+        }
+    }
+
+    Mat templ = imread([path UTF8String], IMREAD_GRAYSCALE);
+    if (templ.empty()) {
+        return templ;
+    }
+
+    @synchronized([TemplateMatch class]) {
+        if (cache.size() > 32) {
+            cache.clear();
+        }
+        ZXTemplateCacheEntry entry;
+        entry.mtime = mtime;
+        entry.size = size;
+        entry.templ = templ;
+        cache[key] = entry;
+    }
+    return templ;
+}
+
+static string zx_scaledTemplateCacheKey(const char *templateKey, int templCols, int templRows, float resizeRatio, float scaleRation, int maxTryTimes)
+{
+    char buf[256];
+    snprintf(buf, sizeof(buf), "|cols=%d|rows=%d|r=%.6f|sr=%.6f|mtt=%d", templCols, templRows, resizeRatio, scaleRation, maxTryTimes);
+    string key = templateKey ? templateKey : "";
+    key += buf;
+    return key;
+}
+
+static map<string, vector<Mat> > &zx_scaledTemplateCache(void)
+{
+    static map<string, vector<Mat> > cache;
+    return cache;
+}
+
+static bool zx_getScaledTemplateCache(const string &key, vector<Mat> *out)
+{
+    @synchronized([TemplateMatch class]) {
+        map<string, vector<Mat> > &cache = zx_scaledTemplateCache();
+        map<string, vector<Mat> >::iterator it = cache.find(key);
+        if (it == cache.end()) {
+            return false;
+        }
+        if (out) *out = it->second;
+        return true;
+    }
+}
+
+static void zx_setScaledTemplateCache(const string &key, const vector<Mat> &templates)
+{
+    @synchronized([TemplateMatch class]) {
+        map<string, vector<Mat> > &cache = zx_scaledTemplateCache();
+        if (cache.size() > 64) {
+            cache.clear();
+        }
+        cache[key] = templates;
+    }
+}
+
 static inline long long zx_absll(long long v) { return v < 0 ? -v : v; }
 
 static long long zx_sad_match_region(const Mat &img, const Mat &templ,
@@ -144,6 +249,8 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     float resizeRatio;
 }
 
+- (CGRect)matchWithMat:(Mat)img andTemplate:(Mat)templ scaledCacheKey:(const char *)scaledCacheKey;
+
 @end
 
 
@@ -197,7 +304,11 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     CGContextRelease(contextRef);
     // CGImageGetColorSpace() does not transfer ownership.
     
-    Mat templ = imread([templatePath UTF8String], IMREAD_GRAYSCALE); //[templatePath UTF8String]
+    time_t templMtime = 0;
+    off_t templSize = 0;
+    zx_templateFileInfo(templatePath, &templMtime, &templSize);
+    string templCacheKey = zx_templateCacheKey(templatePath, templMtime, templSize);
+    Mat templ = zx_cachedTemplateForPath(templatePath); //[templatePath UTF8String]
     if (templ.cols == 0 && templ.rows == 0)
     {
         if (err) {
@@ -208,13 +319,17 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     cv::Mat greyMat;
     cv::cvtColor(screenMat, greyMat, COLOR_RGBA2GRAY);
 
-    return [self matchWithMat:greyMat andTemplate:templ];
+    return [self matchWithMat:greyMat andTemplate:templ scaledCacheKey:templCacheKey.c_str()];
 }
 
 - (CGRect)templateMatchWithPath:(NSString*)imgPath templatePath:(NSString*)templatePath error:(NSError**)err {
     TMLOGF("templateMatchWithPath start. imgPath=%s templatePath=%s", [imgPath UTF8String], [templatePath UTF8String]);
     Mat image = imread([imgPath UTF8String], IMREAD_GRAYSCALE); //[imgPath UTF8String]
-    Mat templ = imread([templatePath UTF8String], IMREAD_GRAYSCALE); //[templatePath UTF8String]
+    time_t templMtime = 0;
+    off_t templSize = 0;
+    zx_templateFileInfo(templatePath, &templMtime, &templSize);
+    string templCacheKey = zx_templateCacheKey(templatePath, templMtime, templSize);
+    Mat templ = zx_cachedTemplateForPath(templatePath); //[templatePath UTF8String]
 
     TMLOGF("imread done. img=%dx%d templ=%dx%d", image.cols, image.rows, templ.cols, templ.rows);
     
@@ -233,7 +348,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
         return CGRect();    
     }
 
-    return [self matchWithMat:image andTemplate:templ];
+    return [self matchWithMat:image andTemplate:templ scaledCacheKey:templCacheKey.c_str()];
 }
 
 //uncompleted
@@ -245,6 +360,10 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
 //调用OpenCV进行匹配
 //此方法具体解释参考OpenCV官方文档: https://docs.opencv.org/3.2.0/de/da9/tutorial_template_matching.html
 - (CGRect)matchWithMat:(Mat)img andTemplate:(Mat)templ {
+    return [self matchWithMat:img andTemplate:templ scaledCacheKey:NULL];
+}
+
+- (CGRect)matchWithMat:(Mat)img andTemplate:(Mat)templ scaledCacheKey:(const char *)scaledCacheKey {
     // OpenCV on iOS can behave better with fixed thread count.
     cv::setNumThreads(1);
 
@@ -269,24 +388,37 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
         cv::resize(templ, templWork, cv::Size(0, 0), r, r, cv::INTER_AREA);
     }
 
-    // New instance is usually created per request, but keep this method safe anyway.
-    _scaledTempls.clear();
-    _scaledTempls.push_back(templWork);
+    bool gotScaledCache = false;
+    string scaledKey;
+    if (scaledCacheKey) {
+        scaledKey = zx_scaledTemplateCacheKey(scaledCacheKey, templWork.cols, templWork.rows, r, scaleRation, maxTryTimes);
+        gotScaledCache = zx_getScaledTemplateCache(scaledKey, &_scaledTempls);
+    }
 
-    Mat templResized;
+    if (!gotScaledCache) {
+        _scaledTempls.clear();
+        _scaledTempls.push_back(templWork);
 
-    //由于模板图和原图大小比例不一致，需要放大缩小模板图，来多次比较。所以建立不同比例的模板图。
-    for(int i=0;i<maxTryTimes;i++) {
-        //放大模板图
-        float powIncreaRation = pow(2 - scaleRation, i+1);
-        resize(templWork, templResized, cv::Size(0, 0), powIncreaRation, powIncreaRation);
-        _scaledTempls.push_back(templResized); //由于push_back方法执行值拷贝，所以可以复用templResized变量。
+        Mat templResized;
+        float powIncreaRation = 1.0f;
+        float powReduceRation = 1.0f;
 
-        //缩小模板图
-        float powReduceRation = pow(scaleRation, i+1);
-        resize(templWork, templResized, cv::Size(0, 0), powReduceRation, powReduceRation);
-        _scaledTempls.push_back(templResized);
+        //由于模板图和原图大小比例不一致，需要放大缩小模板图，来多次比较。所以建立不同比例的模板图。
+        for(int i=0;i<maxTryTimes;i++) {
+            //放大模板图
+            powIncreaRation *= (2 - scaleRation);
+            resize(templWork, templResized, cv::Size(0, 0), powIncreaRation, powIncreaRation);
+            _scaledTempls.push_back(templResized); //由于push_back方法执行值拷贝，所以可以复用templResized变量。
 
+            //缩小模板图
+            powReduceRation *= scaleRation;
+            resize(templWork, templResized, cv::Size(0, 0), powReduceRation, powReduceRation);
+            _scaledTempls.push_back(templResized);
+        }
+
+        if (scaledCacheKey) {
+            zx_setScaledTemplateCache(scaledKey, _scaledTempls);
+        }
     }
 
     TMLOGF("start matching. screen=%dx%d templates=%lu", imgWork.cols, imgWork.rows, (unsigned long)_scaledTempls.size());

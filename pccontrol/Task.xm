@@ -33,12 +33,7 @@ get task type
 */
 static int getTaskType(UInt8* dataArray)
 {
-	int taskType = 0;
-	for (int i = 0; i <= 1; i++)
-	{
-		taskType += (dataArray[i] - '0')*pow(10, 1-i);
-	}
-	return taskType;
+    return (dataArray[0] - '0') * 10 + (dataArray[1] - '0');
 }
 
 static int zx_clampTouchCoord(CGFloat value)
