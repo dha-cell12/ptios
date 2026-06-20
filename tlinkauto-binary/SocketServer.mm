@@ -22,9 +22,10 @@
 
 #import "../pccontrol/Common.h"
 
-CFSocketRef socketRef;
-CFWriteStreamRef writeStreamRef = NULL;
-CFReadStreamRef readStreamRef = NULL;
+#ifndef TLINKAUTO_FILE_LOG
+#define TLINKAUTO_FILE_LOG 0
+#endif
+
 static NSMutableDictionary *socketClients = NULL;
 
 typedef NS_ENUM(uint8_t, ZXWireProtocol) {
@@ -97,11 +98,21 @@ static void zx_cleanupClient(CFReadStreamRef readStream)
     // Already cleaned up. Avoid double-closing/releasing the CF stream from queued events.
 }
 
-// File logging for daemon debugging.
-// Logs are appended to: /var/mobile/Library/TLinkauto/tlinkautod.log
+#if TLINKAUTO_FILE_LOG
 static NSString *zx_logFilePath(void)
 {
     return @"/var/mobile/Library/TLinkauto/tlinkautod.log";
+}
+
+static dispatch_queue_t logQueue(void)
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_BACKGROUND, 0);
+        queue = dispatch_queue_create("com.tlinkauto.tlinkautod.log", attr);
+    });
+    return queue;
 }
 
 static void zx_ensureLogDir(void)
@@ -124,11 +135,10 @@ static void zx_ensureLogFile(void)
         [[NSData data] writeToFile:path atomically:true];
     }
 }
+#endif
 
 static void zx_logf(const char *fmt, ...)
 {
-    zx_ensureLogFile();
-
     char msg[2048];
     va_list args;
     va_start(args, fmt);
@@ -138,11 +148,12 @@ static void zx_logf(const char *fmt, ...)
     // Always mirror to system log as well.
     NSLog(@"[tlinkautod] %s", msg);
 
+#if TLINKAUTO_FILE_LOG
     // Append to file with timestamp.
     NSDate *now = [NSDate date];
     static NSDateFormatter *df = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    static dispatch_once_t dateFormatterOnce;
+    dispatch_once(&dateFormatterOnce, ^{
         df = [[NSDateFormatter alloc] init];
         df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
         df.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
@@ -152,14 +163,18 @@ static void zx_logf(const char *fmt, ...)
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     if (!data) return;
 
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:zx_logFilePath()];
-    if (!fh) return;
-    @try {
-        [fh seekToEndOfFile];
-        [fh writeData:data];
-    } @catch (__unused NSException *e) {
-    }
-    @try { [fh closeFile]; } @catch (__unused NSException *e) {}
+    dispatch_async(logQueue(), ^{
+        static NSFileHandle *fh = nil;
+        static dispatch_once_t fileHandleOnce;
+        dispatch_once(&fileHandleOnce, ^{
+            zx_ensureLogFile();
+            fh = [NSFileHandle fileHandleForWritingAtPath:zx_logFilePath()];
+            @try { [fh seekToEndOfFile]; } @catch (__unused NSException *e) { fh = nil; }
+        });
+        if (!fh) return;
+        @try { [fh writeData:data]; } @catch (__unused NSException *e) {}
+    });
+#endif
 }
 
 static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, void * clientCallBackInfo);
@@ -307,7 +322,14 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
         NSLog(@"### com.tlinkauto.tlinkautod: IPC ready marker missing.");
         return NULL;
     }
-    CFMessagePortRef remotePort = CFMessagePortCreateRemote(kCFAllocatorDefault, kTLinkautoIPCPortName);
+    static CFMessagePortRef remotePort = NULL;
+    if (remotePort && !CFMessagePortIsValid(remotePort)) {
+        CFRelease(remotePort);
+        remotePort = NULL;
+    }
+    if (!remotePort) {
+        remotePort = CFMessagePortCreateRemote(kCFAllocatorDefault, kTLinkautoIPCPortName);
+    }
     if (!remotePort) {
         NSLog(@"### com.tlinkauto.tlinkautod: unable to find SpringBoard IPC port.");
         return NULL;
@@ -333,7 +355,10 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
             }
             if (pingResult != kCFMessagePortSuccess) {
                 NSLog(@"### com.tlinkauto.tlinkautod: IPC ping failed with code %d", (int)pingResult);
-                CFRelease(remotePort);
+                if (remotePort) {
+                    CFRelease(remotePort);
+                    remotePort = NULL;
+                }
                 return NULL;
             } else {
                 lastPingSuccess = now;
@@ -357,6 +382,10 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
                                              responseTarget);
     if (result != kCFMessagePortSuccess) {
         NSLog(@"### com.tlinkauto.tlinkautod: IPC send failed with code %d", (int)result);
+        if (remotePort) {
+            CFRelease(remotePort);
+            remotePort = NULL;
+        }
     } else if (!hotPathPayload) {
         NSLog(@"### com.tlinkauto.tlinkautod: IPC send success");
     }
@@ -364,7 +393,6 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
     if (messageData) {
         CFRelease(messageData);
     }
-    CFRelease(remotePort);
     return responseData;
 }
 
@@ -375,8 +403,6 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
 
 #ifdef ZX_DAEMON
 static char *handleTemplateMatchTaskInDaemon(const char *buffer);
-// (OCR daemon handler left in file but NOT USED anymore)
-static char *handleTextRecognizerTaskInDaemon(const char *buffer);
 #endif
 
 static char *zx_strdup_nsstring(NSString *s)
@@ -524,18 +550,6 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 }
 #endif
 
-// (OCR daemon function still here, but it won't be called anymore after our routing change)
-// Keeping it avoids touching other compilation units; safe to leave as-is.
-#ifdef ZX_DAEMON
-static char *handleTextRecognizerTaskInDaemon(const char *buffer)
-{
-    // NOTE: We intentionally do NOT use this in daemon anymore.
-    // SpringBoard will handle task 27.
-    (void)buffer;
-    return (char *)strdup("-1;;OCR moved to SpringBoard\r\n");
-}
-#endif
-
 static void zx_writeAll(CFWriteStreamRef stream, NSData *data)
 {
     if (!stream || !data || data.length == 0) {
@@ -600,7 +614,11 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         if (strcmp(buffer, kTLinkautoIPCCommandHome) == 0) {
             snprintf(ipcPayload, sizeof(ipcPayload), "%s", kTLinkautoIPCCommandHome);
         } else {
-            snprintf(ipcPayload, sizeof(ipcPayload), "%s%s", kTLinkautoIPCCommandTaskPrefix, buffer);
+            int written = snprintf(ipcPayload, sizeof(ipcPayload), "%s%s", kTLinkautoIPCCommandTaskPrefix, buffer);
+            if (written < 0 || (size_t)written >= sizeof(ipcPayload)) {
+                zx_logf("IPC payload too large; dropping task");
+                return zx_dataFromCString("1;;ipc_payload_too_large\r\n");
+            }
         }
         NSString *payloadString = [NSString stringWithUTF8String:ipcPayload];
         if (!payloadString) {
@@ -943,7 +961,6 @@ static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, v
             }
 
             UInt8 readDataBuff[2048];
-            memset(readDataBuff, 0, sizeof(readDataBuff));
 
             CFIndex hasRead = CFReadStreamRead(readStream, readDataBuff, sizeof(readDataBuff));
 
@@ -978,14 +995,15 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
 
             NSLog(@"### com.tlinkauto.tlinkautod: ++++++++getpeername+++++++");
 
-            exit(1);
+            close(nativeSocketHandle);
+            return;
         }
 
         struct sockaddr_in *addr_in = (struct sockaddr_in *)name;
         NSLog(@"### com.tlinkauto.tlinkautod: connection starts from %s:%d", inet_ntoa(addr_in->sin_addr), ntohs(addr_in->sin_port));
 
-        readStreamRef = NULL;
-        writeStreamRef = NULL;
+        CFReadStreamRef readStreamRef = NULL;
+        CFWriteStreamRef writeStreamRef = NULL;
 
         CFStreamCreatePairWithSocket(kCFAllocatorDefault, nativeSocketHandle, &readStreamRef, &writeStreamRef);
 

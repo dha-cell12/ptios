@@ -15,30 +15,33 @@ int playBackFromRawFile();
 int runDaemon();
 
 int getSpringboardSocket() {
-    int sock = 0, valread;
-     struct sockaddr_in serv_addr;
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
 
-     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-     {
-         NSLog(@"### com.tlinkauto.tlinkautob:  Socket creation error");
-         return -1;
-     }
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        NSLog(@"### com.tlinkauto.tlinkautob:  Socket creation error");
+        return -1;
+    }
     
-     serv_addr.sin_family = AF_INET;
-     serv_addr.sin_port = htons(SPRINGBOARD_PORT);
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(SPRINGBOARD_PORT);
         
-     // Convert IPv4 and IPv6 addresses from text to binary form
-     if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0)
-     {
-         NSLog(@"### com.tlinkauto.tlinkautob: Invalid address. Address not supported");
-         return -1;
-     }
+    // Convert IPv4 and IPv6 addresses from text to binary form
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr)<=0)
+    {
+        NSLog(@"### com.tlinkauto.tlinkautob: Invalid address. Address not supported");
+        close(sock);
+        return -1;
+    }
     
-     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-     {
-         NSLog(@"### com.tlinkauto.tlinkautob: \nConnection Failed \n");
-         return -1;
-     }
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        NSLog(@"### com.tlinkauto.tlinkautob: \nConnection Failed \n");
+        close(sock);
+        return -1;
+    }
     
     return sock;
 }
@@ -164,8 +167,18 @@ int playBackFromRawFile()
     }
     
     int sbSocket = getSpringboardSocket();
+    if (sbSocket < 0)
+    {
+        return 0;
+    }
     
     FILE *file = fopen([parameterArr[2] UTF8String], "r");
+    if (!file)
+    {
+        NSLog(@"com.tlinkauto.tlinkautob: unable to open raw file: %@", parameterArr[2]);
+        close(sbSocket);
+        return 0;
+    }
     
     char buffer[256];
     int taskType;
@@ -185,4 +198,7 @@ int playBackFromRawFile()
             send(sbSocket , buffer, strlen(buffer) , 0);
         }
     }
+    fclose(file);
+    close(sbSocket);
+    return 0;
 }
