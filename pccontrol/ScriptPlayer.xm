@@ -7,6 +7,7 @@
 #include "Config.h"
 #include "Common.h"
 #include "RuntimeUtils.h"
+#import "TLinkautoJSRuntime.h"
 
 static BOOL isPlaying = false;
 
@@ -17,11 +18,25 @@ static BOOL isPlaying = false;
     float speed;
     NSString* scriptBundlePath;
     UIWindow *_playIndicator;
-    int currentScriptType; // -1 no task has specified; 0 not playing but has upcoming task; 1 raw file playing; 2 py file playing
+    int currentScriptType; // -1 no task has specified; 0 not playing but has upcoming task; 1 raw file playing; 2 py file playing; 3 js file playing
     NSTimer *replayTimer;
     UIView *circleView;
     Boolean scriptPlayForceStop;
     Boolean switchAppBeforePlaying;
+    TLinkautoJSRuntime *jsRuntime;
+}
+
+static BOOL tlinkautoLegacyPythonEnabled(void)
+{
+    if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH])
+    {
+        NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:SCRIPT_PLAY_CONFIG_PATH];
+        id value = config[@"legacy_python_enabled"];
+        if ([value respondsToSelector:@selector(boolValue)]) {
+            return [value boolValue];
+        }
+    }
+    return YES;
 }
 
 - (BOOL)isPlaying {
@@ -164,6 +179,13 @@ static BOOL isPlaying = false;
     }
     else if ([fileExtension isEqualToString:@"py"])
     {
+        if (!tlinkautoLegacyPythonEnabled()) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Python script support has been removed. Convert this bundle to JavaScript and set runtime to javascriptcore.\r\n"}];
+            }
+            [self clear];
+            return -1;
+        }
         currentScriptType = 2;
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             NSError *err = nil;
@@ -171,10 +193,20 @@ static BOOL isPlaying = false;
         });
         return 0;
     }
+    else if ([fileExtension isEqualToString:@"js"])
+    {
+        currentScriptType = 3;
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            NSError *err = nil;
+            [self playFromJSFile:entryFilePath foregroundApp:foregroundApp err:&err];
+        });
+        return 0;
+    }
 
     if (error) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
     }
+    [self clear];
     return -1;
 }
 
@@ -249,6 +281,7 @@ static BOOL isPlaying = false;
 -(void) playFromPythonFile:(NSString*) filePath foregroundApp:(NSString*) foregroundApp err:(NSError**) err
 {
     isPlaying = true;
+    NSLog(@"com.tlinkauto.springboard: Legacy Python runtime is deprecated and will be removed in the next release. Convert this bundle to JavaScriptCore runtime.");
 
     if (switchAppBeforePlaying)
     {
@@ -278,6 +311,36 @@ static BOOL isPlaying = false;
     //scriptPlayForceStop = true;
     system2([commandToRun UTF8String], NULL, NULL);
     // add force stop
+    [self playHasStopped];
+}
+
+-(void) playFromJSFile:(NSString*) filePath foregroundApp:(NSString*) foregroundApp err:(NSError**) err
+{
+    isPlaying = true;
+
+    if (switchAppBeforePlaying)
+    {
+        bringAppForeground(foregroundApp);
+    }
+
+    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath])
+    {
+        showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script. JavaScript file not found in bdl folder. Script path: %@", filePath], 999);
+        setLastScriptError([NSString stringWithFormat:@"JavaScript file not found: %@", filePath]);
+        isPlaying = false;
+        return;
+    }
+
+    jsRuntime = [[TLinkautoJSRuntime alloc] init];
+    NSError *runError = nil;
+    BOOL ok = [jsRuntime runScriptAtPath:filePath bundlePath:scriptBundlePath error:&runError];
+    if (!ok && runError) {
+        setLastScriptError([runError localizedDescription]);
+        if (!scriptPlayForceStop) {
+            showAlertBox(@"JavaScript Error", [runError localizedDescription], 999);
+        }
+    }
+    scriptPlayForceStop = false;
     [self playHasStopped];
 }
 
@@ -365,6 +428,11 @@ static BOOL isPlaying = false;
         // kill all python3 process
         system2("sudo /usr/bin/tlinkautob -e \"killall -9 python3\"", NULL, NULL);
         [self clear];
+    }
+    else if (currentScriptType == 3)
+    {
+        scriptPlayForceStop = true;
+        [jsRuntime requestStop];
     }
     else
     {
