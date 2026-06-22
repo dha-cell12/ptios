@@ -7,7 +7,7 @@
 #include "Config.h"
 #include "Common.h"
 #include "RuntimeUtils.h"
-#import "TLinkautoJSRuntime.h"
+#import "jsruntime/TLinkautoJSRuntime.h"
 
 static BOOL isPlaying = false;
 

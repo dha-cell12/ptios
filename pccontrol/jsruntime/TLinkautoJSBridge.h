@@ -7,7 +7,6 @@
 @class TLinkautoJSRuntimeExecution;
 
 @protocol TLinkautoDeviceJSExport <JSExport>
-
 JSExportAs(tap,
 - (NSDictionary *)tap:(double)x y:(double)y);
 JSExportAs(swipe,
@@ -122,31 +121,27 @@ JSExportAs(fileExists,
 - (NSDictionary *)fileExists:(NSString *)path);
 JSExportAs(deleteFile,
 - (NSDictionary *)deleteFile:(NSString *)path);
-- (NSDictionary *)getScreenSize;
+
 - (NSDictionary *)screenshot;
-- (NSDictionary *)releaseAllFrames;
-- (NSDictionary *)info;
-- (NSDictionary *)batteryInfo;
-- (NSDictionary *)clearScreenshotAlbum;
-- (NSDictionary *)listAutoLaunch;
-- (NSDictionary *)ocrLanguages;
-- (NSDictionary *)clearDialogValues;
+- (NSDictionary *)frontMostAppId;
+- (NSDictionary *)frontMostPid;
+- (NSDictionary *)orientation;
 - (NSDictionary *)getClipboardText;
-- (NSDictionary *)pasteFromClipboard;
-- (NSDictionary *)showKeyboard;
-- (NSDictionary *)hideKeyboard;
 - (NSDictionary *)rootDir;
 - (NSDictionary *)currentDir;
 - (NSDictionary *)botPath;
-- (NSDictionary *)frontMostPid;
+- (NSDictionary *)info;
+- (NSDictionary *)batteryInfo;
+- (NSDictionary *)getScreenSize;
+- (NSDictionary *)runtimeInfo;
 - (NSDictionary *)wifi;
 - (NSDictionary *)bluetooth;
 - (NSDictionary *)airplaneMode;
 - (NSDictionary *)cellularData;
-- (NSDictionary *)frontMostAppId;
-- (NSDictionary *)orientation;
-- (NSDictionary *)runtimeInfo;
-
+- (NSDictionary *)clearScreenshotAlbum;
+- (NSDictionary *)listAutoLaunch;
+- (NSDictionary *)ocrLanguages;
+- (NSDictionary *)clearDialogValues;
 @end
 
 @interface TLinkautoJSBridge : NSObject <TLinkautoDeviceJSExport>
@@ -156,4 +151,4 @@ JSExportAs(deleteFile,
 
 @end
 
-#endif
+#endif /* TLINKAUTO_JS_BRIDGE_H */
