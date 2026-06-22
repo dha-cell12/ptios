@@ -8,6 +8,7 @@ console.log("manifest", manifest);
 
 var size = device.getScreenSize();
 console.log("screen", size);
+TLinkauto.assert(size.width > 0 && size.height > 0, "screen size unavailable");
 device.toast("Screen " + size.width + "x" + size.height, { type: 3, duration: 2, position: 0 });
 sleep(700);
 

@@ -45,6 +45,13 @@ Console file logs:
 - `device.runtimeInfo()` includes `consoleLogPath` and `consoleLatestLogPath`.
 - Console log files rotate by deletion when they exceed 512 KiB.
 
+Runtime helpers:
+
+- `TLinkauto.version` exposes the helper API version.
+- `TLinkauto.assert(condition, message)` throws an error when `condition` is false.
+- `TLinkauto.waitUntil(predicate, { timeoutMs, intervalMs })` polls synchronously until `predicate(attempt)` returns a truthy value or timeout expires.
+- `TLinkauto.retry(action, { retries, delayMs })` retries a synchronous action and returns `{ ok, value, attempts }` or `{ ok, error, attempts }`.
+
 Core APIs:
 
 - `device.toast(message, { type, duration, position, fontSize })` shows a visible on-screen toast.

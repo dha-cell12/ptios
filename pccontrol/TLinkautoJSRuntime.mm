@@ -907,10 +907,50 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
          "    return (0, eval)(rec.source + '\\n//# sourceURL=' + rec.path);\n"
          "  };\n"
          "})();";
+    NSString *helperPrelude =
+        @"(function(){\n"
+         "  function normalizeOptions(options, defaults){\n"
+         "    options = options || {};\n"
+         "    var out = {};\n"
+         "    Object.keys(defaults).forEach(function(k){ out[k] = options[k] == null ? defaults[k] : options[k]; });\n"
+         "    return out;\n"
+         "  }\n"
+         "  var api = this.TLinkauto || {};\n"
+         "  api.version = '1.0';\n"
+         "  api.assert = function(condition, message){\n"
+         "    if (!condition) throw new Error(message || 'Assertion failed');\n"
+         "    return true;\n"
+         "  };\n"
+         "  api.waitUntil = function(predicate, options){\n"
+         "    if (typeof predicate !== 'function') throw new Error('waitUntil requires a predicate function');\n"
+         "    var opts = normalizeOptions(options, { timeoutMs: 5000, intervalMs: 100 });\n"
+         "    var start = Date.now();\n"
+         "    var attempts = 0;\n"
+         "    while (Date.now() - start <= opts.timeoutMs) {\n"
+         "      attempts++;\n"
+         "      var value = predicate(attempts);\n"
+         "      if (value) return { ok: true, value: value, attempts: attempts, elapsedMs: Date.now() - start };\n"
+         "      sleep(opts.intervalMs);\n"
+         "    }\n"
+         "    return { ok: false, attempts: attempts, elapsedMs: Date.now() - start };\n"
+         "  };\n"
+         "  api.retry = function(action, options){\n"
+         "    if (typeof action !== 'function') throw new Error('retry requires an action function');\n"
+         "    var opts = normalizeOptions(options, { retries: 3, delayMs: 100 });\n"
+         "    var lastError = null;\n"
+         "    for (var i = 0; i <= opts.retries; i++) {\n"
+         "      try { return { ok: true, value: action(i + 1), attempts: i + 1 }; }\n"
+         "      catch (e) { lastError = e; if (i < opts.retries) sleep(opts.delayMs); }\n"
+         "    }\n"
+         "    return { ok: false, error: String(lastError && lastError.message || lastError), attempts: opts.retries + 1 };\n"
+         "  };\n"
+         "  this.TLinkauto = api;\n"
+         "})();";
 
     [self installWatchdogForContext:context];
     [context evaluateScript:consolePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://console-prelude.js"]];
     [context evaluateScript:modulePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://module-prelude.js"]];
+    [context evaluateScript:helperPrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://helper-prelude.js"]];
     NSURL *sourceURL = [NSURL fileURLWithPath:scriptPath ?: @"script.js"];
     [context evaluateScript:script withSourceURL:sourceURL];
     [self clearWatchdogForContext:context];
