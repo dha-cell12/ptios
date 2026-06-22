@@ -24,6 +24,7 @@ static BOOL isPlaying = false;
     Boolean scriptPlayForceStop;
     Boolean switchAppBeforePlaying;
     TLinkautoJSRuntime *jsRuntime;
+    NSDictionary *currentManifest;
 }
 
 static BOOL tlinkautoLegacyPythonEnabled(void)
@@ -178,6 +179,7 @@ static NSString *tlinkautoStringValue(id value)
     }
     NSDictionary *scriptInfo = [NSDictionary dictionaryWithContentsOfFile:infoFilePath];
     NSDictionary *manifest = tlinkautoReadManifest(scriptBundlePath);
+    currentManifest = manifest ?: @{};
     // get entry file extension
     NSString *entryFileName = tlinkautoStringValue(manifest[@"entry"]) ?: scriptInfo[@"Entry"];
     if (!entryFileName || [entryFileName length] == 0) {
@@ -232,6 +234,14 @@ static NSString *tlinkautoStringValue(id value)
         if (apiVersion && [apiVersion intValue] != 1) {
             if (error) {
                 *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript API version: %@\r\n", apiVersion]}];
+            }
+            [self clear];
+            return -1;
+        }
+        NSString *coordinateSpace = tlinkautoStringValue(manifest[@"coordinateSpace"]);
+        if (coordinateSpace && ![coordinateSpace isEqualToString:@"native-pixels"]) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript coordinateSpace: %@\r\n", coordinateSpace]}];
             }
             [self clear];
             return -1;
@@ -389,7 +399,7 @@ static NSString *tlinkautoStringValue(id value)
 
     jsRuntime = [[TLinkautoJSRuntime alloc] init];
     NSError *runError = nil;
-    BOOL ok = [jsRuntime runScriptAtPath:filePath bundlePath:scriptBundlePath error:&runError];
+    BOOL ok = [jsRuntime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest error:&runError];
     if (!ok && runError) {
         setLastScriptError([runError localizedDescription]);
         if (!scriptPlayForceStop) {

@@ -4,6 +4,7 @@ device.toast("JSC demo started", { type: 3, duration: 2, position: 0 });
 sleep(700);
 var runtime = device.runtimeInfo();
 console.log("runtime", runtime);
+console.log("manifest", manifest);
 
 var size = device.getScreenSize();
 console.log("screen", size);

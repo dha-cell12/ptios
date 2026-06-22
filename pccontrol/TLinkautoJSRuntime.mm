@@ -180,6 +180,7 @@ struct TLinkautoJSWatchdogProbeState {
     BOOL _running;
     NSString *_runId;
     NSString *_bundlePath;
+    NSDictionary *_manifest;
     NSString *_consoleLogPath;
     NSString *_consoleLatestLogPath;
     NSMutableSet<NSNumber *> *_ownedFrameIds;
@@ -199,6 +200,7 @@ struct TLinkautoJSWatchdogProbeState {
 - (NSString *)currentConsoleLogPath;
 - (NSString *)currentConsoleLatestLogPath;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
+- (NSDictionary *)currentManifest;
 - (void)trackFrameId:(int)frameId;
 - (void)untrackFrameId:(int)frameId;
 - (void)untrackAllFrameIds;
@@ -502,6 +504,11 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     return _consoleLatestLogPath ?: @"";
 }
 
+- (NSDictionary *)currentManifest
+{
+    return _manifest ?: @{};
+}
+
 - (void)prepareConsoleLogFiles
 {
     if (![_bundlePath isKindOfClass:[NSString class]] || [_bundlePath length] == 0 || ![_runId isKindOfClass:[NSString class]]) return;
@@ -779,7 +786,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _clearExecutionTimeLimit(group);
 }
 
-- (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath error:(NSError **)error
+- (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest error:(NSError **)error
 {
     if (_running) {
         if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScript runtime is busy.\r\n"}];
@@ -794,6 +801,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _running = YES;
     _runId = [[NSUUID UUID] UUIDString];
     _bundlePath = [bundlePath copy];
+    _manifest = [manifest isKindOfClass:[NSDictionary class]] ? [manifest copy] : @{};
     [self prepareConsoleLogFiles];
     _cancelState->aborted.store(false, std::memory_order_release);
 
@@ -815,6 +823,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     TLinkautoDeviceBridge *bridge = [[TLinkautoDeviceBridge alloc] init];
     bridge.runtime = self;
     context[@"device"] = bridge;
+    context[@"manifest"] = _manifest ?: @{};
 
     context[@"sleep"] = ^(double ms) {
         TLinkautoJSRuntime *strongSelf = weakSelf;
@@ -915,6 +924,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     [self releaseOwnedHandles];
     _context = nil;
     _bundlePath = nil;
+    _manifest = nil;
     _consoleLogPath = nil;
     _consoleLatestLogPath = nil;
     _running = NO;
@@ -2043,9 +2053,14 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (NSDictionary *)runtimeInfo
 {
     BOOL watchdog = [self.runtime watchdogAvailable];
+    NSDictionary *manifest = [self.runtime currentManifest];
     return @{
         @"engine": @"JavaScriptCore",
         @"apiVersion": @1,
+        @"manifestApiVersion": [manifest[@"apiVersion"] respondsToSelector:@selector(intValue)] ? manifest[@"apiVersion"] : @1,
+        @"manifestRuntime": [manifest[@"runtime"] isKindOfClass:[NSString class]] ? manifest[@"runtime"] : @"javascriptcore",
+        @"manifestEntry": [manifest[@"entry"] isKindOfClass:[NSString class]] ? manifest[@"entry"] : @"",
+        @"manifestCoordinateSpace": [manifest[@"coordinateSpace"] isKindOfClass:[NSString class]] ? manifest[@"coordinateSpace"] : @"native-pixels",
         @"jit": @"unknown",
         @"watchdog": watchdog ? @"private-api" : @"unavailable",
         @"watchdogIntervalMs": @(watchdog ? (int)(kTLinkautoJSWatchdogInterval * 1000.0) : 0),

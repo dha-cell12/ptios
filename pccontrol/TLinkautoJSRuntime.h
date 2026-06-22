@@ -8,7 +8,7 @@
 @property(nonatomic, readonly) BOOL running;
 @property(nonatomic, readonly) NSString *runId;
 
-- (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath error:(NSError **)error;
+- (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest error:(NSError **)error;
 - (void)requestStop;
 
 @end

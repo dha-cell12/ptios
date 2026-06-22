@@ -11,6 +11,13 @@ Bundle manifest:
 }
 ```
 
+Manifest validation:
+
+- JavaScript bundles support `apiVersion: 1`.
+- `coordinateSpace` must be omitted or set to `native-pixels`.
+- The manifest object is available at global `manifest`.
+- `device.runtimeInfo()` includes manifest runtime, entry, apiVersion, and coordinateSpace metadata.
+
 Bundle modules:
 
 - `require("./file")` loads `.js`, `.json`, or `index.js` files relative to the current module.
