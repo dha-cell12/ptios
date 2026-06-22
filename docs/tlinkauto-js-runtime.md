@@ -13,6 +13,7 @@ Bundle manifest:
 
 Core APIs:
 
+- `device.toast(message, { type, duration, position, fontSize })` shows a visible on-screen toast.
 - `device.tap(x, y)`
 - `device.swipe(x1, y1, x2, y2, durationMs)`
 - `device.pickColor(x, y)` returns `{ ok, red, green, blue }`

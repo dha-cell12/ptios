@@ -27,6 +27,8 @@ JSExportAs(swipe,
 - (NSDictionary *)swipe:(double)x1 y1:(double)y1 x2:(double)x2 y2:(double)y2 duration:(double)duration);
 JSExportAs(runTask,
 - (NSDictionary *)runTask:(int)task payload:(NSString *)payload);
+JSExportAs(toast,
+- (NSDictionary *)toast:(NSString *)message options:(NSDictionary *)options);
 JSExportAs(pickColor,
 - (NSDictionary *)pickColor:(double)x y:(double)y);
 JSExportAs(screenshotTo,
@@ -84,6 +86,9 @@ struct TLinkautoJSWatchdogProbeState {
 }
 - (BOOL)watchdogAvailable;
 - (NSString *)currentBundlePath;
+- (void)throwError:(NSString *)message;
+- (NSDictionary *)taskResultForPayload:(NSString *)payload;
+- (void)showDebugToast:(NSString *)message type:(int)type;
 @end
 
 static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
@@ -148,6 +153,19 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
         return [payload substringToIndex:8192];
     }
     return payload;
+}
+
+static NSString *TLinkautoJSSanitizeProtocolText(NSString *text, NSUInteger maxLength)
+{
+    NSString *safe = [text isKindOfClass:[NSString class]] ? text : [text description];
+    safe = safe ?: @"";
+    safe = [safe stringByReplacingOccurrencesOfString:@";;" withString:@"; "];
+    safe = [safe stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+    safe = [safe stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    if ([safe length] > maxLength) {
+        safe = [safe substringToIndex:maxLength];
+    }
+    return safe;
 }
 
 static NSString *TLinkautoJSSafeStringPart(NSArray *parts, NSUInteger index)
@@ -296,6 +314,13 @@ static BOOL TLinkautoJSValidToken(NSString *value)
     }
 }
 
+- (void)showDebugToast:(NSString *)message type:(int)type
+{
+    NSString *safeMessage = TLinkautoJSSanitizeProtocolText(message ?: @"JavaScript error", 180);
+    NSString *payload = [NSString stringWithFormat:@"22%d;;%@;;3;;0;;14", type, safeMessage];
+    [self taskResultForPayload:payload];
+}
+
 - (NSDictionary *)taskResultForPayload:(NSString *)payload
 {
     if ([self isAborted]) {
@@ -383,6 +408,7 @@ static BOOL TLinkautoJSValidToken(NSString *value)
         TLinkautoJSRuntime *strongSelf = weakSelf;
         if (strongSelf) {
             setLastScriptError([exception toString] ?: @"JavaScript exception");
+            [strongSelf showDebugToast:[NSString stringWithFormat:@"JS error: %@", [exception toString] ?: @"unknown"] type:1];
         }
     };
 
@@ -446,6 +472,23 @@ static BOOL TLinkautoJSValidToken(NSString *value)
     }
     NSString *wire = [NSString stringWithFormat:@"%02d%@", task, TLinkautoJSSanitizePayload(payload)];
     return [self.runtime taskResultForPayload:wire];
+}
+
+- (NSDictionary *)toast:(NSString *)message options:(NSDictionary *)options
+{
+    NSString *safeMessage = TLinkautoJSSanitizeProtocolText(message ?: @"", 180);
+    if ([safeMessage length] == 0) {
+        [self.runtime throwError:@"toast(message) requires a non-empty message"];
+        return @{ @"ok": @NO };
+    }
+    int type = TLinkautoJSIntOption(options, @"type", 3);
+    int duration = TLinkautoJSIntOption(options, @"duration", 2);
+    int position = TLinkautoJSIntOption(options, @"position", 0);
+    int fontSize = TLinkautoJSIntOption(options, @"fontSize", 14);
+    if (type < 0 || type > 4) type = 3;
+    if (duration <= 0 && type != 0) duration = 2;
+    NSString *payload = [NSString stringWithFormat:@"%d;;%@;;%d;;%d;;%d", type, safeMessage, duration, position, fontSize];
+    return [self runTask:TASK_SHOW_TOAST payload:payload];
 }
 
 - (NSDictionary *)tap:(double)x y:(double)y
