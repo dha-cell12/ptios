@@ -27,7 +27,16 @@ JSExportAs(swipe,
 - (NSDictionary *)swipe:(double)x1 y1:(double)y1 x2:(double)x2 y2:(double)y2 duration:(double)duration);
 JSExportAs(runTask,
 - (NSDictionary *)runTask:(int)task payload:(NSString *)payload);
+JSExportAs(pickColor,
+- (NSDictionary *)pickColor:(double)x y:(double)y);
+JSExportAs(screenshotTo,
+- (NSDictionary *)screenshotTo:(NSString *)path);
+JSExportAs(batch,
+- (NSDictionary *)batch:(NSArray *)commands);
 - (NSDictionary *)getScreenSize;
+- (NSDictionary *)screenshot;
+- (NSDictionary *)frontMostAppId;
+- (NSDictionary *)orientation;
 - (NSDictionary *)runtimeInfo;
 
 @end
@@ -50,12 +59,14 @@ struct TLinkautoJSWatchdogProbeState {
     NSCondition *_sleepCondition;
     BOOL _running;
     NSString *_runId;
+    NSString *_bundlePath;
     JSContext *_context;
     TLinkautoJSSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkautoJSClearExecutionTimeLimitFn _clearExecutionTimeLimit;
     BOOL _watchdogAvailable;
 }
 - (BOOL)watchdogAvailable;
+- (NSString *)currentBundlePath;
 @end
 
 static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
@@ -122,6 +133,38 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
     return payload;
 }
 
+static NSString *TLinkautoJSSafeStringPart(NSArray *parts, NSUInteger index)
+{
+    if (index >= [parts count]) return @"";
+    id value = parts[index];
+    return [value isKindOfClass:[NSString class]] ? (NSString *)value : [value description];
+}
+
+static NSDictionary *TLinkautoJSResultByAdding(NSDictionary *result, NSDictionary *extra)
+{
+    NSMutableDictionary *out = [NSMutableDictionary dictionaryWithDictionary:result ?: @{}];
+    [out addEntriesFromDictionary:extra ?: @{}];
+    return out;
+}
+
+static NSString *TLinkautoJSSanitizeFileComponent(NSString *value)
+{
+    if (!value || [value length] == 0) return @"script";
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"].invertedSet;
+    NSArray *parts = [value componentsSeparatedByCharactersInSet:allowed];
+    NSString *joined = [parts componentsJoinedByString:@"_"];
+    return [joined length] > 0 ? joined : @"script";
+}
+
+static BOOL TLinkautoJSStringContainsAny(NSString *value, NSArray<NSString *> *needles)
+{
+    if (![value isKindOfClass:[NSString class]]) return YES;
+    for (NSString *needle in needles) {
+        if ([value rangeOfString:needle].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
 @implementation TLinkautoJSRuntime
 
 - (instancetype)init
@@ -156,6 +199,11 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
 - (BOOL)watchdogAvailable
 {
     return _watchdogAvailable;
+}
+
+- (NSString *)currentBundlePath
+{
+    return _bundlePath ?: @"";
 }
 
 - (void)requestStop
@@ -266,7 +314,6 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
 
 - (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath error:(NSError **)error
 {
-    (void)bundlePath;
     if (_running) {
         if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScript runtime is busy.\r\n"}];
         return NO;
@@ -279,6 +326,7 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
 
     _running = YES;
     _runId = [[NSUUID UUID] UUIDString];
+    _bundlePath = [bundlePath copy];
     _cancelState->aborted.store(false, std::memory_order_release);
 
     JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
@@ -337,6 +385,7 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
     }
 
     _context = nil;
+    _bundlePath = nil;
     _running = NO;
     return success;
 }
@@ -378,6 +427,132 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
     if (duration > 60000) duration = 60000;
     NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration];
     return [self runTask:TASK_NATIVE_SWIPE payload:payload];
+}
+
+- (NSDictionary *)pickColor:(double)x y:(double)y
+{
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
+        [self.runtime throwError:@"pickColor(x, y) requires finite numbers"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_COLOR_PICKER payload:[NSString stringWithFormat:@"%.0f;;%.0f", x, y]];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 4) {
+        return result;
+    }
+    return TLinkautoJSResultByAdding(result, @{
+        @"red": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"green": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
+        @"blue": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+    });
+}
+
+- (NSString *)defaultScreenshotPath
+{
+    NSString *dir = [self.runtime currentBundlePath];
+    if (!dir || [dir length] == 0) {
+        dir = @"/tmp";
+    }
+    NSString *name = [NSString stringWithFormat:@"screenshot_%@.png", TLinkautoJSSanitizeFileComponent(self.runtime.runId)];
+    return [dir stringByAppendingPathComponent:name];
+}
+
+- (NSDictionary *)screenshot
+{
+    return [self screenshotTo:[self defaultScreenshotPath]];
+}
+
+- (NSDictionary *)screenshotTo:(NSString *)path
+{
+    NSString *targetPath = ([path isKindOfClass:[NSString class]] && [path length] > 0) ? path : [self defaultScreenshotPath];
+    if (TLinkautoJSStringContainsAny(targetPath, @[@";;", @"\r", @"\n"])) {
+        [self.runtime throwError:@"screenshot path contains unsupported protocol delimiter"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_SCREENSHOT payload:[NSString stringWithFormat:@"1;;%@", targetPath]];
+    NSArray *parts = result[@"parts"];
+    NSString *resultPath = [parts count] >= 2 ? TLinkautoJSSafeStringPart(parts, 1) : targetPath;
+    return TLinkautoJSResultByAdding(result, @{ @"path": resultPath ?: @"" });
+}
+
+- (NSDictionary *)frontMostAppId
+{
+    NSDictionary *result = [self runTask:TASK_FRONTMOST_APP_ID payload:@""];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"bundleId": TLinkautoJSSafeStringPart(parts, 1) });
+}
+
+- (NSDictionary *)orientation
+{
+    NSDictionary *result = [self runTask:TASK_FRONTMOST_APP_ORIENTATION payload:@""];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"value": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+}
+
+- (NSDictionary *)batch:(NSArray *)commands
+{
+    if (![commands isKindOfClass:[NSArray class]]) {
+        [self.runtime throwError:@"batch(commands) requires an array"];
+        return @{ @"ok": @NO };
+    }
+    if ([commands count] > 256) {
+        [self.runtime throwError:@"batch(commands) accepts at most 256 commands"];
+        return @{ @"ok": @NO };
+    }
+
+    NSMutableArray<NSString *> *wireCommands = [NSMutableArray arrayWithCapacity:[commands count]];
+    for (id item in commands) {
+        if ([item isKindOfClass:[NSString class]]) {
+            NSString *raw = (NSString *)item;
+            if (TLinkautoJSStringContainsAny(raw, @[@"||", @"\r", @"\n"])) {
+                [self.runtime throwError:@"raw batch command contains unsupported protocol delimiter"];
+                return @{ @"ok": @NO };
+            }
+            if ([raw hasPrefix:@"62"] || [raw hasPrefix:@"63"] || [raw hasPrefix:@"64"]) {
+                [wireCommands addObject:raw];
+            } else {
+                [self.runtime throwError:@"raw batch command must start with allowed native task 62/63/64"];
+                return @{ @"ok": @NO };
+            }
+            continue;
+        }
+        if (![item isKindOfClass:[NSDictionary class]]) {
+            [self.runtime throwError:@"batch command must be an object or raw command string"];
+            return @{ @"ok": @NO };
+        }
+        NSDictionary *cmd = (NSDictionary *)item;
+        NSString *type = [[cmd[@"type"] description] lowercaseString];
+        if ([type isEqualToString:@"tap"]) {
+            double x = [cmd[@"x"] doubleValue];
+            double y = [cmd[@"y"] doubleValue];
+            double duration = cmd[@"duration"] ? [cmd[@"duration"] doubleValue] : 50.0;
+            if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(duration)) {
+                [self.runtime throwError:@"batch tap requires finite x/y/duration"];
+                return @{ @"ok": @NO };
+            }
+            [wireCommands addObject:[NSString stringWithFormat:@"62%.2f;;%.2f;;%.0f", x, y, duration]];
+        } else if ([type isEqualToString:@"swipe"]) {
+            double x1 = [cmd[@"x1"] doubleValue];
+            double y1 = [cmd[@"y1"] doubleValue];
+            double x2 = [cmd[@"x2"] doubleValue];
+            double y2 = [cmd[@"y2"] doubleValue];
+            double duration = cmd[@"duration"] ? [cmd[@"duration"] doubleValue] : 300.0;
+            if (!TLinkautoJSIsFiniteNumber(x1) || !TLinkautoJSIsFiniteNumber(y1) ||
+                !TLinkautoJSIsFiniteNumber(x2) || !TLinkautoJSIsFiniteNumber(y2) || !TLinkautoJSIsFiniteNumber(duration)) {
+                [self.runtime throwError:@"batch swipe requires finite coordinates/duration"];
+                return @{ @"ok": @NO };
+            }
+            [wireCommands addObject:[NSString stringWithFormat:@"63%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration]];
+        } else {
+            [self.runtime throwError:[NSString stringWithFormat:@"unsupported batch command type: %@", type ?: @""]];
+            return @{ @"ok": @NO };
+        }
+    }
+
+    NSString *payload = [wireCommands componentsJoinedByString:@"||"];
+    return [self runTask:TASK_NATIVE_BATCH payload:payload];
 }
 
 - (NSDictionary *)getScreenSize
