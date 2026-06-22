@@ -51,9 +51,14 @@ JSExportAs(framePickColors,
 - (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
 JSExportAs(findImageInFrame,
 - (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options);
+JSExportAs(ocrFrame,
+- (NSDictionary *)ocrFrame:(int)frameId options:(NSDictionary *)options);
+JSExportAs(ocr,
+- (NSDictionary *)ocr:(NSDictionary *)options);
 - (NSDictionary *)getScreenSize;
 - (NSDictionary *)screenshot;
 - (NSDictionary *)releaseAllFrames;
+- (NSDictionary *)ocrLanguages;
 - (NSDictionary *)frontMostAppId;
 - (NSDictionary *)orientation;
 - (NSDictionary *)runtimeInfo;
@@ -168,6 +173,20 @@ static NSString *TLinkautoJSSanitizeProtocolText(NSString *text, NSUInteger maxL
     return safe;
 }
 
+static NSString *TLinkautoJSBase64Encode(NSString *text)
+{
+    NSData *data = [(text ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
+    return [data base64EncodedStringWithOptions:0] ?: @"";
+}
+
+static NSString *TLinkautoJSBase64Decode(NSString *text)
+{
+    if (![text isKindOfClass:[NSString class]] || [text length] == 0) return @"";
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:text options:0];
+    if (!data) return @"";
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+}
+
 static NSString *TLinkautoJSSafeStringPart(NSArray *parts, NSUInteger index)
 {
     if (index >= [parts count]) return @"";
@@ -224,6 +243,16 @@ static NSString *TLinkautoJSStringOption(NSDictionary *options, NSString *key, N
 static BOOL TLinkautoJSValidToken(NSString *value)
 {
     return [value isKindOfClass:[NSString class]] && !TLinkautoJSStringContainsAny(value, @[@";;", @"||", @"@@", @",", @"\r", @"\n"]);
+}
+
+static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *result)
+{
+    NSArray *parts = result[@"parts"];
+    if ([result[@"ok"] boolValue] || [parts count] < 3) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"errorCode": TLinkautoJSSafeStringPart(parts, 1),
+        @"errorMessage": TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 2)),
+    });
 }
 
 @implementation TLinkautoJSRuntime
@@ -859,6 +888,87 @@ static BOOL TLinkautoJSValidToken(NSString *value)
         @"ageMs": @([TLinkautoJSSafeStringPart(parts, 8) longLongValue]),
         @"totalMs": @([TLinkautoJSSafeStringPart(parts, 9) doubleValue]),
     });
+}
+
+- (NSDictionary *)ocrLanguages
+{
+    NSDictionary *result = [self runTask:TASK_OCR_TESSERACT_REGION payload:@"check_langs"];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 3) return TLinkautoJSOCRResultByAddingDecodedError(result);
+    NSString *langsText = TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 2));
+    NSArray *langs = [langsText length] > 0 ? [langsText componentsSeparatedByString:@","] : @[];
+    return TLinkautoJSResultByAdding(result, @{
+        @"languages": langs,
+        @"value": langsText ?: @"",
+    });
+}
+
+- (NSDictionary *)ocrFrame:(int)frameId options:(NSDictionary *)options
+{
+    if (frameId <= 0) {
+        [self.runtime throwError:@"ocrFrame(frameId, options) requires a positive frame id"];
+        return @{ @"ok": @NO };
+    }
+
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
+        !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
+        [self.runtime throwError:@"ocrFrame options require finite x/y/width/height"];
+        return @{ @"ok": @NO };
+    }
+
+    NSString *lang = TLinkautoJSStringOption(options, @"lang", @"vie");
+    NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+    if (!TLinkautoJSValidToken(lang) || !TLinkautoJSValidToken(coord)) {
+        [self.runtime throwError:@"ocrFrame lang/coord contains unsupported protocol delimiter"];
+        return @{ @"ok": @NO };
+    }
+
+    int oem = TLinkautoJSIntOption(options, @"oem", 1);
+    int psm = TLinkautoJSIntOption(options, @"psm", 7);
+    int scaleUp = TLinkautoJSIntOption(options, @"scaleUp", 2);
+    int thresholdMode = TLinkautoJSIntOption(options, @"thresholdMode", 0);
+    int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+    NSString *whitelist = TLinkautoJSStringOption(options, @"whitelist", @"");
+
+    NSString *payload = [NSString stringWithFormat:@"%d;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%d;;%@;;%d;;%d;;%@;;%d",
+                         frameId, x, y, width, height, lang, oem, psm,
+                         TLinkautoJSBase64Encode(whitelist), scaleUp, thresholdMode, coord, maxAgeMs];
+    NSDictionary *result = [self runTask:TASK_OCR_TESSERACT_REGION payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue]) return TLinkautoJSOCRResultByAddingDecodedError(result);
+    if ([parts count] < 7) return result;
+
+    return TLinkautoJSResultByAdding(result, @{
+        @"text": TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 1)),
+        @"confidence": @([TLinkautoJSSafeStringPart(parts, 2) doubleValue]),
+        @"ageMs": @([TLinkautoJSSafeStringPart(parts, 3) longLongValue]),
+        @"ocrMs": @([TLinkautoJSSafeStringPart(parts, 4) doubleValue]),
+        @"preprocessMs": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 6) doubleValue]),
+    });
+}
+
+- (NSDictionary *)ocr:(NSDictionary *)options
+{
+    NSDictionary *frame = [self captureFrame:@{
+        @"gray": @1,
+        @"bgra": @0,
+        @"ttlMs": @(TLinkautoJSIntOption(options, @"ttlMs", 1000)),
+    }];
+    if (![frame[@"ok"] boolValue]) return frame;
+
+    int frameId = [frame[@"id"] intValue];
+    NSMutableDictionary *ocrOptions = [NSMutableDictionary dictionaryWithDictionary:[options isKindOfClass:[NSDictionary class]] ? options : @{}];
+    if (!ocrOptions[@"width"]) ocrOptions[@"width"] = frame[@"width"] ?: @0;
+    if (!ocrOptions[@"height"]) ocrOptions[@"height"] = frame[@"height"] ?: @0;
+
+    NSDictionary *ocrResult = [self ocrFrame:frameId options:ocrOptions];
+    [self releaseFrame:frameId];
+    return ocrResult;
 }
 
 - (NSDictionary *)getScreenSize

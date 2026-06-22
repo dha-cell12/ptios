@@ -35,6 +35,9 @@ Frame/image APIs use opaque numeric handles and avoid moving image bytes through
 - `device.framePickColor(frameId, x, y, { coord, maxAgeMs })` returns `{ ok, red, green, blue, ageMs }`
 - `device.framePickColors(frameId, points, { coord, maxAgeMs })` returns `{ ok, colors, ageMs }`
 - `device.findImageInFrame(frameId, imageId, options)` returns `{ ok, matched, x, y, width, height, centerX, centerY, score, ageMs }`
+- `device.ocrLanguages()` returns `{ ok, languages }` from `/var/mobile/Library/TLinkauto/tessdata`.
+- `device.ocrFrame(frameId, options)` runs Tesseract OCR on a captured frame region and returns `{ ok, text, confidence, ageMs, ocrMs, preprocessMs, totalMs }`.
+- `device.ocr(options)` captures a temporary gray frame, runs OCR, releases the frame, and returns the same OCR result.
 
 `findImageInFrame` options:
 
@@ -44,5 +47,18 @@ Frame/image APIs use opaque numeric handles and avoid moving image bytes through
 - `pixelSkip`, default `0`
 - `coord`, default `pixel`
 - `maxAgeMs`, default `1000`
+
+`ocrFrame` / `ocr` options:
+
+- `x`, `y`, `width`, `height`, defaults to full frame for `ocr`.
+- `lang`, default `vie`.
+- `oem`, default `1`.
+- `psm`, default `7`.
+- `whitelist`, optional string.
+- `scaleUp`, default `2`, clamped by native OCR implementation.
+- `thresholdMode`, default `0`; native supports `0` none, `1` Otsu, `2` adaptive.
+- `coord`, default `pixel`.
+- `maxAgeMs`, default `1000`.
+- `ttlMs`, only for `device.ocr`, default `1000`.
 
 `device.runTask(task, payload)` remains available for internal debugging, but public scripts should prefer typed APIs.

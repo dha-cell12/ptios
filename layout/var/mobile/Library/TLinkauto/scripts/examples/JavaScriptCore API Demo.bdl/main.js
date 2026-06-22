@@ -33,6 +33,10 @@ if (frame.ok) {
 
 var app = device.frontMostAppId();
 var orientation = device.orientation();
+var ocrLangs = device.ocrLanguages();
 console.log("front app", app);
 console.log("orientation", orientation);
+console.log("ocr languages", ocrLangs);
+device.toast("OCR langs: " + ((ocrLangs.languages || []).join(",") || "none"), { type: ocrLangs.ok ? 3 : 1, duration: 3, position: 0 });
+sleep(700);
 device.toast("JSC demo done: " + (app.bundleId || "unknown"), { type: 4, duration: 3, position: 0 });
