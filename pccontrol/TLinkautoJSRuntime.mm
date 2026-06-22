@@ -40,6 +40,10 @@ struct TLinkautoJSCancelState {
     std::atomic<bool> aborted;
 };
 
+struct TLinkautoJSWatchdogProbeState {
+    std::atomic<int> callbacks;
+};
+
 @interface TLinkautoJSRuntime ()
 {
     TLinkautoJSCancelState *_cancelState;
@@ -59,6 +63,49 @@ static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
     (void)ctx;
     TLinkautoJSCancelState *state = (TLinkautoJSCancelState *)opaque;
     return state && state->aborted.load(std::memory_order_acquire);
+}
+
+static bool TLinkautoJSWatchdogProbeCallback(JSContextRef ctx, void *opaque)
+{
+    (void)ctx;
+    TLinkautoJSWatchdogProbeState *state = (TLinkautoJSWatchdogProbeState *)opaque;
+    if (state) {
+        state->callbacks.fetch_add(1, std::memory_order_relaxed);
+    }
+    return false;
+}
+
+static BOOL TLinkautoJSRunWatchdogSelfTest(TLinkautoJSSetExecutionTimeLimitFn setLimit, TLinkautoJSClearExecutionTimeLimitFn clearLimit)
+{
+    if (!setLimit || !clearLimit) return NO;
+
+    TLinkautoJSWatchdogProbeState state;
+    state.callbacks.store(0, std::memory_order_relaxed);
+
+    JSGlobalContextRef ctx = JSGlobalContextCreate(NULL);
+    if (!ctx) return NO;
+
+    JSContextGroupRef group = JSContextGetGroup(ctx);
+    setLimit(group, 0.001, TLinkautoJSWatchdogProbeCallback, &state);
+
+    JSStringRef script = JSStringCreateWithUTF8CString("var end = Date.now() + 20; var x = 0; while (Date.now() < end) { x++; } x;");
+    JSValueRef exception = NULL;
+    JSEvaluateScript(ctx, script, NULL, NULL, 1, &exception);
+    JSStringRelease(script);
+    clearLimit(group);
+    JSGlobalContextRelease(ctx);
+
+    return exception == NULL && state.callbacks.load(std::memory_order_relaxed) > 0;
+}
+
+static BOOL TLinkautoJSWatchdogCapability(TLinkautoJSSetExecutionTimeLimitFn setLimit, TLinkautoJSClearExecutionTimeLimitFn clearLimit)
+{
+    static dispatch_once_t onceToken;
+    static BOOL capable = NO;
+    dispatch_once(&onceToken, ^{
+        capable = TLinkautoJSRunWatchdogSelfTest(setLimit, clearLimit);
+    });
+    return capable;
 }
 
 static BOOL TLinkautoJSIsFiniteNumber(double value)
@@ -86,7 +133,7 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
         _sleepCondition = [[NSCondition alloc] init];
         _setExecutionTimeLimit = (TLinkautoJSSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
         _clearExecutionTimeLimit = (TLinkautoJSClearExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupClearExecutionTimeLimit");
-        _watchdogAvailable = _setExecutionTimeLimit && _clearExecutionTimeLimit;
+        _watchdogAvailable = TLinkautoJSWatchdogCapability(_setExecutionTimeLimit, _clearExecutionTimeLimit);
     }
     return self;
 }
@@ -257,17 +304,28 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
         if (strongSelf) [strongSelf interruptibleSleepMs:ms];
     };
 
-    void (^logBlock)(NSString *) = ^(NSString *message) {
-        NSLog(@"com.tlinkauto.jsruntime[%@]: %@", weakSelf.runId ?: @"", message ?: @"");
+    void (^logBlock)(NSString *, NSString *) = ^(NSString *level, NSString *message) {
+        NSLog(@"com.tlinkauto.jsruntime[%@][%@]: %@", weakSelf.runId ?: @"", level ?: @"log", message ?: @"");
     };
-    context[@"console"] = @{
-        @"log": ^(JSValue *value) { logBlock([value toString]); },
-        @"info": ^(JSValue *value) { logBlock([value toString]); },
-        @"warn": ^(JSValue *value) { logBlock([NSString stringWithFormat:@"WARN: %@", [value toString]]); },
-        @"error": ^(JSValue *value) { logBlock([NSString stringWithFormat:@"ERROR: %@", [value toString]]); },
+    context[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
+        logBlock(level, message);
     };
+    NSString *consolePrelude =
+        @"(function(){\n"
+         "  function fmt(args){ return Array.prototype.map.call(args, function(v){\n"
+         "    try { if (typeof v === 'string') return v; return JSON.stringify(v); }\n"
+         "    catch(e) { return String(v); }\n"
+         "  }).join(' '); }\n"
+         "  this.console = {\n"
+         "    log: function(){ _tlinkautoLog('log', fmt(arguments)); },\n"
+         "    info: function(){ _tlinkautoLog('info', fmt(arguments)); },\n"
+         "    warn: function(){ _tlinkautoLog('warn', fmt(arguments)); },\n"
+         "    error: function(){ _tlinkautoLog('error', fmt(arguments)); }\n"
+         "  };\n"
+         "})();";
 
     [self installWatchdogForContext:context];
+    [context evaluateScript:consolePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://console-prelude.js"]];
     NSURL *sourceURL = [NSURL fileURLWithPath:scriptPath ?: @"script.js"];
     [context evaluateScript:script withSourceURL:sourceURL];
     [self clearWatchdogForContext:context];
@@ -346,8 +404,10 @@ static NSString *TLinkautoJSSanitizePayload(NSString *payload)
         @"apiVersion": @1,
         @"jit": @"unknown",
         @"watchdog": watchdog ? @"private-api" : @"unavailable",
+        @"watchdogIntervalMs": @(watchdog ? (int)(kTLinkautoJSWatchdogInterval * 1000.0) : 0),
         @"hardJsCancellation": @(watchdog),
         @"cooperativeCancellation": @YES,
+        @"runtimeLocation": @"in-process-prototype",
         @"runId": self.runtime.runId ?: @"",
     };
 }

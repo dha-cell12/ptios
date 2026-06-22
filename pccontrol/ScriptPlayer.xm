@@ -31,12 +31,48 @@ static BOOL tlinkautoLegacyPythonEnabled(void)
     if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH])
     {
         NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:SCRIPT_PLAY_CONFIG_PATH];
-        id value = config[@"legacy_python_enabled"];
+        id value = config[@"legacy_python_enabled"] ?: config[@"legacyPythonEnabled"];
         if ([value respondsToSelector:@selector(boolValue)]) {
             return [value boolValue];
         }
     }
     return YES;
+}
+
+static BOOL tlinkautoJavaScriptRuntimeEnabled(void)
+{
+    if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH])
+    {
+        NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:SCRIPT_PLAY_CONFIG_PATH];
+        id value = config[@"javascript_runtime_enabled"] ?: config[@"javascriptRuntimeEnabled"];
+        if ([value respondsToSelector:@selector(boolValue)]) {
+            return [value boolValue];
+        }
+    }
+    return YES;
+}
+
+static NSDictionary *tlinkautoReadManifest(NSString *bundlePath)
+{
+    NSString *manifestPath = [bundlePath stringByAppendingPathComponent:@"manifest.json"];
+    NSData *data = [NSData dataWithContentsOfFile:manifestPath];
+    if (!data) {
+        return nil;
+    }
+    NSError *err = nil;
+    id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
+    if (err || ![obj isKindOfClass:[NSDictionary class]]) {
+        return nil;
+    }
+    return (NSDictionary *)obj;
+}
+
+static NSString *tlinkautoStringValue(id value)
+{
+    if ([value isKindOfClass:[NSString class]]) {
+        return (NSString *)value;
+    }
+    return nil;
 }
 
 - (BOOL)isPlaying {
@@ -141,9 +177,16 @@ static BOOL tlinkautoLegacyPythonEnabled(void)
         return -1;
     }
     NSDictionary *scriptInfo = [NSDictionary dictionaryWithContentsOfFile:infoFilePath];
+    NSDictionary *manifest = tlinkautoReadManifest(scriptBundlePath);
     // get entry file extension
-    NSString *entryFileName = scriptInfo[@"Entry"];
+    NSString *entryFileName = tlinkautoStringValue(manifest[@"entry"]) ?: scriptInfo[@"Entry"];
+    if (!entryFileName || [entryFileName length] == 0) {
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Script entry is missing.\r\n"}];
+        return -1;
+    }
     NSString *fileExtension = [entryFileName pathExtension];
+    NSString *runtime = [tlinkautoStringValue(manifest[@"runtime"]) lowercaseString];
+    NSNumber *apiVersion = [manifest[@"apiVersion"] respondsToSelector:@selector(intValue)] ? manifest[@"apiVersion"] : nil;
 
     NSString *foregroundApp = scriptInfo[@"FrontApp"];
     // call different functions depending on file extension
@@ -177,7 +220,30 @@ static BOOL tlinkautoLegacyPythonEnabled(void)
         }); 
         return 0;
     }
-    else if ([fileExtension isEqualToString:@"py"])
+    else if ([runtime isEqualToString:@"javascriptcore"] || [fileExtension isEqualToString:@"js"])
+    {
+        if (!tlinkautoJavaScriptRuntimeEnabled()) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScriptCore runtime is disabled.\r\n"}];
+            }
+            [self clear];
+            return -1;
+        }
+        if (apiVersion && [apiVersion intValue] != 1) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript API version: %@\r\n", apiVersion]}];
+            }
+            [self clear];
+            return -1;
+        }
+        currentScriptType = 3;
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            NSError *err = nil;
+            [self playFromJSFile:entryFilePath foregroundApp:foregroundApp err:&err];
+        });
+        return 0;
+    }
+    else if ([runtime isEqualToString:@"python"] || [fileExtension isEqualToString:@"py"])
     {
         if (!tlinkautoLegacyPythonEnabled()) {
             if (error) {
@@ -193,16 +259,6 @@ static BOOL tlinkautoLegacyPythonEnabled(void)
         });
         return 0;
     }
-    else if ([fileExtension isEqualToString:@"js"])
-    {
-        currentScriptType = 3;
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            NSError *err = nil;
-            [self playFromJSFile:entryFilePath foregroundApp:foregroundApp err:&err];
-        });
-        return 0;
-    }
-
     if (error) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
     }
