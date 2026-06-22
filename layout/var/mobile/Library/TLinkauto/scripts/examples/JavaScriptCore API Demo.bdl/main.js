@@ -1,3 +1,5 @@
+var helper = require("./demo-helper");
+
 device.toast("JSC demo started", { type: 3, duration: 2, position: 0 });
 sleep(700);
 console.log("runtime", device.runtimeInfo());
@@ -50,7 +52,7 @@ device.toast("Front app: " + (app.bundleId || "unknown") + " pid " + (pid.pid ||
 sleep(700);
 device.toast("Bot path ready: " + !!paths.botPath, { type: paths.ok ? 3 : 1, duration: 2, position: 0 });
 sleep(700);
-device.toast("Device: " + (info.model || "unknown") + " battery " + Math.round(battery.level || 0) + "%", { type: info.ok ? 3 : 1, duration: 2, position: 0 });
+device.toast("Device: " + helper.describeDevice(info, battery), { type: info.ok ? 3 : 1, duration: 2, position: 0 });
 sleep(700);
 console.log("ocr languages", ocrLangs);
 device.toast("OCR langs: " + ((ocrLangs.languages || []).join(",") || "none"), { type: ocrLangs.ok ? 3 : 1, duration: 3, position: 0 });

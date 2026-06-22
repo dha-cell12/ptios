@@ -16,6 +16,7 @@ typedef void (*TLinkautoJSClearExecutionTimeLimitFn)(JSContextGroupRef group);
 
 static const double kTLinkautoJSWatchdogInterval = 0.1;
 static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
+static const unsigned long long kTLinkautoJSMaxBundleFileBytes = 512 * 1024;
 
 @class TLinkautoJSRuntime;
 
@@ -173,6 +174,7 @@ struct TLinkautoJSWatchdogProbeState {
 - (void)throwError:(NSString *)message;
 - (NSDictionary *)taskResultForPayload:(NSString *)payload;
 - (void)showDebugToast:(NSString *)message type:(int)type;
+- (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
 @end
 
 static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
@@ -556,6 +558,47 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     return @{ @"ok": @(ok), @"raw": raw, @"parts": parts ?: @[] };
 }
 
+- (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath
+{
+    NSString *bundlePath = [_bundlePath stringByStandardizingPath];
+    if (![bundlePath isKindOfClass:[NSString class]] || [bundlePath length] == 0) {
+        return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
+    }
+    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) {
+        return @{ @"ok": @NO, @"error": @"module path is required" };
+    }
+    if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) {
+        return @{ @"ok": @NO, @"error": @"module path must be bundle-relative" };
+    }
+
+    NSString *candidate = [[bundlePath stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
+    NSString *prefix = [bundlePath hasSuffix:@"/"] ? bundlePath : [bundlePath stringByAppendingString:@"/"];
+    if (![candidate isEqualToString:bundlePath] && ![candidate hasPrefix:prefix]) {
+        return @{ @"ok": @NO, @"error": @"module path escapes bundle" };
+    }
+
+    NSString *extension = [[candidate pathExtension] lowercaseString];
+    if (!([extension isEqualToString:@"js"] || [extension isEqualToString:@"json"])) {
+        return @{ @"ok": @NO, @"error": @"module extension must be .js or .json" };
+    }
+
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:candidate error:nil];
+    if (!attrs) {
+        return @{ @"ok": @NO, @"error": @"module file not found", @"path": candidate };
+    }
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkautoJSMaxBundleFileBytes) {
+        return @{ @"ok": @NO, @"error": @"module file is too large", @"path": candidate };
+    }
+
+    NSError *readError = nil;
+    NSString *source = [NSString stringWithContentsOfFile:candidate encoding:NSUTF8StringEncoding error:&readError];
+    if (!source) {
+        return @{ @"ok": @NO, @"error": readError.localizedDescription ?: @"failed to read module", @"path": candidate };
+    }
+    NSString *canonical = [candidate substringFromIndex:[prefix length]];
+    return @{ @"ok": @YES, @"path": candidate, @"id": canonical ?: relativePath, @"source": source };
+}
+
 - (void)installWatchdogForContext:(JSContext *)context
 {
     if (!_watchdogAvailable || !context) return;
@@ -619,6 +662,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     context[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
         logBlock(level, message);
     };
+    context[@"_tlinkautoLoadBundleText"] = ^NSDictionary *(NSString *relativePath) {
+        TLinkautoJSRuntime *strongSelf = weakSelf;
+        return strongSelf ? [strongSelf bundleTextForRelativePath:relativePath] : @{ @"ok": @NO, @"error": @"runtime missing" };
+    };
     NSString *consolePrelude =
         @"(function(){\n"
          "  function fmt(args){ return Array.prototype.map.call(args, function(v){\n"
@@ -632,9 +679,62 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
          "    error: function(){ _tlinkautoLog('error', fmt(arguments)); }\n"
          "  };\n"
          "})();";
+    NSString *modulePrelude =
+        @"(function(){\n"
+         "  var cache = Object.create(null);\n"
+         "  var stack = [];\n"
+         "  function dirname(path){ var i = path.lastIndexOf('/'); return i >= 0 ? path.slice(0, i) : ''; }\n"
+         "  function normalize(base, request){\n"
+         "    if (typeof request !== 'string' || !request) throw new Error('module path is required');\n"
+         "    var input = request;\n"
+         "    if (request.indexOf('./') === 0 || request.indexOf('../') === 0) {\n"
+         "      input = (base ? dirname(base) + '/' : '') + request;\n"
+         "    }\n"
+         "    var out = [];\n"
+         "    input.split('/').forEach(function(part){\n"
+         "      if (!part || part === '.') return;\n"
+         "      if (part === '..') out.pop(); else out.push(part);\n"
+         "    });\n"
+         "    return out.join('/');\n"
+         "  }\n"
+         "  function candidates(id){\n"
+         "    if (/\\.(js|json)$/.test(id)) return [id];\n"
+         "    return [id + '.js', id + '.json', id + '/index.js'];\n"
+         "  }\n"
+         "  function loadRecord(id){\n"
+         "    var last = '';\n"
+         "    var list = candidates(id);\n"
+         "    for (var i = 0; i < list.length; i++) {\n"
+         "      var rec = _tlinkautoLoadBundleText(list[i]);\n"
+         "      if (rec && rec.ok) return rec;\n"
+         "      last = rec && rec.error ? rec.error : 'module not found';\n"
+         "    }\n"
+         "    throw new Error('Cannot load module ' + id + ': ' + last);\n"
+         "  }\n"
+         "  this.require = function(request){\n"
+         "    var id = normalize(stack.length ? stack[stack.length - 1] : '', request);\n"
+         "    var rec = loadRecord(id);\n"
+         "    if (cache[rec.id]) return cache[rec.id].exports;\n"
+         "    var module = { id: rec.id, filename: rec.path, exports: {} };\n"
+         "    cache[rec.id] = module;\n"
+         "    if (/\\.json$/.test(rec.id)) { module.exports = JSON.parse(rec.source); return module.exports; }\n"
+         "    stack.push(rec.id);\n"
+         "    try {\n"
+         "      var fn = new Function('exports', 'module', 'require', 'device', 'sleep', rec.source + '\\n//# sourceURL=' + rec.path);\n"
+         "      fn(module.exports, module, this.require, device, sleep);\n"
+         "    } finally { stack.pop(); }\n"
+         "    return module.exports;\n"
+         "  };\n"
+         "  this.include = function(request){\n"
+         "    var id = normalize(stack.length ? stack[stack.length - 1] : '', request);\n"
+         "    var rec = loadRecord(id);\n"
+         "    return (0, eval)(rec.source + '\\n//# sourceURL=' + rec.path);\n"
+         "  };\n"
+         "})();";
 
     [self installWatchdogForContext:context];
     [context evaluateScript:consolePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://console-prelude.js"]];
+    [context evaluateScript:modulePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://module-prelude.js"]];
     NSURL *sourceURL = [NSURL fileURLWithPath:scriptPath ?: @"script.js"];
     [context evaluateScript:script withSourceURL:sourceURL];
     [self clearWatchdogForContext:context];

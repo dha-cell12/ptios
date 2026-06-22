@@ -11,6 +11,14 @@ Bundle manifest:
 }
 ```
 
+Bundle modules:
+
+- `require("./file")` loads `.js`, `.json`, or `index.js` files relative to the current module.
+- `include("./file")` evaluates a bundle-relative `.js` file without CommonJS exports.
+- Module paths are sandboxed to the current `.bdl` directory.
+- Absolute paths, `..` escapes, and files larger than 512 KiB are rejected.
+- Only `.js` and `.json` files are loadable through the module loader.
+
 Core APIs:
 
 - `device.toast(message, { type, duration, position, fontSize })` shows a visible on-screen toast.
