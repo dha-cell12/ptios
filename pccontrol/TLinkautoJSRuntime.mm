@@ -17,6 +17,7 @@ typedef void (*TLinkautoJSClearExecutionTimeLimitFn)(JSContextGroupRef group);
 static const double kTLinkautoJSWatchdogInterval = 0.1;
 static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
 static const unsigned long long kTLinkautoJSMaxBundleFileBytes = 512 * 1024;
+static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
 
 @class TLinkautoJSRuntime;
 
@@ -118,6 +119,18 @@ JSExportAs(setTimer,
 - (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script);
 JSExportAs(removeTimer,
 - (NSDictionary *)removeTimer:(NSString *)name);
+JSExportAs(readText,
+- (NSDictionary *)readText:(NSString *)path);
+JSExportAs(writeText,
+- (NSDictionary *)writeText:(NSString *)path text:(NSString *)text);
+JSExportAs(readJSON,
+- (NSDictionary *)readJSON:(NSString *)path);
+JSExportAs(writeJSON,
+- (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value);
+JSExportAs(fileExists,
+- (NSDictionary *)fileExists:(NSString *)path);
+JSExportAs(deleteFile,
+- (NSDictionary *)deleteFile:(NSString *)path);
 - (NSDictionary *)getScreenSize;
 - (NSDictionary *)screenshot;
 - (NSDictionary *)releaseAllFrames;
@@ -175,6 +188,7 @@ struct TLinkautoJSWatchdogProbeState {
 - (NSDictionary *)taskResultForPayload:(NSString *)payload;
 - (void)showDebugToast:(NSString *)message type:(int)type;
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
+- (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent;
 @end
 
 static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
@@ -597,6 +611,43 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     }
     NSString *canonical = [candidate substringFromIndex:[prefix length]];
     return @{ @"ok": @YES, @"path": candidate, @"id": canonical ?: relativePath, @"source": source };
+}
+
+- (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent
+{
+    NSString *bundlePath = [_bundlePath stringByStandardizingPath];
+    if (![bundlePath isKindOfClass:[NSString class]] || [bundlePath length] == 0) {
+        return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
+    }
+    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) {
+        return @{ @"ok": @NO, @"error": @"path is required" };
+    }
+    if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) {
+        return @{ @"ok": @NO, @"error": @"path must be bundle-relative" };
+    }
+
+    NSString *candidate = [[bundlePath stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
+    NSString *prefix = [bundlePath hasSuffix:@"/"] ? bundlePath : [bundlePath stringByAppendingString:@"/"];
+    if (![candidate hasPrefix:prefix]) {
+        return @{ @"ok": @NO, @"error": @"path escapes bundle" };
+    }
+
+    NSString *name = [candidate lastPathComponent];
+    if ([name isEqualToString:@"manifest.json"] || [name isEqualToString:@"info.plist"]) {
+        return @{ @"ok": @NO, @"error": @"refusing to modify bundle metadata" };
+    }
+    if ([[[candidate pathExtension] lowercaseString] isEqualToString:@"js"]) {
+        return @{ @"ok": @NO, @"error": @"refusing to modify JavaScript source files" };
+    }
+
+    if (createParent) {
+        NSString *dir = [candidate stringByDeletingLastPathComponent];
+        NSError *mkdirError = nil;
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&mkdirError]) {
+            return @{ @"ok": @NO, @"error": mkdirError.localizedDescription ?: @"failed to create parent directory", @"path": candidate };
+        }
+    }
+    return @{ @"ok": @YES, @"path": candidate };
 }
 
 - (void)installWatchdogForContext:(JSContext *)context
@@ -1731,6 +1782,87 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         return @{ @"ok": @NO };
     }
     return [self runTask:TASK_REMOVE_TIMER payload:name];
+}
+
+- (NSDictionary *)readText:(NSString *)path
+{
+    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    NSString *resolvedPath = resolved[@"path"];
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:resolvedPath error:nil];
+    if (!attrs) return @{ @"ok": @NO, @"error": @"file not found", @"path": resolvedPath ?: @"" };
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkautoJSMaxStorageFileBytes) {
+        return @{ @"ok": @NO, @"error": @"file is too large", @"path": resolvedPath ?: @"" };
+    }
+    NSError *error = nil;
+    NSString *text = [NSString stringWithContentsOfFile:resolvedPath encoding:NSUTF8StringEncoding error:&error];
+    if (!text) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to read file", @"path": resolvedPath ?: @"" };
+    return @{ @"ok": @YES, @"path": resolvedPath ?: @"", @"text": text };
+}
+
+- (NSDictionary *)writeText:(NSString *)path text:(NSString *)text
+{
+    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:YES];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    NSString *safeText = [text isKindOfClass:[NSString class]] ? text : [text description];
+    safeText = safeText ?: @"";
+    NSData *data = [safeText dataUsingEncoding:NSUTF8StringEncoding];
+    if ([data length] > kTLinkautoJSMaxStorageFileBytes) {
+        return @{ @"ok": @NO, @"error": @"text is too large", @"path": resolved[@"path"] ?: @"" };
+    }
+    NSError *error = nil;
+    BOOL ok = [safeText writeToFile:resolved[@"path"] atomically:YES encoding:NSUTF8StringEncoding error:&error];
+    if (!ok) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to write file", @"path": resolved[@"path"] ?: @"" };
+    return @{ @"ok": @YES, @"path": resolved[@"path"] ?: @"", @"bytes": @([data length]) };
+}
+
+- (NSDictionary *)readJSON:(NSString *)path
+{
+    NSDictionary *textResult = [self readText:path];
+    if (![textResult[@"ok"] boolValue]) return textResult;
+    NSData *data = [textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
+    NSError *error = nil;
+    id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&error] : nil;
+    if (!value) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" };
+    return @{ @"ok": @YES, @"path": textResult[@"path"] ?: @"", @"value": value };
+}
+
+- (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value
+{
+    id object = [value isKindOfClass:[JSValue class]] ? [value toObject] : value;
+    if (!object || ![NSJSONSerialization isValidJSONObject:object]) {
+        [self.runtime throwError:@"writeJSON(path, value) requires a JSON-serializable object or array"];
+        return @{ @"ok": @NO };
+    }
+    NSError *error = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:&error];
+    if (!data) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to encode JSON" };
+    if ([data length] > kTLinkautoJSMaxStorageFileBytes) return @{ @"ok": @NO, @"error": @"JSON is too large" };
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+    return [self writeText:path text:text];
+}
+
+- (NSDictionary *)fileExists:(NSString *)path
+{
+    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    BOOL isDir = NO;
+    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:resolved[@"path"] isDirectory:&isDir];
+    return @{ @"ok": @YES, @"path": resolved[@"path"] ?: @"", @"exists": @(exists), @"directory": @(exists && isDir) };
+}
+
+- (NSDictionary *)deleteFile:(NSString *)path
+{
+    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    NSString *resolvedPath = resolved[@"path"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:resolvedPath]) {
+        return @{ @"ok": @YES, @"path": resolvedPath ?: @"", @"deleted": @NO };
+    }
+    NSError *error = nil;
+    BOOL ok = [[NSFileManager defaultManager] removeItemAtPath:resolvedPath error:&error];
+    if (!ok) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to delete file", @"path": resolvedPath ?: @"" };
+    return @{ @"ok": @YES, @"path": resolvedPath ?: @"", @"deleted": @YES };
 }
 
 - (NSDictionary *)getScreenSize

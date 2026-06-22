@@ -19,6 +19,17 @@ Bundle modules:
 - Absolute paths, `..` escapes, and files larger than 512 KiB are rejected.
 - Only `.js` and `.json` files are loadable through the module loader.
 
+Bundle storage APIs:
+
+- `device.readText(path)` returns `{ ok, path, text }`.
+- `device.writeText(path, text)` writes UTF-8 text and returns `{ ok, path, bytes }`.
+- `device.readJSON(path)` returns `{ ok, path, value }`.
+- `device.writeJSON(path, value)` writes a JSON object or array.
+- `device.fileExists(path)` returns `{ ok, path, exists, directory }`.
+- `device.deleteFile(path)` deletes a bundle-relative file.
+- Storage paths are sandboxed to the current `.bdl` directory.
+- Writes reject `manifest.json`, `info.plist`, `.js` source files, path escapes, and files larger than 512 KiB.
+
 Core APIs:
 
 - `device.toast(message, { type, duration, position, fontSize })` shows a visible on-screen toast.
