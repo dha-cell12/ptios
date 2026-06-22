@@ -18,6 +18,7 @@ static const double kTLinkautoJSWatchdogInterval = 0.1;
 static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
 static const unsigned long long kTLinkautoJSMaxBundleFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
+static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
 
 @class TLinkautoJSRuntime;
 
@@ -177,6 +178,8 @@ struct TLinkautoJSWatchdogProbeState {
     BOOL _running;
     NSString *_runId;
     NSString *_bundlePath;
+    NSString *_consoleLogPath;
+    NSString *_consoleLatestLogPath;
     JSContext *_context;
     TLinkautoJSSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkautoJSClearExecutionTimeLimitFn _clearExecutionTimeLimit;
@@ -189,6 +192,9 @@ struct TLinkautoJSWatchdogProbeState {
 - (void)showDebugToast:(NSString *)message type:(int)type;
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
 - (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent;
+- (NSString *)currentConsoleLogPath;
+- (NSString *)currentConsoleLatestLogPath;
+- (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
 @end
 
 static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
@@ -475,6 +481,59 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     return _bundlePath ?: @"";
 }
 
+- (NSString *)currentConsoleLogPath
+{
+    return _consoleLogPath ?: @"";
+}
+
+- (NSString *)currentConsoleLatestLogPath
+{
+    return _consoleLatestLogPath ?: @"";
+}
+
+- (void)prepareConsoleLogFiles
+{
+    if (![_bundlePath isKindOfClass:[NSString class]] || [_bundlePath length] == 0 || ![_runId isKindOfClass:[NSString class]]) return;
+    NSString *dir = [_bundlePath stringByAppendingPathComponent:@"_logs"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    _consoleLogPath = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.log", TLinkautoJSSanitizeFileComponent(_runId)]];
+    _consoleLatestLogPath = [dir stringByAppendingPathComponent:@"latest.log"];
+    NSString *header = [NSString stringWithFormat:@"[%@] run %@ started\n", [[NSDate date] description], _runId ?: @""];
+    [header writeToFile:_consoleLogPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [header writeToFile:_consoleLatestLogPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (void)appendLine:(NSString *)line toConsolePath:(NSString *)path
+{
+    if (![path isKindOfClass:[NSString class]] || [path length] == 0) return;
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkautoJSMaxConsoleLogBytes) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    }
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data) return;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        [data writeToFile:path atomically:YES];
+        return;
+    }
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) return;
+    [handle seekToEndOfFile];
+    [handle writeData:data];
+    [handle closeFile];
+}
+
+- (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message
+{
+    NSString *safeLevel = TLinkautoJSSanitizeFileComponent(level ?: @"log");
+    NSString *safeMessage = [message isKindOfClass:[NSString class]] ? message : [message description];
+    safeMessage = safeMessage ?: @"";
+    safeMessage = [safeMessage stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"];
+    NSString *line = [NSString stringWithFormat:@"[%@][%@][%@] %@\n", [[NSDate date] description], _runId ?: @"", safeLevel, safeMessage];
+    [self appendLine:line toConsolePath:_consoleLogPath];
+    [self appendLine:line toConsolePath:_consoleLatestLogPath];
+}
+
 - (void)requestStop
 {
     _cancelState->aborted.store(true, std::memory_order_release);
@@ -681,6 +740,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _running = YES;
     _runId = [[NSUUID UUID] UUIDString];
     _bundlePath = [bundlePath copy];
+    [self prepareConsoleLogFiles];
     _cancelState->aborted.store(false, std::memory_order_release);
 
     JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
@@ -709,6 +769,8 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
     void (^logBlock)(NSString *, NSString *) = ^(NSString *level, NSString *message) {
         NSLog(@"com.tlinkauto.jsruntime[%@][%@]: %@", weakSelf.runId ?: @"", level ?: @"log", message ?: @"");
+        TLinkautoJSRuntime *strongSelf = weakSelf;
+        if (strongSelf) [strongSelf appendConsoleLogWithLevel:level message:message];
     };
     context[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
         logBlock(level, message);
@@ -798,6 +860,8 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
     _context = nil;
     _bundlePath = nil;
+    _consoleLogPath = nil;
+    _consoleLatestLogPath = nil;
     _running = NO;
     return success;
 }
@@ -1894,6 +1958,8 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"cooperativeCancellation": @YES,
         @"runtimeLocation": @"in-process-prototype",
         @"runId": self.runtime.runId ?: @"",
+        @"consoleLogPath": [self.runtime currentConsoleLogPath] ?: @"",
+        @"consoleLatestLogPath": [self.runtime currentConsoleLatestLogPath] ?: @"",
     };
 }
 

@@ -2,7 +2,8 @@ var helper = require("./demo-helper");
 
 device.toast("JSC demo started", { type: 3, duration: 2, position: 0 });
 sleep(700);
-console.log("runtime", device.runtimeInfo());
+var runtime = device.runtimeInfo();
+console.log("runtime", runtime);
 
 var size = device.getScreenSize();
 console.log("screen", size);
@@ -44,7 +45,7 @@ var battery = device.batteryInfo();
 var statePath = "_data/demo-state.json";
 var previousState = device.fileExists(statePath).exists ? device.readJSON(statePath) : { ok: false };
 var runCount = previousState.ok && previousState.value ? (previousState.value.runCount || 0) + 1 : 1;
-var savedState = device.writeJSON(statePath, { runCount: runCount, lastRunId: device.runtimeInfo().runId });
+var savedState = device.writeJSON(statePath, { runCount: runCount, lastRunId: runtime.runId });
 console.log("front app", app);
 console.log("orientation", orientation);
 console.log("front pid", pid);
@@ -63,5 +64,8 @@ device.toast("Storage run count: " + runCount, { type: savedState.ok ? 3 : 1, du
 sleep(700);
 console.log("ocr languages", ocrLangs);
 device.toast("OCR langs: " + ((ocrLangs.languages || []).join(",") || "none"), { type: ocrLangs.ok ? 3 : 1, duration: 3, position: 0 });
+sleep(700);
+device.toast("Log: _logs/latest.log", { type: 3, duration: 2, position: 0 });
+console.log("console log path", runtime.consoleLatestLogPath);
 sleep(700);
 device.toast("JSC demo done: " + (app.bundleId || "unknown"), { type: 4, duration: 3, position: 0 });

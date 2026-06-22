@@ -30,6 +30,14 @@ Bundle storage APIs:
 - Storage paths are sandboxed to the current `.bdl` directory.
 - Writes reject `manifest.json`, `info.plist`, `.js` source files, path escapes, and files larger than 512 KiB.
 
+Console file logs:
+
+- `console.log/info/warn/error` writes to system `NSLog` and bundle files.
+- Current run log: `_logs/<runId>.log` inside the `.bdl` bundle.
+- Latest run log: `_logs/latest.log` inside the `.bdl` bundle.
+- `device.runtimeInfo()` includes `consoleLogPath` and `consoleLatestLogPath`.
+- Console log files rotate by deletion when they exceed 512 KiB.
+
 Core APIs:
 
 - `device.toast(message, { type, duration, position, fontSize })` shows a visible on-screen toast.
