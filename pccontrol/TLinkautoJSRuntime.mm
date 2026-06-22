@@ -25,6 +25,10 @@ JSExportAs(tap,
 - (NSDictionary *)tap:(double)x y:(double)y);
 JSExportAs(swipe,
 - (NSDictionary *)swipe:(double)x1 y1:(double)y1 x2:(double)x2 y2:(double)y2 duration:(double)duration);
+JSExportAs(longPress,
+- (NSDictionary *)longPress:(double)x y:(double)y duration:(double)duration);
+JSExportAs(gesture,
+- (NSDictionary *)gesture:(NSArray *)points options:(NSDictionary *)options);
 JSExportAs(runTask,
 - (NSDictionary *)runTask:(int)task payload:(NSString *)payload);
 JSExportAs(toast,
@@ -368,6 +372,42 @@ static int TLinkautoJSTouchIndicatorAction(NSString *action)
     return -1;
 }
 
+static BOOL TLinkautoJSEncodePoint(id point, double *outX, double *outY)
+{
+    if ([point isKindOfClass:[NSArray class]] && [point count] >= 2) {
+        NSArray *arrayPoint = (NSArray *)point;
+        double x = [arrayPoint[0] doubleValue];
+        double y = [arrayPoint[1] doubleValue];
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return NO;
+        if (outX) *outX = x;
+        if (outY) *outY = y;
+        return YES;
+    }
+    if ([point isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dictPoint = (NSDictionary *)point;
+        double x = [dictPoint[@"x"] doubleValue];
+        double y = [dictPoint[@"y"] doubleValue];
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return NO;
+        if (outX) *outX = x;
+        if (outY) *outY = y;
+        return YES;
+    }
+    return NO;
+}
+
+static NSString *TLinkautoJSEncodeGesturePoints(NSArray *points)
+{
+    if (![points isKindOfClass:[NSArray class]] || [points count] < 2 || [points count] > 512) return nil;
+    NSMutableArray<NSString *> *encoded = [NSMutableArray arrayWithCapacity:[points count]];
+    for (id point in points) {
+        double x = 0;
+        double y = 0;
+        if (!TLinkautoJSEncodePoint(point, &x, &y)) return nil;
+        [encoded addObject:[NSString stringWithFormat:@"%.2f,%.2f", x, y]];
+    }
+    return [encoded componentsJoinedByString:@"|"];
+}
+
 static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *result)
 {
     NSArray *parts = result[@"parts"];
@@ -667,6 +707,33 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     return [self runTask:TASK_NATIVE_SWIPE payload:payload];
 }
 
+- (NSDictionary *)longPress:(double)x y:(double)y duration:(double)duration
+{
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(duration)) {
+        [self.runtime throwError:@"longPress(x, y, duration) requires finite numbers"];
+        return @{ @"ok": @NO };
+    }
+    if (duration < 0) duration = 0;
+    if (duration > 60000) duration = 60000;
+    NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.0f", x, y, duration];
+    return [self runTask:TASK_NATIVE_TAP payload:payload];
+}
+
+- (NSDictionary *)gesture:(NSArray *)points options:(NSDictionary *)options
+{
+    NSString *encoded = TLinkautoJSEncodeGesturePoints(points);
+    if (!encoded) {
+        [self.runtime throwError:@"gesture(points, options) requires 2-512 points as [x,y] arrays or {x,y} objects"];
+        return @{ @"ok": @NO };
+    }
+    int finger = TLinkautoJSIntOption(options, @"finger", 0);
+    int duration = TLinkautoJSIntOption(options, @"duration", TLinkautoJSIntOption(options, @"durationMs", 300));
+    if (duration < 0) duration = 0;
+    if (duration > 60000) duration = 60000;
+    NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%@", finger, duration, encoded];
+    return [self runTask:TASK_NATIVE_GESTURE payload:payload];
+}
+
 - (NSDictionary *)pickColor:(double)x y:(double)y
 {
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
@@ -783,6 +850,18 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
                 return @{ @"ok": @NO };
             }
             [wireCommands addObject:[NSString stringWithFormat:@"63%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration]];
+        } else if ([type isEqualToString:@"gesture"]) {
+            NSArray *points = [cmd[@"points"] isKindOfClass:[NSArray class]] ? cmd[@"points"] : nil;
+            NSString *encoded = TLinkautoJSEncodeGesturePoints(points);
+            if (!encoded) {
+                [self.runtime throwError:@"batch gesture requires 2-512 valid points"];
+                return @{ @"ok": @NO };
+            }
+            int finger = cmd[@"finger"] ? [cmd[@"finger"] intValue] : 0;
+            int duration = cmd[@"duration"] ? [cmd[@"duration"] intValue] : (cmd[@"durationMs"] ? [cmd[@"durationMs"] intValue] : 300);
+            if (duration < 0) duration = 0;
+            if (duration > 60000) duration = 60000;
+            [wireCommands addObject:[NSString stringWithFormat:@"64%d;;%d;;%@", finger, duration, encoded]];
         } else {
             [self.runtime throwError:[NSString stringWithFormat:@"unsupported batch command type: %@", type ?: @""]];
             return @{ @"ok": @NO };

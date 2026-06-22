@@ -15,7 +15,9 @@ Core APIs:
 
 - `device.toast(message, { type, duration, position, fontSize })` shows a visible on-screen toast.
 - `device.tap(x, y)`
+- `device.longPress(x, y, durationMs)`
 - `device.swipe(x1, y1, x2, y2, durationMs)`
+- `device.gesture(points, { finger, duration })`, where points are `[x, y]` arrays or `{ x, y }` objects.
 - `device.pickColor(x, y)` returns `{ ok, red, green, blue }`
 - `device.screenshot()` returns `{ ok, path }`
 - `device.screenshotTo(path)` returns `{ ok, path }`
@@ -54,6 +56,7 @@ Core APIs:
 - `device.listAutoLaunch()` returns `{ ok, items }`.
 - `device.setTimer(name, interval, repeat, script)` schedules a script timer.
 - `device.removeTimer(name)` removes a scheduled script timer.
+- `device.batch(commands)` supports typed `tap`, `swipe`, and `gesture` commands, plus allowlisted raw native commands `62`, `63`, `64`.
 - `device.getScreenSize()` returns `{ width, height, scale, orientation, coordinateSpace }`
 - `device.runtimeInfo()` returns runtime capabilities.
 
