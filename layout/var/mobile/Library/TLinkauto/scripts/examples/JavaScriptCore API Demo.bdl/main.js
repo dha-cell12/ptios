@@ -33,9 +33,15 @@ if (frame.ok) {
 
 var app = device.frontMostAppId();
 var orientation = device.orientation();
+var pid = device.frontMostPid();
+var appInfo = device.appInfo(app.bundleId || "com.apple.springboard");
 var ocrLangs = device.ocrLanguages();
 console.log("front app", app);
 console.log("orientation", orientation);
+console.log("front pid", pid);
+console.log("app info", appInfo);
+device.toast("Front app: " + (app.bundleId || "unknown") + " pid " + (pid.pid || 0), { type: 3, duration: 2, position: 0 });
+sleep(700);
 console.log("ocr languages", ocrLangs);
 device.toast("OCR langs: " + ((ocrLangs.languages || []).join(",") || "none"), { type: ocrLangs.ok ? 3 : 1, duration: 3, position: 0 });
 sleep(700);

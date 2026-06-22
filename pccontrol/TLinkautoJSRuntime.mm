@@ -55,10 +55,39 @@ JSExportAs(ocrFrame,
 - (NSDictionary *)ocrFrame:(int)frameId options:(NSDictionary *)options);
 JSExportAs(ocr,
 - (NSDictionary *)ocr:(NSDictionary *)options);
+JSExportAs(openApp,
+- (NSDictionary *)openApp:(NSString *)bundleId);
+JSExportAs(killApp,
+- (NSDictionary *)killApp:(NSString *)bundleId);
+JSExportAs(appState,
+- (NSDictionary *)appState:(NSString *)bundleId);
+JSExportAs(appInfo,
+- (NSDictionary *)appInfo:(NSString *)bundleId);
+JSExportAs(appPid,
+- (NSDictionary *)appPid:(NSString *)bundleId);
+JSExportAs(appPaths,
+- (NSDictionary *)appPaths:(NSString *)bundleId);
+JSExportAs(listBundles,
+- (NSDictionary *)listBundles:(BOOL)withInfo);
+JSExportAs(openUrl,
+- (NSDictionary *)openUrl:(NSString *)url);
+JSExportAs(setWifi,
+- (NSDictionary *)setWifi:(BOOL)enabled);
+JSExportAs(setBluetooth,
+- (NSDictionary *)setBluetooth:(BOOL)enabled);
+JSExportAs(setAirplaneMode,
+- (NSDictionary *)setAirplaneMode:(BOOL)enabled);
+JSExportAs(setCellularData,
+- (NSDictionary *)setCellularData:(BOOL)enabled);
 - (NSDictionary *)getScreenSize;
 - (NSDictionary *)screenshot;
 - (NSDictionary *)releaseAllFrames;
 - (NSDictionary *)ocrLanguages;
+- (NSDictionary *)frontMostPid;
+- (NSDictionary *)wifi;
+- (NSDictionary *)bluetooth;
+- (NSDictionary *)airplaneMode;
+- (NSDictionary *)cellularData;
 - (NSDictionary *)frontMostAppId;
 - (NSDictionary *)orientation;
 - (NSDictionary *)runtimeInfo;
@@ -187,6 +216,14 @@ static NSString *TLinkautoJSBase64Decode(NSString *text)
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
 }
 
+static id TLinkautoJSJSONFromBase64(NSString *text)
+{
+    NSString *json = TLinkautoJSBase64Decode(text);
+    NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data) return nil;
+    return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+}
+
 static NSString *TLinkautoJSSafeStringPart(NSArray *parts, NSUInteger index)
 {
     if (index >= [parts count]) return @"";
@@ -243,6 +280,19 @@ static NSString *TLinkautoJSStringOption(NSDictionary *options, NSString *key, N
 static BOOL TLinkautoJSValidToken(NSString *value)
 {
     return [value isKindOfClass:[NSString class]] && !TLinkautoJSStringContainsAny(value, @[@";;", @"||", @"@@", @",", @"\r", @"\n"]);
+}
+
+static BOOL TLinkautoJSValidProtocolString(NSString *value)
+{
+    return [value isKindOfClass:[NSString class]] && [value length] > 0 && !TLinkautoJSStringContainsAny(value, @[@";;", @"\r", @"\n"]);
+}
+
+static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *key)
+{
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    BOOL enabled = [TLinkautoJSSafeStringPart(parts, 1) intValue] != 0;
+    return TLinkautoJSResultByAdding(result, @{ (key ?: @"enabled"): @(enabled), @"value": @(enabled) });
 }
 
 static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *result)
@@ -969,6 +1019,163 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSDictionary *ocrResult = [self ocrFrame:frameId options:ocrOptions];
     [self releaseFrame:frameId];
     return ocrResult;
+}
+
+- (NSDictionary *)openApp:(NSString *)bundleId
+{
+    if (!TLinkautoJSValidProtocolString(bundleId)) {
+        [self.runtime throwError:@"openApp(bundleId) requires a valid bundle id"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_PROCESS_BRING_FOREGROUND payload:bundleId];
+}
+
+- (NSDictionary *)killApp:(NSString *)bundleId
+{
+    if (!TLinkautoJSValidProtocolString(bundleId)) {
+        [self.runtime throwError:@"killApp(bundleId) requires a valid bundle id"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_APP_KILL payload:bundleId];
+}
+
+- (NSDictionary *)appState:(NSString *)bundleId
+{
+    if (!TLinkautoJSValidProtocolString(bundleId)) {
+        [self.runtime throwError:@"appState(bundleId) requires a valid bundle id"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_APP_STATE payload:bundleId];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    int state = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    return TLinkautoJSResultByAdding(result, @{
+        @"state": @(state),
+        @"running": @(state > 0),
+    });
+}
+
+- (NSDictionary *)appInfo:(NSString *)bundleId
+{
+    if (!TLinkautoJSValidProtocolString(bundleId)) {
+        [self.runtime throwError:@"appInfo(bundleId) requires a valid bundle id"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_APP_INFO payload:bundleId];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 6) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"bundleId": TLinkautoJSSafeStringPart(parts, 1),
+        @"name": TLinkautoJSSafeStringPart(parts, 2),
+        @"shortVersion": TLinkautoJSSafeStringPart(parts, 3),
+        @"bundleVersion": TLinkautoJSSafeStringPart(parts, 4),
+        @"state": @([TLinkautoJSSafeStringPart(parts, 5) intValue]),
+    });
+}
+
+- (NSDictionary *)appPid:(NSString *)bundleId
+{
+    if (!TLinkautoJSValidProtocolString(bundleId)) {
+        [self.runtime throwError:@"appPid(bundleId) requires a valid bundle id"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_APP_PID payload:bundleId];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"pid": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+}
+
+- (NSDictionary *)frontMostPid
+{
+    NSDictionary *result = [self runTask:TASK_FRONTMOST_PID payload:@""];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"pid": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+}
+
+- (NSDictionary *)appPaths:(NSString *)bundleId
+{
+    if (!TLinkautoJSValidProtocolString(bundleId)) {
+        [self.runtime throwError:@"appPaths(bundleId) requires a valid bundle id"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_APP_PATHS payload:bundleId];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue]) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"bundlePath": [parts count] > 1 ? TLinkautoJSSafeStringPart(parts, 1) : @"",
+        @"dataPath": [parts count] > 2 ? TLinkautoJSSafeStringPart(parts, 2) : @"",
+    });
+}
+
+- (NSDictionary *)listBundles:(BOOL)withInfo
+{
+    NSDictionary *result = [self runTask:TASK_LIST_BUNDLES payload:(withInfo ? @"1" : @"0")];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    if (withInfo) {
+        id obj = TLinkautoJSJSONFromBase64(TLinkautoJSSafeStringPart(parts, 1));
+        NSArray *items = [obj isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)obj)[@"items"] : @[];
+        return TLinkautoJSResultByAdding(result, @{ @"items": [items isKindOfClass:[NSArray class]] ? items : @[] });
+    }
+    NSString *raw = TLinkautoJSSafeStringPart(parts, 1);
+    NSArray *bundleIds = [raw length] > 0 ? [raw componentsSeparatedByString:@",,"] : @[];
+    return TLinkautoJSResultByAdding(result, @{ @"bundleIds": bundleIds });
+}
+
+- (NSDictionary *)openUrl:(NSString *)url
+{
+    if (!TLinkautoJSValidProtocolString(url)) {
+        [self.runtime throwError:@"openUrl(url) requires a valid URL string"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_OPEN_URL payload:url];
+}
+
+- (NSDictionary *)connectivityTask:(int)task enabledKey:(NSString *)enabledKey value:(NSNumber *)value
+{
+    NSString *payload = value ? [NSString stringWithFormat:@"1;;%d", [value boolValue] ? 1 : 0] : @"0";
+    return TLinkautoJSStateResult([self runTask:task payload:payload], enabledKey ?: @"enabled");
+}
+
+- (NSDictionary *)wifi
+{
+    return [self connectivityTask:TASK_WIFI enabledKey:@"enabled" value:nil];
+}
+
+- (NSDictionary *)setWifi:(BOOL)enabled
+{
+    return [self connectivityTask:TASK_WIFI enabledKey:@"enabled" value:@(enabled)];
+}
+
+- (NSDictionary *)bluetooth
+{
+    return [self connectivityTask:TASK_BLUETOOTH enabledKey:@"enabled" value:nil];
+}
+
+- (NSDictionary *)setBluetooth:(BOOL)enabled
+{
+    return [self connectivityTask:TASK_BLUETOOTH enabledKey:@"enabled" value:@(enabled)];
+}
+
+- (NSDictionary *)airplaneMode
+{
+    return [self connectivityTask:TASK_AIRPLANE enabledKey:@"enabled" value:nil];
+}
+
+- (NSDictionary *)setAirplaneMode:(BOOL)enabled
+{
+    return [self connectivityTask:TASK_AIRPLANE enabledKey:@"enabled" value:@(enabled)];
+}
+
+- (NSDictionary *)cellularData
+{
+    return [self connectivityTask:TASK_CELLULAR_DATA enabledKey:@"enabled" value:nil];
+}
+
+- (NSDictionary *)setCellularData:(BOOL)enabled
+{
+    return [self connectivityTask:TASK_CELLULAR_DATA enabledKey:@"enabled" value:@(enabled)];
 }
 
 - (NSDictionary *)getScreenSize

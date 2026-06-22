@@ -20,7 +20,18 @@ Core APIs:
 - `device.screenshot()` returns `{ ok, path }`
 - `device.screenshotTo(path)` returns `{ ok, path }`
 - `device.frontMostAppId()` returns `{ ok, bundleId }`
+- `device.frontMostPid()` returns `{ ok, pid }`
 - `device.orientation()` returns `{ ok, value }`
+- `device.openApp(bundleId)` launches/brings an app forward.
+- `device.killApp(bundleId)` terminates an app.
+- `device.appState(bundleId)` returns `{ ok, state, running }`.
+- `device.appInfo(bundleId)` returns `{ ok, bundleId, name, shortVersion, bundleVersion, state }`.
+- `device.appPid(bundleId)` returns `{ ok, pid }`.
+- `device.appPaths(bundleId)` returns `{ ok, bundlePath, dataPath }`.
+- `device.listBundles(withInfo)` returns `{ ok, bundleIds }` or `{ ok, items }`.
+- `device.openUrl(url)` opens a URL through SpringBoard/UIKit.
+- `device.wifi()`, `device.bluetooth()`, `device.airplaneMode()`, `device.cellularData()` query connectivity state.
+- `device.setWifi(enabled)`, `device.setBluetooth(enabled)`, `device.setAirplaneMode(enabled)`, `device.setCellularData(enabled)` set connectivity state when supported by the iOS build.
 - `device.getScreenSize()` returns `{ width, height, scale, orientation, coordinateSpace }`
 - `device.runtimeInfo()` returns runtime capabilities.
 
