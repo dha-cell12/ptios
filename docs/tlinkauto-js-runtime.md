@@ -49,8 +49,11 @@ Runtime helpers:
 
 - `TLinkauto.version` exposes the helper API version.
 - `TLinkauto.assert(condition, message)` throws an error when `condition` is false.
+- `TLinkauto.ensureOk(result, message)` throws when a typed API result is missing or has `ok: false`, otherwise returns the result.
 - `TLinkauto.waitUntil(predicate, { timeoutMs, intervalMs })` polls synchronously until `predicate(attempt)` returns a truthy value or timeout expires.
 - `TLinkauto.retry(action, { retries, delayMs })` retries a synchronous action and returns `{ ok, value, attempts }` or `{ ok, error, attempts }`.
+- `TLinkauto.waitForApp(bundleId, options)` waits until the frontmost app matches `bundleId`.
+- `TLinkauto.waitForColor(x, y, { red, green, blue }, { timeoutMs, intervalMs, tolerance })` waits until a screen pixel matches the target color.
 
 Core APIs:
 
