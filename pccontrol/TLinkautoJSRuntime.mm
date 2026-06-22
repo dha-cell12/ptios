@@ -182,6 +182,8 @@ struct TLinkautoJSWatchdogProbeState {
     NSString *_bundlePath;
     NSString *_consoleLogPath;
     NSString *_consoleLatestLogPath;
+    NSMutableSet<NSNumber *> *_ownedFrameIds;
+    NSMutableSet<NSNumber *> *_ownedImageIds;
     JSContext *_context;
     TLinkautoJSSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkautoJSClearExecutionTimeLimitFn _clearExecutionTimeLimit;
@@ -197,6 +199,11 @@ struct TLinkautoJSWatchdogProbeState {
 - (NSString *)currentConsoleLogPath;
 - (NSString *)currentConsoleLatestLogPath;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
+- (void)trackFrameId:(int)frameId;
+- (void)untrackFrameId:(int)frameId;
+- (void)untrackAllFrameIds;
+- (void)trackImageId:(int)imageId;
+- (void)untrackImageId:(int)imageId;
 @end
 
 static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
@@ -451,6 +458,8 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         _cancelState = new TLinkautoJSCancelState();
         _cancelState->aborted.store(false, std::memory_order_release);
         _sleepCondition = [[NSCondition alloc] init];
+        _ownedFrameIds = [NSMutableSet set];
+        _ownedImageIds = [NSMutableSet set];
         _setExecutionTimeLimit = (TLinkautoJSSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
         _clearExecutionTimeLimit = (TLinkautoJSClearExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupClearExecutionTimeLimit");
         _watchdogAvailable = TLinkautoJSWatchdogCapability(_setExecutionTimeLimit, _clearExecutionTimeLimit);
@@ -534,6 +543,49 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSString *line = [NSString stringWithFormat:@"[%@][%@][%@] %@\n", [[NSDate date] description], _runId ?: @"", safeLevel, safeMessage];
     [self appendLine:line toConsolePath:_consoleLogPath];
     [self appendLine:line toConsolePath:_consoleLatestLogPath];
+}
+
+- (void)trackFrameId:(int)frameId
+{
+    if (frameId > 0) [_ownedFrameIds addObject:@(frameId)];
+}
+
+- (void)untrackFrameId:(int)frameId
+{
+    if (frameId > 0) [_ownedFrameIds removeObject:@(frameId)];
+}
+
+- (void)untrackAllFrameIds
+{
+    [_ownedFrameIds removeAllObjects];
+}
+
+- (void)trackImageId:(int)imageId
+{
+    if (imageId > 0) [_ownedImageIds addObject:@(imageId)];
+}
+
+- (void)untrackImageId:(int)imageId
+{
+    if (imageId > 0) [_ownedImageIds removeObject:@(imageId)];
+}
+
+- (void)releaseOwnedHandles
+{
+    NSArray<NSNumber *> *frameIds = [_ownedFrameIds allObjects];
+    NSArray<NSNumber *> *imageIds = [_ownedImageIds allObjects];
+    [_ownedFrameIds removeAllObjects];
+    [_ownedImageIds removeAllObjects];
+
+    bool wasAborted = _cancelState->aborted.load(std::memory_order_acquire);
+    _cancelState->aborted.store(false, std::memory_order_release);
+    for (NSNumber *frameId in frameIds) {
+        [self taskResultForPayload:[NSString stringWithFormat:@"67%d", [frameId intValue]]];
+    }
+    for (NSNumber *imageId in imageIds) {
+        [self taskResultForPayload:[NSString stringWithFormat:@"483;;%d", [imageId intValue]]];
+    }
+    _cancelState->aborted.store(wasAborted, std::memory_order_release);
 }
 
 - (void)requestStop
@@ -860,6 +912,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n", message ?: @"JavaScript error"]}];
     }
 
+    [self releaseOwnedHandles];
     _context = nil;
     _bundlePath = nil;
     _consoleLogPath = nil;
@@ -1133,8 +1186,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSDictionary *result = [self runTask:TASK_FRAME_CAPTURE payload:payload];
     NSArray *parts = result[@"parts"];
     if (![result[@"ok"] boolValue] || [parts count] < 15) return result;
+    int frameId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    [self.runtime trackFrameId:frameId];
     return TLinkautoJSResultByAdding(result, @{
-        @"id": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"id": @(frameId),
         @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
         @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
         @"bytesPerRow": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
@@ -1158,6 +1213,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         return @{ @"ok": @NO };
     }
     NSDictionary *result = [self runTask:TASK_FRAME_RELEASE payload:[NSString stringWithFormat:@"%d", frameId]];
+    if ([result[@"ok"] boolValue]) [self.runtime untrackFrameId:frameId];
     NSArray *parts = result[@"parts"];
     if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
     return TLinkautoJSResultByAdding(result, @{ @"released": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
@@ -1166,6 +1222,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (NSDictionary *)releaseAllFrames
 {
     NSDictionary *result = [self runTask:TASK_FRAME_RELEASE payload:@"all"];
+    if ([result[@"ok"] boolValue]) [self.runtime untrackAllFrameIds];
     NSArray *parts = result[@"parts"];
     if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
     return TLinkautoJSResultByAdding(result, @{ @"released": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
@@ -1180,8 +1237,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:[NSString stringWithFormat:@"2;;%@", path]];
     NSArray *parts = result[@"parts"];
     if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
+    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    [self.runtime trackImageId:imageId];
     return TLinkautoJSResultByAdding(result, @{
-        @"id": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"id": @(imageId),
         @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
         @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
     });
@@ -1198,8 +1257,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:payload];
     NSArray *parts = result[@"parts"];
     if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
+    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    [self.runtime trackImageId:imageId];
     return TLinkautoJSResultByAdding(result, @{
-        @"id": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"id": @(imageId),
         @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
         @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
     });
@@ -1211,7 +1272,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         [self.runtime throwError:@"releaseImage(imageId) requires a positive id"];
         return @{ @"ok": @NO };
     }
-    return [self runTask:TASK_IMAGE_OBJECT payload:[NSString stringWithFormat:@"3;;%d", imageId]];
+    NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:[NSString stringWithFormat:@"3;;%d", imageId]];
+    if ([result[@"ok"] boolValue]) [self.runtime untrackImageId:imageId];
+    return result;
 }
 
 - (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options
@@ -1988,6 +2051,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"watchdogIntervalMs": @(watchdog ? (int)(kTLinkautoJSWatchdogInterval * 1000.0) : 0),
         @"hardJsCancellation": @(watchdog),
         @"cooperativeCancellation": @YES,
+        @"autoReleaseHandles": @YES,
         @"runtimeLocation": @"in-process-prototype",
         @"runId": self.runtime.runId ?: @"",
         @"consoleLogPath": [self.runtime currentConsoleLogPath] ?: @"",

@@ -90,6 +90,8 @@ Core APIs:
 
 Frame/image APIs use opaque numeric handles and avoid moving image bytes through JavaScript:
 
+Frame/image handles created by JavaScript are auto-released when the script exits. Explicit `releaseFrame` / `releaseImage` is still recommended for long-running scripts that create many handles.
+
 - `device.captureFrame({ gray, bgra, ttlMs })` returns `{ ok, id, width, height, scale, hasGray, hasBGRA }`
 - `device.releaseFrame(frameId)` releases one frame.
 - `device.releaseAllFrames()` releases all cached frames.
