@@ -54,6 +54,9 @@ Runtime helpers:
 - `TLinkauto.retry(action, { retries, delayMs })` retries a synchronous action and returns `{ ok, value, attempts }` or `{ ok, error, attempts }`.
 - `TLinkauto.waitForApp(bundleId, options)` waits until the frontmost app matches `bundleId`.
 - `TLinkauto.waitForColor(x, y, { red, green, blue }, { timeoutMs, intervalMs, tolerance })` waits until a screen pixel matches the target color.
+- `TLinkauto.withFrame(options, callback)` captures a frame, passes it to `callback(frame)`, and releases it in `finally`.
+- `TLinkauto.withImage(path, callback)` opens an image handle and releases it in `finally`.
+- `TLinkauto.withCapturedImage(x, y, width, height, callback)` captures an image handle and releases it in `finally`.
 
 Core APIs:
 
@@ -97,6 +100,8 @@ Core APIs:
 - `device.clearScreenshotAlbum()` clears the TLinkauto Photos album.
 - `device.matchTemplate(path, { maxTryTimes, acceptable, scaleRatio })` returns `{ ok, matched, x, y, width, height, centerX, centerY }`.
 - `device.findColor(options)` searches the current screen and returns `{ ok, matched, x, y, red, green, blue }`.
+- `device.isColors(points, { mode, value, tolerance })` checks absolute point colors and returns `{ ok, matched }`.
+- `device.findMultiColor(points, { x, y, width, height, mode, value, tolerance, skip })` searches for a relative multi-point color pattern and returns `{ ok, matched, x, y }`.
 - `device.setAutoLaunch(name, script, enabled)` configures auto-launch metadata.
 - `device.listAutoLaunch()` returns `{ ok, items }`.
 - `device.setTimer(name, interval, repeat, script)` schedules a script timer.

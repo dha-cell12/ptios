@@ -20,12 +20,10 @@ console.log("center color", centerColor);
 device.toast("Center RGB " + centerColor.red + "," + centerColor.green + "," + centerColor.blue, { type: 3, duration: 2, position: 0 });
 sleep(700);
 
-var frame = device.captureFrame({ gray: 1, bgra: 1, ttlMs: 1000 });
-console.log("frame", frame);
-device.toast(frame.ok ? "Frame captured #" + frame.id : "Frame failed", { type: frame.ok ? 4 : 1, duration: 2, position: 0 });
-sleep(700);
-
-if (frame.ok) {
+TLinkauto.withFrame({ gray: 1, bgra: 1, ttlMs: 1000 }, function(frame) {
+  console.log("frame", frame);
+  device.toast("Frame captured #" + frame.id, { type: 4, duration: 2, position: 0 });
+  sleep(700);
   var frameColor = device.framePickColor(frame.id, centerX, centerY, { maxAgeMs: 1000 });
   console.log("frame center color", frameColor);
   device.toast("Frame RGB " + frameColor.red + "," + frameColor.green + "," + frameColor.blue, { type: 4, duration: 2, position: 0 });
@@ -34,8 +32,7 @@ if (frame.ok) {
     { x: centerX, y: centerY },
     [Math.max(0, centerX - 20), centerY]
   ], { maxAgeMs: 1000 }));
-  console.log("release frame", device.releaseFrame(frame.id));
-}
+});
 
 var app = device.frontMostAppId();
 var orientation = device.orientation();

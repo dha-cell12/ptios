@@ -116,6 +116,10 @@ JSExportAs(matchTemplate,
 - (NSDictionary *)matchTemplate:(NSString *)path options:(NSDictionary *)options);
 JSExportAs(findColor,
 - (NSDictionary *)findColor:(NSDictionary *)options);
+JSExportAs(isColors,
+- (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options);
+JSExportAs(findMultiColor,
+- (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options);
 JSExportAs(setAutoLaunch,
 - (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled);
 JSExportAs(setTimer,
@@ -437,6 +441,47 @@ static NSString *TLinkautoJSEncodeGesturePoints(NSArray *points)
         double y = 0;
         if (!TLinkautoJSEncodePoint(point, &x, &y)) return nil;
         [encoded addObject:[NSString stringWithFormat:@"%.2f,%.2f", x, y]];
+    }
+    return [encoded componentsJoinedByString:@"|"];
+}
+
+static BOOL TLinkautoJSEncodePointColor(id point, int *outX, int *outY, int *outR, int *outG, int *outB)
+{
+    int x = 0, y = 0, r = 0, g = 0, b = 0;
+    if ([point isKindOfClass:[NSArray class]] && [point count] >= 5) {
+        NSArray *arrayPoint = (NSArray *)point;
+        x = [arrayPoint[0] intValue];
+        y = [arrayPoint[1] intValue];
+        r = [arrayPoint[2] intValue];
+        g = [arrayPoint[3] intValue];
+        b = [arrayPoint[4] intValue];
+    } else if ([point isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dictPoint = (NSDictionary *)point;
+        x = [dictPoint[@"x"] intValue];
+        y = [dictPoint[@"y"] intValue];
+        r = dictPoint[@"red"] ? [dictPoint[@"red"] intValue] : [dictPoint[@"r"] intValue];
+        g = dictPoint[@"green"] ? [dictPoint[@"green"] intValue] : [dictPoint[@"g"] intValue];
+        b = dictPoint[@"blue"] ? [dictPoint[@"blue"] intValue] : [dictPoint[@"b"] intValue];
+    } else {
+        return NO;
+    }
+    if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) return NO;
+    if (outX) *outX = x;
+    if (outY) *outY = y;
+    if (outR) *outR = r;
+    if (outG) *outG = g;
+    if (outB) *outB = b;
+    return YES;
+}
+
+static NSString *TLinkautoJSEncodePointColorTable(NSArray *points)
+{
+    if (![points isKindOfClass:[NSArray class]] || [points count] == 0 || [points count] > 512) return nil;
+    NSMutableArray<NSString *> *encoded = [NSMutableArray arrayWithCapacity:[points count]];
+    for (id point in points) {
+        int x = 0, y = 0, r = 0, g = 0, b = 0;
+        if (!TLinkautoJSEncodePointColor(point, &x, &y, &r, &g, &b)) return nil;
+        [encoded addObject:[NSString stringWithFormat:@"%d,,%d,,%d,,%d,,%d", x, y, r, g, b]];
     }
     return [encoded componentsJoinedByString:@"|"];
 }
@@ -966,6 +1011,24 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
          "      var ok = Math.abs(c.red - rgb.red) <= t && Math.abs(c.green - rgb.green) <= t && Math.abs(c.blue - rgb.blue) <= t;\n"
          "      return ok ? c : false;\n"
          "    }, options);\n"
+         "  };\n"
+         "  api.withFrame = function(options, callback){\n"
+         "    if (typeof callback !== 'function') throw new Error('withFrame requires a callback');\n"
+         "    var frame = api.ensureOk(device.captureFrame(options || {}), 'captureFrame failed');\n"
+         "    try { return callback(frame); }\n"
+         "    finally { device.releaseFrame(frame.id); }\n"
+         "  };\n"
+         "  api.withImage = function(path, callback){\n"
+         "    if (typeof callback !== 'function') throw new Error('withImage requires a callback');\n"
+         "    var image = api.ensureOk(device.openImage(path), 'openImage failed');\n"
+         "    try { return callback(image); }\n"
+         "    finally { device.releaseImage(image.id); }\n"
+         "  };\n"
+         "  api.withCapturedImage = function(x, y, width, height, callback){\n"
+         "    if (typeof callback !== 'function') throw new Error('withCapturedImage requires a callback');\n"
+         "    var image = api.ensureOk(device.captureImage(x, y, width, height), 'captureImage failed');\n"
+         "    try { return callback(image); }\n"
+         "    finally { device.releaseImage(image.id); }\n"
          "  };\n"
          "  this.TLinkauto = api;\n"
          "})();";
@@ -1965,6 +2028,53 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"red": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
         @"green": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
         @"blue": @([TLinkautoJSSafeStringPart(parts, 5) intValue]),
+    });
+}
+
+- (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options
+{
+    NSString *table = TLinkautoJSEncodePointColorTable(points);
+    if (!table) {
+        [self.runtime throwError:@"isColors(points, options) requires 1-512 point colors"];
+        return @{ @"ok": @NO };
+    }
+    int mode = TLinkautoJSIntOption(options, @"mode", 1);
+    double value = TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0));
+    NSDictionary *result = [self runTask:TASK_COLOR_SEARCHER payload:[NSString stringWithFormat:@"2;;%@;;%d;;%.4f", table, mode, value]];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    BOOL matched = [TLinkautoJSSafeStringPart(parts, 1) intValue] != 0;
+    return TLinkautoJSResultByAdding(result, @{ @"matched": @(matched), @"value": @(matched) });
+}
+
+- (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options
+{
+    NSString *table = TLinkautoJSEncodePointColorTable(points);
+    if (!table) {
+        [self.runtime throwError:@"findMultiColor(points, options) requires 1-512 relative point colors"];
+        return @{ @"ok": @NO };
+    }
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+    int mode = TLinkautoJSIntOption(options, @"mode", 1);
+    double value = TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0));
+    int skip = TLinkautoJSIntOption(options, @"skip", 0);
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
+        [self.runtime throwError:@"findMultiColor(points, options) requires finite x/y/width/height"];
+        return @{ @"ok": @NO };
+    }
+    NSString *payload = [NSString stringWithFormat:@"3;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d", x, y, width, height, table, mode, value, skip];
+    NSDictionary *result = [self runTask:TASK_COLOR_SEARCHER payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 3) return result;
+    int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    int foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+    return TLinkautoJSResultByAdding(result, @{
+        @"matched": @(foundX >= 0 && foundY >= 0),
+        @"x": @(foundX),
+        @"y": @(foundY),
     });
 }
 
