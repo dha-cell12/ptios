@@ -43,6 +43,17 @@ Core APIs:
 - `device.keepAwake(enabled)` toggles idle timer.
 - `device.touchIndicator(action)` supports `show`, `hide`, `reload`.
 - `device.rootDir()`, `device.currentDir()`, `device.botPath()` return runtime paths.
+- `device.info()` returns `{ ok, name, systemName, systemVersion, model, identifierForVendor }`.
+- `device.batteryInfo()` returns `{ ok, state, level }`.
+- `device.runShell(command)` runs a privileged shell command through `tlinkautob` and returns `{ ok, output }`. Use for debugging/admin scripts only.
+- `device.saveScreenshotToAlbum(path)` saves an image to the TLinkauto Photos album.
+- `device.clearScreenshotAlbum()` clears the TLinkauto Photos album.
+- `device.matchTemplate(path, { maxTryTimes, acceptable, scaleRatio })` returns `{ ok, matched, x, y, width, height, centerX, centerY }`.
+- `device.findColor(options)` searches the current screen and returns `{ ok, matched, x, y, red, green, blue }`.
+- `device.setAutoLaunch(name, script, enabled)` configures auto-launch metadata.
+- `device.listAutoLaunch()` returns `{ ok, items }`.
+- `device.setTimer(name, interval, repeat, script)` schedules a script timer.
+- `device.removeTimer(name)` removes a scheduled script timer.
 - `device.getScreenSize()` returns `{ width, height, scale, orientation, coordinateSpace }`
 - `device.runtimeInfo()` returns runtime capabilities.
 

@@ -99,9 +99,27 @@ JSExportAs(keepAwake,
 - (NSDictionary *)keepAwake:(BOOL)enabled);
 JSExportAs(touchIndicator,
 - (NSDictionary *)touchIndicator:(NSString *)action);
+JSExportAs(runShell,
+- (NSDictionary *)runShell:(NSString *)command);
+JSExportAs(saveScreenshotToAlbum,
+- (NSDictionary *)saveScreenshotToAlbum:(NSString *)path);
+JSExportAs(matchTemplate,
+- (NSDictionary *)matchTemplate:(NSString *)path options:(NSDictionary *)options);
+JSExportAs(findColor,
+- (NSDictionary *)findColor:(NSDictionary *)options);
+JSExportAs(setAutoLaunch,
+- (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled);
+JSExportAs(setTimer,
+- (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script);
+JSExportAs(removeTimer,
+- (NSDictionary *)removeTimer:(NSString *)name);
 - (NSDictionary *)getScreenSize;
 - (NSDictionary *)screenshot;
 - (NSDictionary *)releaseAllFrames;
+- (NSDictionary *)info;
+- (NSDictionary *)batteryInfo;
+- (NSDictionary *)clearScreenshotAlbum;
+- (NSDictionary *)listAutoLaunch;
 - (NSDictionary *)ocrLanguages;
 - (NSDictionary *)clearDialogValues;
 - (NSDictionary *)getClipboardText;
@@ -1370,6 +1388,170 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (NSDictionary *)botPath
 {
     return [self pathTask:TASK_BOT_PATH key:@"botPath"];
+}
+
+- (NSDictionary *)runShell:(NSString *)command
+{
+    if (!TLinkautoJSValidProtocolString(command)) {
+        [self.runtime throwError:@"runShell(command) requires a non-empty single-line command"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_RUN_SHELL payload:command];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    NSArray *outputParts = [parts subarrayWithRange:NSMakeRange(1, [parts count] - 1)];
+    NSString *output = [[outputParts componentsJoinedByString:@";;"] stringByReplacingOccurrencesOfString:@"\\n" withString:@"\n"];
+    output = [output stringByReplacingOccurrencesOfString:@"\\r" withString:@"\r"];
+    return TLinkautoJSResultByAdding(result, @{ @"output": output ?: @"" });
+}
+
+- (NSDictionary *)info
+{
+    NSDictionary *result = [self runTask:TASK_GET_DEVICE_INFO payload:@"30"];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 6) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"name": TLinkautoJSSafeStringPart(parts, 1),
+        @"systemName": TLinkautoJSSafeStringPart(parts, 2),
+        @"systemVersion": TLinkautoJSSafeStringPart(parts, 3),
+        @"model": TLinkautoJSSafeStringPart(parts, 4),
+        @"identifierForVendor": TLinkautoJSSafeStringPart(parts, 5),
+    });
+}
+
+- (NSDictionary *)batteryInfo
+{
+    NSDictionary *result = [self runTask:TASK_GET_DEVICE_INFO payload:@"31"];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 3) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"state": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"level": @([TLinkautoJSSafeStringPart(parts, 2) doubleValue]),
+    });
+}
+
+- (NSDictionary *)saveScreenshotToAlbum:(NSString *)path
+{
+    if (!TLinkautoJSValidProtocolString(path)) {
+        [self.runtime throwError:@"saveScreenshotToAlbum(path) requires a valid path"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_SCREENSHOT payload:[NSString stringWithFormat:@"2;;%@", path]];
+}
+
+- (NSDictionary *)clearScreenshotAlbum
+{
+    return [self runTask:TASK_SCREENSHOT payload:@"3"];
+}
+
+- (NSDictionary *)matchTemplate:(NSString *)path options:(NSDictionary *)options
+{
+    if (!TLinkautoJSValidProtocolString(path)) {
+        [self.runtime throwError:@"matchTemplate(path, options) requires a valid template path"];
+        return @{ @"ok": @NO };
+    }
+    int maxTryTimes = TLinkautoJSIntOption(options, @"maxTryTimes", 2);
+    double acceptable = TLinkautoJSDoubleOption(options, @"acceptable", 0.8);
+    double scaleRatio = TLinkautoJSDoubleOption(options, @"scaleRatio", 0.8);
+    NSString *payload = [NSString stringWithFormat:@"%@;;%d;;%.4f;;%.4f", path, maxTryTimes, acceptable, scaleRatio];
+    NSDictionary *result = [self runTask:TASK_TEMPLATE_MATCH payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 5) return result;
+    double x = [TLinkautoJSSafeStringPart(parts, 1) doubleValue];
+    double y = [TLinkautoJSSafeStringPart(parts, 2) doubleValue];
+    double width = [TLinkautoJSSafeStringPart(parts, 3) doubleValue];
+    double height = [TLinkautoJSSafeStringPart(parts, 4) doubleValue];
+    return TLinkautoJSResultByAdding(result, @{
+        @"matched": @(width > 0 && height > 0),
+        @"x": @(x),
+        @"y": @(y),
+        @"width": @(width),
+        @"height": @(height),
+        @"centerX": @(x + width / 2.0),
+        @"centerY": @(y + height / 2.0),
+    });
+}
+
+- (NSDictionary *)findColor:(NSDictionary *)options
+{
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+    int redMin = TLinkautoJSIntOption(options, @"redMin", TLinkautoJSIntOption(options, @"rMin", 0));
+    int redMax = TLinkautoJSIntOption(options, @"redMax", TLinkautoJSIntOption(options, @"rMax", 255));
+    int greenMin = TLinkautoJSIntOption(options, @"greenMin", TLinkautoJSIntOption(options, @"gMin", 0));
+    int greenMax = TLinkautoJSIntOption(options, @"greenMax", TLinkautoJSIntOption(options, @"gMax", 255));
+    int blueMin = TLinkautoJSIntOption(options, @"blueMin", TLinkautoJSIntOption(options, @"bMin", 0));
+    int blueMax = TLinkautoJSIntOption(options, @"blueMax", TLinkautoJSIntOption(options, @"bMax", 255));
+    int skip = TLinkautoJSIntOption(options, @"skip", 0);
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
+        [self.runtime throwError:@"findColor(options) requires finite x/y/width/height"];
+        return @{ @"ok": @NO };
+    }
+    NSString *payload = [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d",
+                         x, y, width, height, redMin, redMax, greenMin, greenMax, blueMin, blueMax, skip];
+    NSDictionary *result = [self runTask:TASK_COLOR_SEARCHER payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 6) return result;
+    int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    int foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+    return TLinkautoJSResultByAdding(result, @{
+        @"matched": @(foundX >= 0 && foundY >= 0),
+        @"x": @(foundX),
+        @"y": @(foundY),
+        @"red": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+        @"green": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
+        @"blue": @([TLinkautoJSSafeStringPart(parts, 5) intValue]),
+    });
+}
+
+- (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled
+{
+    if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script)) {
+        [self.runtime throwError:@"setAutoLaunch(name, script, enabled) requires valid name and script path"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_SET_AUTO_LAUNCH payload:[NSString stringWithFormat:@"%@;;%@;;%d", name, script, enabled ? 1 : 0]];
+}
+
+- (NSDictionary *)listAutoLaunch
+{
+    NSDictionary *result = [self runTask:TASK_LIST_AUTO_LAUNCH payload:@""];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue]) return result;
+    NSMutableArray *items = [NSMutableArray array];
+    for (NSUInteger i = 1; i < [parts count]; i++) {
+        NSString *entry = TLinkautoJSSafeStringPart(parts, i);
+        if ([entry length] == 0) continue;
+        NSArray *fields = [entry componentsSeparatedByString:@",,"];
+        if ([fields count] >= 3) {
+            [items addObject:@{
+                @"name": TLinkautoJSSafeStringPart(fields, 0),
+                @"script": TLinkautoJSSafeStringPart(fields, 1),
+                @"enabled": @([TLinkautoJSSafeStringPart(fields, 2) intValue] != 0),
+            }];
+        }
+    }
+    return TLinkautoJSResultByAdding(result, @{ @"items": items });
+}
+
+- (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script
+{
+    if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script) || !TLinkautoJSIsFiniteNumber(interval) || interval <= 0) {
+        [self.runtime throwError:@"setTimer(name, interval, repeat, script) requires valid values"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_SET_TIMER payload:[NSString stringWithFormat:@"%@;;%.3f;;%d;;%@", name, interval, repeat ? 1 : 0, script]];
+}
+
+- (NSDictionary *)removeTimer:(NSString *)name
+{
+    if (!TLinkautoJSValidProtocolString(name)) {
+        [self.runtime throwError:@"removeTimer(name) requires a valid timer name"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_REMOVE_TIMER payload:name];
 }
 
 - (NSDictionary *)getScreenSize
