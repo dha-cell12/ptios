@@ -33,8 +33,25 @@ JSExportAs(screenshotTo,
 - (NSDictionary *)screenshotTo:(NSString *)path);
 JSExportAs(batch,
 - (NSDictionary *)batch:(NSArray *)commands);
+JSExportAs(captureFrame,
+- (NSDictionary *)captureFrame:(NSDictionary *)options);
+JSExportAs(releaseFrame,
+- (NSDictionary *)releaseFrame:(int)frameId);
+JSExportAs(openImage,
+- (NSDictionary *)openImage:(NSString *)path);
+JSExportAs(captureImage,
+- (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height);
+JSExportAs(releaseImage,
+- (NSDictionary *)releaseImage:(int)imageId);
+JSExportAs(framePickColor,
+- (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options);
+JSExportAs(framePickColors,
+- (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
+JSExportAs(findImageInFrame,
+- (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options);
 - (NSDictionary *)getScreenSize;
 - (NSDictionary *)screenshot;
+- (NSDictionary *)releaseAllFrames;
 - (NSDictionary *)frontMostAppId;
 - (NSDictionary *)orientation;
 - (NSDictionary *)runtimeInfo;
@@ -163,6 +180,32 @@ static BOOL TLinkautoJSStringContainsAny(NSString *value, NSArray<NSString *> *n
         if ([value rangeOfString:needle].location != NSNotFound) return YES;
     }
     return NO;
+}
+
+static double TLinkautoJSDoubleOption(NSDictionary *options, NSString *key, double defaultValue)
+{
+    if (![options isKindOfClass:[NSDictionary class]]) return defaultValue;
+    id value = options[key];
+    return value ? [value doubleValue] : defaultValue;
+}
+
+static int TLinkautoJSIntOption(NSDictionary *options, NSString *key, int defaultValue)
+{
+    if (![options isKindOfClass:[NSDictionary class]]) return defaultValue;
+    id value = options[key];
+    return value ? [value intValue] : defaultValue;
+}
+
+static NSString *TLinkautoJSStringOption(NSDictionary *options, NSString *key, NSString *defaultValue)
+{
+    if (![options isKindOfClass:[NSDictionary class]]) return defaultValue;
+    id value = options[key];
+    return [value isKindOfClass:[NSString class]] && [value length] > 0 ? (NSString *)value : defaultValue;
+}
+
+static BOOL TLinkautoJSValidToken(NSString *value)
+{
+    return [value isKindOfClass:[NSString class]] && !TLinkautoJSStringContainsAny(value, @[@";;", @"||", @"@@", @",", @"\r", @"\n"]);
 }
 
 @implementation TLinkautoJSRuntime
@@ -553,6 +596,226 @@ static BOOL TLinkautoJSStringContainsAny(NSString *value, NSArray<NSString *> *n
 
     NSString *payload = [wireCommands componentsJoinedByString:@"||"];
     return [self runTask:TASK_NATIVE_BATCH payload:payload];
+}
+
+- (NSDictionary *)captureFrame:(NSDictionary *)options
+{
+    BOOL needGray = TLinkautoJSIntOption(options, @"gray", 1) != 0;
+    BOOL needBGRA = TLinkautoJSIntOption(options, @"bgra", 1) != 0;
+    int ttlMs = TLinkautoJSIntOption(options, @"ttlMs", 1000);
+    if (!needGray && !needBGRA) {
+        needGray = YES;
+        needBGRA = YES;
+    }
+    if (ttlMs <= 0) ttlMs = 1000;
+    NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%d", needGray ? 1 : 0, needBGRA ? 1 : 0, ttlMs];
+    NSDictionary *result = [self runTask:TASK_FRAME_CAPTURE payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 15) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"id": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
+        @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+        @"bytesPerRow": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
+        @"scale": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]),
+        @"coordinateSpace": TLinkautoJSSafeStringPart(parts, 6),
+        @"pixelFormat": TLinkautoJSSafeStringPart(parts, 7),
+        @"hasBGRA": @([TLinkautoJSSafeStringPart(parts, 8) intValue] != 0),
+        @"hasGray": @([TLinkautoJSSafeStringPart(parts, 9) intValue] != 0),
+        @"createdAtMs": @([TLinkautoJSSafeStringPart(parts, 10) longLongValue]),
+        @"captureMs": @([TLinkautoJSSafeStringPart(parts, 11) doubleValue]),
+        @"bgraMs": @([TLinkautoJSSafeStringPart(parts, 12) doubleValue]),
+        @"grayMs": @([TLinkautoJSSafeStringPart(parts, 13) doubleValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 14) doubleValue]),
+    });
+}
+
+- (NSDictionary *)releaseFrame:(int)frameId
+{
+    if (frameId <= 0) {
+        [self.runtime throwError:@"releaseFrame(frameId) requires a positive id"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_FRAME_RELEASE payload:[NSString stringWithFormat:@"%d", frameId]];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"released": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+}
+
+- (NSDictionary *)releaseAllFrames
+{
+    NSDictionary *result = [self runTask:TASK_FRAME_RELEASE payload:@"all"];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"released": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+}
+
+- (NSDictionary *)openImage:(NSString *)path
+{
+    if (![path isKindOfClass:[NSString class]] || [path length] == 0 || TLinkautoJSStringContainsAny(path, @[@";;", @"\r", @"\n"])) {
+        [self.runtime throwError:@"openImage(path) requires a valid path"];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:[NSString stringWithFormat:@"2;;%@", path]];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"id": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
+        @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+    });
+}
+
+- (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height
+{
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
+        !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
+        [self.runtime throwError:@"captureImage(x, y, width, height) requires finite positive dimensions"];
+        return @{ @"ok": @NO };
+    }
+    NSString *payload = [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f", x, y, width, height];
+    NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"id": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
+        @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+    });
+}
+
+- (NSDictionary *)releaseImage:(int)imageId
+{
+    if (imageId <= 0) {
+        [self.runtime throwError:@"releaseImage(imageId) requires a positive id"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_IMAGE_OBJECT payload:[NSString stringWithFormat:@"3;;%d", imageId]];
+}
+
+- (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options
+{
+    if (frameId <= 0 || !TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
+        [self.runtime throwError:@"framePickColor(frameId, x, y) requires a frame id and finite coordinates"];
+        return @{ @"ok": @NO };
+    }
+    NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+    if (!TLinkautoJSValidToken(coord)) {
+        [self.runtime throwError:@"coord contains unsupported protocol delimiter"];
+        return @{ @"ok": @NO };
+    }
+    int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+    NSString *payload = [NSString stringWithFormat:@"%d;;pick;;%.0f;;%.0f;;%@;;%d", frameId, x, y, coord, maxAgeMs];
+    NSDictionary *result = [self runTask:TASK_COLOR_IN_FRAME payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 7) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"red": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+        @"green": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
+        @"blue": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+        @"ageMs": @([TLinkautoJSSafeStringPart(parts, 4) longLongValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]),
+    });
+}
+
+- (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options
+{
+    if (frameId <= 0 || ![points isKindOfClass:[NSArray class]] || [points count] == 0) {
+        [self.runtime throwError:@"framePickColors(frameId, points) requires a frame id and non-empty points array"];
+        return @{ @"ok": @NO };
+    }
+    NSMutableArray<NSString *> *encoded = [NSMutableArray arrayWithCapacity:[points count]];
+    for (id point in points) {
+        double x = 0;
+        double y = 0;
+        if ([point isKindOfClass:[NSArray class]] && [point count] >= 2) {
+            NSArray *arrayPoint = (NSArray *)point;
+            x = [arrayPoint[0] doubleValue];
+            y = [arrayPoint[1] doubleValue];
+        } else if ([point isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *dictPoint = (NSDictionary *)point;
+            x = [dictPoint[@"x"] doubleValue];
+            y = [dictPoint[@"y"] doubleValue];
+        } else {
+            [self.runtime throwError:@"framePickColors points must be [x,y] arrays or {x,y} objects"];
+            return @{ @"ok": @NO };
+        }
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
+            [self.runtime throwError:@"framePickColors points require finite coordinates"];
+            return @{ @"ok": @NO };
+        }
+        [encoded addObject:[NSString stringWithFormat:@"%.0f,%.0f", x, y]];
+    }
+    NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+    if (!TLinkautoJSValidToken(coord)) {
+        [self.runtime throwError:@"coord contains unsupported protocol delimiter"];
+        return @{ @"ok": @NO };
+    }
+    int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+    NSString *payload = [NSString stringWithFormat:@"%d;;pick_many;;%@;;%@;;%d", frameId, [encoded componentsJoinedByString:@"|"], coord, maxAgeMs];
+    NSDictionary *result = [self runTask:TASK_COLOR_IN_FRAME payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 5) return result;
+    NSMutableArray *colors = [NSMutableArray array];
+    for (NSString *item in [TLinkautoJSSafeStringPart(parts, 1) componentsSeparatedByString:@"|"]) {
+        NSArray *fields = [item componentsSeparatedByString:@","];
+        if ([fields count] == 5) {
+            [colors addObject:@{
+                @"x": @([fields[0] intValue]),
+                @"y": @([fields[1] intValue]),
+                @"red": @([fields[2] intValue]),
+                @"green": @([fields[3] intValue]),
+                @"blue": @([fields[4] intValue]),
+            }];
+        }
+    }
+    return TLinkautoJSResultByAdding(result, @{
+        @"colors": colors,
+        @"ageMs": @([TLinkautoJSSafeStringPart(parts, 2) longLongValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 3) doubleValue]),
+    });
+}
+
+- (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options
+{
+    if (frameId <= 0 || imageId <= 0) {
+        [self.runtime throwError:@"findImageInFrame(frameId, imageId, options) requires positive ids"];
+        return @{ @"ok": @NO };
+    }
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+    double acceptable = TLinkautoJSDoubleOption(options, @"acceptable", 0.95);
+    double scaleMin = TLinkautoJSDoubleOption(options, @"scaleMin", 1.0);
+    double scaleMax = TLinkautoJSDoubleOption(options, @"scaleMax", 1.0);
+    double scaleStep = TLinkautoJSDoubleOption(options, @"scaleStep", 1.0);
+    int pixelSkip = TLinkautoJSIntOption(options, @"pixelSkip", 0);
+    NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+    if (!TLinkautoJSValidToken(coord)) {
+        [self.runtime throwError:@"coord contains unsupported protocol delimiter"];
+        return @{ @"ok": @NO };
+    }
+    int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+    NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%.0f;;%.0f;;%.0f;;%.0f;;%.4f;;%.4f;;%.4f;;%.4f;;%d;;%@;;%d",
+                         frameId, imageId, x, y, width, height, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip, coord, maxAgeMs];
+    NSDictionary *result = [self runTask:TASK_FIND_IMAGE_IN_FRAME payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 11) return result;
+    int matchX = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    int matchY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+    return TLinkautoJSResultByAdding(result, @{
+        @"matched": @(matchX >= 0 && matchY >= 0),
+        @"x": @(matchX),
+        @"y": @(matchY),
+        @"width": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+        @"height": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
+        @"centerX": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]),
+        @"centerY": @([TLinkautoJSSafeStringPart(parts, 6) doubleValue]),
+        @"score": @([TLinkautoJSSafeStringPart(parts, 7) doubleValue]),
+        @"ageMs": @([TLinkautoJSSafeStringPart(parts, 8) longLongValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 9) doubleValue]),
+    });
 }
 
 - (NSDictionary *)getScreenSize
