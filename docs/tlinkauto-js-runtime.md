@@ -32,6 +32,17 @@ Core APIs:
 - `device.openUrl(url)` opens a URL through SpringBoard/UIKit.
 - `device.wifi()`, `device.bluetooth()`, `device.airplaneMode()`, `device.cellularData()` query connectivity state.
 - `device.setWifi(enabled)`, `device.setBluetooth(enabled)`, `device.setAirplaneMode(enabled)`, `device.setCellularData(enabled)` set connectivity state when supported by the iOS build.
+- `device.alert(title, message, duration)` shows a blocking native alert.
+- `device.dialog({ title, message, ok, cancel })` shows a native dialog and returns `{ ok, response }`.
+- `device.clearDialogValues()` clears stored dialog value.
+- `device.showKeyboard()`, `device.hideKeyboard()`, `device.insertText(text)`, `device.deleteCharacters(count)`, `device.moveCursor(offset)`, `device.pasteFromClipboard()` control the active keyboard field.
+- `device.getClipboardText()` returns `{ ok, text }`.
+- `device.setClipboardText(text)` writes text to the general pasteboard.
+- `device.hardwareKey(key, action)` sends hardware key down/up. Keys: `home`, `volume-up`, `volume-down`, `lock`. Actions: `down`, `up`.
+- `device.pressHardwareKey(key)` sends down then up.
+- `device.keepAwake(enabled)` toggles idle timer.
+- `device.touchIndicator(action)` supports `show`, `hide`, `reload`.
+- `device.rootDir()`, `device.currentDir()`, `device.botPath()` return runtime paths.
 - `device.getScreenSize()` returns `{ width, height, scale, orientation, coordinateSpace }`
 - `device.runtimeInfo()` returns runtime capabilities.
 

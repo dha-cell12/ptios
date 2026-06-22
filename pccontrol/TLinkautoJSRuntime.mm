@@ -79,10 +79,38 @@ JSExportAs(setAirplaneMode,
 - (NSDictionary *)setAirplaneMode:(BOOL)enabled);
 JSExportAs(setCellularData,
 - (NSDictionary *)setCellularData:(BOOL)enabled);
+JSExportAs(alert,
+- (NSDictionary *)alert:(NSString *)title message:(NSString *)message duration:(int)duration);
+JSExportAs(dialog,
+- (NSDictionary *)dialog:(NSDictionary *)options);
+JSExportAs(setClipboardText,
+- (NSDictionary *)setClipboardText:(NSString *)text);
+JSExportAs(insertText,
+- (NSDictionary *)insertText:(NSString *)text);
+JSExportAs(deleteCharacters,
+- (NSDictionary *)deleteCharacters:(int)count);
+JSExportAs(moveCursor,
+- (NSDictionary *)moveCursor:(int)offset);
+JSExportAs(hardwareKey,
+- (NSDictionary *)hardwareKey:(NSString *)key action:(NSString *)action);
+JSExportAs(pressHardwareKey,
+- (NSDictionary *)pressHardwareKey:(NSString *)key);
+JSExportAs(keepAwake,
+- (NSDictionary *)keepAwake:(BOOL)enabled);
+JSExportAs(touchIndicator,
+- (NSDictionary *)touchIndicator:(NSString *)action);
 - (NSDictionary *)getScreenSize;
 - (NSDictionary *)screenshot;
 - (NSDictionary *)releaseAllFrames;
 - (NSDictionary *)ocrLanguages;
+- (NSDictionary *)clearDialogValues;
+- (NSDictionary *)getClipboardText;
+- (NSDictionary *)pasteFromClipboard;
+- (NSDictionary *)showKeyboard;
+- (NSDictionary *)hideKeyboard;
+- (NSDictionary *)rootDir;
+- (NSDictionary *)currentDir;
+- (NSDictionary *)botPath;
 - (NSDictionary *)frontMostPid;
 - (NSDictionary *)wifi;
 - (NSDictionary *)bluetooth;
@@ -293,6 +321,33 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *key)
     if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
     BOOL enabled = [TLinkautoJSSafeStringPart(parts, 1) intValue] != 0;
     return TLinkautoJSResultByAdding(result, @{ (key ?: @"enabled"): @(enabled), @"value": @(enabled) });
+}
+
+static int TLinkautoJSHardwareKeyType(NSString *key)
+{
+    NSString *k = [[key ?: @"" lowercaseString] stringByReplacingOccurrencesOfString:@"_" withString:@"-"];
+    if ([k isEqualToString:@"home"]) return 1;
+    if ([k isEqualToString:@"volume-up"] || [k isEqualToString:@"vol-up"]) return 2;
+    if ([k isEqualToString:@"volume-down"] || [k isEqualToString:@"vol-down"]) return 3;
+    if ([k isEqualToString:@"lock"] || [k isEqualToString:@"power"]) return 4;
+    return 0;
+}
+
+static int TLinkautoJSHardwareKeyAction(NSString *action)
+{
+    NSString *a = [[action ?: @"" lowercaseString] stringByReplacingOccurrencesOfString:@"_" withString:@"-"];
+    if ([a isEqualToString:@"down"]) return 1;
+    if ([a isEqualToString:@"up"]) return 0;
+    return -1;
+}
+
+static int TLinkautoJSTouchIndicatorAction(NSString *action)
+{
+    NSString *a = [[action ?: @"" lowercaseString] stringByReplacingOccurrencesOfString:@"_" withString:@"-"];
+    if ([a isEqualToString:@"hide"] || [a isEqualToString:@"off"]) return 0;
+    if ([a isEqualToString:@"show"] || [a isEqualToString:@"on"]) return 1;
+    if ([a isEqualToString:@"reload"]) return 2;
+    return -1;
 }
 
 static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *result)
@@ -1176,6 +1231,145 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (NSDictionary *)setCellularData:(BOOL)enabled
 {
     return [self connectivityTask:TASK_CELLULAR_DATA enabledKey:@"enabled" value:@(enabled)];
+}
+
+- (NSDictionary *)alert:(NSString *)title message:(NSString *)message duration:(int)duration
+{
+    NSString *safeTitle = TLinkautoJSSanitizeProtocolText(title ?: @"TLinkauto", 80);
+    NSString *safeMessage = TLinkautoJSSanitizeProtocolText(message ?: @"", 300);
+    if (duration <= 0) duration = 3;
+    return [self runTask:TASK_SHOW_ALERT_BOX payload:[NSString stringWithFormat:@"%@;;%@;;%d", safeTitle, safeMessage, duration]];
+}
+
+- (NSDictionary *)dialog:(NSDictionary *)options
+{
+    NSString *title = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"title", @"TLinkauto"), 80);
+    NSString *message = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"message", @""), 300);
+    NSString *ok = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"ok", @"OK"), 40);
+    NSString *cancel = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"cancel", @"Cancel"), 40);
+    NSDictionary *result = [self runTask:TASK_DIALOG payload:[NSString stringWithFormat:@"%@;;%@;;%@;;%@", title, message, ok, cancel]];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"response": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+}
+
+- (NSDictionary *)clearDialogValues
+{
+    return [self runTask:TASK_CLEAR_DIALOG payload:@""];
+}
+
+- (NSDictionary *)keyboardTask:(int)kind content:(NSString *)content
+{
+    NSString *payload = content ? [NSString stringWithFormat:@"%d;;%@", kind, TLinkautoJSSanitizeProtocolText(content, 2048)] : [NSString stringWithFormat:@"%d", kind];
+    return [self runTask:TASK_TEXT_INPUT payload:payload];
+}
+
+- (NSDictionary *)showKeyboard
+{
+    return [self keyboardTask:2 content:@"2"];
+}
+
+- (NSDictionary *)hideKeyboard
+{
+    return [self keyboardTask:2 content:@"1"];
+}
+
+- (NSDictionary *)pasteFromClipboard
+{
+    return [self keyboardTask:5 content:nil];
+}
+
+- (NSDictionary *)getClipboardText
+{
+    NSDictionary *result = [self keyboardTask:6 content:nil];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    return TLinkautoJSResultByAdding(result, @{ @"text": TLinkautoJSSafeStringPart(parts, 1) });
+}
+
+- (NSDictionary *)setClipboardText:(NSString *)text
+{
+    return [self keyboardTask:7 content:(text ?: @"")];
+}
+
+- (NSDictionary *)insertText:(NSString *)text
+{
+    return [self keyboardTask:1 content:(text ?: @"")];
+}
+
+- (NSDictionary *)deleteCharacters:(int)count
+{
+    if (count <= 0) count = 1;
+    if (count > 1024) count = 1024;
+    return [self keyboardTask:4 content:[NSString stringWithFormat:@"%d", count]];
+}
+
+- (NSDictionary *)moveCursor:(int)offset
+{
+    if (offset > 1024) offset = 1024;
+    if (offset < -1024) offset = -1024;
+    return [self keyboardTask:3 content:[NSString stringWithFormat:@"%d", offset]];
+}
+
+- (NSDictionary *)hardwareKey:(NSString *)key action:(NSString *)action
+{
+    int keyType = TLinkautoJSHardwareKeyType(key);
+    int keyAction = TLinkautoJSHardwareKeyAction(action);
+    if (keyType <= 0 || keyAction < 0) {
+        [self.runtime throwError:@"hardwareKey(key, action) supports key home/volume-up/volume-down/lock and action down/up"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_HARDWARE_KEY payload:[NSString stringWithFormat:@"%d;;%d", keyAction, keyType]];
+}
+
+- (NSDictionary *)pressHardwareKey:(NSString *)key
+{
+    NSDictionary *down = [self hardwareKey:key action:@"down"];
+    if (![down[@"ok"] boolValue]) return down;
+    [NSThread sleepForTimeInterval:0.05];
+    NSDictionary *up = [self hardwareKey:key action:@"up"];
+    return TLinkautoJSResultByAdding(up, @{ @"down": down });
+}
+
+- (NSDictionary *)keepAwake:(BOOL)enabled
+{
+    return [self runTask:TASK_KEEP_AWAKE payload:(enabled ? @"1" : @"0")];
+}
+
+- (NSDictionary *)touchIndicator:(NSString *)action
+{
+    int value = TLinkautoJSTouchIndicatorAction(action);
+    if (value < 0) {
+        [self.runtime throwError:@"touchIndicator(action) supports show/hide/reload"];
+        return @{ @"ok": @NO };
+    }
+    return [self runTask:TASK_TOUCH_INDICATOR payload:[NSString stringWithFormat:@"%d", value]];
+}
+
+- (NSDictionary *)pathTask:(int)task key:(NSString *)key
+{
+    NSDictionary *result = [self runTask:task payload:@""];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    NSString *path = TLinkautoJSSafeStringPart(parts, 1);
+    NSMutableDictionary *extra = [NSMutableDictionary dictionaryWithObject:path forKey:@"path"];
+    extra[key ?: @"path"] = path;
+    return TLinkautoJSResultByAdding(result, extra);
+}
+
+- (NSDictionary *)rootDir
+{
+    return [self pathTask:TASK_ROOT_DIR key:@"rootDir"];
+}
+
+- (NSDictionary *)currentDir
+{
+    return [self pathTask:TASK_CURRENT_DIR key:@"currentDir"];
+}
+
+- (NSDictionary *)botPath
+{
+    return [self pathTask:TASK_BOT_PATH key:@"botPath"];
 }
 
 - (NSDictionary *)getScreenSize
