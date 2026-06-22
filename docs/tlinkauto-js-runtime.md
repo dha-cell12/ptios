@@ -48,6 +48,7 @@ Core APIs:
 - `device.pickColor(x, y)` returns `{ ok, red, green, blue }`
 - `device.screenshot()` returns `{ ok, path }`
 - `device.screenshotTo(path)` returns `{ ok, path }`
+- `device.screenshotRegion(path, { x, y, width, height })` saves a cropped screenshot and returns `{ ok, path, x, y, width, height }`.
 - `device.frontMostAppId()` returns `{ ok, bundleId }`
 - `device.frontMostPid()` returns `{ ok, pid }`
 - `device.orientation()` returns `{ ok, value }`

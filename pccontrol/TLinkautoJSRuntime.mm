@@ -40,6 +40,8 @@ JSExportAs(pickColor,
 - (NSDictionary *)pickColor:(double)x y:(double)y);
 JSExportAs(screenshotTo,
 - (NSDictionary *)screenshotTo:(NSString *)path);
+JSExportAs(screenshotRegion,
+- (NSDictionary *)screenshotRegion:(NSString *)path options:(NSDictionary *)options);
 JSExportAs(batch,
 - (NSDictionary *)batch:(NSArray *)commands);
 JSExportAs(captureFrame,
@@ -993,6 +995,36 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSArray *parts = result[@"parts"];
     NSString *resultPath = [parts count] >= 2 ? TLinkautoJSSafeStringPart(parts, 1) : targetPath;
     return TLinkautoJSResultByAdding(result, @{ @"path": resultPath ?: @"" });
+}
+
+- (NSDictionary *)screenshotRegion:(NSString *)path options:(NSDictionary *)options
+{
+    NSString *targetPath = ([path isKindOfClass:[NSString class]] && [path length] > 0) ? path : [self defaultScreenshotPath];
+    if (TLinkautoJSStringContainsAny(targetPath, @[@";;", @"\r", @"\n"])) {
+        [self.runtime throwError:@"screenshot path contains unsupported protocol delimiter"];
+        return @{ @"ok": @NO };
+    }
+
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
+        !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
+        [self.runtime throwError:@"screenshotRegion(path, options) requires finite positive width/height"];
+        return @{ @"ok": @NO };
+    }
+
+    NSDictionary *result = [self runTask:TASK_SCREENSHOT payload:[NSString stringWithFormat:@"1;;%@;;%.0f;;%.0f;;%.0f;;%.0f", targetPath, x, y, width, height]];
+    NSArray *parts = result[@"parts"];
+    NSString *resultPath = [parts count] >= 2 ? TLinkautoJSSafeStringPart(parts, 1) : targetPath;
+    return TLinkautoJSResultByAdding(result, @{
+        @"path": resultPath ?: @"",
+        @"x": @(x),
+        @"y": @(y),
+        @"width": @(width),
+        @"height": @(height),
+    });
 }
 
 - (NSDictionary *)frontMostAppId
