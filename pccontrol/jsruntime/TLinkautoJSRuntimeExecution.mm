@@ -36,6 +36,11 @@
 
         _bridge = [[TLinkautoJSBridge alloc] initWithExecution:self];
         [_bridge injectIntoContext:_jsContext];
+        __weak typeof(self) weakSelf = self;
+        _jsContext[@"sleep"] = ^(double ms) {
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (strongSelf) [strongSelf interruptibleSleepMs:ms];
+        };
     }
     return self;
 }
@@ -69,4 +74,30 @@
     [_logSink close];
 }
 
+
+
+- (void)setAbortExceptionIfNeeded {
+    if (![self isAborted] || !_jsContext) return;
+    _jsContext.exception = [JSValue valueWithNewErrorFromMessage:@"JavaScript execution aborted" inContext:_jsContext];
+}
+
+- (BOOL)interruptibleSleepMs:(double)ms {
+    if (ms < 0 || !isfinite(ms)) {
+        if (_jsContext) _jsContext.exception = [JSValue valueWithNewErrorFromMessage:@"sleep(ms) requires a finite non-negative number" inContext:_jsContext];
+        return NO;
+    }
+    if (ms > 24.0 * 60.0 * 60.0 * 1000.0) {
+        ms = 24.0 * 60.0 * 60.0 * 1000.0;
+    }
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:(ms / 1000.0)];
+    [_sleepCondition lock];
+    while (![self isAborted]) {
+        if (![_sleepCondition waitUntilDate:deadline]) {
+            break;
+        }
+    }
+    [_sleepCondition unlock];
+    [self setAbortExceptionIfNeeded];
+    return ![self isAborted];
+}
 @end

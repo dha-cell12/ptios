@@ -29,6 +29,8 @@
 - (BOOL)isAborted;
 - (void)requestStop;
 - (void)evaluateScriptAtPath:(NSString *)scriptPath error:(NSError **)error;
+- (BOOL)interruptibleSleepMs:(double)ms;
+- (void)setAbortExceptionIfNeeded;
 
 @end
 
