@@ -54,9 +54,9 @@
 
         CFWriteStreamOpen(writeStream);
 
-        void (*processTaskFn)(UInt8*, CFWriteStreamRef) = (void (*)(UInt8*, CFWriteStreamRef))dlsym(RTLD_DEFAULT, "processTask");
-        if (processTaskFn) {
-            processTaskFn((UInt8 *)[payloadData bytes], writeStream);
+        void processTask(UInt8* dataArray, CFWriteStreamRef stream);
+        if (1) {
+            processTask((UInt8 *)[payloadData bytes], writeStream);
         } else {
             NSString *err = @"0;;internal error: processTask missing\r\n";
             CFWriteStreamWrite(writeStream, (const UInt8 *)[err UTF8String], [err length]);

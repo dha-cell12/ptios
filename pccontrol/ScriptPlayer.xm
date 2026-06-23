@@ -7,7 +7,7 @@
 #include "Config.h"
 #include "Common.h"
 #include "RuntimeUtils.h"
-#import "jsruntime/TLinkautoJSRuntime.h"
+#import "jsruntime/TLinkautoJSTaskService.h"
 
 static BOOL isPlaying = false;
 
@@ -23,7 +23,7 @@ static BOOL isPlaying = false;
     UIView *circleView;
     Boolean scriptPlayForceStop;
     Boolean switchAppBeforePlaying;
-    TLinkautoJSRuntime *jsRuntime;
+    TLinkautoJSTaskService *jsRuntime;
     NSDictionary *currentManifest;
 }
 
@@ -397,7 +397,7 @@ static NSString *tlinkautoStringValue(id value)
         return;
     }
 
-    jsRuntime = [[TLinkautoJSRuntime alloc] init];
+    jsRuntime = [TLinkautoJSTaskService sharedService];
     NSError *runError = nil;
     BOOL ok = [jsRuntime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest error:&runError];
     if (!ok && runError) {

@@ -17,6 +17,8 @@
     _runtime = [[TLinkautoJSRuntime alloc] init];
     _conn = [[TLinkautoJSIPCConnection alloc] initWithSocketFile:@"/var/run/tlinkauto/jsruntime.sock" isServer:YES];
     _conn.delegate = self;
+    // ensure dir exists
+    [[NSFileManager defaultManager] createDirectoryAtPath:@"/var/run/tlinkauto" withIntermediateDirectories:YES attributes:nil error:nil];
     [_conn start];
     [[NSRunLoop currentRunLoop] run];
 }

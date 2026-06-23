@@ -28,4 +28,4 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 
 after-install::
 	install.exec "chown -R mobile:mobile /var/mobile/Library/TLinkauto && killall -9 SpringBoard;"
-include pccontrol/jsruntime/ipc/tlinkauto-jsd.mk
+include jsruntime/ipc/tlinkauto-jsd.mk
