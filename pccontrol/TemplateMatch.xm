@@ -186,7 +186,7 @@ static void zx_setScaledTemplateCache(const string &key, const vector<Mat> &temp
     }
 }
 
-static inline long long zx_absll(long long v) { return v < 0 ? -v : v; }
+static inline __attribute__((unused)) long long zx_absll(long long v) { return v < 0 ? -v : v; }
 
 static long long zx_sad_match_region(const Mat &img, const Mat &templ,
                                     int x0, int y0, int x1, int y1,
@@ -451,7 +451,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
         }
         // Custom SAD-based template matching.
         // Rationale: OpenCV matchTemplate() has been observed to hang on some devices/framework builds.
-        CFAbsoluteTime one0 = CFAbsoluteTimeGetCurrent();
+        CFAbsoluteTime __attribute__((unused)) one0 = CFAbsoluteTimeGetCurrent();
         TMLOGF("sadMatch #%d templ=%dx%d result=%dx%d", i, currentTemplate.cols, currentTemplate.rows, result_cols, result_rows);
 
         int bx = 0;
