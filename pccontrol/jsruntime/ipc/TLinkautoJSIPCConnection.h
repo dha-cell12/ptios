@@ -7,6 +7,8 @@
 @protocol TLinkautoJSIPCConnectionDelegate <NSObject>
 - (void)connectionDidReceiveMessage:(TLinkautoJSIPCHeader)header payload:(NSDictionary *)payload;
 - (void)connectionDidDisconnect;
+@optional
+- (void)connectionDidAcceptClient;
 @end
 
 @interface TLinkautoJSIPCConnection : NSObject

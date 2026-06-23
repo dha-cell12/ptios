@@ -60,18 +60,54 @@
     // Inject bridge and polyfills
     [_watchdog installForContext:_jsContext];
 
+    __block JSManagedValue *scriptExceptionManaged = nil;
+    _jsContext.exceptionHandler = ^(JSContext *context, JSValue *exception) {
+        scriptExceptionManaged = [JSManagedValue managedValueWithValue:exception];
+        [context.virtualMachine addManagedReference:scriptExceptionManaged withOwner:context];
+        context.exception = exception;
+    };
+
     // Evaluate script here...
     NSString *script = [NSString stringWithContentsOfFile:scriptPath encoding:NSUTF8StringEncoding error:error];
     if (script) {
         NSURL *sourceURL = [NSURL fileURLWithPath:scriptPath];
         [_jsContext evaluateScript:script withSourceURL:sourceURL];
+
+        // Also check if context exception was set directly
+        if (_jsContext.exception) {
+            scriptExceptionManaged = [JSManagedValue managedValueWithValue:_jsContext.exception];
+            [_jsContext.virtualMachine addManagedReference:scriptExceptionManaged withOwner:_jsContext];
+        }
     }
+
+    JSValue *scriptException = [scriptExceptionManaged value];
 
     [_watchdog clearForContext:_jsContext];
 
     // Cleanup handles
     [_handleRegistry releaseAll];
     [_logSink close];
+
+    if (scriptException && error) {
+        NSString *message = [scriptException toString];
+        NSString *stack = @"";
+        if ([scriptException hasProperty:@"stack"]) {
+            stack = [[scriptException valueForProperty:@"stack"] toString];
+        }
+        int line = 0;
+        if ([scriptException hasProperty:@"line"]) {
+            line = [[scriptException valueForProperty:@"line"] toInt32];
+        }
+        NSString *fullMessage = stack.length > 0 ? [NSString stringWithFormat:@"%@\n%@", message, stack] : message;
+        if (line > 0) {
+            fullMessage = [NSString stringWithFormat:@"%@ (Line %d)", fullMessage, line];
+        }
+        *error = [NSError errorWithDomain:@"TLinkautoJSRuntime" code:1 userInfo:@{NSLocalizedDescriptionKey: fullMessage ?: @"JavaScript execution failed"}];
+    }
+
+    if (scriptExceptionManaged) {
+        [_jsContext.virtualMachine removeManagedReference:scriptExceptionManaged withOwner:_jsContext];
+    }
 }
 
 

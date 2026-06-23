@@ -1,0 +1,11 @@
+--- pccontrol/jsruntime/ipc/TLinkautoJSIPCConnection.h
++++ pccontrol/jsruntime/ipc/TLinkautoJSIPCConnection.h
+@@ -6,6 +6,9 @@
+ @protocol TLinkautoJSIPCConnectionDelegate <NSObject>
+ - (void)connectionDidReceiveMessage:(TLinkautoJSIPCHeader)header payload:(NSDictionary *)payload;
+ - (void)connectionDidDisconnect;
++@optional
++- (void)connectionDidAcceptClient;
+ @end
+
+ @interface TLinkautoJSIPCConnection : NSObject

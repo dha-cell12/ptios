@@ -273,11 +273,15 @@ Boolean initConfig()
     return true;
 }
 
+#import "jsruntime/TLinkautoJSTaskService.h"
+
 Boolean init()
 {
     initScriptPlayer();
     initActivatorInstance();
     initConfig();
+
+    [[TLinkautoJSTaskService sharedService] startService];
 
     return true;
 }

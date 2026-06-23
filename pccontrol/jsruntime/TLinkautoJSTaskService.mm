@@ -6,6 +6,18 @@
 @interface TLinkautoJSTaskService () <TLinkautoJSIPCConnectionDelegate>
 @end
 
+@interface TLinkautoJSTaskContextImpl : NSObject <TLinkautoJSTaskContext>
+@property (nonatomic, assign) uint64_t runId;
+@property (nonatomic, assign) uint64_t generation;
+@property (nonatomic, weak) TLinkautoJSTaskService *service;
+@end
+
+@implementation TLinkautoJSTaskContextImpl
+- (BOOL)isCancelled {
+    return ![self.service isRunActive:self.runId generation:self.generation];
+}
+@end
+
 @implementation TLinkautoJSTaskService {
     TLinkautoJSIPCConnection *_connection;
     TLinkautoJSLegacyTaskAdapter *_legacyAdapter;
@@ -32,12 +44,19 @@
     self = [super init];
     if (self) {
         _lock = OS_UNFAIR_LOCK_INIT;
-        _legacyAdapter = [[TLinkautoJSLegacyTaskAdapter alloc] initWithExecution:nil]; // Dummy execution for now
+        _legacyAdapter = [[TLinkautoJSLegacyTaskAdapter alloc] initWithTaskContext:nil];
         _connection = [[TLinkautoJSIPCConnection alloc] initWithSocketFile:@"/var/mobile/Library/TLinkauto/run/jsruntime.sock" isServer:NO];
         _connection.delegate = self;
         _runCondition = [[NSCondition alloc] init];
     }
     return self;
+}
+
+- (BOOL)isRunActive:(uint64_t)runId generation:(uint64_t)generation {
+    os_unfair_lock_lock(&_lock);
+    BOOL active = _isRunning && _activeRunId == runId && _activeGeneration == generation;
+    os_unfair_lock_unlock(&_lock);
+    return active;
 }
 
 - (void)startService {
@@ -79,9 +98,12 @@
 
     os_unfair_lock_lock(&_lock);
     _isRunning = YES;
+
+    // Wait until daemon tells us RUN_FINISHED
     while (_isRunning) {
         [_runCondition wait];
     }
+
     BOOL success = _lastRunSuccess;
     if (!success && error) {
         *error = [NSError errorWithDomain:@"TLinkautoJSTaskService" code:1 userInfo:@{NSLocalizedDescriptionKey: _lastRunError ?: @"Script execution failed"}];
@@ -107,8 +129,27 @@
 
 - (void)connectionDidReceiveMessage:(TLinkautoJSIPCHeader)header payload:(NSDictionary *)payload {
     if (header.messageType == TLJS_MSG_HELLO) {
+        if ([payload[@"protocolVersion"] intValue] != TLJS_VERSION) {
+            NSLog(@"TLinkautoJSTaskService: Protocol mismatch. Expected %d, got %d", TLJS_VERSION, [payload[@"protocolVersion"] intValue]);
+            // Do not mark as connected
+            return;
+        }
         os_unfair_lock_lock(&_lock);
         _daemonConnected = YES;
+        os_unfair_lock_unlock(&_lock);
+
+        [_connection sendMessageWithType:TLJS_MSG_HELLO_ACK requestId:0 runId:0 generation:0 timeout:5000 payload:@{}];
+    }
+    else if (header.messageType == TLJS_MSG_START_RESULT) {
+        os_unfair_lock_lock(&_lock);
+        if (header.runId == _activeRunId && header.generation == _activeGeneration) {
+            if (![payload[@"ok"] boolValue]) {
+                _isRunning = NO;
+                _lastRunSuccess = NO;
+                _lastRunError = payload[@"error"];
+                [_runCondition broadcast];
+            }
+        }
         os_unfair_lock_unlock(&_lock);
     }
     else if (header.messageType == TLJS_MSG_TASK_REQUEST) {
@@ -116,10 +157,12 @@
     }
     else if (header.messageType == TLJS_MSG_RUN_FINISHED) {
         os_unfair_lock_lock(&_lock);
-        _isRunning = NO;
-        _lastRunSuccess = [payload[@"ok"] boolValue];
-        _lastRunError = payload[@"error"];
-        [_runCondition broadcast];
+        if (header.runId == _activeRunId && header.generation == _activeGeneration) {
+            _isRunning = NO;
+            _lastRunSuccess = [payload[@"ok"] boolValue];
+            _lastRunError = payload[@"error"];
+            [_runCondition broadcast];
+        }
         os_unfair_lock_unlock(&_lock);
     }
 }
@@ -127,6 +170,12 @@
 - (void)handleTaskRequest:(TLinkautoJSIPCHeader)header payload:(NSDictionary *)payload {
     NSString *taskName = payload[@"taskName"];
     NSDictionary *taskPayload = payload[@"payload"];
+
+    TLinkautoJSTaskContextImpl *ctx = [[TLinkautoJSTaskContextImpl alloc] init];
+    ctx.runId = header.runId;
+    ctx.generation = header.generation;
+    ctx.service = self;
+    [_legacyAdapter setTaskContext:ctx];
 
     NSDictionary *result = [_legacyAdapter dispatchLegacyTask:taskName payload:taskPayload];
 

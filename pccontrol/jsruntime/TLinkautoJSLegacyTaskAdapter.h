@@ -3,12 +3,16 @@
 
 #import <Foundation/Foundation.h>
 
-@class TLinkautoJSRuntimeExecution;
+@protocol TLinkautoJSTaskContext <NSObject>
+@property (nonatomic, readonly) uint64_t runId;
+@property (nonatomic, readonly) uint64_t generation;
+- (BOOL)isCancelled;
+@end
 
 @interface TLinkautoJSLegacyTaskAdapter : NSObject
 
-- (instancetype)initWithExecution:(TLinkautoJSRuntimeExecution *)execution;
-- (void)setExecution:(TLinkautoJSRuntimeExecution *)execution;
+- (instancetype)initWithTaskContext:(id<TLinkautoJSTaskContext>)context;
+- (void)setTaskContext:(id<TLinkautoJSTaskContext>)context;
 - (NSDictionary *)dispatchLegacyTask:(NSString *)taskName payload:(NSDictionary *)payload;
 
 @end

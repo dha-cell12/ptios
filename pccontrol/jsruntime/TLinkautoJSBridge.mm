@@ -161,19 +161,39 @@
 // Stub out all remaining required interfaces to satisfy protocol matching.
 // They simply delegate similarly via dispatchTask for this iteration.
 - (NSDictionary *)screenshotTo:(NSString *)path { return [_execution.taskDispatcher dispatchTask:@"screenshotTo" payload:@{@"path": path}]; }
-- (NSDictionary *)screenshotRegion:(NSString *)path options:(NSDictionary *)options { return [_execution.taskDispatcher dispatchTask:@"screenshotRegion" payload:@{@"path": path, @"options": options ?: @{}}]; }
-- (NSDictionary *)batch:(NSArray *)commands { return @{@"ok": @NO, @"error": @"batch not yet mapped in Phase 1 proxy"}; }
+- (NSDictionary *)screenshotRegion:(NSString *)path options:(NSDictionary *)options {
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
+        !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"screenshotRegion(path, options) requires finite positive width/height" inContext:[JSContext currentContext]];
+        return @{ @"ok": @NO };
+    }
+
+    return [_execution.taskDispatcher dispatchTask:@"screenshotRegion" payload:@{
+        @"path": path ?: @"",
+        @"x": @(x),
+        @"y": @(y),
+        @"width": @(width),
+        @"height": @(height)
+    }];
+}
+- (NSDictionary *)batch:(NSArray *)commands { return [_execution.taskDispatcher dispatchTask:@"batch" payload:@{@"commands": commands ?: @[]}]; }
 - (NSDictionary *)captureFrame:(NSDictionary *)options {
     BOOL needGray = TLinkautoJSIntOption(options, @"gray", 1) != 0;
     BOOL needBGRA = TLinkautoJSIntOption(options, @"bgra", 1) != 0;
     int ttlMs = TLinkautoJSIntOption(options, @"ttlMs", 1000);
     if (!needGray && !needBGRA) { needGray = YES; needBGRA = YES; }
     if (ttlMs <= 0) ttlMs = 1000;
-    NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%d", needGray ? 1 : 0, needBGRA ? 1 : 0, ttlMs];
-    NSDictionary *result = [_execution.taskDispatcher dispatchTask:@"captureFrame" payload:@{@"stringPayload": payload}];
-    if (![result[@"ok"] boolValue]) return result;
-    // Registry assignment happens in bridge normally, but we delegate strictly here.
-    return @{@"ok": @YES, @"id": result[@"parts"][0]};
+
+    return [_execution.taskDispatcher dispatchTask:@"captureFrame" payload:@{
+        @"gray": @(needGray),
+        @"bgra": @(needBGRA),
+        @"ttlMs": @(ttlMs)
+    }];
 }
 - (NSDictionary *)releaseFrame:(int)frameId { [_execution.handleRegistry releaseFrame:frameId]; return @{@"ok": @YES}; }
 - (NSDictionary *)openImage:(NSString *)path {
@@ -183,10 +203,10 @@
     }
     NSDictionary *result = [_execution.taskDispatcher dispatchTask:@"openImage" payload:@{@"path": path}];
     NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
-    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    if (![result[@"ok"] boolValue] || [parts count] < 3) return result;
+    int imageId = [TLinkautoJSSafeStringPart(parts, 0) intValue];
     // Registry assignment delegates
-    return @{@"ok": @YES, @"id": @(imageId), @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue])};
+    return @{@"ok": @YES, @"id": @(imageId), @"width": @([TLinkautoJSSafeStringPart(parts, 1) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 2) intValue])};
 }
 - (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height {
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
@@ -196,9 +216,9 @@
     }
     NSDictionary *result = [_execution.taskDispatcher dispatchTask:@"captureImage" payload:@{@"x": @(x), @"y": @(y), @"width": @(width), @"height": @(height)}];
     NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
-    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
-    return @{@"ok": @YES, @"id": @(imageId), @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue])};
+    if (![result[@"ok"] boolValue] || [parts count] < 3) return result;
+    int imageId = [TLinkautoJSSafeStringPart(parts, 0) intValue];
+    return @{@"ok": @YES, @"id": @(imageId), @"width": @([TLinkautoJSSafeStringPart(parts, 1) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 2) intValue])};
 }
 - (NSDictionary *)releaseImage:(int)imageId { [_execution.handleRegistry releaseImage:imageId]; return @{@"ok": @YES}; }
 - (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options {
@@ -235,7 +255,14 @@
     return [_execution.taskDispatcher dispatchTask:@"setCellularData" payload:@{@"enabled": @(enabled)}];
 }
 - (NSDictionary *)alert:(NSString *)title message:(NSString *)message duration:(int)duration { return [_execution.taskDispatcher dispatchTask:@"alert" payload:@{@"stringPayload": [NSString stringWithFormat:@"%@;;%@;;%d", title, message, duration]}]; }
-- (NSDictionary *)dialog:(NSDictionary *)options { return [_execution.taskDispatcher dispatchTask:@"dialog" payload:@{@"stringPayload": @""}]; }
+- (NSDictionary *)dialog:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"dialog" payload:@{
+        @"title": TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"title", @"TLinkauto"), 80) ?: @"",
+        @"message": TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"message", @""), 300) ?: @"",
+        @"ok": TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"ok", @"OK"), 40) ?: @"",
+        @"cancel": TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"cancel", @"Cancel"), 40) ?: @""
+    }];
+}
 - (NSDictionary *)setClipboardText:(NSString *)text { return [_execution.taskDispatcher dispatchTask:@"setClipboardText" payload:@{@"text": text ?: @""}]; }
 - (NSDictionary *)insertText:(NSString *)text { return [_execution.taskDispatcher dispatchTask:@"insertText" payload:@{@"text": text ?: @""}]; }
 - (NSDictionary *)deleteCharacters:(int)count { return [_execution.taskDispatcher dispatchTask:@"deleteCharacters" payload:@{@"count": @(count)}]; }
@@ -246,8 +273,18 @@
 - (NSDictionary *)touchIndicator:(NSString *)action { return [_execution.taskDispatcher dispatchTask:@"touchIndicator" payload:@{@"action": action ?: @""}]; }
 - (NSDictionary *)runShell:(NSString *)command { return [_execution.taskDispatcher dispatchTask:@"runShell" payload:@{@"command": command ?: @""}]; }
 - (NSDictionary *)saveScreenshotToAlbum:(NSString *)path { return [_execution.taskDispatcher dispatchTask:@"saveScreenshotToAlbum" payload:@{@"path": path ?: @""}]; }
-- (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options { return [_execution.taskDispatcher dispatchTask:@"isColors" payload:@{@"stringPayload": @""}]; }
-- (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options { return [_execution.taskDispatcher dispatchTask:@"findMultiColor" payload:@{@"stringPayload": @""}]; }
+- (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"isColors" payload:@{
+        @"points": points ?: @[],
+        @"options": options ?: @{}
+    }];
+}
+- (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"findMultiColor" payload:@{
+        @"points": points ?: @[],
+        @"options": options ?: @{}
+    }];
+}
 - (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled {
     return [_execution.taskDispatcher dispatchTask:@"setAutoLaunch" payload:@{@"name": name ?: @"", @"script": script ?: @"", @"enabled": @(enabled)}];
 }

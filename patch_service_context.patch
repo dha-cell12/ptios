@@ -1,0 +1,55 @@
+--- pccontrol/jsruntime/TLinkautoJSTaskService.mm
++++ pccontrol/jsruntime/TLinkautoJSTaskService.mm
+@@ -6,6 +6,23 @@
+ @interface TLinkautoJSTaskService () <TLinkautoJSIPCConnectionDelegate>
+ @end
+
++@interface TLinkautoJSTaskContextImpl : NSObject <TLinkautoJSTaskContext>
++@property (nonatomic, assign) uint64_t runId;
++@property (nonatomic, assign) uint64_t generation;
++@property (nonatomic, weak) TLinkautoJSTaskService *service;
++@end
++
++@implementation TLinkautoJSTaskContextImpl
++- (BOOL)isCancelled {
++    // It's cancelled if the service is not running or the run/generation changed
++    return ![self.service isRunActive:self.runId generation:self.generation];
++}
++@end
++
+ @implementation TLinkautoJSTaskService {
+     TLinkautoJSIPCConnection *_connection;
+     TLinkautoJSLegacyTaskAdapter *_legacyAdapter;
+@@ -34,7 +51,9 @@
+ - (instancetype)init {
+     self = [super init];
+     if (self) {
+         _lock = OS_UNFAIR_LOCK_INIT;
+-        _legacyAdapter = [[TLinkautoJSLegacyTaskAdapter alloc] initWithExecution:nil]; // Dummy execution for now
++        TLinkautoJSTaskContextImpl *ctx = [[TLinkautoJSTaskContextImpl alloc] init];
++        ctx.service = self;
++        _legacyAdapter = [[TLinkautoJSLegacyTaskAdapter alloc] initWithTaskContext:ctx];
+         _connection = [[TLinkautoJSIPCConnection alloc] initWithSocketFile:@"/var/mobile/Library/TLinkauto/run/jsruntime.sock" isServer:NO];
+         _connection.delegate = self;
+@@ -48,6 +67,16 @@
+     [_connection start];
+ }
+
++- (BOOL)isRunActive:(uint64_t)runId generation:(uint64_t)generation {
++    os_unfair_lock_lock(&_lock);
++    BOOL active = _isRunning && _activeRunId == runId && _activeGeneration == generation;
++    os_unfair_lock_unlock(&_lock);
++    return active;
++}
++
+ - (void)stopService {
+     [_connection stop];
+     os_unfair_lock_lock(&_lock);
+@@ -155,6 +184,10 @@
+
+ - (void)handleTaskRequest:(TLinkautoJSIPCHeader)header payload:(NSDictionary *)payload {
++    // Update context per request
++    TLinkautoJSTaskContextImpl *ctx = (TLinkautoJSTaskContextImpl *)_legacyAdapter.context; // need to expose or just create new
++
+     NSString *taskName = payload[@"taskName"];
+     NSDictionary *taskPayload = payload[@"payload"];

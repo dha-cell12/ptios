@@ -70,6 +70,9 @@
         if (clientFd >= 0) {
             dispatch_async(self->_ioQueue, ^{
                 [self handleNewClient:clientFd];
+                if ([self.delegate respondsToSelector:@selector(connectionDidAcceptClient)]) {
+                    [(id)self.delegate connectionDidAcceptClient];
+                }
             });
         }
     });

@@ -1,0 +1,10 @@
+--- pccontrol/jsruntime/ipc/TLinkautoJSIPCConnection.mm
++++ pccontrol/jsruntime/ipc/TLinkautoJSIPCConnection.mm
+@@ -71,6 +71,11 @@
+             dispatch_async(self->_ioQueue, ^{
+                 [self handleNewClient:clientFd];
++                if ([self.delegate respondsToSelector:@selector(connectionDidAcceptClient)]) {
++                    [self.delegate performSelector:@selector(connectionDidAcceptClient)];
++                }
+             });
+         }

@@ -1,0 +1,11 @@
+--- pccontrol/jsruntime/ipc/tlinkauto-jsd-main.mm
++++ pccontrol/jsruntime/ipc/tlinkauto-jsd-main.mm
+@@ -34,6 +34,8 @@
+     } else if (header.messageType == TLJS_MSG_START_RUN) {
+         NSString *scriptPath = payload[@"scriptPath"];
+         NSString *bundlePath = payload[@"bundlePath"];
+         NSDictionary *manifest = payload[@"manifest"];
+
++        [_conn sendMessageWithType:TLJS_MSG_START_RESULT requestId:0 runId:header.runId generation:header.generation timeout:5000 payload:@{@"ok": @YES}];
++
+         _dispatcher = [[TLinkautoJSIPCTaskDispatcher alloc] initWithConnection:_conn runId:header.runId generation:header.generation];

@@ -52,11 +52,19 @@
 
     os_unfair_lock_unlock(&_lock);
 
-    [_activeExecution evaluateScriptAtPath:scriptPath error:error];
+    NSError *evalError = nil;
+    [_activeExecution evaluateScriptAtPath:scriptPath error:&evalError];
 
     os_unfair_lock_lock(&_lock);
     _activeExecution = nil;
     os_unfair_lock_unlock(&_lock);
+
+    if (evalError) {
+        if (error) {
+            *error = evalError;
+        }
+        return NO;
+    }
 
     return YES;
 }
