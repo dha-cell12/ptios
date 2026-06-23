@@ -32,10 +32,12 @@
         return @{ @"ok": @NO, @"error": @"runTask task code out of range" };
     }
 
-    NSString *taskStr = [NSString stringWithFormat:@"%d|%@", task, payload ?: @""];
-    NSData *payloadData = [taskStr dataUsingEncoding:NSUTF8StringEncoding];
+    NSString *taskStr = [NSString stringWithFormat:@"%02d%@", task, payload ?: @""];
+    NSMutableData *requestData = [[taskStr dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+    uint8_t nullByte = 0;
+    [requestData appendBytes:&nullByte length:1];
 
-    if (payloadData.length > 512 * 1024) {
+    if (requestData.length > 512 * 1024) {
         return @{ @"ok": @NO, @"error": @"runTask payload exceeds maximum size" };
     }
 
@@ -43,38 +45,29 @@
     __block NSString *responseString = nil;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        CFReadStreamRef readStream;
-        CFWriteStreamRef writeStream;
-        CFStreamCreateBoundPair(NULL, &readStream, &writeStream, 1024 * 1024);
+        CFWriteStreamRef writeStream = CFWriteStreamCreateWithAllocatedBuffers(kCFAllocatorDefault, kCFAllocatorDefault);
 
         if (!writeStream) {
             responseString = @"0;;internal error: failed to create stream\r\n";
             [sleepCondition lock];
             [sleepCondition signal];
             [sleepCondition unlock];
-            if (readStream) CFRelease(readStream);
             return;
         }
 
         CFWriteStreamOpen(writeStream);
 
         void processTask(UInt8* dataArray, CFWriteStreamRef stream);
-        if (1) {
-            processTask((UInt8 *)[payloadData bytes], writeStream);
-        } else {
-            NSString *err = @"0;;internal error: processTask missing\r\n";
-            CFWriteStreamWrite(writeStream, (const UInt8 *)[err UTF8String], [err length]);
-        }
+        processTask((UInt8 *)[requestData mutableBytes], writeStream);
 
         CFWriteStreamClose(writeStream);
 
         CFDataRef written = (CFDataRef)CFWriteStreamCopyProperty(writeStream, kCFStreamPropertyDataWritten);
         CFRelease(writeStream);
-        if (readStream) CFRelease(readStream);
 
         NSData *data = CFBridgingRelease(written);
         if (!data || [data length] == 0) {
-            responseString = @"0\r\n";
+            responseString = @"-1;;native task returned no response\r\n";
         } else {
             responseString = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
         }
@@ -106,7 +99,7 @@
     NSString *errorMsg = [rawError stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 
     NSMutableDictionary *result = [NSMutableDictionary dictionary];
-    if (status == 1) {
+    if (status == 0) {
         result[@"ok"] = @YES;
         NSMutableArray *resParts = [NSMutableArray arrayWithCapacity:parts.count - 1];
         for (NSUInteger i = 1; i < parts.count; i++) {

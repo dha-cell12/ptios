@@ -398,16 +398,21 @@ static NSString *tlinkautoStringValue(id value)
     }
 
     jsRuntime = [TLinkautoJSTaskService sharedService];
-    NSError *runError = nil;
-    BOOL ok = [jsRuntime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest error:&runError];
-    if (!ok && runError) {
-        setLastScriptError([runError localizedDescription]);
-        if (!scriptPlayForceStop) {
-            showAlertBox(@"JavaScript Error", [runError localizedDescription], 999);
-        }
-    }
-    scriptPlayForceStop = false;
-    [self playHasStopped];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSError *runError = nil;
+        BOOL ok = [jsRuntime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest error:&runError];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!ok && runError) {
+                setLastScriptError([runError localizedDescription]);
+                if (!scriptPlayForceStop) {
+                    showAlertBox(@"JavaScript Error", [runError localizedDescription], 999);
+                }
+            }
+            scriptPlayForceStop = false;
+            [self playHasStopped];
+        });
+    });
 }
 
 - (void)replay:(NSTimer*)nstimer {

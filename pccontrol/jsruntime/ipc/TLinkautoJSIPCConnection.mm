@@ -78,6 +78,19 @@
     });
 }
 
+- (void)scheduleReconnect {
+    if (_isServer || !_running) {
+        return;
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), _ioQueue, ^{
+        if (!self->_running || self->_clientFd >= 0) {
+            return;
+        }
+        [self setupClient];
+    });
+}
+
 - (void)setupClient {
     _clientFd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (_clientFd < 0) return;
@@ -90,7 +103,7 @@
     if (connect(_clientFd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         close(_clientFd);
         _clientFd = -1;
-        // In real impl, we should schedule a retry
+        [self scheduleReconnect];
         return;
     }
 
@@ -111,23 +124,35 @@
     dispatch_resume(_readSource);
 }
 
+- (BOOL)readFully:(int)fd buffer:(void *)buffer length:(size_t)length {
+    size_t totalRead = 0;
+    while (totalRead < length) {
+        ssize_t r = read(fd, (uint8_t *)buffer + totalRead, length - totalRead);
+        if (r <= 0) return NO;
+        totalRead += r;
+    }
+    return YES;
+}
+
+- (BOOL)writeFully:(int)fd buffer:(const void *)buffer length:(size_t)length {
+    size_t totalWritten = 0;
+    while (totalWritten < length) {
+        ssize_t w = write(fd, (const uint8_t *)buffer + totalWritten, length - totalWritten);
+        if (w <= 0) return NO;
+        totalWritten += w;
+    }
+    return YES;
+}
+
 - (void)readData {
     // Read header
     TLinkautoJSIPCHeader header;
-    ssize_t bytesRead = read(_clientFd, &header, sizeof(header));
-
-    if (bytesRead <= 0) {
+    if (![self readFully:_clientFd buffer:&header length:sizeof(header)]) {
         [self stop];
         return;
     }
 
-    if (bytesRead < sizeof(header)) {
-        // Handle fragmentation in real impl. Keeping it simple.
-        [self stop];
-        return;
-    }
-
-    if (header.magic != TLJS_MAGIC || header.version != TLJS_VERSION || header.payloadLength > 1024*1024) {
+    if (header.magic != TLJS_MAGIC || header.version != TLJS_VERSION || header.payloadLength > 10*1024*1024) {
         [self stop];
         return;
     }
@@ -135,13 +160,11 @@
     NSDictionary *payload = @{};
     if (header.payloadLength > 0) {
         NSMutableData *payloadData = [NSMutableData dataWithLength:header.payloadLength];
-        ssize_t payloadRead = read(_clientFd, payloadData.mutableBytes, header.payloadLength);
-        if (payloadRead == header.payloadLength) {
-            payload = [TLinkautoJSIPCCodec decodePayload:payloadData error:nil] ?: @{};
-        } else {
+        if (![self readFully:_clientFd buffer:payloadData.mutableBytes length:header.payloadLength]) {
             [self stop];
             return;
         }
+        payload = [TLinkautoJSIPCCodec decodePayload:payloadData error:nil] ?: @{};
     }
 
     if ([self.delegate respondsToSelector:@selector(connectionDidReceiveMessage:payload:)]) {
@@ -165,7 +188,9 @@
 
     dispatch_async(_ioQueue, ^{
         if (self->_clientFd >= 0) {
-            write(self->_clientFd, packet.bytes, packet.length);
+            if (![self writeFully:self->_clientFd buffer:packet.bytes length:packet.length]) {
+                [self stop];
+            }
         }
     });
     return YES;
@@ -189,6 +214,8 @@
         if ([self.delegate respondsToSelector:@selector(connectionDidDisconnect)]) {
             [self.delegate connectionDidDisconnect];
         }
+
+        [self scheduleReconnect];
     });
 }
 
