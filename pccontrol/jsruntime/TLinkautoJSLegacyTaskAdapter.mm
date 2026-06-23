@@ -35,7 +35,7 @@
         return @{ @"ok": @NO, @"error": @"runTask payload exceeds maximum size" };
     }
 
-    NSCondition *sleepCondition = exec.sleepCondition;
+    NSCondition *sleepCondition = [[NSCondition alloc] init];
     __block NSString *responseString = nil;
 
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -81,12 +81,12 @@
     });
 
     [sleepCondition lock];
-    while (!responseString && ![exec isAborted]) {
+    while (!responseString) {
         [sleepCondition wait];
     }
     [sleepCondition unlock];
 
-    if ([exec isAborted]) {
+    if (!responseString) {
         return @{ @"ok": @NO, @"error": @"aborted" };
     }
 

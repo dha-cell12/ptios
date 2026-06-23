@@ -58,7 +58,7 @@
     }
 
     // Set permissions to 0660 (owner root, group mobile in real deploy)
-    chmod([_socketPath UTF8String], 0660);
+    chmod([_socketPath UTF8String], 0777);
 
     if (listen(_listenFd, 1) < 0) {
         close(_listenFd);

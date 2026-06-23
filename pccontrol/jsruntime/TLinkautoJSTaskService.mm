@@ -13,6 +13,10 @@
     uint64_t _activeRunId;
     uint64_t _activeGeneration;
     BOOL _daemonConnected;
+    BOOL _isRunning;
+    BOOL _lastRunSuccess;
+    NSString *_lastRunError;
+    NSCondition *_runCondition;
 }
 
 + (instancetype)sharedService {
@@ -29,8 +33,9 @@
     if (self) {
         _lock = OS_UNFAIR_LOCK_INIT;
         _legacyAdapter = [[TLinkautoJSLegacyTaskAdapter alloc] initWithExecution:nil]; // Dummy execution for now
-        _connection = [[TLinkautoJSIPCConnection alloc] initWithSocketFile:@"/var/run/tlinkauto/jsruntime.sock" isServer:NO];
+        _connection = [[TLinkautoJSIPCConnection alloc] initWithSocketFile:@"/var/mobile/Library/TLinkauto/run/jsruntime.sock" isServer:NO];
         _connection.delegate = self;
+        _runCondition = [[NSCondition alloc] init];
     }
     return self;
 }
@@ -41,6 +46,10 @@
 
 - (void)stopService {
     [_connection stop];
+    os_unfair_lock_lock(&_lock);
+    _isRunning = NO;
+    [_runCondition broadcast];
+    os_unfair_lock_unlock(&_lock);
 }
 
 - (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest error:(NSError **)error {
@@ -68,7 +77,18 @@
                              timeout:5000
                              payload:payload];
 
-    return YES;
+    os_unfair_lock_lock(&_lock);
+    _isRunning = YES;
+    while (_isRunning) {
+        [_runCondition wait];
+    }
+    BOOL success = _lastRunSuccess;
+    if (!success && error) {
+        *error = [NSError errorWithDomain:@"TLinkautoJSTaskService" code:1 userInfo:@{NSLocalizedDescriptionKey: _lastRunError ?: @"Script execution failed"}];
+    }
+    os_unfair_lock_unlock(&_lock);
+
+    return success;
 }
 
 - (void)requestStop {
@@ -94,6 +114,14 @@
     else if (header.messageType == TLJS_MSG_TASK_REQUEST) {
         [self handleTaskRequest:header payload:payload];
     }
+    else if (header.messageType == TLJS_MSG_RUN_FINISHED) {
+        os_unfair_lock_lock(&_lock);
+        _isRunning = NO;
+        _lastRunSuccess = [payload[@"ok"] boolValue];
+        _lastRunError = payload[@"error"];
+        [_runCondition broadcast];
+        os_unfair_lock_unlock(&_lock);
+    }
 }
 
 - (void)handleTaskRequest:(TLinkautoJSIPCHeader)header payload:(NSDictionary *)payload {
@@ -113,6 +141,8 @@
 - (void)connectionDidDisconnect {
     os_unfair_lock_lock(&_lock);
     _daemonConnected = NO;
+    _isRunning = NO;
+    [_runCondition broadcast];
     os_unfair_lock_unlock(&_lock);
 }
 

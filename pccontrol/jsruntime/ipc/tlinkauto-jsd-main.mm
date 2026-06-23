@@ -15,11 +15,15 @@
 - (void)start {
     NSLog(@"tlinkauto-jsd: Starting daemon");
     _runtime = [[TLinkautoJSRuntime alloc] init];
-    _conn = [[TLinkautoJSIPCConnection alloc] initWithSocketFile:@"/var/run/tlinkauto/jsruntime.sock" isServer:YES];
+    _conn = [[TLinkautoJSIPCConnection alloc] initWithSocketFile:@"/var/mobile/Library/TLinkauto/run/jsruntime.sock" isServer:YES];
     _conn.delegate = self;
     // ensure dir exists
-    [[NSFileManager defaultManager] createDirectoryAtPath:@"/var/run/tlinkauto" withIntermediateDirectories:YES attributes:nil error:nil];
+    [[NSFileManager defaultManager] createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/run" withIntermediateDirectories:YES attributes:nil error:nil];
     [_conn start];
+    // Wait briefly, then broadcast HELLO to any connected clients
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [_conn sendMessageWithType:TLJS_MSG_HELLO requestId:0 runId:0 generation:0 timeout:5000 payload:@{}];
+    });
     [[NSRunLoop currentRunLoop] run];
 }
 
