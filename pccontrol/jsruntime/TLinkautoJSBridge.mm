@@ -176,26 +176,64 @@
     return @{@"ok": @YES, @"id": result[@"parts"][0]};
 }
 - (NSDictionary *)releaseFrame:(int)frameId { [_execution.handleRegistry releaseFrame:frameId]; return @{@"ok": @YES}; }
-- (NSDictionary *)openImage:(NSString *)path { return @{@"ok": @NO}; }
-- (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height { return @{@"ok": @NO}; }
+- (NSDictionary *)openImage:(NSString *)path {
+    if (![path isKindOfClass:[NSString class]] || [path length] == 0 || TLinkautoJSStringContainsAny(path, @[@";;", @"\r", @"\n"])) {
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"openImage(path) requires a valid path" inContext:[JSContext currentContext]];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [_execution.taskDispatcher dispatchTask:@"openImage" payload:@{@"path": path}];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
+    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    // Registry assignment delegates
+    return @{@"ok": @YES, @"id": @(imageId), @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue])};
+}
+- (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height {
+    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
+        !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"captureImage(x, y, width, height) requires finite positive dimensions" inContext:[JSContext currentContext]];
+        return @{ @"ok": @NO };
+    }
+    NSDictionary *result = [_execution.taskDispatcher dispatchTask:@"captureImage" payload:@{@"x": @(x), @"y": @(y), @"width": @(width), @"height": @(height)}];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
+    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    return @{@"ok": @YES, @"id": @(imageId), @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue])};
+}
 - (NSDictionary *)releaseImage:(int)imageId { [_execution.handleRegistry releaseImage:imageId]; return @{@"ok": @YES}; }
-- (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options { return @{@"ok": @NO}; }
-- (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options { return @{@"ok": @NO}; }
-- (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options { return @{@"ok": @NO}; }
-- (NSDictionary *)ocrFrame:(int)frameId options:(NSDictionary *)options { return @{@"ok": @NO}; }
-- (NSDictionary *)ocr:(NSDictionary *)options { return @{@"ok": @NO}; }
+- (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"framePickColor" payload:@{@"frameId": @(frameId), @"x": @(x), @"y": @(y), @"options": options ?: @{}}];
+}
+- (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"framePickColors" payload:@{@"frameId": @(frameId), @"points": points ?: @[], @"options": options ?: @{}}];
+}
+- (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"findImageInFrame" payload:@{@"frameId": @(frameId), @"imageId": @(imageId), @"options": options ?: @{}}];
+}
+- (NSDictionary *)ocrFrame:(int)frameId options:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"ocrFrame" payload:@{@"frameId": @(frameId), @"options": options ?: @{}}];
+}
+- (NSDictionary *)ocr:(NSDictionary *)options {
+    return [_execution.taskDispatcher dispatchTask:@"ocr" payload:@{@"options": options ?: @{}}];
+}
 - (NSDictionary *)openApp:(NSString *)bundleId { return [_execution.taskDispatcher dispatchTask:@"openApp" payload:@{@"bundleId": bundleId ?: @""}]; }
 - (NSDictionary *)killApp:(NSString *)bundleId { return [_execution.taskDispatcher dispatchTask:@"killApp" payload:@{@"bundleId": bundleId ?: @""}]; }
 - (NSDictionary *)appState:(NSString *)bundleId { return [_execution.taskDispatcher dispatchTask:@"appState" payload:@{@"bundleId": bundleId ?: @""}]; }
 - (NSDictionary *)appInfo:(NSString *)bundleId { return [_execution.taskDispatcher dispatchTask:@"appInfo" payload:@{@"bundleId": bundleId ?: @""}]; }
 - (NSDictionary *)appPid:(NSString *)bundleId { return [_execution.taskDispatcher dispatchTask:@"appPid" payload:@{@"bundleId": bundleId ?: @""}]; }
-- (NSDictionary *)appPaths:(NSString *)bundleId { return @{@"ok": @NO}; }
+- (NSDictionary *)appPaths:(NSString *)bundleId {
+    return [_execution.taskDispatcher dispatchTask:@"appPaths" payload:@{@"bundleId": bundleId ?: @""}];
+}
 - (NSDictionary *)listBundles:(BOOL)withInfo { return [_execution.taskDispatcher dispatchTask:@"listBundles" payload:@{@"withInfo": @(withInfo)}]; }
 - (NSDictionary *)openUrl:(NSString *)url { return [_execution.taskDispatcher dispatchTask:@"openUrl" payload:@{@"url": url ?: @""}]; }
 - (NSDictionary *)setWifi:(BOOL)enabled { return [_execution.taskDispatcher dispatchTask:@"setWifi" payload:@{@"enabled": @(enabled)}]; }
 - (NSDictionary *)setBluetooth:(BOOL)enabled { return [_execution.taskDispatcher dispatchTask:@"setBluetooth" payload:@{@"enabled": @(enabled)}]; }
-- (NSDictionary *)setAirplaneMode:(BOOL)enabled { return @{@"ok": @NO}; }
-- (NSDictionary *)setCellularData:(BOOL)enabled { return @{@"ok": @NO}; }
+- (NSDictionary *)setAirplaneMode:(BOOL)enabled {
+    return [_execution.taskDispatcher dispatchTask:@"setAirplaneMode" payload:@{@"enabled": @(enabled)}];
+}
+- (NSDictionary *)setCellularData:(BOOL)enabled {
+    return [_execution.taskDispatcher dispatchTask:@"setCellularData" payload:@{@"enabled": @(enabled)}];
+}
 - (NSDictionary *)alert:(NSString *)title message:(NSString *)message duration:(int)duration { return [_execution.taskDispatcher dispatchTask:@"alert" payload:@{@"stringPayload": [NSString stringWithFormat:@"%@;;%@;;%d", title, message, duration]}]; }
 - (NSDictionary *)dialog:(NSDictionary *)options { return [_execution.taskDispatcher dispatchTask:@"dialog" payload:@{@"stringPayload": @""}]; }
 - (NSDictionary *)setClipboardText:(NSString *)text { return [_execution.taskDispatcher dispatchTask:@"setClipboardText" payload:@{@"text": text ?: @""}]; }
@@ -210,32 +248,70 @@
 - (NSDictionary *)saveScreenshotToAlbum:(NSString *)path { return [_execution.taskDispatcher dispatchTask:@"saveScreenshotToAlbum" payload:@{@"path": path ?: @""}]; }
 - (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options { return [_execution.taskDispatcher dispatchTask:@"isColors" payload:@{@"stringPayload": @""}]; }
 - (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options { return [_execution.taskDispatcher dispatchTask:@"findMultiColor" payload:@{@"stringPayload": @""}]; }
-- (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled { return @{@"ok": @NO}; }
-- (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script { return @{@"ok": @NO}; }
-- (NSDictionary *)removeTimer:(NSString *)name { return @{@"ok": @NO}; }
-- (NSDictionary *)readText:(NSString *)path { return @{@"ok": @NO}; }
-- (NSDictionary *)writeText:(NSString *)path text:(NSString *)text { return @{@"ok": @NO}; }
-- (NSDictionary *)readJSON:(NSString *)path { return @{@"ok": @NO}; }
-- (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value { return @{@"ok": @NO}; }
-- (NSDictionary *)fileExists:(NSString *)path { return @{@"ok": @NO}; }
-- (NSDictionary *)deleteFile:(NSString *)path { return @{@"ok": @NO}; }
+- (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled {
+    return [_execution.taskDispatcher dispatchTask:@"setAutoLaunch" payload:@{@"name": name ?: @"", @"script": script ?: @"", @"enabled": @(enabled)}];
+}
+- (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script {
+    return [_execution.taskDispatcher dispatchTask:@"setTimer" payload:@{@"name": name ?: @"", @"interval": @(interval), @"repeat": @(repeat), @"script": script ?: @""}];
+}
+- (NSDictionary *)removeTimer:(NSString *)name {
+    return [_execution.taskDispatcher dispatchTask:@"removeTimer" payload:@{@"name": name ?: @""}];
+}
+- (NSDictionary *)readText:(NSString *)path {
+    return [_execution.taskDispatcher dispatchTask:@"readText" payload:@{@"path": path ?: @""}];
+}
+- (NSDictionary *)writeText:(NSString *)path text:(NSString *)text {
+    return [_execution.taskDispatcher dispatchTask:@"writeText" payload:@{@"path": path ?: @"", @"text": text ?: @""}];
+}
+- (NSDictionary *)readJSON:(NSString *)path {
+    return [_execution.taskDispatcher dispatchTask:@"readJSON" payload:@{@"path": path ?: @""}];
+}
+- (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value {
+    return [_execution.taskDispatcher dispatchTask:@"writeJSON" payload:@{@"path": path ?: @"", @"value": value ? [value toObject] : @""}];
+}
+- (NSDictionary *)fileExists:(NSString *)path {
+    return [_execution.taskDispatcher dispatchTask:@"fileExists" payload:@{@"path": path ?: @""}];
+}
+- (NSDictionary *)deleteFile:(NSString *)path {
+    return [_execution.taskDispatcher dispatchTask:@"deleteFile" payload:@{@"path": path ?: @""}];
+}
 - (NSDictionary *)screenshot { return [_execution.taskDispatcher dispatchTask:@"screenshot" payload:@{}]; }
-- (NSDictionary *)frontMostAppId { return @{@"ok": @NO}; }
-- (NSDictionary *)frontMostPid { return @{@"ok": @NO}; }
-- (NSDictionary *)orientation { return @{@"ok": @NO}; }
+- (NSDictionary *)frontMostAppId {
+    return [_execution.taskDispatcher dispatchTask:@"frontMostAppId" payload:@{}];
+}
+- (NSDictionary *)frontMostPid {
+    return [_execution.taskDispatcher dispatchTask:@"frontMostPid" payload:@{}];
+}
+- (NSDictionary *)orientation {
+    return [_execution.taskDispatcher dispatchTask:@"orientation" payload:@{}];
+}
 - (NSDictionary *)getClipboardText { return [_execution.taskDispatcher dispatchTask:@"getClipboardText" payload:@{}]; }
-- (NSDictionary *)rootDir { return @{@"ok": @NO}; }
-- (NSDictionary *)currentDir { return @{@"ok": @NO}; }
-- (NSDictionary *)botPath { return @{@"ok": @NO}; }
+- (NSDictionary *)rootDir {
+    return [_execution.taskDispatcher dispatchTask:@"rootDir" payload:@{}];
+}
+- (NSDictionary *)currentDir {
+    return [_execution.taskDispatcher dispatchTask:@"currentDir" payload:@{}];
+}
+- (NSDictionary *)botPath {
+    return [_execution.taskDispatcher dispatchTask:@"botPath" payload:@{}];
+}
 - (NSDictionary *)info { return [_execution.taskDispatcher dispatchTask:@"info" payload:@{}]; }
 - (NSDictionary *)batteryInfo { return [_execution.taskDispatcher dispatchTask:@"batteryInfo" payload:@{}]; }
-- (NSDictionary *)runtimeInfo { return @{@"ok": @NO}; }
+- (NSDictionary *)runtimeInfo {
+    return [_execution.taskDispatcher dispatchTask:@"runtimeInfo" payload:@{}];
+}
 - (NSDictionary *)wifi { return [_execution.taskDispatcher dispatchTask:@"wifi" payload:@{}]; }
 - (NSDictionary *)bluetooth { return [_execution.taskDispatcher dispatchTask:@"bluetooth" payload:@{}]; }
-- (NSDictionary *)airplaneMode { return @{@"ok": @NO}; }
-- (NSDictionary *)cellularData { return @{@"ok": @NO}; }
+- (NSDictionary *)airplaneMode {
+    return [_execution.taskDispatcher dispatchTask:@"airplaneMode" payload:@{}];
+}
+- (NSDictionary *)cellularData {
+    return [_execution.taskDispatcher dispatchTask:@"cellularData" payload:@{}];
+}
 - (NSDictionary *)clearScreenshotAlbum { return [_execution.taskDispatcher dispatchTask:@"clearScreenshotAlbum" payload:@{}]; }
-- (NSDictionary *)listAutoLaunch { return @{@"ok": @NO}; }
+- (NSDictionary *)listAutoLaunch {
+    return [_execution.taskDispatcher dispatchTask:@"listAutoLaunch" payload:@{}];
+}
 - (NSDictionary *)clearDialogValues { return [_execution.taskDispatcher dispatchTask:@"clearDialogValues" payload:@{}]; }
 
 @end
