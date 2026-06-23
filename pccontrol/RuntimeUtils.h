@@ -59,3 +59,11 @@ static inline NSString *TLinkautoJSSanitizeProtocolText(NSString *text, NSUInteg
     if (safe.length > maxLength) safe = [safe substringToIndex:maxLength];
     return safe;
 }
+
+static inline BOOL TLinkautoJSStringContainsAny(NSString *string, NSArray<NSString *> *substrings) {
+    if (!string || !substrings) return NO;
+    for (NSString *sub in substrings) {
+        if ([string rangeOfString:sub].location != NSNotFound) return YES;
+    }
+    return NO;
+}
