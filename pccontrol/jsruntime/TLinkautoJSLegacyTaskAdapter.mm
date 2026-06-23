@@ -144,7 +144,7 @@
     } else if ([taskName isEqualToString:@"listBundles"]) {
         return [self runTask:TASK_LIST_BUNDLES payload:[dict[@"withInfo"] boolValue] ? @"1" : @"0"];
     } else if ([taskName isEqualToString:@"openUrl"]) {
-        return [self runTask:TASK_PROCESS_BRING_FOREGROUND_URL payload:dict[@"url"]];
+        return [self runTask:TASK_OPEN_URL payload:dict[@"url"]];
     } else if ([taskName isEqualToString:@"wifi"]) {
         return [self runTask:TASK_WIFI payload:@""];
     } else if ([taskName isEqualToString:@"bluetooth"]) {
@@ -164,23 +164,23 @@
     } else if ([taskName isEqualToString:@"screenshot"]) {
         return [self runTask:TASK_SCREENSHOT payload:@""];
     } else if ([taskName isEqualToString:@"screenshotTo"]) {
-        return [self runTask:TASK_SCREENSHOT_TO payload:dict[@"path"]];
+        return [self runTask:TASK_SCREENSHOT payload:dict[@"path"]];
     } else if ([taskName isEqualToString:@"screenshotRegion"]) {
-        return [self runTask:TASK_SCREENSHOT_REGION payload:dict[@"stringPayload"]];
+        return [self runTask:TASK_SCREENSHOT payload:dict[@"stringPayload"]];
     } else if ([taskName isEqualToString:@"saveScreenshotToAlbum"]) {
-        return [self runTask:TASK_SCREENSHOT_SAVE_TO_ALBUM payload:dict[@"path"]];
+        return [self runTask:TASK_SCREENSHOT payload:dict[@"path"]];
     } else if ([taskName isEqualToString:@"clearScreenshotAlbum"]) {
-        return [self runTask:TASK_SCREENSHOT_CLEAR_ALBUM payload:@""];
+        return [self runTask:TASK_SCREENSHOT payload:@""];
     } else if ([taskName isEqualToString:@"hardwareKey"]) {
         return [self runTask:TASK_HARDWARE_KEY payload:dict[@"stringPayload"]];
     } else if ([taskName isEqualToString:@"pressHardwareKey"]) {
-        return [self runTask:TASK_HARDWARE_KEY_PRESS payload:dict[@"key"]];
+        return [self runTask:TASK_HARDWARE_KEY payload:dict[@"key"]];
     } else if ([taskName isEqualToString:@"keepAwake"]) {
         return [self runTask:TASK_KEEP_AWAKE payload:[dict[@"enabled"] boolValue] ? @"1" : @"0"];
     } else if ([taskName isEqualToString:@"touchIndicator"]) {
         return [self runTask:TASK_TOUCH_INDICATOR payload:dict[@"action"]];
     } else if ([taskName isEqualToString:@"runShell"]) {
-        return [self runTask:TASK_SHELL_COMMAND payload:dict[@"command"]];
+        return [self runTask:TASK_RUN_SHELL payload:dict[@"command"]];
     } else if ([taskName isEqualToString:@"insertText"]) {
         return [self runTask:TASK_TEXT_INPUT payload:dict[@"text"]];
     } else if ([taskName isEqualToString:@"deleteCharacters"]) {
