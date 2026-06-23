@@ -60,10 +60,10 @@ static inline NSString *TLinkautoJSSanitizeProtocolText(NSString *text, NSUInteg
     return safe;
 }
 
-static inline BOOL TLinkautoJSStringContainsAny(NSString *string, NSArray<NSString *> *substrings) {
-    if (!string || !substrings) return NO;
+static inline bool TLinkautoJSStringContainsAny(NSString *string, NSArray<NSString *> *substrings) {
+    if (!string || !substrings) return false;
     for (NSString *sub in substrings) {
-        if ([string rangeOfString:sub].location != NSNotFound) return YES;
+        if ([string rangeOfString:sub].location != NSNotFound) return true;
     }
-    return NO;
+    return false;
 }
