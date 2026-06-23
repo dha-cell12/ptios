@@ -2,10 +2,8 @@ name: Build
 
 on:
   push:
-    branches: ["main", "newjs"]
   pull_request:
-    branches: ["main", "newjs"]
-
+  
 jobs:
   build:
     runs-on: macos-latest
