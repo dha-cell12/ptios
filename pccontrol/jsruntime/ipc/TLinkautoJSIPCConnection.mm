@@ -4,6 +4,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 @implementation TLinkautoJSIPCConnection {
     NSString *_socketPath;
