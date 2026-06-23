@@ -38,7 +38,7 @@
         [_bridge injectIntoContext:_jsContext];
         __weak typeof(self) weakSelf = self;
         _jsContext[@"sleep"] = ^(double ms) {
-            typeof(weakSelf) strongSelf = weakSelf;
+            __strong __typeof(weakSelf) strongSelf = weakSelf;
             if (strongSelf) [strongSelf interruptibleSleepMs:ms];
         };
     }
