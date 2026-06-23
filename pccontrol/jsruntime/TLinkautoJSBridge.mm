@@ -20,7 +20,7 @@
 
 - (NSDictionary *)tap:(double)x y:(double)y {
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
-        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"tap(x, y) requires finite numbers" ];
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"tap(x, y) requires finite numbers" inContext:[JSContext currentContext]];
         return @{ @"ok": @NO };
     }
     return [_execution.taskDispatcher dispatchTask:@"tap" payload:@{@"x": @(x), @"y": @(y)}];
@@ -28,7 +28,7 @@
 
 - (NSDictionary *)swipe:(double)x1 y1:(double)y1 x2:(double)x2 y2:(double)y2 duration:(double)duration {
     if (!TLinkautoJSIsFiniteNumber(x1) || !TLinkautoJSIsFiniteNumber(y1) || !TLinkautoJSIsFiniteNumber(x2) || !TLinkautoJSIsFiniteNumber(y2) || !TLinkautoJSIsFiniteNumber(duration)) {
-        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"swipe(...) requires finite numbers" ];
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"swipe(...) requires finite numbers" inContext:[JSContext currentContext]];
         return @{ @"ok": @NO };
     }
     return [_execution.taskDispatcher dispatchTask:@"swipe" payload:@{@"x1": @(x1), @"y1": @(y1), @"x2": @(x2), @"y2": @(y2), @"duration": @(duration)}];
@@ -36,7 +36,7 @@
 
 - (NSDictionary *)longPress:(double)x y:(double)y duration:(double)duration {
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(duration)) {
-        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"longPress(x, y, duration) requires finite numbers" ];
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"longPress(x, y, duration) requires finite numbers" inContext:[JSContext currentContext]];
         return @{ @"ok": @NO };
     }
     return [_execution.taskDispatcher dispatchTask:@"longPress" payload:@{@"x": @(x), @"y": @(y), @"duration": @(duration)}];
@@ -44,7 +44,7 @@
 
 - (NSDictionary *)gesture:(NSArray *)points options:(NSDictionary *)options {
     if (![points isKindOfClass:[NSArray class]] || points.count < 2 || points.count > 512) {
-        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"gesture(points, options) requires 2-512 points as [x,y] arrays or {x,y} objects" ];
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"gesture(points, options) requires 2-512 points as [x,y] arrays or {x,y} objects" inContext:[JSContext currentContext]];
         return @{ @"ok": @NO };
     }
     NSMutableString *payload = [NSMutableString string];
@@ -87,7 +87,7 @@
 
 - (NSDictionary *)pickColor:(double)x y:(double)y {
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
-        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"pickColor(x, y) requires finite numbers" ];
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"pickColor(x, y) requires finite numbers" inContext:[JSContext currentContext]];
         return @{ @"ok": @NO };
     }
     NSDictionary *res = [_execution.taskDispatcher dispatchTask:@"pickColor" payload:@{@"x": @(x), @"y": @(y)}];
@@ -99,7 +99,7 @@
 - (NSDictionary *)toast:(NSString *)message options:(NSDictionary *)options {
     NSString *safeMessage = TLinkautoJSSanitizeProtocolText(message ?: @"", 180);
     if ([safeMessage length] == 0) {
-        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"toast(message) requires a non-empty message" ];
+        [JSContext currentContext].exception = [JSValue valueWithNewErrorFromMessage:@"toast(message) requires a non-empty message" inContext:[JSContext currentContext]];
         return @{ @"ok": @NO };
     }
     int type = TLinkautoJSIntOption(options, @"type", 3);
