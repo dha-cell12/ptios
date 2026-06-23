@@ -36,9 +36,9 @@
 
         _bridge = [[TLinkautoJSBridge alloc] initWithExecution:self];
         [_bridge injectIntoContext:_jsContext];
-        __weak typeof(self) weakSelf = self;
+        TLinkautoJSRuntimeExecution * __weak weakSelf = self;
         _jsContext[@"sleep"] = ^(double ms) {
-            __strong __typeof(weakSelf) strongSelf = weakSelf;
+            TLinkautoJSRuntimeExecution *strongSelf = weakSelf;
             if (strongSelf) [strongSelf interruptibleSleepMs:ms];
         };
     }
