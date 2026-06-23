@@ -11,7 +11,7 @@
 
 void startRecording(CFWriteStreamRef requestClient, NSError **error);
 void stopRecording();
-static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef event);
+void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef event);
 Boolean isRecordingStart();
 
 #endif

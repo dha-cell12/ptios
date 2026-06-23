@@ -31,7 +31,7 @@ extern ScriptPlayer *scriptPlayer;
 /*
 get task type
 */
-static int getTaskType(UInt8* dataArray)
+int getTaskType(UInt8* dataArray)
 {
     return (dataArray[0] - '0') * 10 + (dataArray[1] - '0');
 }

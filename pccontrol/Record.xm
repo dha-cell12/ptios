@@ -134,7 +134,7 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
 }
 
 //TODO: multi-touch support! get touch index automatically, rather than set to 7.
-static void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef parentEvent) 
+void recordIOHIDEventCallback(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef parentEvent)
 {
     //NSLog(@"### com.tlinkauto.springboard: handle_event : %d", IOHIDEventGetType(event));
     if (!scriptRecordingFileHandle)
