@@ -15,6 +15,7 @@
 
 #import "jsruntime/TLinkJSRuntimeCore.h"
 #import "jsruntime/TLinkInProcessNativeBridge.h"
+#import "jsruntime/TLinkautoDeviceBridge.h"
 
 typedef bool (*TLinkautoJSShouldTerminateCallback)(JSContextRef ctx, void *opaque);
 typedef void (*TLinkautoJSSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkautoJSShouldTerminateCallback callback, void *opaque);
@@ -28,26 +29,50 @@ static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
 
 @class TLinkautoJSRuntime;
 
-@protocol TLinkautoDeviceJSExport <JSExport>
+struct TLinkautoJSCancelState {
+    std::atomic<bool> aborted;
+};
 
-JSExportAs(tap,
-- (NSDictionary *)tap:(double)x y:(double)y
-{
-    return [self.runtime executeNativeRequest:@"tap" arguments:@[@(x), @(y)]];
+struct TLinkautoJSWatchdogProbeState {
+    std::atomic<int> callbacks;
+};
+
+@interface TLinkautoJSRuntime () {
+    TLinkautoJSCancelState *_cancelState;
+    NSCondition *_sleepCondition;
+    NSMutableSet<NSNumber *> *_ownedFrameIds;
+    NSMutableSet<NSNumber *> *_ownedImageIds;
+
+    TLinkautoJSSetExecutionTimeLimitFn _setExecutionTimeLimit;
+    TLinkautoJSClearExecutionTimeLimitFn _clearExecutionTimeLimit;
+    BOOL _watchdogAvailable;
+
+    dispatch_queue_t _logQueue;
+    os_unfair_lock _logStateLock;
+    BOOL _acceptingLogs;
+
+    os_unfair_lock _handlesLock;
+    BOOL _acceptingHandles;
+
+    BOOL _running;
+    NSString *_runId;
+    NSString *_bundlePath;
+    NSDictionary *_manifest;
+    NSString *_consoleLogPath;
+    NSString *_consoleLatestLogPath;
+    JSContext *_context;
+
+    TLinkJSRuntimeCore *_core;
+    TLinkInProcessNativeBridge *_bridge;
+    TLinkTaskExecutionContext *_taskContext;
 }
-@property (nonatomic, strong) TLinkJSRuntimeCore *core;
-@property (nonatomic, strong) TLinkInProcessNativeBridge *bridge;
-- (BOOL)watchdogAvailable;
-- (NSString *)currentBundlePath;
-- (void)throwError:(NSString *)message;
-- (NSDictionary *)taskResultForPayload:(NSString *)payload;
+
+- (void)beginOwnedHandleTracking;
+- (void)releaseOwnedHandles;
+- (void)recordLastScriptError:(NSString *)message;
 - (void)showDebugToast:(NSString *)message type:(int)type;
-- (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
-- (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent;
-- (NSString *)currentConsoleLogPath;
-- (NSString *)currentConsoleLatestLogPath;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
-- (NSDictionary *)currentManifest;
+- (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
 - (void)trackFrameId:(int)frameId;
 - (void)untrackFrameId:(int)frameId;
 - (void)untrackAllFrameIds;
@@ -341,12 +366,6 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 @implementation TLinkautoJSRuntime
 
-- (void)setAcceptingHandles:(NSNumber *)accepting {
-    os_unfair_lock_lock(&_handlesLock);
-    _acceptingHandles = [accepting boolValue];
-    os_unfair_lock_unlock(&_handlesLock);
-}
-
 - (instancetype)init
 {
     self = [super init];
@@ -361,9 +380,15 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         _watchdogAvailable = TLinkautoJSWatchdogCapability(_setExecutionTimeLimit, _clearExecutionTimeLimit);
         
         _logQueue = dispatch_queue_create("com.tlinkauto.js.log", DISPATCH_QUEUE_SERIAL);
+        _logStateLock = OS_UNFAIR_LOCK_INIT;
         _acceptingLogs = NO;
-        
+
+        _handlesLock = OS_UNFAIR_LOCK_INIT;
         _acceptingHandles = NO;
+
+        _core = [[TLinkJSRuntimeCore alloc] init];
+        _bridge = [[TLinkInProcessNativeBridge alloc] init];
+        _core.nativeBridge = _bridge;
     }
     return self;
 }
@@ -375,37 +400,37 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (BOOL)running
 {
-    return _running;
+    return _core.running;
 }
 
 - (NSString *)runId
 {
-    return _runId ?: @"";
+    return _core.runId ?: @"";
 }
 
 - (BOOL)watchdogAvailable
 {
-    return _watchdogAvailable;
+    return _core.watchdogAvailable;
 }
 
 - (NSString *)currentBundlePath
 {
-    return _bundlePath ?: @"";
+    return _core.currentBundlePath ?: @"";
 }
 
 - (NSString *)currentConsoleLogPath
 {
-    return _consoleLogPath ?: @"";
+    return _core.currentConsoleLogPath ?: @"";
 }
 
 - (NSString *)currentConsoleLatestLogPath
 {
-    return _consoleLatestLogPath ?: @"";
+    return _core.currentConsoleLatestLogPath ?: @"";
 }
 
 - (NSDictionary *)currentManifest
 {
-    return _manifest ?: @{};
+    return _core.currentManifest ?: @{};
 }
 
 - (void)prepareConsoleLogFiles
@@ -462,6 +487,15 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         [self appendLine:line toConsolePath:path1];
         [self appendLine:line toConsolePath:path2];
     });
+}
+
+- (void)beginOwnedHandleTracking
+{
+    os_unfair_lock_lock(&_handlesLock);
+    _acceptingHandles = YES;
+    [_ownedFrameIds removeAllObjects];
+    [_ownedImageIds removeAllObjects];
+    os_unfair_lock_unlock(&_handlesLock);
 }
 
 - (void)trackFrameId:(int)frameId
@@ -534,11 +568,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     [_sleepCondition lock];
     [_sleepCondition broadcast];
     [_sleepCondition unlock];
+    [_core requestStop];
 }
 
 - (BOOL)isAborted
 {
-    return _cancelState->aborted.load(std::memory_order_acquire);
+    return [_core isAborted];
 }
 
 - (void)setAbortExceptionIfNeeded
@@ -570,9 +605,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (void)throwError:(NSString *)message
 {
-    if (_context) {
-        _context.exception = [JSValue valueWithNewErrorFromMessage:(message ?: @"JavaScript runtime error") inContext:_context];
-    }
+    [_core throwError:(message ?: @"JavaScript runtime error")];
+}
+
+- (void)recordLastScriptError:(NSString *)message
+{
+    setLastScriptError(message ?: @"JavaScript exception");
 }
 
 - (void)showDebugToast:(NSString *)message type:(int)type
@@ -584,7 +622,8 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)taskResultForPayload:(NSString *)payload
 {
-    if ([self isAborted]) {
+    BOOL cleanupRelease = [payload hasPrefix:@"67"] || [payload hasPrefix:@"483;;"];
+    if ([self isAborted] && !cleanupRelease) {
         [self setAbortExceptionIfNeeded];
         return @{ @"ok": @NO, @"raw": @"1;;AbortError\r\n", @"parts": @[@"1", @"AbortError"] };
     }
@@ -668,39 +707,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent
 {
-    NSString *bundlePath = [_bundlePath stringByStandardizingPath];
-    if (![bundlePath isKindOfClass:[NSString class]] || [bundlePath length] == 0) {
-        return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
-    }
-    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) {
-        return @{ @"ok": @NO, @"error": @"path is required" };
-    }
-    if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) {
-        return @{ @"ok": @NO, @"error": @"path must be bundle-relative" };
-    }
-
-    NSString *candidate = [[bundlePath stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
-    NSString *prefix = [bundlePath hasSuffix:@"/"] ? bundlePath : [bundlePath stringByAppendingString:@"/"];
-    if (![candidate hasPrefix:prefix]) {
-        return @{ @"ok": @NO, @"error": @"path escapes bundle" };
-    }
-
-    NSString *name = [candidate lastPathComponent];
-    if ([name isEqualToString:@"manifest.json"] || [name isEqualToString:@"info.plist"]) {
-        return @{ @"ok": @NO, @"error": @"refusing to modify bundle metadata" };
-    }
-    if ([[[candidate pathExtension] lowercaseString] isEqualToString:@"js"]) {
-        return @{ @"ok": @NO, @"error": @"refusing to modify JavaScript source files" };
-    }
-
-    if (createParent) {
-        NSString *dir = [candidate stringByDeletingLastPathComponent];
-        NSError *mkdirError = nil;
-        if (![[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&mkdirError]) {
-            return @{ @"ok": @NO, @"error": mkdirError.localizedDescription ?: @"failed to create parent directory", @"path": candidate };
-        }
-    }
-    return @{ @"ok": @YES, @"path": candidate };
+    return [_core bundleStoragePathForRelativePath:relativePath createParent:createParent];
 }
 
 - (void)installWatchdogForContext:(JSContext *)context
@@ -721,12 +728,20 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest context:(TLinkTaskExecutionContext *)context error:(NSError **)error
 {
-    return [_core runScriptAtPath:scriptPath bundlePath:bundlePath manifest:manifest context:context facade:self error:error];
+    _cancelState->aborted.store(false, std::memory_order_release);
+    [self beginOwnedHandleTracking];
+    _taskContext = context;
+    _taskContext.runtime = self;
+    @try {
+        return [_core runScriptAtPath:scriptPath bundlePath:bundlePath manifest:manifest context:context facade:self error:error];
+    } @finally {
+        _taskContext = nil;
+    }
 }
 
 - (NSDictionary *)executeNativeRequest:(NSString *)method arguments:(NSArray *)arguments {
     TLinkJSNativeRequest *request = [[TLinkJSNativeRequest alloc] initWithMethod:method arguments:arguments];
-    TLinkTaskExecutionContext *ctx = [[TLinkTaskExecutionContext alloc] init];
+    TLinkTaskExecutionContext *ctx = _taskContext ?: [[TLinkTaskExecutionContext alloc] init];
     ctx.runtime = self;
     TLinkJSNativeResponse *response = [_bridge executeRequest:request context:ctx error:nil];
     if (response.ok) {
