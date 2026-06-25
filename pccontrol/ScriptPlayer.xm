@@ -1,4 +1,5 @@
 #import "ScriptPlayer.h"
+#import "TLinkDiagnostic.h"
 #include "Play.h"
 #include "SocketServer.h"
 #include "Process.h"
@@ -8,8 +9,17 @@
 #include "Common.h"
 #include "RuntimeUtils.h"
 #import "TLinkautoJSRuntime.h"
+#import "TLinkTaskContext.h"
+#include <os/lock.h>
 
 static BOOL isPlaying = false;
+
+typedef NS_ENUM(NSInteger, TLinkScriptState) {
+    TLinkScriptStateIdle = 0,
+    TLinkScriptStateScheduled,
+    TLinkScriptStateRunning,
+    TLinkScriptStateStopping
+};
 
 @implementation ScriptPlayer
 {
@@ -18,135 +28,96 @@ static BOOL isPlaying = false;
     float speed;
     NSString* scriptBundlePath;
     UIWindow *_playIndicator;
-    int currentScriptType; // -1 no task has specified; 0 not playing but has upcoming task; 1 raw file playing; 2 py file playing; 3 js file playing
+    int currentScriptType; // -1 none, 0 upcoming, 1 raw, 2 py, 3 js
     NSTimer *replayTimer;
     UIView *circleView;
     Boolean scriptPlayForceStop;
     Boolean switchAppBeforePlaying;
-    TLinkautoJSRuntime *jsRuntime;
     NSDictionary *currentManifest;
+
+    os_unfair_lock _playerLock;
+    TLinkScriptState _state;
+    TLinkScriptSession *_currentSession;
+    TLinkautoJSRuntime *_currentRuntime;
+    dispatch_queue_t _jsSerialQueue;
 }
 
-static BOOL tlinkautoLegacyPythonEnabled(void)
-{
-    if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH])
-    {
+static BOOL tlinkautoLegacyPythonEnabled(void) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH]) {
         NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:SCRIPT_PLAY_CONFIG_PATH];
         id value = config[@"legacy_python_enabled"] ?: config[@"legacyPythonEnabled"];
-        if ([value respondsToSelector:@selector(boolValue)]) {
-            return [value boolValue];
-        }
+        if ([value respondsToSelector:@selector(boolValue)]) return [value boolValue];
     }
     return YES;
 }
 
-static BOOL tlinkautoJavaScriptRuntimeEnabled(void)
-{
-    if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH])
-    {
+static BOOL tlinkautoJavaScriptRuntimeEnabled(void) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH]) {
         NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:SCRIPT_PLAY_CONFIG_PATH];
         id value = config[@"javascript_runtime_enabled"] ?: config[@"javascriptRuntimeEnabled"];
-        if ([value respondsToSelector:@selector(boolValue)]) {
-            return [value boolValue];
-        }
+        if ([value respondsToSelector:@selector(boolValue)]) return [value boolValue];
     }
     return YES;
 }
 
-static NSDictionary *tlinkautoReadManifest(NSString *bundlePath)
-{
+static NSDictionary *tlinkautoReadManifest(NSString *bundlePath) {
     NSString *manifestPath = [bundlePath stringByAppendingPathComponent:@"manifest.json"];
     NSData *data = [NSData dataWithContentsOfFile:manifestPath];
-    if (!data) {
-        return nil;
-    }
+    if (!data) return nil;
     NSError *err = nil;
     id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&err];
-    if (err || ![obj isKindOfClass:[NSDictionary class]]) {
-        return nil;
-    }
+    if (err || ![obj isKindOfClass:[NSDictionary class]]) return nil;
     return (NSDictionary *)obj;
 }
 
-static NSString *tlinkautoStringValue(id value)
-{
-    if ([value isKindOfClass:[NSString class]]) {
-        return (NSString *)value;
-    }
+static NSString *tlinkautoStringValue(id value) {
+    if ([value isKindOfClass:[NSString class]]) return (NSString *)value;
     return nil;
 }
 
-- (BOOL)isPlaying {
-    return isPlaying;
-}
+- (BOOL)isPlaying { return isPlaying; }
 
-- (NSString*)getCurrentBundlePath {
-    if (!scriptBundlePath)
-    {
-        return @"";
-    }
-    return scriptBundlePath;
-}
+- (NSString*)getCurrentBundlePath { return scriptBundlePath ?: @""; }
 
 - (void)setPath:(NSString*)path {
-    if (isPlaying)
-    {
-        NSLog(@"com.tlinkauto.springboard: cannot change script path because a script is playing.");
-        return;
-    }
+    if (isPlaying) return;
     scriptBundlePath = path;
 }
 
 - (void)setRepeatTime:(int)rt {
-    if (isPlaying)
-    {
-        NSLog(@"com.tlinkauto.springboard: cannot change repeat time because a script is playing.");
-        return;
-    }
+    if (isPlaying) return;
     repeatTime = rt;
 }
 
 - (void)setInterval:(float)intv {
-    if (isPlaying)
-    {
-        NSLog(@"com.tlinkauto.springboard: cannot change interval because a script is playing.");
-        return;
-    }
+    if (isPlaying) return;
     interval = intv;
 }
 
 - (void)setSpeed:(float)sp {
-    if (isPlaying)
-    {
-        NSLog(@"com.tlinkauto.springboard: cannot change speed because a script is playing.");
-        return;
-    }
+    if (isPlaying) return;
     speed = sp;
 }
 
 - (void)setSwitchApp:(BOOL)value {
-    if (isPlaying)
-    {
-        NSLog(@"com.tlinkauto.springboard: cannot change speed because a script is playing.");
-        return;
-    }
+    if (isPlaying) return;
     switchAppBeforePlaying = value;
 }
 
-
 - (id)init {
     self = [super init];
-    if (self)
-    {
+    if (self) {
+        _playerLock = OS_UNFAIR_LOCK_INIT;
+        _jsSerialQueue = dispatch_queue_create("com.tlinkauto.js.serial", DISPATCH_QUEUE_SERIAL);
+        _state = TLinkScriptStateIdle;
         [self clear];
     }
     return self;
 }
 
 - (id)initWithPath:(NSString*)path {
-    self = [super init];
-    if (self)
-    {
+    self = [self init];
+    if (self) {
         scriptBundlePath = path;
         currentScriptType = -1;
     }
@@ -154,33 +125,26 @@ static NSString *tlinkautoStringValue(id value)
 }
 
 -(int)runScript:(NSError**)error {
-    if (!scriptBundlePath)
-    {
-        NSLog(@"com.tlinkauto.springboard: Unable to run the script. ScriptBundlePath not set.");
+    if (!scriptBundlePath) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. ScriptBundlePath not set.\r\n"}];
         return -1;
     }
 
     BOOL isDir;
-    if (![[NSFileManager defaultManager] fileExistsAtPath:scriptBundlePath isDirectory:&isDir] || !isDir)
-    {
-        NSLog(@"com.tlinkauto.springboard: Unable to run the script. Path not found or it is not a directory.");
+    if (![[NSFileManager defaultManager] fileExistsAtPath:scriptBundlePath isDirectory:&isDir] || !isDir) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Path not found or it is not a directory.\r\n"}];
         return -1;
     }
 
-    // read info.plist into dictionary
     NSString *infoFilePath = [NSString stringWithFormat:@"%@/info.plist", scriptBundlePath];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:infoFilePath isDirectory:&isDir])
-    {
-        NSLog(@"com.tlinkauto.springboard: Unable to run the script. Info.plist not found.");
+    if (![[NSFileManager defaultManager] fileExistsAtPath:infoFilePath isDirectory:&isDir]) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Info.plist not found.\r\n"}];
         return -1;
     }
     NSDictionary *scriptInfo = [NSDictionary dictionaryWithContentsOfFile:infoFilePath];
     NSDictionary *manifest = tlinkautoReadManifest(scriptBundlePath);
     currentManifest = manifest ?: @{};
-    // get entry file extension
+    
     NSString *entryFileName = tlinkautoStringValue(manifest[@"entry"]) ?: scriptInfo[@"Entry"];
     if (!entryFileName || [entryFileName length] == 0) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Script entry is missing.\r\n"}];
@@ -189,11 +153,8 @@ static NSString *tlinkautoStringValue(id value)
     NSString *fileExtension = [entryFileName pathExtension];
     NSString *runtime = [tlinkautoStringValue(manifest[@"runtime"]) lowercaseString];
     NSNumber *apiVersion = [manifest[@"apiVersion"] respondsToSelector:@selector(intValue)] ? manifest[@"apiVersion"] : nil;
-
     NSString *foregroundApp = scriptInfo[@"FrontApp"];
-    // call different functions depending on file extension
 
-    // show indicator
     dispatch_async(dispatch_get_main_queue(), ^{
         _playIndicator = [[UIWindow alloc] initWithFrame:CGRectMake(0,0,10*2,10*2)];
         _playIndicator.windowLevel = UIWindowLevelStatusBar;
@@ -202,63 +163,59 @@ static NSString *tlinkautoStringValue(id value)
         [_playIndicator setUserInteractionEnabled:NO];
 
         circleView = [[UIView alloc] initWithFrame:CGRectMake(0,0,10*2,10*2)];
-
-        //circleView.alpha = 1;
-        circleView.layer.cornerRadius = 10;  // half the width/height
+        circleView.layer.cornerRadius = 10;
         circleView.backgroundColor = [UIColor greenColor];
         [_playIndicator addSubview:circleView];
     });
 
     NSString *entryFilePath = [scriptBundlePath stringByAppendingPathComponent:entryFileName];
-    NSLog(@"com.tlinkauto.sprinboard: currently playing: %@. Repeat time: %d", entryFilePath, repeatTime);
-    
 
-    if ([fileExtension isEqualToString:@"raw"])
-    {
+    if ([fileExtension isEqualToString:@"raw"]) {
         currentScriptType = 1;
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             NSError *err = nil;
             [self playFromRawFile:entryFilePath foregroundApp:foregroundApp err:&err];
         }); 
         return 0;
-    }
-    else if ([runtime isEqualToString:@"javascriptcore"] || [fileExtension isEqualToString:@"js"])
-    {
+    } else if ([runtime isEqualToString:@"javascriptcore"] || [fileExtension isEqualToString:@"js"]) {
         if (!tlinkautoJavaScriptRuntimeEnabled()) {
-            if (error) {
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScriptCore runtime is disabled.\r\n"}];
-            }
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScriptCore runtime is disabled.\r\n"}];
             [self clear];
             return -1;
         }
         if (apiVersion && [apiVersion intValue] != 1) {
-            if (error) {
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript API version: %@\r\n", apiVersion]}];
-            }
-            [self clear];
-            return -1;
-        }
-        NSString *coordinateSpace = tlinkautoStringValue(manifest[@"coordinateSpace"]);
-        if (coordinateSpace && ![coordinateSpace isEqualToString:@"native-pixels"]) {
-            if (error) {
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript coordinateSpace: %@\r\n", coordinateSpace]}];
-            }
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript API version: %@\r\n", apiVersion]}];
             [self clear];
             return -1;
         }
         currentScriptType = 3;
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            NSError *err = nil;
-            [self playFromJSFile:entryFilePath foregroundApp:foregroundApp err:&err];
+        
+        os_unfair_lock_lock(&_playerLock);
+        
+        if (_state != TLinkScriptStateIdle) {
+            os_unfair_lock_unlock(&_playerLock);
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Script is already running.\r\n"}];
+            return -1;
+        }
+        _state = TLinkScriptStateScheduled;
+        
+        TLinkScriptSession *session = [[TLinkScriptSession alloc] init];
+        session.generation = (uint64_t)[[NSDate date] timeIntervalSince1970] * 1000000;
+        session.cancellationToken = [[TLinkCancellationToken alloc] init];
+        session.taskContext = [[TLinkTaskExecutionContext alloc] init];
+        session.taskContext.cancellationToken = session.cancellationToken;
+        
+        _currentSession = session;
+        isPlaying = true;
+        os_unfair_lock_unlock(&_playerLock);
+
+        dispatch_async(_jsSerialQueue, ^{
+            [self executeJSIteration:session filePath:entryFilePath foregroundApp:foregroundApp];
         });
         return 0;
-    }
-    else if ([runtime isEqualToString:@"python"] || [fileExtension isEqualToString:@"py"])
-    {
+    } else if ([runtime isEqualToString:@"python"] || [fileExtension isEqualToString:@"py"]) {
         if (!tlinkautoLegacyPythonEnabled()) {
-            if (error) {
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Python script support has been removed. Convert this bundle to JavaScript and set runtime to javascriptcore.\r\n"}];
-            }
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Python script support has been removed.\r\n"}];
             [self clear];
             return -1;
         }
@@ -269,38 +226,30 @@ static NSString *tlinkautoStringValue(id value)
         });
         return 0;
     }
-    if (error) {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
-    }
+    
+    if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
     [self clear];
     return -1;
 }
 
-// play the script
-- (int)play:(NSError**)error 
-{
-    if (isPlaying)
-    {
-        NSLog(@"com.tlinkauto.springboard: Unable to run the script. Another script is currently running.");
+- (int)play:(NSError**)error {
+    os_unfair_lock_lock(&_playerLock);
+    
+    if (_state != TLinkScriptStateIdle || isPlaying) {
+        os_unfair_lock_unlock(&_playerLock);
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
         return -1;
     }
-   return [self runScript:error];
+    os_unfair_lock_unlock(&_playerLock);
+    return [self runScript:error];
 }
 
-
--(void)playFromRawFile:(NSString*) filePath foregroundApp:(NSString*)foregroundApp err:(NSError**)err
-{
+-(void)playFromRawFile:(NSString*) filePath foregroundApp:(NSString*)foregroundApp err:(NSError**)err {
     isPlaying = true;
-    if (switchAppBeforePlaying)
-    {
-        bringAppForeground(foregroundApp);
-    }
+    if (switchAppBeforePlaying) bringAppForeground(foregroundApp);
 
     FILE *file = fopen([filePath UTF8String], "r");
-
-    if (!file)
-    {
+    if (!file) {
         showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script because TLinkauto cannot open the file. File path: %@", filePath], 999);
         setLastScriptError([NSString stringWithFormat:@"Cannot open raw script: %@", filePath]);
         isPlaying = false;
@@ -311,143 +260,152 @@ static NSString *tlinkautoStringValue(id value)
     int taskType;
     int sleepTime;
     
-    while (fgets(buffer, sizeof(char)*256, file) != NULL)
-    {
-        if (scriptPlayForceStop)
-        {
+    while (fgets(buffer, sizeof(char)*256, file) != NULL) {
+        if (scriptPlayForceStop) {
             scriptPlayForceStop = false;
             break;
         }
-        if (speed > 0 && speed != 1)
-        {
-            // check whether need to speed up
+        if (speed > 0 && speed != 1) {
             int type, sleepTime;
             sscanf(buffer, "%2d", &type);
-            if (type == TASK_USLEEP)
-            {
+            if (type == TASK_USLEEP) {
                 sscanf(buffer, "%2d%d", &type, &sleepTime);
-                sleepTime = sleepTime / speed; // truncate the float part
+                sleepTime = sleepTime / speed;
                 processTask((UInt8*)[[NSString stringWithFormat:@"18%d", sleepTime] UTF8String], NULL);
-            }
-            else
-            {
+            } else {
                 processTask((UInt8*)buffer, NULL);
             }
-        }
-        else
-        {
+        } else {
             processTask((UInt8*)buffer, NULL);
         }
-
     }
-
     [self playHasStopped];
 }
 
--(void) playFromPythonFile:(NSString*) filePath foregroundApp:(NSString*) foregroundApp err:(NSError**) err
-{
+-(void) playFromPythonFile:(NSString*) filePath foregroundApp:(NSString*) foregroundApp err:(NSError**) err {
     isPlaying = true;
-    NSLog(@"com.tlinkauto.springboard: Legacy Python runtime is deprecated and will be removed in the next release. Convert this bundle to JavaScriptCore runtime.");
-
-    if (switchAppBeforePlaying)
-    {
-        bringAppForeground(foregroundApp);
-    }
+    if (switchAppBeforePlaying) bringAppForeground(foregroundApp);
     
-    // check python exists
-    if (![[NSFileManager defaultManager] fileExistsAtPath:@"/bin/python3"])
-    {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:@"/bin/python3"]) {
         showAlertBox(@"Error", @"Cannot play this script. /bin/python3 not found. Please install Python3.7 on your device.", 999);
         setLastScriptError(@"/bin/python3 not found");
         isPlaying = false;
         return;
     }
 
-    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath])
-    {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
         showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script. Script file not found in bdl folder. Script path: %@", filePath], 999);
         setLastScriptError([NSString stringWithFormat:@"Script file not found: %@", filePath]);
         isPlaying = false;
         return;
     }
     NSString *commandToRun = [NSString stringWithFormat:@"sudo /usr/bin/tlinkautob -e \"PYTHONPATH=/usr/lib/python3.7/site-packages /bin/python3 -u \\\"%@\\\" 2>&1 | /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/add_datetime.sh\" >> /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output", filePath];
-    NSLog(@"com.tlinkauto.springboard: command to run for running py file %@", commandToRun);
-
-    // here I made it run in background because of a weird thing: ios objc cannot call second system() if the first system() does not return
-    //scriptPlayForceStop = true;
     system2([commandToRun UTF8String], NULL, NULL);
-    // add force stop
     [self playHasStopped];
 }
 
--(void) playFromJSFile:(NSString*) filePath foregroundApp:(NSString*) foregroundApp err:(NSError**) err
-{
-    isPlaying = true;
+- (void)executeJSIteration:(TLinkScriptSession *)session filePath:(NSString *)filePath foregroundApp:(NSString *)foregroundApp {
+    os_unfair_lock_lock(&_playerLock);
+    if (_currentSession != session || [session.cancellationToken isCancelled]) {
+        os_unfair_lock_unlock(&_playerLock);
+        return;
+    }
+    TLinkautoJSRuntime *runtime = [[TLinkautoJSRuntime alloc] init];
+    _currentRuntime = runtime;
+    _state = TLinkScriptStateRunning;
+    os_unfair_lock_unlock(&_playerLock);
 
-    if (switchAppBeforePlaying)
-    {
+    if (self->switchAppBeforePlaying) {
         bringAppForeground(foregroundApp);
     }
 
-    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath])
-    {
-        showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script. JavaScript file not found in bdl folder. Script path: %@", filePath], 999);
-        setLastScriptError([NSString stringWithFormat:@"JavaScript file not found: %@", filePath]);
-        isPlaying = false;
+    NSError *runError = nil;
+    BOOL ok = [runtime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest context:session.taskContext error:&runError];
+    
+    os_unfair_lock_lock(&_playerLock);
+    if (_currentSession != session) {
+        os_unfair_lock_unlock(&_playerLock);
         return;
     }
-
-    jsRuntime = [[TLinkautoJSRuntime alloc] init];
-    NSError *runError = nil;
-    BOOL ok = [jsRuntime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest error:&runError];
-    if (!ok && runError) {
-        setLastScriptError([runError localizedDescription]);
-        if (!scriptPlayForceStop) {
-            showAlertBox(@"JavaScript Error", [runError localizedDescription], 999);
-        }
+    _currentRuntime = nil; // Clear for replay
+    if ([session.cancellationToken isCancelled]) {
+        os_unfair_lock_unlock(&_playerLock);
+        [self finishSessionIfCurrent:session outcome:NO];
+        return;
     }
-    scriptPlayForceStop = false;
-    [self playHasStopped];
+    
+    if (repeatTime > 0) {
+        repeatTime--;
+        os_unfair_lock_unlock(&_playerLock);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->circleView.backgroundColor = [UIColor orangeColor];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(interval * NSEC_PER_SEC)), _jsSerialQueue, ^{
+            [self executeJSIteration:session filePath:filePath foregroundApp:foregroundApp];
+        });
+    } else {
+        os_unfair_lock_unlock(&_playerLock);
+        if (!ok && runError) {
+            setLastScriptError([runError localizedDescription]);
+            if (![session.cancellationToken isCancelled]) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    showAlertBox(@"JavaScript Error", [runError localizedDescription], 999);
+                });
+            }
+        }
+        [self finishSessionIfCurrent:session outcome:ok];
+    }
+}
+
+- (void)finishSessionIfCurrent:(TLinkScriptSession *)session outcome:(BOOL)ok {
+    os_unfair_lock_lock(&_playerLock);
+    if (_currentSession == session) {
+        _currentSession = nil;
+        _currentRuntime = nil;
+        _state = TLinkScriptStateIdle;
+        isPlaying = false;
+    }
+    os_unfair_lock_unlock(&_playerLock);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self clearLegacyState];
+    });
+}
+
+- (void)clearLegacyState {
+    repeatTime = 0;
+    interval = 0.0f;
+    speed = 1.0f;
+    scriptBundlePath = nil;
+    currentScriptType = -1;
+    if (_playIndicator) {
+        _playIndicator.hidden = YES;
+        _playIndicator = nil;
+    }
+    if (replayTimer) {
+        [replayTimer invalidate];
+        replayTimer = nil;
+    }
 }
 
 - (void)replay:(NSTimer*)nstimer {
-    NSLog(@"com.tlinkauto.springboard: script is replaying...");
     NSError *err = nil;
-
     [self runScript:&err];
-
     CFRunLoopStop(CFRunLoopGetCurrent());
 }
 
--(void) playHasStopped
-{
-    NSLog(@"com.tlinkauto.springboard: script has finished");
-
-    // check whether need to replay
-    if (repeatTime != 0)
-    {    
+-(void) playHasStopped {
+    if (repeatTime != 0) {    
         dispatch_async(dispatch_get_main_queue(), ^{
             circleView.backgroundColor = [UIColor orangeColor];
         });
-
-        NSLog(@"com.tlinkauto.springboard: need replay. Replay time: %d", repeatTime);
-
-        replayTimer = [NSTimer scheduledTimerWithTimeInterval:interval
-         target:self selector:@selector(replay:) 
-         userInfo:nil repeats:NO];
+        replayTimer = [NSTimer scheduledTimerWithTimeInterval:interval target:self selector:@selector(replay:) userInfo:nil repeats:NO];
         repeatTime--;
-
         currentScriptType = 0;
-
         CFRunLoopRun();
-    }
-    else
-    {
+    } else {
         [self clear];
     }
-
-
-
 }
 
 - (void)clear {
@@ -457,56 +415,65 @@ static NSString *tlinkautoStringValue(id value)
     scriptBundlePath = nil;
     isPlaying = false;
     currentScriptType = -1;
-    //scriptPlayForceStop = false;
 
-    // remove indicator
     dispatch_async(dispatch_get_main_queue(), ^{
         _playIndicator.hidden = YES;
         _playIndicator = nil;
     });
 
-    if (replayTimer)
-        [replayTimer invalidate];
-
+    if (replayTimer) [replayTimer invalidate];
     replayTimer = nil;
 }
 
 - (void)forceStop:(NSError**)error {
-    if (currentScriptType == -1)
-    {
-        NSLog(@"com.tlinkauto.springboard: Cannot stop playing script. No script is playing.");
+    os_unfair_lock_lock(&_playerLock);
+    if (_state == TLinkScriptStateIdle && !isPlaying) {
+        os_unfair_lock_unlock(&_playerLock);
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. No script is playing.\r\n"}];
         return;
     }
 
-    if (currentScriptType == 0)
-    {
-        [self clear];
+    if (currentScriptType == 3) {
+        if (_state == TLinkScriptStateScheduled) {
+            [_currentSession.cancellationToken cancel];
+            _currentSession = nil;
+            _state = TLinkScriptStateIdle;
+            isPlaying = false;
+            os_unfair_lock_unlock(&_playerLock);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self clearLegacyState];
+            });
+        } else if (_state == TLinkScriptStateRunning) {
+            [_currentSession.cancellationToken cancel];
+            if (_currentRuntime) {
+                __strong TLinkautoJSRuntime *runtime = _currentRuntime;
+                _state = TLinkScriptStateStopping;
+                os_unfair_lock_unlock(&_playerLock);
+                [runtime requestStop];
+            } else {
+                TLinkScriptSession *session = _currentSession;
+                os_unfair_lock_unlock(&_playerLock);
+                dispatch_async(_jsSerialQueue, ^{
+                    [self finishSessionIfCurrent:session outcome:NO];
+                });
+            }
+        } else if (_state == TLinkScriptStateStopping) {
+            [_currentSession.cancellationToken cancel];
+            os_unfair_lock_unlock(&_playerLock);
+        } else {
+            os_unfair_lock_unlock(&_playerLock);
+        }
+    } else {
+        os_unfair_lock_unlock(&_playerLock);
+        if (currentScriptType == 0) {
+            [self clear];
+        } else if (currentScriptType == 1) {
+            scriptPlayForceStop = true;
+            [self clear];
+        } else if (currentScriptType == 2) {
+            system2("sudo /usr/bin/tlinkautob -e \"killall -9 python3\"", NULL, NULL);
+            [self clear];
+        }
     }
-    else if (currentScriptType == 1)
-    {
-        // make stop to be true
-        scriptPlayForceStop = true;
-        [self clear];
-    }
-    else if (currentScriptType == 2)
-    {
-        // kill all python3 process
-        system2("sudo /usr/bin/tlinkautob -e \"killall -9 python3\"", NULL, NULL);
-        [self clear];
-    }
-    else if (currentScriptType == 3)
-    {
-        scriptPlayForceStop = true;
-        [jsRuntime requestStop];
-    }
-    else
-    {
-        NSLog(@"com.tlinkauto.springboard: unknown currently playing script type.");
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. Unkonwn currently playing script type.\r\n"}];
-        return;
-    }
-
 }
-
 @end

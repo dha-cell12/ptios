@@ -8,6 +8,7 @@
 #import "ScriptListTableCell.h"
 #import "Socket.h"
 #import "Util.h"
+#import "TLinkAppDiagnostic.h"
 
 @implementation ScriptListTableCell
 {
@@ -20,16 +21,45 @@
 }
 
 - (IBAction)playButtonClick:(id)sender {
-    Socket *springBoardSocket = [[Socket alloc] init];
-    [springBoardSocket connect:@"127.0.0.1" byPort:6000];
+    // Capture values needed by the block
+    NSString *path = [filePath copy];
+    __weak UIViewController *weakParent = _parentViewController;
     
-    [springBoardSocket send:[NSString stringWithFormat:@"19%@", filePath]];
-    NSString* result = [springBoardSocket recv:1024];
-    if ([result characterAtIndex:0] != '0')
-    {
-        [Util showAlertBoxWithOneOption:_parentViewController title:@"Error" message:[NSString stringWithFormat:@"Cannot play script. Error: %@", result] buttonString:@"OK"];
-    }
-    [springBoardSocket close];
+    // Disable button immediately to prevent double-tap
+    _playButton.enabled = NO;
+    
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        Socket *springBoardSocket = [[Socket alloc] init];
+        int connectResult = [springBoardSocket connect:@"127.0.0.1" byPort:6000];
+        
+        if (connectResult < 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self->_playButton.enabled = YES;
+                UIViewController *parent = weakParent;
+                if (parent) {
+                    [Util showAlertBoxWithOneOption:parent title:@"Error" message:@"Cannot connect to SpringBoard socket." buttonString:@"OK"];
+                }
+            });
+            return;
+        }
+        
+        NSString *payload = [NSString stringWithFormat:@"19%@", path];
+        [springBoardSocket send:payload];
+        
+        NSString *result = [springBoardSocket recv:1024];
+        
+        [springBoardSocket close];
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_playButton.enabled = YES;
+            if (result.length > 0 && [result characterAtIndex:0] != '0') {
+                UIViewController *parent = weakParent;
+                if (parent) {
+                    [Util showAlertBoxWithOneOption:parent title:@"Error" message:[NSString stringWithFormat:@"Cannot play script. Error: %@", result] buttonString:@"OK"];
+                }
+            }
+        });
+    });
 }
 
 - (void)setSelected:(BOOL)selected animated:(BOOL)animated {

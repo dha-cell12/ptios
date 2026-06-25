@@ -82,6 +82,7 @@
 #define TASK_FIND_IMAGE_IN_FRAME 68
 #define TASK_COLOR_IN_FRAME 69
 #define TASK_FRAME_BATCH 70
+#define TASK_RUN_SHELL_V2 71
 
 
 #define TASK_UPDATE_CACHE 90
@@ -89,7 +90,12 @@
 
 #define TASK_TEST 99
 
-void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef = NULL);
+#import "TLinkTaskContext.h"
+
+void processTaskLegacy(UInt8 *buff, CFWriteStreamRef writeStreamRef = NULL);
+void processTaskWithContext(UInt8 *buffer, size_t actualLength, CFWriteStreamRef stream, TLinkTaskExecutionContext *context);
+void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef = NULL); // routes to processTaskLegacy
+
 static int getTaskType(UInt8* dataArray);
 
 #endif

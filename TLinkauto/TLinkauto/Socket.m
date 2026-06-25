@@ -6,6 +6,7 @@
 //
 
 #import "Socket.h"
+#import "TLinkAppDiagnostic.h"
 
 
 @implementation Socket
@@ -18,13 +19,14 @@
  */
 -(int) connect: (NSString*) ip byPort:(int) port
 {
-    //NSLog(@"ip: %@, and port: %d", ip, port);、
+    //NSLog(@"ip: %@, and port: %d", ip, port);
     int sock = 0;
     struct sockaddr_in serv_addr;
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         NSLog(@"### com.tlinkauto.tlinkautob:  Socket creation error");
+        APP_DIAG("SOCKET-ERROR", "socket() failed errno=%d", errno);
         return -1;
         
     }
@@ -35,12 +37,14 @@
     if(inet_pton(AF_INET, [ip UTF8String], &serv_addr.sin_addr)<=0)
     {
         NSLog(@"### com.tlinkauto.tlinkautob: Invalid address. Address not supported");
+        APP_DIAG("SOCKET-ERROR", "inet_pton() failed for %s", [ip UTF8String]);
         return -1;
     }
 
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
         NSLog(@"### com.tlinkauto.tlinkautob: \nConnection Failed \n");
+        APP_DIAG("SOCKET-ERROR", "connect() failed errno=%d", errno);
         return -1;
     }
     socketHandle = sock;
@@ -54,7 +58,11 @@
 -(void) send: (NSString*)msg
 {
     const char *buffer = [msg UTF8String];
-    send(socketHandle , buffer, strlen(buffer) , 0);
+    size_t len = strlen(buffer);
+    ssize_t sent = send(socketHandle , buffer, len , 0);
+    if (sent < 0) {
+        APP_DIAG("SOCKET-ERROR", "send() failed errno=%d", errno);
+    }
 }
 
 -(void) sendChar: (char*)msg
@@ -66,7 +74,10 @@
 {
     char buffer[length];
     memset(buffer, 0, sizeof(buffer));
-    recv(socketHandle, buffer, length, 0);
+    ssize_t received = recv(socketHandle, buffer, length, 0);
+    if (received < 0) {
+        APP_DIAG("SOCKET-ERROR", "recv() failed errno=%d", errno);
+    }
     return [NSString stringWithUTF8String:buffer];
 }
 

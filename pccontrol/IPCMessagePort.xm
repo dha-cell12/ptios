@@ -1,4 +1,5 @@
 #include "IPCMessagePort.h"
+#import "TLinkDiagnostic.h"
 #include "IPCConstants.h"
 #include "HardwareKey.h"
 #include "Task.h"
