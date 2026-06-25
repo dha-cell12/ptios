@@ -257,8 +257,6 @@ static NSString *tlinkautoStringValue(id value) {
     }
     
     char buffer[256];
-    int taskType;
-    int sleepTime;
     
     while (fgets(buffer, sizeof(char)*256, file) != NULL) {
         if (scriptPlayForceStop) {
