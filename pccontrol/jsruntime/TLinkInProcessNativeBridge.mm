@@ -1,6 +1,18 @@
 #import "TLinkInProcessNativeBridge.h"
 #import "../Task.h"
 #import "../Screen.h"
+
+#ifndef TASK_IMAGE_OBJECT
+#define TASK_IMAGE_OBJECT 48
+#endif
+
+#ifndef TASK_FRAME_CAPTURE
+#define TASK_FRAME_CAPTURE 66
+#endif
+
+#ifndef TASK_FRAME_RELEASE
+#define TASK_FRAME_RELEASE 67
+#endif
 #import "TLinkJSRuntimeCore.h"
 #import "../TLinkautoJSRuntime.h"
 

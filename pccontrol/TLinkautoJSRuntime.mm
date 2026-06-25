@@ -31,171 +31,9 @@ static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
 @protocol TLinkautoDeviceJSExport <JSExport>
 
 JSExportAs(tap,
-- (NSDictionary *)tap:(double)x y:(double)y);
-JSExportAs(swipe,
-- (NSDictionary *)swipe:(double)x1 y1:(double)y1 x2:(double)x2 y2:(double)y2 duration:(double)duration);
-JSExportAs(longPress,
-- (NSDictionary *)longPress:(double)x y:(double)y duration:(double)duration);
-JSExportAs(gesture,
-- (NSDictionary *)gesture:(NSArray *)points options:(NSDictionary *)options);
-JSExportAs(runTask,
-- (NSDictionary *)runTask:(int)task payload:(NSString *)payload);
-JSExportAs(toast,
-- (NSDictionary *)toast:(NSString *)message options:(NSDictionary *)options);
-JSExportAs(pickColor,
-- (NSDictionary *)pickColor:(double)x y:(double)y);
-JSExportAs(screenshotTo,
-- (NSDictionary *)screenshotTo:(NSString *)path);
-JSExportAs(screenshotRegion,
-- (NSDictionary *)screenshotRegion:(NSString *)path options:(NSDictionary *)options);
-JSExportAs(batch,
-- (NSDictionary *)batch:(NSArray *)commands);
-JSExportAs(captureFrame,
-- (NSDictionary *)captureFrame:(NSDictionary *)options);
-JSExportAs(releaseFrame,
-- (NSDictionary *)releaseFrame:(int)frameId);
-JSExportAs(openImage,
-- (NSDictionary *)openImage:(NSString *)path);
-JSExportAs(captureImage,
-- (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height);
-JSExportAs(releaseImage,
-- (NSDictionary *)releaseImage:(int)imageId);
-JSExportAs(framePickColor,
-- (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options);
-JSExportAs(framePickColors,
-- (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
-JSExportAs(frameFindColor,
-- (NSDictionary *)frameFindColor:(int)frameId options:(NSDictionary *)options);
-JSExportAs(frameIsColors,
-- (NSDictionary *)frameIsColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
-JSExportAs(frameFindMultiColor,
-- (NSDictionary *)frameFindMultiColor:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
-JSExportAs(findImageInFrame,
-- (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options);
-JSExportAs(ocrFrame,
-- (NSDictionary *)ocrFrame:(int)frameId options:(NSDictionary *)options);
-JSExportAs(ocr,
-- (NSDictionary *)ocr:(NSDictionary *)options);
-JSExportAs(openApp,
-- (NSDictionary *)openApp:(NSString *)bundleId);
-JSExportAs(killApp,
-- (NSDictionary *)killApp:(NSString *)bundleId);
-JSExportAs(appState,
-- (NSDictionary *)appState:(NSString *)bundleId);
-JSExportAs(appInfo,
-- (NSDictionary *)appInfo:(NSString *)bundleId);
-JSExportAs(appPid,
-- (NSDictionary *)appPid:(NSString *)bundleId);
-JSExportAs(appPaths,
-- (NSDictionary *)appPaths:(NSString *)bundleId);
-JSExportAs(listBundles,
-- (NSDictionary *)listBundles:(BOOL)withInfo);
-JSExportAs(openUrl,
-- (NSDictionary *)openUrl:(NSString *)url);
-JSExportAs(setWifi,
-- (NSDictionary *)setWifi:(BOOL)enabled);
-JSExportAs(setBluetooth,
-- (NSDictionary *)setBluetooth:(BOOL)enabled);
-JSExportAs(setAirplaneMode,
-- (NSDictionary *)setAirplaneMode:(BOOL)enabled);
-JSExportAs(setCellularData,
-- (NSDictionary *)setCellularData:(BOOL)enabled);
-JSExportAs(alert,
-- (NSDictionary *)alert:(NSString *)title message:(NSString *)message duration:(int)duration);
-JSExportAs(dialog,
-- (NSDictionary *)dialog:(NSDictionary *)options);
-JSExportAs(setClipboardText,
-- (NSDictionary *)setClipboardText:(NSString *)text);
-JSExportAs(insertText,
-- (NSDictionary *)insertText:(NSString *)text);
-JSExportAs(deleteCharacters,
-- (NSDictionary *)deleteCharacters:(int)count);
-JSExportAs(moveCursor,
-- (NSDictionary *)moveCursor:(int)offset);
-JSExportAs(hardwareKey,
-- (NSDictionary *)hardwareKey:(NSString *)key action:(NSString *)action);
-JSExportAs(pressHardwareKey,
-- (NSDictionary *)pressHardwareKey:(NSString *)key);
-JSExportAs(keepAwake,
-- (NSDictionary *)keepAwake:(BOOL)enabled);
-JSExportAs(touchIndicator,
-- (NSDictionary *)touchIndicator:(NSString *)action);
-JSExportAs(runShell,
-- (NSDictionary *)runShell:(NSString *)command timeoutSeconds:(double)timeoutSeconds);
-JSExportAs(saveScreenshotToAlbum,
-- (NSDictionary *)saveScreenshotToAlbum:(NSString *)path);
-JSExportAs(matchTemplate,
-- (NSDictionary *)matchTemplate:(NSString *)path options:(NSDictionary *)options);
-JSExportAs(findColor,
-- (NSDictionary *)findColor:(NSDictionary *)options);
-JSExportAs(isColors,
-- (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options);
-JSExportAs(findMultiColor,
-- (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options);
-JSExportAs(setAutoLaunch,
-- (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled);
-JSExportAs(setTimer,
-- (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script);
-JSExportAs(removeTimer,
-- (NSDictionary *)removeTimer:(NSString *)name);
-JSExportAs(readText,
-- (NSDictionary *)readText:(NSString *)path);
-JSExportAs(writeText,
-- (NSDictionary *)writeText:(NSString *)path text:(NSString *)text);
-JSExportAs(readJSON,
-- (NSDictionary *)readJSON:(NSString *)path);
-JSExportAs(writeJSON,
-- (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value);
-JSExportAs(fileExists,
-- (NSDictionary *)fileExists:(NSString *)path);
-JSExportAs(deleteFile,
-- (NSDictionary *)deleteFile:(NSString *)path);
-- (NSDictionary *)getScreenSize;
-- (NSDictionary *)screenshot;
-- (NSDictionary *)releaseAllFrames;
-- (NSDictionary *)info;
-- (NSDictionary *)batteryInfo;
-- (NSDictionary *)clearScreenshotAlbum;
-- (NSDictionary *)listAutoLaunch;
-- (NSDictionary *)ocrLanguages;
-- (NSDictionary *)clearDialogValues;
-- (NSDictionary *)getClipboardText;
-- (NSDictionary *)pasteFromClipboard;
-- (NSDictionary *)showKeyboard;
-- (NSDictionary *)hideKeyboard;
-- (NSDictionary *)rootDir;
-- (NSDictionary *)currentDir;
-- (NSDictionary *)botPath;
-- (NSDictionary *)frontMostPid;
-- (NSDictionary *)wifi;
-- (NSDictionary *)bluetooth;
-- (NSDictionary *)airplaneMode;
-- (NSDictionary *)cellularData;
-- (NSDictionary *)frontMostAppId;
-- (NSDictionary *)orientation;
-- (NSDictionary *)runtimeInfo;
-
-@end
-
-@interface TLinkautoDeviceBridge : NSObject <TLinkautoDeviceJSExport>
-@property(nonatomic, weak) TLinkautoJSRuntime *runtime;
-@end
-
-struct TLinkautoJSCancelState {
-    std::atomic<bool> aborted;
-};
-
-struct TLinkautoJSWatchdogProbeState {
-    std::atomic<int> callbacks;
-};
-
-@interface TLinkautoJSRuntime ()
+- (NSDictionary *)tap:(double)x y:(double)y
 {
-    NSMutableSet<NSNumber *> *_ownedFrameIds;
-    NSMutableSet<NSNumber *> *_ownedImageIds;
-    
-    os_unfair_lock _handlesLock;
-    BOOL _acceptingHandles;
+    return [self.runtime executeNativeRequest:@"tap" arguments:@[@(x), @(y)]];
 }
 @property (nonatomic, strong) TLinkJSRuntimeCore *core;
 @property (nonatomic, strong) TLinkInProcessNativeBridge *bridge;
@@ -988,16 +826,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)screenshotTo:(NSString *)path
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSString *targetPath = ([path isKindOfClass:[NSString class]] && [path length] > 0) ? path : [self defaultScreenshotPath];
-    if (TLinkautoJSStringContainsAny(targetPath, @[@";;", @"\r", @"\n"])) {
-        [self.runtime throwError:@"screenshot path contains unsupported protocol delimiter"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_SCREENSHOT payload:[NSString stringWithFormat:@"1;;%@", targetPath]];
-    NSArray *parts = result[@"parts"];
-    NSString *resultPath = [parts count] >= 2 ? TLinkautoJSSafeStringPart(parts, 1) : targetPath;
-    return TLinkautoJSResultByAdding(result, @{ @"path": resultPath ?: @"" });
+    return [self.runtime executeNativeRequest:@"screenshotTo" arguments:@[path ?: @""]];
 }
 
 - (NSDictionary *)screenshotRegion:(NSString *)path options:(NSDictionary *)options
@@ -1126,51 +955,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)captureFrame:(NSDictionary *)options
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    BOOL needGray = TLinkautoJSIntOption(options, @"gray", 1) != 0;
-    BOOL needBGRA = TLinkautoJSIntOption(options, @"bgra", 1) != 0;
-    int ttlMs = TLinkautoJSIntOption(options, @"ttlMs", 1000);
-    if (!needGray && !needBGRA) {
-        needGray = YES;
-        needBGRA = YES;
-    }
-    if (ttlMs <= 0) ttlMs = 1000;
-    NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%d", needGray ? 1 : 0, needBGRA ? 1 : 0, ttlMs];
-    NSDictionary *result = [self runTask:TASK_FRAME_CAPTURE payload:payload];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 15) return result;
-    int frameId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
-    [self.runtime trackFrameId:frameId];
-    return TLinkautoJSResultByAdding(result, @{
-        @"id": @(frameId),
-        @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
-        @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
-        @"bytesPerRow": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
-        @"scale": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]),
-        @"coordinateSpace": TLinkautoJSSafeStringPart(parts, 6),
-        @"pixelFormat": TLinkautoJSSafeStringPart(parts, 7),
-        @"hasBGRA": @([TLinkautoJSSafeStringPart(parts, 8) intValue] != 0),
-        @"hasGray": @([TLinkautoJSSafeStringPart(parts, 9) intValue] != 0),
-        @"createdAtMs": @([TLinkautoJSSafeStringPart(parts, 10) longLongValue]),
-        @"captureMs": @([TLinkautoJSSafeStringPart(parts, 11) doubleValue]),
-        @"bgraMs": @([TLinkautoJSSafeStringPart(parts, 12) doubleValue]),
-        @"grayMs": @([TLinkautoJSSafeStringPart(parts, 13) doubleValue]),
-        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 14) doubleValue]),
-    });
+    return [self.runtime executeNativeRequest:@"captureFrame" arguments:@[options ?: @{}]];
 }
 
 - (NSDictionary *)releaseFrame:(int)frameId
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    if (frameId <= 0) {
-        [self.runtime throwError:@"releaseFrame(frameId) requires a positive id"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_FRAME_RELEASE payload:[NSString stringWithFormat:@"%d", frameId]];
-    if ([result[@"ok"] boolValue]) [self.runtime untrackFrameId:frameId];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    return TLinkautoJSResultByAdding(result, @{ @"released": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+    return [self.runtime executeNativeRequest:@"releaseFrame" arguments:@[@(frameId)]];
 }
 
 - (NSDictionary *)releaseAllFrames
@@ -1184,54 +974,17 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)openImage:(NSString *)path
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    if (![path isKindOfClass:[NSString class]] || [path length] == 0 || TLinkautoJSStringContainsAny(path, @[@";;", @"\r", @"\n"])) {
-        [self.runtime throwError:@"openImage(path) requires a valid path"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:[NSString stringWithFormat:@"2;;%@", path]];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
-    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
-    [self.runtime trackImageId:imageId];
-    return TLinkautoJSResultByAdding(result, @{
-        @"id": @(imageId),
-        @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
-        @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
-    });
+    return [self.runtime executeNativeRequest:@"openImage" arguments:@[path ?: @""]];
 }
 
 - (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
-        !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
-        [self.runtime throwError:@"captureImage(x, y, width, height) requires finite positive dimensions"];
-        return @{ @"ok": @NO };
-    }
-    NSString *payload = [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f", x, y, width, height];
-    NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:payload];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 4) return result;
-    int imageId = [TLinkautoJSSafeStringPart(parts, 1) intValue];
-    [self.runtime trackImageId:imageId];
-    return TLinkautoJSResultByAdding(result, @{
-        @"id": @(imageId),
-        @"width": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
-        @"height": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
-    });
+    return [self.runtime executeNativeRequest:@"captureImage" arguments:@[@(x), @(y), @(width), @(height)]];
 }
 
 - (NSDictionary *)releaseImage:(int)imageId
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    if (imageId <= 0) {
-        [self.runtime throwError:@"releaseImage(imageId) requires a positive id"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_IMAGE_OBJECT payload:[NSString stringWithFormat:@"3;;%d", imageId]];
-    if ([result[@"ok"] boolValue]) [self.runtime untrackImageId:imageId];
-    return result;
+    return [self.runtime executeNativeRequest:@"releaseImage" arguments:@[@(imageId)]];
 }
 
 - (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options
@@ -1879,25 +1632,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)runShell:(NSString *)command timeoutSeconds:(double)timeoutSeconds
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    if (!TLinkautoJSValidProtocolString(command)) {
-        [self.runtime throwError:@"runShell(command) requires a non-empty single-line command"];
-        return @{ @"ok": @NO };
-    }
-    // Optional timeout: prepend "timeout;;" only when a finite positive value is given.
-    // The command itself can never contain ";;" (rejected above), so the first ";;"
-    // is unambiguously the separator parsed by the Task.xm handler.
-    NSString *payload = command;
-    if (TLinkautoJSIsFiniteNumber(timeoutSeconds) && timeoutSeconds > 0) {
-        payload = [NSString stringWithFormat:@"%.3f;;%@", timeoutSeconds, command];
-    }
-    NSDictionary *result = [self runTask:TASK_RUN_SHELL payload:payload];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    NSArray *outputParts = [parts subarrayWithRange:NSMakeRange(1, [parts count] - 1)];
-    NSString *output = [[outputParts componentsJoinedByString:@";;"] stringByReplacingOccurrencesOfString:@"\\n" withString:@"\n"];
-    output = [output stringByReplacingOccurrencesOfString:@"\\r" withString:@"\r"];
-    return TLinkautoJSResultByAdding(result, @{ @"output": output ?: @"" });
+    return [self.runtime executeNativeRequest:@"runShell" arguments:@[command ?: @"", @(timeoutSeconds)]];
 }
 
 - (NSDictionary *)info
@@ -1942,115 +1677,22 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)matchTemplate:(NSString *)path options:(NSDictionary *)options
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    if (!TLinkautoJSValidProtocolString(path)) {
-        [self.runtime throwError:@"matchTemplate(path, options) requires a valid template path"];
-        return @{ @"ok": @NO };
-    }
-    int maxTryTimes = TLinkautoJSIntOption(options, @"maxTryTimes", 2);
-    double acceptable = TLinkautoJSDoubleOption(options, @"acceptable", 0.8);
-    double scaleRatio = TLinkautoJSDoubleOption(options, @"scaleRatio", 0.8);
-    NSString *payload = [NSString stringWithFormat:@"%@;;%d;;%.4f;;%.4f", path, maxTryTimes, acceptable, scaleRatio];
-    NSDictionary *result = [self runTask:TASK_TEMPLATE_MATCH payload:payload];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 5) return result;
-    double x = [TLinkautoJSSafeStringPart(parts, 1) doubleValue];
-    double y = [TLinkautoJSSafeStringPart(parts, 2) doubleValue];
-    double width = [TLinkautoJSSafeStringPart(parts, 3) doubleValue];
-    double height = [TLinkautoJSSafeStringPart(parts, 4) doubleValue];
-    return TLinkautoJSResultByAdding(result, @{
-        @"matched": @(width > 0 && height > 0),
-        @"x": @(x),
-        @"y": @(y),
-        @"width": @(width),
-        @"height": @(height),
-        @"centerX": @(x + width / 2.0),
-        @"centerY": @(y + height / 2.0),
-    });
+    return [self.runtime executeNativeRequest:@"matchTemplate" arguments:@[path ?: @"", options ?: @{}]];
 }
 
 - (NSDictionary *)findColor:(NSDictionary *)options
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    double x = TLinkautoJSDoubleOption(options, @"x", 0);
-    double y = TLinkautoJSDoubleOption(options, @"y", 0);
-    double width = TLinkautoJSDoubleOption(options, @"width", 0);
-    double height = TLinkautoJSDoubleOption(options, @"height", 0);
-    int redMin = TLinkautoJSIntOption(options, @"redMin", TLinkautoJSIntOption(options, @"rMin", 0));
-    int redMax = TLinkautoJSIntOption(options, @"redMax", TLinkautoJSIntOption(options, @"rMax", 255));
-    int greenMin = TLinkautoJSIntOption(options, @"greenMin", TLinkautoJSIntOption(options, @"gMin", 0));
-    int greenMax = TLinkautoJSIntOption(options, @"greenMax", TLinkautoJSIntOption(options, @"gMax", 255));
-    int blueMin = TLinkautoJSIntOption(options, @"blueMin", TLinkautoJSIntOption(options, @"bMin", 0));
-    int blueMax = TLinkautoJSIntOption(options, @"blueMax", TLinkautoJSIntOption(options, @"bMax", 255));
-    int skip = TLinkautoJSIntOption(options, @"skip", 0);
-    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
-        [self.runtime throwError:@"findColor(options) requires finite x/y/width/height"];
-        return @{ @"ok": @NO };
-    }
-    NSString *payload = [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d",
-                         x, y, width, height, redMin, redMax, greenMin, greenMax, blueMin, blueMax, skip];
-    NSDictionary *result = [self runTask:TASK_COLOR_SEARCHER payload:payload];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 6) return result;
-    int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue];
-    int foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
-    return TLinkautoJSResultByAdding(result, @{
-        @"matched": @(foundX >= 0 && foundY >= 0),
-        @"x": @(foundX),
-        @"y": @(foundY),
-        @"red": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
-        @"green": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
-        @"blue": @([TLinkautoJSSafeStringPart(parts, 5) intValue]),
-    });
+    return [self.runtime executeNativeRequest:@"findColor" arguments:@[options ?: @{}]];
 }
 
 - (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSString *table = TLinkautoJSEncodePointColorTable(points);
-    if (!table) {
-        [self.runtime throwError:@"isColors(points, options) requires 1-512 point colors"];
-        return @{ @"ok": @NO };
-    }
-    int mode = TLinkautoJSIntOption(options, @"mode", 1);
-    double value = TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0));
-    NSDictionary *result = [self runTask:TASK_COLOR_SEARCHER payload:[NSString stringWithFormat:@"2;;%@;;%d;;%.4f", table, mode, value]];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    BOOL matched = [TLinkautoJSSafeStringPart(parts, 1) intValue] != 0;
-    return TLinkautoJSResultByAdding(result, @{ @"matched": @(matched), @"value": @(matched) });
+    return [self.runtime executeNativeRequest:@"isColors" arguments:@[points ?: @[], options ?: @{}]];
 }
 
 - (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSString *table = TLinkautoJSEncodePointColorTable(points);
-    if (!table) {
-        [self.runtime throwError:@"findMultiColor(points, options) requires 1-512 relative point colors"];
-        return @{ @"ok": @NO };
-    }
-    double x = TLinkautoJSDoubleOption(options, @"x", 0);
-    double y = TLinkautoJSDoubleOption(options, @"y", 0);
-    double width = TLinkautoJSDoubleOption(options, @"width", 0);
-    double height = TLinkautoJSDoubleOption(options, @"height", 0);
-    int mode = TLinkautoJSIntOption(options, @"mode", 1);
-    double value = TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0));
-    int skip = TLinkautoJSIntOption(options, @"skip", 0);
-    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
-        [self.runtime throwError:@"findMultiColor(points, options) requires finite x/y/width/height"];
-        return @{ @"ok": @NO };
-    }
-    NSString *payload = [NSString stringWithFormat:@"3;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d", x, y, width, height, table, mode, value, skip];
-    NSDictionary *result = [self runTask:TASK_COLOR_SEARCHER payload:payload];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 3) return result;
-    int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue];
-    int foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
-    return TLinkautoJSResultByAdding(result, @{
-        @"matched": @(foundX >= 0 && foundY >= 0),
-        @"x": @(foundX),
-        @"y": @(foundY),
-    });
+    return [self.runtime executeNativeRequest:@"findMultiColor" arguments:@[points ?: @[], options ?: @{}]];
 }
 
 - (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled
@@ -2106,89 +1748,33 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)readText:(NSString *)path
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
-    if (![resolved[@"ok"] boolValue]) return resolved;
-    NSString *resolvedPath = resolved[@"path"];
-    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:resolvedPath error:nil];
-    if (!attrs) return @{ @"ok": @NO, @"error": @"file not found", @"path": resolvedPath ?: @"" };
-    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkautoJSMaxStorageFileBytes) {
-        return @{ @"ok": @NO, @"error": @"file is too large", @"path": resolvedPath ?: @"" };
-    }
-    NSError *error = nil;
-    NSString *text = [NSString stringWithContentsOfFile:resolvedPath encoding:NSUTF8StringEncoding error:&error];
-    if (!text) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to read file", @"path": resolvedPath ?: @"" };
-    return @{ @"ok": @YES, @"path": resolvedPath ?: @"", @"text": text };
+    return [self.runtime executeNativeRequest:@"readText" arguments:@[path ?: @""]];
 }
 
 - (NSDictionary *)writeText:(NSString *)path text:(NSString *)text
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:YES];
-    if (![resolved[@"ok"] boolValue]) return resolved;
-    NSString *safeText = [text isKindOfClass:[NSString class]] ? text : [text description];
-    safeText = safeText ?: @"";
-    NSData *data = [safeText dataUsingEncoding:NSUTF8StringEncoding];
-    if ([data length] > kTLinkautoJSMaxStorageFileBytes) {
-        return @{ @"ok": @NO, @"error": @"text is too large", @"path": resolved[@"path"] ?: @"" };
-    }
-    NSError *error = nil;
-    BOOL ok = [safeText writeToFile:resolved[@"path"] atomically:YES encoding:NSUTF8StringEncoding error:&error];
-    if (!ok) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to write file", @"path": resolved[@"path"] ?: @"" };
-    return @{ @"ok": @YES, @"path": resolved[@"path"] ?: @"", @"bytes": @([data length]) };
+    return [self.runtime executeNativeRequest:@"writeText" arguments:@[path ?: @"", text ?: @""]];
 }
 
 - (NSDictionary *)readJSON:(NSString *)path
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSDictionary *textResult = [self readText:path];
-    if (![textResult[@"ok"] boolValue]) return textResult;
-    NSData *data = [textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
-    NSError *error = nil;
-    id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&error] : nil;
-    if (!value) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" };
-    return @{ @"ok": @YES, @"path": textResult[@"path"] ?: @"", @"value": value };
+    return [self.runtime executeNativeRequest:@"readJSON" arguments:@[path ?: @""]];
 }
 
 - (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     id object = [value isKindOfClass:[JSValue class]] ? [value toObject] : value;
-    if (!object || ![NSJSONSerialization isValidJSONObject:object]) {
-        [self.runtime throwError:@"writeJSON(path, value) requires a JSON-serializable object or array"];
-        return @{ @"ok": @NO };
-    }
-    NSError *error = nil;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:&error];
-    if (!data) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to encode JSON" };
-    if ([data length] > kTLinkautoJSMaxStorageFileBytes) return @{ @"ok": @NO, @"error": @"JSON is too large" };
-    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
-    return [self writeText:path text:text];
+    return [self.runtime executeNativeRequest:@"writeJSON" arguments:@[path ?: @"", object ?: [NSNull null]]];
 }
 
 - (NSDictionary *)fileExists:(NSString *)path
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
-    if (![resolved[@"ok"] boolValue]) return resolved;
-    BOOL isDir = NO;
-    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:resolved[@"path"] isDirectory:&isDir];
-    return @{ @"ok": @YES, @"path": resolved[@"path"] ?: @"", @"exists": @(exists), @"directory": @(exists && isDir) };
+    return [self.runtime executeNativeRequest:@"fileExists" arguments:@[path ?: @""]];
 }
 
 - (NSDictionary *)deleteFile:(NSString *)path
 {
-    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
-    NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
-    if (![resolved[@"ok"] boolValue]) return resolved;
-    NSString *resolvedPath = resolved[@"path"];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:resolvedPath]) {
-        return @{ @"ok": @YES, @"path": resolvedPath ?: @"", @"deleted": @NO };
-    }
-    NSError *error = nil;
-    BOOL ok = [[NSFileManager defaultManager] removeItemAtPath:resolvedPath error:&error];
-    if (!ok) return @{ @"ok": @NO, @"error": error.localizedDescription ?: @"failed to delete file", @"path": resolvedPath ?: @"" };
-    return @{ @"ok": @YES, @"path": resolvedPath ?: @"", @"deleted": @YES };
+    return [self.runtime executeNativeRequest:@"deleteFile" arguments:@[path ?: @""]];
 }
 
 - (NSDictionary *)getScreenSize
