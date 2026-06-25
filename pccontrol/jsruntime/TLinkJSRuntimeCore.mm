@@ -1,5 +1,6 @@
 #import "../TLinkautoJSRuntime.h"
 #import "TLinkJSRuntimeCore.h"
+#import "TLinkautoDeviceBridge.h"
 #import <os/lock.h>
 #include <atomic>
 #include <dlfcn.h>
@@ -8,6 +9,14 @@
 typedef bool (*TLinkautoJSShouldTerminateCallback)(JSContextRef ctx, void *opaque);
 typedef void (*TLinkautoJSSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkautoJSShouldTerminateCallback callback, void *opaque);
 typedef void (*TLinkautoJSClearExecutionTimeLimitFn)(JSContextGroupRef group);
+
+@protocol TLinkJSRuntimeFacadePrivate <NSObject>
+- (void)beginOwnedHandleTracking;
+- (void)releaseOwnedHandles;
+- (void)recordLastScriptError:(NSString *)message;
+- (void)showDebugToast:(NSString *)message type:(int)type;
+@end
+
 
 struct TLinkautoJSCancelState {
     std::atomic<bool> aborted;
@@ -67,6 +76,13 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
     return isfinite(value);
 }
 
+static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
+    if (![value isKindOfClass:[NSString class]] || [value length] == 0) return @"script";
+    NSCharacterSet *invalid = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"] invertedSet];
+    NSString *joined = [[value componentsSeparatedByCharactersInSet:invalid] componentsJoinedByString:@"_"];
+    return [joined length] > 0 ? joined : @"script";
+}
+
 @interface TLinkJSRuntimeCore () {
     TLinkautoJSCancelState *_cancelState;
     NSCondition *_sleepCondition;
@@ -77,22 +93,22 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
     NSString *_consoleLogPath;
     NSString *_consoleLatestLogPath;
     JSContext *_context;
-
+    
     TLinkautoJSSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkautoJSClearExecutionTimeLimitFn _clearExecutionTimeLimit;
     BOOL _watchdogAvailable;
-
+    
     dispatch_queue_t _logQueue;
     os_unfair_lock _logStateLock;
     BOOL _acceptingLogs;
 }
-@end
 
-
-@protocol TLinkautoFacadeInterface <NSObject>
-- (void)showDebugToast:(NSString *)message type:(int)type;
-- (void)setAcceptingHandles:(NSNumber *)accepting;
-- (void)releaseOwnedHandles;
+- (void)prepareConsoleLogFiles;
+- (void)appendLine:(NSString *)line toConsolePath:(NSString *)path;
+- (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
+- (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
+- (void)installWatchdogForContext:(JSContext *)context;
+- (void)clearWatchdogForContext:(JSContext *)context;
 @end
 
 @implementation TLinkJSRuntimeCore
@@ -104,12 +120,13 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
         _cancelState->aborted.store(false, std::memory_order_relaxed);
         _sleepCondition = [[NSCondition alloc] init];
         _running = NO;
-
+        
         _setExecutionTimeLimit = (TLinkautoJSSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
         _clearExecutionTimeLimit = (TLinkautoJSClearExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupClearExecutionTimeLimit");
         _watchdogAvailable = TLinkautoJSWatchdogCapability(_setExecutionTimeLimit, _clearExecutionTimeLimit);
-
+        
         _logQueue = dispatch_queue_create("com.tlinkauto.js.log", DISPATCH_QUEUE_SERIAL);
+        _logStateLock = OS_UNFAIR_LOCK_INIT;
         _acceptingLogs = NO;
     }
     return self;
@@ -168,7 +185,141 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
     return ![self isAborted];
 }
 
-// ... Additional methods will be moved here incrementally
+- (void)prepareConsoleLogFiles {
+    if (![_bundlePath isKindOfClass:[NSString class]] || [_bundlePath length] == 0 ||
+        ![_runId isKindOfClass:[NSString class]] || [_runId length] == 0) {
+        return;
+    }
+
+    NSString *dir = [_bundlePath stringByAppendingPathComponent:@"_logs"];
+    NSError *mkdirError = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:&mkdirError]) {
+        NSLog(@"com.tlinkauto.jsruntime: unable to create log directory: %@", mkdirError);
+        return;
+    }
+
+    _consoleLogPath = [dir stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@.log", TLinkautoJSSanitizeFileComponent(_runId)]];
+    _consoleLatestLogPath = [dir stringByAppendingPathComponent:@"latest.log"];
+
+    NSString *header = [NSString stringWithFormat:@"[%@] run %@ started\n", [NSDate date], _runId];
+    [header writeToFile:_consoleLogPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [header writeToFile:_consoleLatestLogPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (void)appendLine:(NSString *)line toConsolePath:(NSString *)path {
+    if (![path isKindOfClass:[NSString class]] || [path length] == 0 ||
+        ![line isKindOfClass:[NSString class]]) {
+        return;
+    }
+
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkautoJSMaxConsoleLogBytes) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    }
+
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data) return;
+
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        [data writeToFile:path atomically:YES];
+        return;
+    }
+
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) return;
+    @try {
+        [handle seekToEndOfFile];
+        [handle writeData:data];
+    } @finally {
+        [handle closeFile];
+    }
+}
+
+- (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message {
+    os_unfair_lock_lock(&_logStateLock);
+    BOOL accepting = _acceptingLogs;
+    os_unfair_lock_unlock(&_logStateLock);
+    if (!accepting) return;
+
+    NSString *safeLevel = TLinkautoJSSanitizeFileComponent(level ?: @"log");
+    NSString *safeMessage = [message isKindOfClass:[NSString class]] ? message : [message description];
+    safeMessage = [safeMessage ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"];
+    NSString *line = [NSString stringWithFormat:@"[%@][%@][%@] %@\n",
+                      [NSDate date], _runId ?: @"", safeLevel, safeMessage];
+    NSString *runPath = [_consoleLogPath copy];
+    NSString *latestPath = [_consoleLatestLogPath copy];
+
+    dispatch_async(_logQueue, ^{
+        [self appendLine:line toConsolePath:runPath];
+        [self appendLine:line toConsolePath:latestPath];
+    });
+}
+
+- (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath {
+    NSString *bundlePath = [_bundlePath stringByStandardizingPath];
+    if (![bundlePath isKindOfClass:[NSString class]] || [bundlePath length] == 0) {
+        return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
+    }
+    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) {
+        return @{ @"ok": @NO, @"error": @"module path is required" };
+    }
+    if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) {
+        return @{ @"ok": @NO, @"error": @"module path must be bundle-relative" };
+    }
+
+    NSString *candidate = [[bundlePath stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
+    NSString *prefix = [bundlePath hasSuffix:@"/"] ? bundlePath : [bundlePath stringByAppendingString:@"/"];
+    if (![candidate hasPrefix:prefix]) {
+        return @{ @"ok": @NO, @"error": @"module path escapes bundle" };
+    }
+
+    NSString *extension = [[candidate pathExtension] lowercaseString];
+    if (!([extension isEqualToString:@"js"] || [extension isEqualToString:@"json"])) {
+        return @{ @"ok": @NO, @"error": @"module extension must be .js or .json" };
+    }
+
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:candidate error:nil];
+    if (!attrs) {
+        return @{ @"ok": @NO, @"error": @"module file not found", @"path": candidate ?: @"" };
+    }
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkautoJSMaxBundleFileBytes) {
+        return @{ @"ok": @NO, @"error": @"module file is too large", @"path": candidate ?: @"" };
+    }
+
+    NSError *readError = nil;
+    NSString *source = [NSString stringWithContentsOfFile:candidate
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:&readError];
+    if (!source) {
+        return @{ @"ok": @NO,
+                  @"error": readError.localizedDescription ?: @"failed to read module",
+                  @"path": candidate ?: @"" };
+    }
+
+    NSString *canonical = [candidate substringFromIndex:[prefix length]];
+    return @{ @"ok": @YES,
+              @"path": candidate,
+              @"id": canonical ?: relativePath,
+              @"source": source };
+}
+
+- (void)installWatchdogForContext:(JSContext *)context {
+    if (!_watchdogAvailable || !context || !_setExecutionTimeLimit) return;
+    JSContextRef ctx = [context JSGlobalContextRef];
+    JSContextGroupRef group = JSContextGetGroup(ctx);
+    _setExecutionTimeLimit(group, kTLinkautoJSWatchdogInterval, TLinkautoJSShouldTerminate, _cancelState);
+}
+
+- (void)clearWatchdogForContext:(JSContext *)context {
+    if (!_watchdogAvailable || !context || !_clearExecutionTimeLimit) return;
+    JSContextRef ctx = [context JSGlobalContextRef];
+    JSContextGroupRef group = JSContextGetGroup(ctx);
+    _clearExecutionTimeLimit(group);
+}
 
 - (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest context:(TLinkTaskExecutionContext *)context facade:(id)facade error:(NSError **)error
 {
@@ -193,50 +344,49 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
     os_unfair_lock_lock(&_logStateLock);
     _acceptingLogs = YES;
     os_unfair_lock_unlock(&_logStateLock);
-
-    os_unfair_lock_lock(&_handlesLock);
-    _acceptingHandles = YES;
-    os_unfair_lock_unlock(&_handlesLock);
-
+    
+    id<TLinkJSRuntimeFacadePrivate> runtimeFacade = (id<TLinkJSRuntimeFacadePrivate>)facade;
+    [runtimeFacade beginOwnedHandleTracking];
+    
     _cancelState->aborted.store(false, std::memory_order_release);
-
+    
     @try {
 
     JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
     JSContext *context = [[JSContext alloc] initWithVirtualMachine:vm];
     _context = context;
 
-    __weak id weakSelf = self;
+    __weak TLinkJSRuntimeCore *weakSelf = self;
+    __weak id<TLinkJSRuntimeFacadePrivate> weakFacade = runtimeFacade;
     context.exceptionHandler = ^(JSContext *ctx, JSValue *exception) {
         NSLog(@"com.tlinkauto.jsruntime: exception: %@", exception);
         ctx.exception = exception;
-        id strongSelf = weakSelf;
-        if (strongSelf) {
-            setLastScriptError([exception toString] ?: @"JavaScript exception");
-            [strongSelf showDebugToast:[NSString stringWithFormat:@"JS error: %@", [exception toString] ?: @"unknown"] type:1];
-        }
+        NSString *message = [exception toString] ?: @"JavaScript exception";
+        id<TLinkJSRuntimeFacadePrivate> strongFacade = weakFacade;
+        [strongFacade recordLastScriptError:message];
+        [strongFacade showDebugToast:[NSString stringWithFormat:@"JS error: %@", message] type:1];
     };
 
     TLinkautoDeviceBridge *bridge = [[TLinkautoDeviceBridge alloc] init];
-    bridge.runtime = facade;
+    bridge.runtime = (TLinkautoJSRuntime *)facade;
     context[@"device"] = bridge;
     context[@"manifest"] = _manifest ?: @{};
 
     context[@"sleep"] = ^(double ms) {
-        id strongSelf = weakSelf;
+        TLinkJSRuntimeCore *strongSelf = weakSelf;
         if (strongSelf) [strongSelf interruptibleSleepMs:ms];
     };
 
     void (^logBlock)(NSString *, NSString *) = ^(NSString *level, NSString *message) {
         NSLog(@"com.tlinkauto.jsruntime[%@][%@]: %@", weakSelf.runId ?: @"", level ?: @"log", message ?: @"");
-        id strongSelf = weakSelf;
+        TLinkJSRuntimeCore *strongSelf = weakSelf;
         if (strongSelf) [strongSelf appendConsoleLogWithLevel:level message:message];
     };
     context[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
         logBlock(level, message);
     };
     context[@"_tlinkautoLoadBundleText"] = ^NSDictionary *(NSString *relativePath) {
-        id strongSelf = weakSelf;
+        TLinkJSRuntimeCore *strongSelf = weakSelf;
         return strongSelf ? [strongSelf bundleTextForRelativePath:relativePath] : @{ @"ok": @NO, @"error": @"runtime missing" };
     };
     NSString *consolePrelude =
@@ -399,17 +549,17 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
     }
     return success;
     } @finally {
-        [self releaseOwnedHandles];
+        [runtimeFacade releaseOwnedHandles];
         [self clearWatchdogForContext:_context];
         _context = nil;
         _bundlePath = nil;
         _manifest = nil;
-
+        
         os_unfair_lock_lock(&_logStateLock);
         _acceptingLogs = NO;
         os_unfair_lock_unlock(&_logStateLock);
         dispatch_sync(_logQueue, ^{}); // flush
-
+        
         _consoleLogPath = nil;
         _consoleLatestLogPath = nil;
         _running = NO;
@@ -439,12 +589,23 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
 
     NSString *name = [candidate lastPathComponent];
     if ([name isEqualToString:@"manifest.json"] || [name isEqualToString:@"info.plist"]) {
-        return @{ @"ok": @NO, @"error": @"path overlaps with reserved files" };
+        return @{ @"ok": @NO, @"error": @"refusing to modify bundle metadata" };
+    }
+    if ([[[candidate pathExtension] lowercaseString] isEqualToString:@"js"]) {
+        return @{ @"ok": @NO, @"error": @"refusing to modify JavaScript source files" };
     }
 
     if (createParent) {
         NSString *dir = [candidate stringByDeletingLastPathComponent];
-        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSError *mkdirError = nil;
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:&mkdirError]) {
+            return @{ @"ok": @NO,
+                      @"error": mkdirError.localizedDescription ?: @"failed to create parent directory",
+                      @"path": candidate ?: @"" };
+        }
     }
 
     return @{ @"ok": @YES, @"path": candidate };
