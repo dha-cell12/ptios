@@ -30,6 +30,8 @@
 
 - (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent;
 - (BOOL)watchdogAvailable;
+- (void)setAcceptingHandles:(NSNumber *)accepting;
+- (void)releaseOwnedHandles;
 - (NSDictionary *)taskResultForPayload:(NSString *)payload;
 - (NSDictionary *)currentManifest;
 - (NSString *)currentConsoleLogPath;

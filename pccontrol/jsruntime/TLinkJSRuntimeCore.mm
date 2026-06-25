@@ -88,6 +88,13 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) {
 }
 @end
 
+
+@protocol TLinkautoFacadeInterface <NSObject>
+- (void)showDebugToast:(NSString *)message type:(int)type;
+- (void)setAcceptingHandles:(NSNumber *)accepting;
+- (void)releaseOwnedHandles;
+@end
+
 @implementation TLinkJSRuntimeCore
 
 - (instancetype)init {

@@ -341,6 +341,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 @implementation TLinkautoJSRuntime
 
+- (void)setAcceptingHandles:(NSNumber *)accepting {
+    os_unfair_lock_lock(&_handlesLock);
+    _acceptingHandles = [accepting boolValue];
+    os_unfair_lock_unlock(&_handlesLock);
+}
+
 - (instancetype)init
 {
     self = [super init];
