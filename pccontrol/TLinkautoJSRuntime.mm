@@ -1,3 +1,4 @@
+#import "TLinkTaskContext.h"
 #import "TLinkautoJSRuntime.h"
 #import "TLinkDiagnostic.h"
 #import <os/lock.h>
@@ -881,7 +882,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)executeNativeRequest:(NSString *)method arguments:(NSArray *)arguments {
     TLinkJSNativeRequest *request = [[TLinkJSNativeRequest alloc] initWithMethod:method arguments:arguments];
-    TLinkJSNativeResponse *response = [_bridge executeRequest:request context:nil error:nil];
+    TLinkTaskExecutionContext *ctx = [[TLinkTaskExecutionContext alloc] init];
+    ctx.runtime = self;
+    TLinkJSNativeResponse *response = [_bridge executeRequest:request context:ctx error:nil];
     if (response.ok) {
         return response.value ?: @{@"ok": @YES};
     } else {
