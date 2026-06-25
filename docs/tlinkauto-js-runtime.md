@@ -122,6 +122,9 @@ Frame/image handles created by JavaScript are auto-released when the script exit
 - `device.releaseImage(imageId)` releases one image handle.
 - `device.framePickColor(frameId, x, y, { coord, maxAgeMs })` returns `{ ok, red, green, blue, ageMs }`
 - `device.framePickColors(frameId, points, { coord, maxAgeMs })` returns `{ ok, colors, ageMs }`
+- `device.frameFindColor(frameId, options)` searches a cached frame and returns `{ ok, matched, x, y, red, green, blue, ageMs }`.
+- `device.frameIsColors(frameId, points, options)` checks absolute point colors in a cached frame and returns `{ ok, matched, ageMs }`.
+- `device.frameFindMultiColor(frameId, points, options)` searches for a relative multi-point color pattern in a cached frame and returns `{ ok, matched, x, y, ageMs }`.
 - `device.findImageInFrame(frameId, imageId, options)` returns `{ ok, matched, x, y, width, height, centerX, centerY, score, ageMs }`
 - `device.ocrLanguages()` returns `{ ok, languages }` from `/var/mobile/Library/TLinkauto/tessdata`.
 - `device.ocrFrame(frameId, options)` runs Tesseract OCR on a captured frame region and returns `{ ok, text, confidence, ageMs, ocrMs, preprocessMs, totalMs }`.

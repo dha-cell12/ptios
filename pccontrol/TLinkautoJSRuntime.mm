@@ -60,6 +60,12 @@ JSExportAs(framePickColor,
 - (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options);
 JSExportAs(framePickColors,
 - (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
+JSExportAs(frameFindColor,
+- (NSDictionary *)frameFindColor:(int)frameId options:(NSDictionary *)options);
+JSExportAs(frameIsColors,
+- (NSDictionary *)frameIsColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
+JSExportAs(frameFindMultiColor,
+- (NSDictionary *)frameFindMultiColor:(int)frameId points:(NSArray *)points options:(NSDictionary *)options);
 JSExportAs(findImageInFrame,
 - (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options);
 JSExportAs(ocrFrame,
@@ -1560,6 +1566,110 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"colors": colors,
         @"ageMs": @([TLinkautoJSSafeStringPart(parts, 2) longLongValue]),
         @"totalMs": @([TLinkautoJSSafeStringPart(parts, 3) doubleValue]),
+    });
+}
+
+- (NSDictionary *)frameFindColor:(int)frameId options:(NSDictionary *)options
+{
+    if (frameId <= 0) {
+        [self.runtime throwError:@"frameFindColor(frameId, options) requires a positive frame id"];
+        return @{ @"ok": @NO };
+    }
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+    int redMin = TLinkautoJSIntOption(options, @"redMin", TLinkautoJSIntOption(options, @"rMin", 0));
+    int redMax = TLinkautoJSIntOption(options, @"redMax", TLinkautoJSIntOption(options, @"rMax", 255));
+    int greenMin = TLinkautoJSIntOption(options, @"greenMin", TLinkautoJSIntOption(options, @"gMin", 0));
+    int greenMax = TLinkautoJSIntOption(options, @"greenMax", TLinkautoJSIntOption(options, @"gMax", 255));
+    int blueMin = TLinkautoJSIntOption(options, @"blueMin", TLinkautoJSIntOption(options, @"bMin", 0));
+    int blueMax = TLinkautoJSIntOption(options, @"blueMax", TLinkautoJSIntOption(options, @"bMax", 255));
+    int skip = TLinkautoJSIntOption(options, @"skip", 0);
+    NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+    if (!TLinkautoJSValidToken(coord) || !TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
+        [self.runtime throwError:@"frameFindColor options require finite x/y/width/height and valid coord"];
+        return @{ @"ok": @NO };
+    }
+    int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+    NSString *payload = [NSString stringWithFormat:@"%d;;search_single;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d;;%@;;%d",
+                         frameId, x, y, width, height, redMin, redMax, greenMin, greenMax, blueMin, blueMax, skip, coord, maxAgeMs];
+    NSDictionary *result = [self runTask:TASK_COLOR_IN_FRAME payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 9) return result;
+    int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    int foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+    return TLinkautoJSResultByAdding(result, @{
+        @"matched": @(foundX >= 0 && foundY >= 0),
+        @"x": @(foundX),
+        @"y": @(foundY),
+        @"red": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+        @"green": @([TLinkautoJSSafeStringPart(parts, 4) intValue]),
+        @"blue": @([TLinkautoJSSafeStringPart(parts, 5) intValue]),
+        @"ageMs": @([TLinkautoJSSafeStringPart(parts, 6) longLongValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 7) doubleValue]),
+    });
+}
+
+- (NSDictionary *)frameIsColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options
+{
+    NSString *table = TLinkautoJSEncodePointColorTable(points);
+    if (frameId <= 0 || !table) {
+        [self.runtime throwError:@"frameIsColors(frameId, points, options) requires a frame id and point colors"];
+        return @{ @"ok": @NO };
+    }
+    int mode = TLinkautoJSIntOption(options, @"mode", 1);
+    double value = TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0));
+    NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+    if (!TLinkautoJSValidToken(coord)) {
+        [self.runtime throwError:@"coord contains unsupported protocol delimiter"];
+        return @{ @"ok": @NO };
+    }
+    int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+    NSDictionary *result = [self runTask:TASK_COLOR_IN_FRAME payload:[NSString stringWithFormat:@"%d;;is_colors;;%@;;%d;;%.4f;;%@;;%d", frameId, table, mode, value, coord, maxAgeMs]];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 5) return result;
+    BOOL matched = [TLinkautoJSSafeStringPart(parts, 1) intValue] != 0;
+    return TLinkautoJSResultByAdding(result, @{
+        @"matched": @(matched),
+        @"value": @(matched),
+        @"ageMs": @([TLinkautoJSSafeStringPart(parts, 2) longLongValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 3) doubleValue]),
+    });
+}
+
+- (NSDictionary *)frameFindMultiColor:(int)frameId points:(NSArray *)points options:(NSDictionary *)options
+{
+    NSString *table = TLinkautoJSEncodePointColorTable(points);
+    if (frameId <= 0 || !table) {
+        [self.runtime throwError:@"frameFindMultiColor(frameId, points, options) requires a frame id and relative point colors"];
+        return @{ @"ok": @NO };
+    }
+    double x = TLinkautoJSDoubleOption(options, @"x", 0);
+    double y = TLinkautoJSDoubleOption(options, @"y", 0);
+    double width = TLinkautoJSDoubleOption(options, @"width", 0);
+    double height = TLinkautoJSDoubleOption(options, @"height", 0);
+    int mode = TLinkautoJSIntOption(options, @"mode", 1);
+    double value = TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0));
+    int skip = TLinkautoJSIntOption(options, @"skip", 0);
+    NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+    if (!TLinkautoJSValidToken(coord) || !TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
+        [self.runtime throwError:@"frameFindMultiColor options require finite x/y/width/height and valid coord"];
+        return @{ @"ok": @NO };
+    }
+    int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+    NSString *payload = [NSString stringWithFormat:@"%d;;find_multi_point;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d;;%@;;%d", frameId, x, y, width, height, table, mode, value, skip, coord, maxAgeMs];
+    NSDictionary *result = [self runTask:TASK_COLOR_IN_FRAME payload:payload];
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 6) return result;
+    int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+    int foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+    return TLinkautoJSResultByAdding(result, @{
+        @"matched": @(foundX >= 0 && foundY >= 0),
+        @"x": @(foundX),
+        @"y": @(foundY),
+        @"ageMs": @([TLinkautoJSSafeStringPart(parts, 3) longLongValue]),
+        @"totalMs": @([TLinkautoJSSafeStringPart(parts, 4) doubleValue]),
     });
 }
 
