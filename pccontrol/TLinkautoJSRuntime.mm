@@ -12,6 +12,9 @@
 #include "Screen.h"
 #include "RuntimeUtils.h"
 
+#import "jsruntime/TLinkJSRuntimeCore.h"
+#import "jsruntime/TLinkInProcessNativeBridge.h"
+
 typedef bool (*TLinkautoJSShouldTerminateCallback)(JSContextRef ctx, void *opaque);
 typedef void (*TLinkautoJSSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkautoJSShouldTerminateCallback callback, void *opaque);
 typedef void (*TLinkautoJSClearExecutionTimeLimitFn)(JSContextGroupRef group);
@@ -187,28 +190,14 @@ struct TLinkautoJSWatchdogProbeState {
 
 @interface TLinkautoJSRuntime ()
 {
-    TLinkautoJSCancelState *_cancelState;
-    NSCondition *_sleepCondition;
-    BOOL _running;
-    NSString *_runId;
-    NSString *_bundlePath;
-    NSDictionary *_manifest;
-    NSString *_consoleLogPath;
-    NSString *_consoleLatestLogPath;
     NSMutableSet<NSNumber *> *_ownedFrameIds;
     NSMutableSet<NSNumber *> *_ownedImageIds;
-    JSContext *_context;
-    TLinkautoJSSetExecutionTimeLimitFn _setExecutionTimeLimit;
-    TLinkautoJSClearExecutionTimeLimitFn _clearExecutionTimeLimit;
-    BOOL _watchdogAvailable;
-    
-    dispatch_queue_t _logQueue;
-    os_unfair_lock _logStateLock;
-    BOOL _acceptingLogs;
     
     os_unfair_lock _handlesLock;
     BOOL _acceptingHandles;
 }
+@property (nonatomic, strong) TLinkJSRuntimeCore *core;
+@property (nonatomic, strong) TLinkInProcessNativeBridge *bridge;
 - (BOOL)watchdogAvailable;
 - (NSString *)currentBundlePath;
 - (void)throwError:(NSString *)message;
@@ -887,246 +876,17 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest context:(TLinkTaskExecutionContext *)context error:(NSError **)error
 {
-    CFAbsoluteTime runtimeStart = CFAbsoluteTimeGetCurrent();
+    return [_core runScriptAtPath:scriptPath bundlePath:bundlePath manifest:manifest context:context facade:self error:error];
+}
 
-    if (_running) {
-        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScript runtime is busy.\r\n"}];
-        return NO;
-    }
-
-    NSString *script = [NSString stringWithContentsOfFile:scriptPath encoding:NSUTF8StringEncoding error:error];
-    if (!script) {
-        return NO;
-    }
-
-    _running = YES;
-    _runId = [[NSUUID UUID] UUIDString];
-    _bundlePath = [bundlePath copy];
-    _manifest = [manifest isKindOfClass:[NSDictionary class]] ? [manifest copy] : @{};
-    [self prepareConsoleLogFiles];
-    os_unfair_lock_lock(&_logStateLock);
-    _acceptingLogs = YES;
-    os_unfair_lock_unlock(&_logStateLock);
-    
-    os_unfair_lock_lock(&_handlesLock);
-    _acceptingHandles = YES;
-    os_unfair_lock_unlock(&_handlesLock);
-    
-    _cancelState->aborted.store(false, std::memory_order_release);
-    
-    @try {
-
-    JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
-    JSContext *context = [[JSContext alloc] initWithVirtualMachine:vm];
-    _context = context;
-
-    __weak TLinkautoJSRuntime *weakSelf = self;
-    context.exceptionHandler = ^(JSContext *ctx, JSValue *exception) {
-        NSLog(@"com.tlinkauto.jsruntime: exception: %@", exception);
-        ctx.exception = exception;
-        TLinkautoJSRuntime *strongSelf = weakSelf;
-        if (strongSelf) {
-            setLastScriptError([exception toString] ?: @"JavaScript exception");
-            [strongSelf showDebugToast:[NSString stringWithFormat:@"JS error: %@", [exception toString] ?: @"unknown"] type:1];
-        }
-    };
-
-    TLinkautoDeviceBridge *bridge = [[TLinkautoDeviceBridge alloc] init];
-    bridge.runtime = self;
-    context[@"device"] = bridge;
-    context[@"manifest"] = _manifest ?: @{};
-
-    context[@"sleep"] = ^(double ms) {
-        TLinkautoJSRuntime *strongSelf = weakSelf;
-        if (strongSelf) [strongSelf interruptibleSleepMs:ms];
-    };
-
-    void (^logBlock)(NSString *, NSString *) = ^(NSString *level, NSString *message) {
-        NSLog(@"com.tlinkauto.jsruntime[%@][%@]: %@", weakSelf.runId ?: @"", level ?: @"log", message ?: @"");
-        TLinkautoJSRuntime *strongSelf = weakSelf;
-        if (strongSelf) [strongSelf appendConsoleLogWithLevel:level message:message];
-    };
-    context[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
-        logBlock(level, message);
-    };
-    context[@"_tlinkautoLoadBundleText"] = ^NSDictionary *(NSString *relativePath) {
-        TLinkautoJSRuntime *strongSelf = weakSelf;
-        return strongSelf ? [strongSelf bundleTextForRelativePath:relativePath] : @{ @"ok": @NO, @"error": @"runtime missing" };
-    };
-    NSString *consolePrelude =
-        @"(function(){\n"
-         "  function fmt(args){ return Array.prototype.map.call(args, function(v){\n"
-         "    try { if (typeof v === 'string') return v; return JSON.stringify(v); }\n"
-         "    catch(e) { return String(v); }\n"
-         "  }).join(' '); }\n"
-         "  this.console = {\n"
-         "    log: function(){ _tlinkautoLog('log', fmt(arguments)); },\n"
-         "    info: function(){ _tlinkautoLog('info', fmt(arguments)); },\n"
-         "    warn: function(){ _tlinkautoLog('warn', fmt(arguments)); },\n"
-         "    error: function(){ _tlinkautoLog('error', fmt(arguments)); }\n"
-         "  };\n"
-         "})();";
-    NSString *modulePrelude =
-        @"(function(){\n"
-         "  var cache = Object.create(null);\n"
-         "  var stack = [];\n"
-         "  function dirname(path){ var i = path.lastIndexOf('/'); return i >= 0 ? path.slice(0, i) : ''; }\n"
-         "  function normalize(base, request){\n"
-         "    if (typeof request !== 'string' || !request) throw new Error('module path is required');\n"
-         "    var input = request;\n"
-         "    if (request.indexOf('./') === 0 || request.indexOf('../') === 0) {\n"
-         "      input = (base ? dirname(base) + '/' : '') + request;\n"
-         "    }\n"
-         "    var out = [];\n"
-         "    input.split('/').forEach(function(part){\n"
-         "      if (!part || part === '.') return;\n"
-         "      if (part === '..') out.pop(); else out.push(part);\n"
-         "    });\n"
-         "    return out.join('/');\n"
-         "  }\n"
-         "  function candidates(id){\n"
-         "    if (/\\.(js|json)$/.test(id)) return [id];\n"
-         "    return [id + '.js', id + '.json', id + '/index.js'];\n"
-         "  }\n"
-         "  function loadRecord(id){\n"
-         "    var last = '';\n"
-         "    var list = candidates(id);\n"
-         "    for (var i = 0; i < list.length; i++) {\n"
-         "      var rec = _tlinkautoLoadBundleText(list[i]);\n"
-         "      if (rec && rec.ok) return rec;\n"
-         "      last = rec && rec.error ? rec.error : 'module not found';\n"
-         "    }\n"
-         "    throw new Error('Cannot load module ' + id + ': ' + last);\n"
-         "  }\n"
-         "  this.require = function(request){\n"
-         "    var id = normalize(stack.length ? stack[stack.length - 1] : '', request);\n"
-         "    var rec = loadRecord(id);\n"
-         "    if (cache[rec.id]) return cache[rec.id].exports;\n"
-         "    var module = { id: rec.id, filename: rec.path, exports: {} };\n"
-         "    cache[rec.id] = module;\n"
-         "    if (/\\.json$/.test(rec.id)) { module.exports = JSON.parse(rec.source); return module.exports; }\n"
-         "    stack.push(rec.id);\n"
-         "    try {\n"
-         "      var fn = new Function('exports', 'module', 'require', 'device', 'sleep', rec.source + '\\n//# sourceURL=' + rec.path);\n"
-         "      fn(module.exports, module, this.require, device, sleep);\n"
-         "    } finally { stack.pop(); }\n"
-         "    return module.exports;\n"
-         "  };\n"
-         "  this.include = function(request){\n"
-         "    var id = normalize(stack.length ? stack[stack.length - 1] : '', request);\n"
-         "    var rec = loadRecord(id);\n"
-         "    return (0, eval)(rec.source + '\\n//# sourceURL=' + rec.path);\n"
-         "  };\n"
-         "})();";
-    NSString *helperPrelude =
-        @"(function(){\n"
-         "  function normalizeOptions(options, defaults){\n"
-         "    options = options || {};\n"
-         "    var out = {};\n"
-         "    Object.keys(defaults).forEach(function(k){ out[k] = options[k] == null ? defaults[k] : options[k]; });\n"
-         "    return out;\n"
-         "  }\n"
-         "  var api = this.TLinkauto || {};\n"
-         "  api.version = '1.0';\n"
-         "  api.assert = function(condition, message){\n"
-         "    if (!condition) throw new Error(message || 'Assertion failed');\n"
-         "    return true;\n"
-         "  };\n"
-         "  api.ensureOk = function(result, message){\n"
-         "    if (!result || !result.ok) {\n"
-         "      var detail = result && (result.errorMessage || result.error || result.raw) || 'operation failed';\n"
-         "      throw new Error((message || 'TLinkauto operation failed') + ': ' + detail);\n"
-         "    }\n"
-         "    return result;\n"
-         "  };\n"
-         "  api.waitUntil = function(predicate, options){\n"
-         "    if (typeof predicate !== 'function') throw new Error('waitUntil requires a predicate function');\n"
-         "    var opts = normalizeOptions(options, { timeoutMs: 5000, intervalMs: 100 });\n"
-         "    var start = Date.now();\n"
-         "    var attempts = 0;\n"
-         "    while (Date.now() - start <= opts.timeoutMs) {\n"
-         "      attempts++;\n"
-         "      var value = predicate(attempts);\n"
-         "      if (value) return { ok: true, value: value, attempts: attempts, elapsedMs: Date.now() - start };\n"
-         "      sleep(opts.intervalMs);\n"
-         "    }\n"
-         "    return { ok: false, attempts: attempts, elapsedMs: Date.now() - start };\n"
-         "  };\n"
-         "  api.retry = function(action, options){\n"
-         "    if (typeof action !== 'function') throw new Error('retry requires an action function');\n"
-         "    var opts = normalizeOptions(options, { retries: 3, delayMs: 100 });\n"
-         "    var lastError = null;\n"
-         "    for (var i = 0; i <= opts.retries; i++) {\n"
-         "      try { return { ok: true, value: action(i + 1), attempts: i + 1 }; }\n"
-         "      catch (e) { lastError = e; if (i < opts.retries) sleep(opts.delayMs); }\n"
-         "    }\n"
-         "    return { ok: false, error: String(lastError && lastError.message || lastError), attempts: opts.retries + 1 };\n"
-         "  };\n"
-         "  api.waitForApp = function(bundleId, options){\n"
-         "    return api.waitUntil(function(){\n"
-         "      var current = device.frontMostAppId();\n"
-         "      return current.ok && current.bundleId === bundleId ? current : false;\n"
-         "    }, options);\n"
-         "  };\n"
-         "  api.waitForColor = function(x, y, rgb, options){\n"
-         "    options = normalizeOptions(options, { timeoutMs: 5000, intervalMs: 100, tolerance: 0 });\n"
-         "    return api.waitUntil(function(){\n"
-         "      var c = device.pickColor(x, y);\n"
-         "      if (!c.ok) return false;\n"
-         "      var t = options.tolerance || 0;\n"
-         "      var ok = Math.abs(c.red - rgb.red) <= t && Math.abs(c.green - rgb.green) <= t && Math.abs(c.blue - rgb.blue) <= t;\n"
-         "      return ok ? c : false;\n"
-         "    }, options);\n"
-         "  };\n"
-         "  api.withFrame = function(options, callback){\n"
-         "    if (typeof callback !== 'function') throw new Error('withFrame requires a callback');\n"
-         "    var frame = api.ensureOk(device.captureFrame(options || {}), 'captureFrame failed');\n"
-         "    try { return callback(frame); }\n"
-         "    finally { device.releaseFrame(frame.id); }\n"
-         "  };\n"
-         "  api.withImage = function(path, callback){\n"
-         "    if (typeof callback !== 'function') throw new Error('withImage requires a callback');\n"
-         "    var image = api.ensureOk(device.openImage(path), 'openImage failed');\n"
-         "    try { return callback(image); }\n"
-         "    finally { device.releaseImage(image.id); }\n"
-         "  };\n"
-         "  api.withCapturedImage = function(x, y, width, height, callback){\n"
-         "    if (typeof callback !== 'function') throw new Error('withCapturedImage requires a callback');\n"
-         "    var image = api.ensureOk(device.captureImage(x, y, width, height), 'captureImage failed');\n"
-         "    try { return callback(image); }\n"
-         "    finally { device.releaseImage(image.id); }\n"
-         "  };\n"
-         "  this.TLinkauto = api;\n"
-         "})();";
-
-    [self installWatchdogForContext:context];
-    NSLog(@"[Diag-E4] Evaluating prelude");
-    [context evaluateScript:consolePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://console-prelude.js"]];
-    [context evaluateScript:modulePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://module-prelude.js"]];
-    [context evaluateScript:helperPrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://helper-prelude.js"]];
-    NSURL *sourceURL = [NSURL fileURLWithPath:scriptPath ?: @"script.js"];
-    [context evaluateScript:script withSourceURL:sourceURL];
-    BOOL success = !context.exception && ![self isAborted];
-    if (!success && error) {
-        NSString *message = context.exception ? [context.exception toString] : @"JavaScript execution was stopped";
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n", message ?: @"JavaScript error"]}];
-    }
-    return success;
-    } @finally {
-        [self releaseOwnedHandles];
-        [self clearWatchdogForContext:_context];
-        _context = nil;
-        _bundlePath = nil;
-        _manifest = nil;
-        
-        os_unfair_lock_lock(&_logStateLock);
-        _acceptingLogs = NO;
-        os_unfair_lock_unlock(&_logStateLock);
-        dispatch_sync(_logQueue, ^{}); // flush
-        
-        _consoleLogPath = nil;
-        _consoleLatestLogPath = nil;
-        _running = NO;
+- (NSDictionary *)executeNativeRequest:(NSString *)method arguments:(NSArray *)arguments {
+    TLinkJSNativeRequest *request = [[TLinkJSNativeRequest alloc] initWithMethod:method arguments:arguments];
+    TLinkJSNativeResponse *response = [_bridge executeRequest:request context:nil error:nil];
+    if (response.ok) {
+        return response.value ?: @{@"ok": @YES};
+    } else {
+        [self throwError:response.errorMessage ?: @"Native request failed"];
+        return @{@"ok": @NO, @"error": response.errorMessage ?: @"Unknown error"};
     }
 }
 
@@ -1147,47 +907,22 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)toast:(NSString *)message options:(NSDictionary *)options
 {
-    NSString *safeMessage = TLinkautoJSSanitizeProtocolText(message ?: @"", 180);
-    if ([safeMessage length] == 0) {
-        [self.runtime throwError:@"toast(message) requires a non-empty message"];
-        return @{ @"ok": @NO };
-    }
-    int type = TLinkautoJSIntOption(options, @"type", 3);
-    int duration = TLinkautoJSIntOption(options, @"duration", 2);
-    int position = TLinkautoJSIntOption(options, @"position", 0);
-    int fontSize = TLinkautoJSIntOption(options, @"fontSize", 14);
-    if (type < 0 || type > 4) type = 3;
-    if (duration <= 0 && type != 0) duration = 2;
-    NSString *payload = [NSString stringWithFormat:@"%d;;%@;;%d;;%d;;%d", type, safeMessage, duration, position, fontSize];
-    return [self runTask:TASK_SHOW_TOAST payload:payload];
+    return [self.runtime executeNativeRequest:@"toast" arguments:@[message ?: @"", options ?: @{}]];
 }
 
 - (NSDictionary *)tap:(double)x y:(double)y
 {
-    if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
-        [self.runtime throwError:@"tap(x, y) requires finite numbers"];
-        return @{ @"ok": @NO };
-    }
-    NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f", x, y];
-    return [self runTask:TASK_NATIVE_TAP payload:payload];
+    return [self.runtime executeNativeRequest:@"tap" arguments:@[@(x), @(y)]];
 }
 
 - (NSDictionary *)swipe:(double)x1 y1:(double)y1 x2:(double)x2 y2:(double)y2 duration:(double)duration
 {
-    if (!TLinkautoJSIsFiniteNumber(x1) || !TLinkautoJSIsFiniteNumber(y1) ||
-        !TLinkautoJSIsFiniteNumber(x2) || !TLinkautoJSIsFiniteNumber(y2) ||
-        !TLinkautoJSIsFiniteNumber(duration)) {
-        [self.runtime throwError:@"swipe(...) requires finite numbers"];
-        return @{ @"ok": @NO };
-    }
-    if (duration < 0) duration = 0;
-    if (duration > 60000) duration = 60000;
-    NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration];
-    return [self runTask:TASK_NATIVE_SWIPE payload:payload];
+    return [self.runtime executeNativeRequest:@"swipe" arguments:@[@(x1), @(y1), @(x2), @(y2), @(duration)]];
 }
 
 - (NSDictionary *)longPress:(double)x y:(double)y duration:(double)duration
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(duration)) {
         [self.runtime throwError:@"longPress(x, y, duration) requires finite numbers"];
         return @{ @"ok": @NO };
@@ -1200,6 +935,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)gesture:(NSArray *)points options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *encoded = TLinkautoJSEncodeGesturePoints(points);
     if (!encoded) {
         [self.runtime throwError:@"gesture(points, options) requires 2-512 points as [x,y] arrays or {x,y} objects"];
@@ -1215,6 +951,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)pickColor:(double)x y:(double)y
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
         [self.runtime throwError:@"pickColor(x, y) requires finite numbers"];
         return @{ @"ok": @NO };
@@ -1248,6 +985,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)screenshotTo:(NSString *)path
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *targetPath = ([path isKindOfClass:[NSString class]] && [path length] > 0) ? path : [self defaultScreenshotPath];
     if (TLinkautoJSStringContainsAny(targetPath, @[@";;", @"\r", @"\n"])) {
         [self.runtime throwError:@"screenshot path contains unsupported protocol delimiter"];
@@ -1261,6 +999,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)screenshotRegion:(NSString *)path options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *targetPath = ([path isKindOfClass:[NSString class]] && [path length] > 0) ? path : [self defaultScreenshotPath];
     if (TLinkautoJSStringContainsAny(targetPath, @[@";;", @"\r", @"\n"])) {
         [self.runtime throwError:@"screenshot path contains unsupported protocol delimiter"];
@@ -1307,6 +1046,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)batch:(NSArray *)commands
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (![commands isKindOfClass:[NSArray class]]) {
         [self.runtime throwError:@"batch(commands) requires an array"];
         return @{ @"ok": @NO };
@@ -1383,6 +1123,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)captureFrame:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     BOOL needGray = TLinkautoJSIntOption(options, @"gray", 1) != 0;
     BOOL needBGRA = TLinkautoJSIntOption(options, @"bgra", 1) != 0;
     int ttlMs = TLinkautoJSIntOption(options, @"ttlMs", 1000);
@@ -1417,6 +1158,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)releaseFrame:(int)frameId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (frameId <= 0) {
         [self.runtime throwError:@"releaseFrame(frameId) requires a positive id"];
         return @{ @"ok": @NO };
@@ -1439,6 +1181,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)openImage:(NSString *)path
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (![path isKindOfClass:[NSString class]] || [path length] == 0 || TLinkautoJSStringContainsAny(path, @[@";;", @"\r", @"\n"])) {
         [self.runtime throwError:@"openImage(path) requires a valid path"];
         return @{ @"ok": @NO };
@@ -1457,6 +1200,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)captureImage:(double)x y:(double)y width:(double)width height:(double)height
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) ||
         !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
         [self.runtime throwError:@"captureImage(x, y, width, height) requires finite positive dimensions"];
@@ -1477,6 +1221,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)releaseImage:(int)imageId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (imageId <= 0) {
         [self.runtime throwError:@"releaseImage(imageId) requires a positive id"];
         return @{ @"ok": @NO };
@@ -1488,6 +1233,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)framePickColor:(int)frameId x:(double)x y:(double)y options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (frameId <= 0 || !TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
         [self.runtime throwError:@"framePickColor(frameId, x, y) requires a frame id and finite coordinates"];
         return @{ @"ok": @NO };
@@ -1513,6 +1259,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)framePickColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (frameId <= 0 || ![points isKindOfClass:[NSArray class]] || [points count] == 0) {
         [self.runtime throwError:@"framePickColors(frameId, points) requires a frame id and non-empty points array"];
         return @{ @"ok": @NO };
@@ -1571,6 +1318,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)frameFindColor:(int)frameId options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (frameId <= 0) {
         [self.runtime throwError:@"frameFindColor(frameId, options) requires a positive frame id"];
         return @{ @"ok": @NO };
@@ -1613,6 +1361,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)frameIsColors:(int)frameId points:(NSArray *)points options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *table = TLinkautoJSEncodePointColorTable(points);
     if (frameId <= 0 || !table) {
         [self.runtime throwError:@"frameIsColors(frameId, points, options) requires a frame id and point colors"];
@@ -1640,6 +1389,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)frameFindMultiColor:(int)frameId points:(NSArray *)points options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *table = TLinkautoJSEncodePointColorTable(points);
     if (frameId <= 0 || !table) {
         [self.runtime throwError:@"frameFindMultiColor(frameId, points, options) requires a frame id and relative point colors"];
@@ -1675,6 +1425,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)findImageInFrame:(int)frameId imageId:(int)imageId options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (frameId <= 0 || imageId <= 0) {
         [self.runtime throwError:@"findImageInFrame(frameId, imageId, options) requires positive ids"];
         return @{ @"ok": @NO };
@@ -1730,6 +1481,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)ocrFrame:(int)frameId options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if ([self.runtime isAborted]) {
         [self.runtime throwError:@"JavaScript execution was aborted"];
         return @{ @"ok": @NO };
@@ -1783,6 +1535,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)ocr:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *frame = [self captureFrame:@{
         @"gray": @1,
         @"bgra": @0,
@@ -1802,6 +1555,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)openApp:(NSString *)bundleId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(bundleId)) {
         [self.runtime throwError:@"openApp(bundleId) requires a valid bundle id"];
         return @{ @"ok": @NO };
@@ -1811,6 +1565,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)killApp:(NSString *)bundleId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(bundleId)) {
         [self.runtime throwError:@"killApp(bundleId) requires a valid bundle id"];
         return @{ @"ok": @NO };
@@ -1820,6 +1575,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)appState:(NSString *)bundleId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(bundleId)) {
         [self.runtime throwError:@"appState(bundleId) requires a valid bundle id"];
         return @{ @"ok": @NO };
@@ -1836,6 +1592,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)appInfo:(NSString *)bundleId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(bundleId)) {
         [self.runtime throwError:@"appInfo(bundleId) requires a valid bundle id"];
         return @{ @"ok": @NO };
@@ -1854,6 +1611,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)appPid:(NSString *)bundleId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(bundleId)) {
         [self.runtime throwError:@"appPid(bundleId) requires a valid bundle id"];
         return @{ @"ok": @NO };
@@ -1874,6 +1632,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)appPaths:(NSString *)bundleId
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(bundleId)) {
         [self.runtime throwError:@"appPaths(bundleId) requires a valid bundle id"];
         return @{ @"ok": @NO };
@@ -1889,6 +1648,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)listBundles:(BOOL)withInfo
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *result = [self runTask:TASK_LIST_BUNDLES payload:(withInfo ? @"1" : @"0")];
     NSArray *parts = result[@"parts"];
     if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
@@ -1904,6 +1664,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)openUrl:(NSString *)url
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(url)) {
         [self.runtime throwError:@"openUrl(url) requires a valid URL string"];
         return @{ @"ok": @NO };
@@ -1913,6 +1674,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)connectivityTask:(int)task enabledKey:(NSString *)enabledKey value:(NSNumber *)value
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *payload = value ? [NSString stringWithFormat:@"1;;%d", [value boolValue] ? 1 : 0] : @"0";
     return TLinkautoJSStateResult([self runTask:task payload:payload], enabledKey ?: @"enabled");
 }
@@ -1924,6 +1686,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setWifi:(BOOL)enabled
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     return [self connectivityTask:TASK_WIFI enabledKey:@"enabled" value:@(enabled)];
 }
 
@@ -1934,6 +1697,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setBluetooth:(BOOL)enabled
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     return [self connectivityTask:TASK_BLUETOOTH enabledKey:@"enabled" value:@(enabled)];
 }
 
@@ -1944,6 +1708,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setAirplaneMode:(BOOL)enabled
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     return [self connectivityTask:TASK_AIRPLANE enabledKey:@"enabled" value:@(enabled)];
 }
 
@@ -1954,11 +1719,13 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setCellularData:(BOOL)enabled
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     return [self connectivityTask:TASK_CELLULAR_DATA enabledKey:@"enabled" value:@(enabled)];
 }
 
 - (NSDictionary *)alert:(NSString *)title message:(NSString *)message duration:(int)duration
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *safeTitle = TLinkautoJSSanitizeProtocolText(title ?: @"TLinkauto", 80);
     NSString *safeMessage = TLinkautoJSSanitizeProtocolText(message ?: @"", 300);
     if (duration <= 0) duration = 3;
@@ -1967,6 +1734,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)dialog:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *title = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"title", @"TLinkauto"), 80);
     NSString *message = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"message", @""), 300);
     NSString *ok = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"ok", @"OK"), 40);
@@ -1984,6 +1752,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)keyboardTask:(int)kind content:(NSString *)content
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *payload = content ? [NSString stringWithFormat:@"%d;;%@", kind, TLinkautoJSSanitizeProtocolText(content, 2048)] : [NSString stringWithFormat:@"%d", kind];
     return [self runTask:TASK_TEXT_INPUT payload:payload];
 }
@@ -2013,16 +1782,19 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setClipboardText:(NSString *)text
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     return [self keyboardTask:7 content:(text ?: @"")];
 }
 
 - (NSDictionary *)insertText:(NSString *)text
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     return [self keyboardTask:1 content:(text ?: @"")];
 }
 
 - (NSDictionary *)deleteCharacters:(int)count
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (count <= 0) count = 1;
     if (count > 1024) count = 1024;
     return [self keyboardTask:4 content:[NSString stringWithFormat:@"%d", count]];
@@ -2030,6 +1802,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)moveCursor:(int)offset
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (offset > 1024) offset = 1024;
     if (offset < -1024) offset = -1024;
     return [self keyboardTask:3 content:[NSString stringWithFormat:@"%d", offset]];
@@ -2037,6 +1810,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)hardwareKey:(NSString *)key action:(NSString *)action
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     int keyType = TLinkautoJSHardwareKeyType(key);
     int keyAction = TLinkautoJSHardwareKeyAction(action);
     if (keyType <= 0 || keyAction < 0) {
@@ -2048,6 +1822,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)pressHardwareKey:(NSString *)key
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *down = [self hardwareKey:key action:@"down"];
     if (![down[@"ok"] boolValue]) return down;
     [NSThread sleepForTimeInterval:0.05];
@@ -2057,11 +1832,13 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)keepAwake:(BOOL)enabled
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     return [self runTask:TASK_KEEP_AWAKE payload:(enabled ? @"1" : @"0")];
 }
 
 - (NSDictionary *)touchIndicator:(NSString *)action
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     int value = TLinkautoJSTouchIndicatorAction(action);
     if (value < 0) {
         [self.runtime throwError:@"touchIndicator(action) supports show/hide/reload"];
@@ -2072,6 +1849,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)pathTask:(int)task key:(NSString *)key
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *result = [self runTask:task payload:@""];
     NSArray *parts = result[@"parts"];
     if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
@@ -2098,6 +1876,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)runShell:(NSString *)command timeoutSeconds:(double)timeoutSeconds
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(command)) {
         [self.runtime throwError:@"runShell(command) requires a non-empty single-line command"];
         return @{ @"ok": @NO };
@@ -2145,6 +1924,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)saveScreenshotToAlbum:(NSString *)path
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(path)) {
         [self.runtime throwError:@"saveScreenshotToAlbum(path) requires a valid path"];
         return @{ @"ok": @NO };
@@ -2159,6 +1939,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)matchTemplate:(NSString *)path options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(path)) {
         [self.runtime throwError:@"matchTemplate(path, options) requires a valid template path"];
         return @{ @"ok": @NO };
@@ -2187,6 +1968,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)findColor:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     double x = TLinkautoJSDoubleOption(options, @"x", 0);
     double y = TLinkautoJSDoubleOption(options, @"y", 0);
     double width = TLinkautoJSDoubleOption(options, @"width", 0);
@@ -2221,6 +2003,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)isColors:(NSArray *)points options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *table = TLinkautoJSEncodePointColorTable(points);
     if (!table) {
         [self.runtime throwError:@"isColors(points, options) requires 1-512 point colors"];
@@ -2237,6 +2020,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)findMultiColor:(NSArray *)points options:(NSDictionary *)options
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSString *table = TLinkautoJSEncodePointColorTable(points);
     if (!table) {
         [self.runtime throwError:@"findMultiColor(points, options) requires 1-512 relative point colors"];
@@ -2268,6 +2052,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script)) {
         [self.runtime throwError:@"setAutoLaunch(name, script, enabled) requires valid name and script path"];
         return @{ @"ok": @NO };
@@ -2298,6 +2083,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script) || !TLinkautoJSIsFiniteNumber(interval) || interval <= 0) {
         [self.runtime throwError:@"setTimer(name, interval, repeat, script) requires valid values"];
         return @{ @"ok": @NO };
@@ -2307,6 +2093,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)removeTimer:(NSString *)name
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     if (!TLinkautoJSValidProtocolString(name)) {
         [self.runtime throwError:@"removeTimer(name) requires a valid timer name"];
         return @{ @"ok": @NO };
@@ -2316,6 +2103,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)readText:(NSString *)path
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *resolvedPath = resolved[@"path"];
@@ -2332,6 +2120,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)writeText:(NSString *)path text:(NSString *)text
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:YES];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *safeText = [text isKindOfClass:[NSString class]] ? text : [text description];
@@ -2348,6 +2137,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)readJSON:(NSString *)path
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *textResult = [self readText:path];
     if (![textResult[@"ok"] boolValue]) return textResult;
     NSData *data = [textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
@@ -2359,6 +2149,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     id object = [value isKindOfClass:[JSValue class]] ? [value toObject] : value;
     if (!object || ![NSJSONSerialization isValidJSONObject:object]) {
         [self.runtime throwError:@"writeJSON(path, value) requires a JSON-serializable object or array"];
@@ -2374,6 +2165,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)fileExists:(NSString *)path
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     BOOL isDir = NO;
@@ -2383,6 +2175,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)deleteFile:(NSString *)path
 {
+    // PHASE0_BRIDGE_TODO: migrate this typed API to TLinkJSNativeBridge.
     NSDictionary *resolved = [self.runtime bundleStoragePathForRelativePath:path createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *resolvedPath = resolved[@"path"];
@@ -2397,18 +2190,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)getScreenSize
 {
-    CGFloat width = [Screen getScreenWidth];
-    CGFloat height = [Screen getScreenHeight];
-    CGFloat scale = [UIScreen mainScreen].scale;
-    int orientation = [Screen getScreenOrientation];
-    return @{
-        @"width": @((int)width),
-        @"height": @((int)height),
-        @"scale": @(scale),
-        @"orientation": @(orientation),
-        @"coordinateSpace": @"native-pixels",
-        @"revision": @0,
-    };
+    return [self.runtime executeNativeRequest:@"getScreenSize" arguments:@[]];
 }
 
 - (NSDictionary *)runtimeInfo
