@@ -12,7 +12,7 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
 
 @implementation TLinkJSHelperClient
 
-- (NSDictionary *)requestCommand:(NSString *)command timeoutMs:(int)timeoutMs
+- (NSDictionary *)requestCommand:(NSString *)command payload:(NSDictionary *)payload sessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs
 {
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) return @{ @"ok": @NO, @"error": @"socket_failed" };
@@ -34,7 +34,7 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
     }
 
     NSString *requestId = [[NSUUID UUID] UUIDString];
-    NSDictionary *envelope = [TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:nil sessionId:nil requestId:requestId payload:@{}];
+    NSDictionary *envelope = [TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:nil sessionId:sessionId requestId:requestId payload:payload ?: @{}];
     NSMutableData *requestData = [[TLinkJSHelperProtocol serializeEnvelope:envelope error:nil] mutableCopy];
     if (!requestData) {
         close(sock);
@@ -81,12 +81,30 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
 
 - (NSDictionary *)handshakeWithTimeoutMs:(int)timeoutMs
 {
-    return [self requestCommand:kTLinkJSHelperCmdHandshake timeoutMs:timeoutMs];
+    return [self requestCommand:kTLinkJSHelperCmdHandshake payload:@{} sessionId:nil timeoutMs:timeoutMs];
 }
 
 - (NSDictionary *)statusWithTimeoutMs:(int)timeoutMs
 {
-    return [self requestCommand:kTLinkJSHelperCmdStatus timeoutMs:timeoutMs];
+    return [self requestCommand:kTLinkJSHelperCmdStatus payload:@{} sessionId:nil timeoutMs:timeoutMs];
+}
+
+- (NSDictionary *)startScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest timeoutMs:(int)timeoutMs
+{
+    return [self requestCommand:kTLinkJSHelperCmdStart
+                        payload:@{ @"scriptPath": scriptPath ?: @"", @"bundlePath": bundlePath ?: @"", @"manifest": manifest ?: @{} }
+                      sessionId:nil
+                      timeoutMs:timeoutMs];
+}
+
+- (NSDictionary *)statusForSessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs
+{
+    return [self requestCommand:kTLinkJSHelperCmdStatus payload:@{} sessionId:sessionId timeoutMs:timeoutMs];
+}
+
+- (NSDictionary *)stopSessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs
+{
+    return [self requestCommand:kTLinkJSHelperCmdStop payload:@{} sessionId:sessionId timeoutMs:timeoutMs];
 }
 
 @end

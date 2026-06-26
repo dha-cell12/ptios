@@ -1,5 +1,6 @@
 #import "TLinkJSHelperServer.h"
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
+#import <JavaScriptCore/JavaScriptCore.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -7,13 +8,45 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <math.h>
+#include <dlfcn.h>
+#include <atomic>
 
 static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkauto/run/js-helper.sock";
 static NSString * const kTLinkJSHelperVersion = @"1.0.0";
+static const unsigned long long kTLinkJSHelperMaxBundleFileBytes = 512 * 1024;
+static const unsigned long long kTLinkJSHelperMaxConsoleLogBytes = 512 * 1024;
+static const double kTLinkJSHelperWatchdogInterval = 0.1;
 
-@interface TLinkJSHelperServer ()
+typedef bool (*TLinkJSHelperShouldTerminateCallback)(JSContextRef ctx, void *opaque);
+typedef void (*TLinkJSHelperSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkJSHelperShouldTerminateCallback callback, void *opaque);
+typedef void (*TLinkJSHelperClearExecutionTimeLimitFn)(JSContextGroupRef group);
+
+struct TLinkJSHelperCancelState {
+    std::atomic<bool> stopped;
+};
+
+static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
+    (void)ctx;
+    TLinkJSHelperCancelState *state = (TLinkJSHelperCancelState *)opaque;
+    return state && state->stopped.load(std::memory_order_acquire);
+}
+
+@interface TLinkJSHelperServer () {
+    TLinkJSHelperCancelState *_cancelState;
+    TLinkJSHelperSetExecutionTimeLimitFn _setExecutionTimeLimit;
+    TLinkJSHelperClearExecutionTimeLimitFn _clearExecutionTimeLimit;
+}
 @property(nonatomic, copy) NSString *helperInstanceId;
 @property(nonatomic, strong) NSDate *startedAt;
+@property(nonatomic, strong) dispatch_queue_t executionQueue;
+@property(nonatomic, strong) NSCondition *sleepCondition;
+@property(nonatomic, copy) NSString *activeSessionId;
+@property(nonatomic, copy) NSString *activeRunId;
+@property(nonatomic, copy) NSString *activeState;
+@property(nonatomic, copy) NSString *lastError;
+@property(nonatomic, copy) NSString *lastConsoleLogPath;
+@property(nonatomic, copy) NSString *lastConsoleLatestLogPath;
 @end
 
 @implementation TLinkJSHelperServer
@@ -24,8 +57,215 @@ static NSString * const kTLinkJSHelperVersion = @"1.0.0";
     if (self) {
         _helperInstanceId = [[NSUUID UUID] UUIDString];
         _startedAt = [NSDate date];
+        _executionQueue = dispatch_queue_create("com.tlinkauto.js-helper.execution", DISPATCH_QUEUE_SERIAL);
+        _sleepCondition = [[NSCondition alloc] init];
+        _activeState = kTLinkJSHelperStateIdle;
+        _cancelState = new TLinkJSHelperCancelState();
+        _cancelState->stopped.store(false, std::memory_order_relaxed);
+        _setExecutionTimeLimit = (TLinkJSHelperSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
+        _clearExecutionTimeLimit = (TLinkJSHelperClearExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupClearExecutionTimeLimit");
     }
     return self;
+}
+
+- (void)dealloc
+{
+    delete _cancelState;
+}
+
+static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
+    if (![value isKindOfClass:[NSString class]] || [value length] == 0) return @"script";
+    NSCharacterSet *invalid = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"] invertedSet];
+    NSString *joined = [[value componentsSeparatedByCharactersInSet:invalid] componentsJoinedByString:@"_"];
+    return [joined length] > 0 ? joined : @"script";
+}
+
+- (NSDictionary *)statusPayload
+{
+    NSTimeInterval uptimeMs = [[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000.0;
+    return @{
+        @"state": self.activeState ?: kTLinkJSHelperStateIdle,
+        @"activeSessionId": self.activeSessionId ?: [NSNull null],
+        @"runId": self.activeRunId ?: @"",
+        @"uptimeMs": @((long long)uptimeMs),
+        @"lastError": self.lastError ?: @"",
+        @"consoleLogPath": self.lastConsoleLogPath ?: @"",
+        @"consoleLatestLogPath": self.lastConsoleLatestLogPath ?: @"",
+    };
+}
+
+- (NSString *)consoleLogPathForBundlePath:(NSString *)bundlePath runId:(NSString *)runId latest:(BOOL)latest
+{
+    NSString *dir = [bundlePath stringByAppendingPathComponent:@"_logs"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    if (latest) return [dir stringByAppendingPathComponent:@"latest-helper.log"];
+    return [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-helper.log", TLinkJSHelperSanitizeFileComponent(runId)]];
+}
+
+- (void)appendLine:(NSString *)line toPath:(NSString *)path
+{
+    if (![line isKindOfClass:[NSString class]] || ![path isKindOfClass:[NSString class]] || [path length] == 0) return;
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkJSHelperMaxConsoleLogBytes) {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    }
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data) return;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        [data writeToFile:path atomically:YES];
+        return;
+    }
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) return;
+    @try {
+        [handle seekToEndOfFile];
+        [handle writeData:data];
+    } @finally {
+        [handle closeFile];
+    }
+}
+
+- (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
+{
+    NSString *root = [bundlePath stringByStandardizingPath];
+    if (![root isKindOfClass:[NSString class]] || [root length] == 0) return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
+    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) return @{ @"ok": @NO, @"error": @"module path is required" };
+    if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) return @{ @"ok": @NO, @"error": @"module path must be bundle-relative" };
+    NSString *candidate = [[root stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
+    NSString *prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
+    if (![candidate hasPrefix:prefix]) return @{ @"ok": @NO, @"error": @"module path escapes bundle" };
+    NSString *extension = [[candidate pathExtension] lowercaseString];
+    if (!([extension isEqualToString:@"js"] || [extension isEqualToString:@"json"])) return @{ @"ok": @NO, @"error": @"module extension must be .js or .json" };
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:candidate error:nil];
+    if (!attrs) return @{ @"ok": @NO, @"error": @"module file not found", @"path": candidate ?: @"" };
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkJSHelperMaxBundleFileBytes) return @{ @"ok": @NO, @"error": @"module file is too large", @"path": candidate ?: @"" };
+    NSError *err = nil;
+    NSString *source = [NSString stringWithContentsOfFile:candidate encoding:NSUTF8StringEncoding error:&err];
+    if (!source) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to read module", @"path": candidate ?: @"" };
+    return @{ @"ok": @YES, @"path": candidate, @"id": [candidate substringFromIndex:[prefix length]] ?: relativePath, @"source": source };
+}
+
+- (BOOL)interruptibleSleepMs:(double)ms context:(JSContext *)context
+{
+    if (!isfinite(ms) || ms < 0) {
+        context.exception = [JSValue valueWithNewErrorFromMessage:@"sleep(ms) requires a finite non-negative number" inContext:context];
+        return NO;
+    }
+    if (ms > 24.0 * 60.0 * 60.0 * 1000.0) ms = 24.0 * 60.0 * 60.0 * 1000.0;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:(ms / 1000.0)];
+    [self.sleepCondition lock];
+    while (!_cancelState->stopped.load(std::memory_order_acquire)) {
+        if (![self.sleepCondition waitUntilDate:deadline]) break;
+    }
+    [self.sleepCondition unlock];
+    if (_cancelState->stopped.load(std::memory_order_acquire)) {
+        context.exception = [JSValue valueWithNewErrorFromMessage:@"Script aborted" inContext:context];
+        return NO;
+    }
+    return YES;
+}
+
+- (void)runSessionId:(NSString *)sessionId scriptPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest runId:(NSString *)runId
+{
+    @autoreleasepool {
+        NSString *logPath = [self consoleLogPathForBundlePath:bundlePath runId:runId latest:NO];
+        NSString *latestPath = [self consoleLogPathForBundlePath:bundlePath runId:runId latest:YES];
+        self.lastConsoleLogPath = logPath;
+        self.lastConsoleLatestLogPath = latestPath;
+        NSString *header = [NSString stringWithFormat:@"[%@] helper run %@ started\n", [NSDate date], runId];
+        [header writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        [header writeToFile:latestPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+        NSError *readError = nil;
+        NSString *script = [NSString stringWithContentsOfFile:scriptPath encoding:NSUTF8StringEncoding error:&readError];
+        if (!script) {
+            self.lastError = readError.localizedDescription ?: @"failed to read script";
+            self.activeState = kTLinkJSHelperStateFailed;
+            return;
+        }
+
+        self.activeState = kTLinkJSHelperStateRunning;
+        JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
+        JSContext *ctx = [[JSContext alloc] initWithVirtualMachine:vm];
+        __weak TLinkJSHelperServer *weakSelf = self;
+        ctx.exceptionHandler = ^(JSContext *context, JSValue *exception) {
+            context.exception = exception;
+            weakSelf.lastError = [exception toString] ?: @"JavaScript exception";
+        };
+        ctx[@"manifest"] = manifest ?: @{};
+        ctx[@"sleep"] = ^(double ms) {
+            [weakSelf interruptibleSleepMs:ms context:[JSContext currentContext]];
+        };
+        ctx[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
+            NSString *line = [NSString stringWithFormat:@"[%@][%@][%@] %@\n", [NSDate date], runId ?: @"", level ?: @"log", message ?: @""];
+            [weakSelf appendLine:line toPath:logPath];
+            [weakSelf appendLine:line toPath:latestPath];
+            NSLog(@"tlinkauto-jsd[%@][%@]: %@", runId ?: @"", level ?: @"log", message ?: @"");
+        };
+        ctx[@"_tlinkautoLoadBundleText"] = ^NSDictionary *(NSString *relativePath) {
+            return [weakSelf bundleTextForRelativePath:relativePath bundlePath:bundlePath];
+        };
+        JSValue *device = [JSValue valueWithNewObjectInContext:ctx];
+        device[@"runtimeInfo"] = ^NSDictionary *{
+            return @{
+                @"engine": @"JavaScriptCore",
+                @"runtimeLocation": @"helper-process-prototype",
+                @"apiVersion": @1,
+                @"helperInstanceId": weakSelf.helperInstanceId ?: @"",
+                @"sessionId": sessionId ?: @"",
+                @"runId": runId ?: @"",
+                @"consoleLogPath": logPath ?: @"",
+                @"consoleLatestLogPath": latestPath ?: @"",
+                @"nativeAPIs": @NO,
+            };
+        };
+        ctx[@"device"] = device;
+        NSString *consolePrelude = @"(function(){function fmt(args){return Array.prototype.map.call(args,function(v){try{if(typeof v==='string')return v;return JSON.stringify(v);}catch(e){return String(v);}}).join(' ');}this.console={log:function(){_tlinkautoLog('log',fmt(arguments));},info:function(){_tlinkautoLog('info',fmt(arguments));},warn:function(){_tlinkautoLog('warn',fmt(arguments));},error:function(){_tlinkautoLog('error',fmt(arguments));}};})();";
+        NSString *modulePrelude = @"(function(){var cache=Object.create(null);var stack=[];function dirname(p){var i=p.lastIndexOf('/');return i>=0?p.slice(0,i):'';}function normalize(base,req){if(typeof req!=='string'||!req)throw new Error('module path is required');var input=req;if(req.indexOf('./')===0||req.indexOf('../')===0)input=(base?dirname(base)+'/':'')+req;var out=[];input.split('/').forEach(function(part){if(!part||part==='.')return;if(part==='..')out.pop();else out.push(part);});return out.join('/');}function candidates(id){if(/\.(js|json)$/.test(id))return[id];return[id+'.js',id+'.json',id+'/index.js'];}function loadRecord(id){var last='';var list=candidates(id);for(var i=0;i<list.length;i++){var rec=_tlinkautoLoadBundleText(list[i]);if(rec&&rec.ok)return rec;last=rec&&rec.error?rec.error:'module not found';}throw new Error('Cannot load module '+id+': '+last);}this.require=function(request){var id=normalize(stack.length?stack[stack.length-1]:'',request);var rec=loadRecord(id);if(cache[rec.id])return cache[rec.id].exports;var module={id:rec.id,filename:rec.path,exports:{}};cache[rec.id]=module;if(/\.json$/.test(rec.id)){module.exports=JSON.parse(rec.source);return module.exports;}stack.push(rec.id);try{var fn=new Function('exports','module','require','device','sleep',rec.source+'\n//# sourceURL='+rec.path);fn(module.exports,module,this.require,device,sleep);}finally{stack.pop();}return module.exports;};this.include=function(request){var id=normalize(stack.length?stack[stack.length-1]:'',request);var rec=loadRecord(id);return(0,eval)(rec.source+'\n//# sourceURL='+rec.path);};})();";
+        JSContextGroupRef group = JSContextGetGroup([ctx JSGlobalContextRef]);
+        if (_setExecutionTimeLimit) _setExecutionTimeLimit(group, kTLinkJSHelperWatchdogInterval, TLinkJSHelperShouldTerminate, _cancelState);
+        @try {
+            [ctx evaluateScript:consolePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto-helper://console-prelude.js"]];
+            [ctx evaluateScript:modulePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto-helper://module-prelude.js"]];
+            [ctx evaluateScript:script withSourceURL:[NSURL fileURLWithPath:scriptPath]];
+        } @finally {
+            if (_clearExecutionTimeLimit) _clearExecutionTimeLimit(group);
+        }
+        if (_cancelState->stopped.load(std::memory_order_acquire)) {
+            self.activeState = kTLinkJSHelperStateCancelled;
+        } else if (ctx.exception) {
+            self.lastError = [ctx.exception toString] ?: self.lastError ?: @"JavaScript exception";
+            self.activeState = kTLinkJSHelperStateFailed;
+        } else {
+            self.activeState = kTLinkJSHelperStateCompleted;
+        }
+        if (![self.activeSessionId isEqualToString:sessionId]) return;
+    }
+}
+
+- (NSDictionary *)startWithRequest:(NSDictionary *)request
+{
+    if (self.activeSessionId && ([self.activeState isEqualToString:kTLinkJSHelperStateStarting] || [self.activeState isEqualToString:kTLinkJSHelperStateRunning])) {
+        return [self errorEnvelopeForRequest:request message:@"helper_busy"];
+    }
+    NSDictionary *payload = [request[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? request[kTLinkJSHelperKeyPayload] : @{};
+    NSString *scriptPath = [payload[@"scriptPath"] isKindOfClass:[NSString class]] ? payload[@"scriptPath"] : @"";
+    NSString *bundlePath = [payload[@"bundlePath"] isKindOfClass:[NSString class]] ? payload[@"bundlePath"] : @"";
+    NSDictionary *manifest = [payload[@"manifest"] isKindOfClass:[NSDictionary class]] ? payload[@"manifest"] : @{};
+    if (![scriptPath length] || ![bundlePath length]) return [self errorEnvelopeForRequest:request message:@"scriptPath and bundlePath are required"];
+    NSString *sessionId = [[NSUUID UUID] UUIDString];
+    NSString *runId = [[NSUUID UUID] UUIDString];
+    self.activeSessionId = sessionId;
+    self.activeRunId = runId;
+    self.lastError = @"";
+    self.lastConsoleLogPath = @"";
+    self.lastConsoleLatestLogPath = @"";
+    self.activeState = kTLinkJSHelperStateStarting;
+    _cancelState->stopped.store(false, std::memory_order_release);
+    dispatch_async(self.executionQueue, ^{
+        [self runSessionId:sessionId scriptPath:scriptPath bundlePath:bundlePath manifest:manifest runId:runId];
+    });
+    return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStart helperInstanceId:self.helperInstanceId sessionId:sessionId requestId:request[kTLinkJSHelperKeyRequestId] payload:[self statusPayload]];
 }
 
 - (NSDictionary *)errorEnvelopeForRequest:(NSDictionary *)request message:(NSString *)message
@@ -59,8 +299,9 @@ static NSString * const kTLinkJSHelperVersion = @"1.0.0";
             @"state": kTLinkJSHelperStateIdle,
             @"uptimeMs": @((long long)uptimeMs),
             @"capabilities": @{
-                @"javascriptcore": @NO,
-                @"executionTimeLimit": @NO,
+                @"javascriptcore": @YES,
+                @"pureJavaScriptExecution": @YES,
+                @"executionTimeLimit": @(_setExecutionTimeLimit != NULL && _clearExecutionTimeLimit != NULL),
                 @"hardKillRecovery": @NO,
                 @"nativeRPC": @NO,
                 @"structuredConsole": @NO,
@@ -70,14 +311,31 @@ static NSString * const kTLinkJSHelperVersion = @"1.0.0";
     }
     if ([command isEqualToString:kTLinkJSHelperCmdStatus]) {
         return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStatus
+                                          helperInstanceId:self.helperInstanceId
+                                                 sessionId:request[kTLinkJSHelperKeySessionId]
+                                                 requestId:request[kTLinkJSHelperKeyRequestId]
+                                                  payload:[self statusPayload]];
+    }
+    if ([command isEqualToString:kTLinkJSHelperCmdStart]) {
+        return [self startWithRequest:request];
+    }
+    if ([command isEqualToString:kTLinkJSHelperCmdStop]) {
+        NSString *requestedSessionId = request[kTLinkJSHelperKeySessionId];
+        if (requestedSessionId && self.activeSessionId && ![requestedSessionId isEqualToString:self.activeSessionId]) {
+            return [self errorEnvelopeForRequest:request message:@"session_mismatch"];
+        }
+        if (self.activeSessionId && ([self.activeState isEqualToString:kTLinkJSHelperStateStarting] || [self.activeState isEqualToString:kTLinkJSHelperStateRunning])) {
+            self.activeState = kTLinkJSHelperStateStopping;
+            _cancelState->stopped.store(true, std::memory_order_release);
+            [self.sleepCondition lock];
+            [self.sleepCondition broadcast];
+            [self.sleepCondition unlock];
+        }
+        return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStop
                                          helperInstanceId:self.helperInstanceId
                                                 sessionId:request[kTLinkJSHelperKeySessionId]
                                                 requestId:request[kTLinkJSHelperKeyRequestId]
-                                                  payload:@{
-            @"state": kTLinkJSHelperStateIdle,
-            @"activeSessionId": [NSNull null],
-            @"uptimeMs": @((long long)uptimeMs),
-        }];
+                                                  payload:[self statusPayload]];
     }
     return [self errorEnvelopeForRequest:request message:@"unsupported_command"];
 }

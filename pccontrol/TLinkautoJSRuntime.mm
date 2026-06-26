@@ -118,6 +118,11 @@ struct TLinkautoJSWatchdogProbeState {
     TLinkJSRuntimeCore *_core;
     TLinkInProcessNativeBridge *_bridge;
     TLinkTaskExecutionContext *_taskContext;
+    BOOL _helperRunning;
+    NSString *_helperSessionId;
+    NSString *_helperRunId;
+    NSString *_helperConsoleLogPath;
+    NSString *_helperConsoleLatestLogPath;
 }
 
 - (void)beginOwnedHandleTracking;
@@ -126,6 +131,7 @@ struct TLinkautoJSWatchdogProbeState {
 - (void)showDebugToast:(NSString *)message type:(int)type;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
+- (BOOL)runScriptInHelperAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest error:(NSError **)error;
 - (void)trackFrameId:(int)frameId;
 - (void)untrackFrameId:(int)frameId;
 - (void)untrackAllFrameIds;
@@ -454,12 +460,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (BOOL)running
 {
-    return _core.running;
+    return _core.running || _helperRunning;
 }
 
 - (NSString *)runId
 {
-    return _core.runId ?: @"";
+    return _helperRunning ? (_helperRunId ?: @"") : (_core.runId ?: @"");
 }
 
 - (BOOL)watchdogAvailable
@@ -474,12 +480,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSString *)currentConsoleLogPath
 {
-    return _core.currentConsoleLogPath ?: @"";
+    return _helperRunning ? (_helperConsoleLogPath ?: @"") : (_core.currentConsoleLogPath ?: @"");
 }
 
 - (NSString *)currentConsoleLatestLogPath
 {
-    return _core.currentConsoleLatestLogPath ?: @"";
+    return _helperRunning ? (_helperConsoleLatestLogPath ?: @"") : (_core.currentConsoleLatestLogPath ?: @"");
 }
 
 - (NSDictionary *)currentManifest
@@ -623,6 +629,11 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     [_sleepCondition broadcast];
     [_sleepCondition unlock];
     [_core requestStop];
+    NSString *sessionId = [_helperSessionId copy];
+    if (sessionId.length > 0) {
+        TLinkJSHelperClient *helper = [[TLinkJSHelperClient alloc] init];
+        [helper stopSessionId:sessionId timeoutMs:250];
+    }
 }
 
 - (BOOL)isAborted
@@ -739,6 +750,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (BOOL)runScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest context:(TLinkTaskExecutionContext *)context error:(NSError **)error
 {
     _cancelState->aborted.store(false, std::memory_order_release);
+    id helperFlag = manifest[@"helperRuntimeEnabled"] ?: manifest[@"helper_runtime_enabled"];
+    NSString *runtimeLocation = [manifest[@"runtimeLocation"] isKindOfClass:[NSString class]] ? [manifest[@"runtimeLocation"] lowercaseString] : @"";
+    BOOL useHelper = ([helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue]) || [runtimeLocation isEqualToString:@"helper"];
+    if (useHelper) {
+        return [self runScriptInHelperAtPath:scriptPath bundlePath:bundlePath manifest:manifest error:error];
+    }
     [self beginOwnedHandleTracking];
     _taskContext = context;
     @try {
@@ -746,6 +763,65 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     } @finally {
         _taskContext = nil;
     }
+}
+
+- (BOOL)runScriptInHelperAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest error:(NSError **)error
+{
+    if (_helperRunning) {
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScript helper runtime is busy.\r\n"}];
+        return NO;
+    }
+    TLinkJSHelperClient *helper = [[TLinkJSHelperClient alloc] init];
+    NSDictionary *start = [helper startScriptAtPath:scriptPath bundlePath:bundlePath manifest:manifest ?: @{} timeoutMs:1000];
+    if (![start[@"ok"] boolValue]) {
+        NSString *message = [start[@"error"] isKindOfClass:[NSDictionary class]] ? start[@"error"][@"message"] : [start[@"error"] description];
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;JavaScript helper start failed: %@\r\n", message ?: @"unknown"]}];
+        return NO;
+    }
+    NSDictionary *response = start[@"response"];
+    NSDictionary *payload = [response[@"payload"] isKindOfClass:[NSDictionary class]] ? response[@"payload"] : @{};
+    _helperRunning = YES;
+    _helperSessionId = [response[@"sessionId"] copy];
+    _helperRunId = [payload[@"runId"] copy];
+    _helperConsoleLogPath = [payload[@"consoleLogPath"] copy];
+    _helperConsoleLatestLogPath = [payload[@"consoleLatestLogPath"] copy];
+    BOOL ok = NO;
+    NSString *failure = nil;
+    @try {
+        while (!_cancelState->aborted.load(std::memory_order_acquire)) {
+            NSDictionary *status = [helper statusForSessionId:_helperSessionId timeoutMs:1000];
+            if (![status[@"ok"] boolValue]) {
+                failure = [status[@"error"] description] ?: @"status_failed";
+                break;
+            }
+            NSDictionary *statusResponse = status[@"response"];
+            NSDictionary *statusPayload = [statusResponse[@"payload"] isKindOfClass:[NSDictionary class]] ? statusResponse[@"payload"] : @{};
+            NSString *state = [statusPayload[@"state"] isKindOfClass:[NSString class]] ? statusPayload[@"state"] : @"unknown";
+            if ([statusPayload[@"runId"] isKindOfClass:[NSString class]]) _helperRunId = [statusPayload[@"runId"] copy];
+            if ([statusPayload[@"consoleLogPath"] isKindOfClass:[NSString class]]) _helperConsoleLogPath = [statusPayload[@"consoleLogPath"] copy];
+            if ([statusPayload[@"consoleLatestLogPath"] isKindOfClass:[NSString class]]) _helperConsoleLatestLogPath = [statusPayload[@"consoleLatestLogPath"] copy];
+            if ([state isEqualToString:@"completed"]) {
+                ok = YES;
+                break;
+            }
+            if ([state isEqualToString:@"failed"] || [state isEqualToString:@"cancelled"] || [state isEqualToString:@"crashed"]) {
+                failure = [statusPayload[@"lastError"] isKindOfClass:[NSString class]] && [statusPayload[@"lastError"] length] ? statusPayload[@"lastError"] : state;
+                break;
+            }
+            [NSThread sleepForTimeInterval:0.1];
+        }
+        if (_cancelState->aborted.load(std::memory_order_acquire)) {
+            [helper stopSessionId:_helperSessionId timeoutMs:250];
+            failure = @"JavaScript helper execution was stopped";
+        }
+    } @finally {
+        _helperRunning = NO;
+        _helperSessionId = nil;
+    }
+    if (!ok && error) {
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n", failure ?: @"JavaScript helper execution failed"]}];
+    }
+    return ok;
 }
 
 - (NSDictionary *)executeNativeRequest:(NSString *)method arguments:(NSArray *)arguments {
