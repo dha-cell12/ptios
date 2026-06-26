@@ -10,6 +10,8 @@
 #include <string.h>
 #include <math.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <atomic>
 
 static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkauto/run/js-helper.sock";
@@ -414,21 +416,33 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
     NSString *runDir = [kTLinkJSHelperSocketPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:runDir withIntermediateDirectories:YES attributes:nil error:nil];
 
-    NSString *pidText = [NSString stringWithContentsOfFile:kTLinkJSHelperPidPath encoding:NSUTF8StringEncoding error:nil];
-    pid_t existingPid = (pid_t)[pidText intValue];
-    if (existingPid > 0 && existingPid != getpid()) {
-        if (kill(existingPid, 0) == 0) {
+    int pidFd = open([kTLinkJSHelperPidPath fileSystemRepresentation], O_CREAT | O_EXCL | O_WRONLY, 0644);
+    if (pidFd < 0 && errno == EEXIST) {
+        NSString *pidText = [NSString stringWithContentsOfFile:kTLinkJSHelperPidPath encoding:NSUTF8StringEncoding error:nil];
+        pid_t existingPid = (pid_t)[pidText intValue];
+        if (existingPid > 0 && existingPid != getpid() && kill(existingPid, 0) == 0) {
             NSLog(@"tlinkauto-jsd: helper pid %d is already running", existingPid);
             return;
         }
+        unlink([kTLinkJSHelperPidPath fileSystemRepresentation]);
+        pidFd = open([kTLinkJSHelperPidPath fileSystemRepresentation], O_CREAT | O_EXCL | O_WRONLY, 0644);
+    }
+    if (pidFd < 0) {
+        NSLog(@"tlinkauto-jsd: pid file create failed: %d", errno);
+        return;
     }
 
-    unlink([kTLinkJSHelperPidPath fileSystemRepresentation]);
+    NSString *pidLine = [NSString stringWithFormat:@"%d", getpid()];
+    NSData *pidData = [pidLine dataUsingEncoding:NSUTF8StringEncoding];
+    if (pidData) write(pidFd, pidData.bytes, pidData.length);
+
     unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);
 
     int server = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server < 0) {
         NSLog(@"tlinkauto-jsd: socket failed: %d", errno);
+        close(pidFd);
+        unlink([kTLinkJSHelperPidPath fileSystemRepresentation]);
         return;
     }
 
@@ -439,14 +453,16 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
     if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         NSLog(@"tlinkauto-jsd: bind failed: %d", errno);
         close(server);
+        close(pidFd);
+        unlink([kTLinkJSHelperPidPath fileSystemRepresentation]);
         return;
     }
     chmod([kTLinkJSHelperSocketPath fileSystemRepresentation], 0666);
-    [[NSString stringWithFormat:@"%d", getpid()] writeToFile:kTLinkJSHelperPidPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
     chmod([kTLinkJSHelperPidPath fileSystemRepresentation], 0644);
     if (listen(server, 8) != 0) {
         NSLog(@"tlinkauto-jsd: listen failed: %d", errno);
         close(server);
+        close(pidFd);
         unlink([kTLinkJSHelperPidPath fileSystemRepresentation]);
         return;
     }
@@ -463,6 +479,7 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
     }
     close(server);
     unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);
+    close(pidFd);
     unlink([kTLinkJSHelperPidPath fileSystemRepresentation]);
 }
 
