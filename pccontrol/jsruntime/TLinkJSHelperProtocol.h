@@ -5,6 +5,15 @@
 
 extern NSString * const kTLinkJSHelperProtocolVersion;
 
+extern NSString * const kTLinkJSHelperKeyProtocolVersion;
+extern NSString * const kTLinkJSHelperKeyCommand;
+extern NSString * const kTLinkJSHelperKeyHelperInstanceId;
+extern NSString * const kTLinkJSHelperKeySessionId;
+extern NSString * const kTLinkJSHelperKeyRequestId;
+extern NSString * const kTLinkJSHelperKeyStateSequence;
+extern NSString * const kTLinkJSHelperKeyPayload;
+extern NSString * const kTLinkJSHelperKeyError;
+
 // Commands
 extern NSString * const kTLinkJSHelperCmdHandshake;
 extern NSString * const kTLinkJSHelperCmdStart;
@@ -34,6 +43,7 @@ extern NSString * const kTLinkJSHelperStateCrashed;
                               payload:(NSDictionary *)payload;
 
 + (BOOL)validateEnvelope:(NSDictionary *)envelope error:(NSError **)error;
++ (BOOL)validateJSONObject:(id)obj error:(NSError **)error;
 + (NSData *)serializeEnvelope:(NSDictionary *)envelope error:(NSError **)error;
 + (NSDictionary *)deserializeEnvelope:(NSData *)data error:(NSError **)error;
 

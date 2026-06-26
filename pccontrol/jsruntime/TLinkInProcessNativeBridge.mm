@@ -3,6 +3,7 @@
 #import "../Screen.h"
 #import "../TLinkTaskContext.h"
 #import <UIKit/UIKit.h>
+#import <CoreFoundation/CoreFoundation.h>
 #include <math.h>
 
 #ifndef TASK_IMAGE_OBJECT
@@ -17,21 +18,65 @@
 #define TASK_FRAME_RELEASE 67
 #endif
 #import "TLinkJSRuntimeCore.h"
-#import "../TLinkautoJSRuntime.h"
 
 static BOOL TLinkautoJSIsFiniteNumber(double value) { return isfinite(value); }
 static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
+static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
 
 
 @protocol TLinkInProcessFacadeInterface <NSObject>
-- (NSDictionary *)taskResultForPayload:(NSString *)payload;
+- (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent;
 - (void)trackFrameId:(int)frameId;
 - (void)untrackFrameId:(int)frameId;
 - (void)trackImageId:(int)imageId;
 - (void)untrackImageId:(int)imageId;
 @end
 
+@interface TLinkInProcessNativeBridge ()
+- (NSDictionary *)executeRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context;
+@end
+
 @implementation TLinkInProcessNativeBridge
+
+- (NSDictionary *)executeRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context
+{
+    if (![payload isKindOfClass:[NSString class]] || [payload length] == 0) {
+        return @{ @"ok": @NO, @"raw": @"1;;invalid_payload\r\n", @"parts": @[@"1", @"invalid_payload"] };
+    }
+    BOOL cleanupRelease = [payload hasPrefix:@"67"] || [payload hasPrefix:@"483;;"];
+    if ([context.cancellationToken isCancelled] && !cleanupRelease) {
+        return @{ @"ok": @NO, @"raw": @"1;;AbortError\r\n", @"parts": @[@"1", @"AbortError"] };
+    }
+    NSString *safePayload = payload;
+    if ([safePayload length] > 8192) safePayload = [safePayload substringToIndex:8192];
+    NSMutableData *payloadData = [[safePayload dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+    if (!payloadData) {
+        return @{ @"ok": @NO, @"raw": @"1;;invalid_payload\r\n", @"parts": @[@"1", @"invalid_payload"] };
+    }
+    UInt8 zero = 0;
+    [payloadData appendBytes:&zero length:1];
+    CFWriteStreamRef stream = CFWriteStreamCreateWithAllocatedBuffers(kCFAllocatorDefault, kCFAllocatorDefault);
+    if (!stream) {
+        return @{ @"ok": @NO, @"raw": @"1;;stream_create_failed\r\n", @"parts": @[@"1", @"stream_create_failed"] };
+    }
+    CFWriteStreamOpen(stream);
+    processTask((UInt8 *)[payloadData mutableBytes], stream);
+    CFWriteStreamClose(stream);
+    CFDataRef written = (CFDataRef)CFWriteStreamCopyProperty(stream, kCFStreamPropertyDataWritten);
+    CFRelease(stream);
+    NSData *data = CFBridgingRelease(written);
+    if (!data || [data length] == 0) {
+        return @{ @"ok": @YES, @"raw": @"0\r\n", @"parts": @[@"0"] };
+    }
+    if ([data length] > kTLinkautoJSMaxResponseBytes) {
+        return @{ @"ok": @NO, @"raw": @"1;;response_too_large\r\n", @"parts": @[@"1", @"response_too_large"] };
+    }
+    NSString *raw = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+    NSString *trimmed = [raw stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    NSArray<NSString *> *parts = [trimmed componentsSeparatedByString:@";;"];
+    NSString *status = [parts count] > 0 ? parts[0] : @"1";
+    return @{ @"ok": @([status hasPrefix:@"0"]), @"raw": raw, @"parts": parts ?: @[] };
+}
 
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request
                                   context:(TLinkTaskExecutionContext *)context
@@ -39,14 +84,16 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
     NSString *method = request.method;
     NSArray *args = request.arguments;
     
-    // In Phase 0, we use the facade (TLinkautoJSRuntime) passed via context to process tasks.
-    id<TLinkInProcessFacadeInterface> runtime = nil;
-    if ([context isKindOfClass:[TLinkTaskExecutionContext class]]) {
-        TLinkTaskExecutionContext *ctx = (TLinkTaskExecutionContext *)context;
-        runtime = ctx.runtime;
+    id<TLinkInProcessFacadeInterface> runtime = (id<TLinkInProcessFacadeInterface>)self.host;
+    if (!runtime && ![method isEqualToString:TLinkJSNativeMethodRawTask]) {
+        return [TLinkJSNativeResponse responseWithError:@"in-process bridge host missing" code:@-1];
+    }
+    if ([method isEqualToString:TLinkJSNativeMethodRawTask]) {
+        NSString *payload = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:payload context:context]];
     }
     
-    if ([method isEqualToString:@"getScreenSize"]) {
+    if ([method isEqualToString:TLinkJSNativeMethodGetScreenSize]) {
         CGFloat width = [Screen getScreenWidth];
         CGFloat height = [Screen getScreenHeight];
         CGFloat scale = [UIScreen mainScreen].scale;
@@ -61,7 +108,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         };
         return [TLinkJSNativeResponse responseWithValue:result];
     }
-    else if ([method isEqualToString:@"toast"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodToast]) {
         NSString *message = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
         NSString *safeMessage = [message isKindOfClass:[NSString class]] ? message : [message description];
@@ -79,20 +126,20 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         if (type < 0 || type > 4) type = 3;
         if (duration <= 0 && type != 0) duration = 2;
         NSString *payload = [NSString stringWithFormat:@"%d;;%@;;%d;;%d;;%d", type, safeMessage, duration, position, fontSize];
-        NSDictionary *res = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_SHOW_TOAST, payload]];
+        NSDictionary *res = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_SHOW_TOAST, payload] context:context];
         return [TLinkJSNativeResponse responseWithValue:res];
     }
-    else if ([method isEqualToString:@"tap"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodTap]) {
         double x = [[args objectAtIndex:0] doubleValue];
         double y = [[args objectAtIndex:1] doubleValue];
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
             return [TLinkJSNativeResponse responseWithError:@"tap(x, y) requires finite numbers" code:@-1];
         }
         NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f", x, y];
-        NSDictionary *res = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_TAP, payload]];
+        NSDictionary *res = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_TAP, payload] context:context];
         return [TLinkJSNativeResponse responseWithValue:res];
     }
-    else if ([method isEqualToString:@"swipe"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodSwipe]) {
         double x1 = [[args objectAtIndex:0] doubleValue];
         double y1 = [[args objectAtIndex:1] doubleValue];
         double x2 = [[args objectAtIndex:2] doubleValue];
@@ -106,11 +153,11 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         if (duration < 0) duration = 0;
         if (duration > 60000) duration = 60000;
         NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration];
-        NSDictionary *res = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_SWIPE, payload]];
+        NSDictionary *res = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_SWIPE, payload] context:context];
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     
-    else if ([method isEqualToString:@"runShell"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodRunShell]) {
         NSString *command = [args count] > 0 ? [args objectAtIndex:0] : @"";
         double timeoutSeconds = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : 0;
         
@@ -122,7 +169,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         if (TLinkautoJSIsFiniteNumber(timeoutSeconds) && timeoutSeconds > 0) {
             payload = [NSString stringWithFormat:@"%.3f;;%@", timeoutSeconds, command];
         }
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_RUN_SHELL, payload]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_RUN_SHELL, payload] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:result];
         
@@ -139,17 +186,12 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         res[@"output"] = output;
         return [TLinkJSNativeResponse responseWithValue:res];
     }
-    else if ([method isEqualToString:@"readText"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodReadText]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSString *resolvedPath = nil;
-        if ([context isKindOfClass:[TLinkTaskExecutionContext class]]) {
-            TLinkTaskExecutionContext *ctx = (TLinkTaskExecutionContext *)context;
-            if (ctx.runtime && [ctx.runtime respondsToSelector:@selector(bundleStoragePathForRelativePath:createParent:)]) {
-                NSDictionary *resolved = [ctx.runtime bundleStoragePathForRelativePath:path createParent:NO];
-                if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
-                resolvedPath = resolved[@"path"];
-            }
-        }
+        NSDictionary *resolved = [runtime bundleStoragePathForRelativePath:path createParent:NO];
+        if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
+        resolvedPath = resolved[@"path"];
         if (!resolvedPath) return [TLinkJSNativeResponse responseWithError:@"context runtime missing for path resolution" code:@-1];
         
         NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:resolvedPath error:nil];
@@ -162,18 +204,13 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         if (!text) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to read file", @"path": resolvedPath ?: @"" }];
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": resolvedPath ?: @"", @"text": text }];
     }
-    else if ([method isEqualToString:@"writeText"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodWriteText]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSString *text = [args count] > 1 ? [args objectAtIndex:1] : @"";
         NSString *resolvedPath = nil;
-        if ([context isKindOfClass:[TLinkTaskExecutionContext class]]) {
-            TLinkTaskExecutionContext *ctx = (TLinkTaskExecutionContext *)context;
-            if (ctx.runtime && [ctx.runtime respondsToSelector:@selector(bundleStoragePathForRelativePath:createParent:)]) {
-                NSDictionary *resolved = [ctx.runtime bundleStoragePathForRelativePath:path createParent:YES];
-                if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
-                resolvedPath = resolved[@"path"];
-            }
-        }
+        NSDictionary *resolved = [runtime bundleStoragePathForRelativePath:path createParent:YES];
+        if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
+        resolvedPath = resolved[@"path"];
         if (!resolvedPath) return [TLinkJSNativeResponse responseWithError:@"context runtime missing for path resolution" code:@-1];
         
         NSString *safeText = [text isKindOfClass:[NSString class]] ? text : [text description];
@@ -188,9 +225,9 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": resolvedPath ?: @"", @"bytes": @([data length]) }];
     }
     
-    else if ([method isEqualToString:@"readJSON"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodReadJSON]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
-        TLinkJSNativeRequest *subReq = [[TLinkJSNativeRequest alloc] initWithMethod:@"readText" arguments:@[path]];
+        TLinkJSNativeRequest *subReq = [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodReadText arguments:@[path]];
         TLinkJSNativeResponse *subRes = [self executeRequest:subReq context:context error:error];
         if (!subRes.ok) return subRes;
         NSDictionary *textResult = subRes.value;
@@ -201,7 +238,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         if (!value) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" }];
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": textResult[@"path"] ?: @"", @"value": value }];
     }
-    else if ([method isEqualToString:@"writeJSON"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodWriteJSON]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         id object = [args count] > 1 ? [args objectAtIndex:1] : nil;
         if ([object isKindOfClass:[NSNull class]]) object = nil;
@@ -213,36 +250,26 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         if (!data) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to encode JSON" }];
         if ([data length] > kTLinkautoJSMaxStorageFileBytes) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"JSON is too large" }];
         NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
-        TLinkJSNativeRequest *subReq = [[TLinkJSNativeRequest alloc] initWithMethod:@"writeText" arguments:@[path, text]];
+        TLinkJSNativeRequest *subReq = [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodWriteText arguments:@[path, text]];
         return [self executeRequest:subReq context:context error:error];
     }
-    else if ([method isEqualToString:@"fileExists"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodFileExists]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSString *resolvedPath = nil;
-        if ([context isKindOfClass:[TLinkTaskExecutionContext class]]) {
-            TLinkTaskExecutionContext *ctx = (TLinkTaskExecutionContext *)context;
-            if (ctx.runtime && [ctx.runtime respondsToSelector:@selector(bundleStoragePathForRelativePath:createParent:)]) {
-                NSDictionary *resolved = [ctx.runtime bundleStoragePathForRelativePath:path createParent:NO];
-                if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
-                resolvedPath = resolved[@"path"];
-            }
-        }
+        NSDictionary *resolved = [runtime bundleStoragePathForRelativePath:path createParent:NO];
+        if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
+        resolvedPath = resolved[@"path"];
         if (!resolvedPath) return [TLinkJSNativeResponse responseWithError:@"context runtime missing for path resolution" code:@-1];
         BOOL isDir = NO;
         BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:resolvedPath isDirectory:&isDir];
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": resolvedPath ?: @"", @"exists": @(exists), @"directory": @(exists && isDir) }];
     }
-    else if ([method isEqualToString:@"deleteFile"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodDeleteFile]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSString *resolvedPath = nil;
-        if ([context isKindOfClass:[TLinkTaskExecutionContext class]]) {
-            TLinkTaskExecutionContext *ctx = (TLinkTaskExecutionContext *)context;
-            if (ctx.runtime && [ctx.runtime respondsToSelector:@selector(bundleStoragePathForRelativePath:createParent:)]) {
-                NSDictionary *resolved = [ctx.runtime bundleStoragePathForRelativePath:path createParent:NO];
-                if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
-                resolvedPath = resolved[@"path"];
-            }
-        }
+        NSDictionary *resolved = [runtime bundleStoragePathForRelativePath:path createParent:NO];
+        if (![resolved[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:resolved];
+        resolvedPath = resolved[@"path"];
         if (!resolvedPath) return [TLinkJSNativeResponse responseWithError:@"context runtime missing for path resolution" code:@-1];
         if (![[NSFileManager defaultManager] fileExistsAtPath:resolvedPath]) {
             return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": resolvedPath ?: @"", @"deleted": @NO }];
@@ -253,27 +280,27 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": resolvedPath ?: @"", @"deleted": @YES }];
     }
     
-    else if ([method isEqualToString:@"screenshotTo"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodScreenshotTo]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSString *targetPath = ([path isKindOfClass:[NSString class]] && [path length] > 0) ? path : @"/var/mobile/Media/DCIM/100APPLE/screenshot.png";
         if ([targetPath rangeOfString:@";;"].location != NSNotFound || [targetPath rangeOfString:@"\r"].location != NSNotFound || [targetPath rangeOfString:@"\n"].location != NSNotFound) {
             return [TLinkJSNativeResponse responseWithError:@"screenshot path contains unsupported protocol delimiter" code:@-1];
         }
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d1;;%@", TASK_SCREENSHOT, targetPath]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@", TASK_SCREENSHOT, targetPath] context:context];
         NSArray *parts = result[@"parts"];
         NSString *resultPath = [parts count] >= 2 ? parts[1] : targetPath;
         NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
         res[@"path"] = resultPath ?: @"";
         return [TLinkJSNativeResponse responseWithValue:res];
     }
-    else if ([method isEqualToString:@"captureFrame"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodCaptureFrame]) {
         NSDictionary *options = [args count] > 0 ? [args objectAtIndex:0] : @{};
         int format = [options[@"format"] respondsToSelector:@selector(intValue)] ? [options[@"format"] intValue] : 1;
         if (format < 0) format = 1;
         double scale = [options[@"scale"] respondsToSelector:@selector(doubleValue)] ? [options[@"scale"] doubleValue] : 1.0;
         double quality = [options[@"quality"] respondsToSelector:@selector(doubleValue)] ? [options[@"quality"] doubleValue] : 0.8;
         NSString *payload = [NSString stringWithFormat:@"1;;%d;;%.4f;;%.4f", format, scale, quality];
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_FRAME_CAPTURE, payload]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_FRAME_CAPTURE, payload] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         int frameId = [parts[1] intValue];
@@ -282,19 +309,19 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         res[@"id"] = @(frameId);
         return [TLinkJSNativeResponse responseWithValue:res];
     }
-    else if ([method isEqualToString:@"releaseFrame"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodReleaseFrame]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
         if (frameId < 0) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"invalid handle" }];
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%d", TASK_FRAME_RELEASE, frameId]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%d", TASK_FRAME_RELEASE, frameId] context:context];
         if ([result[@"ok"] boolValue]) [runtime untrackFrameId:frameId];
         return [TLinkJSNativeResponse responseWithValue:result];
     }
-    else if ([method isEqualToString:@"openImage"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodOpenImage]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         if ([path length] == 0) {
             return [TLinkJSNativeResponse responseWithError:@"openImage(path) requires a valid path" code:@-1];
         }
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d1;;%@", TASK_IMAGE_OBJECT, path]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@", TASK_IMAGE_OBJECT, path] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         int imageId = [parts[1] intValue];
@@ -304,7 +331,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     
-    else if ([method isEqualToString:@"captureImage"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodCaptureImage]) {
         double x = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : 0;
         double y = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : 0;
         double width = [args count] > 2 ? [[args objectAtIndex:2] doubleValue] : 0;
@@ -312,7 +339,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
             return [TLinkJSNativeResponse responseWithError:@"captureImage(x, y, width, height) requires finite numbers" code:@-1];
         }
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d2;;%.0f;;%.0f;;%.0f;;%.0f", TASK_IMAGE_OBJECT, x, y, width, height]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%.0f;;%.0f;;%.0f;;%.0f", TASK_IMAGE_OBJECT, x, y, width, height] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         int imageId = [parts[1] intValue];
@@ -321,15 +348,15 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         res[@"id"] = @(imageId);
         return [TLinkJSNativeResponse responseWithValue:res];
     }
-    else if ([method isEqualToString:@"releaseImage"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage]) {
         int imageId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
         if (imageId < 0) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"invalid handle" }];
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d3;;%d", TASK_IMAGE_OBJECT, imageId]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d3;;%d", TASK_IMAGE_OBJECT, imageId] context:context];
         if ([result[@"ok"] boolValue]) [runtime untrackImageId:imageId];
         return [TLinkJSNativeResponse responseWithValue:result];
     }
     
-    else if ([method isEqualToString:@"matchTemplate"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodMatchTemplate]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
         if ([path length] == 0 || [path rangeOfString:@";;"].location != NSNotFound || [path rangeOfString:@"\r"].location != NSNotFound || [path rangeOfString:@"\n"].location != NSNotFound) {
@@ -339,7 +366,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         double acceptable = [options[@"acceptable"] respondsToSelector:@selector(doubleValue)] ? [options[@"acceptable"] doubleValue] : 0.8;
         double scaleRatio = [options[@"scaleRatio"] respondsToSelector:@selector(doubleValue)] ? [options[@"scaleRatio"] doubleValue] : 0.8;
         NSString *payload = [NSString stringWithFormat:@"%@;;%d;;%.4f;;%.4f", path, maxTryTimes, acceptable, scaleRatio];
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEMPLATE_MATCH, payload]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEMPLATE_MATCH, payload] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 5) return [TLinkJSNativeResponse responseWithValue:result];
         double x = [parts[1] doubleValue];
@@ -356,7 +383,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         res[@"centerY"] = @(y + height / 2.0);
         return [TLinkJSNativeResponse responseWithValue:res];
     }
-    else if ([method isEqualToString:@"findColor"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodFindColor]) {
         NSDictionary *options = [args count] > 0 ? [args objectAtIndex:0] : @{};
         double x = [options[@"x"] respondsToSelector:@selector(doubleValue)] ? [options[@"x"] doubleValue] : 0;
         double y = [options[@"y"] respondsToSelector:@selector(doubleValue)] ? [options[@"y"] doubleValue] : 0;
@@ -374,7 +401,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         }
         NSString *payload = [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d",
                              x, y, width, height, redMin, redMax, greenMin, greenMax, blueMin, blueMax, skip];
-        NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_SEARCHER, payload]];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_SEARCHER, payload] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 6) return [TLinkJSNativeResponse responseWithValue:result];
         int foundX = [parts[1] intValue];
@@ -389,7 +416,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     
-    else if ([method isEqualToString:@"isColors"] || [method isEqualToString:@"findMultiColor"]) {
+    else if ([method isEqualToString:TLinkJSNativeMethodIsColors] || [method isEqualToString:TLinkJSNativeMethodFindMultiColor]) {
         NSArray *points = [args count] > 0 ? [args objectAtIndex:0] : @[];
         NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
         
@@ -408,10 +435,10 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
         }
         if ([table length] == 0) return [TLinkJSNativeResponse responseWithError:@"requires 1-512 point colors" code:@-1];
         
-        if ([method isEqualToString:@"isColors"]) {
+        if ([method isEqualToString:TLinkJSNativeMethodIsColors]) {
             int mode = [options[@"mode"] respondsToSelector:@selector(intValue)] ? [options[@"mode"] intValue] : 1;
             double value = [options[@"value"] respondsToSelector:@selector(doubleValue)] ? [options[@"value"] doubleValue] : ([options[@"tolerance"] respondsToSelector:@selector(doubleValue)] ? [options[@"tolerance"] doubleValue] : 0);
-            NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d2;;%@;;%d;;%.4f", TASK_COLOR_SEARCHER, table, mode, value]];
+            NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%@;;%d;;%.4f", TASK_COLOR_SEARCHER, table, mode, value] context:context];
             NSArray *parts = result[@"parts"];
             if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
             BOOL matched = [parts[1] intValue] != 0;
@@ -431,7 +458,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
                 return [TLinkJSNativeResponse responseWithError:@"findMultiColor(options) requires finite x/y/width/height" code:@-1];
             }
             NSString *payload = [NSString stringWithFormat:@"3;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d", x, y, width, height, table, mode, value, skip];
-            NSDictionary *result = [runtime taskResultForPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_SEARCHER, payload]];
+            NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_SEARCHER, payload] context:context];
             NSArray *parts = result[@"parts"];
             if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:result];
             int foundX = [parts[1] intValue];

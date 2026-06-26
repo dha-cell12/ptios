@@ -1,4 +1,3 @@
-#import "../TLinkautoJSRuntime.h"
 #import "TLinkJSRuntimeCore.h"
 #import "TLinkautoDeviceBridge.h"
 #import <os/lock.h>
@@ -368,7 +367,7 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     };
 
     TLinkautoDeviceBridge *bridge = [[TLinkautoDeviceBridge alloc] init];
-    bridge.runtime = (TLinkautoJSRuntime *)facade;
+    bridge.runtime = facade;
     context[@"device"] = bridge;
     context[@"manifest"] = _manifest ?: @{};
 

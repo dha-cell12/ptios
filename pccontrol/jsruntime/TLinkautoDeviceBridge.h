@@ -4,8 +4,6 @@
 #import <Foundation/Foundation.h>
 #import <JavaScriptCore/JavaScriptCore.h>
 
-@class TLinkautoJSRuntime;
-
 @protocol TLinkautoDeviceJSExport <JSExport>
 
 JSExportAs(runTask,
@@ -158,7 +156,7 @@ JSExportAs(writeJSON,
 @end
 
 @interface TLinkautoDeviceBridge : NSObject <TLinkautoDeviceJSExport>
-@property(nonatomic, weak) TLinkautoJSRuntime *runtime;
+@property(nonatomic, weak) id runtime;
 @end
 
 #endif

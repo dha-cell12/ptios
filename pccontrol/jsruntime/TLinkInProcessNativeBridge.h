@@ -6,6 +6,8 @@
 
 @interface TLinkInProcessNativeBridge : NSObject <TLinkJSNativeBridge>
 
+@property(nonatomic, weak) id host;
+
 @end
 
 #endif
