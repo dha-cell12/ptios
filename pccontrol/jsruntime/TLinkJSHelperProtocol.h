@@ -23,6 +23,7 @@ extern NSString * const kTLinkJSHelperCmdStateChanged;
 extern NSString * const kTLinkJSHelperCmdFetchLogs;
 extern NSString * const kTLinkJSHelperCmdNativeRPCRequest;
 extern NSString * const kTLinkJSHelperCmdNativeRPCResponse;
+extern NSString * const kTLinkJSHelperCmdError;
 
 // States
 extern NSString * const kTLinkJSHelperStateIdle;

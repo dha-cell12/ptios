@@ -15,6 +15,7 @@
 #import "jsruntime/TLinkJSRuntimeCore.h"
 #import "jsruntime/TLinkInProcessNativeBridge.h"
 #import "jsruntime/TLinkautoDeviceBridge.h"
+#import "jsruntime/TLinkJSHelperClient.h"
 
 typedef NS_ENUM(int, TLinkJSRuntimeTaskCode) {
     TASK_PERFORM_TOUCH = 10,
@@ -1247,7 +1248,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 {
     BOOL watchdog = [self.runtime watchdogAvailable];
     NSDictionary *manifest = [self.runtime currentManifest];
-    return @{
+    NSMutableDictionary *info = [@{
         @"engine": @"JavaScriptCore",
         @"apiVersion": @1,
         @"manifestApiVersion": [manifest[@"apiVersion"] respondsToSelector:@selector(intValue)] ? manifest[@"apiVersion"] : @1,
@@ -1264,7 +1265,25 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"runId": [self.runtime runId] ?: @"",
         @"consoleLogPath": [self.runtime currentConsoleLogPath] ?: @"",
         @"consoleLatestLogPath": [self.runtime currentConsoleLatestLogPath] ?: @"",
-    };
+    } mutableCopy];
+
+    TLinkJSHelperClient *helper = [[TLinkJSHelperClient alloc] init];
+    NSDictionary *handshake = [helper handshakeWithTimeoutMs:250];
+    BOOL helperReachable = [handshake[@"ok"] boolValue];
+    info[@"helperReachable"] = @(helperReachable);
+    if (helperReachable) {
+        NSDictionary *response = handshake[@"response"];
+        NSDictionary *payload = [response[@"payload"] isKindOfClass:[NSDictionary class]] ? response[@"payload"] : @{};
+        info[@"helperProtocolVersion"] = response[@"protocolVersion"] ?: @"";
+        info[@"helperInstanceId"] = response[@"helperInstanceId"] ?: @"";
+        info[@"helperVersion"] = payload[@"helperVersion"] ?: @"";
+        info[@"helperPid"] = payload[@"pid"] ?: @0;
+        info[@"helperState"] = payload[@"state"] ?: @"unknown";
+        info[@"helperCapabilities"] = [payload[@"capabilities"] isKindOfClass:[NSDictionary class]] ? payload[@"capabilities"] : @{};
+    } else {
+        info[@"helperError"] = handshake[@"error"] ?: @"unreachable";
+    }
+    return info;
 }
 
 @end

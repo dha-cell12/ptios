@@ -19,6 +19,7 @@ NSString * const kTLinkJSHelperCmdStateChanged = @"stateChanged";
 NSString * const kTLinkJSHelperCmdFetchLogs = @"fetchLogs";
 NSString * const kTLinkJSHelperCmdNativeRPCRequest = @"nativeRPCRequest";
 NSString * const kTLinkJSHelperCmdNativeRPCResponse = @"nativeRPCResponse";
+NSString * const kTLinkJSHelperCmdError = @"error";
 
 NSString * const kTLinkJSHelperStateIdle = @"idle";
 NSString * const kTLinkJSHelperStateStarting = @"starting";
@@ -46,7 +47,8 @@ NSString * const kTLinkJSHelperStateCrashed = @"crashed";
                     kTLinkJSHelperCmdStateChanged,
                     kTLinkJSHelperCmdFetchLogs,
                     kTLinkJSHelperCmdNativeRPCRequest,
-                    kTLinkJSHelperCmdNativeRPCResponse, nil];
+                    kTLinkJSHelperCmdNativeRPCResponse,
+                    kTLinkJSHelperCmdError, nil];
     });
     return commands;
 }
@@ -164,6 +166,17 @@ NSString * const kTLinkJSHelperStateCrashed = @"crashed";
 }
 
 + (NSDictionary *)deserializeEnvelope:(NSData *)data error:(NSError **)error {
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger length = data.length;
+    for (NSUInteger i = 0; i < data.length; i++) {
+        if (bytes[i] == '\n') {
+            length = i;
+            break;
+        }
+    }
+    if (length != data.length) {
+        data = [NSData dataWithBytes:bytes length:length];
+    }
     id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:error];
     if (!obj) return nil;
     if ([self validateEnvelope:obj error:error]) {

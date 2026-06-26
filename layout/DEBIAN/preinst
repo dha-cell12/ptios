@@ -1,8 +1,11 @@
 #!/bin/sh
 launchctl unload /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 launchctl unload /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist 2>/dev/null
+launchctl unload /Library/LaunchDaemons/com.tlinkauto.js-helper.plist 2>/dev/null
 killall -9 zxtouchd 2>/dev/null
 killall -9 tlinkautod 2>/dev/null
+killall -9 tlinkauto-jsd 2>/dev/null
 rm -f /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 rm -f /usr/bin/zxtouchd /usr/bin/zxtouchb 2>/dev/null
+rm -f /var/mobile/Library/TLinkauto/run/js-helper.sock 2>/dev/null
 
