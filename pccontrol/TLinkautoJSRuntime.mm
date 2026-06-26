@@ -840,7 +840,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     if (!dir || [dir length] == 0) {
         dir = @"/tmp";
     }
-    NSString *name = [NSString stringWithFormat:@"screenshot_%@.png", TLinkautoJSSanitizeFileComponent(self.runtime.runId)];
+    NSString *name = [NSString stringWithFormat:@"screenshot_%@.png", TLinkautoJSSanitizeFileComponent([self.runtime runId])];
     return [dir stringByAppendingPathComponent:name];
 }
 
@@ -1786,7 +1786,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"cooperativeCancellation": @YES,
         @"autoReleaseHandles": @YES,
         @"runtimeLocation": @"in-process-prototype",
-        @"runId": self.runtime.runId ?: @"",
+        @"runId": [self.runtime runId] ?: @"",
         @"consoleLogPath": [self.runtime currentConsoleLogPath] ?: @"",
         @"consoleLatestLogPath": [self.runtime currentConsoleLatestLogPath] ?: @"",
     };
