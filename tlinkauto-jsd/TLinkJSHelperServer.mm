@@ -281,6 +281,15 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
         device[@"toast"] = ^NSDictionary *(NSString *message, NSDictionary *options) {
             return [weakSelf executeNativeRPCMethod:@"toast" arguments:@[message ?: @"", options ?: @{}] sessionId:sessionId];
         };
+        device[@"tap"] = ^NSDictionary *(double x, double y) {
+            return [weakSelf executeNativeRPCMethod:@"tap" arguments:@[@(x), @(y)] sessionId:sessionId];
+        };
+        device[@"swipe"] = ^NSDictionary *(double x1, double y1, double x2, double y2, double duration) {
+            return [weakSelf executeNativeRPCMethod:@"swipe" arguments:@[@(x1), @(y1), @(x2), @(y2), @(duration)] sessionId:sessionId];
+        };
+        device[@"longPress"] = ^NSDictionary *(double x, double y, double duration) {
+            return [weakSelf executeNativeRPCMethod:@"longPress" arguments:@[@(x), @(y), @(duration)] sessionId:sessionId];
+        };
         ctx[@"device"] = device;
         NSString *consolePrelude = @"(function(){function fmt(args){return Array.prototype.map.call(args,function(v){try{if(typeof v==='string')return v;return JSON.stringify(v);}catch(e){return String(v);}}).join(' ');}this.console={log:function(){_tlinkautoLog('log',fmt(arguments));},info:function(){_tlinkautoLog('info',fmt(arguments));},warn:function(){_tlinkautoLog('warn',fmt(arguments));},error:function(){_tlinkautoLog('error',fmt(arguments));}};})();";
         NSString *modulePrelude = @"(function(){var cache=Object.create(null);var stack=[];function dirname(p){var i=p.lastIndexOf('/');return i>=0?p.slice(0,i):'';}function normalize(base,req){if(typeof req!=='string'||!req)throw new Error('module path is required');var input=req;if(req.indexOf('./')===0||req.indexOf('../')===0)input=(base?dirname(base)+'/':'')+req;var out=[];input.split('/').forEach(function(part){if(!part||part==='.')return;if(part==='..')out.pop();else out.push(part);});return out.join('/');}function candidates(id){if(/\\.(js|json)$/.test(id))return[id];return[id+'.js',id+'.json',id+'/index.js'];}function loadRecord(id){var last='';var list=candidates(id);for(var i=0;i<list.length;i++){var rec=_tlinkautoLoadBundleText(list[i]);if(rec&&rec.ok)return rec;last=rec&&rec.error?rec.error:'module not found';}throw new Error('Cannot load module '+id+': '+last);}this.require=function(request){var id=normalize(stack.length?stack[stack.length-1]:'',request);var rec=loadRecord(id);if(cache[rec.id])return cache[rec.id].exports;var module={id:rec.id,filename:rec.path,exports:{}};cache[rec.id]=module;if(/\\.json$/.test(rec.id)){module.exports=JSON.parse(rec.source);return module.exports;}stack.push(rec.id);try{var fn=new Function('exports','module','require','device','sleep',rec.source+'\\n//# sourceURL='+rec.path);fn(module.exports,module,this.require,device,sleep);}finally{stack.pop();}return module.exports;};this.include=function(request){var id=normalize(stack.length?stack[stack.length-1]:'',request);var rec=loadRecord(id);return(0,eval)(rec.source+'\\n//# sourceURL='+rec.path);};})();";

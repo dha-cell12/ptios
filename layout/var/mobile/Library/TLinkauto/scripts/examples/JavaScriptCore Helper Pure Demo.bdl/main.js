@@ -8,7 +8,7 @@ console.log("helperInstanceId", info.helperInstanceId);
 console.log("square(7)", helper.square(7));
 
 if (info.runtimeLocation === "in-process-prototype" && device.toast) {
-  device.toast("Helper daemon reachable; execution is in-process", { type: 0, duration: 2 });
+  device.toast("Helper daemon reachable; execution is in-process", { type: 4, duration: 2 });
 }
 
 sleep(100);

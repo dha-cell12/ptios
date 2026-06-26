@@ -4,7 +4,7 @@ var info = device.runtimeInfo();
 console.log("runtimeLocation", info.runtimeLocation);
 console.log("nativeRPC", info.nativeRPC);
 
-var result = device.toast("Helper native RPC toast", { type: 0, duration: 2 });
+var result = device.toast("Helper native RPC toast", { type: 4, duration: 2 });
 console.log("toast result", result);
 
 if (!result || !result.ok) {
