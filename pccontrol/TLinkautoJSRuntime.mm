@@ -832,18 +832,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)frontMostAppId
 {
-    NSDictionary *result = [self runTask:TASK_FRONTMOST_APP_ID payload:@""];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    return TLinkautoJSResultByAdding(result, @{ @"bundleId": TLinkautoJSSafeStringPart(parts, 1) });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodFrontMostAppId arguments:@[]];
 }
 
 - (NSDictionary *)orientation
 {
-    NSDictionary *result = [self runTask:TASK_FRONTMOST_APP_ORIENTATION payload:@""];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    return TLinkautoJSResultByAdding(result, @{ @"value": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodOrientation arguments:@[]];
 }
 
 - (NSDictionary *)batch:(NSArray *)commands
@@ -928,119 +922,52 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)openApp:(NSString *)bundleId
 {
-    if (!TLinkautoJSValidProtocolString(bundleId)) {
-        [self.runtime throwError:@"openApp(bundleId) requires a valid bundle id"];
-        return @{ @"ok": @NO };
-    }
-    return [self runTask:TASK_PROCESS_BRING_FOREGROUND payload:bundleId];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodOpenApp arguments:@[bundleId ?: @""]];
 }
 
 - (NSDictionary *)killApp:(NSString *)bundleId
 {
-    if (!TLinkautoJSValidProtocolString(bundleId)) {
-        [self.runtime throwError:@"killApp(bundleId) requires a valid bundle id"];
-        return @{ @"ok": @NO };
-    }
-    return [self runTask:TASK_APP_KILL payload:bundleId];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodKillApp arguments:@[bundleId ?: @""]];
 }
 
 - (NSDictionary *)appState:(NSString *)bundleId
 {
-    if (!TLinkautoJSValidProtocolString(bundleId)) {
-        [self.runtime throwError:@"appState(bundleId) requires a valid bundle id"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_APP_STATE payload:bundleId];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    int state = [TLinkautoJSSafeStringPart(parts, 1) intValue];
-    return TLinkautoJSResultByAdding(result, @{
-        @"state": @(state),
-        @"running": @(state > 0),
-    });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodAppState arguments:@[bundleId ?: @""]];
 }
 
 - (NSDictionary *)appInfo:(NSString *)bundleId
 {
-    if (!TLinkautoJSValidProtocolString(bundleId)) {
-        [self.runtime throwError:@"appInfo(bundleId) requires a valid bundle id"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_APP_INFO payload:bundleId];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 6) return result;
-    return TLinkautoJSResultByAdding(result, @{
-        @"bundleId": TLinkautoJSSafeStringPart(parts, 1),
-        @"name": TLinkautoJSSafeStringPart(parts, 2),
-        @"shortVersion": TLinkautoJSSafeStringPart(parts, 3),
-        @"bundleVersion": TLinkautoJSSafeStringPart(parts, 4),
-        @"state": @([TLinkautoJSSafeStringPart(parts, 5) intValue]),
-    });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodAppInfo arguments:@[bundleId ?: @""]];
 }
 
 - (NSDictionary *)appPid:(NSString *)bundleId
 {
-    if (!TLinkautoJSValidProtocolString(bundleId)) {
-        [self.runtime throwError:@"appPid(bundleId) requires a valid bundle id"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_APP_PID payload:bundleId];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    return TLinkautoJSResultByAdding(result, @{ @"pid": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodAppPid arguments:@[bundleId ?: @""]];
 }
 
 - (NSDictionary *)frontMostPid
 {
-    NSDictionary *result = [self runTask:TASK_FRONTMOST_PID payload:@""];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    return TLinkautoJSResultByAdding(result, @{ @"pid": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodFrontMostPid arguments:@[]];
 }
 
 - (NSDictionary *)appPaths:(NSString *)bundleId
 {
-    if (!TLinkautoJSValidProtocolString(bundleId)) {
-        [self.runtime throwError:@"appPaths(bundleId) requires a valid bundle id"];
-        return @{ @"ok": @NO };
-    }
-    NSDictionary *result = [self runTask:TASK_APP_PATHS payload:bundleId];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue]) return result;
-    return TLinkautoJSResultByAdding(result, @{
-        @"bundlePath": [parts count] > 1 ? TLinkautoJSSafeStringPart(parts, 1) : @"",
-        @"dataPath": [parts count] > 2 ? TLinkautoJSSafeStringPart(parts, 2) : @"",
-    });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodAppPaths arguments:@[bundleId ?: @""]];
 }
 
 - (NSDictionary *)listBundles:(BOOL)withInfo
 {
-    NSDictionary *result = [self runTask:TASK_LIST_BUNDLES payload:(withInfo ? @"1" : @"0")];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    if (withInfo) {
-        id obj = TLinkautoJSJSONFromBase64(TLinkautoJSSafeStringPart(parts, 1));
-        NSArray *items = [obj isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)obj)[@"items"] : @[];
-        return TLinkautoJSResultByAdding(result, @{ @"items": [items isKindOfClass:[NSArray class]] ? items : @[] });
-    }
-    NSString *raw = TLinkautoJSSafeStringPart(parts, 1);
-    NSArray *bundleIds = [raw length] > 0 ? [raw componentsSeparatedByString:@",,"] : @[];
-    return TLinkautoJSResultByAdding(result, @{ @"bundleIds": bundleIds });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodListBundles arguments:@[@(withInfo)]];
 }
 
 - (NSDictionary *)openUrl:(NSString *)url
 {
-    if (!TLinkautoJSValidProtocolString(url)) {
-        [self.runtime throwError:@"openUrl(url) requires a valid URL string"];
-        return @{ @"ok": @NO };
-    }
-    return [self runTask:TASK_OPEN_URL payload:url];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodOpenUrl arguments:@[url ?: @""]];
 }
 
 - (NSDictionary *)connectivityTask:(int)task enabledKey:(NSString *)enabledKey value:(NSNumber *)value
 {
-    NSString *payload = value ? [NSString stringWithFormat:@"1;;%d", [value boolValue] ? 1 : 0] : @"0";
-    return TLinkautoJSStateResult([self runTask:task payload:payload], enabledKey ?: @"enabled");
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodConnectivity arguments:@[@(task), enabledKey ?: @"enabled", value ?: [NSNull null]]];
 }
 
 - (NSDictionary *)wifi
@@ -1198,13 +1125,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)pathTask:(int)task key:(NSString *)key
 {
-    NSDictionary *result = [self runTask:task payload:@""];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    NSString *path = TLinkautoJSSafeStringPart(parts, 1);
-    NSMutableDictionary *extra = [NSMutableDictionary dictionaryWithObject:path forKey:@"path"];
-    extra[key ?: @"path"] = path;
-    return TLinkautoJSResultByAdding(result, extra);
+    if (task == TASK_ROOT_DIR) return [self.runtime executeNativeRequest:TLinkJSNativeMethodRootDir arguments:@[]];
+    if (task == TASK_CURRENT_DIR) return [self.runtime executeNativeRequest:TLinkJSNativeMethodCurrentDir arguments:@[]];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodBotPath arguments:@[]];
 }
 
 - (NSDictionary *)rootDir
@@ -1229,27 +1152,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)info
 {
-    NSDictionary *result = [self runTask:TASK_GET_DEVICE_INFO payload:@"30"];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 6) return result;
-    return TLinkautoJSResultByAdding(result, @{
-        @"name": TLinkautoJSSafeStringPart(parts, 1),
-        @"systemName": TLinkautoJSSafeStringPart(parts, 2),
-        @"systemVersion": TLinkautoJSSafeStringPart(parts, 3),
-        @"model": TLinkautoJSSafeStringPart(parts, 4),
-        @"identifierForVendor": TLinkautoJSSafeStringPart(parts, 5),
-    });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodInfo arguments:@[]];
 }
 
 - (NSDictionary *)batteryInfo
 {
-    NSDictionary *result = [self runTask:TASK_GET_DEVICE_INFO payload:@"31"];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 3) return result;
-    return TLinkautoJSResultByAdding(result, @{
-        @"state": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
-        @"level": @([TLinkautoJSSafeStringPart(parts, 2) doubleValue]),
-    });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodBatteryInfo arguments:@[]];
 }
 
 - (NSDictionary *)saveScreenshotToAlbum:(NSString *)path

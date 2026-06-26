@@ -87,6 +87,11 @@ static BOOL TLinkautoJSValidToken(NSString *value)
     return !TLinkautoJSStringContainsAny(value ?: @"", @[@";;", @"\r", @"\n"]);
 }
 
+static BOOL TLinkautoJSValidProtocolString(NSString *value)
+{
+    return [value isKindOfClass:[NSString class]] && [value length] > 0 && TLinkautoJSValidToken(value);
+}
+
 static NSString *TLinkautoJSEncodeGesturePoints(NSArray *points)
 {
     if (![points isKindOfClass:[NSArray class]] || [points count] < 2 || [points count] > 512) return nil;
@@ -137,6 +142,14 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"errorCode": TLinkautoJSSafeStringPart(parts, 1),
         @"errorMessage": TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 2)),
     });
+}
+
+static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enabledKey)
+{
+    NSArray *parts = result[@"parts"];
+    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
+    BOOL enabled = [TLinkautoJSSafeStringPart(parts, 1) intValue] != 0;
+    return TLinkautoJSResultByAdding(result, @{ enabledKey ?: @"enabled": @(enabled), @"value": @(enabled) });
 }
 
 
@@ -738,6 +751,103 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         TLinkJSNativeResponse *ocrRes = [self executeRequest:[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodOcrFrame arguments:@[@(frameId), ocrOptions]] context:context error:error];
         [self executeRequest:[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodReleaseFrame arguments:@[@(frameId)]] context:context error:nil];
         return ocrRes;
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFrontMostAppId]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_FRONTMOST_APP_ID] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"bundleId": TLinkautoJSSafeStringPart(parts, 1)})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodOrientation]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_FRONTMOST_APP_ORIENTATION] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"value": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodOpenApp] || [method isEqualToString:TLinkJSNativeMethodKillApp] || [method isEqualToString:TLinkJSNativeMethodAppState] || [method isEqualToString:TLinkJSNativeMethodAppInfo] || [method isEqualToString:TLinkJSNativeMethodAppPid] || [method isEqualToString:TLinkJSNativeMethodAppPaths]) {
+        NSString *bundleId = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        if (!TLinkautoJSValidProtocolString(bundleId)) return [TLinkJSNativeResponse responseWithError:@"app method requires a valid bundle id" code:@-1];
+        int task = TASK_APP_STATE;
+        if ([method isEqualToString:TLinkJSNativeMethodOpenApp]) task = TASK_PROCESS_BRING_FOREGROUND;
+        else if ([method isEqualToString:TLinkJSNativeMethodKillApp]) task = TASK_APP_KILL;
+        else if ([method isEqualToString:TLinkJSNativeMethodAppInfo]) task = TASK_APP_INFO;
+        else if ([method isEqualToString:TLinkJSNativeMethodAppPid]) task = TASK_APP_PID;
+        else if ([method isEqualToString:TLinkJSNativeMethodAppPaths]) task = TASK_APP_PATHS;
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", task, bundleId] context:context];
+        NSArray *parts = result[@"parts"];
+        if ([method isEqualToString:TLinkJSNativeMethodOpenApp] || [method isEqualToString:TLinkJSNativeMethodKillApp]) return [TLinkJSNativeResponse responseWithValue:result];
+        if (![result[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:result];
+        if ([method isEqualToString:TLinkJSNativeMethodAppState]) {
+            if ([parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+            int state = [TLinkautoJSSafeStringPart(parts, 1) intValue];
+            return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"state": @(state), @"running": @(state > 0)})];
+        }
+        if ([method isEqualToString:TLinkJSNativeMethodAppInfo]) {
+            if ([parts count] < 6) return [TLinkJSNativeResponse responseWithValue:result];
+            return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"bundleId": TLinkautoJSSafeStringPart(parts, 1), @"name": TLinkautoJSSafeStringPart(parts, 2), @"shortVersion": TLinkautoJSSafeStringPart(parts, 3), @"bundleVersion": TLinkautoJSSafeStringPart(parts, 4), @"state": @([TLinkautoJSSafeStringPart(parts, 5) intValue])})];
+        }
+        if ([method isEqualToString:TLinkJSNativeMethodAppPid]) {
+            if ([parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+            return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"pid": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
+        }
+        if ([parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"bundlePath": TLinkautoJSSafeStringPart(parts, 1), @"dataPath": [parts count] > 2 ? TLinkautoJSSafeStringPart(parts, 2) : @""})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFrontMostPid]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_FRONTMOST_PID] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"pid": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodListBundles]) {
+        BOOL withInfo = [args count] > 0 ? [[args objectAtIndex:0] boolValue] : NO;
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_LIST_BUNDLES, withInfo ? @"1" : @"0"] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        if (withInfo) {
+            NSString *json = TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 1));
+            NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+            id obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+            NSArray *items = [obj isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)obj)[@"items"] : @[];
+            return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"items": [items isKindOfClass:[NSArray class]] ? items : @[]})];
+        }
+        NSString *raw = TLinkautoJSSafeStringPart(parts, 1);
+        NSArray *bundleIds = [raw length] > 0 ? [raw componentsSeparatedByString:@",,"] : @[];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"bundleIds": bundleIds})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodOpenUrl]) {
+        NSString *url = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        if (!TLinkautoJSValidProtocolString(url)) return [TLinkJSNativeResponse responseWithError:@"openUrl(url) requires a valid URL string" code:@-1];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_OPEN_URL, url] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodConnectivity]) {
+        int task = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        NSString *enabledKey = [args count] > 1 ? [args objectAtIndex:1] : @"enabled";
+        id value = [args count] > 2 ? [args objectAtIndex:2] : [NSNull null];
+        NSString *payload = (value && value != [NSNull null]) ? [NSString stringWithFormat:@"1;;%d", [value boolValue] ? 1 : 0] : @"0";
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", task, payload] context:context];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSStateResult(result, enabledKey)];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodRootDir] || [method isEqualToString:TLinkJSNativeMethodCurrentDir] || [method isEqualToString:TLinkJSNativeMethodBotPath]) {
+        int task = [method isEqualToString:TLinkJSNativeMethodRootDir] ? TASK_ROOT_DIR : ([method isEqualToString:TLinkJSNativeMethodCurrentDir] ? TASK_CURRENT_DIR : TASK_BOT_PATH);
+        NSString *key = [method isEqualToString:TLinkJSNativeMethodRootDir] ? @"rootDir" : ([method isEqualToString:TLinkJSNativeMethodCurrentDir] ? @"currentDir" : @"botPath");
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", task] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        NSString *path = TLinkautoJSSafeStringPart(parts, 1);
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"path": path ?: @"", key: path ?: @""})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodInfo]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d30", TASK_GET_DEVICE_INFO] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 6) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"name": TLinkautoJSSafeStringPart(parts, 1), @"systemName": TLinkautoJSSafeStringPart(parts, 2), @"systemVersion": TLinkautoJSSafeStringPart(parts, 3), @"model": TLinkautoJSSafeStringPart(parts, 4), @"identifierForVendor": TLinkautoJSSafeStringPart(parts, 5)})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodBatteryInfo]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d31", TASK_GET_DEVICE_INFO] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"state": @([TLinkautoJSSafeStringPart(parts, 1) intValue]), @"level": @([TLinkautoJSSafeStringPart(parts, 2) doubleValue])})];
     }
     
     else if ([method isEqualToString:TLinkJSNativeMethodMatchTemplate]) {
