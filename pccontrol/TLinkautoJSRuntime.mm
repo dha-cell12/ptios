@@ -79,6 +79,7 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
 static const unsigned long long kTLinkautoJSMaxBundleFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
+static NSString * const kTLinkautoJSHelperExecutionGatePath = @"/var/mobile/Library/TLinkauto/enable_js_helper_execution";
 
 @class TLinkautoJSRuntime;
 
@@ -752,7 +753,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _cancelState->aborted.store(false, std::memory_order_release);
     id helperFlag = manifest[@"helperRuntimeEnabled"] ?: manifest[@"helper_runtime_enabled"];
     NSString *runtimeLocation = [manifest[@"runtimeLocation"] isKindOfClass:[NSString class]] ? [manifest[@"runtimeLocation"] lowercaseString] : @"";
-    BOOL useHelper = ([helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue]) || [runtimeLocation isEqualToString:@"helper"];
+    BOOL requestedHelper = ([helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue]) || [runtimeLocation isEqualToString:@"helper"];
+    BOOL helperExecutionAllowed = [[NSFileManager defaultManager] fileExistsAtPath:kTLinkautoJSHelperExecutionGatePath];
+    BOOL useHelper = requestedHelper && helperExecutionAllowed;
     if (useHelper) {
         return [self runScriptInHelperAtPath:scriptPath bundlePath:bundlePath manifest:manifest error:error];
     }
@@ -807,6 +810,11 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
             NSDictionary *statusResponse = status[@"response"];
             NSDictionary *statusPayload = [statusResponse[@"payload"] isKindOfClass:[NSDictionary class]] ? statusResponse[@"payload"] : @{};
             NSString *state = [statusPayload[@"state"] isKindOfClass:[NSString class]] ? statusPayload[@"state"] : @"unknown";
+            id activeSession = statusPayload[@"activeSessionId"];
+            if ([state isEqualToString:@"idle"] || (activeSession && activeSession != [NSNull null] && ![activeSession isEqual:_helperSessionId])) {
+                failure = @"JavaScript helper session disappeared";
+                break;
+            }
             if ([statusPayload[@"runId"] isKindOfClass:[NSString class]]) _helperRunId = [statusPayload[@"runId"] copy];
             if ([statusPayload[@"consoleLogPath"] isKindOfClass:[NSString class]]) _helperConsoleLogPath = [statusPayload[@"consoleLogPath"] copy];
             if ([statusPayload[@"consoleLatestLogPath"] isKindOfClass:[NSString class]]) _helperConsoleLatestLogPath = [statusPayload[@"consoleLatestLogPath"] copy];

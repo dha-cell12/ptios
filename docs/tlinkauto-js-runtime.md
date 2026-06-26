@@ -22,6 +22,7 @@ Helper runtime opt-in:
 
 - Phase 2 can run pure JavaScript in the separate `tlinkauto-jsd` helper process.
 - Enable it per bundle with `"helperRuntimeEnabled": true` or `"runtimeLocation": "helper"`.
+- For safety during Phase 2, helper execution is additionally gated by marker file `/var/mobile/Library/TLinkauto/enable_js_helper_execution`.
 - Phase 2 helper runs have a default 10 second timeout; override with `"helperTimeoutMs": 30000`.
 - Helper execution currently supports pure JS, `console`, `sleep`, `require`, `include`, and `device.runtimeInfo()`.
 - Native `device.*` automation APIs still run through the default in-process runtime unless a future phase enables native RPC.
