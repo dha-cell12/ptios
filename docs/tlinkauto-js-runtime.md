@@ -30,6 +30,7 @@ Helper runtime opt-in:
 - Debug helper execution outside UI playback with `/usr/libexec/tlinkauto-jsd --run-script /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json`.
 - Debug the daemon socket path with `/usr/libexec/tlinkauto-jsd --client-run /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json` while launchd helper is running.
 - Check daemon socket health with `/usr/libexec/tlinkauto-jsd --client-handshake` and `/usr/libexec/tlinkauto-jsd --client-status`.
+- On iOS, use `ps ax | grep tlinkauto-jsd`; plain `ps` may only show the current terminal session.
 
 Bundle modules:
 
