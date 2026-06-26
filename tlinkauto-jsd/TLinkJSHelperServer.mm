@@ -168,6 +168,7 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
 - (void)runSessionId:(NSString *)sessionId scriptPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest runId:(NSString *)runId
 {
     @autoreleasepool {
+        NSLog(@"tlinkauto-jsd: starting session=%@ script=%@ bundle=%@", sessionId, scriptPath, bundlePath);
         NSString *logPath = [self consoleLogPathForBundlePath:bundlePath runId:runId latest:NO];
         NSString *latestPath = [self consoleLogPathForBundlePath:bundlePath runId:runId latest:YES];
         self.lastConsoleLogPath = logPath;
@@ -181,16 +182,19 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
         if (!script) {
             self.lastError = readError.localizedDescription ?: @"failed to read script";
             self.activeState = kTLinkJSHelperStateFailed;
+            NSLog(@"tlinkauto-jsd: read script failed session=%@ error=%@", sessionId, self.lastError);
             return;
         }
 
         self.activeState = kTLinkJSHelperStateRunning;
+        NSLog(@"tlinkauto-jsd: evaluating session=%@", sessionId);
         JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
         JSContext *ctx = [[JSContext alloc] initWithVirtualMachine:vm];
         __weak TLinkJSHelperServer *weakSelf = self;
         ctx.exceptionHandler = ^(JSContext *context, JSValue *exception) {
             context.exception = exception;
             weakSelf.lastError = [exception toString] ?: @"JavaScript exception";
+            NSLog(@"tlinkauto-jsd: exception session=%@ error=%@", sessionId, weakSelf.lastError);
         };
         ctx[@"manifest"] = manifest ?: @{};
         ctx[@"sleep"] = ^(double ms) {
@@ -225,8 +229,11 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
         JSContextGroupRef group = JSContextGetGroup([ctx JSGlobalContextRef]);
         if (_setExecutionTimeLimit) _setExecutionTimeLimit(group, kTLinkJSHelperWatchdogInterval, TLinkJSHelperShouldTerminate, _cancelState);
         @try {
+            NSLog(@"tlinkauto-jsd: evaluate console prelude session=%@", sessionId);
             [ctx evaluateScript:consolePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto-helper://console-prelude.js"]];
+            NSLog(@"tlinkauto-jsd: evaluate module prelude session=%@", sessionId);
             [ctx evaluateScript:modulePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto-helper://module-prelude.js"]];
+            NSLog(@"tlinkauto-jsd: evaluate main script session=%@", sessionId);
             [ctx evaluateScript:script withSourceURL:[NSURL fileURLWithPath:scriptPath]];
         } @finally {
             if (_clearExecutionTimeLimit) _clearExecutionTimeLimit(group);
@@ -239,8 +246,24 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
         } else {
             self.activeState = kTLinkJSHelperStateCompleted;
         }
+        NSLog(@"tlinkauto-jsd: finished session=%@ state=%@ error=%@", sessionId, self.activeState, self.lastError ?: @"");
         if (![self.activeSessionId isEqualToString:sessionId]) return;
     }
+}
+
+- (NSDictionary *)runScriptDirectAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest
+{
+    NSString *sessionId = [[NSUUID UUID] UUIDString];
+    NSString *runId = [[NSUUID UUID] UUIDString];
+    self.activeSessionId = sessionId;
+    self.activeRunId = runId;
+    self.lastError = @"";
+    self.lastConsoleLogPath = @"";
+    self.lastConsoleLatestLogPath = @"";
+    self.activeState = kTLinkJSHelperStateStarting;
+    _cancelState->stopped.store(false, std::memory_order_release);
+    [self runSessionId:sessionId scriptPath:scriptPath bundlePath:bundlePath manifest:manifest ?: @{} runId:runId];
+    return [self statusPayload];
 }
 
 - (NSDictionary *)startWithRequest:(NSDictionary *)request
