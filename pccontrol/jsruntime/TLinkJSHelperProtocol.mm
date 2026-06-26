@@ -155,6 +155,15 @@ NSString * const kTLinkJSHelperStateCrashed = @"crashed";
             return NO;
         }
     }
+    if ([command isEqualToString:kTLinkJSHelperCmdNativeRPCResponse]) {
+        NSDictionary *payloadDict = [payload isKindOfClass:[NSDictionary class]] ? (NSDictionary *)payload : nil;
+        id nativeRequestId = payloadDict[kTLinkJSHelperKeyRequestId];
+        id result = payloadDict[@"result"];
+        if (!nativeRequestId || !result) {
+            if (error) *error = [self errorWithMessage:@"nativeRPCResponse requires requestId and result"];
+            return NO;
+        }
+    }
     return YES;
 }
 

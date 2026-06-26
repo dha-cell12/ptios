@@ -107,4 +107,12 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
     return [self requestCommand:kTLinkJSHelperCmdStop payload:@{} sessionId:sessionId timeoutMs:timeoutMs];
 }
 
+- (NSDictionary *)sendNativeRPCResponse:(NSDictionary *)result requestId:(NSString *)requestId sessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs
+{
+    return [self requestCommand:kTLinkJSHelperCmdNativeRPCResponse
+                        payload:@{ kTLinkJSHelperKeyRequestId: requestId ?: @"", @"result": result ?: @{} }
+                      sessionId:sessionId
+                      timeoutMs:timeoutMs];
+}
+
 @end

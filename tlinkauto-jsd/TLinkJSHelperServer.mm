@@ -50,6 +50,9 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 @property(nonatomic, copy) NSString *lastError;
 @property(nonatomic, copy) NSString *lastConsoleLogPath;
 @property(nonatomic, copy) NSString *lastConsoleLatestLogPath;
+@property(nonatomic, strong) NSCondition *rpcCondition;
+@property(nonatomic, copy) NSDictionary *pendingNativeRequest;
+@property(nonatomic, strong) NSMutableDictionary *nativeResponses;
 @end
 
 @implementation TLinkJSHelperServer
@@ -62,6 +65,8 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
         _startedAt = [NSDate date];
         _executionQueue = dispatch_queue_create("com.tlinkauto.js-helper.execution", DISPATCH_QUEUE_SERIAL);
         _sleepCondition = [[NSCondition alloc] init];
+        _rpcCondition = [[NSCondition alloc] init];
+        _nativeResponses = [NSMutableDictionary dictionary];
         _activeState = kTLinkJSHelperStateIdle;
         _cancelState = new TLinkJSHelperCancelState();
         _cancelState->stopped.store(false, std::memory_order_relaxed);
@@ -86,7 +91,7 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
 - (NSDictionary *)statusPayload
 {
     NSTimeInterval uptimeMs = [[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000.0;
-    return @{
+    NSMutableDictionary *payload = [@{
         @"state": self.activeState ?: kTLinkJSHelperStateIdle,
         @"activeSessionId": self.activeSessionId ?: [NSNull null],
         @"runId": self.activeRunId ?: @"",
@@ -94,7 +99,53 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
         @"lastError": self.lastError ?: @"",
         @"consoleLogPath": self.lastConsoleLogPath ?: @"",
         @"consoleLatestLogPath": self.lastConsoleLatestLogPath ?: @"",
+    } mutableCopy];
+    [self.rpcCondition lock];
+    if (self.pendingNativeRequest) {
+        payload[@"nativeRPCRequest"] = self.pendingNativeRequest;
+    }
+    [self.rpcCondition unlock];
+    return payload;
+}
+
+- (NSDictionary *)executeNativeRPCMethod:(NSString *)method arguments:(NSArray *)arguments sessionId:(NSString *)sessionId
+{
+    if (![method isKindOfClass:[NSString class]] || [method length] == 0) {
+        return @{ @"ok": @NO, @"error": @"native RPC method is required" };
+    }
+    NSString *requestId = [[NSUUID UUID] UUIDString];
+    NSDictionary *request = @{
+        kTLinkJSHelperKeyRequestId: requestId,
+        @"method": method,
+        @"arguments": arguments ?: @[],
+        @"sessionId": sessionId ?: @"",
     };
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    [self.rpcCondition lock];
+    while (self.pendingNativeRequest && !_cancelState->stopped.load(std::memory_order_acquire)) {
+        if (![self.rpcCondition waitUntilDate:deadline]) break;
+    }
+    if (self.pendingNativeRequest || _cancelState->stopped.load(std::memory_order_acquire)) {
+        [self.rpcCondition unlock];
+        return @{ @"ok": @NO, @"error": @"native RPC unavailable" };
+    }
+    self.pendingNativeRequest = request;
+    [self.rpcCondition broadcast];
+    while (!_cancelState->stopped.load(std::memory_order_acquire)) {
+        NSDictionary *response = self.nativeResponses[requestId];
+        if (response) {
+            [self.nativeResponses removeObjectForKey:requestId];
+            self.pendingNativeRequest = nil;
+            [self.rpcCondition broadcast];
+            [self.rpcCondition unlock];
+            return response;
+        }
+        if (![self.rpcCondition waitUntilDate:deadline]) break;
+    }
+    self.pendingNativeRequest = nil;
+    [self.rpcCondition broadcast];
+    [self.rpcCondition unlock];
+    return @{ @"ok": @NO, @"error": @"native RPC timed out" };
 }
 
 - (NSString *)consoleLogPathForBundlePath:(NSString *)bundlePath runId:(NSString *)runId latest:(BOOL)latest
@@ -224,7 +275,11 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
                 @"consoleLogPath": logPath ?: @"",
                 @"consoleLatestLogPath": latestPath ?: @"",
                 @"nativeAPIs": @NO,
+                @"nativeRPC": @YES,
             };
+        };
+        device[@"toast"] = ^NSDictionary *(NSString *message, NSDictionary *options) {
+            return [weakSelf executeNativeRPCMethod:@"toast" arguments:@[message ?: @"", options ?: @{}] sessionId:sessionId];
         };
         ctx[@"device"] = device;
         NSString *consolePrelude = @"(function(){function fmt(args){return Array.prototype.map.call(args,function(v){try{if(typeof v==='string')return v;return JSON.stringify(v);}catch(e){return String(v);}}).join(' ');}this.console={log:function(){_tlinkautoLog('log',fmt(arguments));},info:function(){_tlinkautoLog('info',fmt(arguments));},warn:function(){_tlinkautoLog('warn',fmt(arguments));},error:function(){_tlinkautoLog('error',fmt(arguments));}};})();";
@@ -333,7 +388,7 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
                 @"pureJavaScriptExecution": @YES,
                 @"executionTimeLimit": @(_setExecutionTimeLimit != NULL && _clearExecutionTimeLimit != NULL),
                 @"hardKillRecovery": @NO,
-                @"nativeRPC": @NO,
+                @"nativeRPC": @YES,
                 @"structuredConsole": @NO,
                 @"oneActiveSession": @YES,
             },
@@ -366,6 +421,22 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
                                                 sessionId:request[kTLinkJSHelperKeySessionId]
                                                 requestId:request[kTLinkJSHelperKeyRequestId]
                                                   payload:[self statusPayload]];
+    }
+    if ([command isEqualToString:kTLinkJSHelperCmdNativeRPCResponse]) {
+        NSDictionary *payload = [request[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? request[kTLinkJSHelperKeyPayload] : @{};
+        NSString *nativeRequestId = [payload[kTLinkJSHelperKeyRequestId] isKindOfClass:[NSString class]] ? payload[kTLinkJSHelperKeyRequestId] : @"";
+        NSDictionary *result = [payload[@"result"] isKindOfClass:[NSDictionary class]] ? payload[@"result"] : @{};
+        [self.rpcCondition lock];
+        if ([nativeRequestId length] > 0) {
+            self.nativeResponses[nativeRequestId] = result;
+        }
+        [self.rpcCondition broadcast];
+        [self.rpcCondition unlock];
+        return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdNativeRPCResponse
+                                         helperInstanceId:self.helperInstanceId
+                                                sessionId:request[kTLinkJSHelperKeySessionId]
+                                                requestId:request[kTLinkJSHelperKeyRequestId]
+                                                  payload:@{ kTLinkJSHelperKeyRequestId: nativeRequestId ?: @"", @"result": @{ @"ok": @YES, @"accepted": @YES } }];
     }
     return [self errorEnvelopeForRequest:request message:@"unsupported_command"];
 }

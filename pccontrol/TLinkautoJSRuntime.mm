@@ -810,6 +810,14 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
             NSDictionary *statusResponse = status[@"response"];
             NSDictionary *statusPayload = [statusResponse[@"payload"] isKindOfClass:[NSDictionary class]] ? statusResponse[@"payload"] : @{};
             NSString *state = [statusPayload[@"state"] isKindOfClass:[NSString class]] ? statusPayload[@"state"] : @"unknown";
+            NSDictionary *nativeRPC = [statusPayload[@"nativeRPCRequest"] isKindOfClass:[NSDictionary class]] ? statusPayload[@"nativeRPCRequest"] : nil;
+            if (nativeRPC) {
+                NSString *nativeRequestId = [nativeRPC[@"requestId"] isKindOfClass:[NSString class]] ? nativeRPC[@"requestId"] : @"";
+                NSString *method = [nativeRPC[@"method"] isKindOfClass:[NSString class]] ? nativeRPC[@"method"] : @"";
+                NSArray *arguments = [nativeRPC[@"arguments"] isKindOfClass:[NSArray class]] ? nativeRPC[@"arguments"] : @[];
+                NSDictionary *result = [self executeNativeRequest:method arguments:arguments];
+                [helper sendNativeRPCResponse:result requestId:nativeRequestId sessionId:_helperSessionId timeoutMs:500];
+            }
             id activeSession = statusPayload[@"activeSessionId"];
             if ([state isEqualToString:@"idle"] || (activeSession && activeSession != [NSNull null] && ![activeSession isEqual:_helperSessionId])) {
                 failure = @"JavaScript helper session disappeared";

@@ -25,7 +25,8 @@ Helper runtime opt-in:
 - For safety during Phase 2, helper execution is additionally gated by marker file `/var/mobile/Library/TLinkauto/enable_js_helper_execution`.
 - Phase 2 helper runs have a default 10 second timeout; override with `"helperTimeoutMs": 30000`.
 - Helper execution currently supports pure JS, `console`, `sleep`, `require`, `include`, and `device.runtimeInfo()`.
-- Native `device.*` automation APIs still run through the default in-process runtime unless a future phase enables native RPC.
+- Phase 3 helper native RPC currently supports `device.toast(message, options)` through SpringBoard while running via UI playback.
+- Other native `device.*` automation APIs still run through the default in-process runtime until they are explicitly added to native RPC.
 - Helper logs are written to `_logs/<runId>-helper.log` and `_logs/latest-helper.log`.
 - Debug helper execution outside UI playback with `/usr/libexec/tlinkauto-jsd --run-script /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json`.
 - Debug the daemon socket path with `/usr/libexec/tlinkauto-jsd --client-run /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json` while launchd helper is running.
