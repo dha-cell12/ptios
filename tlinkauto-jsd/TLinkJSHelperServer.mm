@@ -10,9 +10,12 @@
 #include <string.h>
 #include <math.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <atomic>
 
 static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkauto/run/js-helper.sock";
+static NSString * const kTLinkJSHelperLockPath = @"/var/mobile/Library/TLinkauto/run/js-helper.lock";
 static NSString * const kTLinkJSHelperVersion = @"1.0.0";
 static const unsigned long long kTLinkJSHelperMaxBundleFileBytes = 512 * 1024;
 static const unsigned long long kTLinkJSHelperMaxConsoleLogBytes = 512 * 1024;
@@ -385,11 +388,24 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
 {
     NSString *runDir = [kTLinkJSHelperSocketPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:runDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+    int lockFd = open([kTLinkJSHelperLockPath fileSystemRepresentation], O_CREAT | O_RDWR, 0644);
+    if (lockFd < 0) {
+        NSLog(@"tlinkauto-jsd: lock open failed: %d", errno);
+        return;
+    }
+    if (flock(lockFd, LOCK_EX | LOCK_NB) != 0) {
+        NSLog(@"tlinkauto-jsd: another helper instance is already running");
+        close(lockFd);
+        return;
+    }
+
     unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);
 
     int server = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server < 0) {
         NSLog(@"tlinkauto-jsd: socket failed: %d", errno);
+        close(lockFd);
         return;
     }
 
@@ -400,12 +416,14 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
     if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         NSLog(@"tlinkauto-jsd: bind failed: %d", errno);
         close(server);
+        close(lockFd);
         return;
     }
     chmod([kTLinkJSHelperSocketPath fileSystemRepresentation], 0666);
     if (listen(server, 8) != 0) {
         NSLog(@"tlinkauto-jsd: listen failed: %d", errno);
         close(server);
+        close(lockFd);
         return;
     }
 
@@ -420,6 +438,8 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
         [self handleClient:client];
     }
     close(server);
+    unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);
+    close(lockFd);
 }
 
 @end
