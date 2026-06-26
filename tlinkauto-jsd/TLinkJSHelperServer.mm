@@ -89,7 +89,7 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
 }
 
 static int TLinkJSHelperHardwareKeyType(NSString *key) {
-    NSString *k = [[key ?: @""] lowercaseString];
+    NSString *k = [(key ? key : @"") lowercaseString];
     if ([k isEqualToString:@"home"]) return 1;
     if ([k isEqualToString:@"volume-up"] || [k isEqualToString:@"volumeup"]) return 2;
     if ([k isEqualToString:@"volume-down"] || [k isEqualToString:@"volumedown"]) return 3;
@@ -98,14 +98,14 @@ static int TLinkJSHelperHardwareKeyType(NSString *key) {
 }
 
 static int TLinkJSHelperHardwareKeyAction(NSString *action) {
-    NSString *a = [[action ?: @""] lowercaseString];
+    NSString *a = [(action ? action : @"") lowercaseString];
     if ([a isEqualToString:@"up"]) return 0;
     if ([a isEqualToString:@"down"]) return 1;
     return -1;
 }
 
 static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
-    NSString *a = [[action ?: @""] lowercaseString];
+    NSString *a = [(action ? action : @"") lowercaseString];
     if ([a isEqualToString:@"show"]) return 1;
     if ([a isEqualToString:@"hide"]) return 0;
     if ([a isEqualToString:@"reload"]) return 2;
