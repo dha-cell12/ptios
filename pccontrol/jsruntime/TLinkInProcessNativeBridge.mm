@@ -23,11 +23,128 @@ static BOOL TLinkautoJSIsFiniteNumber(double value) { return isfinite(value); }
 static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
 static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
 
+static NSString *TLinkautoJSSafeStringPart(NSArray *parts, NSUInteger index)
+{
+    if (index >= [parts count]) return @"";
+    id value = parts[index];
+    return [value isKindOfClass:[NSString class]] ? (NSString *)value : [value description];
+}
+
+static NSString *TLinkautoJSBase64Encode(NSString *text)
+{
+    NSData *data = [(text ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
+    return [data base64EncodedStringWithOptions:0] ?: @"";
+}
+
+static NSString *TLinkautoJSBase64Decode(NSString *text)
+{
+    if (![text isKindOfClass:[NSString class]] || [text length] == 0) return @"";
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:text options:0];
+    if (!data) return @"";
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+}
+
+static NSDictionary *TLinkautoJSResultByAdding(NSDictionary *result, NSDictionary *extra)
+{
+    NSMutableDictionary *out = [NSMutableDictionary dictionaryWithDictionary:result ?: @{}];
+    [out addEntriesFromDictionary:extra ?: @{}];
+    return out;
+}
+
+static double TLinkautoJSDoubleOption(NSDictionary *options, NSString *key, double defaultValue)
+{
+    if (![options isKindOfClass:[NSDictionary class]]) return defaultValue;
+    id value = options[key];
+    return value ? [value doubleValue] : defaultValue;
+}
+
+static int TLinkautoJSIntOption(NSDictionary *options, NSString *key, int defaultValue)
+{
+    if (![options isKindOfClass:[NSDictionary class]]) return defaultValue;
+    id value = options[key];
+    return value ? [value intValue] : defaultValue;
+}
+
+static NSString *TLinkautoJSStringOption(NSDictionary *options, NSString *key, NSString *defaultValue)
+{
+    if (![options isKindOfClass:[NSDictionary class]]) return defaultValue;
+    id value = options[key];
+    if ([value isKindOfClass:[NSString class]]) return value;
+    return value ? [value description] : defaultValue;
+}
+
+static BOOL TLinkautoJSStringContainsAny(NSString *value, NSArray<NSString *> *needles)
+{
+    if (![value isKindOfClass:[NSString class]]) return YES;
+    for (NSString *needle in needles) {
+        if ([value rangeOfString:needle].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
+static BOOL TLinkautoJSValidToken(NSString *value)
+{
+    return !TLinkautoJSStringContainsAny(value ?: @"", @[@";;", @"\r", @"\n"]);
+}
+
+static NSString *TLinkautoJSEncodeGesturePoints(NSArray *points)
+{
+    if (![points isKindOfClass:[NSArray class]] || [points count] < 2 || [points count] > 512) return nil;
+    NSMutableArray<NSString *> *encoded = [NSMutableArray arrayWithCapacity:[points count]];
+    for (id item in points) {
+        double x = 0;
+        double y = 0;
+        if ([item isKindOfClass:[NSArray class]] && [item count] >= 2) {
+            NSArray *pair = (NSArray *)item;
+            x = [pair[0] doubleValue];
+            y = [pair[1] doubleValue];
+        } else if ([item isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *dict = (NSDictionary *)item;
+            x = [dict[@"x"] doubleValue];
+            y = [dict[@"y"] doubleValue];
+        } else {
+            return nil;
+        }
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return nil;
+        [encoded addObject:[NSString stringWithFormat:@"%.2f,%.2f", x, y]];
+    }
+    return [encoded componentsJoinedByString:@"|"];
+}
+
+static NSString *TLinkautoJSEncodePointColorTable(NSArray *points)
+{
+    if (![points isKindOfClass:[NSArray class]] || [points count] == 0 || [points count] > 512) return nil;
+    NSMutableArray<NSString *> *encoded = [NSMutableArray arrayWithCapacity:[points count]];
+    for (id item in points) {
+        if (![item isKindOfClass:[NSDictionary class]]) return nil;
+        NSDictionary *dict = (NSDictionary *)item;
+        double x = [dict[@"x"] doubleValue];
+        double y = [dict[@"y"] doubleValue];
+        int r = [dict[@"red"] respondsToSelector:@selector(intValue)] ? [dict[@"red"] intValue] : [dict[@"r"] intValue];
+        int g = [dict[@"green"] respondsToSelector:@selector(intValue)] ? [dict[@"green"] intValue] : [dict[@"g"] intValue];
+        int b = [dict[@"blue"] respondsToSelector:@selector(intValue)] ? [dict[@"blue"] intValue] : [dict[@"b"] intValue];
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return nil;
+        [encoded addObject:[NSString stringWithFormat:@"%.0f;;%.0f;;%d;;%d;;%d", x, y, r, g, b]];
+    }
+    return [encoded componentsJoinedByString:@",,"];
+}
+
+static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *result)
+{
+    NSArray *parts = result[@"parts"];
+    if ([result[@"ok"] boolValue] || [parts count] < 3) return result;
+    return TLinkautoJSResultByAdding(result, @{
+        @"errorCode": TLinkautoJSSafeStringPart(parts, 1),
+        @"errorMessage": TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 2)),
+    });
+}
+
 
 @protocol TLinkInProcessFacadeInterface <NSObject>
 - (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent;
 - (void)trackFrameId:(int)frameId;
 - (void)untrackFrameId:(int)frameId;
+- (void)untrackAllFrameIds;
 - (void)trackImageId:(int)imageId;
 - (void)untrackImageId:(int)imageId;
 @end
@@ -155,6 +272,101 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
         NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration];
         NSDictionary *res = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_SWIPE, payload] context:context];
         return [TLinkJSNativeResponse responseWithValue:res];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodLongPress]) {
+        double x = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : 0;
+        double y = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : 0;
+        double duration = [args count] > 2 ? [[args objectAtIndex:2] doubleValue] : 0;
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(duration)) {
+            return [TLinkJSNativeResponse responseWithError:@"longPress(x, y, duration) requires finite numbers" code:@-1];
+        }
+        if (duration < 0) duration = 0;
+        if (duration > 60000) duration = 60000;
+        NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.0f", x, y, duration];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_TAP, payload] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodGesture]) {
+        NSArray *points = [args count] > 0 ? [args objectAtIndex:0] : @[];
+        NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
+        NSString *encoded = TLinkautoJSEncodeGesturePoints(points);
+        if (!encoded) return [TLinkJSNativeResponse responseWithError:@"gesture(points, options) requires 2-512 points as [x,y] arrays or {x,y} objects" code:@-1];
+        int finger = TLinkautoJSIntOption(options, @"finger", 0);
+        int duration = TLinkautoJSIntOption(options, @"duration", TLinkautoJSIntOption(options, @"durationMs", 300));
+        if (duration < 0) duration = 0;
+        if (duration > 60000) duration = 60000;
+        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%@", finger, duration, encoded];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_GESTURE, payload] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodPickColor]) {
+        double x = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : 0;
+        double y = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : 0;
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
+            return [TLinkJSNativeResponse responseWithError:@"pickColor(x, y) requires finite numbers" code:@-1];
+        }
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%.0f;;%.0f", TASK_COLOR_PICKER, x, y] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 4) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{
+            @"red": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
+            @"green": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
+            @"blue": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
+        })];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodScreenshotRegion]) {
+        NSString *targetPath = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
+        if (TLinkautoJSStringContainsAny(targetPath, @[@";;", @"\r", @"\n"])) {
+            return [TLinkJSNativeResponse responseWithError:@"screenshot path contains unsupported protocol delimiter" code:@-1];
+        }
+        double x = TLinkautoJSDoubleOption(options, @"x", 0);
+        double y = TLinkautoJSDoubleOption(options, @"y", 0);
+        double width = TLinkautoJSDoubleOption(options, @"width", 0);
+        double height = TLinkautoJSDoubleOption(options, @"height", 0);
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
+            return [TLinkJSNativeResponse responseWithError:@"screenshotRegion(path, options) requires finite positive width/height" code:@-1];
+        }
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@;;%.0f;;%.0f;;%.0f;;%.0f", TASK_SCREENSHOT, targetPath, x, y, width, height] context:context];
+        NSArray *parts = result[@"parts"];
+        NSString *resultPath = [parts count] >= 2 ? TLinkautoJSSafeStringPart(parts, 1) : targetPath;
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"path": resultPath ?: @"", @"x": @(x), @"y": @(y), @"width": @(width), @"height": @(height)})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodBatch]) {
+        NSArray *commands = [args count] > 0 ? [args objectAtIndex:0] : @[];
+        if (![commands isKindOfClass:[NSArray class]]) return [TLinkJSNativeResponse responseWithError:@"batch(commands) requires an array" code:@-1];
+        if ([commands count] > 256) return [TLinkJSNativeResponse responseWithError:@"batch(commands) accepts at most 256 commands" code:@-1];
+        NSMutableArray<NSString *> *wireCommands = [NSMutableArray arrayWithCapacity:[commands count]];
+        for (id item in commands) {
+            if ([item isKindOfClass:[NSString class]]) {
+                NSString *raw = (NSString *)item;
+                if (TLinkautoJSStringContainsAny(raw, @[@"||", @"\r", @"\n"])) return [TLinkJSNativeResponse responseWithError:@"raw batch command contains unsupported protocol delimiter" code:@-1];
+                if ([raw hasPrefix:@"62"] || [raw hasPrefix:@"63"] || [raw hasPrefix:@"64"]) [wireCommands addObject:raw];
+                else return [TLinkJSNativeResponse responseWithError:@"raw batch command must start with allowed native task 62/63/64" code:@-1];
+                continue;
+            }
+            if (![item isKindOfClass:[NSDictionary class]]) return [TLinkJSNativeResponse responseWithError:@"batch command must be an object or raw command string" code:@-1];
+            NSDictionary *cmd = (NSDictionary *)item;
+            NSString *type = [[cmd[@"type"] description] lowercaseString];
+            if ([type isEqualToString:@"tap"]) {
+                double x = [cmd[@"x"] doubleValue], y = [cmd[@"y"] doubleValue], duration = cmd[@"duration"] ? [cmd[@"duration"] doubleValue] : 50.0;
+                if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(duration)) return [TLinkJSNativeResponse responseWithError:@"batch tap requires finite x/y/duration" code:@-1];
+                [wireCommands addObject:[NSString stringWithFormat:@"62%.2f;;%.2f;;%.0f", x, y, duration]];
+            } else if ([type isEqualToString:@"swipe"]) {
+                double x1 = [cmd[@"x1"] doubleValue], y1 = [cmd[@"y1"] doubleValue], x2 = [cmd[@"x2"] doubleValue], y2 = [cmd[@"y2"] doubleValue], duration = cmd[@"duration"] ? [cmd[@"duration"] doubleValue] : 300.0;
+                if (!TLinkautoJSIsFiniteNumber(x1) || !TLinkautoJSIsFiniteNumber(y1) || !TLinkautoJSIsFiniteNumber(x2) || !TLinkautoJSIsFiniteNumber(y2) || !TLinkautoJSIsFiniteNumber(duration)) return [TLinkJSNativeResponse responseWithError:@"batch swipe requires finite coordinates/duration" code:@-1];
+                [wireCommands addObject:[NSString stringWithFormat:@"63%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration]];
+            } else if ([type isEqualToString:@"gesture"]) {
+                NSString *encoded = TLinkautoJSEncodeGesturePoints([cmd[@"points"] isKindOfClass:[NSArray class]] ? cmd[@"points"] : nil);
+                if (!encoded) return [TLinkJSNativeResponse responseWithError:@"batch gesture requires 2-512 valid points" code:@-1];
+                int finger = cmd[@"finger"] ? [cmd[@"finger"] intValue] : 0;
+                int duration = cmd[@"duration"] ? [cmd[@"duration"] intValue] : (cmd[@"durationMs"] ? [cmd[@"durationMs"] intValue] : 300);
+                if (duration < 0) duration = 0;
+                if (duration > 60000) duration = 60000;
+                [wireCommands addObject:[NSString stringWithFormat:@"64%d;;%d;;%@", finger, duration, encoded]];
+            } else {
+                return [TLinkJSNativeResponse responseWithError:[NSString stringWithFormat:@"unsupported batch command type: %@", type ?: @""] code:@-1];
+            }
+        }
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_BATCH, [wireCommands componentsJoinedByString:@"||"]] context:context]];
     }
     
     else if ([method isEqualToString:TLinkJSNativeMethodRunShell]) {
@@ -295,18 +507,30 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
     }
     else if ([method isEqualToString:TLinkJSNativeMethodCaptureFrame]) {
         NSDictionary *options = [args count] > 0 ? [args objectAtIndex:0] : @{};
-        int format = [options[@"format"] respondsToSelector:@selector(intValue)] ? [options[@"format"] intValue] : 1;
-        if (format < 0) format = 1;
-        double scale = [options[@"scale"] respondsToSelector:@selector(doubleValue)] ? [options[@"scale"] doubleValue] : 1.0;
-        double quality = [options[@"quality"] respondsToSelector:@selector(doubleValue)] ? [options[@"quality"] doubleValue] : 0.8;
-        NSString *payload = [NSString stringWithFormat:@"1;;%d;;%.4f;;%.4f", format, scale, quality];
+        int gray = TLinkautoJSIntOption(options, @"gray", 1);
+        int bgra = TLinkautoJSIntOption(options, @"bgra", 1);
+        int ttlMs = TLinkautoJSIntOption(options, @"ttlMs", 1000);
+        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%d", gray ? 1 : 0, bgra ? 1 : 0, ttlMs];
         NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_FRAME_CAPTURE, payload] context:context];
         NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        if (![result[@"ok"] boolValue] || [parts count] < 14) return [TLinkJSNativeResponse responseWithValue:result];
         int frameId = [parts[1] intValue];
         [runtime trackFrameId:frameId];
         NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
         res[@"id"] = @(frameId);
+        res[@"width"] = @([TLinkautoJSSafeStringPart(parts, 2) intValue]);
+        res[@"height"] = @([TLinkautoJSSafeStringPart(parts, 3) intValue]);
+        res[@"bytesPerRow"] = @([TLinkautoJSSafeStringPart(parts, 4) intValue]);
+        res[@"scale"] = @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]);
+        res[@"coord"] = TLinkautoJSSafeStringPart(parts, 6);
+        res[@"format"] = TLinkautoJSSafeStringPart(parts, 7);
+        res[@"hasBGRA"] = @([TLinkautoJSSafeStringPart(parts, 8) intValue] != 0);
+        res[@"hasGray"] = @([TLinkautoJSSafeStringPart(parts, 9) intValue] != 0);
+        res[@"createdAtMs"] = @([TLinkautoJSSafeStringPart(parts, 10) longLongValue]);
+        res[@"captureMs"] = @([TLinkautoJSSafeStringPart(parts, 11) doubleValue]);
+        res[@"bgraMs"] = @([TLinkautoJSSafeStringPart(parts, 12) doubleValue]);
+        res[@"grayMs"] = @([TLinkautoJSSafeStringPart(parts, 13) doubleValue]);
+        if ([parts count] > 14) res[@"totalMs"] = @([TLinkautoJSSafeStringPart(parts, 14) doubleValue]);
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseFrame]) {
@@ -315,6 +539,15 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
         NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%d", TASK_FRAME_RELEASE, frameId] context:context];
         if ([result[@"ok"] boolValue]) [runtime untrackFrameId:frameId];
         return [TLinkJSNativeResponse responseWithValue:result];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodReleaseAllFrames]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02dall", TASK_FRAME_RELEASE] context:context];
+        if ([result[@"ok"] boolValue] && [runtime respondsToSelector:@selector(untrackAllFrameIds)]) {
+            [(id)runtime untrackAllFrameIds];
+        }
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"released": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodOpenImage]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
@@ -328,6 +561,10 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
         [runtime trackImageId:imageId];
         NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
         res[@"id"] = @(imageId);
+        if ([parts count] > 3) {
+            res[@"width"] = @([TLinkautoJSSafeStringPart(parts, 2) intValue]);
+            res[@"height"] = @([TLinkautoJSSafeStringPart(parts, 3) intValue]);
+        }
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     
@@ -346,6 +583,10 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
         [runtime trackImageId:imageId];
         NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
         res[@"id"] = @(imageId);
+        if ([parts count] > 3) {
+            res[@"width"] = @([TLinkautoJSSafeStringPart(parts, 2) intValue]);
+            res[@"height"] = @([TLinkautoJSSafeStringPart(parts, 3) intValue]);
+        }
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage]) {
@@ -354,6 +595,149 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
         NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d3;;%d", TASK_IMAGE_OBJECT, imageId] context:context];
         if ([result[@"ok"] boolValue]) [runtime untrackImageId:imageId];
         return [TLinkJSNativeResponse responseWithValue:result];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColor]) {
+        int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        double x = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : 0;
+        double y = [args count] > 2 ? [[args objectAtIndex:2] doubleValue] : 0;
+        NSDictionary *options = [args count] > 3 ? [args objectAtIndex:3] : @{};
+        if (frameId <= 0 || !TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return [TLinkJSNativeResponse responseWithError:@"framePickColor(frameId, x, y) requires a frame id and finite coordinates" code:@-1];
+        NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+        if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
+        int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+        NSString *payload = [NSString stringWithFormat:@"%d;;pick;;%.0f;;%.0f;;%@;;%d", frameId, x, y, coord, maxAgeMs];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 7) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"red": @([TLinkautoJSSafeStringPart(parts, 1) intValue]), @"green": @([TLinkautoJSSafeStringPart(parts, 2) intValue]), @"blue": @([TLinkautoJSSafeStringPart(parts, 3) intValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 4) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColors]) {
+        int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        NSArray *points = [args count] > 1 ? [args objectAtIndex:1] : @[];
+        NSDictionary *options = [args count] > 2 ? [args objectAtIndex:2] : @{};
+        if (frameId <= 0 || ![points isKindOfClass:[NSArray class]] || [points count] == 0) return [TLinkJSNativeResponse responseWithError:@"framePickColors(frameId, points) requires a frame id and non-empty points array" code:@-1];
+        NSMutableArray<NSString *> *encoded = [NSMutableArray arrayWithCapacity:[points count]];
+        for (id point in points) {
+            double x = 0, y = 0;
+            if ([point isKindOfClass:[NSArray class]] && [point count] >= 2) {
+                NSArray *arrayPoint = (NSArray *)point;
+                x = [arrayPoint[0] doubleValue];
+                y = [arrayPoint[1] doubleValue];
+            }
+            else if ([point isKindOfClass:[NSDictionary class]]) {
+                NSDictionary *dictPoint = (NSDictionary *)point;
+                x = [dictPoint[@"x"] doubleValue];
+                y = [dictPoint[@"y"] doubleValue];
+            }
+            else return [TLinkJSNativeResponse responseWithError:@"framePickColors points must be [x,y] arrays or {x,y} objects" code:@-1];
+            if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return [TLinkJSNativeResponse responseWithError:@"framePickColors points require finite coordinates" code:@-1];
+            [encoded addObject:[NSString stringWithFormat:@"%.0f,%.0f", x, y]];
+        }
+        NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+        if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
+        int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+        NSString *payload = [NSString stringWithFormat:@"%d;;pick_many;;%@;;%@;;%d", frameId, [encoded componentsJoinedByString:@"|"], coord, maxAgeMs];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 5) return [TLinkJSNativeResponse responseWithValue:result];
+        NSMutableArray *colors = [NSMutableArray array];
+        for (NSString *item in [TLinkautoJSSafeStringPart(parts, 1) componentsSeparatedByString:@"|"]) {
+            NSArray *fields = [item componentsSeparatedByString:@","];
+            if ([fields count] == 5) [colors addObject:@{@"x": @([fields[0] intValue]), @"y": @([fields[1] intValue]), @"red": @([fields[2] intValue]), @"green": @([fields[3] intValue]), @"blue": @([fields[4] intValue])}];
+        }
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"colors": colors, @"ageMs": @([TLinkautoJSSafeStringPart(parts, 2) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 3) doubleValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFrameFindColor]) {
+        int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
+        if (frameId <= 0) return [TLinkJSNativeResponse responseWithError:@"frameFindColor(frameId, options) requires a positive frame id" code:@-1];
+        double x = TLinkautoJSDoubleOption(options, @"x", 0), y = TLinkautoJSDoubleOption(options, @"y", 0), width = TLinkautoJSDoubleOption(options, @"width", 0), height = TLinkautoJSDoubleOption(options, @"height", 0);
+        NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+        if (!TLinkautoJSValidToken(coord) || !TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) return [TLinkJSNativeResponse responseWithError:@"frameFindColor options require finite x/y/width/height and valid coord" code:@-1];
+        NSString *payload = [NSString stringWithFormat:@"%d;;search_single;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d;;%@;;%d", frameId, x, y, width, height, TLinkautoJSIntOption(options, @"redMin", TLinkautoJSIntOption(options, @"rMin", 0)), TLinkautoJSIntOption(options, @"redMax", TLinkautoJSIntOption(options, @"rMax", 255)), TLinkautoJSIntOption(options, @"greenMin", TLinkautoJSIntOption(options, @"gMin", 0)), TLinkautoJSIntOption(options, @"greenMax", TLinkautoJSIntOption(options, @"gMax", 255)), TLinkautoJSIntOption(options, @"blueMin", TLinkautoJSIntOption(options, @"bMin", 0)), TLinkautoJSIntOption(options, @"blueMax", TLinkautoJSIntOption(options, @"bMax", 255)), TLinkautoJSIntOption(options, @"skip", 0), coord, TLinkautoJSIntOption(options, @"maxAgeMs", 1000)];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 9) return [TLinkJSNativeResponse responseWithValue:result];
+        int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue], foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY), @"red": @([TLinkautoJSSafeStringPart(parts, 3) intValue]), @"green": @([TLinkautoJSSafeStringPart(parts, 4) intValue]), @"blue": @([TLinkautoJSSafeStringPart(parts, 5) intValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 6) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 7) doubleValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFrameIsColors] || [method isEqualToString:TLinkJSNativeMethodFrameFindMultiColor]) {
+        int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        NSArray *points = [args count] > 1 ? [args objectAtIndex:1] : @[];
+        NSDictionary *options = [args count] > 2 ? [args objectAtIndex:2] : @{};
+        NSString *table = TLinkautoJSEncodePointColorTable(points);
+        if (frameId <= 0 || !table) return [TLinkJSNativeResponse responseWithError:@"frame color method requires a frame id and point colors" code:@-1];
+        NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+        if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
+        int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
+        if ([method isEqualToString:TLinkJSNativeMethodFrameIsColors]) {
+            NSString *payload = [NSString stringWithFormat:@"%d;;is_colors;;%@;;%d;;%.4f;;%@;;%d", frameId, table, TLinkautoJSIntOption(options, @"mode", 1), TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0)), coord, maxAgeMs];
+            NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
+            NSArray *parts = result[@"parts"];
+            if (![result[@"ok"] boolValue] || [parts count] < 5) return [TLinkJSNativeResponse responseWithValue:result];
+            BOOL matched = [TLinkautoJSSafeStringPart(parts, 1) intValue] != 0;
+            return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"matched": @(matched), @"value": @(matched), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 2) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 3) doubleValue])})];
+        }
+        double x = TLinkautoJSDoubleOption(options, @"x", 0), y = TLinkautoJSDoubleOption(options, @"y", 0), width = TLinkautoJSDoubleOption(options, @"width", 0), height = TLinkautoJSDoubleOption(options, @"height", 0);
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) return [TLinkJSNativeResponse responseWithError:@"frameFindMultiColor options require finite x/y/width/height" code:@-1];
+        NSString *payload = [NSString stringWithFormat:@"%d;;find_multi_point;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d;;%@;;%d", frameId, x, y, width, height, table, TLinkautoJSIntOption(options, @"mode", 1), TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0)), TLinkautoJSIntOption(options, @"skip", 0), coord, maxAgeMs];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 6) return [TLinkJSNativeResponse responseWithValue:result];
+        int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue], foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 3) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 4) doubleValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFindImageInFrame]) {
+        int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        int imageId = [args count] > 1 ? [[args objectAtIndex:1] intValue] : 0;
+        NSDictionary *options = [args count] > 2 ? [args objectAtIndex:2] : @{};
+        if (frameId <= 0 || imageId <= 0) return [TLinkJSNativeResponse responseWithError:@"findImageInFrame(frameId, imageId, options) requires positive ids" code:@-1];
+        NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+        if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
+        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%.0f;;%.0f;;%.0f;;%.0f;;%.4f;;%.4f;;%.4f;;%.4f;;%d;;%@;;%d", frameId, imageId, TLinkautoJSDoubleOption(options, @"x", 0), TLinkautoJSDoubleOption(options, @"y", 0), TLinkautoJSDoubleOption(options, @"width", 0), TLinkautoJSDoubleOption(options, @"height", 0), TLinkautoJSDoubleOption(options, @"acceptable", 0.95), TLinkautoJSDoubleOption(options, @"scaleMin", 1.0), TLinkautoJSDoubleOption(options, @"scaleMax", 1.0), TLinkautoJSDoubleOption(options, @"scaleStep", 1.0), TLinkautoJSIntOption(options, @"pixelSkip", 0), coord, TLinkautoJSIntOption(options, @"maxAgeMs", 1000)];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_FIND_IMAGE_IN_FRAME, payload] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 11) return [TLinkJSNativeResponse responseWithValue:result];
+        int matchX = [TLinkautoJSSafeStringPart(parts, 1) intValue], matchY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"matched": @(matchX >= 0 && matchY >= 0), @"x": @(matchX), @"y": @(matchY), @"width": @([TLinkautoJSSafeStringPart(parts, 3) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 4) intValue]), @"centerX": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]), @"centerY": @([TLinkautoJSSafeStringPart(parts, 6) doubleValue]), @"score": @([TLinkautoJSSafeStringPart(parts, 7) doubleValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 8) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 9) doubleValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodOcrLanguages]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02dcheck_langs", TASK_OCR_TESSERACT_REGION] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:TLinkautoJSOCRResultByAddingDecodedError(result)];
+        NSString *langsText = TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 2));
+        NSArray *langs = [langsText length] > 0 ? [langsText componentsSeparatedByString:@","] : @[];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"languages": langs, @"value": langsText ?: @""})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodOcrFrame]) {
+        int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
+        if ([context.cancellationToken isCancelled]) return [TLinkJSNativeResponse responseWithError:@"JavaScript execution was aborted" code:@-1];
+        if (frameId <= 0) return [TLinkJSNativeResponse responseWithError:@"ocrFrame(frameId, options) requires a positive frame id" code:@-1];
+        double x = TLinkautoJSDoubleOption(options, @"x", 0), y = TLinkautoJSDoubleOption(options, @"y", 0), width = TLinkautoJSDoubleOption(options, @"width", 0), height = TLinkautoJSDoubleOption(options, @"height", 0);
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) return [TLinkJSNativeResponse responseWithError:@"ocrFrame options require finite x/y/width/height" code:@-1];
+        NSString *lang = TLinkautoJSStringOption(options, @"lang", @"vie");
+        NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
+        if (!TLinkautoJSValidToken(lang) || !TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"ocrFrame lang/coord contains unsupported protocol delimiter" code:@-1];
+        NSString *payload = [NSString stringWithFormat:@"%d;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%d;;%@;;%d;;%d;;%@;;%d", frameId, x, y, width, height, lang, TLinkautoJSIntOption(options, @"oem", 1), TLinkautoJSIntOption(options, @"psm", 7), TLinkautoJSBase64Encode(TLinkautoJSStringOption(options, @"whitelist", @"")), TLinkautoJSIntOption(options, @"scaleUp", 2), TLinkautoJSIntOption(options, @"thresholdMode", 0), coord, TLinkautoJSIntOption(options, @"maxAgeMs", 1000)];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_OCR_TESSERACT_REGION, payload] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:TLinkautoJSOCRResultByAddingDecodedError(result)];
+        if ([parts count] < 7) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"text": TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 1)), @"confidence": @([TLinkautoJSSafeStringPart(parts, 2) doubleValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 3) longLongValue]), @"ocrMs": @([TLinkautoJSSafeStringPart(parts, 4) doubleValue]), @"preprocessMs": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 6) doubleValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodOcr]) {
+        NSDictionary *options = [args count] > 0 ? [args objectAtIndex:0] : @{};
+        TLinkJSNativeResponse *frameRes = [self executeRequest:[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodCaptureFrame arguments:@[@{@"gray": @1, @"bgra": @0, @"ttlMs": @(TLinkautoJSIntOption(options, @"ttlMs", 1000))}]] context:context error:error];
+        NSDictionary *frame = frameRes.value;
+        if (![frame[@"ok"] boolValue]) return frameRes;
+        int frameId = [frame[@"id"] intValue];
+        NSMutableDictionary *ocrOptions = [NSMutableDictionary dictionaryWithDictionary:[options isKindOfClass:[NSDictionary class]] ? options : @{}];
+        if (!ocrOptions[@"width"]) ocrOptions[@"width"] = frame[@"width"] ?: @0;
+        if (!ocrOptions[@"height"]) ocrOptions[@"height"] = frame[@"height"] ?: @0;
+        TLinkJSNativeResponse *ocrRes = [self executeRequest:[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodOcrFrame arguments:@[@(frameId), ocrOptions]] context:context error:error];
+        [self executeRequest:[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodReleaseFrame arguments:@[@(frameId)]] context:context error:nil];
+        return ocrRes;
     }
     
     else if ([method isEqualToString:TLinkJSNativeMethodMatchTemplate]) {
