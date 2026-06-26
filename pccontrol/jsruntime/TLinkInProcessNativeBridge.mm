@@ -849,6 +849,103 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
         if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:result];
         return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"state": @([TLinkautoJSSafeStringPart(parts, 1) intValue]), @"level": @([TLinkautoJSSafeStringPart(parts, 2) doubleValue])})];
     }
+    else if ([method isEqualToString:TLinkJSNativeMethodAlert]) {
+        NSString *title = [args count] > 0 ? [args objectAtIndex:0] : @"TLinkauto";
+        NSString *message = [args count] > 1 ? [args objectAtIndex:1] : @"";
+        int duration = [args count] > 2 ? [[args objectAtIndex:2] intValue] : 3;
+        if (duration <= 0) duration = 3;
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%@;;%d", TASK_SHOW_ALERT_BOX, title ?: @"TLinkauto", message ?: @"", duration] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodDialog]) {
+        NSString *title = [args count] > 0 ? [args objectAtIndex:0] : @"TLinkauto";
+        NSString *message = [args count] > 1 ? [args objectAtIndex:1] : @"";
+        NSString *ok = [args count] > 2 ? [args objectAtIndex:2] : @"OK";
+        NSString *cancel = [args count] > 3 ? [args objectAtIndex:3] : @"Cancel";
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%@;;%@;;%@", TASK_DIALOG, title ?: @"TLinkauto", message ?: @"", ok ?: @"OK", cancel ?: @"Cancel"] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"response": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodClearDialogValues]) {
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_CLEAR_DIALOG] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodKeyboard]) {
+        int kind = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
+        NSString *content = [args count] > 1 && [args objectAtIndex:1] != [NSNull null] ? [args objectAtIndex:1] : nil;
+        NSString *payload = content ? [NSString stringWithFormat:@"%d;;%@", kind, content] : [NSString stringWithFormat:@"%d", kind];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEXT_INPUT, payload] context:context];
+        if (kind != 6) return [TLinkJSNativeResponse responseWithValue:result];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"text": TLinkautoJSSafeStringPart(parts, 1)})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey]) {
+        int keyAction = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
+        int keyType = [args count] > 1 ? [[args objectAtIndex:1] intValue] : -1;
+        if (keyType <= 0 || keyAction < 0) return [TLinkJSNativeResponse responseWithError:@"hardwareKey requires valid normalized key/action" code:@-1];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%d;;%d", TASK_HARDWARE_KEY, keyAction, keyType] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey]) {
+        int keyType = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
+        if (keyType <= 0) return [TLinkJSNativeResponse responseWithError:@"pressHardwareKey requires valid normalized key" code:@-1];
+        TLinkJSNativeResponse *down = [self executeRequest:[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodHardwareKey arguments:@[@1, @(keyType)]] context:context error:error];
+        NSDictionary *downValue = down.value;
+        if (![downValue[@"ok"] boolValue]) return down;
+        [NSThread sleepForTimeInterval:0.05];
+        TLinkJSNativeResponse *up = [self executeRequest:[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodHardwareKey arguments:@[@0, @(keyType)]] context:context error:error];
+        if (up.ok) up.value = TLinkautoJSResultByAdding(up.value, @{@"down": downValue ?: @{}});
+        return up;
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake]) {
+        BOOL enabled = [args count] > 0 ? [[args objectAtIndex:0] boolValue] : NO;
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_KEEP_AWAKE, enabled ? @"1" : @"0"] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodTouchIndicator]) {
+        int value = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
+        if (value < 0) return [TLinkJSNativeResponse responseWithError:@"touchIndicator requires valid normalized action" code:@-1];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%d", TASK_TOUCH_INDICATOR, value] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodSaveScreenshotToAlbum]) {
+        NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        if (!TLinkautoJSValidProtocolString(path)) return [TLinkJSNativeResponse responseWithError:@"saveScreenshotToAlbum(path) requires a valid path" code:@-1];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%@", TASK_SCREENSHOT, path] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodClearScreenshotAlbum]) {
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d3", TASK_SCREENSHOT] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodSetAutoLaunch]) {
+        NSString *name = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        NSString *script = [args count] > 1 ? [args objectAtIndex:1] : @"";
+        BOOL enabled = [args count] > 2 ? [[args objectAtIndex:2] boolValue] : NO;
+        if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script)) return [TLinkJSNativeResponse responseWithError:@"setAutoLaunch(name, script, enabled) requires valid name and script path" code:@-1];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%@;;%d", TASK_SET_AUTO_LAUNCH, name, script, enabled ? 1 : 0] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodListAutoLaunch]) {
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_LIST_AUTO_LAUNCH] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:result];
+        NSMutableArray *items = [NSMutableArray array];
+        for (NSUInteger i = 1; i < [parts count]; i++) {
+            NSString *entry = TLinkautoJSSafeStringPart(parts, i);
+            if ([entry length] == 0) continue;
+            NSArray *fields = [entry componentsSeparatedByString:@",,"];
+            if ([fields count] >= 3) [items addObject:@{@"name": TLinkautoJSSafeStringPart(fields, 0), @"script": TLinkautoJSSafeStringPart(fields, 1), @"enabled": @([TLinkautoJSSafeStringPart(fields, 2) intValue] != 0)}];
+        }
+        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"items": items})];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodSetTimer]) {
+        NSString *name = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        double interval = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : 0;
+        BOOL repeat = [args count] > 2 ? [[args objectAtIndex:2] boolValue] : NO;
+        NSString *script = [args count] > 3 ? [args objectAtIndex:3] : @"";
+        if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script) || !TLinkautoJSIsFiniteNumber(interval) || interval <= 0) return [TLinkJSNativeResponse responseWithError:@"setTimer(name, interval, repeat, script) requires valid values" code:@-1];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%.3f;;%d;;%@", TASK_SET_TIMER, name, interval, repeat ? 1 : 0, script] context:context]];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodRemoveTimer]) {
+        NSString *name = [args count] > 0 ? [args objectAtIndex:0] : @"";
+        if (!TLinkautoJSValidProtocolString(name)) return [TLinkJSNativeResponse responseWithError:@"removeTimer(name) requires a valid timer name" code:@-1];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_REMOVE_TIMER, name] context:context]];
+    }
     
     else if ([method isEqualToString:TLinkJSNativeMethodMatchTemplate]) {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";

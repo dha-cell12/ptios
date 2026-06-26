@@ -1014,8 +1014,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 {
     NSString *safeTitle = TLinkautoJSSanitizeProtocolText(title ?: @"TLinkauto", 80);
     NSString *safeMessage = TLinkautoJSSanitizeProtocolText(message ?: @"", 300);
-    if (duration <= 0) duration = 3;
-    return [self runTask:TASK_SHOW_ALERT_BOX payload:[NSString stringWithFormat:@"%@;;%@;;%d", safeTitle, safeMessage, duration]];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodAlert arguments:@[safeTitle ?: @"TLinkauto", safeMessage ?: @"", @(duration)]];
 }
 
 - (NSDictionary *)dialog:(NSDictionary *)options
@@ -1024,21 +1023,18 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSString *message = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"message", @""), 300);
     NSString *ok = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"ok", @"OK"), 40);
     NSString *cancel = TLinkautoJSSanitizeProtocolText(TLinkautoJSStringOption(options, @"cancel", @"Cancel"), 40);
-    NSDictionary *result = [self runTask:TASK_DIALOG payload:[NSString stringWithFormat:@"%@;;%@;;%@;;%@", title, message, ok, cancel]];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue] || [parts count] < 2) return result;
-    return TLinkautoJSResultByAdding(result, @{ @"response": @([TLinkautoJSSafeStringPart(parts, 1) intValue]) });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodDialog arguments:@[title ?: @"TLinkauto", message ?: @"", ok ?: @"OK", cancel ?: @"Cancel"]];
 }
 
 - (NSDictionary *)clearDialogValues
 {
-    return [self runTask:TASK_CLEAR_DIALOG payload:@""];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodClearDialogValues arguments:@[]];
 }
 
 - (NSDictionary *)keyboardTask:(int)kind content:(NSString *)content
 {
-    NSString *payload = content ? [NSString stringWithFormat:@"%d;;%@", kind, TLinkautoJSSanitizeProtocolText(content, 2048)] : [NSString stringWithFormat:@"%d", kind];
-    return [self runTask:TASK_TEXT_INPUT payload:payload];
+    NSString *safeContent = content ? TLinkautoJSSanitizeProtocolText(content, 2048) : nil;
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodKeyboard arguments:@[@(kind), safeContent ?: [NSNull null]]];
 }
 
 - (NSDictionary *)showKeyboard
@@ -1096,21 +1092,22 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         [self.runtime throwError:@"hardwareKey(key, action) supports key home/volume-up/volume-down/lock and action down/up"];
         return @{ @"ok": @NO };
     }
-    return [self runTask:TASK_HARDWARE_KEY payload:[NSString stringWithFormat:@"%d;;%d", keyAction, keyType]];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodHardwareKey arguments:@[@(keyAction), @(keyType)]];
 }
 
 - (NSDictionary *)pressHardwareKey:(NSString *)key
 {
-    NSDictionary *down = [self hardwareKey:key action:@"down"];
-    if (![down[@"ok"] boolValue]) return down;
-    [NSThread sleepForTimeInterval:0.05];
-    NSDictionary *up = [self hardwareKey:key action:@"up"];
-    return TLinkautoJSResultByAdding(up, @{ @"down": down });
+    int keyType = TLinkautoJSHardwareKeyType(key);
+    if (keyType <= 0) {
+        [self.runtime throwError:@"pressHardwareKey(key) supports key home/volume-up/volume-down/lock"];
+        return @{ @"ok": @NO };
+    }
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodPressHardwareKey arguments:@[@(keyType)]];
 }
 
 - (NSDictionary *)keepAwake:(BOOL)enabled
 {
-    return [self runTask:TASK_KEEP_AWAKE payload:(enabled ? @"1" : @"0")];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodKeepAwake arguments:@[@(enabled)]];
 }
 
 - (NSDictionary *)touchIndicator:(NSString *)action
@@ -1120,7 +1117,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         [self.runtime throwError:@"touchIndicator(action) supports show/hide/reload"];
         return @{ @"ok": @NO };
     }
-    return [self runTask:TASK_TOUCH_INDICATOR payload:[NSString stringWithFormat:@"%d", value]];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodTouchIndicator arguments:@[@(value)]];
 }
 
 - (NSDictionary *)pathTask:(int)task key:(NSString *)key
@@ -1162,16 +1159,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)saveScreenshotToAlbum:(NSString *)path
 {
-    if (!TLinkautoJSValidProtocolString(path)) {
-        [self.runtime throwError:@"saveScreenshotToAlbum(path) requires a valid path"];
-        return @{ @"ok": @NO };
-    }
-    return [self runTask:TASK_SCREENSHOT payload:[NSString stringWithFormat:@"2;;%@", path]];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodSaveScreenshotToAlbum arguments:@[path ?: @""]];
 }
 
 - (NSDictionary *)clearScreenshotAlbum
 {
-    return [self runTask:TASK_SCREENSHOT payload:@"3"];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodClearScreenshotAlbum arguments:@[]];
 }
 
 - (NSDictionary *)matchTemplate:(NSString *)path options:(NSDictionary *)options
@@ -1196,50 +1189,22 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSDictionary *)setAutoLaunch:(NSString *)name script:(NSString *)script enabled:(BOOL)enabled
 {
-    if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script)) {
-        [self.runtime throwError:@"setAutoLaunch(name, script, enabled) requires valid name and script path"];
-        return @{ @"ok": @NO };
-    }
-    return [self runTask:TASK_SET_AUTO_LAUNCH payload:[NSString stringWithFormat:@"%@;;%@;;%d", name, script, enabled ? 1 : 0]];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodSetAutoLaunch arguments:@[name ?: @"", script ?: @"", @(enabled)]];
 }
 
 - (NSDictionary *)listAutoLaunch
 {
-    NSDictionary *result = [self runTask:TASK_LIST_AUTO_LAUNCH payload:@""];
-    NSArray *parts = result[@"parts"];
-    if (![result[@"ok"] boolValue]) return result;
-    NSMutableArray *items = [NSMutableArray array];
-    for (NSUInteger i = 1; i < [parts count]; i++) {
-        NSString *entry = TLinkautoJSSafeStringPart(parts, i);
-        if ([entry length] == 0) continue;
-        NSArray *fields = [entry componentsSeparatedByString:@",,"];
-        if ([fields count] >= 3) {
-            [items addObject:@{
-                @"name": TLinkautoJSSafeStringPart(fields, 0),
-                @"script": TLinkautoJSSafeStringPart(fields, 1),
-                @"enabled": @([TLinkautoJSSafeStringPart(fields, 2) intValue] != 0),
-            }];
-        }
-    }
-    return TLinkautoJSResultByAdding(result, @{ @"items": items });
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodListAutoLaunch arguments:@[]];
 }
 
 - (NSDictionary *)setTimer:(NSString *)name interval:(double)interval repeat:(BOOL)repeat script:(NSString *)script
 {
-    if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script) || !TLinkautoJSIsFiniteNumber(interval) || interval <= 0) {
-        [self.runtime throwError:@"setTimer(name, interval, repeat, script) requires valid values"];
-        return @{ @"ok": @NO };
-    }
-    return [self runTask:TASK_SET_TIMER payload:[NSString stringWithFormat:@"%@;;%.3f;;%d;;%@", name, interval, repeat ? 1 : 0, script]];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodSetTimer arguments:@[name ?: @"", @(interval), @(repeat), script ?: @""]];
 }
 
 - (NSDictionary *)removeTimer:(NSString *)name
 {
-    if (!TLinkautoJSValidProtocolString(name)) {
-        [self.runtime throwError:@"removeTimer(name) requires a valid timer name"];
-        return @{ @"ok": @NO };
-    }
-    return [self runTask:TASK_REMOVE_TIMER payload:name];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodRemoveTimer arguments:@[name ?: @""]];
 }
 
 - (NSDictionary *)readText:(NSString *)path
