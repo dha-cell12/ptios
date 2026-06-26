@@ -638,7 +638,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (BOOL)isAborted
 {
-    return [_core isAborted];
+    return _cancelState->aborted.load(std::memory_order_acquire) || [_core isAborted];
 }
 
 - (void)setAbortExceptionIfNeeded
@@ -785,11 +785,21 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _helperRunId = [payload[@"runId"] copy];
     _helperConsoleLogPath = [payload[@"consoleLogPath"] copy];
     _helperConsoleLatestLogPath = [payload[@"consoleLatestLogPath"] copy];
+    id timeoutValue = manifest[@"helperTimeoutMs"] ?: manifest[@"helper_timeout_ms"];
+    double timeoutMs = [timeoutValue respondsToSelector:@selector(doubleValue)] ? [timeoutValue doubleValue] : 10000.0;
+    if (!TLinkautoJSIsFiniteNumber(timeoutMs) || timeoutMs <= 0) timeoutMs = 10000.0;
+    if (timeoutMs > 5.0 * 60.0 * 1000.0) timeoutMs = 5.0 * 60.0 * 1000.0;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:(timeoutMs / 1000.0)];
     BOOL ok = NO;
     NSString *failure = nil;
     @try {
         while (!_cancelState->aborted.load(std::memory_order_acquire)) {
-            NSDictionary *status = [helper statusForSessionId:_helperSessionId timeoutMs:1000];
+            if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+                [helper stopSessionId:_helperSessionId timeoutMs:250];
+                failure = [NSString stringWithFormat:@"JavaScript helper timed out after %.0f ms", timeoutMs];
+                break;
+            }
+            NSDictionary *status = [helper statusForSessionId:_helperSessionId timeoutMs:500];
             if (![status[@"ok"] boolValue]) {
                 failure = [status[@"error"] description] ?: @"status_failed";
                 break;
@@ -808,7 +818,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
                 failure = [statusPayload[@"lastError"] isKindOfClass:[NSString class]] && [statusPayload[@"lastError"] length] ? statusPayload[@"lastError"] : state;
                 break;
             }
-            [NSThread sleepForTimeInterval:0.1];
+            [NSThread sleepForTimeInterval:0.2];
         }
         if (_cancelState->aborted.load(std::memory_order_acquire)) {
             [helper stopSessionId:_helperSessionId timeoutMs:250];

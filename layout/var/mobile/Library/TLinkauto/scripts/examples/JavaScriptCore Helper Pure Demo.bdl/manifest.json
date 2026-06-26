@@ -4,5 +4,6 @@
   "apiVersion": 1,
   "coordinateSpace": "native-pixels",
   "helperRuntimeEnabled": true,
-  "runtimeLocation": "helper"
+  "runtimeLocation": "helper",
+  "helperTimeoutMs": 10000
 }
