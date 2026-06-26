@@ -29,6 +29,7 @@ Helper runtime opt-in:
 - Helper logs are written to `_logs/<runId>-helper.log` and `_logs/latest-helper.log`.
 - Debug helper execution outside UI playback with `/usr/libexec/tlinkauto-jsd --run-script /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json`.
 - Debug the daemon socket path with `/usr/libexec/tlinkauto-jsd --client-run /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json` while launchd helper is running.
+- Check daemon socket health with `/usr/libexec/tlinkauto-jsd --client-handshake` and `/usr/libexec/tlinkauto-jsd --client-status`.
 
 Bundle modules:
 

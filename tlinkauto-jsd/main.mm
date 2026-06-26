@@ -140,6 +140,16 @@ int main(int argc, char *argv[], char *envp[]) {
             TLinkJSDPrintJSON(@{ @"state": @"timeout", @"sessionId": sessionId ?: @"" });
             return 2;
         }
+        if (argc >= 2 && strcmp(argv[1], "--client-handshake") == 0) {
+            NSDictionary *result = TLinkJSDClientRequest(kTLinkJSHelperCmdHandshake, @{}, nil);
+            TLinkJSDPrintJSON(result);
+            return [result[@"ok"] boolValue] ? 0 : 2;
+        }
+        if (argc >= 2 && strcmp(argv[1], "--client-status") == 0) {
+            NSDictionary *result = TLinkJSDClientRequest(kTLinkJSHelperCmdStatus, @{}, nil);
+            TLinkJSDPrintJSON(result);
+            return [result[@"ok"] boolValue] ? 0 : 2;
+        }
         [server run];
     }
     return 0;
