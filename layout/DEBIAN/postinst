@@ -39,4 +39,8 @@ rm -f /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 rm -f /usr/bin/zxtouchd /usr/bin/zxtouchb 2>/dev/null
 rm -f /var/mobile/Library/TLinkauto/run/js-helper.sock 2>/dev/null
 launchctl load -w /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
-launchctl load -w /Library/LaunchDaemons/com.tlinkauto.js-helper.plist 2>/dev/null
+if [ -x /usr/libexec/tlinkauto-jsd ] && [ -f /Library/LaunchDaemons/com.tlinkauto.js-helper.plist ]; then
+    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.js-helper.plist >/var/mobile/Library/TLinkauto/js-helper-launchctl.log 2>&1
+else
+    echo "missing /usr/libexec/tlinkauto-jsd or helper plist" >/var/mobile/Library/TLinkauto/js-helper-launchctl.log
+fi
