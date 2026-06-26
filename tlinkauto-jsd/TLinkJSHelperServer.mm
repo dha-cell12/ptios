@@ -88,6 +88,30 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
     return [joined length] > 0 ? joined : @"script";
 }
 
+static int TLinkJSHelperHardwareKeyType(NSString *key) {
+    NSString *k = [[key ?: @""] lowercaseString];
+    if ([k isEqualToString:@"home"]) return 1;
+    if ([k isEqualToString:@"volume-up"] || [k isEqualToString:@"volumeup"]) return 2;
+    if ([k isEqualToString:@"volume-down"] || [k isEqualToString:@"volumedown"]) return 3;
+    if ([k isEqualToString:@"lock"] || [k isEqualToString:@"power"]) return 4;
+    return -1;
+}
+
+static int TLinkJSHelperHardwareKeyAction(NSString *action) {
+    NSString *a = [[action ?: @""] lowercaseString];
+    if ([a isEqualToString:@"up"]) return 0;
+    if ([a isEqualToString:@"down"]) return 1;
+    return -1;
+}
+
+static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
+    NSString *a = [[action ?: @""] lowercaseString];
+    if ([a isEqualToString:@"show"]) return 1;
+    if ([a isEqualToString:@"hide"]) return 0;
+    if ([a isEqualToString:@"reload"]) return 2;
+    return -1;
+}
+
 - (NSDictionary *)statusPayload
 {
     NSTimeInterval uptimeMs = [[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000.0;
@@ -290,6 +314,54 @@ static NSString *TLinkJSHelperSanitizeFileComponent(NSString *value) {
         device[@"longPress"] = ^NSDictionary *(double x, double y, double duration) {
             return [weakSelf executeNativeRPCMethod:@"longPress" arguments:@[@(x), @(y), @(duration)] sessionId:sessionId];
         };
+        device[@"gesture"] = ^NSDictionary *(NSArray *points, NSDictionary *options) {
+            return [weakSelf executeNativeRPCMethod:@"gesture" arguments:@[points ?: @[], options ?: @{}] sessionId:sessionId];
+        };
+        device[@"pickColor"] = ^NSDictionary *(double x, double y) {
+            return [weakSelf executeNativeRPCMethod:@"pickColor" arguments:@[@(x), @(y)] sessionId:sessionId];
+        };
+        device[@"getScreenSize"] = ^NSDictionary *{
+            return [weakSelf executeNativeRPCMethod:@"getScreenSize" arguments:@[] sessionId:sessionId];
+        };
+        device[@"screenshotTo"] = ^NSDictionary *(NSString *path) {
+            return [weakSelf executeNativeRPCMethod:@"screenshotTo" arguments:@[path ?: @""] sessionId:sessionId];
+        };
+        device[@"screenshotRegion"] = ^NSDictionary *(NSString *path, NSDictionary *options) {
+            return [weakSelf executeNativeRPCMethod:@"screenshotRegion" arguments:@[path ?: @"", options ?: @{}] sessionId:sessionId];
+        };
+        device[@"frontMostAppId"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"frontMostAppId" arguments:@[] sessionId:sessionId]; };
+        device[@"frontMostPid"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"frontMostPid" arguments:@[] sessionId:sessionId]; };
+        device[@"orientation"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"orientation" arguments:@[] sessionId:sessionId]; };
+        device[@"openApp"] = ^NSDictionary *(NSString *bundleId) { return [weakSelf executeNativeRPCMethod:@"openApp" arguments:@[bundleId ?: @""] sessionId:sessionId]; };
+        device[@"killApp"] = ^NSDictionary *(NSString *bundleId) { return [weakSelf executeNativeRPCMethod:@"killApp" arguments:@[bundleId ?: @""] sessionId:sessionId]; };
+        device[@"appState"] = ^NSDictionary *(NSString *bundleId) { return [weakSelf executeNativeRPCMethod:@"appState" arguments:@[bundleId ?: @""] sessionId:sessionId]; };
+        device[@"appInfo"] = ^NSDictionary *(NSString *bundleId) { return [weakSelf executeNativeRPCMethod:@"appInfo" arguments:@[bundleId ?: @""] sessionId:sessionId]; };
+        device[@"appPid"] = ^NSDictionary *(NSString *bundleId) { return [weakSelf executeNativeRPCMethod:@"appPid" arguments:@[bundleId ?: @""] sessionId:sessionId]; };
+        device[@"appPaths"] = ^NSDictionary *(NSString *bundleId) { return [weakSelf executeNativeRPCMethod:@"appPaths" arguments:@[bundleId ?: @""] sessionId:sessionId]; };
+        device[@"listBundles"] = ^NSDictionary *(BOOL withInfo) { return [weakSelf executeNativeRPCMethod:@"listBundles" arguments:@[@(withInfo)] sessionId:sessionId]; };
+        device[@"openUrl"] = ^NSDictionary *(NSString *url) { return [weakSelf executeNativeRPCMethod:@"openUrl" arguments:@[url ?: @""] sessionId:sessionId]; };
+        device[@"wifi"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@55, @"enabled", [NSNull null]] sessionId:sessionId]; };
+        device[@"setWifi"] = ^NSDictionary *(BOOL enabled) { return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@55, @"enabled", @(enabled)] sessionId:sessionId]; };
+        device[@"bluetooth"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@56, @"enabled", [NSNull null]] sessionId:sessionId]; };
+        device[@"setBluetooth"] = ^NSDictionary *(BOOL enabled) { return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@56, @"enabled", @(enabled)] sessionId:sessionId]; };
+        device[@"airplaneMode"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@57, @"enabled", [NSNull null]] sessionId:sessionId]; };
+        device[@"setAirplaneMode"] = ^NSDictionary *(BOOL enabled) { return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@57, @"enabled", @(enabled)] sessionId:sessionId]; };
+        device[@"cellularData"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@58, @"enabled", [NSNull null]] sessionId:sessionId]; };
+        device[@"setCellularData"] = ^NSDictionary *(BOOL enabled) { return [weakSelf executeNativeRPCMethod:@"connectivity" arguments:@[@58, @"enabled", @(enabled)] sessionId:sessionId]; };
+        device[@"rootDir"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"rootDir" arguments:@[] sessionId:sessionId]; };
+        device[@"currentDir"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"currentDir" arguments:@[] sessionId:sessionId]; };
+        device[@"botPath"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"botPath" arguments:@[] sessionId:sessionId]; };
+        device[@"info"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"info" arguments:@[] sessionId:sessionId]; };
+        device[@"batteryInfo"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"batteryInfo" arguments:@[] sessionId:sessionId]; };
+        device[@"hardwareKey"] = ^NSDictionary *(NSString *key, NSString *action) {
+            return [weakSelf executeNativeRPCMethod:@"hardwareKey" arguments:@[@(TLinkJSHelperHardwareKeyAction(action)), @(TLinkJSHelperHardwareKeyType(key))] sessionId:sessionId];
+        };
+        device[@"pressHardwareKey"] = ^NSDictionary *(NSString *key) {
+            return [weakSelf executeNativeRPCMethod:@"pressHardwareKey" arguments:@[@(TLinkJSHelperHardwareKeyType(key))] sessionId:sessionId];
+        };
+        device[@"keepAwake"] = ^NSDictionary *(BOOL enabled) { return [weakSelf executeNativeRPCMethod:@"keepAwake" arguments:@[@(enabled)] sessionId:sessionId]; };
+        device[@"touchIndicator"] = ^NSDictionary *(NSString *action) { return [weakSelf executeNativeRPCMethod:@"touchIndicator" arguments:@[@(TLinkJSHelperTouchIndicatorAction(action))] sessionId:sessionId]; };
+        device[@"runShell"] = ^NSDictionary *(NSString *command, double timeoutSeconds) { return [weakSelf executeNativeRPCMethod:@"runShell" arguments:@[command ?: @"", @(timeoutSeconds)] sessionId:sessionId]; };
         ctx[@"device"] = device;
         NSString *consolePrelude = @"(function(){function fmt(args){return Array.prototype.map.call(args,function(v){try{if(typeof v==='string')return v;return JSON.stringify(v);}catch(e){return String(v);}}).join(' ');}this.console={log:function(){_tlinkautoLog('log',fmt(arguments));},info:function(){_tlinkautoLog('info',fmt(arguments));},warn:function(){_tlinkautoLog('warn',fmt(arguments));},error:function(){_tlinkautoLog('error',fmt(arguments));}};})();";
         NSString *modulePrelude = @"(function(){var cache=Object.create(null);var stack=[];function dirname(p){var i=p.lastIndexOf('/');return i>=0?p.slice(0,i):'';}function normalize(base,req){if(typeof req!=='string'||!req)throw new Error('module path is required');var input=req;if(req.indexOf('./')===0||req.indexOf('../')===0)input=(base?dirname(base)+'/':'')+req;var out=[];input.split('/').forEach(function(part){if(!part||part==='.')return;if(part==='..')out.pop();else out.push(part);});return out.join('/');}function candidates(id){if(/\\.(js|json)$/.test(id))return[id];return[id+'.js',id+'.json',id+'/index.js'];}function loadRecord(id){var last='';var list=candidates(id);for(var i=0;i<list.length;i++){var rec=_tlinkautoLoadBundleText(list[i]);if(rec&&rec.ok)return rec;last=rec&&rec.error?rec.error:'module not found';}throw new Error('Cannot load module '+id+': '+last);}this.require=function(request){var id=normalize(stack.length?stack[stack.length-1]:'',request);var rec=loadRecord(id);if(cache[rec.id])return cache[rec.id].exports;var module={id:rec.id,filename:rec.path,exports:{}};cache[rec.id]=module;if(/\\.json$/.test(rec.id)){module.exports=JSON.parse(rec.source);return module.exports;}stack.push(rec.id);try{var fn=new Function('exports','module','require','device','sleep',rec.source+'\\n//# sourceURL='+rec.path);fn(module.exports,module,this.require,device,sleep);}finally{stack.pop();}return module.exports;};this.include=function(request){var id=normalize(stack.length?stack[stack.length-1]:'',request);var rec=loadRecord(id);return(0,eval)(rec.source+'\\n//# sourceURL='+rec.path);};})();";
