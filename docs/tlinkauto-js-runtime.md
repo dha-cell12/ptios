@@ -25,7 +25,7 @@ Helper runtime opt-in:
 - For safety during Phase 2, helper execution is additionally gated by marker file `/var/mobile/Library/TLinkauto/enable_js_helper_execution`.
 - Phase 2 helper runs have a default 10 second timeout; override with `"helperTimeoutMs": 30000`.
 - Helper execution currently supports pure JS, `console`, `sleep`, `require`, `include`, and `device.runtimeInfo()`.
-- Phase 3 helper native RPC supports `device.toast`, `tap`, `swipe`, `longPress`, `gesture`, `pickColor`, explicit-path screenshot APIs, screen size, foreground app/process queries, app info/state/path queries, bundle listing, URL opening, connectivity queries/setters, runtime paths, device/battery info, hardware keys, keep-awake, touch indicator, and debug `runShell` through SpringBoard while running via UI playback.
+- Phase 3 helper native RPC supports `device.toast`, `tap`, `swipe`, `longPress`, `gesture`, `pickColor`, explicit-path screenshot APIs, screen size, foreground app/process queries, app info/state/path queries, bundle listing, URL opening, connectivity queries/setters, runtime paths, device/battery info, alert/dialog, keyboard/clipboard helpers, hardware keys, keep-awake, touch indicator, and debug `runShell` through SpringBoard while running via UI playback.
 - Bundle storage and frame/image/OCR handle APIs still run only in the default in-process runtime until cross-process handle ownership is finalized.
 - Toast `type: 0` hides the current toast; use `1`-`4` to display one.
 - Other native `device.*` automation APIs still run through the default in-process runtime until they are explicitly added to native RPC.

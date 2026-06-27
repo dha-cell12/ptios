@@ -353,6 +353,20 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         device[@"botPath"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"botPath" arguments:@[] sessionId:sessionId]; };
         device[@"info"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"info" arguments:@[] sessionId:sessionId]; };
         device[@"batteryInfo"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"batteryInfo" arguments:@[] sessionId:sessionId]; };
+        device[@"alert"] = ^NSDictionary *(NSString *title, NSString *message, int duration) { return [weakSelf executeNativeRPCMethod:@"alert" arguments:@[title ?: @"TLinkauto", message ?: @"", @(duration)] sessionId:sessionId]; };
+        device[@"dialog"] = ^NSDictionary *(NSDictionary *options) {
+            options = [options isKindOfClass:[NSDictionary class]] ? options : @{};
+            return [weakSelf executeNativeRPCMethod:@"dialog" arguments:@[options[@"title"] ?: @"TLinkauto", options[@"message"] ?: @"", options[@"ok"] ?: @"OK", options[@"cancel"] ?: @"Cancel"] sessionId:sessionId];
+        };
+        device[@"clearDialogValues"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"clearDialogValues" arguments:@[] sessionId:sessionId]; };
+        device[@"showKeyboard"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@2, @"2"] sessionId:sessionId]; };
+        device[@"hideKeyboard"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@2, @"1"] sessionId:sessionId]; };
+        device[@"insertText"] = ^NSDictionary *(NSString *text) { return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@1, text ?: @""] sessionId:sessionId]; };
+        device[@"deleteCharacters"] = ^NSDictionary *(int count) { return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@4, [NSString stringWithFormat:@"%d", count > 0 ? count : 1]] sessionId:sessionId]; };
+        device[@"moveCursor"] = ^NSDictionary *(int offset) { return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@3, [NSString stringWithFormat:@"%d", offset]] sessionId:sessionId]; };
+        device[@"pasteFromClipboard"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@5, [NSNull null]] sessionId:sessionId]; };
+        device[@"getClipboardText"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@6, [NSNull null]] sessionId:sessionId]; };
+        device[@"setClipboardText"] = ^NSDictionary *(NSString *text) { return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@7, text ?: @""] sessionId:sessionId]; };
         device[@"hardwareKey"] = ^NSDictionary *(NSString *key, NSString *action) {
             return [weakSelf executeNativeRPCMethod:@"hardwareKey" arguments:@[@(TLinkJSHelperHardwareKeyAction(action)), @(TLinkJSHelperHardwareKeyType(key))] sessionId:sessionId];
         };
