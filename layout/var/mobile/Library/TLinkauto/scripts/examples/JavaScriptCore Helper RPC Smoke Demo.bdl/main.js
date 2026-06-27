@@ -30,7 +30,7 @@ console.log("botPath", paths);
 var toast = device.toast("Helper RPC smoke OK", { type: 4, duration: 2 });
 console.log("toast", toast);
 
-if (!size.ok || !app.ok || !pid.ok || !orientation.ok || !dev.ok || !battery.ok || !toast.ok) {
+if (!size.width || !size.height || !app.ok || !pid.ok || !orientation.ok || !dev.ok || !battery.ok || !toast.ok) {
   throw new Error("helper RPC smoke failed");
 }
 

@@ -832,6 +832,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
             }
             if ([state isEqualToString:@"failed"] || [state isEqualToString:@"cancelled"] || [state isEqualToString:@"crashed"]) {
                 failure = [statusPayload[@"lastError"] isKindOfClass:[NSString class]] && [statusPayload[@"lastError"] length] ? statusPayload[@"lastError"] : state;
+                [helper stopSessionId:_helperSessionId timeoutMs:250];
                 break;
             }
             [NSThread sleepForTimeInterval:0.2];

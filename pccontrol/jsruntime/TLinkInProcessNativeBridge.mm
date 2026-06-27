@@ -229,6 +229,7 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
         CGFloat scale = [UIScreen mainScreen].scale;
         int orientation = [Screen getScreenOrientation];
         NSDictionary *result = @{
+            @"ok": @YES,
             @"width": @((int)width),
             @"height": @((int)height),
             @"scale": @(scale),
