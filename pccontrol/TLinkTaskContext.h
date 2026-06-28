@@ -18,6 +18,9 @@
 @property (nonatomic, strong) TLinkCancellationToken *cancellationToken;
 @property (nonatomic, assign) NSTimeInterval defaultTimeoutSeconds;
 @property (nonatomic, assign) NSUInteger defaultMaxOutputBytes;
+@property (nonatomic, copy) NSString *ownerSessionId;
+@property (nonatomic, copy) NSString *ownerRunId;
+@property (nonatomic, copy) NSString *ownerRuntime;
 @end
 
 // --- Script Session ---

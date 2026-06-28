@@ -73,6 +73,25 @@ static NSString *TLinkautoJSStringOption(NSDictionary *options, NSString *key, N
     return value ? [value description] : defaultValue;
 }
 
+static NSString *TLinkautoJSOwnerField(NSString *value)
+{
+    if (![value isKindOfClass:[NSString class]] || [value length] == 0) return @"";
+    NSString *out = [value stringByReplacingOccurrencesOfString:@";;" withString:@"_"];
+    out = [out stringByReplacingOccurrencesOfString:@"\r" withString:@"_"];
+    out = [out stringByReplacingOccurrencesOfString:@"\n" withString:@"_"];
+    if ([out length] > 96) out = [out substringToIndex:96];
+    return out ?: @"";
+}
+
+static NSString *TLinkautoJSOwnerSuffix(TLinkTaskExecutionContext *context)
+{
+    NSString *runtime = TLinkautoJSOwnerField(context.ownerRuntime);
+    if ([runtime length] == 0) return @"";
+    NSString *sessionId = TLinkautoJSOwnerField(context.ownerSessionId);
+    NSString *runId = TLinkautoJSOwnerField(context.ownerRunId);
+    return [NSString stringWithFormat:@";;%@;;%@;;%@", sessionId ?: @"", runId ?: @"", runtime ?: @""];
+}
+
 static BOOL TLinkautoJSStringContainsAny(NSString *value, NSArray<NSString *> *needles)
 {
     if (![value isKindOfClass:[NSString class]]) return YES;
@@ -524,7 +543,7 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
         int gray = TLinkautoJSIntOption(options, @"gray", 1);
         int bgra = TLinkautoJSIntOption(options, @"bgra", 1);
         int ttlMs = TLinkautoJSIntOption(options, @"ttlMs", 1000);
-        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%d", gray ? 1 : 0, bgra ? 1 : 0, ttlMs];
+        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%d%@", gray ? 1 : 0, bgra ? 1 : 0, ttlMs, TLinkautoJSOwnerSuffix(context)];
         NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_FRAME_CAPTURE, payload] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 14) return [TLinkJSNativeResponse responseWithValue:result];
@@ -550,7 +569,7 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseFrame]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
         if (frameId < 0) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"invalid handle" }];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%d", TASK_FRAME_RELEASE, frameId] context:context];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%d%@", TASK_FRAME_RELEASE, frameId, TLinkautoJSOwnerSuffix(context)] context:context];
         if ([result[@"ok"] boolValue]) [runtime untrackFrameId:frameId];
         return [TLinkJSNativeResponse responseWithValue:result];
     }
@@ -568,7 +587,7 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
         if ([path length] == 0) {
             return [TLinkJSNativeResponse responseWithError:@"openImage(path) requires a valid path" code:@-1];
         }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@", TASK_IMAGE_OBJECT, path] context:context];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%@%@", TASK_IMAGE_OBJECT, path, TLinkautoJSOwnerSuffix(context)] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         int imageId = [parts[1] intValue];
@@ -590,7 +609,7 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
             return [TLinkJSNativeResponse responseWithError:@"captureImage(x, y, width, height) requires finite numbers" code:@-1];
         }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%.0f;;%.0f;;%.0f;;%.0f", TASK_IMAGE_OBJECT, x, y, width, height] context:context];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%.0f;;%.0f;;%.0f;;%.0f%@", TASK_IMAGE_OBJECT, x, y, width, height, TLinkautoJSOwnerSuffix(context)] context:context];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         int imageId = [parts[1] intValue];
@@ -606,7 +625,7 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage]) {
         int imageId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
         if (imageId < 0) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"invalid handle" }];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d3;;%d", TASK_IMAGE_OBJECT, imageId] context:context];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d3;;%d%@", TASK_IMAGE_OBJECT, imageId, TLinkautoJSOwnerSuffix(context)] context:context];
         if ([result[@"ok"] boolValue]) [runtime untrackImageId:imageId];
         return [TLinkJSNativeResponse responseWithValue:result];
     }

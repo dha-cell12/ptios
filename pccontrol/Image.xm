@@ -10,6 +10,7 @@
 #include <math.h>
 #include <vector>
 #include <stdint.h>
+#include <string>
 
 // From Play.xm
 extern ScriptPlayer *scriptPlayer;
@@ -18,9 +19,16 @@ using namespace cv;
 using namespace std;
 
 typedef struct {
+    uint32_t imageId;
     cv::Mat gray;
     int w;
     int h;
+    uint64_t createdAtMs;
+    uint64_t ttlMs;
+    bool released;
+    std::string ownerSessionId;
+    std::string ownerRunId;
+    std::string ownerRuntime;
 } ZXImageObject;
 
 typedef struct {
@@ -31,6 +39,11 @@ typedef struct {
     double scale;
     uint64_t createdAtMs;
     uint64_t expiresAtMs;
+    uint64_t ttlMs;
+    bool released;
+    std::string ownerSessionId;
+    std::string ownerRunId;
+    std::string ownerRuntime;
     bool hasBGRA;
     bool hasGray;
     std::vector<uint8_t> bgra;
@@ -75,6 +88,56 @@ static NSError *zx_frameError(NSString *message)
     return [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
                                code:999
                            userInfo:@{NSLocalizedDescriptionKey:message ?: @"1;;frame_error\r\n"}];
+}
+
+static std::string zx_stringFromPart(NSArray *data, NSUInteger index, const char *fallback)
+{
+    if (index >= [data count]) return std::string(fallback ?: "");
+    id value = data[index];
+    NSString *text = [value isKindOfClass:[NSString class]] ? (NSString *)value : [value description];
+    if (![text isKindOfClass:[NSString class]] || [text length] == 0) return std::string(fallback ?: "");
+    return std::string([text UTF8String] ?: "");
+}
+
+static void zx_applyFrameOwner(ZXFrameObject &frame, NSArray *data, NSUInteger startIndex)
+{
+    frame.ownerSessionId = zx_stringFromPart(data, startIndex, "");
+    frame.ownerRunId = zx_stringFromPart(data, startIndex + 1, "");
+    frame.ownerRuntime = zx_stringFromPart(data, startIndex + 2, "legacy");
+    frame.released = false;
+}
+
+static void zx_applyImageOwner(ZXImageObject &image, NSArray *data, NSUInteger startIndex)
+{
+    image.ownerSessionId = zx_stringFromPart(data, startIndex, "");
+    image.ownerRunId = zx_stringFromPart(data, startIndex + 1, "");
+    image.ownerRuntime = zx_stringFromPart(data, startIndex + 2, "legacy");
+    image.released = false;
+}
+
+static bool zx_ownerMatchFields(const std::string &objSessionId,
+                                const std::string &objRunId,
+                                const std::string &objRuntime,
+                                const std::string &sessionId,
+                                const std::string &runId,
+                                const std::string &runtime)
+{
+    bool scoped = !sessionId.empty() || !runId.empty() || !runtime.empty();
+    if (!scoped) return true;
+    if (!runtime.empty() && objRuntime != runtime) return false;
+    if (!sessionId.empty() && objSessionId != sessionId) return false;
+    if (!runId.empty() && objRunId != runId) return false;
+    return true;
+}
+
+static bool zx_ownerMatchesFrame(const ZXFrameObject &frame, const std::string &sessionId, const std::string &runId, const std::string &runtime)
+{
+    return zx_ownerMatchFields(frame.ownerSessionId, frame.ownerRunId, frame.ownerRuntime, sessionId, runId, runtime);
+}
+
+static bool zx_ownerMatchesImage(const ZXImageObject &image, const std::string &sessionId, const std::string &runId, const std::string &runtime)
+{
+    return zx_ownerMatchFields(image.ownerSessionId, image.ownerRunId, image.ownerRuntime, sessionId, runId, runtime);
 }
 
 static void zx_cleanupFramesLocked(uint64_t nowMs);
@@ -353,6 +416,8 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
     frame.scale = [Screen getScale];
     frame.createdAtMs = zx_nowMs();
     frame.expiresAtMs = frame.createdAtMs + ttlMs;
+    frame.ttlMs = ttlMs;
+    zx_applyFrameOwner(frame, data, 3);
     frame.hasBGRA = false;
     frame.hasGray = false;
 
@@ -401,14 +466,60 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
     (void)error;
     NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData] ?: @"";
     raw = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSArray<NSString *> *data = [raw componentsSeparatedByString:@";;"];
+    NSString *command = [data count] > 0 ? data[0] : @"";
+    NSString *lower = [command lowercaseString];
     __block NSUInteger removed = 0;
     dispatch_sync(zx_imageQueue(), ^{
-        if ([[raw lowercaseString] isEqualToString:@"all"]) {
-            removed = gFrameStore.size();
-            gFrameStore.clear();
+        if ([lower isEqualToString:@"all"]) {
+            if ([data count] >= 4) {
+                std::string sessionId = zx_stringFromPart(data, 1, "");
+                std::string runId = zx_stringFromPart(data, 2, "");
+                std::string runtime = zx_stringFromPart(data, 3, "");
+                std::vector<uint32_t> ids;
+                for (auto const &kv : gFrameStore) {
+                    if (zx_ownerMatchesFrame(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                }
+                for (uint32_t fid : ids) {
+                    auto it = gFrameStore.find(fid);
+                    if (it != gFrameStore.end()) it->second.released = true;
+                    removed += gFrameStore.erase(fid);
+                }
+            } else {
+                removed = gFrameStore.size();
+                gFrameStore.clear();
+            }
+        } else if ([lower isEqualToString:@"scoped"]) {
+            if ([data count] >= 4) {
+                std::string sessionId = zx_stringFromPart(data, 1, "");
+                std::string runId = zx_stringFromPart(data, 2, "");
+                std::string runtime = zx_stringFromPart(data, 3, "");
+                std::vector<uint32_t> ids;
+                for (auto const &kv : gFrameStore) {
+                    if (zx_ownerMatchesFrame(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                }
+                for (uint32_t fid : ids) {
+                    auto it = gFrameStore.find(fid);
+                    if (it != gFrameStore.end()) it->second.released = true;
+                    removed += gFrameStore.erase(fid);
+                }
+            }
         } else {
-            uint32_t frameId = (uint32_t)[raw intValue];
-            removed = gFrameStore.erase(frameId);
+            uint32_t frameId = (uint32_t)[command intValue];
+            auto it = gFrameStore.find(frameId);
+            if (it != gFrameStore.end()) {
+                bool allowed = true;
+                if ([data count] >= 4) {
+                    allowed = zx_ownerMatchesFrame(it->second,
+                                                   zx_stringFromPart(data, 1, ""),
+                                                   zx_stringFromPart(data, 2, ""),
+                                                   zx_stringFromPart(data, 3, ""));
+                }
+                if (allowed) {
+                    it->second.released = true;
+                    removed = gFrameStore.erase(frameId);
+                }
+            }
         }
     });
     return [NSString stringWithFormat:@"%lu", (unsigned long)removed];
@@ -868,16 +979,19 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
 @implementation Image
 @end
 
-static uint32_t zx_storeImageLocked(const cv::Mat &gray)
+static uint32_t zx_storeImageLocked(const ZXImageObject &image)
 {
     if (gImageStore.size() >= kMaxImageObjects) {
         return 0;
     }
     uint32_t imageId = gNextImageId++;
-    ZXImageObject obj;
-    obj.gray = gray;
-    obj.w = gray.cols;
-    obj.h = gray.rows;
+    if (imageId == 0) imageId = gNextImageId++;
+    ZXImageObject obj = image;
+    obj.imageId = imageId;
+    obj.w = obj.gray.cols;
+    obj.h = obj.gray.rows;
+    if (obj.createdAtMs == 0) obj.createdAtMs = zx_nowMs();
+    obj.released = false;
     gImageStore[imageId] = obj;
     return imageId;
 }
@@ -1094,9 +1208,16 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
             return nil;
         }
 
+        ZXImageObject image;
+        image.gray = gray;
+        image.w = gray.cols;
+        image.h = gray.rows;
+        image.createdAtMs = zx_nowMs();
+        image.ttlMs = 0;
+        zx_applyImageOwner(image, data, 5);
         __block uint32_t imageId = 0;
         dispatch_sync(zx_imageQueue(), ^{
-            imageId = zx_storeImageLocked(gray);
+            imageId = zx_storeImageLocked(image);
         });
         if (imageId == 0) {
             if (error) {
@@ -1127,9 +1248,16 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
             }
             return nil;
         }
+        ZXImageObject image;
+        image.gray = gray;
+        image.w = gray.cols;
+        image.h = gray.rows;
+        image.createdAtMs = zx_nowMs();
+        image.ttlMs = 0;
+        zx_applyImageOwner(image, data, 2);
         __block uint32_t imageId = 0;
         dispatch_sync(zx_imageQueue(), ^{
-            imageId = zx_storeImageLocked(gray);
+            imageId = zx_storeImageLocked(image);
         });
         if (imageId == 0) {
             if (error) {
@@ -1143,11 +1271,62 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         if ([data count] < 2) {
             return nil;
         }
-        uint32_t imageId = (uint32_t)[data[1] intValue];
+        NSString *target = [data[1] isKindOfClass:[NSString class]] ? data[1] : @"";
+        NSString *lower = [target lowercaseString];
+        __block NSUInteger removed = 0;
         dispatch_sync(zx_imageQueue(), ^{
-            gImageStore.erase(imageId);
+            if ([lower isEqualToString:@"all"]) {
+                if ([data count] >= 5) {
+                    std::string sessionId = zx_stringFromPart(data, 2, "");
+                    std::string runId = zx_stringFromPart(data, 3, "");
+                    std::string runtime = zx_stringFromPart(data, 4, "");
+                    std::vector<uint32_t> ids;
+                    for (auto const &kv : gImageStore) {
+                        if (zx_ownerMatchesImage(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                    }
+                    for (uint32_t iid : ids) {
+                        auto it = gImageStore.find(iid);
+                        if (it != gImageStore.end()) it->second.released = true;
+                        removed += gImageStore.erase(iid);
+                    }
+                } else {
+                    removed = gImageStore.size();
+                    gImageStore.clear();
+                }
+            } else if ([lower isEqualToString:@"scoped"]) {
+                if ([data count] >= 5) {
+                    std::string sessionId = zx_stringFromPart(data, 2, "");
+                    std::string runId = zx_stringFromPart(data, 3, "");
+                    std::string runtime = zx_stringFromPart(data, 4, "");
+                    std::vector<uint32_t> ids;
+                    for (auto const &kv : gImageStore) {
+                        if (zx_ownerMatchesImage(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                    }
+                    for (uint32_t iid : ids) {
+                        auto it = gImageStore.find(iid);
+                        if (it != gImageStore.end()) it->second.released = true;
+                        removed += gImageStore.erase(iid);
+                    }
+                }
+            } else {
+                uint32_t imageId = (uint32_t)[target intValue];
+                auto it = gImageStore.find(imageId);
+                if (it != gImageStore.end()) {
+                    bool allowed = true;
+                    if ([data count] >= 5) {
+                        allowed = zx_ownerMatchesImage(it->second,
+                                                       zx_stringFromPart(data, 2, ""),
+                                                       zx_stringFromPart(data, 3, ""),
+                                                       zx_stringFromPart(data, 4, ""));
+                    }
+                    if (allowed) {
+                        it->second.released = true;
+                        removed = gImageStore.erase(imageId);
+                    }
+                }
+            }
         });
-        return @"";
+        return [NSString stringWithFormat:@"%lu", (unsigned long)removed];
     }
 
     if (error) {

@@ -79,7 +79,19 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
 static const unsigned long long kTLinkautoJSMaxBundleFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
-static NSString * const kTLinkautoJSHelperExecutionGatePath = @"/var/mobile/Library/TLinkauto/enable_js_helper_execution";
+static NSString * const kTLinkautoJSHelperConfigPath = @"/var/mobile/Library/TLinkauto/config.json";
+static const NSUInteger kTLinkautoJSNativeRPCCacheLimit = 256;
+
+static BOOL TLinkautoJSHelperRuntimeEnabledFromConfig(void)
+{
+    NSData *data = [NSData dataWithContentsOfFile:kTLinkautoJSHelperConfigPath];
+    if (![data isKindOfClass:[NSData class]] || [data length] == 0) return NO;
+    NSError *error = nil;
+    id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+    if (![obj isKindOfClass:[NSDictionary class]]) return NO;
+    id value = [(NSDictionary *)obj objectForKey:@"javascript_helper_runtime_enabled"];
+    return [value respondsToSelector:@selector(boolValue)] && [value boolValue];
+}
 
 @class TLinkautoJSRuntime;
 
@@ -124,15 +136,18 @@ struct TLinkautoJSWatchdogProbeState {
     NSString *_helperRunId;
     NSString *_helperConsoleLogPath;
     NSString *_helperConsoleLatestLogPath;
+    NSMutableDictionary<NSString *, NSDictionary *> *_helperNativeRPCCache;
+    NSMutableArray<NSString *> *_helperNativeRPCOrder;
 }
 
 - (void)beginOwnedHandleTracking;
 - (void)releaseOwnedHandles;
+- (NSUInteger)releaseOwnedFramesOnly;
 - (void)recordLastScriptError:(NSString *)message;
 - (void)showDebugToast:(NSString *)message type:(int)type;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
-- (BOOL)runScriptInHelperAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest error:(NSError **)error;
+- (BOOL)runScriptInHelperAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 - (void)trackFrameId:(int)frameId;
 - (void)untrackFrameId:(int)frameId;
 - (void)untrackAllFrameIds;
@@ -435,6 +450,8 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         _sleepCondition = [[NSCondition alloc] init];
         _ownedFrameIds = [NSMutableSet set];
         _ownedImageIds = [NSMutableSet set];
+        _helperNativeRPCCache = [NSMutableDictionary dictionary];
+        _helperNativeRPCOrder = [NSMutableArray array];
         _setExecutionTimeLimit = (TLinkautoJSSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
         _clearExecutionTimeLimit = (TLinkautoJSClearExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupClearExecutionTimeLimit");
         _watchdogAvailable = TLinkautoJSWatchdogCapability(_setExecutionTimeLimit, _clearExecutionTimeLimit);
@@ -602,6 +619,22 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     }
 }
 
+- (NSUInteger)releaseOwnedFramesOnly
+{
+    os_unfair_lock_lock(&_handlesLock);
+    NSArray<NSNumber *> *frameIds = [_ownedFrameIds allObjects];
+    [_ownedFrameIds removeAllObjects];
+    os_unfair_lock_unlock(&_handlesLock);
+
+    bool wasAborted = _cancelState->aborted.load(std::memory_order_acquire);
+    _cancelState->aborted.store(false, std::memory_order_release);
+    for (NSNumber *frameId in frameIds) {
+        [self executeNativeRequest:TLinkJSNativeMethodReleaseFrame arguments:@[frameId]];
+    }
+    _cancelState->aborted.store(wasAborted, std::memory_order_release);
+    return [frameIds count];
+}
+
 - (void)releaseOwnedHandles
 {
     os_unfair_lock_lock(&_handlesLock);
@@ -615,10 +648,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     bool wasAborted = _cancelState->aborted.load(std::memory_order_acquire);
     _cancelState->aborted.store(false, std::memory_order_release);
     for (NSNumber *frameId in frameIds) {
-        [self executeNativeRequest:TLinkJSNativeMethodRawTask arguments:@[[NSString stringWithFormat:@"67%d", [frameId intValue]]]];
+        [self executeNativeRequest:TLinkJSNativeMethodReleaseFrame arguments:@[frameId]];
     }
     for (NSNumber *imageId in imageIds) {
-        [self executeNativeRequest:TLinkJSNativeMethodRawTask arguments:@[[NSString stringWithFormat:@"483;;%d", [imageId intValue]]]];
+        [self executeNativeRequest:TLinkJSNativeMethodReleaseImage arguments:@[imageId]];
     }
     _cancelState->aborted.store(wasAborted, std::memory_order_release);
 }
@@ -754,10 +787,13 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     id helperFlag = manifest[@"helperRuntimeEnabled"] ?: manifest[@"helper_runtime_enabled"];
     NSString *runtimeLocation = [manifest[@"runtimeLocation"] isKindOfClass:[NSString class]] ? [manifest[@"runtimeLocation"] lowercaseString] : @"";
     BOOL requestedHelper = ([helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue]) || [runtimeLocation isEqualToString:@"helper"];
-    BOOL helperExecutionAllowed = [[NSFileManager defaultManager] fileExistsAtPath:kTLinkautoJSHelperExecutionGatePath];
-    BOOL useHelper = requestedHelper && helperExecutionAllowed;
-    if (useHelper) {
-        return [self runScriptInHelperAtPath:scriptPath bundlePath:bundlePath manifest:manifest error:error];
+    BOOL helperExecutionAllowed = TLinkautoJSHelperRuntimeEnabledFromConfig();
+    if (requestedHelper && !helperExecutionAllowed) {
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;helper runtime requested but disabled by /var/mobile/Library/TLinkauto/config.json javascript_helper_runtime_enabled\r\n"}];
+        return NO;
+    }
+    if (requestedHelper) {
+        return [self runScriptInHelperAtPath:scriptPath bundlePath:bundlePath manifest:manifest context:context error:error];
     }
     [self beginOwnedHandleTracking];
     _taskContext = context;
@@ -768,7 +804,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     }
 }
 
-- (BOOL)runScriptInHelperAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest error:(NSError **)error
+- (BOOL)runScriptInHelperAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest context:(TLinkTaskExecutionContext *)context error:(NSError **)error
 {
     if (_helperRunning) {
         if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScript helper runtime is busy.\r\n"}];
@@ -784,8 +820,15 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSDictionary *response = start[@"response"];
     NSDictionary *payload = [response[@"payload"] isKindOfClass:[NSDictionary class]] ? response[@"payload"] : @{};
     _helperRunning = YES;
+    [_helperNativeRPCCache removeAllObjects];
+    [_helperNativeRPCOrder removeAllObjects];
+    [self beginOwnedHandleTracking];
+    _taskContext = context;
     _helperSessionId = [response[@"sessionId"] copy];
     _helperRunId = [payload[@"runId"] copy];
+    context.ownerSessionId = _helperSessionId ?: @"";
+    context.ownerRunId = _helperRunId ?: @"";
+    context.ownerRuntime = @"helper";
     _helperConsoleLogPath = [payload[@"consoleLogPath"] copy];
     _helperConsoleLatestLogPath = [payload[@"consoleLatestLogPath"] copy];
     id timeoutValue = manifest[@"helperTimeoutMs"] ?: manifest[@"helper_timeout_ms"];
@@ -815,8 +858,27 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
                 NSString *nativeRequestId = [nativeRPC[@"requestId"] isKindOfClass:[NSString class]] ? nativeRPC[@"requestId"] : @"";
                 NSString *method = [nativeRPC[@"method"] isKindOfClass:[NSString class]] ? nativeRPC[@"method"] : @"";
                 NSArray *arguments = [nativeRPC[@"arguments"] isKindOfClass:[NSArray class]] ? nativeRPC[@"arguments"] : @[];
-                NSDictionary *result = [self executeNativeRequest:method arguments:arguments];
-                [helper sendNativeRPCResponse:result requestId:nativeRequestId sessionId:_helperSessionId timeoutMs:500];
+                NSString *cacheKey = [NSString stringWithFormat:@"%@|%@", _helperSessionId ?: @"", nativeRequestId ?: @""];
+                NSDictionary *result = nil;
+                if ([nativeRequestId length] > 0) {
+                    result = _helperNativeRPCCache[cacheKey];
+                }
+                if (result) {
+                    NSLog(@"tlinkauto-helper-rpc: replay method=%@ id=%@ ok=%d", method, nativeRequestId, [result[@"ok"] boolValue]);
+                } else {
+                    result = [self executeNativeRequest:method arguments:arguments];
+                    if ([nativeRequestId length] > 0) {
+                        _helperNativeRPCCache[cacheKey] = result ?: @{};
+                        [_helperNativeRPCOrder addObject:cacheKey];
+                        while ([_helperNativeRPCOrder count] > kTLinkautoJSNativeRPCCacheLimit) {
+                            NSString *oldest = [_helperNativeRPCOrder firstObject];
+                            if (oldest) [_helperNativeRPCCache removeObjectForKey:oldest];
+                            [_helperNativeRPCOrder removeObjectAtIndex:0];
+                        }
+                    }
+                    NSLog(@"tlinkauto-helper-rpc: handled method=%@ id=%@ ok=%d", method, nativeRequestId, [result[@"ok"] boolValue]);
+                }
+                [helper sendNativeRPCResponse:result ?: @{} requestId:nativeRequestId sessionId:_helperSessionId timeoutMs:500];
             }
             id activeSession = statusPayload[@"activeSessionId"];
             if ([state isEqualToString:@"idle"] || (activeSession && activeSession != [NSNull null] && ![activeSession isEqual:_helperSessionId])) {
@@ -842,6 +904,13 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
             failure = @"JavaScript helper execution was stopped";
         }
     } @finally {
+        [self releaseOwnedHandles];
+        _taskContext.ownerSessionId = nil;
+        _taskContext.ownerRunId = nil;
+        _taskContext.ownerRuntime = nil;
+        _taskContext = nil;
+        [_helperNativeRPCCache removeAllObjects];
+        [_helperNativeRPCOrder removeAllObjects];
         _helperRunning = NO;
         _helperSessionId = nil;
     }
@@ -852,6 +921,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 }
 
 - (NSDictionary *)executeNativeRequest:(NSString *)method arguments:(NSArray *)arguments {
+    if (_helperRunning && [method isEqualToString:TLinkJSNativeMethodReleaseAllFrames]) {
+        NSUInteger released = [self releaseOwnedFramesOnly];
+        return @{ @"ok": @YES, @"released": @(released), @"sessionScoped": @YES };
+    }
     TLinkJSNativeRequest *request = [[TLinkJSNativeRequest alloc] initWithMethod:method arguments:arguments];
     TLinkTaskExecutionContext *ctx = _taskContext ?: [[TLinkTaskExecutionContext alloc] init];
     TLinkJSNativeResponse *response = [_bridge executeRequest:request context:ctx error:nil];

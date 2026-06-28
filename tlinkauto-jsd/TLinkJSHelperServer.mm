@@ -18,6 +18,7 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
 static NSString * const kTLinkJSHelperPidPath = @"/var/mobile/Library/TLinkauto/run/js-helper.pid";
 static NSString * const kTLinkJSHelperVersion = @"1.0.0";
 static const unsigned long long kTLinkJSHelperMaxBundleFileBytes = 512 * 1024;
+static const unsigned long long kTLinkJSHelperMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkJSHelperMaxConsoleLogBytes = 512 * 1024;
 static const double kTLinkJSHelperWatchdogInterval = 0.1;
 
@@ -154,12 +155,14 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         return @{ @"ok": @NO, @"error": @"native RPC unavailable" };
     }
     self.pendingNativeRequest = request;
+    NSLog(@"tlinkauto-jsd rpc: request method=%@ id=%@", method, requestId);
     [self.rpcCondition broadcast];
     while (!_cancelState->stopped.load(std::memory_order_acquire)) {
         NSDictionary *response = self.nativeResponses[requestId];
         if (response) {
             [self.nativeResponses removeObjectForKey:requestId];
             self.pendingNativeRequest = nil;
+            NSLog(@"tlinkauto-jsd rpc: response id=%@ ok=%d", requestId, [response[@"ok"] boolValue]);
             [self.rpcCondition broadcast];
             [self.rpcCondition unlock];
             return response;
@@ -221,6 +224,104 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSString *source = [NSString stringWithContentsOfFile:candidate encoding:NSUTF8StringEncoding error:&err];
     if (!source) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to read module", @"path": candidate ?: @"" };
     return @{ @"ok": @YES, @"path": candidate, @"id": [candidate substringFromIndex:[prefix length]] ?: relativePath, @"source": source };
+}
+
+
+- (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath createParent:(BOOL)createParent
+{
+    NSString *root = [bundlePath stringByStandardizingPath];
+    if (![root isKindOfClass:[NSString class]] || [root length] == 0) return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
+    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) return @{ @"ok": @NO, @"error": @"path is required" };
+    if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) return @{ @"ok": @NO, @"error": @"path must be bundle-relative" };
+    NSString *candidate = [[root stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
+    NSString *prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
+    if (![candidate hasPrefix:prefix]) return @{ @"ok": @NO, @"error": @"path escapes bundle" };
+    NSString *name = [candidate lastPathComponent];
+    if ([name isEqualToString:@"manifest.json"] || [name isEqualToString:@"info.plist"]) return @{ @"ok": @NO, @"error": @"refusing to modify bundle metadata" };
+    if ([[[candidate pathExtension] lowercaseString] isEqualToString:@"js"]) return @{ @"ok": @NO, @"error": @"refusing to modify JavaScript source files" };
+    if (createParent) {
+        NSString *dir = [candidate stringByDeletingLastPathComponent];
+        NSError *mkdirError = nil;
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&mkdirError]) {
+            return @{ @"ok": @NO, @"error": mkdirError.localizedDescription ?: @"failed to create parent directory", @"path": candidate ?: @"" };
+        }
+    }
+    return @{ @"ok": @YES, @"path": candidate ?: @"" };
+}
+
+- (NSDictionary *)readTextAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
+{
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    NSString *path = resolved[@"path"];
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if (!attrs) return @{ @"ok": @NO, @"error": @"file not found", @"path": path ?: @"" };
+    if ([attrs[NSFileSize] unsignedLongLongValue] > kTLinkJSHelperMaxStorageFileBytes) return @{ @"ok": @NO, @"error": @"file is too large", @"path": path ?: @"" };
+    NSError *err = nil;
+    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
+    if (!text) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to read file", @"path": path ?: @"" };
+    return @{ @"ok": @YES, @"path": path ?: @"", @"text": text ?: @"" };
+}
+
+- (NSDictionary *)writeText:(NSString *)text atRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
+{
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:YES];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    NSString *path = resolved[@"path"];
+    NSString *safeText = [text isKindOfClass:[NSString class]] ? text : [text description];
+    safeText = safeText ?: @"";
+    NSData *data = [safeText dataUsingEncoding:NSUTF8StringEncoding];
+    if ([data length] > kTLinkJSHelperMaxStorageFileBytes) return @{ @"ok": @NO, @"error": @"text is too large", @"path": path ?: @"" };
+    NSError *err = nil;
+    BOOL ok = [safeText writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err];
+    if (!ok) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to write file", @"path": path ?: @"" };
+    return @{ @"ok": @YES, @"path": path ?: @"", @"bytes": @([data length]) };
+}
+
+- (NSDictionary *)readJSONAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
+{
+    NSDictionary *textResult = [self readTextAtRelativePath:relativePath bundlePath:bundlePath];
+    if (![textResult[@"ok"] boolValue]) return textResult;
+    NSData *data = [textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
+    NSError *err = nil;
+    id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&err] : nil;
+    if (!value) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" };
+    return @{ @"ok": @YES, @"path": textResult[@"path"] ?: @"", @"value": value };
+}
+
+- (NSDictionary *)writeJSONValue:(id)value atRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
+{
+    id object = [value isKindOfClass:[JSValue class]] ? [(JSValue *)value toObject] : value;
+    if ([object isKindOfClass:[NSNull class]]) object = nil;
+    if (!object || ![NSJSONSerialization isValidJSONObject:object]) return @{ @"ok": @NO, @"error": @"writeJSON(path, value) requires a JSON-serializable object or array" };
+    NSError *err = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:&err];
+    if (!data) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to encode JSON" };
+    if ([data length] > kTLinkJSHelperMaxStorageFileBytes) return @{ @"ok": @NO, @"error": @"JSON is too large" };
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+    return [self writeText:text atRelativePath:relativePath bundlePath:bundlePath];
+}
+
+- (NSDictionary *)fileExistsAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
+{
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    NSString *path = resolved[@"path"];
+    BOOL isDir = NO;
+    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
+    return @{ @"ok": @YES, @"path": path ?: @"", @"exists": @(exists), @"directory": @(exists && isDir) };
+}
+
+- (NSDictionary *)deleteFileAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
+{
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
+    if (![resolved[@"ok"] boolValue]) return resolved;
+    NSString *path = resolved[@"path"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return @{ @"ok": @YES, @"path": path ?: @"", @"deleted": @NO };
+    NSError *err = nil;
+    BOOL ok = [[NSFileManager defaultManager] removeItemAtPath:path error:&err];
+    if (!ok) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to delete file", @"path": path ?: @"" };
+    return @{ @"ok": @YES, @"path": path ?: @"", @"deleted": @YES };
 }
 
 - (BOOL)interruptibleSleepMs:(double)ms context:(JSContext *)context
@@ -367,6 +468,27 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         device[@"pasteFromClipboard"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@5, [NSNull null]] sessionId:sessionId]; };
         device[@"getClipboardText"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@6, [NSNull null]] sessionId:sessionId]; };
         device[@"setClipboardText"] = ^NSDictionary *(NSString *text) { return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@7, text ?: @""] sessionId:sessionId]; };
+        device[@"readText"] = ^NSDictionary *(NSString *path) { return [weakSelf readTextAtRelativePath:path bundlePath:bundlePath]; };
+        device[@"writeText"] = ^NSDictionary *(NSString *path, NSString *text) { return [weakSelf writeText:text atRelativePath:path bundlePath:bundlePath]; };
+        device[@"readJSON"] = ^NSDictionary *(NSString *path) { return [weakSelf readJSONAtRelativePath:path bundlePath:bundlePath]; };
+        device[@"writeJSON"] = ^NSDictionary *(NSString *path, id value) { return [weakSelf writeJSONValue:value atRelativePath:path bundlePath:bundlePath]; };
+        device[@"fileExists"] = ^NSDictionary *(NSString *path) { return [weakSelf fileExistsAtRelativePath:path bundlePath:bundlePath]; };
+        device[@"deleteFile"] = ^NSDictionary *(NSString *path) { return [weakSelf deleteFileAtRelativePath:path bundlePath:bundlePath]; };
+        device[@"captureFrame"] = ^NSDictionary *(NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"captureFrame" arguments:@[options ?: @{}] sessionId:sessionId]; };
+        device[@"releaseFrame"] = ^NSDictionary *(int frameId) { return [weakSelf executeNativeRPCMethod:@"releaseFrame" arguments:@[@(frameId)] sessionId:sessionId]; };
+        device[@"releaseAllFrames"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"releaseAllFrames" arguments:@[] sessionId:sessionId]; };
+        device[@"framePickColor"] = ^NSDictionary *(int frameId, double x, double y, NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"framePickColor" arguments:@[@(frameId), @(x), @(y), options ?: @{}] sessionId:sessionId]; };
+        device[@"framePickColors"] = ^NSDictionary *(int frameId, NSArray *points, NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"framePickColors" arguments:@[@(frameId), points ?: @[], options ?: @{}] sessionId:sessionId]; };
+        device[@"frameFindColor"] = ^NSDictionary *(int frameId, NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"frameFindColor" arguments:@[@(frameId), options ?: @{}] sessionId:sessionId]; };
+        device[@"frameIsColors"] = ^NSDictionary *(int frameId, NSArray *points, NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"frameIsColors" arguments:@[@(frameId), points ?: @[], options ?: @{}] sessionId:sessionId]; };
+        device[@"frameFindMultiColor"] = ^NSDictionary *(int frameId, NSArray *points, NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"frameFindMultiColor" arguments:@[@(frameId), points ?: @[], options ?: @{}] sessionId:sessionId]; };
+        device[@"openImage"] = ^NSDictionary *(NSString *path) { return [weakSelf executeNativeRPCMethod:@"openImage" arguments:@[path ?: @""] sessionId:sessionId]; };
+        device[@"captureImage"] = ^NSDictionary *(double x, double y, double width, double height) { return [weakSelf executeNativeRPCMethod:@"captureImage" arguments:@[@(x), @(y), @(width), @(height)] sessionId:sessionId]; };
+        device[@"releaseImage"] = ^NSDictionary *(int imageId) { return [weakSelf executeNativeRPCMethod:@"releaseImage" arguments:@[@(imageId)] sessionId:sessionId]; };
+        device[@"findImageInFrame"] = ^NSDictionary *(int frameId, int imageId, NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"findImageInFrame" arguments:@[@(frameId), @(imageId), options ?: @{}] sessionId:sessionId]; };
+        device[@"ocrLanguages"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"ocrLanguages" arguments:@[] sessionId:sessionId]; };
+        device[@"ocrFrame"] = ^NSDictionary *(int frameId, NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"ocrFrame" arguments:@[@(frameId), options ?: @{}] sessionId:sessionId]; };
+        device[@"ocr"] = ^NSDictionary *(NSDictionary *options) { return [weakSelf executeNativeRPCMethod:@"ocr" arguments:@[options ?: @{}] sessionId:sessionId]; };
         device[@"hardwareKey"] = ^NSDictionary *(NSString *key, NSString *action) {
             return [weakSelf executeNativeRPCMethod:@"hardwareKey" arguments:@[@(TLinkJSHelperHardwareKeyAction(action)), @(TLinkJSHelperHardwareKeyType(key))] sessionId:sessionId];
         };
@@ -524,6 +646,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         [self.rpcCondition lock];
         if ([nativeRequestId length] > 0) {
             self.nativeResponses[nativeRequestId] = result;
+            NSLog(@"tlinkauto-jsd rpc: accepted response id=%@ ok=%d", nativeRequestId, [result[@"ok"] boolValue]);
         }
         [self.rpcCondition broadcast];
         [self.rpcCondition unlock];
