@@ -1,3 +1,5 @@
 {
-  "javascript_helper_runtime_enabled": false
+  "javascript_helper_runtime_enabled": false,
+  "javascript_helper_runtime_default": false,
+  "javascript_helper_allow_admin_rpc": false
 }

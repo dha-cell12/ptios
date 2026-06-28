@@ -82,15 +82,121 @@ static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
 static NSString * const kTLinkautoJSHelperConfigPath = @"/var/mobile/Library/TLinkauto/config.json";
 static const NSUInteger kTLinkautoJSNativeRPCCacheLimit = 256;
 
-static BOOL TLinkautoJSHelperRuntimeEnabledFromConfig(void)
+static NSDictionary *TLinkautoJSHelperConfigSnapshot(void)
 {
+    NSMutableDictionary *snapshot = [@{
+        @"configPath": kTLinkautoJSHelperConfigPath ?: @"",
+        @"configValid": @NO,
+        @"enabled": @NO,
+        @"runtimeDefault": @NO,
+        @"allowAdminRPC": @NO,
+        @"error": @"",
+    } mutableCopy];
     NSData *data = [NSData dataWithContentsOfFile:kTLinkautoJSHelperConfigPath];
-    if (![data isKindOfClass:[NSData class]] || [data length] == 0) return NO;
+    if (![data isKindOfClass:[NSData class]] || [data length] == 0) {
+        snapshot[@"error"] = @"missing_or_empty_config";
+        return snapshot;
+    }
     NSError *error = nil;
     id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-    if (![obj isKindOfClass:[NSDictionary class]]) return NO;
-    id value = [(NSDictionary *)obj objectForKey:@"javascript_helper_runtime_enabled"];
-    return [value respondsToSelector:@selector(boolValue)] && [value boolValue];
+    if (![obj isKindOfClass:[NSDictionary class]]) {
+        snapshot[@"error"] = error.localizedDescription ?: @"config_parse_failed";
+        return snapshot;
+    }
+    NSDictionary *dict = (NSDictionary *)obj;
+    snapshot[@"configValid"] = @YES;
+    id enabled = dict[@"javascript_helper_runtime_enabled"];
+    id runtimeDefault = dict[@"javascript_helper_runtime_default"];
+    id allowAdmin = dict[@"javascript_helper_allow_admin_rpc"];
+    snapshot[@"enabled"] = @([enabled respondsToSelector:@selector(boolValue)] && [enabled boolValue]);
+    snapshot[@"runtimeDefault"] = @([runtimeDefault respondsToSelector:@selector(boolValue)] && [runtimeDefault boolValue]);
+    snapshot[@"allowAdminRPC"] = @([allowAdmin respondsToSelector:@selector(boolValue)] && [allowAdmin boolValue]);
+    return snapshot;
+}
+
+static BOOL TLinkautoJSHelperRuntimeEnabledFromConfig(void)
+{
+    return [TLinkautoJSHelperConfigSnapshot()[@"enabled"] boolValue];
+}
+
+static NSString *TLinkautoJSArgumentsFingerprint(NSArray *arguments)
+{
+    id obj = [arguments isKindOfClass:[NSArray class]] ? arguments : @[];
+    if ([NSJSONSerialization isValidJSONObject:obj]) {
+        NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+        if (data) return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+    }
+    return [obj description] ?: @"";
+}
+
+static BOOL TLinkautoJSHelperRPCMethodIsAdmin(NSString *method, NSArray *arguments)
+{
+    if (![method isKindOfClass:[NSString class]]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodRawTask]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodRunShell]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodKillApp]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodHardwareKey]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodSetAutoLaunch]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodSetTimer]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodRemoveTimer]) return YES;
+    if ([method isEqualToString:TLinkJSNativeMethodConnectivity]) {
+        id value = ([arguments isKindOfClass:[NSArray class]] && [arguments count] > 2) ? arguments[2] : [NSNull null];
+        return value && value != [NSNull null];
+    }
+    return NO;
+}
+
+static NSSet<NSString *> *TLinkautoJSHelperRPCAllowlist(void)
+{
+    static NSSet<NSString *> *methods = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        methods = [NSSet setWithArray:@[
+            TLinkJSNativeMethodToast, TLinkJSNativeMethodTap, TLinkJSNativeMethodSwipe,
+            TLinkJSNativeMethodLongPress, TLinkJSNativeMethodGesture, TLinkJSNativeMethodPickColor,
+            TLinkJSNativeMethodScreenshotRegion, TLinkJSNativeMethodScreenshotTo,
+            TLinkJSNativeMethodGetScreenSize, TLinkJSNativeMethodFrontMostAppId,
+            TLinkJSNativeMethodFrontMostPid, TLinkJSNativeMethodOrientation,
+            TLinkJSNativeMethodOpenApp, TLinkJSNativeMethodOpenUrl,
+            TLinkJSNativeMethodAppState, TLinkJSNativeMethodAppInfo, TLinkJSNativeMethodAppPid,
+            TLinkJSNativeMethodAppPaths, TLinkJSNativeMethodListBundles,
+            TLinkJSNativeMethodConnectivity, TLinkJSNativeMethodRootDir,
+            TLinkJSNativeMethodCurrentDir, TLinkJSNativeMethodBotPath,
+            TLinkJSNativeMethodInfo, TLinkJSNativeMethodBatteryInfo,
+            TLinkJSNativeMethodAlert, TLinkJSNativeMethodDialog,
+            TLinkJSNativeMethodClearDialogValues, TLinkJSNativeMethodKeyboard,
+            TLinkJSNativeMethodKeepAwake, TLinkJSNativeMethodTouchIndicator,
+            TLinkJSNativeMethodCaptureFrame, TLinkJSNativeMethodReleaseFrame,
+            TLinkJSNativeMethodReleaseAllFrames, TLinkJSNativeMethodOpenImage,
+            TLinkJSNativeMethodCaptureImage, TLinkJSNativeMethodReleaseImage,
+            TLinkJSNativeMethodFramePickColor, TLinkJSNativeMethodFramePickColors,
+            TLinkJSNativeMethodFrameFindColor, TLinkJSNativeMethodFrameIsColors,
+            TLinkJSNativeMethodFrameFindMultiColor, TLinkJSNativeMethodFindImageInFrame,
+            TLinkJSNativeMethodOcrLanguages, TLinkJSNativeMethodOcrFrame, TLinkJSNativeMethodOcr,
+            TLinkJSNativeMethodRunShell, TLinkJSNativeMethodKillApp,
+            TLinkJSNativeMethodHardwareKey, TLinkJSNativeMethodPressHardwareKey,
+            TLinkJSNativeMethodSetAutoLaunch, TLinkJSNativeMethodSetTimer,
+            TLinkJSNativeMethodRemoveTimer,
+        ]];
+    });
+    return methods;
+}
+
+static NSDictionary *TLinkautoJSHelperRPCPolicy(NSString *method, NSArray *arguments, NSDictionary *config)
+{
+    if (![method isKindOfClass:[NSString class]] || [method length] == 0) {
+        return @{ @"allowed": @NO, @"reason": @"missing_method", @"admin": @YES };
+    }
+    if (![TLinkautoJSHelperRPCAllowlist() containsObject:method]) {
+        return @{ @"allowed": @NO, @"reason": @"method_not_allowlisted", @"admin": @YES };
+    }
+    BOOL admin = TLinkautoJSHelperRPCMethodIsAdmin(method, arguments);
+    BOOL allowAdmin = [config[@"allowAdminRPC"] boolValue];
+    if (admin && !allowAdmin) {
+        return @{ @"allowed": @NO, @"reason": @"admin_rpc_disabled", @"admin": @YES };
+    }
+    return @{ @"allowed": @YES, @"reason": @"allowed", @"admin": @(admin) };
 }
 
 @class TLinkautoJSRuntime;
@@ -138,6 +244,15 @@ struct TLinkautoJSWatchdogProbeState {
     NSString *_helperConsoleLatestLogPath;
     NSMutableDictionary<NSString *, NSDictionary *> *_helperNativeRPCCache;
     NSMutableArray<NSString *> *_helperNativeRPCOrder;
+    NSUInteger _helperRPCCount;
+    NSUInteger _helperDuplicateRPCCount;
+    NSUInteger _helperBlockedRPCCount;
+    NSUInteger _helperAutoReleasedFrameCount;
+    NSUInteger _helperAutoReleasedImageCount;
+    BOOL _lastHelperRequested;
+    BOOL _lastHelperAllowed;
+    NSString *_lastEffectiveRuntimeLocation;
+    NSString *_lastHelperConfigError;
 }
 
 - (void)beginOwnedHandleTracking;
@@ -452,6 +567,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         _ownedImageIds = [NSMutableSet set];
         _helperNativeRPCCache = [NSMutableDictionary dictionary];
         _helperNativeRPCOrder = [NSMutableArray array];
+        _lastEffectiveRuntimeLocation = @"in-process";
         _setExecutionTimeLimit = (TLinkautoJSSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
         _clearExecutionTimeLimit = (TLinkautoJSClearExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupClearExecutionTimeLimit");
         _watchdogAvailable = TLinkautoJSWatchdogCapability(_setExecutionTimeLimit, _clearExecutionTimeLimit);
@@ -786,8 +902,16 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _cancelState->aborted.store(false, std::memory_order_release);
     id helperFlag = manifest[@"helperRuntimeEnabled"] ?: manifest[@"helper_runtime_enabled"];
     NSString *runtimeLocation = [manifest[@"runtimeLocation"] isKindOfClass:[NSString class]] ? [manifest[@"runtimeLocation"] lowercaseString] : @"";
-    BOOL requestedHelper = ([helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue]) || [runtimeLocation isEqualToString:@"helper"];
-    BOOL helperExecutionAllowed = TLinkautoJSHelperRuntimeEnabledFromConfig();
+    BOOL explicitInProcess = [runtimeLocation isEqualToString:@"in-process"] || [runtimeLocation isEqualToString:@"inprocess"];
+    BOOL explicitHelper = [runtimeLocation isEqualToString:@"helper"];
+    BOOL legacyHelperFlag = [helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue];
+    NSDictionary *helperConfig = TLinkautoJSHelperConfigSnapshot();
+    BOOL helperExecutionAllowed = [helperConfig[@"enabled"] boolValue];
+    BOOL requestedHelper = explicitInProcess ? NO : (explicitHelper || legacyHelperFlag);
+    _lastHelperRequested = requestedHelper;
+    _lastHelperAllowed = helperExecutionAllowed;
+    _lastHelperConfigError = [helperConfig[@"error"] isKindOfClass:[NSString class]] ? [helperConfig[@"error"] copy] : @"";
+    _lastEffectiveRuntimeLocation = requestedHelper ? @"helper" : @"in-process";
     if (requestedHelper && !helperExecutionAllowed) {
         if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;helper runtime requested but disabled by /var/mobile/Library/TLinkauto/config.json javascript_helper_runtime_enabled\r\n"}];
         return NO;
@@ -822,6 +946,11 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _helperRunning = YES;
     [_helperNativeRPCCache removeAllObjects];
     [_helperNativeRPCOrder removeAllObjects];
+    _helperRPCCount = 0;
+    _helperDuplicateRPCCount = 0;
+    _helperBlockedRPCCount = 0;
+    _helperAutoReleasedFrameCount = 0;
+    _helperAutoReleasedImageCount = 0;
     [self beginOwnedHandleTracking];
     _taskContext = context;
     _helperSessionId = [response[@"sessionId"] copy];
@@ -858,17 +987,37 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
                 NSString *nativeRequestId = [nativeRPC[@"requestId"] isKindOfClass:[NSString class]] ? nativeRPC[@"requestId"] : @"";
                 NSString *method = [nativeRPC[@"method"] isKindOfClass:[NSString class]] ? nativeRPC[@"method"] : @"";
                 NSArray *arguments = [nativeRPC[@"arguments"] isKindOfClass:[NSArray class]] ? nativeRPC[@"arguments"] : @[];
+                _helperRPCCount++;
+                NSString *argumentsFingerprint = TLinkautoJSArgumentsFingerprint(arguments);
                 NSString *cacheKey = [NSString stringWithFormat:@"%@|%@", _helperSessionId ?: @"", nativeRequestId ?: @""];
                 NSDictionary *result = nil;
+                NSDictionary *cacheEntry = nil;
                 if ([nativeRequestId length] > 0) {
-                    result = _helperNativeRPCCache[cacheKey];
+                    cacheEntry = _helperNativeRPCCache[cacheKey];
                 }
-                if (result) {
-                    NSLog(@"tlinkauto-helper-rpc: replay method=%@ id=%@ ok=%d", method, nativeRequestId, [result[@"ok"] boolValue]);
+                if (cacheEntry) {
+                    NSString *cachedMethod = [cacheEntry[@"method"] isKindOfClass:[NSString class]] ? cacheEntry[@"method"] : @"";
+                    NSString *cachedArguments = [cacheEntry[@"argumentsFingerprint"] isKindOfClass:[NSString class]] ? cacheEntry[@"argumentsFingerprint"] : @"";
+                    if (![cachedMethod isEqualToString:method] || ![cachedArguments isEqualToString:argumentsFingerprint]) {
+                        _helperBlockedRPCCount++;
+                        result = @{ @"ok": @NO, @"error": @"duplicate native RPC requestId collision", @"requestId": nativeRequestId ?: @"" };
+                        NSLog(@"tlinkauto-helper-rpc: collision method=%@ id=%@ cachedMethod=%@", method, nativeRequestId, cachedMethod);
+                    } else {
+                        _helperDuplicateRPCCount++;
+                        result = [cacheEntry[@"result"] isKindOfClass:[NSDictionary class]] ? cacheEntry[@"result"] : @{};
+                        NSLog(@"tlinkauto-helper-rpc: replay method=%@ id=%@ ok=%d", method, nativeRequestId, [result[@"ok"] boolValue]);
+                    }
                 } else {
-                    result = [self executeNativeRequest:method arguments:arguments];
+                    NSDictionary *policy = TLinkautoJSHelperRPCPolicy(method, arguments, TLinkautoJSHelperConfigSnapshot());
+                    if (![policy[@"allowed"] boolValue]) {
+                        _helperBlockedRPCCount++;
+                        result = @{ @"ok": @NO, @"error": @"helper RPC method blocked by policy", @"method": method ?: @"", @"reason": policy[@"reason"] ?: @"blocked" };
+                        NSLog(@"tlinkauto-helper-rpc: blocked method=%@ id=%@ reason=%@", method, nativeRequestId, policy[@"reason"] ?: @"blocked");
+                    } else {
+                        result = [self executeNativeRequest:method arguments:arguments];
+                    }
                     if ([nativeRequestId length] > 0) {
-                        _helperNativeRPCCache[cacheKey] = result ?: @{};
+                        _helperNativeRPCCache[cacheKey] = @{ @"method": method ?: @"", @"argumentsFingerprint": argumentsFingerprint ?: @"", @"result": result ?: @{} };
                         [_helperNativeRPCOrder addObject:cacheKey];
                         while ([_helperNativeRPCOrder count] > kTLinkautoJSNativeRPCCacheLimit) {
                             NSString *oldest = [_helperNativeRPCOrder firstObject];
@@ -904,7 +1053,16 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
             failure = @"JavaScript helper execution was stopped";
         }
     } @finally {
+        NSUInteger ownedFrameCount = 0;
+        NSUInteger ownedImageCount = 0;
+        os_unfair_lock_lock(&_handlesLock);
+        ownedFrameCount = [_ownedFrameIds count];
+        ownedImageCount = [_ownedImageIds count];
+        os_unfair_lock_unlock(&_handlesLock);
         [self releaseOwnedHandles];
+        _helperAutoReleasedFrameCount += ownedFrameCount;
+        _helperAutoReleasedImageCount += ownedImageCount;
+        NSLog(@"tlinkauto-helper-summary: session=%@ state=%@ rpc=%lu duplicate=%lu blocked=%lu autoReleasedFrames=%lu autoReleasedImages=%lu", _helperSessionId ?: @"", ok ? @"completed" : @"failed", (unsigned long)_helperRPCCount, (unsigned long)_helperDuplicateRPCCount, (unsigned long)_helperBlockedRPCCount, (unsigned long)_helperAutoReleasedFrameCount, (unsigned long)_helperAutoReleasedImageCount);
         _taskContext.ownerSessionId = nil;
         _taskContext.ownerRunId = nil;
         _taskContext.ownerRuntime = nil;
@@ -923,6 +1081,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (NSDictionary *)executeNativeRequest:(NSString *)method arguments:(NSArray *)arguments {
     if (_helperRunning && [method isEqualToString:TLinkJSNativeMethodReleaseAllFrames]) {
         NSUInteger released = [self releaseOwnedFramesOnly];
+        _helperAutoReleasedFrameCount += released;
         return @{ @"ok": @YES, @"released": @(released), @"sessionScoped": @YES };
     }
     TLinkJSNativeRequest *request = [[TLinkJSNativeRequest alloc] initWithMethod:method arguments:arguments];
@@ -935,6 +1094,13 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         return @{@"ok": @NO, @"error": response.errorMessage ?: @"Unknown error"};
     }
 }
+
+- (NSUInteger)helperRPCCount { return _helperRPCCount; }
+- (NSUInteger)helperDuplicateRPCCount { return _helperDuplicateRPCCount; }
+- (NSUInteger)helperBlockedRPCCount { return _helperBlockedRPCCount; }
+- (NSUInteger)helperAutoReleasedFrameCount { return _helperAutoReleasedFrameCount; }
+- (NSUInteger)helperAutoReleasedImageCount { return _helperAutoReleasedImageCount; }
+
 
 @end
 
@@ -1424,6 +1590,13 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 {
     BOOL watchdog = [self.runtime watchdogAvailable];
     NSDictionary *manifest = [self.runtime currentManifest];
+    NSDictionary *helperConfig = TLinkautoJSHelperConfigSnapshot();
+    NSString *manifestRuntimeLocation = [manifest[@"runtimeLocation"] isKindOfClass:[NSString class]] ? [manifest[@"runtimeLocation"] lowercaseString] : @"";
+    id helperFlag = manifest[@"helperRuntimeEnabled"] ?: manifest[@"helper_runtime_enabled"];
+    BOOL explicitInProcess = [manifestRuntimeLocation isEqualToString:@"in-process"] || [manifestRuntimeLocation isEqualToString:@"inprocess"];
+    BOOL requestedHelper = explicitInProcess ? NO : ([manifestRuntimeLocation isEqualToString:@"helper"] || ([helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue]));
+    BOOL helperAllowed = [helperConfig[@"enabled"] boolValue];
+    NSString *effectiveLocation = requestedHelper ? @"helper" : @"in-process";
     NSMutableDictionary *info = [@{
         @"engine": @"JavaScriptCore",
         @"apiVersion": @1,
@@ -1437,11 +1610,30 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"hardJsCancellation": @(watchdog),
         @"cooperativeCancellation": @YES,
         @"autoReleaseHandles": @YES,
-        @"runtimeLocation": @"in-process-prototype",
+        @"storageLocal": @YES,
+        @"frameHandleRPC": @YES,
+        @"imageHandleRPC": @YES,
+        @"ocrRPC": @YES,
+        @"runtimeLocation": effectiveLocation ?: @"in-process",
+        @"effectiveRuntimeLocation": effectiveLocation ?: @"in-process",
+        @"helperRequested": @(requestedHelper),
+        @"helperAllowed": @(helperAllowed),
+        @"helperConfigPath": kTLinkautoJSHelperConfigPath ?: @"",
+        @"helperConfigError": helperConfig[@"error"] ?: @"",
+        @"helperConfigValid": helperConfig[@"configValid"] ?: @NO,
+        @"helperRuntimeEnabled": helperConfig[@"enabled"] ?: @NO,
+        @"helperRuntimeDefault": helperConfig[@"runtimeDefault"] ?: @NO,
+        @"helperAllowAdminRPC": helperConfig[@"allowAdminRPC"] ?: @NO,
         @"runId": [self.runtime runId] ?: @"",
         @"consoleLogPath": [self.runtime currentConsoleLogPath] ?: @"",
         @"consoleLatestLogPath": [self.runtime currentConsoleLatestLogPath] ?: @"",
     } mutableCopy];
+
+    info[@"helperRpcCount"] = @([self.runtime helperRPCCount]);
+    info[@"helperDuplicateRpcCount"] = @([self.runtime helperDuplicateRPCCount]);
+    info[@"helperBlockedRpcCount"] = @([self.runtime helperBlockedRPCCount]);
+    info[@"helperAutoReleasedFrameCount"] = @([self.runtime helperAutoReleasedFrameCount]);
+    info[@"helperAutoReleasedImageCount"] = @([self.runtime helperAutoReleasedImageCount]);
 
     TLinkJSHelperClient *helper = [[TLinkJSHelperClient alloc] init];
     NSDictionary *handshake = [helper handshakeWithTimeoutMs:250];

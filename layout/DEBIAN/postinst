@@ -2,6 +2,18 @@
 rm -rf /Applications/zxtouch.app
 mkdir -p /var/mobile/Library/TLinkauto
 mkdir -p /var/mobile/Library/TLinkauto/run
+if [ -f /var/mobile/Library/TLinkauto/config.json.preinst-bak ]; then
+    mv /var/mobile/Library/TLinkauto/config.json.preinst-bak /var/mobile/Library/TLinkauto/config.json 2>/dev/null
+fi
+if [ ! -f /var/mobile/Library/TLinkauto/config.json ]; then
+    cat > /var/mobile/Library/TLinkauto/config.json <<'EOF'
+{
+  "javascript_helper_runtime_enabled": false,
+  "javascript_helper_runtime_default": false,
+  "javascript_helper_allow_admin_rpc": false
+}
+EOF
+fi
 chmod +x /Applications/TLinkauto.app/TLinkauto 2>/dev/null
 chmod +x /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
 chmod +x /usr/bin/tlinkautod 2>/dev/null

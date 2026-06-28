@@ -48,6 +48,13 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 @property(nonatomic, copy) NSString *activeSessionId;
 @property(nonatomic, copy) NSString *activeRunId;
 @property(nonatomic, copy) NSString *activeState;
+@property(nonatomic, strong) NSDate *activeStartedAt;
+@property(nonatomic, strong) NSDate *activeEndedAt;
+@property(nonatomic, copy) NSString *activeExitReason;
+@property(nonatomic, assign) NSUInteger nativeRPCCount;
+@property(nonatomic, assign) NSUInteger nativeRPCFailedCount;
+@property(nonatomic, assign) NSUInteger nativeRPCBlockedCount;
+@property(nonatomic, assign) NSUInteger storageOpsCount;
 @property(nonatomic, copy) NSString *lastError;
 @property(nonatomic, copy) NSString *lastConsoleLogPath;
 @property(nonatomic, copy) NSString *lastConsoleLatestLogPath;
@@ -116,11 +123,23 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 - (NSDictionary *)statusPayload
 {
     NSTimeInterval uptimeMs = [[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000.0;
+    NSDate *durationEnd = self.activeEndedAt ?: [NSDate date];
+    long long startedAtMs = self.activeStartedAt ? (long long)([self.activeStartedAt timeIntervalSince1970] * 1000.0) : 0;
+    long long endedAtMs = self.activeEndedAt ? (long long)([self.activeEndedAt timeIntervalSince1970] * 1000.0) : 0;
+    long long durationMs = self.activeStartedAt ? (long long)([durationEnd timeIntervalSinceDate:self.activeStartedAt] * 1000.0) : 0;
     NSMutableDictionary *payload = [@{
         @"state": self.activeState ?: kTLinkJSHelperStateIdle,
         @"activeSessionId": self.activeSessionId ?: [NSNull null],
         @"runId": self.activeRunId ?: @"",
         @"uptimeMs": @((long long)uptimeMs),
+        @"startedAtMs": @(startedAtMs),
+        @"endedAtMs": @(endedAtMs),
+        @"durationMs": @(durationMs),
+        @"exitReason": self.activeExitReason ?: @"",
+        @"rpcCount": @(self.nativeRPCCount),
+        @"rpcFailedCount": @(self.nativeRPCFailedCount),
+        @"blockedRpcCount": @(self.nativeRPCBlockedCount),
+        @"storageOpsCount": @(self.storageOpsCount),
         @"lastError": self.lastError ?: @"",
         @"consoleLogPath": self.lastConsoleLogPath ?: @"",
         @"consoleLatestLogPath": self.lastConsoleLatestLogPath ?: @"",
@@ -138,6 +157,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     if (![method isKindOfClass:[NSString class]] || [method length] == 0) {
         return @{ @"ok": @NO, @"error": @"native RPC method is required" };
     }
+    self.nativeRPCCount++;
     NSString *requestId = [[NSUUID UUID] UUIDString];
     NSDictionary *request = @{
         kTLinkJSHelperKeyRequestId: requestId,
@@ -162,7 +182,13 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         if (response) {
             [self.nativeResponses removeObjectForKey:requestId];
             self.pendingNativeRequest = nil;
-            NSLog(@"tlinkauto-jsd rpc: response id=%@ ok=%d", requestId, [response[@"ok"] boolValue]);
+            BOOL responseOK = [response[@"ok"] boolValue];
+            if (!responseOK) {
+                self.nativeRPCFailedCount++;
+                NSString *err = [response[@"error"] isKindOfClass:[NSString class]] ? response[@"error"] : @"";
+                if ([err rangeOfString:@"blocked by policy"].location != NSNotFound) self.nativeRPCBlockedCount++;
+            }
+            NSLog(@"tlinkauto-jsd rpc: response id=%@ ok=%d", requestId, responseOK);
             [self.rpcCondition broadcast];
             [self.rpcCondition unlock];
             return response;
@@ -172,6 +198,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     self.pendingNativeRequest = nil;
     [self.rpcCondition broadcast];
     [self.rpcCondition unlock];
+    self.nativeRPCFailedCount++;
     return @{ @"ok": @NO, @"error": @"native RPC timed out" };
 }
 
@@ -251,6 +278,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)readTextAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    self.storageOpsCount++;
     NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
@@ -265,6 +293,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)writeText:(NSString *)text atRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    self.storageOpsCount++;
     NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:YES];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
@@ -280,6 +309,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)readJSONAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    self.storageOpsCount++;
     NSDictionary *textResult = [self readTextAtRelativePath:relativePath bundlePath:bundlePath];
     if (![textResult[@"ok"] boolValue]) return textResult;
     NSData *data = [textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
@@ -291,6 +321,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)writeJSONValue:(id)value atRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    self.storageOpsCount++;
     id object = [value isKindOfClass:[JSValue class]] ? [(JSValue *)value toObject] : value;
     if ([object isKindOfClass:[NSNull class]]) object = nil;
     if (!object || ![NSJSONSerialization isValidJSONObject:object]) return @{ @"ok": @NO, @"error": @"writeJSON(path, value) requires a JSON-serializable object or array" };
@@ -304,6 +335,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)fileExistsAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    self.storageOpsCount++;
     NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
@@ -314,6 +346,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)deleteFileAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    self.storageOpsCount++;
     NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
@@ -344,6 +377,35 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     return YES;
 }
 
+- (void)finishSessionId:(NSString *)sessionId state:(NSString *)state reason:(NSString *)reason errorText:(NSString *)errorText logPath:(NSString *)logPath latestPath:(NSString *)latestPath
+{
+    if (sessionId && self.activeSessionId && ![sessionId isEqualToString:self.activeSessionId]) return;
+    self.activeState = state ?: kTLinkJSHelperStateFailed;
+    self.activeExitReason = reason ?: @"unknown";
+    self.activeEndedAt = [NSDate date];
+    if ([errorText length] > 0) self.lastError = errorText;
+    NSDictionary *summary = @{
+        @"state": self.activeState ?: @"",
+        @"exitReason": self.activeExitReason ?: @"",
+        @"durationMs": @((long long)(self.activeStartedAt ? [self.activeEndedAt timeIntervalSinceDate:self.activeStartedAt] * 1000.0 : 0)),
+        @"rpcCount": @(self.nativeRPCCount),
+        @"rpcFailedCount": @(self.nativeRPCFailedCount),
+        @"blockedRpcCount": @(self.nativeRPCBlockedCount),
+        @"storageOpsCount": @(self.storageOpsCount),
+        @"lastError": self.lastError ?: @"",
+    };
+    NSData *json = [NSJSONSerialization dataWithJSONObject:summary options:0 error:nil];
+    NSString *body = json ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : [summary description];
+    NSString *line = [NSString stringWithFormat:@"[%@][%@][summary] %@\n", [NSDate date], self.activeRunId ?: @"", body ?: @"{}"];
+    if ([logPath length]) [self appendLine:line toPath:logPath];
+    if ([latestPath length]) [self appendLine:line toPath:latestPath];
+    [self.rpcCondition lock];
+    self.pendingNativeRequest = nil;
+    [self.rpcCondition broadcast];
+    [self.rpcCondition unlock];
+    NSLog(@"tlinkauto-jsd: finished session=%@ state=%@ reason=%@ rpc=%lu blocked=%lu storage=%lu", sessionId ?: @"", self.activeState ?: @"", self.activeExitReason ?: @"", (unsigned long)self.nativeRPCCount, (unsigned long)self.nativeRPCBlockedCount, (unsigned long)self.storageOpsCount);
+}
+
 - (void)runSessionId:(NSString *)sessionId scriptPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest runId:(NSString *)runId
 {
     @autoreleasepool {
@@ -359,9 +421,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         NSError *readError = nil;
         NSString *script = [NSString stringWithContentsOfFile:scriptPath encoding:NSUTF8StringEncoding error:&readError];
         if (!script) {
-            self.lastError = readError.localizedDescription ?: @"failed to read script";
-            self.activeState = kTLinkJSHelperStateFailed;
-            NSLog(@"tlinkauto-jsd: read script failed session=%@ error=%@", sessionId, self.lastError);
+            NSString *err = readError.localizedDescription ?: @"failed to read script";
+            [self finishSessionId:sessionId state:kTLinkJSHelperStateFailed reason:@"read_script_failed" errorText:err logPath:logPath latestPath:latestPath];
             return;
         }
 
@@ -392,7 +453,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         device[@"runtimeInfo"] = ^NSDictionary *{
             return @{
                 @"engine": @"JavaScriptCore",
-                @"runtimeLocation": @"helper-process-prototype",
+                @"runtimeLocation": @"helper",
+                @"effectiveRuntimeLocation": @"helper",
                 @"apiVersion": @1,
                 @"helperInstanceId": weakSelf.helperInstanceId ?: @"",
                 @"sessionId": sessionId ?: @"",
@@ -401,6 +463,11 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 @"consoleLatestLogPath": latestPath ?: @"",
                 @"nativeAPIs": @NO,
                 @"nativeRPC": @YES,
+                @"storageLocal": @YES,
+                @"frameHandleRPC": @YES,
+                @"imageHandleRPC": @YES,
+                @"ocrRPC": @YES,
+                @"autoReleaseHandles": @YES,
             };
         };
         device[@"toast"] = ^NSDictionary *(NSString *message, NSDictionary *options) {
@@ -525,6 +592,27 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         } else {
             self.activeState = kTLinkJSHelperStateCompleted;
         }
+        self.activeEndedAt = [NSDate date];
+        if (![self.activeExitReason length]) self.activeExitReason = [self.activeState isEqualToString:kTLinkJSHelperStateCompleted] ? @"normal" : ([self.activeState isEqualToString:kTLinkJSHelperStateCancelled] ? @"cancelled" : @"failed");
+        NSDictionary *summary = @{
+            @"state": self.activeState ?: @"",
+            @"exitReason": self.activeExitReason ?: @"",
+            @"durationMs": @((long long)(self.activeStartedAt ? [self.activeEndedAt timeIntervalSinceDate:self.activeStartedAt] * 1000.0 : 0)),
+            @"rpcCount": @(self.nativeRPCCount),
+            @"rpcFailedCount": @(self.nativeRPCFailedCount),
+            @"blockedRpcCount": @(self.nativeRPCBlockedCount),
+            @"storageOpsCount": @(self.storageOpsCount),
+            @"lastError": self.lastError ?: @"",
+        };
+        NSData *summaryJSON = [NSJSONSerialization dataWithJSONObject:summary options:0 error:nil];
+        NSString *summaryBody = summaryJSON ? [[NSString alloc] initWithData:summaryJSON encoding:NSUTF8StringEncoding] : [summary description];
+        NSString *summaryLine = [NSString stringWithFormat:@"[%@][%@][summary] %@\n", [NSDate date], runId ?: @"", summaryBody ?: @"{}"];
+        [self appendLine:summaryLine toPath:logPath];
+        [self appendLine:summaryLine toPath:latestPath];
+        [self.rpcCondition lock];
+        self.pendingNativeRequest = nil;
+        [self.rpcCondition broadcast];
+        [self.rpcCondition unlock];
         NSLog(@"tlinkauto-jsd: finished session=%@ state=%@ error=%@", sessionId, self.activeState, self.lastError ?: @"");
         if (![self.activeSessionId isEqualToString:sessionId]) return;
     }
@@ -536,6 +624,13 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSString *runId = [[NSUUID UUID] UUIDString];
     self.activeSessionId = sessionId;
     self.activeRunId = runId;
+    self.activeStartedAt = [NSDate date];
+    self.activeEndedAt = nil;
+    self.activeExitReason = @"";
+    self.nativeRPCCount = 0;
+    self.nativeRPCFailedCount = 0;
+    self.nativeRPCBlockedCount = 0;
+    self.storageOpsCount = 0;
     self.lastError = @"";
     self.lastConsoleLogPath = @"";
     self.lastConsoleLatestLogPath = @"";
@@ -559,6 +654,13 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSString *runId = [[NSUUID UUID] UUIDString];
     self.activeSessionId = sessionId;
     self.activeRunId = runId;
+    self.activeStartedAt = [NSDate date];
+    self.activeEndedAt = nil;
+    self.activeExitReason = @"";
+    self.nativeRPCCount = 0;
+    self.nativeRPCFailedCount = 0;
+    self.nativeRPCBlockedCount = 0;
+    self.storageOpsCount = 0;
     self.lastError = @"";
     self.lastConsoleLogPath = @"";
     self.lastConsoleLatestLogPath = @"";
@@ -608,6 +710,11 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 @"nativeRPC": @YES,
                 @"structuredConsole": @NO,
                 @"oneActiveSession": @YES,
+                @"storageLocal": @YES,
+                @"frameHandleRPC": @YES,
+                @"imageHandleRPC": @YES,
+                @"ocrRPC": @YES,
+                @"autoReleaseHandles": @YES,
             },
         }];
     }

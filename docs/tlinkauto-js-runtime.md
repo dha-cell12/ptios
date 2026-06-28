@@ -1,172 +1,122 @@
 # TLinkauto JavaScriptCore Runtime
 
-Bundle manifest:
+## Runtime selection policy
+
+JavaScriptCore scripts run in-process by default.
+
+Helper runtime is opt-in and requires both:
+
+- manifest requests helper execution with `runtimeLocation: "helper"` or `helperRuntimeEnabled: true`; and
+- `/var/mobile/Library/TLinkauto/config.json` enables `javascript_helper_runtime_enabled`.
+
+Supported runtimeLocation values:
+
+- `"in-process"`: force in-process execution.
+- `"helper"`: request helper execution. If config disables helper runtime, execution fails clearly.
+- omitted/default: in-process.
+
+Phase 5 does not make helper runtime the default. `javascript_helper_runtime_default` is reserved/report-only for now.
+
+## Config
 
 ```json
 {
-  "runtime": "javascriptcore",
-  "entry": "main.js",
-  "apiVersion": 1,
-  "coordinateSpace": "native-pixels"
+  "javascript_helper_runtime_enabled": false,
+  "javascript_helper_runtime_default": false,
+  "javascript_helper_allow_admin_rpc": false
 }
 ```
 
-Manifest validation:
+`javascript_helper_allow_admin_rpc` gates privileged helper-originated RPC. It is false by default.
 
-- JavaScript bundles support `apiVersion: 1`.
-- `coordinateSpace` must be omitted or set to `native-pixels`.
-- The manifest object is available at global `manifest`.
-- `device.runtimeInfo()` includes manifest runtime, entry, apiVersion, and coordinateSpace metadata.
+## runtimeInfo
 
-Helper runtime opt-in:
+`device.runtimeInfo()` reports manifest metadata, helper requested/allowed/effective state, config path/error, helper daemon reachability, helper capabilities, and helper counters.
 
-- Phase 2 can run pure JavaScript in the separate `tlinkauto-jsd` helper process.
-- Enable it per bundle with `"helperRuntimeEnabled": true` or `"runtimeLocation": "helper"`.
-- For safety during Phase 2, helper execution is additionally gated by marker file `/var/mobile/Library/TLinkauto/enable_js_helper_execution`.
-- Phase 2 helper runs have a default 10 second timeout; override with `"helperTimeoutMs": 30000`.
-- Helper execution currently supports pure JS, `console`, `sleep`, `require`, `include`, and `device.runtimeInfo()`.
-- Phase 3 helper native RPC supports `device.toast`, `tap`, `swipe`, `longPress`, `gesture`, `pickColor`, explicit-path screenshot APIs, screen size, foreground app/process queries, app info/state/path queries, bundle listing, URL opening, connectivity queries/setters, runtime paths, device/battery info, alert/dialog, keyboard/clipboard helpers, hardware keys, keep-awake, touch indicator, and debug `runShell` through SpringBoard while running via UI playback.
-- Bundle storage and frame/image/OCR handle APIs still run only in the default in-process runtime until cross-process handle ownership is finalized.
-- Toast `type: 0` hides the current toast; use `1`-`4` to display one.
-- Other native `device.*` automation APIs still run through the default in-process runtime until they are explicitly added to native RPC.
-- Helper logs are written to `_logs/<runId>-helper.log` and `_logs/latest-helper.log`.
-- Debug helper execution outside UI playback with `/usr/libexec/tlinkauto-jsd --run-script /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json`.
-- Debug the daemon socket path with `/usr/libexec/tlinkauto-jsd --client-run /path/to/main.js /path/to/bundle.bdl /path/to/manifest.json` while launchd helper is running.
-- Check daemon socket health with `/usr/libexec/tlinkauto-jsd --client-handshake` and `/usr/libexec/tlinkauto-jsd --client-status`.
-- On iOS, use `ps ax | grep tlinkauto-jsd`; plain `ps` may only show the current terminal session.
+Capability flags include `nativeRPC`, `storageLocal`, `frameHandleRPC`, `imageHandleRPC`, `ocrRPC`, and `autoReleaseHandles`.
 
-Bundle modules:
+## Support matrix
 
-- `require("./file")` loads `.js`, `.json`, or `index.js` files relative to the current module.
-- `include("./file")` evaluates a bundle-relative `.js` file without CommonJS exports.
-- Module paths are sandboxed to the current `.bdl` directory.
-- Absolute paths, `..` escapes, and files larger than 512 KiB are rejected.
-- Only `.js` and `.json` files are loadable through the module loader.
+| Feature | In-process runtime | Helper runtime |
+| --- | --- | --- |
+| Pure JavaScript / console / require / include | Yes | Yes |
+| Native RPC through SpringBoard | Direct native bridge | Yes, via helper RPC bridge |
+| Bundle-local storage APIs | Yes | Yes, helper-local and bundle-relative |
+| Frame handle APIs | Yes | Yes, via session-owned RPC handles |
+| Image handle APIs | Yes | Yes, via session-owned RPC handles |
+| OCR APIs | Yes | Yes, via RPC wrappers |
+| Admin/destructive APIs | Available to in-process scripts | Blocked by default; requires `javascript_helper_allow_admin_rpc` where allowed |
 
-Bundle storage APIs:
+## Helper native RPC policy
 
-- `device.readText(path)` returns `{ ok, path, text }`.
-- `device.writeText(path, text)` writes UTF-8 text and returns `{ ok, path, bytes }`.
-- `device.readJSON(path)` returns `{ ok, path, value }`.
-- `device.writeJSON(path, value)` writes a JSON object or array.
-- `device.fileExists(path)` returns `{ ok, path, exists, directory }`.
-- `device.deleteFile(path)` deletes a bundle-relative file.
-- Storage paths are sandboxed to the current `.bdl` directory.
-- Writes reject `manifest.json`, `info.plist`, `.js` source files, path escapes, and files larger than 512 KiB.
+Helper scripts can call safe RPC APIs through SpringBoard. Raw task execution is blocked from the helper production path. Privileged/admin RPC is blocked unless `javascript_helper_allow_admin_rpc` is true.
 
-Console file logs:
+Blocked RPC returns `{ ok: false, error: "helper RPC method blocked by policy", reason: ... }`.
 
-- `console.log/info/warn/error` writes to system `NSLog` and bundle files.
-- Current run log: `_logs/<runId>.log` inside the `.bdl` bundle.
-- Latest run log: `_logs/latest.log` inside the `.bdl` bundle.
-- `device.runtimeInfo()` includes `consoleLogPath` and `consoleLatestLogPath`.
-- Console log files rotate by deletion when they exceed 512 KiB.
+## Helper-local storage
 
-Runtime helpers:
+Helper-local storage is bundle-relative and path-safe:
 
-- `TLinkauto.version` exposes the helper API version.
-- `TLinkauto.assert(condition, message)` throws an error when `condition` is false.
-- `TLinkauto.ensureOk(result, message)` throws when a typed API result is missing or has `ok: false`, otherwise returns the result.
-- `TLinkauto.waitUntil(predicate, { timeoutMs, intervalMs })` polls synchronously until `predicate(attempt)` returns a truthy value or timeout expires.
-- `TLinkauto.retry(action, { retries, delayMs })` retries a synchronous action and returns `{ ok, value, attempts }` or `{ ok, error, attempts }`.
-- `TLinkauto.waitForApp(bundleId, options)` waits until the frontmost app matches `bundleId`.
-- `TLinkauto.waitForColor(x, y, { red, green, blue }, { timeoutMs, intervalMs, tolerance })` waits until a screen pixel matches the target color.
-- `TLinkauto.withFrame(options, callback)` captures a frame, passes it to `callback(frame)`, and releases it in `finally`.
-- `TLinkauto.withImage(path, callback)` opens an image handle and releases it in `finally`.
-- `TLinkauto.withCapturedImage(x, y, width, height, callback)` captures an image handle and releases it in `finally`.
+- `device.readText(path)`
+- `device.writeText(path, text)`
+- `device.readJSON(path)`
+- `device.writeJSON(path, value)`
+- `device.fileExists(path)`
+- `device.deleteFile(path)`
 
-Core APIs:
+Paths must remain inside the current script bundle. Bundle metadata/source files are protected from modification.
 
-- `device.toast(message, { type, duration, position, fontSize })` shows a visible on-screen toast.
-- `device.tap(x, y)`
-- `device.longPress(x, y, durationMs)`
-- `device.swipe(x1, y1, x2, y2, durationMs)`
-- `device.gesture(points, { finger, duration })`, where points are `[x, y]` arrays or `{ x, y }` objects.
-- `device.pickColor(x, y)` returns `{ ok, red, green, blue }`
-- `device.screenshot()` returns `{ ok, path }`
-- `device.screenshotTo(path)` returns `{ ok, path }`
-- `device.screenshotRegion(path, { x, y, width, height })` saves a cropped screenshot and returns `{ ok, path, x, y, width, height }`.
-- `device.frontMostAppId()` returns `{ ok, bundleId }`
-- `device.frontMostPid()` returns `{ ok, pid }`
-- `device.orientation()` returns `{ ok, value }`
-- `device.openApp(bundleId)` launches/brings an app forward.
-- `device.killApp(bundleId)` terminates an app.
-- `device.appState(bundleId)` returns `{ ok, state, running }`.
-- `device.appInfo(bundleId)` returns `{ ok, bundleId, name, shortVersion, bundleVersion, state }`.
-- `device.appPid(bundleId)` returns `{ ok, pid }`.
-- `device.appPaths(bundleId)` returns `{ ok, bundlePath, dataPath }`.
-- `device.listBundles(withInfo)` returns `{ ok, bundleIds }` or `{ ok, items }`.
-- `device.openUrl(url)` opens a URL through SpringBoard/UIKit.
-- `device.wifi()`, `device.bluetooth()`, `device.airplaneMode()`, `device.cellularData()` query connectivity state.
-- `device.setWifi(enabled)`, `device.setBluetooth(enabled)`, `device.setAirplaneMode(enabled)`, `device.setCellularData(enabled)` set connectivity state when supported by the iOS build.
-- `device.alert(title, message, duration)` shows a blocking native alert.
-- `device.dialog({ title, message, ok, cancel })` shows a native dialog and returns `{ ok, response }`.
-- `device.clearDialogValues()` clears stored dialog value.
-- `device.showKeyboard()`, `device.hideKeyboard()`, `device.insertText(text)`, `device.deleteCharacters(count)`, `device.moveCursor(offset)`, `device.pasteFromClipboard()` control the active keyboard field.
-- `device.getClipboardText()` returns `{ ok, text }`.
-- `device.setClipboardText(text)` writes text to the general pasteboard.
-- `device.hardwareKey(key, action)` sends hardware key down/up. Keys: `home`, `volume-up`, `volume-down`, `lock`. Actions: `down`, `up`.
-- `device.pressHardwareKey(key)` sends down then up.
-- `device.keepAwake(enabled)` toggles idle timer.
-- `device.touchIndicator(action)` supports `show`, `hide`, `reload`.
-- `device.rootDir()`, `device.currentDir()`, `device.botPath()` return runtime paths.
-- `device.info()` returns `{ ok, name, systemName, systemVersion, model, identifierForVendor }`.
-- `device.batteryInfo()` returns `{ ok, state, level }`.
-- `device.runShell(command)` runs a privileged shell command through `tlinkautob` and returns `{ ok, output }`. Use for debugging/admin scripts only.
-- `device.saveScreenshotToAlbum(path)` saves an image to the TLinkauto Photos album.
-- `device.clearScreenshotAlbum()` clears the TLinkauto Photos album.
-- `device.matchTemplate(path, { maxTryTimes, acceptable, scaleRatio })` returns `{ ok, matched, x, y, width, height, centerX, centerY }`.
-- `device.findColor(options)` searches the current screen and returns `{ ok, matched, x, y, red, green, blue }`.
-- `device.isColors(points, { mode, value, tolerance })` checks absolute point colors and returns `{ ok, matched }`.
-- `device.findMultiColor(points, { x, y, width, height, mode, value, tolerance, skip })` searches for a relative multi-point color pattern and returns `{ ok, matched, x, y }`.
-- `device.setAutoLaunch(name, script, enabled)` configures auto-launch metadata.
-- `device.listAutoLaunch()` returns `{ ok, items }`.
-- `device.setTimer(name, interval, repeat, script)` schedules a script timer.
-- `device.removeTimer(name)` removes a scheduled script timer.
-- `device.batch(commands)` supports typed `tap`, `swipe`, and `gesture` commands, plus allowlisted raw native commands `62`, `63`, `64`.
-- `device.getScreenSize()` returns `{ width, height, scale, orientation, coordinateSpace }`
-- `device.runtimeInfo()` returns runtime capabilities.
+## Frame, image, and OCR RPC
 
-Frame/image APIs use opaque numeric handles and avoid moving image bytes through JavaScript:
+Helper runtime supports frame/image/OCR wrappers:
 
-Frame/image handles created by JavaScript are auto-released when the script exits. Explicit `releaseFrame` / `releaseImage` is still recommended for long-running scripts that create many handles.
+- `captureFrame`, `releaseFrame`, `releaseAllFrames`
+- `framePickColor`, `framePickColors`, `frameFindColor`, `frameIsColors`, `frameFindMultiColor`
+- `openImage`, `captureImage`, `releaseImage`, `findImageInFrame`
+- `ocrLanguages`, `ocrFrame`, `ocr`
 
-- `device.captureFrame({ gray, bgra, ttlMs })` returns `{ ok, id, width, height, scale, hasGray, hasBGRA }`
-- `device.releaseFrame(frameId)` releases one frame.
-- `device.releaseAllFrames()` releases all cached frames.
-- `device.openImage(path)` returns `{ ok, id, width, height }`
-- `device.captureImage(x, y, width, height)` returns `{ ok, id, width, height }`
-- `device.releaseImage(imageId)` releases one image handle.
-- `device.framePickColor(frameId, x, y, { coord, maxAgeMs })` returns `{ ok, red, green, blue, ageMs }`
-- `device.framePickColors(frameId, points, { coord, maxAgeMs })` returns `{ ok, colors, ageMs }`
-- `device.frameFindColor(frameId, options)` searches a cached frame and returns `{ ok, matched, x, y, red, green, blue, ageMs }`.
-- `device.frameIsColors(frameId, points, options)` checks absolute point colors in a cached frame and returns `{ ok, matched, ageMs }`.
-- `device.frameFindMultiColor(frameId, points, options)` searches for a relative multi-point color pattern in a cached frame and returns `{ ok, matched, x, y, ageMs }`.
-- `device.findImageInFrame(frameId, imageId, options)` returns `{ ok, matched, x, y, width, height, centerX, centerY, score, ageMs }`
-- `device.ocrLanguages()` returns `{ ok, languages }` from `/var/mobile/Library/TLinkauto/tessdata`.
-- `device.ocrFrame(frameId, options)` runs Tesseract OCR on a captured frame region and returns `{ ok, text, confidence, ageMs, ocrMs, preprocessMs, totalMs }`.
-- `device.ocr(options)` captures a temporary gray frame, runs OCR, releases the frame, and returns the same OCR result.
+Frame and image handles include owner metadata. Helper cleanup is session-scoped and does not globally release unrelated in-process handles.
 
-`findImageInFrame` options:
+## Helper client CLI
 
-- `x`, `y`, `width`, `height`
-- `acceptable`, default `0.95`
-- `scaleMin`, `scaleMax`, `scaleStep`, defaults `1.0`
-- `pixelSkip`, default `0`
-- `coord`, default `pixel`
-- `maxAgeMs`, default `1000`
+`tlinkauto-jsd` supports small client commands for test/diagnostics:
 
-`ocrFrame` / `ocr` options:
+```sh
+/usr/libexec/tlinkauto-jsd --client-handshake
+/usr/libexec/tlinkauto-jsd --client-status
+/usr/libexec/tlinkauto-jsd --client-run <scriptPath> <bundlePath> [manifestPath]
+/usr/libexec/tlinkauto-jsd --client-stop <sessionId>
+```
 
-- `x`, `y`, `width`, `height`, defaults to full frame for `ocr`.
-- `lang`, default `vie`.
-- `oem`, default `1`.
-- `psm`, default `7`.
-- `whitelist`, optional string.
-- `scaleUp`, default `2`, clamped by native OCR implementation.
-- `thresholdMode`, default `0`; native supports `0` none, `1` Otsu, `2` adaptive.
-- `coord`, default `pixel`.
-- `maxAgeMs`, default `1000`.
-- `ttlMs`, only for `device.ocr`, default `1000`.
+`--client-stop <sessionId>` sends `kTLinkJSHelperCmdStop` to the helper daemon, prints the JSON response, and exits `0` when the request succeeds or `2` on failure.
 
-`device.runTask(task, payload)` remains available for internal debugging, but public scripts should prefer typed APIs.
+## Logs and observability
+
+Helper logs are written under the bundle `_logs` directory:
+
+- `_logs/<runId>-helper.log`
+- `_logs/latest-helper.log`
+
+Phase 5 appends a structured summary at the end of helper runs with state, exit reason, duration, RPC counts, blocked RPC counts, and storage operation counts.
+
+## Safe demos
+
+Safe demos intended for repeated validation:
+
+- Helper Storage Demo
+- Helper Frame Color Demo
+- Helper OCR Demo
+- Helper Full Safe Smoke Demo
+
+## Phase 5 test matrix
+
+1. config off + helper manifest -> fail clear.
+2. config on + helper manifest -> helper run.
+3. JavaScript exception -> helper finishes failed and cleanup runs.
+4. timeout/user stop -> helper finishes cancelled/failed and cleanup runs.
+5. duplicate native RPC request id -> cached replay, no duplicate side effect.
+6. same request id with different payload -> collision error.
+7. admin RPC while admin gate false -> blocked by policy.
+8. admin RPC while admin gate true -> allowed.
+9. repeated frame/image/OCR demos -> no growing handle leak.
+10. daemon restart/poll failure during run -> SpringBoard fails cleanly.

@@ -1,4 +1,9 @@
 #!/bin/sh
+
+mkdir -p /var/mobile/Library/TLinkauto
+if [ -f /var/mobile/Library/TLinkauto/config.json ]; then
+    cp -p /var/mobile/Library/TLinkauto/config.json /var/mobile/Library/TLinkauto/config.json.preinst-bak 2>/dev/null
+fi
 launchctl unload /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 launchctl unload /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist 2>/dev/null
 launchctl unload /Library/LaunchDaemons/com.tlinkauto.js-helper.plist 2>/dev/null

@@ -150,6 +150,12 @@ int main(int argc, char *argv[], char *envp[]) {
             TLinkJSDPrintJSON(result);
             return [result[@"ok"] boolValue] ? 0 : 2;
         }
+        if (argc >= 3 && strcmp(argv[1], "--client-stop") == 0) {
+            NSString *sessionId = [NSString stringWithUTF8String:argv[2]];
+            NSDictionary *result = TLinkJSDClientRequest(kTLinkJSHelperCmdStop, @{}, sessionId);
+            TLinkJSDPrintJSON(result);
+            return [result[@"ok"] boolValue] ? 0 : 2;
+        }
         [server run];
     }
     return 0;
