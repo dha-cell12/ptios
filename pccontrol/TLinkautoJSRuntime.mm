@@ -276,11 +276,6 @@ struct TLinkautoJSWatchdogProbeState {
 - (NSUInteger)helperDuplicateRPCCount;
 - (NSUInteger)helperBlockedRPCCount;
 - (NSUInteger)helperAutoReleasedFrameCount;
-- (NSUInteger)helperAutoReleasedImageCount;
-- (NSUInteger)ownedFrameCount;
-- (NSUInteger)ownedImageCount;
-- (BOOL)acceptingHandlesForDebug;
-- (BOOL)helperRunningForDebug;
 - (BOOL)helperDefaultFallbackForDebug;
 - (NSString *)helperDefaultFallbackReasonForDebug;
 @end
