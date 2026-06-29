@@ -34,3 +34,5 @@ console.log("deleteJSON", deleteJSON);
 var toast = device.toast("Helper Storage Demo OK", { type: 4, duration: 2 });
 console.log("toast", toast);
 console.log("helper storage demo completed");
+
+console.log('[HELPER_TEST_PASS] Helper Storage Demo');

@@ -24,3 +24,5 @@ console.log("cleanup", device.releaseAllFrames());
 console.log("ocrLanguages", device.ocrLanguages());
 device.toast("Helper Full Safe Smoke completed", { type: 4, duration: 2 });
 console.log("helper full safe smoke completed");
+
+console.log('[HELPER_TEST_PASS] Helper Full Safe Smoke Demo');

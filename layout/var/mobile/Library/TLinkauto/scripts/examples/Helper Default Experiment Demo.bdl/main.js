@@ -1,0 +1,13 @@
+﻿console.log("[HELPER_TEST_START] Helper Default Experiment Demo");
+var info = device.runtimeInfo();
+console.log("runtimeInfo", info);
+var path = "data/helper-default-experiment.json";
+var w = device.writeJSON(path, { ok: true, runtimeLocation: info.effectiveRuntimeLocation || info.runtimeLocation || "unknown" });
+console.log("writeJSON", w);
+if (!w.ok) throw new Error("writeJSON failed");
+var r = device.readJSON(path);
+console.log("readJSON", r);
+if (!r.ok) throw new Error("readJSON failed");
+device.deleteFile(path);
+device.toast("Helper Default Experiment Demo OK", { type: 4, duration: 2 });
+console.log("[HELPER_TEST_PASS] Helper Default Experiment Demo");

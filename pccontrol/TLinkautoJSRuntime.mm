@@ -251,8 +251,12 @@ struct TLinkautoJSWatchdogProbeState {
     NSUInteger _helperAutoReleasedImageCount;
     BOOL _lastHelperRequested;
     BOOL _lastHelperAllowed;
+    BOOL _lastHelperExplicitRequested;
+    BOOL _lastHelperDefaultRequested;
+    BOOL _lastHelperDefaultFallback;
     NSString *_lastEffectiveRuntimeLocation;
     NSString *_lastHelperConfigError;
+    NSString *_lastHelperDefaultFallbackReason;
 }
 
 - (void)beginOwnedHandleTracking;
@@ -268,6 +272,17 @@ struct TLinkautoJSWatchdogProbeState {
 - (void)untrackAllFrameIds;
 - (void)trackImageId:(int)imageId;
 - (void)untrackImageId:(int)imageId;
+- (NSUInteger)helperRPCCount;
+- (NSUInteger)helperDuplicateRPCCount;
+- (NSUInteger)helperBlockedRPCCount;
+- (NSUInteger)helperAutoReleasedFrameCount;
+- (NSUInteger)helperAutoReleasedImageCount;
+- (NSUInteger)ownedFrameCount;
+- (NSUInteger)ownedImageCount;
+- (BOOL)acceptingHandlesForDebug;
+- (BOOL)helperRunningForDebug;
+- (BOOL)helperDefaultFallbackForDebug;
+- (NSString *)helperDefaultFallbackReasonForDebug;
 @end
 
 static bool TLinkautoJSShouldTerminate(JSContextRef ctx, void *opaque)
@@ -568,6 +583,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         _helperNativeRPCCache = [NSMutableDictionary dictionary];
         _helperNativeRPCOrder = [NSMutableArray array];
         _lastEffectiveRuntimeLocation = @"in-process";
+        _lastHelperDefaultFallbackReason = @"";
         _setExecutionTimeLimit = (TLinkautoJSSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
         _clearExecutionTimeLimit = (TLinkautoJSClearExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupClearExecutionTimeLimit");
         _watchdogAvailable = TLinkautoJSWatchdogCapability(_setExecutionTimeLimit, _clearExecutionTimeLimit);
@@ -907,17 +923,49 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     BOOL legacyHelperFlag = [helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue];
     NSDictionary *helperConfig = TLinkautoJSHelperConfigSnapshot();
     BOOL helperExecutionAllowed = [helperConfig[@"enabled"] boolValue];
-    BOOL requestedHelper = explicitInProcess ? NO : (explicitHelper || legacyHelperFlag);
+    BOOL helperRuntimeDefault = [helperConfig[@"runtimeDefault"] boolValue];
+    BOOL explicitHelperRequest = explicitInProcess ? NO : (explicitHelper || legacyHelperFlag);
+    BOOL defaultHelperRequest = (!explicitInProcess && !explicitHelperRequest && helperRuntimeDefault);
+    BOOL requestedHelper = explicitHelperRequest || (defaultHelperRequest && helperExecutionAllowed);
     _lastHelperRequested = requestedHelper;
     _lastHelperAllowed = helperExecutionAllowed;
+    _lastHelperExplicitRequested = explicitHelperRequest;
+    _lastHelperDefaultRequested = defaultHelperRequest;
+    _lastHelperDefaultFallback = NO;
+    _lastHelperDefaultFallbackReason = @"";
     _lastHelperConfigError = [helperConfig[@"error"] isKindOfClass:[NSString class]] ? [helperConfig[@"error"] copy] : @"";
     _lastEffectiveRuntimeLocation = requestedHelper ? @"helper" : @"in-process";
-    if (requestedHelper && !helperExecutionAllowed) {
-        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;helper runtime requested but disabled by /var/mobile/Library/TLinkauto/config.json javascript_helper_runtime_enabled\r\n"}];
+    if (explicitHelperRequest && !helperExecutionAllowed) {
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;helper runtime requested but disabled by /var/mobile/Library/TLinkauto/config.json javascript_helper_runtime_enabled
+
+"}];
         return NO;
     }
+    if (defaultHelperRequest && !helperExecutionAllowed) {
+        _lastHelperDefaultFallback = YES;
+        _lastHelperDefaultFallbackReason = @"helper_disabled";
+        _lastEffectiveRuntimeLocation = @"in-process";
+        NSLog(@"tlinkauto-helper-default: fallback to in-process reason=helper_disabled");
+    }
     if (requestedHelper) {
-        return [self runScriptInHelperAtPath:scriptPath bundlePath:bundlePath manifest:manifest context:context error:error];
+        NSError *helperError = nil;
+        BOOL helperOK = [self runScriptInHelperAtPath:scriptPath bundlePath:bundlePath manifest:manifest context:context error:&helperError];
+        if (helperOK) return YES;
+        if (explicitHelperRequest) {
+            if (error) *error = helperError;
+            return NO;
+        }
+        NSString *helperMessage = helperError.localizedDescription ?: @"helper_failed";
+        BOOL infrastructureFailure = ([helperMessage rangeOfString:@"helper start failed"].location != NSNotFound ||
+                                      [helperMessage rangeOfString:@"helper runtime is busy"].location != NSNotFound);
+        if (!infrastructureFailure) {
+            if (error) *error = helperError;
+            return NO;
+        }
+        _lastHelperDefaultFallback = YES;
+        _lastHelperDefaultFallbackReason = ([helperMessage rangeOfString:@"busy"].location != NSNotFound) ? @"helper_busy" : @"helper_start_failed";
+        _lastEffectiveRuntimeLocation = @"in-process";
+        NSLog(@"tlinkauto-helper-default: fallback to in-process reason=%@ message=%@", _lastHelperDefaultFallbackReason ?: @"", helperMessage ?: @"");
     }
     [self beginOwnedHandleTracking];
     _taskContext = context;
@@ -1100,6 +1148,36 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (NSUInteger)helperBlockedRPCCount { return _helperBlockedRPCCount; }
 - (NSUInteger)helperAutoReleasedFrameCount { return _helperAutoReleasedFrameCount; }
 - (NSUInteger)helperAutoReleasedImageCount { return _helperAutoReleasedImageCount; }
+
+- (NSUInteger)ownedFrameCount
+{
+    os_unfair_lock_lock(&_handlesLock);
+    NSUInteger count = [_ownedFrameIds count];
+    os_unfair_lock_unlock(&_handlesLock);
+    return count;
+}
+
+- (NSUInteger)ownedImageCount
+{
+    os_unfair_lock_lock(&_handlesLock);
+    NSUInteger count = [_ownedImageIds count];
+    os_unfair_lock_unlock(&_handlesLock);
+    return count;
+}
+
+- (BOOL)acceptingHandlesForDebug
+{
+    os_unfair_lock_lock(&_handlesLock);
+    BOOL accepting = _acceptingHandles;
+    os_unfair_lock_unlock(&_handlesLock);
+    return accepting;
+}
+
+- (BOOL)helperRunningForDebug { return _helperRunning; }
+
+- (BOOL)helperDefaultFallbackForDebug { return _lastHelperDefaultFallback; }
+
+- (NSString *)helperDefaultFallbackReasonForDebug { return _lastHelperDefaultFallbackReason ?: @""; }
 
 
 @end
@@ -1594,9 +1672,15 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSString *manifestRuntimeLocation = [manifest[@"runtimeLocation"] isKindOfClass:[NSString class]] ? [manifest[@"runtimeLocation"] lowercaseString] : @"";
     id helperFlag = manifest[@"helperRuntimeEnabled"] ?: manifest[@"helper_runtime_enabled"];
     BOOL explicitInProcess = [manifestRuntimeLocation isEqualToString:@"in-process"] || [manifestRuntimeLocation isEqualToString:@"inprocess"];
-    BOOL requestedHelper = explicitInProcess ? NO : ([manifestRuntimeLocation isEqualToString:@"helper"] || ([helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue]));
+    BOOL explicitHelper = [manifestRuntimeLocation isEqualToString:@"helper"];
+    BOOL legacyHelperFlag = [helperFlag respondsToSelector:@selector(boolValue)] && [helperFlag boolValue];
     BOOL helperAllowed = [helperConfig[@"enabled"] boolValue];
+    BOOL helperRuntimeDefault = [helperConfig[@"runtimeDefault"] boolValue];
+    BOOL explicitHelperRequest = explicitInProcess ? NO : (explicitHelper || legacyHelperFlag);
+    BOOL defaultHelperRequest = (!explicitInProcess && !explicitHelperRequest && helperRuntimeDefault);
+    BOOL requestedHelper = explicitHelperRequest || (defaultHelperRequest && helperAllowed);
     NSString *effectiveLocation = requestedHelper ? @"helper" : @"in-process";
+    if ([self.runtime helperDefaultFallbackForDebug]) effectiveLocation = @"in-process";
     NSMutableDictionary *info = [@{
         @"engine": @"JavaScriptCore",
         @"apiVersion": @1,
@@ -1617,6 +1701,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"runtimeLocation": effectiveLocation ?: @"in-process",
         @"effectiveRuntimeLocation": effectiveLocation ?: @"in-process",
         @"helperRequested": @(requestedHelper),
+        @"helperExplicitRequested": @(explicitHelperRequest),
+        @"helperDefaultRequested": @(defaultHelperRequest),
+        @"helperDefaultFallback": @([self.runtime helperDefaultFallbackForDebug]),
+        @"helperDefaultFallbackReason": [self.runtime helperDefaultFallbackReasonForDebug] ?: @"",
         @"helperAllowed": @(helperAllowed),
         @"helperConfigPath": kTLinkautoJSHelperConfigPath ?: @"",
         @"helperConfigError": helperConfig[@"error"] ?: @"",
@@ -1634,6 +1722,11 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     info[@"helperBlockedRpcCount"] = @([self.runtime helperBlockedRPCCount]);
     info[@"helperAutoReleasedFrameCount"] = @([self.runtime helperAutoReleasedFrameCount]);
     info[@"helperAutoReleasedImageCount"] = @([self.runtime helperAutoReleasedImageCount]);
+
+    info[@"ownedFrameCount"] = @([self.runtime ownedFrameCount]);
+    info[@"ownedImageCount"] = @([self.runtime ownedImageCount]);
+    info[@"acceptingHandles"] = @([self.runtime acceptingHandlesForDebug]);
+    info[@"helperRunning"] = @([self.runtime helperRunningForDebug]);
 
     TLinkJSHelperClient *helper = [[TLinkJSHelperClient alloc] init];
     NSDictionary *handshake = [helper handshakeWithTimeoutMs:250];

@@ -12,3 +12,5 @@ if (frame.ok && frame.id) {
 }
 device.toast("Helper OCR Demo completed", { type: 4, duration: 2 });
 console.log("helper ocr demo completed");
+
+console.log('[HELPER_TEST_PASS] Helper OCR Demo');

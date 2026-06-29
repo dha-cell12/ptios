@@ -1,6 +1,7 @@
-{
-  "runtime": "javascriptcore",
-  "entry": "main.js",
-  "apiVersion": 1,
-  "coordinateSpace": "native-pixels"
+﻿{
+    "runtime":  "javascriptcore",
+    "entry":  "main.js",
+    "apiVersion":  1,
+    "coordinateSpace":  "native-pixels",
+    "runtimeLocation":  "in-process"
 }

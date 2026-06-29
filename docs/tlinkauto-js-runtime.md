@@ -120,3 +120,86 @@ Safe demos intended for repeated validation:
 8. admin RPC while admin gate true -> allowed.
 9. repeated frame/image/OCR demos -> no growing handle leak.
 10. daemon restart/poll failure during run -> SpringBoard fails cleanly.
+
+## Phase 6 regression harness
+
+The packaged helper regression harness is installed at:
+
+```sh
+/var/mobile/Library/TLinkauto/tools/run-helper-tests.py
+```
+
+Run safe repeated regression:
+
+```sh
+python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only safe --repeat 20 --json
+```
+
+Run admin blocked regression while `javascript_helper_allow_admin_rpc` is false:
+
+```sh
+python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only admin-blocked --repeat 5 --json
+```
+
+Run failure-path regression:
+
+```sh
+python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only exception,timeout --repeat 3 --json
+```
+
+See `docs/helper-runtime-test-checklist.md` for the full device checklist, including the manual stop-mid-run flow using `--client-status` and `--client-stop <sessionId>`.
+
+## Phase 7 default experiment
+
+Phase 7 makes `javascript_helper_runtime_default` functional as a controlled experiment. The package default remains false and rollback is config-only.
+
+Default experiment config for controlled deployments:
+
+```json
+{
+  "javascript_helper_runtime_enabled": true,
+  "javascript_helper_runtime_default": true,
+  "javascript_helper_allow_admin_rpc": false
+}
+```
+
+Rollback without reinstall:
+
+```json
+{
+  "javascript_helper_runtime_default": false
+}
+```
+
+Runtime selection matrix:
+
+| Manifest/config | Result |
+| --- | --- |
+| `runtimeLocation: "helper"` + helper enabled false | Fail clear |
+| `runtimeLocation: "helper"` + helper enabled true | Helper runtime |
+| `runtimeLocation: "in-process"` | In-process runtime |
+| omitted runtime + default false | In-process runtime |
+| omitted runtime + default true + helper enabled true | Helper runtime |
+| omitted runtime + default true + helper enabled false | In-process fallback |
+| omitted runtime + default true + helper start/busy failure | In-process fallback with warning |
+| explicit helper + helper start/busy failure | Fail clear, no fallback |
+
+Use `runtimeLocation: "in-process"` for legacy scripts that depend on in-process-only behavior. Use `runtimeLocation: "helper"` for scripts that must fail rather than silently run in-process when helper is disabled. Omit `runtimeLocation` only for scripts that are safe under the default experiment.
+
+`device.runtimeInfo()` reports Phase 7 fields: `helperExplicitRequested`, `helperDefaultRequested`, `helperDefaultFallback`, and `helperDefaultFallbackReason`.
+
+Admin RPC remains disabled by default and raw task execution remains blocked from the helper production path.
+
+The default experiment compatibility demo is:
+
+```text
+Helper Default Experiment Demo.bdl
+```
+
+CLI note: `--client-run` invokes the helper daemon directly, so it validates helper compatibility and timing but does not exercise SpringBoard runtime selection. Test the actual default-selection path from the app/script player.
+
+Run Phase 7 helper compatibility baseline:
+
+```sh
+python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only phase7 --repeat 20 --json
+```

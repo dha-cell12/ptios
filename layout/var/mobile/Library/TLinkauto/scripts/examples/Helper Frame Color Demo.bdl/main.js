@@ -28,3 +28,5 @@ var msg = "Frame Color OK rgb=(" + color.red + "," + color.green + "," + color.b
 var toast = device.toast(msg, { type: 4, duration: 2 });
 console.log("toast", toast);
 console.log("helper frame color demo completed");
+
+console.log('[HELPER_TEST_PASS] Helper Frame Color Demo');
