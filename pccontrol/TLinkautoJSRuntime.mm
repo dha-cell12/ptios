@@ -931,9 +931,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _lastHelperConfigError = [helperConfig[@"error"] isKindOfClass:[NSString class]] ? [helperConfig[@"error"] copy] : @"";
     _lastEffectiveRuntimeLocation = requestedHelper ? @"helper" : @"in-process";
     if (explicitHelperRequest && !helperExecutionAllowed) {
-        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;helper runtime requested but disabled by /var/mobile/Library/TLinkauto/config.json javascript_helper_runtime_enabled
-
-"}];
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;helper runtime requested but disabled by /var/mobile/Library/TLinkauto/config.json javascript_helper_runtime_enabled\r\n"}];
         return NO;
     }
     if (defaultHelperRequest && !helperExecutionAllowed) {
