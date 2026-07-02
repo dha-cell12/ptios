@@ -116,21 +116,27 @@ Demo #8: [Color Picker](https://youtu.be/tserB05_B9E)
 
 ## Usage
 
-See python version of documentation below. But you can also use ANY language to control your iOS device as long as the language supports socket. Here is how it works:
+TLinkauto's on-device scripting runtime is JavaScriptCore. New scripts should use `main.js` plus `manifest.json`; see `docs/tlinkauto-js-runtime.md` for the current runtime and helper documentation.
+
+Legacy Python playback has been removed from the iOS package/runtime. Existing `.py` scripts are preserved during upgrade, but running them shows a migration error instead of spawning Python.
+
+You can also use any language to control your iOS device remotely as long as the language supports sockets. Here is how it works:
 
 1. After installation, the tweak starts listening at port 6000.
 
-2. To control your device, send data in certain format to port 6000 on your device. I will not list the detail format of data here, but you can read my python module source code to figure it out.
+2. To control your device, send data in certain format to port 6000 on your device.
 
 
-## Documentation (Python)
+## Documentation (Legacy Python)
+
+The Python module documentation below is legacy reference for PC/dev tooling only. Python is no longer bundled for iOS on-device playback.
 
 ### Installation
 
-1. **On Your iOS Device**: TLinkauto python module will be automatically installed on your iOS device.
+1. **On Your iOS Device**: Python is no longer installed by TLinkauto and `.py` playback is unsupported.
 
 
-2. **On Computers**: If you want to install TLinkauto python module on your computer for remote controlling, download the source code from [github](https://github.com/xuan32546/IOS13-SimulateTouch/tree/0.0.6/layout/usr/lib/python3.7/site-packages) and copy the TLinkauto folder to your "site-packages" folder of your python on your computer.
+2. **On Computers**: Legacy Python remote-control tooling may still be used from the source tree for development, but it is not part of the iOS runtime package.
 
 ### Create A TLinkauto Instance
 

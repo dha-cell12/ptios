@@ -7,6 +7,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdlib.h>
 
 static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkauto/run/js-helper.sock";
 
@@ -81,6 +82,129 @@ static void TLinkJSDPrintJSON(NSDictionary *obj)
     }
 }
 
+static NSDictionary *TLinkJSDManifestAtPath(NSString *path)
+{
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data) return @{};
+    id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    return [obj isKindOfClass:[NSDictionary class]] ? obj : @{};
+}
+
+static NSDictionary *TLinkJSDClientRunScript(NSString *scriptPath, NSString *bundlePath, NSDictionary *manifest, double timeoutSeconds)
+{
+    NSDictionary *start = TLinkJSDClientRequest(kTLinkJSHelperCmdStart, @{ @"scriptPath": scriptPath ?: @"", @"bundlePath": bundlePath ?: @"", @"manifest": manifest ?: @{} }, nil);
+    if (![start[@"ok"] boolValue]) return start;
+    NSDictionary *response = [start[@"response"] isKindOfClass:[NSDictionary class]] ? start[@"response"] : @{};
+    NSString *sessionId = [response[kTLinkJSHelperKeySessionId] isKindOfClass:[NSString class]] ? response[kTLinkJSHelperKeySessionId] : nil;
+    NSDictionary *lastPayload = [response[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? response[kTLinkJSHelperKeyPayload] : @{};
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeoutSeconds > 0 ? timeoutSeconds : 30.0];
+    while ([[NSDate date] compare:deadline] == NSOrderedAscending) {
+        NSString *state = [lastPayload[@"state"] isKindOfClass:[NSString class]] ? lastPayload[@"state"] : @"";
+        if ([state isEqualToString:kTLinkJSHelperStateCompleted] || [state isEqualToString:kTLinkJSHelperStateFailed] || [state isEqualToString:kTLinkJSHelperStateCancelled] || [state isEqualToString:kTLinkJSHelperStateCrashed]) {
+            return lastPayload;
+        }
+        [NSThread sleepForTimeInterval:0.2];
+        NSDictionary *status = TLinkJSDClientRequest(kTLinkJSHelperCmdStatus, @{}, sessionId);
+        if (![status[@"ok"] boolValue]) return status;
+        NSDictionary *statusResponse = [status[@"response"] isKindOfClass:[NSDictionary class]] ? status[@"response"] : @{};
+        lastPayload = [statusResponse[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? statusResponse[kTLinkJSHelperKeyPayload] : @{};
+    }
+    return @{ @"state": @"timeout", @"sessionId": sessionId ?: @"" };
+}
+
+static BOOL TLinkJSDStringContains(NSString *haystack, NSString *needle)
+{
+    return [haystack isKindOfClass:[NSString class]] && [needle isKindOfClass:[NSString class]] && [haystack rangeOfString:needle].location != NSNotFound;
+}
+
+static NSDictionary *TLinkJSDRegressionTest(NSString *name, NSString *bundleName, NSString *expectedState, NSString *marker, NSUInteger minBlocked, NSString *root)
+{
+    NSString *bundlePath = [root stringByAppendingPathComponent:bundleName];
+    NSString *scriptPath = [bundlePath stringByAppendingPathComponent:@"main.js"];
+    NSString *manifestPath = [bundlePath stringByAppendingPathComponent:@"manifest.json"];
+    NSDate *startedAt = [NSDate date];
+    NSDictionary *payload = TLinkJSDClientRunScript(scriptPath, bundlePath, TLinkJSDManifestAtPath(manifestPath), 35.0);
+    NSString *state = [payload[@"state"] isKindOfClass:[NSString class]] ? payload[@"state"] : @"";
+    NSString *logPath = [payload[@"consoleLatestLogPath"] isKindOfClass:[NSString class]] ? payload[@"consoleLatestLogPath"] : @"";
+    if (![logPath length] && [payload[@"consoleLogPath"] isKindOfClass:[NSString class]]) logPath = payload[@"consoleLogPath"];
+    NSString *logText = [logPath length] ? ([NSString stringWithContentsOfFile:logPath encoding:NSUTF8StringEncoding error:nil] ?: @"") : @"";
+    BOOL expectedOK = [state isEqualToString:expectedState];
+    if ([name isEqualToString:@"timeout"] && ([state isEqualToString:@"failed"] || [state isEqualToString:@"cancelled"] || [state isEqualToString:@"timeout"])) expectedOK = YES;
+    BOOL markerOK = ![marker length] || (TLinkJSDStringContains(logText, @"[HELPER_TEST_PASS]") && TLinkJSDStringContains(logText, marker));
+    BOOL noFailMarker = !TLinkJSDStringContains(logText, @"[HELPER_TEST_FAIL]");
+    NSUInteger blocked = [payload[@"blockedRpcCount"] respondsToSelector:@selector(unsignedIntegerValue)] ? [payload[@"blockedRpcCount"] unsignedIntegerValue] : 0;
+    BOOL blockedOK = blocked >= minBlocked;
+    BOOL noPendingRPC = ![payload[@"pendingNativeRPC"] boolValue];
+    NSDictionary *checks = @{
+        @"state": @(expectedOK),
+        @"marker": @(markerOK),
+        @"noFailMarker": @(noFailMarker),
+        @"blockedRpcCount": @(blockedOK),
+        @"noPendingNativeRPC": @(noPendingRPC),
+    };
+    BOOL ok = expectedOK && markerOK && noFailMarker && blockedOK && noPendingRPC;
+    return @{
+        @"ok": @(ok),
+        @"test": name ?: @"",
+        @"state": state ?: @"",
+        @"exitReason": payload[@"exitReason"] ?: @"",
+        @"durationMs": payload[@"durationMs"] ?: @((long long)([[NSDate date] timeIntervalSinceDate:startedAt] * 1000.0)),
+        @"rpcCount": payload[@"rpcCount"] ?: @0,
+        @"blockedRpcCount": payload[@"blockedRpcCount"] ?: @0,
+        @"rpcAvgMs": payload[@"rpcAvgMs"] ?: @0,
+        @"rpcMaxMs": payload[@"rpcMaxMs"] ?: @0,
+        @"evalDurationMs": payload[@"evalDurationMs"] ?: @0,
+        @"checks": checks,
+        @"logPath": logPath ?: @"",
+        @"lastError": payload[@"lastError"] ?: @"",
+    };
+}
+
+static NSArray *TLinkJSDRegressionNamesForSuite(NSString *suite)
+{
+    if (![suite length] || [suite isEqualToString:@"safe"]) return @[@"storage", @"frame", @"ocr", @"full"];
+    if ([suite isEqualToString:@"phase7"]) return @[@"storage", @"frame", @"ocr", @"full", @"default-compat", @"admin-blocked", @"exception", @"timeout"];
+    if ([suite isEqualToString:@"all"]) return @[@"storage", @"frame", @"ocr", @"full", @"default-compat", @"admin-blocked", @"exception", @"timeout"];
+    return [suite componentsSeparatedByString:@","];
+}
+
+static NSDictionary *TLinkJSDRunRegression(NSString *suite, NSUInteger repeat, NSString *root)
+{
+    NSDictionary *defs = @{
+        @"storage": @{ @"bundle": @"Helper Storage Demo.bdl", @"state": @"completed", @"marker": @"Helper Storage Demo", @"blocked": @0 },
+        @"frame": @{ @"bundle": @"Helper Frame Color Demo.bdl", @"state": @"completed", @"marker": @"Helper Frame Color Demo", @"blocked": @0 },
+        @"ocr": @{ @"bundle": @"Helper OCR Demo.bdl", @"state": @"completed", @"marker": @"Helper OCR Demo", @"blocked": @0 },
+        @"full": @{ @"bundle": @"Helper Full Safe Smoke Demo.bdl", @"state": @"completed", @"marker": @"Helper Full Safe Smoke Demo", @"blocked": @0 },
+        @"default-compat": @{ @"bundle": @"Helper Default Experiment Demo.bdl", @"state": @"completed", @"marker": @"Helper Default Experiment Demo", @"blocked": @0 },
+        @"admin-blocked": @{ @"bundle": @"Helper Admin Blocked Demo.bdl", @"state": @"completed", @"marker": @"Helper Admin Blocked Demo", @"blocked": @1 },
+        @"exception": @{ @"bundle": @"Helper JS Exception Demo.bdl", @"state": @"failed", @"marker": @"", @"blocked": @0 },
+        @"timeout": @{ @"bundle": @"Helper Timeout Demo.bdl", @"state": @"failed", @"marker": @"", @"blocked": @0 },
+    };
+    NSArray *names = TLinkJSDRegressionNamesForSuite([suite lowercaseString]);
+    NSMutableArray *results = [NSMutableArray array];
+    BOOL allOK = YES;
+    NSUInteger count = repeat > 0 ? repeat : 1;
+    NSString *examplesRoot = [root length] ? root : @"/var/mobile/Library/TLinkauto/scripts/examples";
+    for (NSUInteger i = 0; i < count; i++) {
+        for (NSString *rawName in names) {
+            NSString *name = [[rawName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+            NSDictionary *def = defs[name];
+            NSDictionary *result = nil;
+            if (!def) {
+                result = @{ @"ok": @NO, @"test": name ?: @"", @"iteration": @(i + 1), @"error": @"unknown_test" };
+            } else {
+                result = [TLinkJSDRegressionTest(name, def[@"bundle"], def[@"state"], def[@"marker"], [def[@"blocked"] unsignedIntegerValue], examplesRoot];
+                NSMutableDictionary *mutableResult = [result mutableCopy];
+                mutableResult[@"iteration"] = @(i + 1);
+                result = mutableResult;
+            }
+            if (![result[@"ok"] boolValue]) allOK = NO;
+            [results addObject:result];
+        }
+    }
+    return @{ @"ok": @(allOK), @"suite": suite ?: @"safe", @"repeat": @(count), @"results": results };
+}
+
 int main(int argc, char *argv[], char *envp[]) {
     @autoreleasepool {
         TLinkJSHelperServer *server = [[TLinkJSHelperServer alloc] init];
@@ -113,32 +237,10 @@ int main(int argc, char *argv[], char *envp[]) {
                     if ([obj isKindOfClass:[NSDictionary class]]) manifest = obj;
                 }
             }
-            NSDictionary *start = TLinkJSDClientRequest(kTLinkJSHelperCmdStart, @{ @"scriptPath": scriptPath ?: @"", @"bundlePath": bundlePath ?: @"", @"manifest": manifest ?: @{} }, nil);
-            if (![start[@"ok"] boolValue]) {
-                TLinkJSDPrintJSON(start);
-                return 2;
-            }
-            NSDictionary *response = start[@"response"];
-            NSString *sessionId = [response[kTLinkJSHelperKeySessionId] isKindOfClass:[NSString class]] ? response[kTLinkJSHelperKeySessionId] : nil;
-            NSDictionary *lastPayload = [response[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? response[kTLinkJSHelperKeyPayload] : @{};
-            NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:30.0];
-            while ([[NSDate date] compare:deadline] == NSOrderedAscending) {
-                NSString *state = [lastPayload[@"state"] isKindOfClass:[NSString class]] ? lastPayload[@"state"] : @"";
-                if ([state isEqualToString:kTLinkJSHelperStateCompleted] || [state isEqualToString:kTLinkJSHelperStateFailed] || [state isEqualToString:kTLinkJSHelperStateCancelled] || [state isEqualToString:kTLinkJSHelperStateCrashed]) {
-                    TLinkJSDPrintJSON(lastPayload);
-                    return [state isEqualToString:kTLinkJSHelperStateCompleted] ? 0 : 2;
-                }
-                [NSThread sleepForTimeInterval:0.2];
-                NSDictionary *status = TLinkJSDClientRequest(kTLinkJSHelperCmdStatus, @{}, sessionId);
-                if (![status[@"ok"] boolValue]) {
-                    TLinkJSDPrintJSON(status);
-                    return 2;
-                }
-                NSDictionary *statusResponse = status[@"response"];
-                lastPayload = [statusResponse[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? statusResponse[kTLinkJSHelperKeyPayload] : @{};
-            }
-            TLinkJSDPrintJSON(@{ @"state": @"timeout", @"sessionId": sessionId ?: @"" });
-            return 2;
+            NSDictionary *status = TLinkJSDClientRunScript(scriptPath, bundlePath, manifest, 30.0);
+            TLinkJSDPrintJSON(status);
+            NSString *state = [status[@"state"] isKindOfClass:[NSString class]] ? status[@"state"] : @"";
+            return [state isEqualToString:kTLinkJSHelperStateCompleted] ? 0 : 2;
         }
         if (argc >= 2 && strcmp(argv[1], "--client-handshake") == 0) {
             NSDictionary *result = TLinkJSDClientRequest(kTLinkJSHelperCmdHandshake, @{}, nil);
@@ -155,6 +257,21 @@ int main(int argc, char *argv[], char *envp[]) {
             NSDictionary *result = TLinkJSDClientRequest(kTLinkJSHelperCmdStop, @{}, sessionId);
             TLinkJSDPrintJSON(result);
             return [result[@"ok"] boolValue] ? 0 : 2;
+        }
+        if (argc >= 3 && strcmp(argv[1], "--client-run-regression") == 0) {
+            NSString *suite = [NSString stringWithUTF8String:argv[2]];
+            NSUInteger repeat = 1;
+            NSString *root = @"/var/mobile/Library/TLinkauto/scripts/examples";
+            for (int i = 3; i < argc; i++) {
+                if (strcmp(argv[i], "--repeat") == 0 && i + 1 < argc) {
+                    repeat = (NSUInteger)MAX(1, atoi(argv[++i]));
+                } else if (strcmp(argv[i], "--examples-root") == 0 && i + 1 < argc) {
+                    root = [NSString stringWithUTF8String:argv[++i]];
+                }
+            }
+            NSDictionary *report = TLinkJSDRunRegression(suite, repeat, root);
+            TLinkJSDPrintJSON(report);
+            return [report[@"ok"] boolValue] ? 0 : 2;
         }
         [server run];
     }

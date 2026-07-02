@@ -121,30 +121,30 @@ Safe demos intended for repeated validation:
 9. repeated frame/image/OCR demos -> no growing handle leak.
 10. daemon restart/poll failure during run -> SpringBoard fails cleanly.
 
-## Phase 6 regression harness
+## Native regression harness
 
-The packaged helper regression harness is installed at:
+The helper regression harness is built into `tlinkauto-jsd` so the iOS package does not depend on Python:
 
 ```sh
-/var/mobile/Library/TLinkauto/tools/run-helper-tests.py
+/usr/libexec/tlinkauto-jsd --client-run-regression <safe|phase7|all|test-list> [--repeat N] [--json]
 ```
 
 Run safe repeated regression:
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only safe --repeat 20 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression safe --repeat 20 --json
 ```
 
 Run admin blocked regression while `javascript_helper_allow_admin_rpc` is false:
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only admin-blocked --repeat 5 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression admin-blocked --repeat 5 --json
 ```
 
 Run failure-path regression:
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only exception,timeout --repeat 3 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression exception,timeout --repeat 3 --json
 ```
 
 See `docs/helper-runtime-test-checklist.md` for the full device checklist, including the manual stop-mid-run flow using `--client-status` and `--client-stop <sessionId>`.
@@ -201,5 +201,16 @@ CLI note: `--client-run` invokes the helper daemon directly, so it validates hel
 Run Phase 7 helper compatibility baseline:
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only phase7 --repeat 20 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression phase7 --repeat 20 --json
 ```
+
+## Python runtime removal
+
+The iOS package/runtime is JavaScriptCore-first. Python playback has been removed from the iOS runtime and package payload.
+
+- `.py` entries and manifests with `runtime: "python"` fail immediately with a migration message.
+- Existing user `.py` scripts are preserved on upgrade, but they are no longer runnable.
+- New scripts created in the app use `main.js` plus `manifest.json`.
+- The iOS package no longer includes `/usr/lib/python3.7`, `/bin/python3*`, bundled `.py` examples, or the old Python helper test harness.
+
+Python-based PC/dev tooling may remain in the source tree as legacy tooling, but it is not part of the iOS runtime path.

@@ -28,7 +28,7 @@ Expected: JSON output, daemon reachable, one active session at most.
 ## Safe regression
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only safe --repeat 20 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression safe --repeat 20 --json
 ```
 
 Expected:
@@ -46,7 +46,7 @@ Expected:
 With `javascript_helper_allow_admin_rpc` still false:
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only admin-blocked --repeat 5 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression admin-blocked --repeat 5 --json
 ```
 
 Expected:
@@ -58,7 +58,7 @@ Expected:
 ## Failure regression
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only exception,timeout --repeat 3 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression exception,timeout --repeat 3 --json
 ```
 
 Expected:
@@ -151,10 +151,18 @@ Package defaults must remain false. Rollback is config-only by setting `javascri
 ## CLI helper compatibility baseline
 
 ```sh
-python3 /var/mobile/Library/TLinkauto/tools/run-helper-tests.py --only phase7 --repeat 20 --json
+/usr/libexec/tlinkauto-jsd --client-run-regression phase7 --repeat 20 --json
 ```
 
-This validates `Helper Default Experiment Demo.bdl` under the helper daemon and reports aggregate timing. It does not test SpringBoard runtime selection because `--client-run` invokes the daemon directly.
+This validates the safe helper demos, `Helper Default Experiment Demo.bdl`, admin-blocked behavior, and controlled failure demos under the helper daemon. It does not test SpringBoard runtime selection because the native runner invokes the daemon directly.
+
+## JS-only runtime cleanup checks
+
+- `.py` scripts and `runtime: "python"` fail immediately with a migration message.
+- No runtime path calls `/bin/python3`, `PYTHONPATH=/usr/lib/python3.7`, or `killall python3`.
+- The package does not contain `/usr/lib/python3.7`, `/bin/python3*`, bundled `.py` examples, or `/var/mobile/Library/TLinkauto/tools/run-helper-tests.py`.
+- Existing user `.py` scripts are preserved on upgrade but are no longer runnable.
+- New script creation generates `main.js` and `manifest.json`.
 
 ## Actual runtime-selection tests from app/script player
 

@@ -71,18 +71,30 @@
                                                                        [Util showAlertBoxWithOneOption:self title:NSLocalizedString(@"error", nil) message:[NSString stringWithFormat:@"%@%@", NSLocalizedString(@"createScriptFailed", nil), err] buttonString:@"OK"];
                                                                    }
                                                                    
-                                                                   // add plist file
-                                                                   NSDictionary *scriptInfo = @{@"Entry": @"main.py", @"FrontApp": @"", @"Orientation": @"1"};
-                                                                   NSString *plistPath = [folderToAddPath stringByAppendingPathComponent:@"info.plist"];
-                                                                   [scriptInfo writeToFile:plistPath atomically:YES];
-                                                                   
-                                                                   // add python file
-                                                                   NSDateFormatter *dateFormatter=[[NSDateFormatter alloc] init];
-                                                                   [dateFormatter setDateFormat:@"MM/dd/yyyy hh:mm:ss"];
-                                                                   NSString *currentDateTime = [dateFormatter stringFromDate:[NSDate date]];
-                                                                    NSString *initContent = [NSString stringWithFormat:@"#This script is created at %@\n#TLinkauto module documentation on Github: https://github.com/xuan32546/IOS13-SimulateTouch/\n\nfrom tlinkauto.client import TLinkauto\n\n\n#insert your code here.", currentDateTime];
-                                                                   
-                                                                   [initContent writeToFile:[folderToAddPath stringByAppendingPathComponent:@"main.py"] atomically:YES encoding:NSUTF8StringEncoding error:&err];
+                                                                    // add plist file
+                                                                    NSDictionary *scriptInfo = @{@"Entry": @"main.js", @"FrontApp": @"", @"Orientation": @"1"};
+                                                                    NSString *plistPath = [folderToAddPath stringByAppendingPathComponent:@"info.plist"];
+                                                                    [scriptInfo writeToFile:plistPath atomically:YES];
+
+                                                                    NSDictionary *manifest = @{
+                                                                        @"runtime": @"javascriptcore",
+                                                                        @"entry": @"main.js",
+                                                                        @"apiVersion": @1,
+                                                                        @"coordinateSpace": @"native-pixels"
+                                                                    };
+                                                                    NSData *manifestData = [NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingPrettyPrinted error:&err];
+                                                                    if (manifestData) {
+                                                                        NSString *manifestPath = [folderToAddPath stringByAppendingPathComponent:@"manifest.json"];
+                                                                        [manifestData writeToFile:manifestPath atomically:YES];
+                                                                    }
+
+                                                                    // add JavaScript file
+                                                                    NSDateFormatter *dateFormatter=[[NSDateFormatter alloc] init];
+                                                                    [dateFormatter setDateFormat:@"MM/dd/yyyy hh:mm:ss"];
+                                                                    NSString *currentDateTime = [dateFormatter stringFromDate:[NSDate date]];
+                                                                    NSString *initContent = [NSString stringWithFormat:@"// This script is created at %@\nconsole.log(\"TLinkauto script started\");\ndevice.toast(\"Hello from TLinkauto JS\", { type: 4, duration: 2 });\n", currentDateTime];
+
+                                                                    [initContent writeToFile:[folderToAddPath stringByAppendingPathComponent:@"main.js"] atomically:YES encoding:NSUTF8StringEncoding error:&err];
                                                                    if (err)
                                                                    {
                                                                        [Util showAlertBoxWithOneOption:self title:NSLocalizedString(@"error", nil) message:[NSString stringWithFormat:@"%@%@", NSLocalizedString(@"createScriptFailed", nil), err] buttonString:@"OK"];

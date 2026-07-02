@@ -28,7 +28,7 @@ typedef NS_ENUM(NSInteger, TLinkScriptState) {
     float speed;
     NSString* scriptBundlePath;
     UIWindow *_playIndicator;
-    int currentScriptType; // -1 none, 0 upcoming, 1 raw, 2 py, 3 js
+    int currentScriptType; // -1 none, 0 upcoming, 1 raw, 3 js
     NSTimer *replayTimer;
     UIView *circleView;
     Boolean scriptPlayForceStop;
@@ -40,15 +40,6 @@ typedef NS_ENUM(NSInteger, TLinkScriptState) {
     TLinkScriptSession *_currentSession;
     TLinkautoJSRuntime *_currentRuntime;
     dispatch_queue_t _jsSerialQueue;
-}
-
-static BOOL tlinkautoLegacyPythonEnabled(void) {
-    if ([[NSFileManager defaultManager] fileExistsAtPath:SCRIPT_PLAY_CONFIG_PATH]) {
-        NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:SCRIPT_PLAY_CONFIG_PATH];
-        id value = config[@"legacy_python_enabled"] ?: config[@"legacyPythonEnabled"];
-        if ([value respondsToSelector:@selector(boolValue)]) return [value boolValue];
-    }
-    return YES;
 }
 
 static BOOL tlinkautoJavaScriptRuntimeEnabled(void) {
@@ -214,17 +205,10 @@ static NSString *tlinkautoStringValue(id value) {
         });
         return 0;
     } else if ([runtime isEqualToString:@"python"] || [fileExtension isEqualToString:@"py"]) {
-        if (!tlinkautoLegacyPythonEnabled()) {
-            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Python script support has been removed.\r\n"}];
-            [self clear];
-            return -1;
-        }
-        currentScriptType = 2;
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            NSError *err = nil;
-            [self playFromPythonFile:entryFilePath foregroundApp:foregroundApp err:&err];
-        });
-        return 0;
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Python script support has been removed. Please migrate this script to JavaScript.\r\n"}];
+        setLastScriptError(@"Python script support has been removed. Please migrate this script to JavaScript.");
+        [self clear];
+        return -1;
     }
     
     if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
@@ -277,28 +261,6 @@ static NSString *tlinkautoStringValue(id value) {
             processTask((UInt8*)buffer, NULL);
         }
     }
-    [self playHasStopped];
-}
-
--(void) playFromPythonFile:(NSString*) filePath foregroundApp:(NSString*) foregroundApp err:(NSError**) err {
-    isPlaying = true;
-    if (switchAppBeforePlaying) bringAppForeground(foregroundApp);
-    
-    if (![[NSFileManager defaultManager] fileExistsAtPath:@"/bin/python3"]) {
-        showAlertBox(@"Error", @"Cannot play this script. /bin/python3 not found. Please install Python3.7 on your device.", 999);
-        setLastScriptError(@"/bin/python3 not found");
-        isPlaying = false;
-        return;
-    }
-
-    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
-        showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script. Script file not found in bdl folder. Script path: %@", filePath], 999);
-        setLastScriptError([NSString stringWithFormat:@"Script file not found: %@", filePath]);
-        isPlaying = false;
-        return;
-    }
-    NSString *commandToRun = [NSString stringWithFormat:@"sudo /usr/bin/tlinkautob -e \"PYTHONPATH=/usr/lib/python3.7/site-packages /bin/python3 -u \\\"%@\\\" 2>&1 | /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/add_datetime.sh\" >> /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output", filePath];
-    system2([commandToRun UTF8String], NULL, NULL);
     [self playHasStopped];
 }
 
@@ -467,9 +429,6 @@ static NSString *tlinkautoStringValue(id value) {
             [self clear];
         } else if (currentScriptType == 1) {
             scriptPlayForceStop = true;
-            [self clear];
-        } else if (currentScriptType == 2) {
-            system2("sudo /usr/bin/tlinkautob -e \"killall -9 python3\"", NULL, NULL);
             [self clear];
         }
     }

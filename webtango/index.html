@@ -8,10 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <script type="module" src="/src/main.ts"></script>
+  <script type="module" src="/src/main.tsx"></script>
 </head>
 
 <body>
+  <div id="root"></div>
   <div class="app-container">
     <!-- Slim, Icon-only Sidebar matching demo -->
     <aside class="sidebar">
@@ -54,132 +55,32 @@
 
     <!-- Main Workspace Wrapper -->
     <div class="main-wrapper">
-      <!-- Premium Top Header -->
-      <header class="main-header">
-        <div class="header-left">
-          <!-- Mock left header menu from demo -->
-          <div class="header-menu">
-            <span class="header-menu-item">Folder</span>
-            <span class="header-menu-item">File</span>
-            <span class="header-menu-item">Toolbox</span>
-          </div>
-
-          <!-- Integrated address-bar style connection panel -->
-          <div class="header-connection-panel">
-            <div id="status" class="connection-status-dot offline" title="Offline"></div>
-            <input id="endpoint" type="text" value="ws://localhost:15037/bridge/" class="address-input" placeholder="ws://..." />
-            <div class="connection-actions">
-              <button id="connect" class="conn-btn btn-primary">Connect</button>
-              <button id="disconnect" class="conn-btn btn-secondary" disabled>Disconnect</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="header-right">
-          <!-- Notification Bell button from demo -->
-          <button class="action-btn header-utility-btn" title="Notifications">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bell"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-          </button>
-          
-          <!-- Settings button from demo -->
-          <button class="action-btn header-utility-btn" title="Settings">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-          
-          <div class="user-profile">
-            <div class="user-avatar">AD</div>
-          </div>
-        </div>
-      </header>
+      <!-- Slice B: legacy header removed; React <Header /> renders inside #root. -->
+      <!-- Hidden compatibility inputs kept until later slices stop reading them. -->
+      <div id="legacy-header-shims" style="display: none;">
+        <input id="endpoint" type="text" value="ws://localhost:15037/bridge/" />
+        <button id="connect"></button>
+        <button id="disconnect" disabled></button>
+      </div>
 
       <!-- Content Layout -->
       <div id="main-content" class="content-area">
         
-        <!-- Spacious Device Grid Table (flex-1) -->
-        <section class="device-list-pane">
-          <div class="list-pane-header">
-            <div class="filter-pills">
-              <button class="filter-pill active" data-filter="all">All</button>
-              <button class="filter-pill" data-filter="online">Online</button>
-              <button class="filter-pill" data-filter="offline">Offline</button>
-              <button class="filter-pill" data-filter="usb">USB</button>
-              <button class="filter-pill" data-filter="wifi">WiFi</button>
-            </div>
-            
-            <div class="list-actions">
-              <!-- Instant Search Box -->
-              <div class="search-container">
-                <span class="search-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-search"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                </span>
-                <input id="search-query" type="text" placeholder="Search devices..." class="search-input" />
-              </div>
-
-              <!-- Refresh Connected Devices -->
-              <button id="refresh-devices" class="action-btn header-refresh-btn" title="Refresh Connected Devices">
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-              </button>
-              
-              <div class="list-meta">
-                <span class="list-count" id="device-count">Android (0)</span>
-                <span class="auto-update">Auto-Sync ON</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Device Table Column Headers -->
-          <div class="table-header-row">
-            <div class="col-checkbox"><input type="checkbox" disabled class="table-checkbox" /></div>
-            <div class="col-no">No</div>
-            <div class="col-serial">Serial Number</div>
-            <div class="col-model">Device Model & Version</div>
-            <div class="col-platform">Platform</div>
-            <div class="col-status">Status</div>
-          </div>
-          
-          <!-- Dynamic Android Container -->
-          <div id="devices-container" class="device-list-table">
-            <div class="empty-state">
-              <div class="empty-icon">
-                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plug"><path d="m18 10 2.5-2.5a2.5 2.5 0 0 0-3.5-3.5L14.5 6.5"/><path d="m14 10 1.5-1.5"/><path d="M8.5 15.5 10 14"/><path d="m9 11-6 6a2 2 0 0 0 2 2h3l6-6"/><path d="M13 18h9"/></svg>
-              </div>
-              <h3>No Android Devices</h3>
-              <p>Verify WebSocket connection or connect an Android device via USB/Wi-Fi.</p>
-            </div>
-          </div>
-
-          <!-- iOS Discovery Sub-section -->
-          <div class="list-pane-header ios-divider-header">
-            <div class="list-meta">
-              <span class="list-count" id="ios-device-count">iOS (0)</span>
-              <span class="ios-badge">TCP 6000</span>
-            </div>
-          </div>
-
-          <!-- iOS Table Column Headers -->
-          <div class="table-header-row">
-            <div class="col-checkbox"><input type="checkbox" disabled class="table-checkbox" /></div>
-            <div class="col-no">No</div>
-            <div class="col-serial">Device ID</div>
-            <div class="col-model">Model & Meta</div>
-            <div class="col-platform">Platform</div>
-            <div class="col-status">Status</div>
-          </div>
-          
-          <!-- Dynamic iOS Container -->
-          <div id="ios-devices-container" class="device-list-table ios-table-container">
-            <div class="empty-state" id="ios-empty-state">
-              <div class="empty-icon">
-                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-smartphone"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
-              </div>
-              <h3>No iOS Devices</h3>
-              <p>Make sure the iPhone service is reachable on TCP 6000.</p>
-            </div>
-          </div>
-        </section>
+        <!-- Slice C: legacy device list pane removed; React <DevicesPane /> renders inside #root. -->
+        <!-- Hidden shim keeps DOM IDs alive for the legacy main.ts queries until later slices remove them. -->
+        <div id="legacy-devices-shims" style="display: none;">
+          <input id="search-query" type="text" />
+          <button id="refresh-devices"></button>
+          <span id="device-count"></span>
+          <span id="ios-device-count"></span>
+          <div id="devices-container"></div>
+          <div id="ios-devices-container"></div>
+        </div>
 
         <!-- Right Side Panel: Integrated Controls & Screen Canvas -->
-        <section class="device-detail-pane" id="device-detail">
+        <!-- Slice D1: legacy detail pane is hidden; React DetailPane renders inside DevicesPane.
+             DOM kept intact so main.ts queries (detailContent, detailCanvas, detailEmpty, etc.) still resolve. -->
+        <section class="device-detail-pane legacy-hidden" id="device-detail" style="display: none;" aria-hidden="true">
           <!-- Default View (No selection) -->
           <div id="detail-empty" class="empty-state">
             <div class="empty-icon">

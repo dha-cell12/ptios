@@ -10,6 +10,13 @@ import * as mpegts from 'mpegts.js';
 import { AdbWebSocketConnector } from './AdbWebSocketConnector';
 import { ScrcpyBatchController } from './ScrcpyBatchController';
 import { TLinkautoWsClient } from './TLinkautoWsClient';
+import { bridgeStore, setBridgeUrl, markConnecting, markConnected, markDisconnected, markError } from './stores/BridgeStore';
+import { iosDeviceStore, refreshIosDevices as refreshIosDevicesStore, startIosPolling, stopIosPolling } from './stores/IosDeviceStore';
+import { adbDeviceStore, upsertLegacyDevice, removeLegacyDevice } from './stores/AdbDeviceStore';
+import { registerMirrorSession, unregisterMirrorSession } from './stores/ScrcpyMirrorStore';
+import { registerAdbConnection, unregisterAdbConnection } from './stores/AdbConnectionRegistry';
+import { CanvasDrawRegistry } from './services/canvas/CanvasDrawRegistry';
+import type { ScrcpyMirrorSession } from './services/adb/ScrcpyMirror';
 
 let automationIdeMounted = false;
 
@@ -322,11 +329,26 @@ function updateVisibilityState() {
 }
 
 function setStatus(text: string, connected = false) {
-  if (!statusBadge) return;
-  statusBadge.textContent = text;
-  statusBadge.className = `status-badge ${connected ? 'badge-online' : 'badge-offline'}`;
-  if (connectButton) connectButton.disabled = connected || isConnecting;
-  if (disconnectButton) disconnectButton.disabled = !connected;
+  // Slice B: React ConnectionPanel owns the status dot and buttons now.
+  // Legacy still calls setStatus through many code paths; we keep it as a
+  // store-sync shim until later slices delete each caller.
+  syncBridgeStatusFromLegacy(text, connected);
+}
+
+// Slice A: mirror legacy connection lifecycle into bridgeStore. The DOM remains
+// the source of truth for now; the store is a read-only mirror that future
+// React components and services subscribe to. Replaced by direct store writes
+// in later slices.
+function syncBridgeStatusFromLegacy(text: string, connected: boolean) {
+  if (connected) {
+    markConnected();
+  } else if (isConnecting) {
+    markConnecting();
+  } else if (/fail/i.test(text)) {
+    markError(text);
+  } else {
+    markDisconnected();
+  }
 }
 
 function appendShell(text: string) {
@@ -395,6 +417,14 @@ async function refreshIosDevices() {
     if (nextSignature !== iosDevicesSignature) {
       iosDevices = nextIosDevices;
       iosDevicesSignature = nextSignature;
+      // Slice A: mirror into iosDeviceStore so React components in later slices
+      // can subscribe instead of re-implementing the fetch loop.
+      iosDeviceStore.setState({
+        devices: nextIosDevices,
+        signature: nextSignature,
+        lastRefreshAt: performance.now(),
+        lastError: undefined,
+      });
       renderIosDevices();
       if (screenPlatform === 'ios' && isScreenViewVisible) renderScreenView();
     }
@@ -402,6 +432,12 @@ async function refreshIosDevices() {
     if (iosDevicesSignature !== '') {
       iosDevices = [];
       iosDevicesSignature = '';
+      iosDeviceStore.setState({
+        devices: [],
+        signature: '',
+        lastError: String(e),
+        lastRefreshAt: performance.now(),
+      });
       renderIosDevices();
       if (screenPlatform === 'ios' && isScreenViewVisible) renderScreenView();
     }
@@ -1970,6 +2006,12 @@ async function connectToDevice(device: AdbServerClient.Device) {
     };
 
     connectedDevices.set(device.serial, deviceConnection);
+    // Slice C: mirror into adbDeviceStore so React DevicesPane sees the row.
+    upsertLegacyDevice({
+      serial: device.serial,
+      state: deviceConnection.state,
+      properties: deviceConnection.properties as Record<string, string> | undefined,
+    });
     updateDeviceCount();
     setStatus(`${connectedDevices.size} device(s) connected`, true);
 
@@ -2022,16 +2064,18 @@ function disconnectDevice(serial: string) {
   device.adb.close?.();
   device.cardElement.remove();
   connectedDevices.delete(serial);
+  // Slice C: remove from React-facing store.
+  removeLegacyDevice(serial);
   if (currentSelectedSerial === serial) {
     currentSelectedSerial = null;
-    detailContent.style.display = 'none';
-    detailEmpty.style.display = 'flex';
+    if (detailContent) detailContent.style.display = 'none';
+    if (detailEmpty) detailEmpty.style.display = 'flex';
   }
   updateDeviceCount();
   renderScreenView(); // Update grid on disconnect
   if (connectedDevices.size === 0) {
     setStatus('Disconnected', false);
-    devicesContainer.innerHTML = '<div class="empty-state"><div class="empty-icon">🔌</div><h3>No Devices Connected</h3><p>Connect to bridge or check filters.</p></div>';
+    if (devicesContainer) devicesContainer.innerHTML = '';
   }
 }
 
@@ -2505,6 +2549,21 @@ async function startMirrorForDevice(deviceConnection: DeviceConnection) {
 
     deviceConnection.renderer = renderer;
     deviceConnection.decoder = decoder;
+
+    // Slice D1: expose this mirror session to the React-side store so
+    // useCanvasBinding / ControlBar / QuickActions can drive it without
+    // touching legacy globals.
+    const mirrorSession: ScrcpyMirrorSession = {
+      serial,
+      controller: deviceConnection.scrcpyClient!.controller!,
+      hiddenCanvas,
+      width,
+      height,
+      stop: () => {
+        try { deviceConnection.scrcpyClient?.close(); } catch {}
+      },
+    };
+    registerMirrorSession(mirrorSession);
 
     let rafId: number;
     const drawToViews = () => {
@@ -3059,6 +3118,36 @@ searchInput.addEventListener('input', () => {
   });
 });
 
+// Slice B: expose legacy connect/disconnect for the React ConnectionPanel.
+// Replaced by a real service in later slices.
+(window as any).__legacyBridge = { connect, disconnect };
+
+// Slice C: expose the device-pane callbacks for React DevicesPane.
+// Replaced by direct service calls in later slices.
+(window as any).__legacyDevices = {
+  openDeviceModal,
+  disconnectDevice,
+  openIosStream,
+  refresh: connect,
+};
+
+// Slice C: when React DevicesPane changes adbDeviceStore.selectedSerial,
+// drive the legacy detail pane (Live Stream View, Quick Actions, etc.) which
+// still owns rendering until Slice D migrates it.
+let __lastSelectedSerial: string | undefined;
+adbDeviceStore.subscribe(() => {
+  const next = adbDeviceStore.getState().selectedSerial;
+  if (next === __lastSelectedSerial) return;
+  __lastSelectedSerial = next;
+  if (next && connectedDevices.has(next)) {
+    updateDeviceDetail(next);
+  } else if (!next) {
+    if (detailContent) detailContent.style.display = 'none';
+    if (detailEmpty) detailEmpty.style.display = 'flex';
+    currentSelectedSerial = null;
+  }
+});
+
 connectButton?.addEventListener('click', connect);
 disconnectButton?.addEventListener('click', disconnect);
 refreshBtn?.addEventListener('click', connect);
@@ -3110,6 +3199,12 @@ if (bridgeParam) {
 } else {
       endpointInput.value = `${defaultHost.replace('8000', '15037')}/bridge`;
 }
+
+// Slice A: mirror the legacy endpoint input into bridgeStore so future React
+// components and the new services read the same value the user types.
+setBridgeUrl(endpointInput.value);
+endpointInput.addEventListener('input', () => setBridgeUrl(endpointInput.value));
+endpointInput.addEventListener('change', () => setBridgeUrl(endpointInput.value));
 
 setStatus('Disconnected', false);
 
