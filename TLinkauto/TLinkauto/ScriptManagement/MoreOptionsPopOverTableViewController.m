@@ -168,7 +168,7 @@
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if ([[currentFolder pathExtension] isEqualToString:@"bdl"])
+    if ([[currentFolder pathExtension] isEqualToString:@"tl"])
     {
         return 2;
     }

@@ -94,7 +94,7 @@
             continue;
         }
         NSString *filePath = [NSString stringWithFormat:@"%@/%@", path, fileName];
-        if (![[fileName pathExtension] isEqualToString:@"bdl"] && [[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:&isDir] && isDir)
+        if (![[fileName pathExtension] isEqualToString:@"tl"] && [[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:&isDir] && isDir)
         {
             [arr insertObject:filePath atIndex:0];
         }

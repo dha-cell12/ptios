@@ -36,7 +36,7 @@
     {
         
         NSString *path = [NSString stringWithFormat:@"%@/%@", currentFolder, scriptName];
-        if (![[scriptName pathExtension] isEqualToString:@"bdl"] && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && isDir)
+        if (![[scriptName pathExtension] isEqualToString:@"tl"] && [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && isDir)
         {
             [scriptList insertObject:path atIndex:0];
         }

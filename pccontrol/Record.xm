@@ -50,7 +50,7 @@ void startRecording(CFWriteStreamRef requestClient, NSError **error)
 
     
     // generate the script directory
-    NSString *scriptDirectory = [NSString stringWithFormat:@"%@/" RECORDING_FILE_FOLDER_NAME "/%@.bdl", getScriptsFolder(), currentDateTime];
+    NSString *scriptDirectory = [NSString stringWithFormat:@"%@/" RECORDING_FILE_FOLDER_NAME "/%@.tl", getScriptsFolder(), currentDateTime];
     [[NSFileManager defaultManager] createDirectoryAtPath:scriptDirectory withIntermediateDirectories:YES attributes:nil error:&err];
     
     if (err)

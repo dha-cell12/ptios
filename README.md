@@ -512,7 +512,7 @@ def image_match(template_path, acceptable_value=0.8, max_try_times=4, scaleRatio
 from TLinkauto.client import TLinkauto
 
 device = TLinkauto("127.0.0.1") # create instance
-result_tuple = device.image_match("/var/mobile/Library/TLinkauto/scripts/examples/Image Matching.bdl/examples_folder.jpg", 0.8, 5, 0.85) # try 5 times with acceptable value 0.8. Each time  make template image size*1.5 AND size/1.5 then match again.
+result_tuple = device.image_match("/var/mobile/Library/TLinkauto/scripts/examples/Image Matching.tl/examples_folder.jpg", 0.8, 5, 0.85) # try 5 times with acceptable value 0.8. Each time  make template image size*1.5 AND size/1.5 then match again.
 
 if not result_tuple[0]:
 	print("Error happens while matching template image. Error info: " + result_tuple[1])

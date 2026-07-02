@@ -87,7 +87,7 @@
     _scriptTitle.text = [path lastPathComponent];
     [self showButton];
 
-    if ([[path pathExtension] isEqualToString:@"bdl"]) // is script. can play
+    if ([[path pathExtension] isEqualToString:@"tl"]) // is script. can play
     {
         // Now the image will have been loaded and decoded and is ready to rock for the main thread
         [[self imageView] setImage:[UIImage imageNamed:@"script-icon"]];

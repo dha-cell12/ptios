@@ -58,7 +58,7 @@
                                                                BOOL isDir;
                                                                NSError *err = nil;
                                                                NSFileManager *fileManager= [NSFileManager defaultManager];
-                                                               NSString* folderToAddPath = [self->currentFolder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.bdl", textField.text]];
+                                                                NSString* folderToAddPath = [self->currentFolder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.tl", textField.text]];
                                                                if([fileManager fileExistsAtPath:folderToAddPath isDirectory:&isDir] && isDir)
                                                                {
                                                                    [Util showAlertBoxWithOneOption:self title:NSLocalizedString(@"error", nil) message:NSLocalizedString(@"createScriptAlreadyExists", nil) buttonString:@"OK"];

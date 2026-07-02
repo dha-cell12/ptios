@@ -171,14 +171,14 @@ static NSArray *TLinkJSDRegressionNamesForSuite(NSString *suite)
 static NSDictionary *TLinkJSDRunRegression(NSString *suite, NSUInteger repeat, NSString *root)
 {
     NSDictionary *defs = @{
-        @"storage": @{ @"bundle": @"Helper Storage Demo.bdl", @"state": @"completed", @"marker": @"Helper Storage Demo", @"blocked": @0 },
-        @"frame": @{ @"bundle": @"Helper Frame Color Demo.bdl", @"state": @"completed", @"marker": @"Helper Frame Color Demo", @"blocked": @0 },
-        @"ocr": @{ @"bundle": @"Helper OCR Demo.bdl", @"state": @"completed", @"marker": @"Helper OCR Demo", @"blocked": @0 },
-        @"full": @{ @"bundle": @"Helper Full Safe Smoke Demo.bdl", @"state": @"completed", @"marker": @"Helper Full Safe Smoke Demo", @"blocked": @0 },
-        @"default-compat": @{ @"bundle": @"Helper Default Experiment Demo.bdl", @"state": @"completed", @"marker": @"Helper Default Experiment Demo", @"blocked": @0 },
-        @"admin-blocked": @{ @"bundle": @"Helper Admin Blocked Demo.bdl", @"state": @"completed", @"marker": @"Helper Admin Blocked Demo", @"blocked": @1 },
-        @"exception": @{ @"bundle": @"Helper JS Exception Demo.bdl", @"state": @"failed", @"marker": @"", @"blocked": @0 },
-        @"timeout": @{ @"bundle": @"Helper Timeout Demo.bdl", @"state": @"failed", @"marker": @"", @"blocked": @0 },
+        @"storage": @{ @"bundle": @"Helper Storage Demo.tl", @"state": @"completed", @"marker": @"Helper Storage Demo", @"blocked": @0 },
+        @"frame": @{ @"bundle": @"Helper Frame Color Demo.tl", @"state": @"completed", @"marker": @"Helper Frame Color Demo", @"blocked": @0 },
+        @"ocr": @{ @"bundle": @"Helper OCR Demo.tl", @"state": @"completed", @"marker": @"Helper OCR Demo", @"blocked": @0 },
+        @"full": @{ @"bundle": @"Helper Full Safe Smoke Demo.tl", @"state": @"completed", @"marker": @"Helper Full Safe Smoke Demo", @"blocked": @0 },
+        @"default-compat": @{ @"bundle": @"Helper Default Experiment Demo.tl", @"state": @"completed", @"marker": @"Helper Default Experiment Demo", @"blocked": @0 },
+        @"admin-blocked": @{ @"bundle": @"Helper Admin Blocked Demo.tl", @"state": @"completed", @"marker": @"Helper Admin Blocked Demo", @"blocked": @1 },
+        @"exception": @{ @"bundle": @"Helper JS Exception Demo.tl", @"state": @"failed", @"marker": @"", @"blocked": @0 },
+        @"timeout": @{ @"bundle": @"Helper Timeout Demo.tl", @"state": @"failed", @"marker": @"", @"blocked": @0 },
     };
     NSArray *names = TLinkJSDRegressionNamesForSuite([suite lowercaseString]);
     NSMutableArray *results = [NSMutableArray array];

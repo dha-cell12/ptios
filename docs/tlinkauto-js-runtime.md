@@ -193,7 +193,7 @@ Admin RPC remains disabled by default and raw task execution remains blocked fro
 The default experiment compatibility demo is:
 
 ```text
-Helper Default Experiment Demo.bdl
+Helper Default Experiment Demo.tl
 ```
 
 CLI note: `--client-run` invokes the helper daemon directly, so it validates helper compatibility and timing but does not exercise SpringBoard runtime selection. Test the actual default-selection path from the app/script player.

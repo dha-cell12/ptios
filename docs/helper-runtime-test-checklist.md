@@ -74,9 +74,9 @@ Start long-running helper demo in one shell:
 
 ```sh
 /usr/libexec/tlinkauto-jsd --client-run \
-  "/var/mobile/Library/TLinkauto/scripts/examples/Helper Stop Mid Run Demo.bdl/main.js" \
-  "/var/mobile/Library/TLinkauto/scripts/examples/Helper Stop Mid Run Demo.bdl" \
-  "/var/mobile/Library/TLinkauto/scripts/examples/Helper Stop Mid Run Demo.bdl/manifest.json"
+  "/var/mobile/Library/TLinkauto/scripts/examples/Helper Stop Mid Run Demo.tl/main.js" \
+  "/var/mobile/Library/TLinkauto/scripts/examples/Helper Stop Mid Run Demo.tl" \
+  "/var/mobile/Library/TLinkauto/scripts/examples/Helper Stop Mid Run Demo.tl/manifest.json"
 ```
 
 In another shell, get the session and stop it:
@@ -154,7 +154,7 @@ Package defaults must remain false. Rollback is config-only by setting `javascri
 /usr/libexec/tlinkauto-jsd --client-run-regression phase7 --repeat 20 --json
 ```
 
-This validates the safe helper demos, `Helper Default Experiment Demo.bdl`, admin-blocked behavior, and controlled failure demos under the helper daemon. It does not test SpringBoard runtime selection because the native runner invokes the daemon directly.
+This validates the safe helper demos, `Helper Default Experiment Demo.tl`, admin-blocked behavior, and controlled failure demos under the helper daemon. It does not test SpringBoard runtime selection because the native runner invokes the daemon directly.
 
 ## JS-only runtime cleanup checks
 
@@ -166,7 +166,7 @@ This validates the safe helper demos, `Helper Default Experiment Demo.bdl`, admi
 
 ## Actual runtime-selection tests from app/script player
 
-Use `Helper Default Experiment Demo.bdl`, whose manifest intentionally omits `runtimeLocation` and `helperRuntimeEnabled`.
+Use `Helper Default Experiment Demo.tl`, whose manifest intentionally omits `runtimeLocation` and `helperRuntimeEnabled`.
 
 Expected matrix:
 
@@ -188,7 +188,7 @@ Inspect `device.runtimeInfo()` for:
 
 ## Compatibility manifest audit
 
-`JavaScriptCore API Demo.bdl` is pinned to `runtimeLocation: "in-process"` because it exercises legacy/in-process API behavior. New scripts should explicitly choose:
+`JavaScriptCore API Demo.tl` is pinned to `runtimeLocation: "in-process"` because it exercises legacy/in-process API behavior. New scripts should explicitly choose:
 
 - `runtimeLocation: "in-process"` for in-process-only behavior.
 - `runtimeLocation: "helper"` when helper is required and failure is preferred over fallback.

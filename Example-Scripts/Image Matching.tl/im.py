@@ -5,7 +5,7 @@ import time
 device = TLinkauto("127.0.0.1")
 device.show_toast(TOAST_WARNING, "Start matching \"examples\" string on this page", 1.5, TOAST_BUTTOM)
 time.sleep(1.5)
-result_tuple = device.image_match("/var/mobile/Library/TLinkauto/scripts/examples/Image Matching.bdl/examples_folder.jpg")
+result_tuple = device.image_match("/var/mobile/Library/TLinkauto/scripts/examples/Image Matching.tl/examples_folder.jpg")
 if not result_tuple[0]:
     device.show_toast(TOAST_ERROR, "Error happened while matching. Error: " + result_tuple[1], 1.5, TOAST_BUTTOM)
 else:
