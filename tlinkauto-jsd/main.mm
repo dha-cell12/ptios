@@ -193,7 +193,7 @@ static NSDictionary *TLinkJSDRunRegression(NSString *suite, NSUInteger repeat, N
             if (!def) {
                 result = @{ @"ok": @NO, @"test": name ?: @"", @"iteration": @(i + 1), @"error": @"unknown_test" };
             } else {
-                result = [TLinkJSDRegressionTest(name, def[@"bundle"], def[@"state"], def[@"marker"], [def[@"blocked"] unsignedIntegerValue], examplesRoot];
+                result = TLinkJSDRegressionTest(name, def[@"bundle"], def[@"state"], def[@"marker"], [def[@"blocked"] unsignedIntegerValue], examplesRoot);
                 NSMutableDictionary *mutableResult = [result mutableCopy];
                 mutableResult[@"iteration"] = @(i + 1);
                 result = mutableResult;
