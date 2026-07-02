@@ -1479,6 +1479,18 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     return [self keyboardTask:7 content:(text ?: @"")];
 }
 
+- (NSDictionary *)setClipboardImage:(NSString *)path
+{
+    if ([path length] == 0) {
+        [self.runtime throwError:@"setClipboardImage(path) requires a non-empty file path"];
+        return @{ @"ok": @NO };
+    }
+    NSString *safePath = [path stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+    safePath = [safePath stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    if ([safePath length] > 2048) safePath = [safePath substringToIndex:2048];
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodKeyboard arguments:@[@8, [NSString stringWithFormat:@"file;;%@", safePath]]];
+}
+
 - (NSDictionary *)insertText:(NSString *)text
 {
     return [self keyboardTask:1 content:(text ?: @"")];

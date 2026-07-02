@@ -556,6 +556,12 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         device[@"pasteFromClipboard"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@5, [NSNull null]] sessionId:sessionId]; };
         device[@"getClipboardText"] = ^NSDictionary *{ return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@6, [NSNull null]] sessionId:sessionId]; };
         device[@"setClipboardText"] = ^NSDictionary *(NSString *text) { return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@7, text ?: @""] sessionId:sessionId]; };
+        device[@"setClipboardImage"] = ^NSDictionary *(NSString *path) {
+            NSString *safePath = [(path ?: @"") stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+            safePath = [safePath stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+            if ([safePath length] > 2048) safePath = [safePath substringToIndex:2048];
+            return [weakSelf executeNativeRPCMethod:@"keyboard" arguments:@[@8, [NSString stringWithFormat:@"file;;%@", safePath]] sessionId:sessionId];
+        };
         device[@"readText"] = ^NSDictionary *(NSString *path) { return [weakSelf readTextAtRelativePath:path bundlePath:bundlePath]; };
         device[@"writeText"] = ^NSDictionary *(NSString *path, NSString *text) { return [weakSelf writeText:text atRelativePath:path bundlePath:bundlePath]; };
         device[@"readJSON"] = ^NSDictionary *(NSString *path) { return [weakSelf readJSONAtRelativePath:path bundlePath:bundlePath]; };

@@ -120,6 +120,24 @@ TLinkauto's on-device scripting runtime is JavaScriptCore. New scripts should us
 
 Legacy Python playback has been removed from the iOS package/runtime. Existing `.py` scripts are preserved during upgrade, but running them shows a migration error instead of spawning Python.
 
+### Clipboard Image (JavaScriptCore)
+
+Set the system clipboard to an on-device image file from JavaScriptCore, then paste it into the current focused app. PNG, JPEG, GIF, and WebP are supported. GIF files keep their original data so animation is preserved in apps that support animated paste.
+
+```js
+var imagePath = "/var/mobile/Library/TLinkauto/clipboard-image-demo.png";
+
+var shot = device.screenshotTo(imagePath);
+TLinkauto.ensureOk(shot, "screenshot failed");
+
+var copied = device.setClipboardImage(imagePath);
+TLinkauto.ensureOk(copied, "setClipboardImage failed");
+
+device.toast("Image copied. Open Notes/Messages and paste.", { type: 4, duration: 4 });
+```
+
+See `Clipboard Image Demo.tl/main.js` in the bundled JavaScript examples.
+
 You can also use any language to control your iOS device remotely as long as the language supports sockets. Here is how it works:
 
 1. After installation, the tweak starts listening at port 6000.

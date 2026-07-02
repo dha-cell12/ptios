@@ -100,6 +100,7 @@ JSExportAs(keyboardTask,
 - (NSDictionary *)pasteFromClipboard;
 - (NSDictionary *)getClipboardText;
 - (NSDictionary *)setClipboardText:(NSString *)text;
+- (NSDictionary *)setClipboardImage:(NSString *)path;
 - (NSDictionary *)insertText:(NSString *)text;
 - (NSDictionary *)deleteCharacters:(int)count;
 - (NSDictionary *)moveCursor:(int)offset;

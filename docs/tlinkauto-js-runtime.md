@@ -66,6 +66,30 @@ Helper-local storage is bundle-relative and path-safe:
 
 Paths must remain inside the current script bundle. Bundle metadata/source files are protected from modification.
 
+## Clipboard image API
+
+JavaScript scripts can copy an on-device image file to the system clipboard and paste it into the current foreground app:
+
+```js
+const imagePath = "/var/mobile/Library/TLinkauto/clipboard-image-demo.png";
+
+const shot = device.screenshotTo(imagePath);
+if (!shot.ok) {
+  throw new Error(shot.error || "screenshot failed");
+}
+
+const copied = device.setClipboardImage(imagePath);
+if (!copied.ok) {
+  throw new Error(copied.error || "setClipboardImage failed");
+}
+
+device.toast("Image copied. Open Notes/Messages and paste.", { type: 4, duration: 4 });
+```
+
+`device.setClipboardImage(path)` accepts an absolute file path on the iOS device. PNG, JPEG, GIF, and WebP are detected from file magic bytes, not from the file extension. GIF files are written to the pasteboard as original GIF data so animation is preserved in apps that support animated paste.
+
+The native clipboard image payload is file-path based only. Do not send image base64 through `keyboardTask`; large payloads are intentionally out of scope for this API.
+
 ## Frame, image, and OCR RPC
 
 Helper runtime supports frame/image/OCR wrappers:
@@ -107,6 +131,7 @@ Safe demos intended for repeated validation:
 - Helper Frame Color Demo
 - Helper OCR Demo
 - Helper Full Safe Smoke Demo
+- Clipboard Image Demo
 
 ## Phase 5 test matrix
 
