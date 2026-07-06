@@ -3,6 +3,10 @@
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
+#include <limits.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <netinet/tcp.h>
 #include <sys/utsname.h>
 
@@ -99,6 +103,358 @@ static NSArray<NSString *> *TLinkSplitBody(NSString *body)
 {
     if (!body) return @[];
     return [body componentsSeparatedByString:@";;"];
+}
+
+static NSString *TLinkJoinParts(NSArray<NSString *> *parts, NSUInteger start)
+{
+    if (!parts || start >= parts.count) return @"";
+    return [[parts subarrayWithRange:NSMakeRange(start, parts.count - start)] componentsJoinedByString:@";;"];
+}
+
+static uint64_t TLinkNowMs(void)
+{
+    return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+}
+
+@interface TLinkImageObject : NSObject
+@property(nonatomic, strong) UIImage *image;
+@property(nonatomic, assign) int width;
+@property(nonatomic, assign) int height;
+@property(nonatomic, assign) uint64_t createdAtMs;
+@end
+
+@implementation TLinkImageObject
+@end
+
+@interface TLinkFrameObject : NSObject
+@property(nonatomic, assign) uint32_t frameId;
+@property(nonatomic, strong) UIImage *image;
+@property(nonatomic, strong) NSData *rgbaData;
+@property(nonatomic, assign) int width;
+@property(nonatomic, assign) int height;
+@property(nonatomic, assign) int bytesPerRow;
+@property(nonatomic, assign) CGFloat scale;
+@property(nonatomic, assign) BOOL hasBGRA;
+@property(nonatomic, assign) BOOL hasGray;
+@property(nonatomic, assign) uint64_t createdAtMs;
+@property(nonatomic, assign) uint64_t expiresAtMs;
+@end
+
+@implementation TLinkFrameObject
+@end
+
+typedef struct {
+    int x;
+    int y;
+    int r;
+    int g;
+    int b;
+} TLinkPointColor;
+
+static UIImage *sTLinkKeptScreenImage = nil;
+static NSMutableDictionary<NSNumber *, TLinkImageObject *> *sTLinkImageStore = nil;
+static NSMutableDictionary<NSNumber *, TLinkFrameObject *> *sTLinkFrameStore = nil;
+static uint32_t sTLinkNextImageId = 1;
+static uint32_t sTLinkNextFrameId = 1;
+static const NSUInteger kTLinkMaxImageObjects = 64;
+static const NSUInteger kTLinkMaxFrameObjects = 4;
+static const uint64_t kTLinkDefaultFrameTtlMs = 1000;
+static const uint64_t kTLinkHardFrameTtlMs = 5000;
+
+static void TLinkEnsureVisionStores(void)
+{
+    if (!sTLinkImageStore) sTLinkImageStore = [[NSMutableDictionary alloc] init];
+    if (!sTLinkFrameStore) sTLinkFrameStore = [[NSMutableDictionary alloc] init];
+}
+
+static CGSize TLinkImagePixelSize(UIImage *image)
+{
+    CGImageRef cg = image.CGImage;
+    if (!cg) return CGSizeZero;
+    return CGSizeMake((CGFloat)CGImageGetWidth(cg), (CGFloat)CGImageGetHeight(cg));
+}
+
+static CGRect TLinkClampRectToImage(CGRect rect, int width, int height)
+{
+    if (width <= 0 || height <= 0) return CGRectZero;
+    int x = (int)rect.origin.x;
+    int y = (int)rect.origin.y;
+    int w = (int)rect.size.width;
+    int h = (int)rect.size.height;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x >= width) x = width - 1;
+    if (y >= height) y = height - 1;
+    if (w <= 0 || x + w > width) w = width - x;
+    if (h <= 0 || y + h > height) h = height - y;
+    if (w <= 0 || h <= 0) return CGRectZero;
+    return CGRectMake(x, y, w, h);
+}
+
+static UIImage *TLinkCropImage(UIImage *image, CGRect rect, NSString **error)
+{
+    CGImageRef source = image.CGImage;
+    if (!source) {
+        if (error) *error = @"image_missing_cgimage";
+        return nil;
+    }
+    CGRect crop = TLinkClampRectToImage(rect, (int)CGImageGetWidth(source), (int)CGImageGetHeight(source));
+    if (CGRectIsEmpty(crop)) {
+        if (error) *error = @"invalid_crop_rect";
+        return nil;
+    }
+    CGImageRef cropped = CGImageCreateWithImageInRect(source, crop);
+    if (!cropped) {
+        if (error) *error = @"crop_failed";
+        return nil;
+    }
+    UIImage *result = [UIImage imageWithCGImage:cropped scale:image.scale orientation:UIImageOrientationUp];
+    CGImageRelease(cropped);
+    return result;
+}
+
+static NSData *TLinkRGBADataFromCGImage(CGImageRef cgImage, int *outW, int *outH, int *outBpr)
+{
+    if (!cgImage) return nil;
+    int width = (int)CGImageGetWidth(cgImage);
+    int height = (int)CGImageGetHeight(cgImage);
+    if (width <= 0 || height <= 0 || width > 20000 || height > 20000) return nil;
+
+    int bytesPerRow = width * 4;
+    size_t totalBytes = (size_t)bytesPerRow * (size_t)height;
+    uint8_t *buffer = (uint8_t *)calloc(1, totalBytes);
+    if (!buffer) return nil;
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(buffer,
+                                                 (size_t)width,
+                                                 (size_t)height,
+                                                 8,
+                                                 (size_t)bytesPerRow,
+                                                 colorSpace,
+                                                 kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(colorSpace);
+    if (!context) {
+        free(buffer);
+        return nil;
+    }
+
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
+    CGContextRelease(context);
+    if (outW) *outW = width;
+    if (outH) *outH = height;
+    if (outBpr) *outBpr = bytesPerRow;
+    return [NSData dataWithBytesNoCopy:buffer length:totalBytes freeWhenDone:YES];
+}
+
+static NSData *TLinkRGBADataFromImage(UIImage *image, int *outW, int *outH, int *outBpr)
+{
+    return TLinkRGBADataFromCGImage(image.CGImage, outW, outH, outBpr);
+}
+
+static BOOL TLinkReadRGBA(NSData *data, int width, int height, int bytesPerRow, int x, int y, int *r, int *g, int *b)
+{
+    if (!data || width <= 0 || height <= 0 || bytesPerRow <= 0) return NO;
+    if (x < 0 || y < 0 || x >= width || y >= height) return NO;
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger offset = (NSUInteger)y * (NSUInteger)bytesPerRow + (NSUInteger)x * 4;
+    if (offset + 2 >= data.length) return NO;
+    if (r) *r = bytes[offset];
+    if (g) *g = bytes[offset + 1];
+    if (b) *b = bytes[offset + 2];
+    return YES;
+}
+
+static BOOL TLinkColorMatches(int r, int g, int b, int tr, int tg, int tb, int mode, double value)
+{
+    int dr = abs(r - tr);
+    int dg = abs(g - tg);
+    int db = abs(b - tb);
+    if (mode == 1) {
+        int dev = (int)value;
+        return dr <= dev && dg <= dev && db <= dev;
+    }
+    double similarity = 1.0 - ((double)dr + (double)dg + (double)db) / (3.0 * 255.0);
+    return similarity >= value;
+}
+
+static BOOL TLinkParsePointTable(NSString *table, NSMutableArray<NSValue *> *points, NSString **error)
+{
+    if (table.length == 0) {
+        if (error) *error = @"point_table_empty";
+        return NO;
+    }
+    NSArray<NSString *> *items = [table componentsSeparatedByString:@"|"];
+    for (NSString *item in items) {
+        if (item.length == 0) continue;
+        NSArray<NSString *> *parts = [item componentsSeparatedByString:@",,"];
+        if (parts.count != 5) {
+            if (error) *error = @"invalid_point_table_format";
+            return NO;
+        }
+        TLinkPointColor pc;
+        pc.x = [parts[0] intValue];
+        pc.y = [parts[1] intValue];
+        pc.r = [parts[2] intValue];
+        pc.g = [parts[3] intValue];
+        pc.b = [parts[4] intValue];
+        [points addObject:[NSValue valueWithBytes:&pc objCType:@encode(TLinkPointColor)]];
+    }
+    if (points.count == 0) {
+        if (error) *error = @"point_table_empty";
+        return NO;
+    }
+    return YES;
+}
+
+static BOOL TLinkFindTemplateInRGBA(NSData *hayData,
+                                    int hayW,
+                                    int hayH,
+                                    int hayBpr,
+                                    NSData *needleData,
+                                    int needleW,
+                                    int needleH,
+                                    int needleBpr,
+                                    CGRect searchRegion,
+                                    double acceptable,
+                                    int pixelSkip,
+                                    int *outX,
+                                    int *outY,
+                                    double *outScore)
+{
+    if (!hayData || !needleData || hayW <= 0 || hayH <= 0 || needleW <= 0 || needleH <= 0) return NO;
+    if (needleW > hayW || needleH > hayH) return NO;
+    if (acceptable <= 0.0 || acceptable > 1.0) acceptable = 0.9;
+
+    CGRect region = TLinkClampRectToImage(searchRegion, hayW, hayH);
+    if (CGRectIsEmpty(region)) return NO;
+    int rx = (int)region.origin.x;
+    int ry = (int)region.origin.y;
+    int rw = (int)region.size.width;
+    int rh = (int)region.size.height;
+    if (needleW > rw || needleH > rh) return NO;
+
+    int anchorStep = pixelSkip + 1;
+    if (anchorStep <= 0) anchorStep = 1;
+    int sampleStep = 1;
+    long samplePixels = (long)needleW * (long)needleH;
+    if (samplePixels > 160000) sampleStep = 4;
+    else if (samplePixels > 40000) sampleStep = 2;
+
+    const uint8_t *hay = (const uint8_t *)hayData.bytes;
+    const uint8_t *needle = (const uint8_t *)needleData.bytes;
+    long long bestSad = LLONG_MAX;
+    int bestX = -1;
+    int bestY = -1;
+    int sampleCount = 0;
+    for (int ty = 0; ty < needleH; ty += sampleStep) {
+        for (int tx = 0; tx < needleW; tx += sampleStep) {
+            sampleCount++;
+        }
+    }
+    if (sampleCount <= 0) return NO;
+
+    int maxX = rx + rw - needleW;
+    int maxY = ry + rh - needleH;
+    for (int y = ry; y <= maxY; y += anchorStep) {
+        for (int x = rx; x <= maxX; x += anchorStep) {
+            long long sad = 0;
+            for (int ty = 0; ty < needleH; ty += sampleStep) {
+                const uint8_t *hayRow = hay + (NSUInteger)(y + ty) * (NSUInteger)hayBpr + (NSUInteger)x * 4;
+                const uint8_t *needleRow = needle + (NSUInteger)ty * (NSUInteger)needleBpr;
+                for (int tx = 0; tx < needleW; tx += sampleStep) {
+                    const uint8_t *hp = hayRow + (NSUInteger)tx * 4;
+                    const uint8_t *np = needleRow + (NSUInteger)tx * 4;
+                    sad += llabs((long long)hp[0] - (long long)np[0]);
+                    sad += llabs((long long)hp[1] - (long long)np[1]);
+                    sad += llabs((long long)hp[2] - (long long)np[2]);
+                    if (sad >= bestSad) break;
+                }
+                if (sad >= bestSad) break;
+            }
+            if (sad < bestSad) {
+                bestSad = sad;
+                bestX = x;
+                bestY = y;
+            }
+        }
+    }
+
+    double score = 0.0;
+    if (bestSad != LLONG_MAX) {
+        double maxSad = (double)sampleCount * 3.0 * 255.0;
+        score = 1.0 - ((double)bestSad / maxSad);
+        if (score < 0.0) score = 0.0;
+        if (score > 1.0) score = 1.0;
+    }
+    if (outX) *outX = bestX;
+    if (outY) *outY = bestY;
+    if (outScore) *outScore = score;
+    return bestX >= 0 && bestY >= 0 && score >= acceptable;
+}
+
+static uint32_t TLinkStoreImageObject(UIImage *image)
+{
+    if (!image || !image.CGImage) return 0;
+    TLinkEnsureVisionStores();
+    while (sTLinkImageStore.count >= kTLinkMaxImageObjects) {
+        NSNumber *key = sTLinkImageStore.allKeys.firstObject;
+        if (!key) break;
+        [sTLinkImageStore removeObjectForKey:key];
+    }
+    uint32_t imageId = sTLinkNextImageId++;
+    if (imageId == 0) imageId = sTLinkNextImageId++;
+    CGSize size = TLinkImagePixelSize(image);
+    TLinkImageObject *obj = [[TLinkImageObject alloc] init];
+    obj.image = image;
+    obj.width = (int)size.width;
+    obj.height = (int)size.height;
+    obj.createdAtMs = TLinkNowMs();
+    sTLinkImageStore[@(imageId)] = obj;
+    return imageId;
+}
+
+static TLinkFrameObject *TLinkFrameForId(uint32_t frameId)
+{
+    TLinkEnsureVisionStores();
+    return sTLinkFrameStore[@(frameId)];
+}
+
+static BOOL TLinkEnsureFrameRGBA(TLinkFrameObject *frame, NSString **error)
+{
+    if (!frame) {
+        if (error) *error = @"frame_not_found";
+        return NO;
+    }
+    if (frame.rgbaData.length > 0) return YES;
+    int w = 0, h = 0, bpr = 0;
+    NSData *data = TLinkRGBADataFromImage(frame.image, &w, &h, &bpr);
+    if (!data) {
+        if (error) *error = @"frame_bgra_render_failed";
+        return NO;
+    }
+    frame.rgbaData = data;
+    frame.width = w;
+    frame.height = h;
+    frame.bytesPerRow = bpr;
+    frame.hasBGRA = YES;
+    return YES;
+}
+
+static uint32_t TLinkStoreFrameObject(TLinkFrameObject *frame)
+{
+    if (!frame || !frame.image) return 0;
+    TLinkEnsureVisionStores();
+    while (sTLinkFrameStore.count >= kTLinkMaxFrameObjects) {
+        NSNumber *key = sTLinkFrameStore.allKeys.firstObject;
+        if (!key) break;
+        [sTLinkFrameStore removeObjectForKey:key];
+    }
+    uint32_t frameId = sTLinkNextFrameId++;
+    if (frameId == 0) frameId = sTLinkNextFrameId++;
+    frame.frameId = frameId;
+    sTLinkFrameStore[@(frameId)] = frame;
+    return frameId;
 }
 
 static int TLinkClampTouchCoord(CGFloat value)
@@ -372,6 +728,677 @@ static NSData *TLinkHandleScreenshot(NSString *body)
     return TLinkSuccess(targetPath);
 }
 
+static UIImage *TLinkCaptureScreenImage(NSString **error)
+{
+    CaptureOutcome *outcome = TLinkRunCaptureOnMain();
+    if (!outcome || !outcome.image || outcome.result == CaptureResultFail) {
+        NSString *diag = outcome.diagnostics ?: @"capture_failed";
+        if (error) *error = [NSString stringWithFormat:@"capture_failed %@", diag];
+        return nil;
+    }
+    return outcome.image;
+}
+
+static UIImage *TLinkScreenImageForVision(NSString **error)
+{
+    if (sTLinkKeptScreenImage) return sTLinkKeptScreenImage;
+    return TLinkCaptureScreenImage(error);
+}
+
+static NSData *TLinkHandleScreenKeep(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    int enabled = parts.count > 0 ? [parts[0] intValue] : 0;
+    if (enabled) {
+        NSString *err = nil;
+        UIImage *image = TLinkCaptureScreenImage(&err);
+        if (!image) return TLinkError(err);
+        sTLinkKeptScreenImage = image;
+        return TLinkSuccess(nil);
+    }
+    sTLinkKeptScreenImage = nil;
+    return TLinkSuccess(nil);
+}
+
+static NSData *TLinkHandleColorPicker(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 2) return TLinkError(@"color_picker format: x;;y");
+    int x = [parts[0] intValue];
+    int y = [parts[1] intValue];
+    NSString *err = nil;
+    UIImage *image = TLinkScreenImageForVision(&err);
+    if (!image) return TLinkError(err);
+    int w = 0, h = 0, bpr = 0;
+    NSData *rgba = TLinkRGBADataFromImage(image, &w, &h, &bpr);
+    if (!rgba) return TLinkError(@"color_picker_rgba_failed");
+    int r = 0, g = 0, b = 0;
+    if (!TLinkReadRGBA(rgba, w, h, bpr, x, y, &r, &g, &b)) {
+        return TLinkError(@"color_picker_point_out_of_bounds");
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"%d;;%d;;%d", r, g, b]);
+}
+
+static NSData *TLinkHandleColorSearch(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 1) return TLinkError(@"color_search missing search type");
+    int searchType = [parts[0] intValue];
+    NSString *err = nil;
+    UIImage *image = TLinkScreenImageForVision(&err);
+    if (!image) return TLinkError(err);
+    int screenW = 0, screenH = 0, bpr = 0;
+    NSData *rgba = TLinkRGBADataFromImage(image, &screenW, &screenH, &bpr);
+    if (!rgba) return TLinkError(@"color_search_rgba_failed");
+
+    if (searchType == 1) {
+        if (parts.count < 12) {
+            return TLinkError(@"color_search single format: 1;;x;;y;;width;;height;;rmin;;rmax;;gmin;;gmax;;bmin;;bmax;;skip");
+        }
+        int x = [parts[1] intValue];
+        int y = [parts[2] intValue];
+        int width = [parts[3] intValue];
+        int height = [parts[4] intValue];
+        int rMin = [parts[5] intValue], rMax = [parts[6] intValue];
+        int gMin = [parts[7] intValue], gMax = [parts[8] intValue];
+        int bMin = [parts[9] intValue], bMax = [parts[10] intValue];
+        int step = [parts[11] intValue] + 1;
+        if (step <= 0) step = 1;
+        CGRect region = TLinkClampRectToImage(CGRectMake(x, y, width, height), screenW, screenH);
+        if (CGRectIsEmpty(region)) return TLinkError(@"color_search_invalid_region");
+        int rx = (int)region.origin.x, ry = (int)region.origin.y;
+        int rw = (int)region.size.width, rh = (int)region.size.height;
+        for (int cy = 0; cy < rh; cy += step) {
+            for (int cx = 0; cx < rw; cx += step) {
+                int r = 0, g = 0, b = 0;
+                if (!TLinkReadRGBA(rgba, screenW, screenH, bpr, rx + cx, ry + cy, &r, &g, &b)) continue;
+                if (r >= rMin && r <= rMax && g >= gMin && g <= gMax && b >= bMin && b <= bMax) {
+                    return TLinkSuccess([NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d", rx + cx, ry + cy, r, g, b]);
+                }
+            }
+        }
+        return TLinkSuccess(@"-1;;-1;;-1;;-1;;-1");
+    }
+
+    if (searchType == 2) {
+        if (parts.count < 4) return TLinkError(@"color_search is_colors format: 2;;table;;mode;;value");
+        NSMutableArray<NSValue *> *points = [NSMutableArray array];
+        if (!TLinkParsePointTable(parts[1], points, &err)) return TLinkError(err);
+        int mode = [parts[2] intValue];
+        double value = [parts[3] doubleValue];
+        BOOL matched = YES;
+        for (NSValue *valueObj in points) {
+            TLinkPointColor pc;
+            [valueObj getValue:&pc];
+            int r = 0, g = 0, b = 0;
+            if (!TLinkReadRGBA(rgba, screenW, screenH, bpr, pc.x, pc.y, &r, &g, &b) ||
+                !TLinkColorMatches(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
+                matched = NO;
+                break;
+            }
+        }
+        return TLinkSuccess(matched ? @"1" : @"0");
+    }
+
+    if (searchType == 3) {
+        if (parts.count < 9) return TLinkError(@"color_search find_multi format: 3;;x;;y;;w;;h;;table;;mode;;value;;skip");
+        int regionX = [parts[1] intValue];
+        int regionY = [parts[2] intValue];
+        int regionW = [parts[3] intValue];
+        int regionH = [parts[4] intValue];
+        NSMutableArray<NSValue *> *points = [NSMutableArray array];
+        if (!TLinkParsePointTable(parts[5], points, &err)) return TLinkError(err);
+        int mode = [parts[6] intValue];
+        double value = [parts[7] doubleValue];
+        int step = [parts[8] intValue] + 1;
+        if (step <= 0) step = 1;
+
+        CGRect region = TLinkClampRectToImage(CGRectMake(regionX, regionY, regionW, regionH), screenW, screenH);
+        if (CGRectIsEmpty(region)) return TLinkSuccess(@"-1;;-1");
+
+        int minDx = INT_MAX, minDy = INT_MAX, maxDx = INT_MIN, maxDy = INT_MIN;
+        for (NSValue *valueObj in points) {
+            TLinkPointColor pc;
+            [valueObj getValue:&pc];
+            if (pc.x < minDx) minDx = pc.x;
+            if (pc.y < minDy) minDy = pc.y;
+            if (pc.x > maxDx) maxDx = pc.x;
+            if (pc.y > maxDy) maxDy = pc.y;
+        }
+        int axStart = MAX((int)region.origin.x, -minDx);
+        int ayStart = MAX((int)region.origin.y, -minDy);
+        int axEnd = MIN((int)(region.origin.x + region.size.width - 1), screenW - 1 - maxDx);
+        int ayEnd = MIN((int)(region.origin.y + region.size.height - 1), screenH - 1 - maxDy);
+        for (int ay = ayStart; ay <= ayEnd; ay += step) {
+            for (int ax = axStart; ax <= axEnd; ax += step) {
+                BOOL ok = YES;
+                for (NSValue *valueObj in points) {
+                    TLinkPointColor pc;
+                    [valueObj getValue:&pc];
+                    int r = 0, g = 0, b = 0;
+                    if (!TLinkReadRGBA(rgba, screenW, screenH, bpr, ax + pc.x, ay + pc.y, &r, &g, &b) ||
+                        !TLinkColorMatches(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
+                        ok = NO;
+                        break;
+                    }
+                }
+                if (ok) return TLinkSuccess([NSString stringWithFormat:@"%d;;%d", ax, ay]);
+            }
+        }
+        return TLinkSuccess(@"-1;;-1");
+    }
+
+    return TLinkError([NSString stringWithFormat:@"unknown_color_search_type %d", searchType]);
+}
+
+static NSString *TLinkResolveImagePath(NSString *path)
+{
+    if (path.length == 0) return nil;
+    if ([path hasPrefix:@"/"]) return path;
+    return [@"/var/mobile/Library/TLinkauto/scripts" stringByAppendingPathComponent:path];
+}
+
+static NSString *TLinkFindImageResponse(UIImage *haystack,
+                                        UIImage *needle,
+                                        CGRect region,
+                                        double acceptable,
+                                        int pixelSkip,
+                                        NSString **error)
+{
+    int hayW = 0, hayH = 0, hayBpr = 0;
+    NSData *hayRGBA = TLinkRGBADataFromImage(haystack, &hayW, &hayH, &hayBpr);
+    int needleW = 0, needleH = 0, needleBpr = 0;
+    NSData *needleRGBA = TLinkRGBADataFromImage(needle, &needleW, &needleH, &needleBpr);
+    if (!hayRGBA || !needleRGBA) {
+        if (error) *error = @"image_match_rgba_failed";
+        return nil;
+    }
+    int matchX = -1, matchY = -1;
+    double score = 0.0;
+    BOOL matched = TLinkFindTemplateInRGBA(hayRGBA, hayW, hayH, hayBpr,
+                                           needleRGBA, needleW, needleH, needleBpr,
+                                           region, acceptable, pixelSkip,
+                                           &matchX, &matchY, &score);
+    if (!matched) {
+        return [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f", score];
+    }
+    double centerX = matchX + needleW / 2.0;
+    double centerY = matchY + needleH / 2.0;
+    return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f",
+            matchX, matchY, needleW, needleH, centerX, centerY, score];
+}
+
+static NSData *TLinkHandleImageObject(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 1) return TLinkError(@"image_object missing action");
+    int action = [parts[0] intValue];
+    if (action == 1) {
+        if (parts.count < 5) return TLinkError(@"image capture format: 1;;x;;y;;w;;h");
+        NSString *err = nil;
+        UIImage *screen = TLinkScreenImageForVision(&err);
+        if (!screen) return TLinkError(err);
+        UIImage *cropped = TLinkCropImage(screen,
+                                          CGRectMake([parts[1] intValue], [parts[2] intValue], [parts[3] intValue], [parts[4] intValue]),
+                                          &err);
+        if (!cropped) return TLinkError(err);
+        uint32_t imageId = TLinkStoreImageObject(cropped);
+        if (imageId == 0) return TLinkError(@"image_object_store_failed");
+        CGSize size = TLinkImagePixelSize(cropped);
+        return TLinkSuccess([NSString stringWithFormat:@"%u;;%d;;%d", imageId, (int)size.width, (int)size.height]);
+    }
+    if (action == 2) {
+        if (parts.count < 2) return TLinkError(@"image open format: 2;;path");
+        NSString *path = TLinkResolveImagePath(parts[1]);
+        UIImage *image = path.length > 0 ? [UIImage imageWithContentsOfFile:path] : nil;
+        if (!image || !image.CGImage) {
+            return TLinkError([NSString stringWithFormat:@"image_not_found path=%@", path ?: parts[1]]);
+        }
+        uint32_t imageId = TLinkStoreImageObject(image);
+        if (imageId == 0) return TLinkError(@"image_object_store_failed");
+        CGSize size = TLinkImagePixelSize(image);
+        return TLinkSuccess([NSString stringWithFormat:@"%u;;%d;;%d", imageId, (int)size.width, (int)size.height]);
+    }
+    if (action == 3) {
+        if (parts.count < 2) return TLinkSuccess(@"0");
+        TLinkEnsureVisionStores();
+        NSString *target = parts[1];
+        NSUInteger removed = 0;
+        if ([[target lowercaseString] isEqualToString:@"all"] || [[target lowercaseString] isEqualToString:@"scoped"]) {
+            removed = sTLinkImageStore.count;
+            [sTLinkImageStore removeAllObjects];
+        } else {
+            NSNumber *key = @((uint32_t)[target intValue]);
+            if (sTLinkImageStore[key]) {
+                [sTLinkImageStore removeObjectForKey:key];
+                removed = 1;
+            }
+        }
+        return TLinkSuccess([NSString stringWithFormat:@"%lu", (unsigned long)removed]);
+    }
+    return TLinkError(@"unknown_image_object_action");
+}
+
+static NSData *TLinkHandleFindImage(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 10) {
+        return TLinkError(@"find_image format: image_id;;x;;y;;w;;h;;acceptable;;scale_min;;scale_max;;scale_step;;pixel_skip");
+    }
+    TLinkEnsureVisionStores();
+    uint32_t imageId = (uint32_t)[parts[0] intValue];
+    TLinkImageObject *templ = sTLinkImageStore[@(imageId)];
+    if (!templ || !templ.image) return TLinkError(@"image_not_found");
+    NSString *err = nil;
+    UIImage *screen = TLinkScreenImageForVision(&err);
+    if (!screen) return TLinkError(err);
+    NSString *ret = TLinkFindImageResponse(screen,
+                                           templ.image,
+                                           CGRectMake([parts[1] intValue], [parts[2] intValue], [parts[3] intValue], [parts[4] intValue]),
+                                           [parts[5] doubleValue],
+                                           [parts[9] intValue],
+                                           &err);
+    if (!ret) return TLinkError(err);
+    return TLinkSuccess(ret);
+}
+
+static NSData *TLinkHandleTemplateMatch(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 1 || parts[0].length == 0) return TLinkError(@"template_match missing path");
+    NSString *path = TLinkResolveImagePath(parts[0]);
+    UIImage *templ = path.length > 0 ? [UIImage imageWithContentsOfFile:path] : nil;
+    if (!templ || !templ.CGImage) return TLinkError([NSString stringWithFormat:@"template_not_found path=%@", path ?: parts[0]]);
+    NSString *err = nil;
+    UIImage *screen = TLinkScreenImageForVision(&err);
+    if (!screen) return TLinkError(err);
+    double acceptable = parts.count >= 3 ? [parts[2] doubleValue] : 0.8;
+    NSString *ret = TLinkFindImageResponse(screen, templ, CGRectMake(0, 0, 0, 0), acceptable, 0, &err);
+    if (!ret) return TLinkError(err);
+    NSArray<NSString *> *retParts = TLinkSplitBody(ret);
+    if (retParts.count >= 4) {
+        return TLinkSuccess([[retParts subarrayWithRange:NSMakeRange(0, 4)] componentsJoinedByString:@";;"]);
+    }
+    return TLinkSuccess(ret);
+}
+
+static NSData *TLinkHandleFrameCapture(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    BOOL needGray = YES;
+    BOOL needBGRA = YES;
+    uint64_t ttlMs = kTLinkDefaultFrameTtlMs;
+    if (parts.count >= 1 && parts[0].length > 0) needGray = [parts[0] intValue] != 0;
+    if (parts.count >= 2 && parts[1].length > 0) needBGRA = [parts[1] intValue] != 0;
+    if (parts.count >= 3 && parts[2].length > 0) ttlMs = (uint64_t)MAX(0, [parts[2] longLongValue]);
+    if (!needGray && !needBGRA) {
+        needGray = YES;
+        needBGRA = YES;
+    }
+    if (ttlMs == 0) ttlMs = kTLinkDefaultFrameTtlMs;
+    if (ttlMs > kTLinkHardFrameTtlMs) ttlMs = kTLinkHardFrameTtlMs;
+
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+    NSString *err = nil;
+    UIImage *image = TLinkCaptureScreenImage(&err);
+    if (!image) return TLinkError(err);
+    CGSize size = TLinkImagePixelSize(image);
+    TLinkFrameObject *frame = [[TLinkFrameObject alloc] init];
+    frame.image = image;
+    frame.width = (int)size.width;
+    frame.height = (int)size.height;
+    frame.bytesPerRow = frame.width * 4;
+    frame.scale = [UIScreen mainScreen].scale;
+    frame.createdAtMs = TLinkNowMs();
+    frame.expiresAtMs = frame.createdAtMs + ttlMs;
+    frame.hasGray = needGray;
+    frame.hasBGRA = NO;
+    double captureMs = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+    double bgraMs = 0.0;
+    if (needBGRA) {
+        CFAbsoluteTime bgraStart = CFAbsoluteTimeGetCurrent();
+        if (!TLinkEnsureFrameRGBA(frame, &err)) return TLinkError(err);
+        bgraMs = (CFAbsoluteTimeGetCurrent() - bgraStart) * 1000.0;
+    }
+    uint32_t frameId = TLinkStoreFrameObject(frame);
+    if (frameId == 0) return TLinkError(@"frame_store_failed");
+    double totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+    NSString *ret = [NSString stringWithFormat:@"%u;;%d;;%d;;%d;;%.3f;;pixel;;RGBA;;%d;;%d;;%llu;;%.3f;;%.3f;;0.000;;%.3f",
+                     frameId, frame.width, frame.height, frame.bytesPerRow, frame.scale,
+                     frame.hasBGRA ? 1 : 0, frame.hasGray ? 1 : 0,
+                     (unsigned long long)frame.createdAtMs,
+                     captureMs, bgraMs, totalMs];
+    return TLinkSuccess(ret);
+}
+
+static NSData *TLinkHandleFrameRelease(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    TLinkEnsureVisionStores();
+    if (parts.count < 1 || parts[0].length == 0) return TLinkSuccess(@"0");
+    NSString *target = [parts[0] lowercaseString];
+    NSUInteger removed = 0;
+    if ([target isEqualToString:@"all"] || [target isEqualToString:@"scoped"]) {
+        removed = sTLinkFrameStore.count;
+        [sTLinkFrameStore removeAllObjects];
+    } else {
+        NSNumber *key = @((uint32_t)[parts[0] intValue]);
+        if (sTLinkFrameStore[key]) {
+            [sTLinkFrameStore removeObjectForKey:key];
+            removed = 1;
+        }
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"%lu", (unsigned long)removed]);
+}
+
+static BOOL TLinkStringIsPointCoord(NSString *coord)
+{
+    return coord && [[coord lowercaseString] isEqualToString:@"point"];
+}
+
+static int TLinkCoordToPixel(double value, CGFloat scale, BOOL pointCoord)
+{
+    return (int)llround(pointCoord ? value * scale : value);
+}
+
+static BOOL TLinkFrameTooOld(TLinkFrameObject *frame, uint64_t maxAgeMs, NSString **error)
+{
+    if (!frame) {
+        if (error) *error = @"frame_not_found";
+        return YES;
+    }
+    if (maxAgeMs == 0) return NO;
+    uint64_t now = TLinkNowMs();
+    uint64_t age = now >= frame.createdAtMs ? now - frame.createdAtMs : 0;
+    if (age > maxAgeMs) {
+        if (error) *error = @"frame_too_old";
+        return YES;
+    }
+    return NO;
+}
+
+static NSData *TLinkHandleColorInFrame(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 2) return TLinkError(@"color_in_frame format: frame_id;;mode;;...");
+    TLinkFrameObject *frame = TLinkFrameForId((uint32_t)[parts[0] intValue]);
+    if (!frame) return TLinkError(@"frame_not_found");
+    NSString *err = nil;
+    if (!TLinkEnsureFrameRGBA(frame, &err)) return TLinkError(err);
+    NSString *mode = [parts[1] lowercaseString];
+    uint64_t ageMs = TLinkNowMs() >= frame.createdAtMs ? TLinkNowMs() - frame.createdAtMs : 0;
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+
+    if ([mode isEqualToString:@"pick"]) {
+        if (parts.count < 4) return TLinkError(@"color pick format: frame_id;;pick;;x;;y[;;coord;;max_age_ms]");
+        BOOL pointCoord = parts.count >= 5 ? TLinkStringIsPointCoord(parts[4]) : NO;
+        uint64_t maxAge = parts.count >= 6 ? (uint64_t)MAX(0, [parts[5] longLongValue]) : kTLinkDefaultFrameTtlMs;
+        if (TLinkFrameTooOld(frame, maxAge, &err)) return TLinkError(err);
+        int x = TLinkCoordToPixel([parts[2] doubleValue], frame.scale, pointCoord);
+        int y = TLinkCoordToPixel([parts[3] doubleValue], frame.scale, pointCoord);
+        int r = 0, g = 0, b = 0;
+        if (!TLinkReadRGBA(frame.rgbaData, frame.width, frame.height, frame.bytesPerRow, x, y, &r, &g, &b)) {
+            return TLinkError(@"point_out_of_bounds");
+        }
+        double ms = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+        return TLinkSuccess([NSString stringWithFormat:@"%d;;%d;;%d;;%llu;;%.3f;;%.3f", r, g, b, (unsigned long long)ageMs, ms, ms]);
+    }
+
+    if ([mode isEqualToString:@"pick_many"]) {
+        if (parts.count < 3) return TLinkError(@"pick_many format: frame_id;;pick_many;;x,y|x,y|...");
+        BOOL pointCoord = parts.count >= 4 ? TLinkStringIsPointCoord(parts[3]) : NO;
+        uint64_t maxAge = parts.count >= 5 ? (uint64_t)MAX(0, [parts[4] longLongValue]) : kTLinkDefaultFrameTtlMs;
+        if (TLinkFrameTooOld(frame, maxAge, &err)) return TLinkError(err);
+        NSMutableArray<NSString *> *result = [NSMutableArray array];
+        for (NSString *item in [parts[2] componentsSeparatedByString:@"|"]) {
+            NSArray<NSString *> *xy = [item componentsSeparatedByString:@","];
+            if (xy.count != 2) return TLinkError(@"invalid_pick_many_point");
+            int x = TLinkCoordToPixel([xy[0] doubleValue], frame.scale, pointCoord);
+            int y = TLinkCoordToPixel([xy[1] doubleValue], frame.scale, pointCoord);
+            int r = 0, g = 0, b = 0;
+            if (!TLinkReadRGBA(frame.rgbaData, frame.width, frame.height, frame.bytesPerRow, x, y, &r, &g, &b)) {
+                return TLinkError(@"point_out_of_bounds");
+            }
+            [result addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
+        }
+        double ms = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+        return TLinkSuccess([NSString stringWithFormat:@"%@;;%llu;;%.3f;;%.3f", [result componentsJoinedByString:@"|"], (unsigned long long)ageMs, ms, ms]);
+    }
+
+    if ([mode isEqualToString:@"search_single"]) {
+        if (parts.count < 13) return TLinkError(@"search_single format: frame_id;;search_single;;x;;y;;w;;h;;rmin;;rmax;;gmin;;gmax;;bmin;;bmax;;skip");
+        BOOL pointCoord = parts.count >= 14 ? TLinkStringIsPointCoord(parts[13]) : NO;
+        uint64_t maxAge = parts.count >= 15 ? (uint64_t)MAX(0, [parts[14] longLongValue]) : kTLinkDefaultFrameTtlMs;
+        if (TLinkFrameTooOld(frame, maxAge, &err)) return TLinkError(err);
+        int x = TLinkCoordToPixel([parts[2] doubleValue], frame.scale, pointCoord);
+        int y = TLinkCoordToPixel([parts[3] doubleValue], frame.scale, pointCoord);
+        int width = TLinkCoordToPixel([parts[4] doubleValue], frame.scale, pointCoord);
+        int height = TLinkCoordToPixel([parts[5] doubleValue], frame.scale, pointCoord);
+        int rMin = [parts[6] intValue], rMax = [parts[7] intValue];
+        int gMin = [parts[8] intValue], gMax = [parts[9] intValue];
+        int bMin = [parts[10] intValue], bMax = [parts[11] intValue];
+        int step = [parts[12] intValue] + 1;
+        if (step <= 0) step = 1;
+        CGRect region = TLinkClampRectToImage(CGRectMake(x, y, width, height), frame.width, frame.height);
+        if (CGRectIsEmpty(region)) return TLinkError(@"invalid_search_region");
+        int rx = (int)region.origin.x, ry = (int)region.origin.y;
+        int rw = (int)region.size.width, rh = (int)region.size.height;
+        for (int cy = 0; cy < rh; cy += step) {
+            for (int cx = 0; cx < rw; cx += step) {
+                int r = 0, g = 0, b = 0;
+                if (!TLinkReadRGBA(frame.rgbaData, frame.width, frame.height, frame.bytesPerRow, rx + cx, ry + cy, &r, &g, &b)) continue;
+                if (r >= rMin && r <= rMax && g >= gMin && g <= gMax && b >= bMin && b <= bMax) {
+                    double ms = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+                    return TLinkSuccess([NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d;;%llu;;%.3f;;%.3f",
+                                         rx + cx, ry + cy, r, g, b, (unsigned long long)ageMs, ms, ms]);
+                }
+            }
+        }
+        double ms = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+        return TLinkSuccess([NSString stringWithFormat:@"-1;;-1;;-1;;-1;;-1;;%llu;;%.3f;;%.3f",
+                             (unsigned long long)ageMs, ms, ms]);
+    }
+
+    if ([mode isEqualToString:@"is_colors"]) {
+        if (parts.count < 5) return TLinkError(@"is_colors format: frame_id;;is_colors;;table;;mode;;value");
+        NSMutableArray<NSValue *> *points = [NSMutableArray array];
+        if (!TLinkParsePointTable(parts[2], points, &err)) return TLinkError(err);
+        int colorMode = [parts[3] intValue];
+        double value = [parts[4] doubleValue];
+        BOOL pointCoord = parts.count >= 6 ? TLinkStringIsPointCoord(parts[5]) : NO;
+        uint64_t maxAge = parts.count >= 7 ? (uint64_t)MAX(0, [parts[6] longLongValue]) : kTLinkDefaultFrameTtlMs;
+        if (TLinkFrameTooOld(frame, maxAge, &err)) return TLinkError(err);
+        BOOL matched = YES;
+        for (NSValue *valueObj in points) {
+            TLinkPointColor pc;
+            [valueObj getValue:&pc];
+            int x = TLinkCoordToPixel(pc.x, frame.scale, pointCoord);
+            int y = TLinkCoordToPixel(pc.y, frame.scale, pointCoord);
+            int r = 0, g = 0, b = 0;
+            if (!TLinkReadRGBA(frame.rgbaData, frame.width, frame.height, frame.bytesPerRow, x, y, &r, &g, &b) ||
+                !TLinkColorMatches(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) {
+                matched = NO;
+                break;
+            }
+        }
+        double ms = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+        return TLinkSuccess([NSString stringWithFormat:@"%d;;%llu;;%.3f;;%.3f", matched ? 1 : 0, (unsigned long long)ageMs, ms, ms]);
+    }
+
+    if ([mode isEqualToString:@"find_multi_point"]) {
+        if (parts.count < 10) return TLinkError(@"find_multi_point format: frame_id;;find_multi_point;;x;;y;;w;;h;;table;;mode;;value;;skip");
+        BOOL pointCoord = parts.count >= 11 ? TLinkStringIsPointCoord(parts[10]) : NO;
+        uint64_t maxAge = parts.count >= 12 ? (uint64_t)MAX(0, [parts[11] longLongValue]) : kTLinkDefaultFrameTtlMs;
+        if (TLinkFrameTooOld(frame, maxAge, &err)) return TLinkError(err);
+        int regionX = TLinkCoordToPixel([parts[2] doubleValue], frame.scale, pointCoord);
+        int regionY = TLinkCoordToPixel([parts[3] doubleValue], frame.scale, pointCoord);
+        int regionW = TLinkCoordToPixel([parts[4] doubleValue], frame.scale, pointCoord);
+        int regionH = TLinkCoordToPixel([parts[5] doubleValue], frame.scale, pointCoord);
+        NSMutableArray<NSValue *> *points = [NSMutableArray array];
+        if (!TLinkParsePointTable(parts[6], points, &err)) return TLinkError(err);
+        int colorMode = [parts[7] intValue];
+        double value = [parts[8] doubleValue];
+        int step = [parts[9] intValue] + 1;
+        if (step <= 0) step = 1;
+        CGRect region = TLinkClampRectToImage(CGRectMake(regionX, regionY, regionW, regionH), frame.width, frame.height);
+        if (CGRectIsEmpty(region)) return TLinkSuccess([NSString stringWithFormat:@"-1;;-1;;%llu;;0.000;;0.000", (unsigned long long)ageMs]);
+        int minDx = INT_MAX, minDy = INT_MAX, maxDx = INT_MIN, maxDy = INT_MIN;
+        for (NSValue *valueObj in points) {
+            TLinkPointColor pc;
+            [valueObj getValue:&pc];
+            int dx = TLinkCoordToPixel(pc.x, frame.scale, pointCoord);
+            int dy = TLinkCoordToPixel(pc.y, frame.scale, pointCoord);
+            if (dx < minDx) minDx = dx;
+            if (dy < minDy) minDy = dy;
+            if (dx > maxDx) maxDx = dx;
+            if (dy > maxDy) maxDy = dy;
+        }
+        int axStart = MAX((int)region.origin.x, -minDx);
+        int ayStart = MAX((int)region.origin.y, -minDy);
+        int axEnd = MIN((int)(region.origin.x + region.size.width - 1), frame.width - 1 - maxDx);
+        int ayEnd = MIN((int)(region.origin.y + region.size.height - 1), frame.height - 1 - maxDy);
+        for (int ay = ayStart; ay <= ayEnd; ay += step) {
+            for (int ax = axStart; ax <= axEnd; ax += step) {
+                BOOL ok = YES;
+                for (NSValue *valueObj in points) {
+                    TLinkPointColor pc;
+                    [valueObj getValue:&pc];
+                    int dx = TLinkCoordToPixel(pc.x, frame.scale, pointCoord);
+                    int dy = TLinkCoordToPixel(pc.y, frame.scale, pointCoord);
+                    int r = 0, g = 0, b = 0;
+                    if (!TLinkReadRGBA(frame.rgbaData, frame.width, frame.height, frame.bytesPerRow, ax + dx, ay + dy, &r, &g, &b) ||
+                        !TLinkColorMatches(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) {
+                        ok = NO;
+                        break;
+                    }
+                }
+                if (ok) {
+                    double ms = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+                    return TLinkSuccess([NSString stringWithFormat:@"%d;;%d;;%llu;;%.3f;;%.3f",
+                                         ax, ay, (unsigned long long)ageMs, ms, ms]);
+                }
+            }
+        }
+        double ms = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+        return TLinkSuccess([NSString stringWithFormat:@"-1;;-1;;%llu;;%.3f;;%.3f",
+                             (unsigned long long)ageMs, ms, ms]);
+    }
+
+    return TLinkError(@"unknown_color_frame_mode");
+}
+
+static NSData *TLinkHandleFindImageInFrame(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 11) {
+        return TLinkError(@"find_image_in_frame format: frame_id;;image_id;;x;;y;;w;;h;;acceptable;;scale_min;;scale_max;;scale_step;;pixel_skip");
+    }
+    TLinkFrameObject *frame = TLinkFrameForId((uint32_t)[parts[0] intValue]);
+    if (!frame) return TLinkError(@"frame_not_found");
+    uint64_t maxAge = parts.count >= 13 ? (uint64_t)MAX(0, [parts[12] longLongValue]) : kTLinkDefaultFrameTtlMs;
+    NSString *err = nil;
+    if (TLinkFrameTooOld(frame, maxAge, &err)) return TLinkError(err);
+    TLinkEnsureVisionStores();
+    TLinkImageObject *templ = sTLinkImageStore[@((uint32_t)[parts[1] intValue])];
+    if (!templ || !templ.image) return TLinkError(@"image_not_found");
+    NSString *ret = TLinkFindImageResponse(frame.image,
+                                           templ.image,
+                                           CGRectMake([parts[2] intValue], [parts[3] intValue], [parts[4] intValue], [parts[5] intValue]),
+                                           [parts[6] doubleValue],
+                                           [parts[10] intValue],
+                                           &err);
+    if (!ret) return TLinkError(err);
+    uint64_t ageMs = TLinkNowMs() >= frame.createdAtMs ? TLinkNowMs() - frame.createdAtMs : 0;
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;%llu;;0.000;;0.000", ret, (unsigned long long)ageMs]);
+}
+
+static NSData *TLinkHandleFrameBatch(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 2) return TLinkError(@"frame_batch format: frame_id;;op@@op...[;;coord;;max_age_ms;;auto_release]");
+    uint32_t frameId = (uint32_t)[parts[0] intValue];
+    TLinkFrameObject *frame = TLinkFrameForId(frameId);
+    if (!frame) return TLinkError(@"frame_not_found");
+    NSString *err = nil;
+    uint64_t maxAge = parts.count >= 4 ? (uint64_t)MAX(0, [parts[3] longLongValue]) : kTLinkDefaultFrameTtlMs;
+    if (TLinkFrameTooOld(frame, maxAge, &err)) return TLinkError(err);
+    BOOL pointCoord = parts.count >= 3 ? TLinkStringIsPointCoord(parts[2]) : NO;
+    BOOL autoRelease = parts.count >= 5 ? ([parts[4] intValue] != 0) : NO;
+    uint64_t ageMs = TLinkNowMs() >= frame.createdAtMs ? TLinkNowMs() - frame.createdAtMs : 0;
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+    NSMutableArray<NSString *> *results = [NSMutableArray array];
+
+    for (NSString *opRaw in [parts[1] componentsSeparatedByString:@"@@"]) {
+        if (opRaw.length == 0) continue;
+        NSArray<NSString *> *fields = [opRaw componentsSeparatedByString:@","];
+        NSString *kind = fields.count > 0 ? [fields[0] lowercaseString] : @"";
+        CFAbsoluteTime opStarted = CFAbsoluteTimeGetCurrent();
+        if ([kind isEqualToString:@"pick_many"]) {
+            if (fields.count < 2) return TLinkError(@"batch pick_many format: pick_many,x:y|x:y");
+            if (!TLinkEnsureFrameRGBA(frame, &err)) return TLinkError(err);
+            NSMutableArray<NSString *> *picked = [NSMutableArray array];
+            for (NSString *item in [fields[1] componentsSeparatedByString:@"|"]) {
+                NSArray<NSString *> *xy = [item componentsSeparatedByString:@":"];
+                if (xy.count != 2) xy = [item componentsSeparatedByString:@"/"];
+                if (xy.count != 2) return TLinkError(@"invalid_batch_pick_many_point");
+                int x = TLinkCoordToPixel([xy[0] doubleValue], frame.scale, pointCoord);
+                int y = TLinkCoordToPixel([xy[1] doubleValue], frame.scale, pointCoord);
+                int r = 0, g = 0, b = 0;
+                if (!TLinkReadRGBA(frame.rgbaData, frame.width, frame.height, frame.bytesPerRow, x, y, &r, &g, &b)) {
+                    return TLinkError(@"point_out_of_bounds");
+                }
+                [picked addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
+            }
+            double opMs = (CFAbsoluteTimeGetCurrent() - opStarted) * 1000.0;
+            [results addObject:[NSString stringWithFormat:@"pick_many:%@,%.3f", [picked componentsJoinedByString:@"|"], opMs]];
+            continue;
+        }
+        if ([kind isEqualToString:@"img"]) {
+            if (fields.count < 9) return TLinkError(@"batch img format: img,image_id,x,y,w,h,acceptable,scale,pixel_skip");
+            TLinkEnsureVisionStores();
+            TLinkImageObject *templ = sTLinkImageStore[@((uint32_t)[fields[1] intValue])];
+            if (!templ || !templ.image) return TLinkError(@"image_not_found");
+            NSString *ret = TLinkFindImageResponse(frame.image,
+                                                   templ.image,
+                                                   CGRectMake(TLinkCoordToPixel([fields[2] doubleValue], frame.scale, pointCoord),
+                                                              TLinkCoordToPixel([fields[3] doubleValue], frame.scale, pointCoord),
+                                                              TLinkCoordToPixel([fields[4] doubleValue], frame.scale, pointCoord),
+                                                              TLinkCoordToPixel([fields[5] doubleValue], frame.scale, pointCoord)),
+                                                   [fields[6] doubleValue],
+                                                   [fields[8] intValue],
+                                                   &err);
+            if (!ret) return TLinkError(err);
+            NSArray<NSString *> *retParts = TLinkSplitBody(ret);
+            double opMs = (CFAbsoluteTimeGetCurrent() - opStarted) * 1000.0;
+            [results addObject:[NSString stringWithFormat:@"img:%@,%.3f", [retParts componentsJoinedByString:@","], opMs]];
+            continue;
+        }
+        return TLinkError(@"unknown_batch_op");
+    }
+    if (autoRelease) {
+        [sTLinkFrameStore removeObjectForKey:@(frameId)];
+    }
+    double totalMs = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;%llu;;%.3f", [results componentsJoinedByString:@"@@"], (unsigned long long)ageMs, totalMs]);
+}
+
+static NSData *TLinkHandleKeyboard(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 1) return TLinkError(@"keyboard task missing subtask");
+    int subtask = [parts[0] intValue];
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+    if (subtask == 6) {
+        return TLinkSuccess(pasteboard.string ?: @"");
+    }
+    if (subtask == 7) {
+        if (parts.count < 2) return TLinkError(@"clipboard save text missing content");
+        pasteboard.string = TLinkJoinParts(parts, 1);
+        return TLinkSuccess(nil);
+    }
+    return TLinkUnsupported(24, @"limited_on_trollstore pasteboard get/set only");
+}
+
 static NSData *TLinkHandleHelloStatus(void)
 {
     NSDictionary *capabilities = @{
@@ -380,7 +1407,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"nativeTouch": @(YES),
         @"capture": @(YES),
         @"h264": @(YES),
-        @"image": @(NO),
+        @"image": @(YES),
+        @"color": @(YES),
+        @"frame": @(YES),
+        @"keyboardClipboard": @(YES),
         @"ocr": @(NO),
         @"script": @(NO),
         @"appMgmt": @(NO),
@@ -391,8 +1421,21 @@ static NSData *TLinkHandleHelloStatus(void)
     NSDictionary *payload = @{
         @"runtime": @"trollstore",
         @"service": @"streamd",
-        @"phase": @"core-automation",
+        @"phase": @"image-color-frame-lite",
         @"pid": @((int)getpid()),
+        @"tlinkauto": @{@"port": @6000, @"protocols": @[@"v0-line", @"legacy-task"]},
+        @"device": @{
+            @"name": [UIDevice currentDevice].name ?: @"",
+            @"system_name": [UIDevice currentDevice].systemName ?: @"iOS",
+            @"system_version": [UIDevice currentDevice].systemVersion ?: @"",
+            @"model": TLinkModelName(),
+        },
+        @"script": @{
+            @"is_playing": @(NO),
+            @"bundle_path": @"/var/mobile/Library/TLinkauto/scripts",
+            @"last_error": @"script_runtime_unsupported_on_trollstore",
+            @"last_error_ts": @(0),
+        },
         @"screen": @{@"width": @((int)screen.width), @"height": @((int)screen.height), @"scale": @([UIScreen mainScreen].scale)},
         @"senderID": [NSString stringWithFormat:@"0x%llx", POCTouchCurrentSenderID()],
         @"dispatchVariant": @(POCTouchDispatchVariant()),
@@ -426,8 +1469,24 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkSuccess(nil);
     }
 
+    if (taskType == 21) {
+        return TLinkHandleTemplateMatch(body);
+    }
+
     if (taskType == 25) {
         return TLinkHandleDeviceInfo(body);
+    }
+
+    if (taskType == 23) {
+        return TLinkHandleColorPicker(body);
+    }
+
+    if (taskType == 24) {
+        return TLinkHandleKeyboard(body);
+    }
+
+    if (taskType == 28) {
+        return TLinkHandleColorSearch(body);
     }
 
     if (taskType == 29) {
@@ -442,6 +1501,18 @@ static NSData *TLinkHandleTaskLine(const char *line)
     if (taskType == 46) {
         TLinkEnsureRuntimeDirectories();
         return TLinkSuccess(@"/var/mobile/Library/TLinkauto/scripts");
+    }
+
+    if (taskType == 47) {
+        return TLinkHandleScreenKeep(body);
+    }
+
+    if (taskType == 48) {
+        return TLinkHandleImageObject(body);
+    }
+
+    if (taskType == 49) {
+        return TLinkHandleFindImage(body);
     }
 
     if (taskType == 60) {
@@ -485,8 +1556,28 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkSuccess(nil);
     }
 
+    if (taskType == 66) {
+        return TLinkHandleFrameCapture(body);
+    }
+
+    if (taskType == 67) {
+        return TLinkHandleFrameRelease(body);
+    }
+
+    if (taskType == 68) {
+        return TLinkHandleFindImageInFrame(body);
+    }
+
+    if (taskType == 69) {
+        return TLinkHandleColorInFrame(body);
+    }
+
+    if (taskType == 70) {
+        return TLinkHandleFrameBatch(body);
+    }
+
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=core-automation ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,18,25,29,44,45,46,60,61,62,63,64,65,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths unsupported=image,ocr,script,appMgmt,privhelper";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,18,21,23,24,25,28,29,44,45,46,47,48,49,60,61,62,63,64,65,66,67,68,69,70,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,keyboardClipboard unsupported=ocr,script,appMgmt,privhelper keyboard=limited_on_trollstore imageMatch=naive_rgba";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

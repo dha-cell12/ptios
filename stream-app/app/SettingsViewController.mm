@@ -11,8 +11,8 @@
     [super viewDidLoad];
     self.title = @"Settings";
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center"],
-        @[@"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: not installed"],
+        @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture"],
+        @[@"Color/Image/Frame: active", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: not installed"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -70,6 +70,20 @@
             line = [NSString stringWithFormat:@"62%d;;%d;;50;;0\n", x, y];
             break;
         }
+        case 4: {
+            CGFloat scale = [UIScreen mainScreen].scale;
+            CGSize size = [UIScreen mainScreen].bounds.size;
+            int x = (int)(size.width * scale / 2.0);
+            int y = (int)(size.height * scale / 2.0);
+            line = [NSString stringWithFormat:@"23%d;;%d\n", x, y];
+            break;
+        }
+        case 5:
+            line = @"281;;0;;0;;0;;0;;0;;255;;0;;255;;0;;255;;8\n";
+            break;
+        case 6:
+            line = @"661;;1;;1000\n";
+            break;
         default: return;
     }
 
