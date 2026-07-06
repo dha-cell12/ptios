@@ -93,6 +93,10 @@
 		<string>com.apple.backboard.hid.services</string>
 		<string>com.apple.backboardservices</string>
 		<string>com.apple.iohideventsystem</string>
+		<string>com.apple.frontboard.systemappservices</string>
+		<string>com.apple.frontboard.workspace-service</string>
+		<string>com.apple.frontboardservices</string>
+		<string>com.apple.springboard.services</string>
 	</array>
 </dict>
 </plist>

@@ -78,6 +78,7 @@ jobs:
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 54' stream-app/streamd/POCSocketServer.mm
+          grep -q 'FrontBoardServices' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 47' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 48' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 49' stream-app/streamd/POCSocketServer.mm

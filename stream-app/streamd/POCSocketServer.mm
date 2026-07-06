@@ -1714,6 +1714,11 @@ static pid_t TLinkPidForBundleId(NSString *bundleId)
 typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
 typedef CFStringRef (*TLinkSBSCopyFrontmostFn)(void);
 
+static NSString *sTLinkLastFrontmostBundleId = nil;
+static id sTLinkFBSDisplayLayoutMonitor = nil;
+static id sTLinkFBSDisplayLayoutBlock = nil;
+static NSString *sTLinkFrontmostDiag = nil;
+
 static void *TLinkSpringBoardServicesHandle(void)
 {
     static void *handle = NULL;
@@ -1738,14 +1743,211 @@ static BOOL TLinkSBSLaunchApplication(NSString *bundleId, int *outRc)
 static NSString *TLinkSBSCopyFrontmostBundleId(void)
 {
     void *handle = TLinkSpringBoardServicesHandle();
-    if (!handle) return nil;
-    TLinkSBSCopyFrontmostFn fn = (TLinkSBSCopyFrontmostFn)dlsym(handle, "SBSCopyFrontmostApplicationDisplayIdentifier");
-    if (!fn) return nil;
-    CFStringRef front = fn();
-    if (!front) return nil;
-    NSString *bundleId = [(__bridge NSString *)front copy];
-    CFRelease(front);
-    return bundleId;
+    if (!handle) {
+        sTLinkFrontmostDiag = @"sbs_dlopen_failed";
+        return nil;
+    }
+    BOOL sawSymbol = NO;
+    const char *symbols[] = {
+        "SBSCopyFrontmostApplicationDisplayIdentifier",
+        "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay",
+        "SBSGetMostElevatedApplicationBundleIdentifier",
+        "SBSGetMostElevatedApplicationDisplayIdentifier",
+        NULL,
+    };
+    for (int i = 0; symbols[i] != NULL; i++) {
+        TLinkSBSCopyFrontmostFn fn = (TLinkSBSCopyFrontmostFn)dlsym(handle, symbols[i]);
+        if (!fn) continue;
+        sawSymbol = YES;
+        CFStringRef front = fn();
+        if (!front) continue;
+        NSString *bundleId = [(__bridge NSString *)front copy];
+        if (strncmp(symbols[i], "SBSCopy", 7) == 0) CFRelease(front);
+        if (bundleId.length > 0) {
+            sTLinkLastFrontmostBundleId = bundleId;
+            return bundleId;
+        }
+    }
+    sTLinkFrontmostDiag = sawSymbol ? @"sbs_symbols_returned_nil" : @"sbs_symbols_missing";
+    return nil;
+}
+
+static BOOL TLinkLooksLikeBundleId(NSString *candidate)
+{
+    if (candidate.length < 3 || [candidate rangeOfString:@"."].location == NSNotFound) return NO;
+    static NSCharacterSet *bad = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        bad = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"] invertedSet];
+    });
+    return [candidate rangeOfCharacterFromSet:bad].location == NSNotFound;
+}
+
+static void TLinkCollectBundleIdsFromObject(id object, NSMutableOrderedSet<NSString *> *bundleIds, NSInteger depth)
+{
+    if (!object || object == (id)kCFNull || depth <= 0) return;
+    if ([object isKindOfClass:[NSString class]]) {
+        NSString *candidate = (NSString *)object;
+        if (TLinkLooksLikeBundleId(candidate)) [bundleIds addObject:candidate];
+        return;
+    }
+    if ([object isKindOfClass:[NSArray class]] || [object isKindOfClass:[NSSet class]]) {
+        for (id item in object) TLinkCollectBundleIdsFromObject(item, bundleIds, depth - 1);
+        return;
+    }
+    if ([object isKindOfClass:[NSDictionary class]]) {
+        for (id value in [(NSDictionary *)object allValues]) TLinkCollectBundleIdsFromObject(value, bundleIds, depth - 1);
+        return;
+    }
+
+    NSArray<NSString *> *selectorNames = @[
+        @"bundleIdentifier",
+        @"displayIdentifier",
+        @"applicationIdentifier",
+        @"applicationBundleIdentifier",
+        @"owningBundleIdentifier",
+        @"elements",
+        @"displayItems",
+        @"toLayout",
+        @"layout",
+        @"currentLayout",
+    ];
+    for (NSString *selName in selectorNames) {
+        SEL sel = NSSelectorFromString(selName);
+        if (![object respondsToSelector:sel]) continue;
+        @try {
+            id value = ((id (*)(id, SEL))objc_msgSend)(object, sel);
+            TLinkCollectBundleIdsFromObject(value, bundleIds, depth - 1);
+        } @catch (__unused NSException *exception) {
+        }
+    }
+}
+
+static NSString *TLinkPreferredBundleIdFromSet(NSOrderedSet<NSString *> *bundleIds)
+{
+    NSString *springboard = nil;
+    for (NSString *bundleId in bundleIds) {
+        if ([bundleId isEqualToString:@"com.apple.springboard"]) {
+            springboard = bundleId;
+            continue;
+        }
+        if ([bundleId hasPrefix:@"com.apple."] &&
+            ([bundleId containsString:@"ControlCenter"] || [bundleId containsString:@"NotificationCenter"])) {
+            continue;
+        }
+        return bundleId;
+    }
+    return springboard ?: (bundleIds.count > 0 ? [bundleIds objectAtIndex:0] : nil);
+}
+
+static NSString *TLinkBundleIdFromFBSObject(id object)
+{
+    NSMutableOrderedSet<NSString *> *bundleIds = [[NSMutableOrderedSet alloc] init];
+    TLinkCollectBundleIdsFromObject(object, bundleIds, 4);
+    return TLinkPreferredBundleIdFromSet(bundleIds);
+}
+
+static void *TLinkFrontBoardServicesHandle(void)
+{
+    static void *handle = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        handle = dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices", RTLD_LAZY);
+    });
+    return handle;
+}
+
+static NSString *TLinkFBSCurrentFrontmostBundleId(void)
+{
+    if (!TLinkFrontBoardServicesHandle()) {
+        sTLinkFrontmostDiag = [NSString stringWithFormat:@"%@ fbs_dlopen_failed", sTLinkFrontmostDiag ?: @""];
+        return nil;
+    }
+
+    if (!sTLinkFBSDisplayLayoutMonitor) {
+        Class configClass = NSClassFromString(@"FBSDisplayLayoutMonitorConfiguration");
+        Class monitorClass = NSClassFromString(@"FBSDisplayLayoutMonitor");
+        if (!configClass || !monitorClass) {
+            sTLinkFrontmostDiag = [NSString stringWithFormat:@"%@ fbs_classes_missing", sTLinkFrontmostDiag ?: @""];
+            return nil;
+        }
+
+        id config = nil;
+        SEL defaultConfigSel = NSSelectorFromString(@"configurationForDefaultMainDisplayMonitor");
+        @try {
+            if ([configClass respondsToSelector:defaultConfigSel]) {
+                config = ((id (*)(Class, SEL))objc_msgSend)(configClass, defaultConfigSel);
+            } else {
+                config = [[configClass alloc] init];
+            }
+        } @catch (__unused NSException *exception) {
+            config = nil;
+        }
+        if (!config) {
+            sTLinkFrontmostDiag = [NSString stringWithFormat:@"%@ fbs_config_failed", sTLinkFrontmostDiag ?: @""];
+            return nil;
+        }
+
+        SEL prioritySel = NSSelectorFromString(@"setNeedsUserInteractivePriority:");
+        if ([config respondsToSelector:prioritySel]) {
+            @try {
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(config, prioritySel, YES);
+            } @catch (__unused NSException *exception) {
+            }
+        }
+
+        sTLinkFBSDisplayLayoutBlock = [^(id transition) {
+            NSString *bundleId = TLinkBundleIdFromFBSObject(transition);
+            if (bundleId.length > 0) sTLinkLastFrontmostBundleId = bundleId;
+        } copy];
+        SEL transitionHandlerSel = NSSelectorFromString(@"setTransitionHandler:");
+        if ([config respondsToSelector:transitionHandlerSel]) {
+            @try {
+                ((void (*)(id, SEL, id))objc_msgSend)(config, transitionHandlerSel, sTLinkFBSDisplayLayoutBlock);
+            } @catch (__unused NSException *exception) {
+            }
+        }
+
+        SEL monitorSel = NSSelectorFromString(@"monitorWithConfiguration:");
+        @try {
+            if ([monitorClass respondsToSelector:monitorSel]) {
+                sTLinkFBSDisplayLayoutMonitor = ((id (*)(Class, SEL, id))objc_msgSend)(monitorClass, monitorSel, config);
+            } else {
+                SEL initSel = NSSelectorFromString(@"initWithConfiguration:");
+                id allocated = [monitorClass alloc];
+                if ([allocated respondsToSelector:initSel]) {
+                    sTLinkFBSDisplayLayoutMonitor = ((id (*)(id, SEL, id))objc_msgSend)(allocated, initSel, config);
+                } else {
+                    sTLinkFBSDisplayLayoutMonitor = [allocated init];
+                }
+            }
+        } @catch (__unused NSException *exception) {
+            sTLinkFBSDisplayLayoutMonitor = nil;
+        }
+        if (!sTLinkFBSDisplayLayoutMonitor) {
+            sTLinkFrontmostDiag = [NSString stringWithFormat:@"%@ fbs_monitor_failed", sTLinkFrontmostDiag ?: @""];
+            return nil;
+        }
+    }
+
+    NSString *bundleId = TLinkBundleIdFromFBSObject(sTLinkFBSDisplayLayoutMonitor);
+    if (bundleId.length > 0) {
+        sTLinkLastFrontmostBundleId = bundleId;
+        return bundleId;
+    }
+
+    __block NSString *asyncBundleId = nil;
+    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        asyncBundleId = sTLinkLastFrontmostBundleId;
+        dispatch_semaphore_signal(sema);
+    });
+    dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(350 * NSEC_PER_MSEC)));
+    if (asyncBundleId.length == 0) {
+        sTLinkFrontmostDiag = [NSString stringWithFormat:@"%@ fbs_no_layout_bundle", sTLinkFrontmostDiag ?: @""];
+    }
+    return asyncBundleId;
 }
 
 static BOOL TLinkWorkspaceOpenBundleId(NSString *bundleId)
@@ -1855,8 +2057,9 @@ static NSData *TLinkHandleAppInfo(NSString *body)
 static NSData *TLinkHandleFrontmostAppId(void)
 {
     NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
+    if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
     if (bundleId.length == 0) {
-        return TLinkUnsupported(34, @"frontmost_requires_springboardservices_access");
+        return TLinkUnsupported(34, [NSString stringWithFormat:@"frontmost_requires_springboard_or_frontboard_access %@", sTLinkFrontmostDiag ?: @""]);
     }
     return TLinkSuccess(bundleId);
 }
@@ -1878,8 +2081,9 @@ static NSData *TLinkHandleAppPid(NSString *body)
 static NSData *TLinkHandleFrontmostPid(void)
 {
     NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
+    if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
     if (bundleId.length == 0) {
-        return TLinkUnsupported(51, @"frontmost_pid_requires_springboardservices_access");
+        return TLinkUnsupported(51, [NSString stringWithFormat:@"frontmost_pid_requires_springboard_or_frontboard_access %@", sTLinkFrontmostDiag ?: @""]);
     }
     return TLinkSuccess([NSString stringWithFormat:@"%d", TLinkPidForBundleId(bundleId)]);
 }
