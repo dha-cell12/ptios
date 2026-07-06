@@ -1713,6 +1713,7 @@ static pid_t TLinkPidForBundleId(NSString *bundleId)
 
 typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
 typedef CFStringRef (*TLinkSBSCopyFrontmostFn)(void);
+typedef int (*TLinkSBSProcessIDFn)(CFStringRef identifier);
 
 static NSString *sTLinkLastFrontmostBundleId = nil;
 static id sTLinkFBSDisplayLayoutMonitor = nil;
@@ -1724,7 +1725,12 @@ static void *TLinkSpringBoardServicesHandle(void)
     static void *handle = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY);
+        dlerror();
+        handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY | RTLD_GLOBAL);
+        if (!handle) {
+            const char *err = dlerror();
+            sTLinkFrontmostDiag = [NSString stringWithFormat:@"sbs_dlopen_failed:%s", err ?: "unknown"];
+        }
     });
     return handle;
 }
@@ -1772,6 +1778,25 @@ static NSString *TLinkSBSCopyFrontmostBundleId(void)
     return nil;
 }
 
+static pid_t TLinkSBSProcessIDForBundleId(NSString *bundleId)
+{
+    if (bundleId.length == 0) return 0;
+    void *handle = TLinkSpringBoardServicesHandle();
+    if (!handle) return 0;
+    const char *symbols[] = {
+        "SBSProcessIDForDisplayIdentifier",
+        "SBSCopyApplicationProcessIDForDisplayIdentifier",
+        NULL,
+    };
+    for (int i = 0; symbols[i] != NULL; i++) {
+        TLinkSBSProcessIDFn fn = (TLinkSBSProcessIDFn)dlsym(handle, symbols[i]);
+        if (!fn) continue;
+        int pid = fn((__bridge CFStringRef)bundleId);
+        if (pid > 0) return (pid_t)pid;
+    }
+    return 0;
+}
+
 static BOOL TLinkLooksLikeBundleId(NSString *candidate)
 {
     if (candidate.length < 3 || [candidate rangeOfString:@"."].location == NSNotFound) return NO;
@@ -1808,9 +1833,12 @@ static void TLinkCollectBundleIdsFromObject(id object, NSMutableOrderedSet<NSStr
         @"owningBundleIdentifier",
         @"elements",
         @"displayItems",
+        @"transitioningItems",
         @"toLayout",
         @"layout",
         @"currentLayout",
+        @"activeApplication",
+        @"frontmostApplication",
     ];
     for (NSString *selName in selectorNames) {
         SEL sel = NSSelectorFromString(selName);
@@ -1852,7 +1880,12 @@ static void *TLinkFrontBoardServicesHandle(void)
     static void *handle = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        handle = dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices", RTLD_LAZY);
+        dlerror();
+        handle = dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices", RTLD_LAZY | RTLD_GLOBAL);
+        if (!handle) {
+            const char *err = dlerror();
+            sTLinkFrontmostDiag = [NSString stringWithFormat:@"%@ fbs_dlopen_failed:%s", sTLinkFrontmostDiag ?: @"", err ?: "unknown"];
+        }
     });
     return handle;
 }
@@ -1930,7 +1963,14 @@ static NSString *TLinkFBSCurrentFrontmostBundleId(void)
         }
     }
 
-    NSString *bundleId = TLinkBundleIdFromFBSObject(sTLinkFBSDisplayLayoutMonitor);
+    id layout = TLinkObjectForSelectorOrKey(sTLinkFBSDisplayLayoutMonitor, @"currentLayout", nil);
+    NSString *bundleId = TLinkBundleIdFromFBSObject(layout);
+    if (bundleId.length > 0) {
+        sTLinkLastFrontmostBundleId = bundleId;
+        return bundleId;
+    }
+
+    bundleId = TLinkBundleIdFromFBSObject(sTLinkFBSDisplayLayoutMonitor);
     if (bundleId.length > 0) {
         sTLinkLastFrontmostBundleId = bundleId;
         return bundleId;
@@ -2007,6 +2047,7 @@ static NSData *TLinkHandleOpenApplication(NSString *body)
     if (bundleId.length == 0) return TLinkError(@"open_app_missing_bundle_id");
     int sbsRc = INT_MIN;
     if (TLinkSBSLaunchApplication(bundleId, &sbsRc) || TLinkWorkspaceOpenBundleId(bundleId)) {
+        sTLinkLastFrontmostBundleId = bundleId;
         return TLinkSuccess(nil);
     }
     return TLinkError([NSString stringWithFormat:@"open_app_failed_or_limited_on_trollstore bundle=%@ sbs_rc=%d", bundleId, sbsRc]);
@@ -2058,6 +2099,7 @@ static NSData *TLinkHandleFrontmostAppId(void)
 {
     NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
     if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
+    if (bundleId.length == 0 && sTLinkLastFrontmostBundleId.length > 0) bundleId = sTLinkLastFrontmostBundleId;
     if (bundleId.length == 0) {
         return TLinkUnsupported(34, [NSString stringWithFormat:@"frontmost_requires_springboard_or_frontboard_access %@", sTLinkFrontmostDiag ?: @""]);
     }
@@ -2075,17 +2117,22 @@ static NSData *TLinkHandleAppPid(NSString *body)
 {
     NSString *bundleId = TLinkCleanPayload(body);
     if (bundleId.length == 0) return TLinkError(@"app_pid_missing_bundle_id");
-    return TLinkSuccess([NSString stringWithFormat:@"%d", TLinkPidForBundleId(bundleId)]);
+    pid_t pid = TLinkSBSProcessIDForBundleId(bundleId);
+    if (pid <= 0) pid = TLinkPidForBundleId(bundleId);
+    return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
 static NSData *TLinkHandleFrontmostPid(void)
 {
     NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
     if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
+    if (bundleId.length == 0 && sTLinkLastFrontmostBundleId.length > 0) bundleId = sTLinkLastFrontmostBundleId;
     if (bundleId.length == 0) {
         return TLinkUnsupported(51, [NSString stringWithFormat:@"frontmost_pid_requires_springboard_or_frontboard_access %@", sTLinkFrontmostDiag ?: @""]);
     }
-    return TLinkSuccess([NSString stringWithFormat:@"%d", TLinkPidForBundleId(bundleId)]);
+    pid_t pid = TLinkSBSProcessIDForBundleId(bundleId);
+    if (pid <= 0) pid = TLinkPidForBundleId(bundleId);
+    return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
 static NSData *TLinkHandleAppPaths(NSString *body)

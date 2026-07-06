@@ -96,7 +96,12 @@
 		<string>com.apple.frontboard.systemappservices</string>
 		<string>com.apple.frontboard.workspace-service</string>
 		<string>com.apple.frontboardservices</string>
+		<string>com.apple.frontboardservices.layout</string>
 		<string>com.apple.springboard.services</string>
+		<string>com.apple.springboardservices.secure</string>
+		<string>com.apple.springboard.applicationprocessstate</string>
+		<string>com.apple.runningboard</string>
+		<string>com.apple.runningboard.process-state</string>
 	</array>
 </dict>
 </plist>
