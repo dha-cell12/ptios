@@ -1,0 +1,105 @@
+name: Build StreamControl TrollStore
+
+on:
+  push:
+    paths:
+      - 'stream-app/**'
+      - '.github/workflows/stream-app.yml'
+  pull_request:
+    paths:
+      - 'stream-app/**'
+      - '.github/workflows/stream-app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      APP_NAME: StreamControl
+      APP_BUNDLE: StreamControl.app
+      TIPA_PATH: stream-app/packages/StreamControl.tipa
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          brew install ldid xz
+
+      - name: Set up Theos
+        run: |
+          set -euo pipefail
+          git clone --quiet --recursive https://github.com/theos/theos.git "$THEOS"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Download iOS SDKs
+        run: |
+          set -euo pipefail
+          cd "$THEOS/sdks"
+          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.zip -o sdks.zip
+          unzip -q sdks.zip
+          mv sdks-master/*.sdk . || true
+          rm -rf sdks-master sdks.zip
+          test -n "$(find . -maxdepth 1 -name '*.sdk' -type d | head -n1)"
+          ls -1
+
+      - name: Sanity check StreamControl sources
+        run: |
+          set -euo pipefail
+          test -f stream-app/Makefile
+          test -f stream-app/app/Makefile
+          test -f stream-app/streamd/Makefile
+          test -f stream-app/app/TLinkSocketClient.mm
+          test -f stream-app/app/ScriptsViewController.mm
+          test -f stream-app/app/SettingsViewController.mm
+          grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile
+          grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
+          grep -q 'SettingsViewController.mm' stream-app/app/Makefile
+          grep -q 'TLinkStartTaskServer' stream-app/streamd/main.mm
+          grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
+
+      - name: Build and package TrollStore .tipa
+        working-directory: stream-app
+        run: |
+          set -euo pipefail
+          make clean || true
+          make package FINALPACKAGE=1
+
+      - name: Validate package
+        run: |
+          set -euo pipefail
+          test -f "$TIPA_PATH"
+          unzip -l "$TIPA_PATH" | tee stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/Info.plist' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/StreamControl' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/streamd' stream-app/packages/StreamControl.tipa.contents.txt
+
+          APP="stream-app/app/.theos/_/Applications/StreamControl.app"
+          if [ ! -d "$APP" ]; then
+            APP=$(find stream-app/app/.theos/_ -maxdepth 8 -name 'StreamControl.app' -type d | head -n1)
+          fi
+          test -d "$APP"
+          test -x "$APP/StreamControl"
+          test -x "$APP/streamd"
+
+          echo "--- StreamControl entitlements ---"
+          ldid -e "$APP/StreamControl" || true
+          echo "--- streamd entitlements ---"
+          ldid -e "$APP/streamd" || true
+          echo "--- bundle files ---"
+          find "$APP" -maxdepth 2 -type f | sort
+
+      - name: Upload TrollStore package
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamControl-tipa
+          path: |
+            stream-app/packages/StreamControl.tipa
+            stream-app/packages/StreamControl.tipa.contents.txt
+          if-no-files-found: error

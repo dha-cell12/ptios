@@ -14,7 +14,7 @@
 //
 // Phase 3: click path + capture probe + video streaming are now live.
 //   - POCTouchInit() initializes screen geometry, dispatch variant, senderID cache.
-//   - POCStartSocketServer() listens on TCP 6000 and handles legacy task 10.
+//   - TLinkStartTaskServer() listens on TCP 6000 and handles legacy/core tasks.
 //   - SCStreamScheduleStartupCaptureProbe() verifies capture entitlement at startup.
 //
 // Video stream ports: 7001 fast, 7002 eco, 7003 raw, 7004 raw-worker, 7005 lan, 7006 wan.
@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
         streamdLog("phase 3: initializing click/touch + capture + video subsystem");
 
         POCTouchInit();
-        POCStartSocketServer();
+        TLinkStartTaskServer();
 
         streamdLog("click server requested on tcp/6000");
         streamdLog("phase 2: scheduling startup capture probe");
@@ -72,6 +72,5 @@ int main(int argc, char *argv[])
     }
     return 0;
 }
-
 
 
