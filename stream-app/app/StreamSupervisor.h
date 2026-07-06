@@ -36,4 +36,7 @@
 // Terminate streamd and disable respawn for this stop.
 - (void)stop;
 
+// Forcefully replace any running/stale streamd with the bundled binary.
+- (void)restart;
+
 @end

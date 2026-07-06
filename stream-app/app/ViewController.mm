@@ -30,6 +30,7 @@
     UITextView *_logView;
     UIButton *_startButton;
     UIButton *_stopButton;
+    UIButton *_restartButton;
     UIButton *_tapButton;
     UIButton *_captureButton;
 }
@@ -66,6 +67,10 @@
     [self.view addSubview:_stopButton];
     y += 56;
 
+    _restartButton = [self makeButton:@"Restart streamd" action:@selector(onRestart) frame:CGRectMake(margin, y, width, 44)];
+    [self.view addSubview:_restartButton];
+    y += 56;
+
     _tapButton = [self makeButton:@"Self-test tap (center)" action:@selector(onSelfTestTap) frame:CGRectMake(margin, y, width, 44)];
     [self.view addSubview:_tapButton];
     y += 56;
@@ -98,10 +103,21 @@
 - (void)onStart
 {
     [_supervisor start];
-    [self appendLog:@"status probe scheduled; checking task 97 after spawn"];
-    [self scheduleStatusProbeAfter:0.8 label:@"status probe #1"];
-    [self scheduleStatusProbeAfter:2.0 label:@"status probe #2"];
-    [self scheduleStatusProbeAfter:4.0 label:@"status probe #3"];
+    [self scheduleStatusProbesWithPrefix:@"start"];
+}
+
+- (void)onRestart
+{
+    [_supervisor restart];
+    [self scheduleStatusProbesWithPrefix:@"restart"];
+}
+
+- (void)scheduleStatusProbesWithPrefix:(NSString *)prefix
+{
+    [self appendLog:[NSString stringWithFormat:@"%@: status probe scheduled; checking task 97", prefix]];
+    [self scheduleStatusProbeAfter:0.8 label:[NSString stringWithFormat:@"%@ probe #1", prefix]];
+    [self scheduleStatusProbeAfter:2.0 label:[NSString stringWithFormat:@"%@ probe #2", prefix]];
+    [self scheduleStatusProbeAfter:4.0 label:[NSString stringWithFormat:@"%@ probe #3", prefix]];
 }
 
 - (void)scheduleStatusProbeAfter:(double)seconds label:(NSString *)label
@@ -230,6 +246,5 @@
 }
 
 @end
-
 
 

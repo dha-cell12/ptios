@@ -93,8 +93,29 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
             [self emitLog:[NSString stringWithFormat:@"supervisor: terminating pid=%d", self->_pid]];
             kill(self->_pid, SIGTERM);
         } else {
-            [self emitLog:@"supervisor: stop requested but no child running"];
+            [self emitLog:@"supervisor: stop requested; scanning for stale streamd"];
+            [self killStaleStreamdLocked];
         }
+    });
+}
+
+- (void)restart
+{
+    dispatch_async(_queue, ^{
+        [self emitLog:@"supervisor: restart requested; replacing any existing streamd"];
+        self->_autoRespawn = NO;
+        if (self->_pid > 0) {
+            errno = 0;
+            int rc = kill(self->_pid, SIGTERM);
+            [self emitLog:[NSString stringWithFormat:@"supervisor: current child pid=%d kill rc=%d errno=%d", self->_pid, rc, errno]];
+            usleep(300000);
+        }
+        [self killStaleStreamdLocked];
+        self->_running = NO;
+        self->_pid = -1;
+        [self emitRunning:NO pid:-1];
+        self->_autoRespawn = YES;
+        [self spawnLocked];
     });
 }
 
@@ -227,5 +248,4 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
 }
 
 @end
-
 

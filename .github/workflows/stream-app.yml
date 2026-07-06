@@ -61,6 +61,8 @@ jobs:
           grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
+          grep -q 'Restart streamd' stream-app/app/ViewController.mm
+          grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
           grep -q 'TLinkStartTaskServer' stream-app/streamd/main.mm
           grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 23' stream-app/streamd/POCSocketServer.mm
