@@ -72,15 +72,24 @@ jobs:
           grep -q 'TLinkStartTaskServer' stream-app/streamd/main.mm
           grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 96' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 11' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 23' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 54' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 47' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 48' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 49' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 66' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 70' stream-app/streamd/POCSocketServer.mm
+          grep -q 'Vision ImageIO' stream-app/streamd/Makefile
           grep -q '"tlinkauto"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"visionOCR"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"appMgmtMode"' stream-app/streamd/POCSocketServer.mm
           grep -q '"keyboardClipboard"' stream-app/streamd/POCSocketServer.mm
+          grep -q 'OCR Languages' stream-app/app/SettingsViewController.mm
+          grep -q 'App Info Self' stream-app/app/SettingsViewController.mm
 
       - name: Build and package TrollStore .tipa
         working-directory: stream-app

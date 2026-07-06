@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <Vision/Vision.h>
+#import <ImageIO/ImageIO.h>
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
@@ -7,13 +9,23 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <dlfcn.h>
+#include <signal.h>
+#include <unistd.h>
+#include <libproc.h>
 #include <netinet/tcp.h>
+#include <sys/sysctl.h>
 #include <sys/utsname.h>
+#import <objc/message.h>
 
 #include "POCSocketServer.h"
 #include "TouchInjector.h"
 #import "CaptureCore.h"
 #import "StreamCaptureProbe.h"
+
+#ifndef PROC_PIDPATHINFO_MAXSIZE
+#define PROC_PIDPATHINFO_MAXSIZE 4096
+#endif
 
 // ---------------------------------------------------------------------------
 // POC socket server
@@ -49,6 +61,17 @@ static dispatch_queue_t POCSocketQueue(void)
 @end
 
 @implementation POCClientContext
+@end
+
+@interface LSApplicationProxy : NSObject
++ (instancetype)applicationProxyForIdentifier:(NSString *)identifier;
+@property(nonatomic, readonly) NSString *localizedName;
+@property(nonatomic, readonly) NSString *shortVersionString;
+@property(nonatomic, readonly) NSString *bundleVersion;
+@end
+
+@interface LSApplicationWorkspace : NSObject
++ (instancetype)defaultWorkspace;
 @end
 
 static NSMutableDictionary *sClients = nil;
@@ -1399,6 +1422,541 @@ static NSData *TLinkHandleKeyboard(NSString *body)
     return TLinkUnsupported(24, @"limited_on_trollstore pasteboard get/set only");
 }
 
+static NSArray<NSString *> *TLinkSplitNonEmpty(NSString *value, NSString *separator)
+{
+    if (value.length == 0) return @[];
+    NSMutableArray<NSString *> *items = [NSMutableArray array];
+    for (NSString *raw in [value componentsSeparatedByString:separator]) {
+        NSString *trimmed = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (trimmed.length > 0) [items addObject:trimmed];
+    }
+    return items;
+}
+
+static NSString *TLinkSanitizeOCRText(NSString *text)
+{
+    NSMutableString *safe = [[text ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@" "] mutableCopy];
+    [safe replaceOccurrencesOfString:@"\n" withString:@" " options:0 range:NSMakeRange(0, safe.length)];
+    [safe replaceOccurrencesOfString:@";;" withString:@"; " options:0 range:NSMakeRange(0, safe.length)];
+    [safe replaceOccurrencesOfString:@",," withString:@", " options:0 range:NSMakeRange(0, safe.length)];
+    return safe ?: @"";
+}
+
+static BOOL TLinkWriteDebugImage(UIImage *image, NSString *path, NSString **error)
+{
+    if (!image || path.length == 0) return YES;
+    NSString *target = [path hasPrefix:@"/"] ? path : [@"/var/mobile/Library/TLinkauto/scripts" stringByAppendingPathComponent:path];
+    NSString *parent = [target stringByDeletingLastPathComponent];
+    if (parent.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parent]) {
+        NSError *mkdirErr = nil;
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:parent
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:&mkdirErr]) {
+            if (error) *error = [NSString stringWithFormat:@"ocr_debug_mkdir_failed %@", mkdirErr.localizedDescription ?: parent];
+            return NO;
+        }
+    }
+    NSData *png = UIImagePNGRepresentation(image);
+    if (!png || ![png writeToFile:target atomically:NO]) {
+        if (error) *error = [NSString stringWithFormat:@"ocr_debug_write_failed %@", target];
+        return NO;
+    }
+    return YES;
+}
+
+static NSUInteger TLinkVisionOCRRevision(void)
+{
+    if (@available(iOS 14.0, *)) return 2;
+    return 1;
+}
+
+static VNRequestTextRecognitionLevel TLinkVisionOCRLevelFromValue(int value)
+{
+    return value == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
+}
+
+static NSData *TLinkHandleVisionOCR(NSString *body)
+{
+    if (!@available(iOS 13.0, *)) {
+        return TLinkUnsupported(27, @"vision_requires_ios13");
+    }
+
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 1) return TLinkError(@"ocr task missing subtask");
+    int subtask = [parts[0] intValue];
+
+    if (subtask == 2) {
+        int levelValue = parts.count >= 2 ? [parts[1] intValue] : 0;
+        VNRequestTextRecognitionLevel level = TLinkVisionOCRLevelFromValue(levelValue);
+        NSError *visionErr = nil;
+        NSArray<NSString *> *languages = [VNRecognizeTextRequest supportedRecognitionLanguagesForTextRecognitionLevel:level
+                                                                                                             revision:TLinkVisionOCRRevision()
+                                                                                                                error:&visionErr];
+        if (!languages) return TLinkError([NSString stringWithFormat:@"ocr_languages_failed %@", visionErr.localizedDescription ?: @"unknown"]);
+        return TLinkSuccess([languages componentsJoinedByString:@";;"]);
+    }
+
+    if (subtask != 1) {
+        return TLinkError([NSString stringWithFormat:@"unknown_ocr_subtask %d", subtask]);
+    }
+
+    if (parts.count < 8) {
+        return TLinkError(@"ocr format: 1;;x,,y,,w,,h;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path");
+    }
+
+    NSArray<NSString *> *rectParts = [parts[1] componentsSeparatedByString:@",,"];
+    if (rectParts.count < 4) return TLinkError(@"ocr_bad_region");
+
+    NSString *err = nil;
+    UIImage *screen = TLinkScreenImageForVision(&err);
+    if (!screen || !screen.CGImage) return TLinkError(err ?: @"ocr_capture_failed");
+
+    int screenW = (int)CGImageGetWidth(screen.CGImage);
+    int screenH = (int)CGImageGetHeight(screen.CGImage);
+    CGRect region = TLinkClampRectToImage(CGRectMake([rectParts[0] intValue],
+                                                     [rectParts[1] intValue],
+                                                     [rectParts[2] intValue],
+                                                     [rectParts[3] intValue]),
+                                          screenW,
+                                          screenH);
+    if (CGRectIsEmpty(region)) return TLinkError(@"ocr_invalid_region");
+
+    UIImage *cropped = TLinkCropImage(screen, region, &err);
+    if (!cropped || !cropped.CGImage) return TLinkError(err ?: @"ocr_crop_failed");
+
+    if (parts[7].length > 0 && !TLinkWriteDebugImage(cropped, parts[7], &err)) {
+        return TLinkError(err);
+    }
+
+    int levelValue = [parts[4] intValue];
+    VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
+        // Results are read after performRequests returns.
+        (void)finishedRequest;
+        (void)error;
+    }];
+    request.recognitionLevel = TLinkVisionOCRLevelFromValue(levelValue);
+    request.revision = TLinkVisionOCRRevision();
+    CGFloat minimumHeight = (CGFloat)[parts[3] doubleValue];
+    if (minimumHeight > 0.0) request.minimumTextHeight = minimumHeight;
+    NSArray<NSString *> *customWords = TLinkSplitNonEmpty(parts[2], @",,");
+    if (customWords.count > 0) request.customWords = customWords;
+    NSArray<NSString *> *languages = TLinkSplitNonEmpty(parts[5], @",,");
+    if (languages.count > 0) request.recognitionLanguages = languages;
+    request.usesLanguageCorrection = [parts[6] intValue] != 0;
+
+    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:cropped.CGImage
+                                                                        orientation:kCGImagePropertyOrientationUp
+                                                                            options:@{}];
+    NSError *visionErr = nil;
+    if (![handler performRequests:@[request] error:&visionErr]) {
+        return TLinkError([NSString stringWithFormat:@"ocr_failed %@", visionErr.localizedDescription ?: @"unknown"]);
+    }
+
+    CGSize regionSize = region.size;
+    NSMutableArray<NSString *> *output = [NSMutableArray array];
+    for (VNRecognizedTextObservation *observation in request.results) {
+        if (![observation isKindOfClass:[VNRecognizedTextObservation class]]) continue;
+        VNRecognizedText *candidate = [[observation topCandidates:1] firstObject];
+        if (!candidate.string.length) continue;
+        CGRect bb = observation.boundingBox;
+        int x = (int)llround(region.origin.x + bb.origin.x * regionSize.width);
+        int y = (int)llround(region.origin.y + (1.0 - bb.origin.y - bb.size.height) * regionSize.height);
+        int w = (int)llround(bb.size.width * regionSize.width);
+        int h = (int)llround(bb.size.height * regionSize.height);
+        [output addObject:[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d",
+                           TLinkSanitizeOCRText(candidate.string), x, y, w, h]];
+    }
+
+    return TLinkSuccess([output componentsJoinedByString:@";;"]);
+}
+
+static NSString *TLinkProtocolSafeField(NSString *value)
+{
+    NSMutableString *safe = [[value ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@" "] mutableCopy];
+    [safe replaceOccurrencesOfString:@"\n" withString:@" " options:0 range:NSMakeRange(0, safe.length)];
+    [safe replaceOccurrencesOfString:@";;" withString:@" " options:0 range:NSMakeRange(0, safe.length)];
+    return safe ?: @"";
+}
+
+static NSString *TLinkCleanPayload(NSString *body)
+{
+    return [[body ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@""]
+        stringByReplacingOccurrencesOfString:@"\n" withString:@""];
+}
+
+static id TLinkObjectForSelectorOrKey(id object, NSString *selectorName, NSString *key)
+{
+    if (!object || selectorName.length == 0) return nil;
+    id value = nil;
+    SEL sel = NSSelectorFromString(selectorName);
+    @try {
+        if ([object respondsToSelector:sel]) {
+            value = ((id (*)(id, SEL))objc_msgSend)(object, sel);
+        } else if (key.length > 0) {
+            value = [object valueForKey:key];
+        }
+    } @catch (__unused NSException *exception) {
+        value = nil;
+    }
+    return value;
+}
+
+static NSString *TLinkStringForSelectorOrKey(id object, NSString *selectorName, NSString *key)
+{
+    id value = TLinkObjectForSelectorOrKey(object, selectorName, key);
+    if (!value || value == (id)kCFNull) return @"";
+    if ([value isKindOfClass:[NSString class]]) return (NSString *)value;
+    return [value description] ?: @"";
+}
+
+static NSString *TLinkPathFromURLLike(id urlLike)
+{
+    if (!urlLike || urlLike == (id)kCFNull) return @"";
+    if ([urlLike isKindOfClass:[NSURL class]]) return [(NSURL *)urlLike path] ?: @"";
+    if ([urlLike respondsToSelector:@selector(path)]) {
+        NSString *path = ((NSString *(*)(id, SEL))objc_msgSend)(urlLike, @selector(path));
+        return path ?: @"";
+    }
+    return @"";
+}
+
+static NSString *TLinkNormalizedPath(NSString *path)
+{
+    if (path.length == 0) return @"";
+    NSString *resolved = [path stringByResolvingSymlinksInPath];
+    return (resolved.length > 0 ? resolved : path).stringByStandardizingPath;
+}
+
+static void TLinkLoadLaunchServices(void)
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dlopen("/System/Library/PrivateFrameworks/MobileCoreServices.framework/MobileCoreServices", RTLD_LAZY);
+        dlopen("/System/Library/PrivateFrameworks/LaunchServices.framework/LaunchServices", RTLD_LAZY);
+        dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices", RTLD_LAZY);
+    });
+}
+
+static id TLinkApplicationProxyForBundleId(NSString *bundleId)
+{
+    if (bundleId.length == 0) return nil;
+    TLinkLoadLaunchServices();
+    Class proxyClass = NSClassFromString(@"LSApplicationProxy");
+    SEL sel = NSSelectorFromString(@"applicationProxyForIdentifier:");
+    if (!proxyClass || ![proxyClass respondsToSelector:sel]) return nil;
+    @try {
+        return ((id (*)(Class, SEL, NSString *))objc_msgSend)(proxyClass, sel, bundleId);
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static id TLinkApplicationWorkspace(void)
+{
+    TLinkLoadLaunchServices();
+    Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
+    SEL sel = NSSelectorFromString(@"defaultWorkspace");
+    if (!workspaceClass || ![workspaceClass respondsToSelector:sel]) return nil;
+    @try {
+        return ((id (*)(Class, SEL))objc_msgSend)(workspaceClass, sel);
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static NSString *TLinkBundlePathForProxy(id proxy)
+{
+    return TLinkPathFromURLLike(TLinkObjectForSelectorOrKey(proxy, @"bundleURL", @"bundleURL"));
+}
+
+static NSString *TLinkDataPathForProxy(id proxy)
+{
+    id dataURL = TLinkObjectForSelectorOrKey(proxy, @"dataContainerURL", @"dataContainerURL");
+    if (!dataURL) dataURL = TLinkObjectForSelectorOrKey(proxy, @"containerURL", @"containerURL");
+    return TLinkPathFromURLLike(dataURL);
+}
+
+static pid_t TLinkPidForBundleId(NSString *bundleId)
+{
+    id proxy = TLinkApplicationProxyForBundleId(bundleId);
+    NSString *bundlePath = TLinkNormalizedPath(TLinkBundlePathForProxy(proxy));
+    if (bundlePath.length == 0) return 0;
+
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    size_t len = 0;
+    if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0 || len == 0) return 0;
+    struct kinfo_proc *procs = (struct kinfo_proc *)malloc(len);
+    if (!procs) return 0;
+    if (sysctl(mib, 4, procs, &len, NULL, 0) != 0) {
+        free(procs);
+        return 0;
+    }
+
+    int count = (int)(len / sizeof(struct kinfo_proc));
+    pid_t found = 0;
+    for (int i = 0; i < count; i++) {
+        pid_t pid = procs[i].kp_proc.p_pid;
+        if (pid <= 0) continue;
+        char pathBuf[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        if (proc_pidpath(pid, pathBuf, sizeof(pathBuf)) <= 0) continue;
+        NSString *procPath = TLinkNormalizedPath([NSString stringWithUTF8String:pathBuf] ?: @"");
+        if (procPath.length > 0 && [procPath hasPrefix:bundlePath]) {
+            found = pid;
+            break;
+        }
+    }
+    free(procs);
+    return found;
+}
+
+typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
+typedef CFStringRef (*TLinkSBSCopyFrontmostFn)(void);
+
+static void *TLinkSpringBoardServicesHandle(void)
+{
+    static void *handle = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY);
+    });
+    return handle;
+}
+
+static BOOL TLinkSBSLaunchApplication(NSString *bundleId, int *outRc)
+{
+    void *handle = TLinkSpringBoardServicesHandle();
+    if (!handle) return NO;
+    TLinkSBSLaunchApplicationFn fn = (TLinkSBSLaunchApplicationFn)dlsym(handle, "SBSLaunchApplicationWithIdentifier");
+    if (!fn) return NO;
+    int rc = fn((__bridge CFStringRef)bundleId, false);
+    if (outRc) *outRc = rc;
+    return rc == 0;
+}
+
+static NSString *TLinkSBSCopyFrontmostBundleId(void)
+{
+    void *handle = TLinkSpringBoardServicesHandle();
+    if (!handle) return nil;
+    TLinkSBSCopyFrontmostFn fn = (TLinkSBSCopyFrontmostFn)dlsym(handle, "SBSCopyFrontmostApplicationDisplayIdentifier");
+    if (!fn) return nil;
+    CFStringRef front = fn();
+    if (!front) return nil;
+    NSString *bundleId = [(__bridge NSString *)front copy];
+    CFRelease(front);
+    return bundleId;
+}
+
+static BOOL TLinkWorkspaceOpenBundleId(NSString *bundleId)
+{
+    id workspace = TLinkApplicationWorkspace();
+    if (!workspace) return NO;
+    NSArray<NSString *> *selectors = @[@"openApplicationWithBundleID:", @"openApplicationWithBundleIdentifier:"];
+    for (NSString *selName in selectors) {
+        SEL sel = NSSelectorFromString(selName);
+        if (![workspace respondsToSelector:sel]) continue;
+        @try {
+            BOOL ok = ((BOOL (*)(id, SEL, NSString *))objc_msgSend)(workspace, sel, bundleId);
+            if (ok) return YES;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return NO;
+}
+
+static BOOL TLinkWorkspaceOpenURL(NSURL *url)
+{
+    id workspace = TLinkApplicationWorkspace();
+    SEL openSel = NSSelectorFromString(@"openURL:");
+    if (workspace && [workspace respondsToSelector:openSel]) {
+        @try {
+            BOOL ok = ((BOOL (*)(id, SEL, NSURL *))objc_msgSend)(workspace, openSel, url);
+            if (ok) return YES;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+
+    __block BOOL started = NO;
+    void (^openBlock)(void) = ^{
+        @try {
+            UIApplication *app = [UIApplication sharedApplication];
+            if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
+                started = YES;
+                [app openURL:url options:@{} completionHandler:^(__unused BOOL success) {}];
+            } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+                started = [app openURL:url];
+#pragma clang diagnostic pop
+            }
+        } @catch (__unused NSException *exception) {
+            started = NO;
+        }
+    };
+    if ([NSThread isMainThread]) openBlock();
+    else dispatch_sync(dispatch_get_main_queue(), openBlock);
+    return started;
+}
+
+static NSData *TLinkHandleOpenApplication(NSString *body)
+{
+    NSString *bundleId = TLinkCleanPayload(body);
+    if (bundleId.length == 0) return TLinkError(@"open_app_missing_bundle_id");
+    int sbsRc = INT_MIN;
+    if (TLinkSBSLaunchApplication(bundleId, &sbsRc) || TLinkWorkspaceOpenBundleId(bundleId)) {
+        return TLinkSuccess(nil);
+    }
+    return TLinkError([NSString stringWithFormat:@"open_app_failed_or_limited_on_trollstore bundle=%@ sbs_rc=%d", bundleId, sbsRc]);
+}
+
+static NSData *TLinkHandleAppKill(NSString *body)
+{
+    NSString *bundleId = TLinkCleanPayload(body);
+    if (bundleId.length == 0) return TLinkError(@"kill_app_missing_bundle_id");
+    if ([bundleId isEqualToString:@"com.apple.springboard"]) {
+        return TLinkUnsupported(31, @"refusing_to_kill_springboard");
+    }
+    pid_t pid = TLinkPidForBundleId(bundleId);
+    if (pid <= 0) return TLinkError([NSString stringWithFormat:@"app_not_running bundle=%@", bundleId]);
+    if (kill(pid, SIGTERM) != 0) {
+        return TLinkError([NSString stringWithFormat:@"kill_app_sigterm_failed pid=%d errno=%d", pid, errno]);
+    }
+    usleep(500 * 1000);
+    if (kill(pid, 0) == 0) {
+        int rc = kill(pid, SIGKILL);
+        if (rc != 0) {
+            return TLinkError([NSString stringWithFormat:@"kill_app_sigkill_failed pid=%d errno=%d", pid, errno]);
+        }
+    }
+    return TLinkSuccess(nil);
+}
+
+static NSData *TLinkHandleAppState(NSString *body)
+{
+    NSString *bundleId = TLinkCleanPayload(body);
+    if (bundleId.length == 0) return TLinkError(@"app_state_missing_bundle_id");
+    return TLinkSuccess(TLinkPidForBundleId(bundleId) > 0 ? @"1" : @"0");
+}
+
+static NSData *TLinkHandleAppInfo(NSString *body)
+{
+    NSString *bundleId = TLinkCleanPayload(body);
+    if (bundleId.length == 0) return TLinkError(@"app_info_missing_bundle_id");
+    id proxy = TLinkApplicationProxyForBundleId(bundleId);
+    if (!proxy) return TLinkError([NSString stringWithFormat:@"app_info_not_found bundle=%@", bundleId]);
+    NSString *name = TLinkProtocolSafeField(TLinkStringForSelectorOrKey(proxy, @"localizedName", @"localizedName"));
+    NSString *shortVersion = TLinkProtocolSafeField(TLinkStringForSelectorOrKey(proxy, @"shortVersionString", @"shortVersionString"));
+    NSString *bundleVersion = TLinkProtocolSafeField(TLinkStringForSelectorOrKey(proxy, @"bundleVersion", @"bundleVersion"));
+    NSString *state = TLinkPidForBundleId(bundleId) > 0 ? @"1" : @"0";
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;%@;;%@;;%@;;%@", bundleId, name, shortVersion, bundleVersion, state]);
+}
+
+static NSData *TLinkHandleFrontmostAppId(void)
+{
+    NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
+    if (bundleId.length == 0) {
+        return TLinkUnsupported(34, @"frontmost_requires_springboardservices_access");
+    }
+    return TLinkSuccess(bundleId);
+}
+
+static NSData *TLinkHandleFrontmostOrientation(void)
+{
+    CGSize bounds = [UIScreen mainScreen].bounds.size;
+    int orientation = bounds.width > bounds.height ? 4 : 1;
+    return TLinkSuccess([NSString stringWithFormat:@"%d", orientation]);
+}
+
+static NSData *TLinkHandleAppPid(NSString *body)
+{
+    NSString *bundleId = TLinkCleanPayload(body);
+    if (bundleId.length == 0) return TLinkError(@"app_pid_missing_bundle_id");
+    return TLinkSuccess([NSString stringWithFormat:@"%d", TLinkPidForBundleId(bundleId)]);
+}
+
+static NSData *TLinkHandleFrontmostPid(void)
+{
+    NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
+    if (bundleId.length == 0) {
+        return TLinkUnsupported(51, @"frontmost_pid_requires_springboardservices_access");
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"%d", TLinkPidForBundleId(bundleId)]);
+}
+
+static NSData *TLinkHandleAppPaths(NSString *body)
+{
+    NSString *bundleId = TLinkCleanPayload(body);
+    if (bundleId.length == 0) return TLinkError(@"app_paths_missing_bundle_id");
+    id proxy = TLinkApplicationProxyForBundleId(bundleId);
+    if (!proxy) return TLinkSuccess(@";;");
+    NSString *bundlePath = TLinkProtocolSafeField(TLinkBundlePathForProxy(proxy));
+    NSString *dataPath = TLinkProtocolSafeField(TLinkDataPathForProxy(proxy));
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;%@", bundlePath ?: @"", dataPath ?: @""]);
+}
+
+static NSData *TLinkHandleListBundles(NSString *body)
+{
+    BOOL withInfo = [TLinkCleanPayload(body) intValue] == 1;
+    id workspace = TLinkApplicationWorkspace();
+    if (!workspace) return TLinkError(@"list_bundles_workspace_unavailable");
+
+    NSArray *apps = nil;
+    SEL allInstalledSel = NSSelectorFromString(@"allInstalledApplications");
+    SEL allSel = NSSelectorFromString(@"allApplications");
+    @try {
+        if ([workspace respondsToSelector:allInstalledSel]) {
+            apps = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, allInstalledSel);
+        } else if ([workspace respondsToSelector:allSel]) {
+            apps = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, allSel);
+        }
+    } @catch (__unused NSException *exception) {
+        apps = nil;
+    }
+    if (![apps isKindOfClass:[NSArray class]]) apps = @[];
+
+    if (!withInfo) {
+        NSMutableArray<NSString *> *bundleIds = [NSMutableArray array];
+        for (id proxy in apps) {
+            NSString *bid = TLinkStringForSelectorOrKey(proxy, @"bundleIdentifier", @"bundleIdentifier");
+            if (bid.length > 0) [bundleIds addObject:bid];
+        }
+        return TLinkSuccess([bundleIds componentsJoinedByString:@",,"]);
+    }
+
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+    for (id proxy in apps) {
+        NSString *bid = TLinkStringForSelectorOrKey(proxy, @"bundleIdentifier", @"bundleIdentifier");
+        if (bid.length == 0) continue;
+        [items addObject:@{
+            @"bundle_id": bid,
+            @"name": TLinkStringForSelectorOrKey(proxy, @"localizedName", @"localizedName") ?: @"",
+            @"short_version": TLinkStringForSelectorOrKey(proxy, @"shortVersionString", @"shortVersionString") ?: @"",
+            @"bundle_version": TLinkStringForSelectorOrKey(proxy, @"bundleVersion", @"bundleVersion") ?: @"",
+        }];
+    }
+    NSDictionary *obj = @{@"items": items};
+    NSError *jsonErr = nil;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&jsonErr];
+    if (!json || jsonErr) return TLinkError(@"list_bundles_json_failed");
+    return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
+}
+
+static NSData *TLinkHandleOpenURL(NSString *body)
+{
+    NSString *raw = TLinkCleanPayload(body);
+    if (raw.length == 0) return TLinkError(@"open_url_missing_url");
+    NSString *fallback = nil;
+    if ([[raw lowercaseString] hasPrefix:@"prefs:"]) {
+        fallback = [@"App-Prefs:" stringByAppendingString:[raw substringFromIndex:6]];
+    }
+    NSURL *url = [NSURL URLWithString:raw];
+    if (!url) return TLinkError(@"open_url_invalid_url");
+    if (TLinkWorkspaceOpenURL(url)) return TLinkSuccess(nil);
+    NSURL *fallbackURL = fallback.length > 0 ? [NSURL URLWithString:fallback] : nil;
+    if (fallbackURL && TLinkWorkspaceOpenURL(fallbackURL)) return TLinkSuccess(nil);
+    return TLinkError(@"open_url_failed_or_limited_on_trollstore");
+}
+
 static NSData *TLinkHandleHelloStatus(void)
 {
     NSDictionary *capabilities = @{
@@ -1411,17 +1969,23 @@ static NSData *TLinkHandleHelloStatus(void)
         @"color": @(YES),
         @"frame": @(YES),
         @"keyboardClipboard": @(YES),
-        @"ocr": @(NO),
+        @"ocr": @(YES),
+        @"visionOCR": @(YES),
+        @"tesseractOCR": @(NO),
         @"script": @(NO),
-        @"appMgmt": @(NO),
+        @"appMgmt": @(YES),
+        @"appMgmtMode": @"limited_process_info_launch_kill",
+        @"frontmost": @(YES),
+        @"clearData": @(NO),
         @"hidMonitor": @(YES),
-        @"privhelper": @(NO),
+        @"privhelper": @(YES),
+        @"privhelperMode": @"restart_streamd_only",
     };
     CGSize screen = TLinkScreenPixelSize();
     NSDictionary *payload = @{
         @"runtime": @"trollstore",
         @"service": @"streamd",
-        @"phase": @"image-color-frame-lite",
+        @"phase": @"image-color-frame-ocr-app-lite",
         @"pid": @((int)getpid()),
         @"tlinkauto": @{@"port": @6000, @"protocols": @[@"v0-line", @"legacy-task"]},
         @"device": @{
@@ -1462,6 +2026,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
     NSString *body = TLinkBodyFromLine(line);
     POCLogf("task-server: line='%s' task=%d", line, taskType);
 
+    if (taskType == 11) {
+        return TLinkHandleOpenApplication(body);
+    }
+
     if (taskType == 18) {
         int us = [body intValue];
         if (us < 0) us = 0;
@@ -1475,6 +2043,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 25) {
         return TLinkHandleDeviceInfo(body);
+    }
+
+    if (taskType == 27) {
+        return TLinkHandleVisionOCR(body);
     }
 
     if (taskType == 23) {
@@ -1491,6 +2063,26 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 29) {
         return TLinkHandleScreenshot(body);
+    }
+
+    if (taskType == 31) {
+        return TLinkHandleAppKill(body);
+    }
+
+    if (taskType == 32) {
+        return TLinkHandleAppState(body);
+    }
+
+    if (taskType == 33) {
+        return TLinkHandleAppInfo(body);
+    }
+
+    if (taskType == 34) {
+        return TLinkHandleFrontmostAppId();
+    }
+
+    if (taskType == 35) {
+        return TLinkHandleFrontmostOrientation();
     }
 
     if (taskType == 44 || taskType == 45) {
@@ -1513,6 +2105,26 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 49) {
         return TLinkHandleFindImage(body);
+    }
+
+    if (taskType == 50) {
+        return TLinkHandleAppPid(body);
+    }
+
+    if (taskType == 51) {
+        return TLinkHandleFrontmostPid();
+    }
+
+    if (taskType == 52) {
+        return TLinkHandleAppPaths(body);
+    }
+
+    if (taskType == 53) {
+        return TLinkHandleListBundles(body);
+    }
+
+    if (taskType == 54) {
+        return TLinkHandleOpenURL(body);
     }
 
     if (taskType == 60) {
@@ -1587,7 +2199,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,18,21,23,24,25,28,29,44,45,46,47,48,49,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,keyboardClipboard,gracefulShutdown unsupported=ocr,script,appMgmt,privhelper keyboard=limited_on_trollstore imageMatch=naive_rgba";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,appInfo,appLaunch,appKillLimited,openURL,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,script,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_launch_kill";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

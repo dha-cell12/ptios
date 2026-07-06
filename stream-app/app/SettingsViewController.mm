@@ -11,8 +11,8 @@
     [super viewDidLoad];
     self.title = @"Settings";
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture"],
-        @[@"Color/Image/Frame: active", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: not installed"],
+        @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"App/Process: limited", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: restart_streamd_only"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -83,6 +83,20 @@
             break;
         case 6:
             line = @"661;;1;;1000\n";
+            break;
+        case 7:
+            line = @"272;;0\n";
+            break;
+        case 8: {
+            NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+            line = [NSString stringWithFormat:@"33%@\n", bundleId];
+            break;
+        }
+        case 9:
+            line = @"34\n";
+            break;
+        case 10:
+            line = @"530\n";
             break;
         default: return;
     }
