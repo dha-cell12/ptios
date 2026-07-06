@@ -1,6 +1,9 @@
 import { createStore } from './createStore';
 import { AdbDeviceManager, type AdbDeviceRecord } from '../services/adb/AdbDeviceManager';
 import { bridge } from './BridgeStore';
+import { startScrcpyMirror } from '../services/adb/ScrcpyMirror';
+import { registerMirrorSession, unregisterMirrorSession, getMirrorSession } from './ScrcpyMirrorStore';
+import { Adb } from '@yume-chan/adb';
 
 export type AdbDeviceMap = Record<string, AdbDeviceRecord>;
 
@@ -24,6 +27,13 @@ export const adbDeviceStore = createStore<AdbDeviceStoreState>({
 
 export const adbDeviceManager = new AdbDeviceManager(bridge);
 
+async function startMirrorWrapper(serial: string) {
+  const client = await bridge.ensure();
+  const transport = await client.createTransport({ serial });
+  const adb = new Adb(transport);
+  return startScrcpyMirror(adb, serial);
+}
+
 function commit(snapshot: AdbDeviceRecord[]) {
   const devices: AdbDeviceMap = {};
   const order: string[] = [];
@@ -38,8 +48,23 @@ function commit(snapshot: AdbDeviceRecord[]) {
   });
 }
 
-adbDeviceManager.on('refreshed', (snapshot) => commit(snapshot));
-adbDeviceManager.on('added', () => commit(adbDeviceManager.list()));
+adbDeviceManager.on('refreshed', (snapshot) => {
+  commit(snapshot);
+  // Auto-start mirrors for newly discovered devices during refresh
+  for (const record of snapshot) {
+    if (!getMirrorSession(record.serial)) {
+      startMirrorWrapper(record.serial).then(registerMirrorSession).catch(e => console.warn('Mirror start failed', e));
+    }
+  }
+});
+
+adbDeviceManager.on('added', (record) => {
+  commit(adbDeviceManager.list());
+  if (!getMirrorSession(record.serial)) {
+    startMirrorWrapper(record.serial).then(registerMirrorSession).catch(e => console.warn('Mirror start failed', e));
+  }
+});
+
 adbDeviceManager.on('removed', ({ serial }) => {
   const { selectedSerial, modalSerial } = adbDeviceStore.getState();
   adbDeviceStore.setState({
@@ -47,7 +72,14 @@ adbDeviceManager.on('removed', ({ serial }) => {
     modalSerial: modalSerial === serial ? undefined : modalSerial,
   });
   commit(adbDeviceManager.list());
+  
+  const session = getMirrorSession(serial);
+  if (session) {
+    session.stop();
+    unregisterMirrorSession(serial);
+  }
 });
+
 adbDeviceManager.on('changed', () => commit(adbDeviceManager.list()));
 
 export function startAdbPolling(intervalMs = 2000) {

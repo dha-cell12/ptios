@@ -1,0 +1,1 @@
+import { AdbServerClient } from " @yume-chan/adb\; console.log(typeof AdbServerClient.prototype.trackDevices);

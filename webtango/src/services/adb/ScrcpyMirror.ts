@@ -18,6 +18,7 @@ export type ScrcpyMirrorSession = {
   controller: any;
   videoStream: any;
   stop: () => void;
+  adb: Adb;
 };
 
 export type ScrcpyMirrorOptions = {
@@ -153,7 +154,7 @@ export async function startScrcpyMirror(
 
   const scrcpyOptions = new AdbScrcpyOptions3_1({
     maxSize: options.maxSize ?? 640,
-    videoBitRate: options.videoBitRate ?? 1_000_000,
+    videoBitRate: options.videoBitRate ?? 1000000,
     videoCodec: 'h264',
     maxFps: options.maxFps ?? 24,
     audio: false,
@@ -193,8 +194,8 @@ export async function startScrcpyMirror(
   });
 
   const getSize = () => ({
-    width: videoStream.metadata.width ?? hiddenCanvas.width,
-    height: videoStream.metadata.height ?? hiddenCanvas.height,
+    width: hiddenCanvas.width,
+    height: hiddenCanvas.height,
   });
   CanvasDrawRegistry.registerSource(serial, hiddenCanvas, getSize);
 
@@ -208,14 +209,15 @@ export async function startScrcpyMirror(
   return {
     serial,
     hiddenCanvas,
-    width,
-    height,
+    width: videoStream.metadata.width || 1080,
+    height: videoStream.metadata.height || 1920,
     scrcpyClient,
     decoder,
     renderer,
     controller,
     videoStream,
     stop,
+    adb,
   };
 }
 

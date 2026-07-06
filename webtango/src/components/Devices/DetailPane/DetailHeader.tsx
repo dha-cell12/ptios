@@ -32,13 +32,19 @@ export function DetailHeader({ device }: Props) {
   if (!metaParts.length) metaParts.push(device.serial);
 
   return (
-    <div className="detail-header">
-      <div className="detail-avatar" aria-hidden="true">{initials}</div>
-      <div className="detail-header-text">
-        <div className="detail-name">{model}</div>
-        <div className="detail-meta">{metaParts.join(' \u2022 ')}</div>
+    <div className="detail-device-info">
+      <div className="detail-avatar" aria-hidden="true" style={{ fontSize: '16px', fontWeight: 'bold' }}>{initials}</div>
+      <div className="detail-titles">
+        <h3>{model}</h3>
+        <p className="detail-full-meta">{metaParts.join(' \u2022 ')}</p>
       </div>
-      <span className={`status-badge ${cls}`}>{label}</span>
+      {device.state === 'device' ? (
+        <span className="live-badge">
+          <span className="pulse-dot"></span> LIVE
+        </span>
+      ) : (
+        <span className={`status-badge ${cls}`}>{label}</span>
+      )}
     </div>
   );
 }

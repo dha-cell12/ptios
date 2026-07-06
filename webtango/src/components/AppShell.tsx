@@ -3,6 +3,10 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { MainContent } from './MainContent';
 import { uiStore } from '../stores/UiStore';
+import { startIosPolling, stopIosPolling } from '../stores/IosDeviceStore';
+
+import { AndroidStreamModal } from './AndroidStreamModal';
+import { IosStreamModal } from './Modal/IosStreamModal';
 
 // AppShell mirrors the legacy .app-container layout but is opt-in: it only
 // renders when the React root is mounted, so the existing vanilla DOM can keep
@@ -21,16 +25,26 @@ export function AppShell() {
         detail: { visible: tab === 'automation_ide' },
       }));
     });
-    return unsubscribe;
+
+    startIosPolling();
+
+    return () => {
+      unsubscribe();
+      stopIosPolling();
+    };
   }, []);
 
   return (
-    <div className="app-container">
-      <Sidebar />
-      <div className="main-wrapper">
-        <Header />
-        <MainContent />
+    <>
+      <div className="app-container">
+        <Sidebar />
+        <div className="main-wrapper">
+          <Header />
+          <MainContent />
+        </div>
       </div>
-    </div>
+      <AndroidStreamModal />
+      <IosStreamModal />
+    </>
   );
 }

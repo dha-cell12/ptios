@@ -13,16 +13,16 @@ export class AdbWebSocketConnector implements AdbServerClient.ServerConnector {
     }
 
     async connect(options?: AdbServerClient.ServerConnectionOptions): Promise<AdbServerClient.ServerConnection> {
-        console.log('[AdbWebSocketConnector] Connecting to:', this.url);
+        console.debug('[AdbWebSocketConnector] Connecting to:', this.url);
 
         return new Promise((resolve, reject) => {
             const socket = new WebSocket(this.url);
             socket.binaryType = "arraybuffer";
 
-            console.log('[AdbWebSocketConnector] WebSocket created, waiting for connection...');
+            console.debug('[AdbWebSocketConnector] WebSocket created, waiting for connection...');
 
             socket.onopen = () => {
-                console.log('[AdbWebSocketConnector] ✅ WebSocket connected successfully');
+                console.debug('[AdbWebSocketConnector] ✅ WebSocket connected successfully');
 
                 // Create readable stream from WebSocket messages
                 const readable = new ReadableStream<Uint8Array>({
@@ -30,12 +30,12 @@ export class AdbWebSocketConnector implements AdbServerClient.ServerConnector {
                         socket.onmessage = ({ data }) => {
                             const bytes = new Uint8Array(data as ArrayBuffer);
                             // Verbose logging removed for performance
-                            // console.log('[AdbWebSocketConnector] ⬇️ Received', bytes.length, 'bytes');
+                            // console.debug('[AdbWebSocketConnector] ⬇️ Received', bytes.length, 'bytes');
                             controller.enqueue(bytes);
                         };
 
                         socket.onclose = (event) => {
-                            console.log('[AdbWebSocketConnector] ❌ WebSocket closed:', event.code, event.reason);
+                            console.debug('[AdbWebSocketConnector] ❌ WebSocket closed:', event.code, event.reason);
                             try {
                                 controller.close();
                             } catch (e) {
@@ -55,7 +55,7 @@ export class AdbWebSocketConnector implements AdbServerClient.ServerConnector {
                     async write(chunk) {
                         const bytes = chunk instanceof Uint8Array ? chunk : chunk.value;
                         // Verbose logging removed for performance
-                        // console.log('[AdbWebSocketConnector] ⬆️ Sending', bytes.length, 'bytes');
+                        // console.debug('[AdbWebSocketConnector] ⬆️ Sending', bytes.length, 'bytes');
 
                         // Backpressure control: Wait if buffer is full
                         if (socket.bufferedAmount > 1024 * 1024) { // 1MB Limit
@@ -78,7 +78,7 @@ export class AdbWebSocketConnector implements AdbServerClient.ServerConnector {
                         socket.send(bytes);
                     },
                     close() {
-                        console.log('[AdbWebSocketConnector] Closing writable stream');
+                        console.debug('[AdbWebSocketConnector] Closing writable stream');
                         socket.close();
                     },
                 });
@@ -90,7 +90,7 @@ export class AdbWebSocketConnector implements AdbServerClient.ServerConnector {
                         // Send empty message as keepalive
                         // ADB protocol ignores zero-length messages
                         socket.send(new Uint8Array(0));
-                        console.log('[AdbWebSocketConnector] 💓 Keepalive ping sent');
+                        console.debug('[AdbWebSocketConnector] 💓 Keepalive ping sent');
                     } else {
                         // Clear interval if socket is closed
                         if (keepaliveInterval) {
@@ -113,7 +113,7 @@ export class AdbWebSocketConnector implements AdbServerClient.ServerConnector {
                         });
                     },
                     close() {
-                        console.log('[AdbWebSocketConnector] Closing connection');
+                        console.debug('[AdbWebSocketConnector] Closing connection');
                         // Clear keepalive interval
                         if (keepaliveInterval) {
                             clearInterval(keepaliveInterval);
@@ -123,7 +123,7 @@ export class AdbWebSocketConnector implements AdbServerClient.ServerConnector {
                     },
                 };
 
-                console.log('[AdbWebSocketConnector] ✅ Connection initialized');
+                console.debug('[AdbWebSocketConnector] ✅ Connection initialized');
                 resolve(connection);
             };
 

@@ -3,6 +3,7 @@
   grid-template-rows: auto minmax(0, 1fr) clamp(110px, 16vh, 170px);
   height: 100%;
   min-height: 0;
+  width: 100%;
   padding: 18px;
   gap: 14px;
   background: #f8fafc;
@@ -262,10 +263,10 @@ button.file-row:disabled {
 
 .ide-tools-body {
   display: grid;
-  grid-template-columns: minmax(230px, 0.78fr) minmax(270px, 1fr);
-  gap: 20px;
+  grid-template-columns: minmax(190px, 0.7fr) 1fr;
+  gap: 12px;
   min-height: 0;
-  padding: 14px 22px 18px;
+  padding: 14px 16px 16px;
 }
 
 .ide-tools-sidebar {
@@ -285,7 +286,10 @@ button.file-row:disabled {
 
 .ide-screen-frame {
   position: relative;
-  width: min(100%, 320px, calc((100vh - 430px) * 0.5625));
+  flex: 1;
+  min-height: 0;
+  width: auto;
+  max-width: min(100%, 320px);
   min-width: 180px;
   max-height: 100%;
   aspect-ratio: 9 / 16;
@@ -333,13 +337,13 @@ button.file-row:disabled {
 }
 
 .ide-mode-selector button {
-  height: 34px;
+  height: 30px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
   color: var(--foreground);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -353,20 +357,25 @@ button.file-row:disabled {
 .ide-tool-button-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .ide-tool-button-grid button {
-  min-height: 52px;
+  min-height: 44px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: #fff;
   color: #0f172a;
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
-  padding: 6px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.25;
 }
 
 .ide-tool-button-grid button:hover:not(:disabled) {
@@ -723,28 +732,23 @@ button.file-row:disabled {
   color: #64748b;
 }
 
-@media (max-width: 1540px) {
+@media (max-width: 1700px) {
   .automation-ide-grid {
     grid-template-columns: 200px minmax(420px, 1fr) minmax(520px, 0.9fr);
   }
 
   .ide-tools-body {
-    grid-template-columns: minmax(210px, 0.8fr) minmax(240px, 1fr);
-    gap: 14px;
-  }
-
-  .ide-tool-button-grid {
-    gap: 8px;
-  }
-
-  .ide-tool-button-grid button {
-    min-height: 50px;
+    grid-template-columns: minmax(180px, 0.7fr) 1fr;
+    gap: 10px;
+    padding: 12px 10px 14px;
   }
 }
 
-@media (max-width: 1320px) {
+@media (max-width: 1440px) {
   .automation-ide-shell {
-    grid-template-rows: auto minmax(0, 1fr) 150px;
+    height: auto;
+    min-height: 100%;
+    grid-template-rows: auto auto 150px;
   }
 
   .automation-ide-topbar {
@@ -771,15 +775,18 @@ button.file-row:disabled {
   }
 
   .ide-tools-body {
-    grid-template-columns: minmax(260px, 0.7fr) minmax(280px, 1fr);
+    grid-template-columns: minmax(200px, 0.65fr) 1fr;
+    gap: 16px;
+    padding: 14px 20px 18px;
   }
 
   .ide-screen-frame {
-    width: min(100%, 300px, calc((100vh - 360px) * 0.5625));
+    max-width: min(100%, 300px);
+    width: auto;
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .automation-ide-grid {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(520px, 1fr) minmax(520px, auto);
@@ -795,7 +802,7 @@ button.file-row:disabled {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .automation-ide-shell {
     height: auto;
     min-height: 100%;
@@ -849,7 +856,8 @@ button.file-row:disabled {
   }
 
   .ide-screen-frame {
-    width: min(100%, 280px);
+    max-width: min(100%, 280px);
+    width: auto;
     min-width: 0;
   }
 

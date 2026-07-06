@@ -28,22 +28,27 @@ function tick() {
     for (const target of src.targets.values()) {
       const ctx = target.canvas.getContext('2d');
       if (!ctx) continue;
-      if (target.mode === 'native') {
-        if (target.canvas.width !== size.width) target.canvas.width = size.width;
-        if (target.canvas.height !== size.height) target.canvas.height = size.height;
-        ctx.drawImage(src.hidden, 0, 0);
-      } else {
-        const { width, height } = target.canvas;
-        const scale = Math.min(width / size.width, height / size.height);
-        const w = size.width * scale;
-        const h = size.height * scale;
-        const x = (width - w) / 2;
-        const y = (height - h) / 2;
-        if (target.background) {
-          ctx.fillStyle = target.background;
-          ctx.fillRect(0, 0, width, height);
+      
+      try {
+        if (target.mode === 'native') {
+          if (target.canvas.width !== size.width) target.canvas.width = size.width;
+          if (target.canvas.height !== size.height) target.canvas.height = size.height;
+          ctx.drawImage(src.hidden, 0, 0);
+        } else {
+          const { width, height } = target.canvas;
+          const scale = Math.min(width / size.width, height / size.height);
+          const w = size.width * scale;
+          const h = size.height * scale;
+          const x = (width - w) / 2;
+          const y = (height - h) / 2;
+          if (target.background) {
+            ctx.fillStyle = target.background;
+            ctx.fillRect(0, 0, width, height);
+          }
+          ctx.drawImage(src.hidden, 0, 0, size.width, size.height, x, y, w, h);
         }
-        ctx.drawImage(src.hidden, 0, 0, size.width, size.height, x, y, w, h);
+      } catch (e) {
+        // Ignore single frame render errors to prevent loop crash
       }
     }
   }

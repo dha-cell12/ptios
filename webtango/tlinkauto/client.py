@@ -550,16 +550,6 @@ class TLinkauto:
             datahandler.format_socket_data(tasktypes.TASK_KEYBOARDIMPL, kbdtasktypes.KEYBOARD_SAVE_TEXT_TO_CLIPBOARD, text))
         return datahandler.decode_socket_data(self.s.recv(1024))
 
-    def set_clipboard_image(self, path):
-        """Set clipboard image from an on-device file path
-
-        :param path: absolute image path on the iOS device. PNG, JPEG, GIF, and WebP are supported.
-        :return: Result tuple: (success?, error_message/return value)
-        """
-        self.s.send(
-            datahandler.format_socket_data(tasktypes.TASK_KEYBOARDIMPL, kbdtasktypes.KEYBOARD_SAVE_IMAGE_TO_CLIPBOARD, "file", path))
-        return datahandler.decode_socket_data(self.s.recv(1024))
-
     def insert_text(self, text):
         """Insert text into the text field
 

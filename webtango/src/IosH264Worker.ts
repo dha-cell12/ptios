@@ -180,23 +180,21 @@ function start(url: string, canvas?: OffscreenCanvas) {
 
   const configureDecoder = () => {
     if (configured || !decoder) return;
-    const realtimeConfig = {
+    
+    // Web Workers on Windows/Chrome often lack support for latencyMode: 'realtime'
+    // and prefer-hardware for H264. Use standard profile.
+    const config = {
       codec: 'avc1.42E01E',
       optimizeForLatency: true,
-      latencyMode: 'realtime',
-      hardwareAcceleration: 'prefer-hardware',
       avc: { format: 'annexb' },
     } as any;
+
     try {
-      decoder.configure(realtimeConfig);
-    } catch {
-      decoder.configure({
-        codec: 'avc1.42E01E',
-        optimizeForLatency: true,
-        avc: { format: 'annexb' },
-      } as any);
+      decoder.configure(config);
+      configured = true;
+    } catch (e) {
+      self.postMessage({ type: 'decoder-error', error: String(e) });
     }
-    configured = true;
   };
 
   socket = new WebSocket(url);

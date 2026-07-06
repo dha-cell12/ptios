@@ -976,6 +976,7 @@ body {
   background: var(--card);
   overflow: hidden;
   transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
 .collapsible-header {
@@ -1449,13 +1450,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  pointer-events: none; /* Let clicks pass through to the background */
 }
 
 .modal-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(6px);
+  display: none; /* Hide background overlay to make background fully visible */
 }
 
 .modal-content {
@@ -1470,6 +1469,7 @@ body {
   overflow: hidden;
   animation: modal-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   z-index: 10;
+  pointer-events: auto; /* Enable clicks inside the modal card itself */
 }
 
 @keyframes modal-enter {
@@ -1690,12 +1690,520 @@ body {
   transition: width 0.5s ease-out;
 }
 
-.progress-bar-fill-success {
-  background: var(--success);
-}
-.progress-bar-fill-warning {
-  background: var(--warning);
-}
 .progress-bar-fill-destructive {
   background: var(--destructive);
 }
+
+/* Android Premium Multi-Card Layout Modals */
+.android-floating-wrapper {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  pointer-events: none; /* Let background mouse clicks fall through */
+}
+
+/* Base style for the cards */
+.android-screen-card-floating,
+.android-vertical-toolbar,
+.android-detail-sidebar {
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.02);
+  border: 1px solid #e2e8f0;
+  pointer-events: auto; /* Re-enable pointer events inside cards */
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Card 1: Phone Frame */
+.android-screen-card-floating {
+  width: 290px;
+  padding: 12px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.android-screen-frame-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #090d16;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.android-canvas-floating {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Card 2: Vertical Control Bar */
+.android-vertical-toolbar {
+  width: 52px;
+  padding: 12px 6px;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-start;
+  box-sizing: border-box;
+}
+
+.toolbar-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: #f8fafc;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid #f1f5f9;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.toolbar-btn svg {
+  color: #475569;
+}
+
+.toolbar-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.toolbar-btn:hover svg {
+  color: #0f172a;
+}
+
+.toolbar-btn.btn-back {
+  background: #e6f6f4;
+  color: #0d9488;
+  border-color: #b2f5ea;
+}
+
+.toolbar-btn.btn-back svg {
+  color: #0d9488;
+}
+
+.toolbar-btn.btn-back:hover {
+  background: #0d9488;
+  color: #ffffff;
+  border-color: #0f766e;
+}
+
+.toolbar-btn.btn-back:hover svg {
+  color: #ffffff;
+}
+
+.toolbar-divider {
+  width: 24px;
+  height: 1px;
+  background: #e2e8f0;
+  margin: 2px 0;
+  flex-shrink: 0;
+}
+
+.btn-badge-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.badge-plus {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  background: #7c3aed;
+  color: white;
+  border-radius: 50%;
+  font-size: 8px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid white;
+}
+
+/* SYNC Switch */
+.toolbar-sync-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin: 2px 0;
+  flex-shrink: 0;
+}
+
+.sync-label {
+  font-size: 8px;
+  font-weight: 700;
+  color: #7c3aed;
+  background: #f3e8ff;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.sync-toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 26px;
+  height: 14px;
+}
+
+.sync-toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.sync-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: #cbd5e1;
+  transition: .2s;
+  border-radius: 14px;
+}
+
+.sync-toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 10px;
+  width: 10px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: .2s;
+  border-radius: 50%;
+}
+
+.sync-toggle-switch input:checked + .sync-toggle-slider {
+  background-color: #7c3aed;
+}
+
+.sync-toggle-switch input:checked + .sync-toggle-slider:before {
+  transform: translateX(12px);
+}
+
+/* Navigation D-Pad */
+.toolbar-dpad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0;
+  flex-shrink: 0;
+}
+
+.dpad-row {
+  display: flex;
+  gap: 6px;
+}
+
+.dpad-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.dpad-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+/* Card 3: Sidebar Content */
+.android-detail-sidebar {
+  width: 290px;
+  padding: 14px;
+  box-sizing: border-box;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.header-close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid #fee2e2;
+  background: #fef2f2;
+  color: #ef4444;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.15s;
+}
+
+.header-close-btn:hover {
+  background: #ef4444;
+  color: white;
+  border-color: #dc2626;
+}
+
+.header-pill {
+  border: 1px solid #e9d5ff;
+  background: #faf5ff;
+  color: #7c3aed;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 14px;
+  border-radius: 999px;
+  min-width: 46px;
+  text-align: center;
+}
+
+.header-drag-handle {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: move;
+  transition: all 0.15s;
+}
+
+.header-drag-handle:hover {
+  background: #f1f5f9;
+  color: #334155;
+  border-color: #cbd5e1;
+}
+
+.sidebar-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  padding: 6px 12px;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  flex-shrink: 0;
+}
+
+.sidebar-scrollable-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+
+/* Scrollbar styling for sidebar */
+.sidebar-scrollable-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-scrollable-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scrollable-content::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.sidebar-action-btn-full {
+  width: 100%;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+
+.sidebar-action-btn-full:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.sidebar-grid-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.grid-action-btn {
+  padding: 7px 4px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+
+.grid-action-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.grid-action-btn.purple-btn {
+  border-color: #ddd6fe;
+  color: #7c3aed;
+  background: #faf5ff;
+}
+
+.grid-action-btn.purple-btn:hover {
+  background: #f3e8ff;
+}
+
+.grid-action-btn.blue-btn {
+  border-color: #bae6fd;
+  color: #0284c7;
+  background: #f0f9ff;
+}
+
+.grid-action-btn.blue-btn:hover {
+  background: #e0f2fe;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 8px;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.kill-btn {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #ef4444;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.kill-btn:hover {
+  background: #ef4444;
+  color: white;
+  border-color: #dc2626;
+}
+
+.sidebar-apps-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.app-btn {
+  padding: 6px 8px;
+  background: #ffffff;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+
+.app-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.app-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+
+.fb-icon {
+  background: #1877f2;
+}
+
+.msger-icon {
+  background: #0084ff;
+}
+
+.insta-icon {
+  background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+}
+
+.tele-icon {
+  background: #229ed9;
+}
+
+.tiktok-icon {
+  background: #000000;
+}
+
+.safari-icon {
+  background: #1ba0e1;
+}
+
+.settings-icon {
+  background: #94a3b8;
+}
+

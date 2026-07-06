@@ -1,7 +1,10 @@
 /* Screen View Pane Styles */
 
 /* Header Toolbar Customization */
-#screen-view-pane > div:first-child {
+.screen-view-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     background: var(--card) !important;
     border-bottom: 1px solid var(--border) !important;
     padding: 12px 24px !important;
@@ -12,7 +15,7 @@
 }
 
 /* Toolbar elements */
-#screen-view-pane > div:first-child div[style*="background: var(--secondary)"] {
+.view-mode-toggle-group {
     background: var(--secondary) !important;
     border: 1px solid var(--border) !important;
     border-radius: 8px !important;
@@ -21,25 +24,80 @@
     gap: 2px;
 }
 
-#screen-view-pane > div:first-child div[style*="background: #fafbfd"] {
+.zoom-slider-container {
     background: var(--card) !important;
     border: 1px solid var(--border) !important;
     border-radius: 8px !important;
     padding: 4px 12px !important;
     box-shadow: var(--shadow-sm);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
 }
 
-#screen-view-pane > div:first-child input[type="range"] {
-    accent-color: var(--primary) !important;
-    height: 4px;
+.zoom-icon {
+    color: var(--muted-foreground);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.zoom-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 90px;
+    height: 5px;
     border-radius: 9999px;
-    background: var(--border);
     outline: none;
-    transition: all 0.2s;
+    cursor: pointer;
+    transition: opacity 0.15s ease-in-out;
 }
 
-#screen-view-pane > div:first-child input[type="range"]:hover {
+.zoom-slider:hover {
     opacity: 0.9;
+}
+
+/* Thumb styling */
+.zoom-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 14px;
+    width: 14px;
+    border-radius: 50%;
+    background: var(--primary) !important;
+    cursor: pointer;
+    border: 2.5px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.1s ease;
+}
+
+.zoom-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.zoom-slider::-moz-range-thumb {
+    height: 12px;
+    width: 12px;
+    border-radius: 50%;
+    background: var(--primary) !important;
+    cursor: pointer;
+    border: 2.5px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.1s ease;
+}
+
+.zoom-slider::-moz-range-thumb:hover {
+    transform: scale(1.2);
+}
+
+.zoom-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    min-width: 32px;
+    text-align: right;
+    user-select: none;
 }
 
 #sync-all {

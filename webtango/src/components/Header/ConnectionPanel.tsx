@@ -1,21 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../../stores/useStore';
-import { bridgeStore, setBridgeUrl } from '../../stores/BridgeStore';
-
-// Slice B: React-owned endpoint input + connect/disconnect + status dot.
-// Reads/writes bridgeStore. The actual connect/disconnect logic still lives in
-// the legacy main.ts and is invoked via window.__legacyBridge to keep this
-// slice scoped to UI only; that bridge goes away in later slices.
-type LegacyBridge = {
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-};
-
-declare global {
-  interface Window {
-    __legacyBridge?: LegacyBridge;
-  }
-}
+import { bridgeStore, setBridgeUrl, markConnecting, markConnected, markDisconnected, markError, bridge } from '../../stores/BridgeStore';
+import { startAdbPolling, stopAdbPolling, adbDeviceManager } from '../../stores/AdbDeviceStore';
 
 export function ConnectionPanel() {
   const url = useStore(bridgeStore, (s) => s.url);
@@ -36,12 +22,28 @@ export function ConnectionPanel() {
     if (legacy && legacy.value !== url) legacy.value = url;
   }, [url]);
 
-  const onConnect = () => {
-    void window.__legacyBridge?.connect();
+  useEffect(() => {
+    // Listen for manager errors to mark the bridge as error
+    const unsub = adbDeviceManager.on('error', (err) => {
+      markError(err.message);
+    });
+    return unsub;
+  }, []);
+
+  const onConnect = async () => {
+    markConnecting();
+    try {
+      await bridge.ensure(); // Verify connection works
+      markConnected();
+      startAdbPolling();
+    } catch (e) {
+      markError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const onDisconnect = () => {
-    void window.__legacyBridge?.disconnect();
+    stopAdbPolling();
+    markDisconnected();
   };
 
   return (

@@ -1,10 +1,12 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../../stores/useStore';
 import { adbDeviceStore } from '../../stores/AdbDeviceStore';
 import { iosDeviceStore, iosGridStreams } from '../../stores/IosDeviceStore';
 import { bridgeStore } from '../../stores/BridgeStore';
 import { uiStore, setScreenViewMode, setScreenViewPlatform, setScreenViewZoom } from '../../stores/UiStore';
-import { useCanvasRegistry } from '../../hooks/useCanvasRegistry';
+import { modalActions } from '../../stores/ModalStore';
+import { useCanvasBinding } from '../../hooks/useCanvasBinding';
+import { useDeviceControl } from '../../hooks/useDeviceControl';
 import type { UnifiedDevice } from '../../services/deviceRegistry';
 import type { AdbDeviceRecord } from '../../services/adb/AdbDeviceManager';
 
@@ -54,8 +56,10 @@ export function ScreenViewGrid() {
 }
 
 function Toolbar({ mode, platform, zoom }: { mode: string; platform: string; zoom: number }) {
+  const percent = ((zoom - 0.4) / 1.1) * 100;
+
   return (
-    <div className="screen-view-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+    <div className="screen-view-toolbar">
       <div className="toolbar-left">
         <span className="toolbar-title" style={{ fontWeight: 600, fontSize: 14, color: 'var(--foreground)' }}>Screen Mirroring Grid</span>
       </div>
@@ -70,9 +74,35 @@ function Toolbar({ mode, platform, zoom }: { mode: string; platform: string; zoo
           options={[{ id: 'grid', label: 'Grid Mode' }, { id: 'focus', label: 'Focus Mode' }]}
           onChange={(v) => setScreenViewMode(v as 'grid' | 'focus')}
         />
-        <div className="zoom-slider-container" style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input type="range" min={0.4} max={1.5} step={0.1} value={zoom} onChange={(e) => setScreenViewZoom(parseFloat(e.target.value))} style={{ width: 80 }} />
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted-foreground)', minWidth: 32, textAlign: 'right' }}>{Math.round(zoom * 100)}%</span>
+        <div className="zoom-slider-container">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="zoom-icon"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="range"
+            min={0.4}
+            max={1.5}
+            step={0.1}
+            value={zoom}
+            onChange={(e) => setScreenViewZoom(parseFloat(e.target.value))}
+            className="zoom-slider"
+            style={{
+              background: `linear-gradient(to right, var(--primary) 0%, var(--primary) ${percent}%, var(--border) ${percent}%, var(--border) 100%)`
+            }}
+          />
+          <span className="zoom-label">{Math.round(zoom * 100)}%</span>
         </div>
       </div>
     </div>
@@ -101,9 +131,15 @@ function ToggleGroup({ value, options, onChange }: {
 }
 
 function AndroidGridCard({ serial, model, width }: { serial: string; model: string | undefined; width: number }) {
-  const ref = useCanvasRegistry(serial);
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useCanvasBinding(serial, ref, { mode: 'native' } as any);
+  useDeviceControl(serial, ref);
+
   return (
-    <div className="device-screen-card" style={{ width }}>
+    <div className="device-screen-card" style={{ width }} onDoubleClick={(e) => {
+      e.preventDefault();
+      modalActions.openAndroidModal(serial);
+    }}>
       <div className="screen-frame">
         <div className="screen-canvas-wrapper">
           <canvas ref={ref} />
@@ -116,30 +152,42 @@ function AndroidGridCard({ serial, model, width }: { serial: string; model: stri
 
 function IosGridCard({ device, width }: { device: UnifiedDevice; width: number }) {
   const bridgeUrl = useStore(bridgeStore, (s) => s.url);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  // Worker-backed iOS streams: attach on mount, stop on unmount. The grid
-  // manager dedups per device so flipping between Grid/Focus modes won't
-  // tear down/restart needlessly.
-  const ref = (canvas: HTMLCanvasElement | null) => {
-    if (canvas) {
-      iosGridStreams.start(device, canvas, bridgeUrl);
-    } else {
+  // Worker-backed iOS streams: attach on mount, stop on unmount.
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    // Create a fresh canvas manually to survive React StrictMode double-invocations.
+    // HTMLCanvasElement.transferControlToOffscreen() can only be called once per canvas.
+    const canvas = document.createElement('canvas');
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.objectFit = 'fill';
+    wrapper.appendChild(canvas);
+
+    iosGridStreams.start(device, canvas, bridgeUrl);
+    
+    return () => {
       iosGridStreams.stop(device.id);
-    }
-  };
+      if (wrapper.contains(canvas)) {
+        wrapper.removeChild(canvas);
+      }
+    };
+  }, [device.id, bridgeUrl]);
 
-  useEffect(() => () => { iosGridStreams.stop(device.id); }, [device.id]);
-
-  const meta = device.meta?.device;
-  const label = device.display_name || meta?.name || device.id;
   return (
-    <div className="device-screen-card ios-screen-card" style={{ width }}>
+    <div className="device-screen-card ios-screen-card" style={{ width }} onDoubleClick={(e) => {
+      e.preventDefault();
+      modalActions.openIosModal(device.id);
+    }}>
       <div className="screen-frame">
-        <div className="screen-canvas-wrapper">
-          <canvas ref={ref} />
+        <div className="screen-canvas-wrapper" ref={wrapperRef}>
+          {/* Canvas is injected here by useEffect */}
         </div>
       </div>
-      <div className="device-label">{label}</div>
+      <div className="device-label">{device.name || device.id}</div>
     </div>
   );
 }

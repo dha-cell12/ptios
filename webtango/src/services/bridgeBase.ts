@@ -18,9 +18,10 @@ export function deriveBridgeBases(bridgeWsUrl: string): BridgeBases {
   };
 }
 
+import { bridgeStore } from '../stores/BridgeStore';
+
 export function getBridgeEndpointValue(): string {
-  const input = document.getElementById('endpoint') as HTMLInputElement | null;
-  return input?.value?.trim() || 'ws://localhost:15037/bridge/';
+  return bridgeStore.getState().url || 'ws://localhost:15037/bridge/';
 }
 
 export function getBridgeBasesFromPage(): BridgeBases {

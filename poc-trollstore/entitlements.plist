@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Grants the high-privilege execution context TrollStore can sign. -->
+	<key>platform-application</key>
+	<true/>
+	<key>com.apple.developer.team-identifier</key>
+	<string>TouchPOC</string>
+	<key>application-identifier</key>
+	<string>TouchPOC.com.poc.trollstore.touch</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>TouchPOC.com.poc.trollstore.touch</string>
+	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.poc.trollstore.touch</string>
+	</array>
+
+	<!-- POC should be as unsandboxed as possible. Keep both names because
+	     different TrollStore examples/tools use different private switches. -->
+	<key>com.apple.private.security.no-container</key>
+	<true/>
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+	<key>com.apple.private.security.container-required</key>
+	<false/>
+
+	<!-- Allow the main app to install/start the PacketTunnelProvider. -->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<key>com.apple.developer.networking.vpn.api</key>
+	<array>
+		<string>allow-vpn</string>
+	</array>
+
+	<!-- Core of the POC: allow this app process to open IOKit HID user clients. -->
+	<key>com.apple.security.exception.iokit-user-client-class</key>
+	<array>
+		<string>IOHIDEventSystemUserClient</string>
+		<string>IOHIDLibUserClient</string>
+		<string>IOHIDUserDevice</string>
+		<string>IOHIDResourceUserClient</string>
+		<string>IOHIDParamUserClient</string>
+	</array>
+
+	<!-- HID service/device access. -->
+	<key>com.apple.hid.system.user-access-service</key>
+	<true/>
+	<key>com.apple.hid.manager.user-access-device</key>
+	<true/>
+
+	<!-- Candidate private HID client entitlements for event injection/monitoring. -->
+	<key>com.apple.private.hid.client.event-dispatch</key>
+	<true/>
+	<key>com.apple.private.hid.client.event-monitor</key>
+	<true/>
+	<key>com.apple.private.hid.client.event-filter</key>
+	<true/>
+	<key>com.apple.private.hid.client.service-protected</key>
+	<true/>
+	<key>com.apple.private.hid.manager.client</key>
+	<true/>
+
+	<!-- Candidate service lookups used by HID/backboard paths on some builds. -->
+	<key>com.apple.security.exception.mach-lookup.global-name</key>
+	<array>
+		<string>com.apple.backboard.hid.services</string>
+		<string>com.apple.backboardservices</string>
+		<string>com.apple.iohideventsystem</string>
+	</array>
+
+	<!-- Broad access often needed by TrollStore system utilities. -->
+	<key>com.apple.private.security.disk-device-access</key>
+	<true/>
+</dict>
+</plist>

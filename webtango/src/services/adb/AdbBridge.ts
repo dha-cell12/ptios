@@ -34,19 +34,8 @@ export class AdbBridge {
   async ensure(): Promise<AdbServerClient> {
     if (!this.client) {
       this.client = this.build();
-      return this.client;
     }
-    try {
-      await Promise.race([
-        this.client.getDevices(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('health-check timeout')), 2000)),
-      ]);
-      return this.client;
-    } catch (e) {
-      console.warn('[adb-bridge] server client unhealthy, recreating', e);
-      this.client = this.build();
-      return this.client;
-    }
+    return this.client;
   }
 
   forceRecreate(): AdbServerClient {

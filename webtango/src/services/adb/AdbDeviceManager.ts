@@ -31,7 +31,8 @@ export class AdbDeviceManager {
     error: new Set(),
   };
   private pollTimer: number | undefined;
-  private pollIntervalMs = 2000;
+  private pollIntervalMs = 10000;
+  private trackObserver?: any;
 
   constructor(bridge: AdbBridge) {
     this.bridge = bridge;
@@ -62,8 +63,42 @@ export class AdbDeviceManager {
     return this.devices.get(serial);
   }
 
-  startPolling(intervalMs = 2000) {
+  async startPolling(intervalMs = 10000) {
     this.pollIntervalMs = intervalMs;
+    if (this.pollTimer !== undefined || this.trackObserver !== undefined) return;
+
+    let client: AdbServerClient;
+    try {
+      client = await this.bridge.ensure();
+    } catch (e) {
+      this.emit('error', { message: 'failed to acquire ADB bridge', cause: e });
+      return;
+    }
+
+    try {
+      // Attempt to use trackDevices for real-time, single-connection updates
+      this.trackObserver = await client.trackDevices();
+      console.log('[adb-device-manager] Using trackDevices for real-time updates');
+      
+      (async () => {
+        try {
+          for await (const rawDevices of this.trackObserver!) {
+            this.processRawDevices(rawDevices);
+          }
+        } catch (e) {
+          console.warn('[adb-device-manager] trackDevices stream ended', e);
+          this.trackObserver = undefined;
+          this.fallbackToPolling();
+        }
+      })();
+    } catch (e) {
+      console.warn('[adb-device-manager] trackDevices not supported or failed, falling back to polling', e);
+      this.trackObserver = undefined;
+      this.fallbackToPolling();
+    }
+  }
+
+  private fallbackToPolling() {
     if (this.pollTimer !== undefined) return;
     void this.refresh();
     this.pollTimer = window.setInterval(() => void this.refresh(), this.pollIntervalMs);
@@ -73,6 +108,14 @@ export class AdbDeviceManager {
     if (this.pollTimer !== undefined) {
       window.clearInterval(this.pollTimer);
       this.pollTimer = undefined;
+    }
+    if (this.trackObserver) {
+      try {
+        if (typeof this.trackObserver.return === 'function') {
+           this.trackObserver.return();
+        }
+      } catch (e) {}
+      this.trackObserver = undefined;
     }
   }
 
@@ -94,6 +137,11 @@ export class AdbDeviceManager {
     }
 
     const seen = new Set<string>();
+    return this.processRawDevices(rawDevices);
+  }
+
+  private processRawDevices(rawDevices: any[]): AdbDeviceRecord[] {
+    const seen = new Set<string>();
     for (const raw of rawDevices) {
       const serial: string = raw.serial ?? raw.transportId ?? String(raw);
       seen.add(serial);
@@ -101,7 +149,12 @@ export class AdbDeviceManager {
       const record: AdbDeviceRecord = {
         serial,
         state: raw.state ?? 'unknown',
-        properties: existing?.properties,
+        properties: {
+          model: raw.model,
+          product: raw.product,
+          device: raw.device,
+          ...existing?.properties,
+        },
         device: raw,
       };
       if (!existing) {
