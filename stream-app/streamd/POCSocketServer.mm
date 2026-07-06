@@ -12,7 +12,6 @@
 #include <dlfcn.h>
 #include <signal.h>
 #include <unistd.h>
-#include <libproc.h>
 #include <netinet/tcp.h>
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
@@ -26,6 +25,8 @@
 #ifndef PROC_PIDPATHINFO_MAXSIZE
 #define PROC_PIDPATHINFO_MAXSIZE 4096
 #endif
+
+extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 
 // ---------------------------------------------------------------------------
 // POC socket server
