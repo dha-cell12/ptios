@@ -41,12 +41,13 @@
 	<false/>
 
 	<!-- ================================================================ -->
-	<!-- RESERVED for future root helper (privhelper). Paths are relative  -->
-	<!-- to this Info.plist. Empty now; add e.g. <string>privhelper</string> -->
-	<!-- when the clear-keychain/app-data helper is introduced.            -->
+	<!-- TrollStore root helper. Paths are relative to this Info.plist.    -->
+	<!-- Current scope: kill stale streamd processes that keep tcp/6000.   -->
+	<!-- Broader app-data/keychain helper tasks are added in later phases. -->
 	<!-- ================================================================ -->
 	<key>TSRootBinaries</key>
 	<array>
+		<string>privhelper</string>
 	</array>
 </dict>
 </plist>

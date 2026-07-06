@@ -1576,8 +1576,18 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleFrameBatch(body);
     }
 
+    if (taskType == 96) {
+        POCLogf("task-server: task96 shutdown requested");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)),
+                       dispatch_get_main_queue(), ^{
+            POCLogf("task-server: exiting for supervisor restart");
+            exit(0);
+        });
+        return TLinkSuccess(@"streamd_exiting");
+    }
+
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,18,21,23,24,25,28,29,44,45,46,47,48,49,60,61,62,63,64,65,66,67,68,69,70,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,keyboardClipboard unsupported=ocr,script,appMgmt,privhelper keyboard=limited_on_trollstore imageMatch=naive_rgba";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,18,21,23,24,25,28,29,44,45,46,47,48,49,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,keyboardClipboard,gracefulShutdown unsupported=ocr,script,appMgmt,privhelper keyboard=limited_on_trollstore imageMatch=naive_rgba";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

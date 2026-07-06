@@ -5,11 +5,24 @@
 #import <unistd.h>
 #import <errno.h>
 #import <sys/sysctl.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
 extern char **environ;
+
+extern "C" {
+int posix_spawnattr_set_persona_np(posix_spawnattr_t *attr, uid_t persona_id, uint32_t flags);
+int posix_spawnattr_set_persona_uid_np(posix_spawnattr_t *attr, uid_t uid);
+int posix_spawnattr_set_persona_gid_np(posix_spawnattr_t *attr, uid_t gid);
+}
+
+#ifndef POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE
+#define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
+#endif
 
 #ifndef PROC_PIDPATHINFO_MAXSIZE
 #define PROC_PIDPATHINFO_MAXSIZE 4096
@@ -55,6 +68,12 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
     return [dir stringByAppendingPathComponent:@"streamd"];
 }
 
+- (NSString *)privhelperPath
+{
+    NSString *dir = [[NSBundle mainBundle] bundlePath];
+    return [dir stringByAppendingPathComponent:@"privhelper"];
+}
+
 - (void)emitLog:(NSString *)line
 {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -89,12 +108,20 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
 {
     dispatch_async(_queue, ^{
         self->_autoRespawn = NO;
+        [self requestTaskServerShutdownLocked:@"stop"];
         if (self->_pid > 0) {
             [self emitLog:[NSString stringWithFormat:@"supervisor: terminating pid=%d", self->_pid]];
             kill(self->_pid, SIGTERM);
+            usleep(300000);
+            self->_running = NO;
+            self->_pid = -1;
+            [self emitRunning:NO pid:-1];
+            [self killStaleStreamdLocked];
+            [self runPrivhelperKillStreamdLocked];
         } else {
             [self emitLog:@"supervisor: stop requested; scanning for stale streamd"];
             [self killStaleStreamdLocked];
+            [self runPrivhelperKillStreamdLocked];
         }
     });
 }
@@ -104,19 +131,144 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
     dispatch_async(_queue, ^{
         [self emitLog:@"supervisor: restart requested; replacing any existing streamd"];
         self->_autoRespawn = NO;
+        [self requestTaskServerShutdownLocked:@"restart"];
         if (self->_pid > 0) {
             errno = 0;
             int rc = kill(self->_pid, SIGTERM);
             [self emitLog:[NSString stringWithFormat:@"supervisor: current child pid=%d kill rc=%d errno=%d", self->_pid, rc, errno]];
             usleep(300000);
         }
-        [self killStaleStreamdLocked];
         self->_running = NO;
         self->_pid = -1;
         [self emitRunning:NO pid:-1];
         self->_autoRespawn = YES;
         [self spawnLocked];
     });
+}
+
+- (NSString *)sendLocalTaskLineLocked:(NSString *)line timeout:(int)timeoutSec
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return nil;
+
+    struct timeval tv;
+    tv.tv_sec = timeoutSec > 0 ? timeoutSec : 1;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(6000);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        return nil;
+    }
+
+    NSString *payload = [line hasSuffix:@"\n"] ? line : [line stringByAppendingString:@"\n"];
+    const char *bytes = [payload UTF8String];
+    send(sock, bytes, strlen(bytes), 0);
+
+    NSMutableData *data = [NSMutableData data];
+    char buf[2048];
+    while (true) {
+        ssize_t n = recv(sock, buf, sizeof(buf), 0);
+        if (n <= 0) break;
+        [data appendBytes:buf length:(NSUInteger)n];
+        if (memchr(buf, '\n', (size_t)n)) break;
+        if (data.length > 64 * 1024) break;
+    }
+    close(sock);
+
+    if (data.length == 0) return nil;
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+- (void)requestTaskServerShutdownLocked:(NSString *)reason
+{
+    NSString *status = [self sendLocalTaskLineLocked:@"97\n" timeout:1];
+    if (status.length > 0) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: tcp/6000 before %@ -> %@", reason, [status stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]];
+    }
+
+    NSString *shutdown = [self sendLocalTaskLineLocked:@"96\n" timeout:1];
+    if (shutdown.length > 0) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: task96 shutdown response -> %@", [shutdown stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]];
+        usleep(400000);
+    }
+}
+
+- (int)runPrivhelperKillStreamdLocked
+{
+    NSString *path = [self privhelperPath];
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:path]) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper missing/not executable at %@", path]];
+        return -1;
+    }
+
+    const char *cpath = [path fileSystemRepresentation];
+    NSString *except = self->_pid > 0 ? [NSString stringWithFormat:@"%d", self->_pid] : @"-1";
+    char *arg0 = strdup(cpath);
+    char *arg1 = strdup("--kill-streamd");
+    char *arg2 = strdup("--except-pid");
+    char *arg3 = strdup([except UTF8String]);
+    if (!arg0 || !arg1 || !arg2 || !arg3) {
+        free(arg0); free(arg1); free(arg2); free(arg3);
+        [self emitLog:@"supervisor: privhelper argv alloc failed"];
+        return -2;
+    }
+    char *const argv[] = { arg0, arg1, arg2, arg3, NULL };
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    int persona = posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+    int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 0);
+    int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 0);
+
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, cpath, NULL, &attr, argv, environ);
+    posix_spawnattr_destroy(&attr);
+    free(arg0); free(arg1); free(arg2); free(arg3);
+
+    if (rc != 0) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper spawn failed rc=%d persona=%d uid=%d gid=%d", rc, persona, personaUid, personaGid]];
+        return rc;
+    }
+
+    int status = 0;
+    pid_t w = waitpid(pid, &status, 0);
+    int exitCode = -1;
+    if (w == pid && WIFEXITED(status)) exitCode = WEXITSTATUS(status);
+    [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper pid=%d wait=%d status=%d exit=%d persona=%d uid=%d gid=%d",
+                   pid, w, status, exitCode, persona, personaUid, personaGid]];
+    return exitCode;
+}
+
+- (BOOL)preparePortForSpawnLocked
+{
+    NSString *before = [self sendLocalTaskLineLocked:@"97\n" timeout:1];
+    if (before.length > 0) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: tcp/6000 currently responds -> %@", [before stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]];
+    } else {
+        [self emitLog:@"supervisor: tcp/6000 has no responder before spawn"];
+    }
+
+    [self requestTaskServerShutdownLocked:@"spawn"];
+    [self killStaleStreamdLocked];
+    [self runPrivhelperKillStreamdLocked];
+    usleep(300000);
+
+    NSString *after = [self sendLocalTaskLineLocked:@"97\n" timeout:1];
+    if (after.length > 0) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: warning tcp/6000 still responds after cleanup -> %@", [after stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]];
+        return NO;
+    } else {
+        [self emitLog:@"supervisor: tcp/6000 cleanup complete; no responder"];
+        return YES;
+    }
 }
 
 - (void)killStaleStreamdLocked
@@ -183,7 +335,13 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
         return;
     }
 
-    [self killStaleStreamdLocked];
+    if (![self preparePortForSpawnLocked]) {
+        [self emitLog:@"supervisor: refusing to spawn because tcp/6000 is still occupied"];
+        self->_running = NO;
+        self->_pid = -1;
+        [self emitRunning:NO pid:-1];
+        return;
+    }
 
     self->_lastSpawn = [NSDate date];
 
@@ -248,4 +406,3 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
 }
 
 @end
-

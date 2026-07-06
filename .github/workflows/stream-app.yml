@@ -55,16 +55,23 @@ jobs:
           test -f stream-app/Makefile
           test -f stream-app/app/Makefile
           test -f stream-app/streamd/Makefile
+          test -f stream-app/privhelper/Makefile
+          test -f stream-app/privhelper/main.mm
           test -f stream-app/app/TLinkSocketClient.mm
           test -f stream-app/app/ScriptsViewController.mm
           test -f stream-app/app/SettingsViewController.mm
+          grep -q 'privhelper' stream-app/Makefile
+          grep -q '<string>privhelper</string>' stream-app/app/Info.plist
           grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
           grep -q 'Restart streamd' stream-app/app/ViewController.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
+          grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
+          grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
           grep -q 'TLinkStartTaskServer' stream-app/streamd/main.mm
           grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 96' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 23' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 47' stream-app/streamd/POCSocketServer.mm
@@ -90,6 +97,7 @@ jobs:
           grep 'Payload/StreamControl.app/Info.plist' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/StreamControl' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/streamd' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/privhelper' stream-app/packages/StreamControl.tipa.contents.txt
 
           APP="stream-app/app/.theos/_/Applications/StreamControl.app"
           if [ ! -d "$APP" ]; then
@@ -98,11 +106,14 @@ jobs:
           test -d "$APP"
           test -x "$APP/StreamControl"
           test -x "$APP/streamd"
+          test -x "$APP/privhelper"
 
           echo "--- StreamControl entitlements ---"
           ldid -e "$APP/StreamControl" || true
           echo "--- streamd entitlements ---"
           ldid -e "$APP/streamd" || true
+          echo "--- privhelper entitlements ---"
+          ldid -e "$APP/privhelper" || true
           echo "--- bundle files ---"
           find "$APP" -maxdepth 2 -type f | sort
 
