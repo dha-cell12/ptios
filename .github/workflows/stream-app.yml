@@ -69,6 +69,7 @@ jobs:
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
+          grep -q -- '--open-bundle' stream-app/privhelper/main.mm
           grep -q 'TLinkStartTaskServer' stream-app/streamd/main.mm
           grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 96' stream-app/streamd/POCSocketServer.mm
@@ -81,8 +82,8 @@ jobs:
           grep -q 'FrontBoardServices' stream-app/streamd/POCSocketServer.mm
           grep -q 'frontmost_cache' stream-app/streamd/POCSocketServer.mm
           grep -q 'task11:expected' stream-app/streamd/POCSocketServer.mm
-          grep -q 'launch_disabled_on_trollstore' stream-app/streamd/POCSocketServer.mm
-          grep -q 'SBSProcessIDForDisplayIdentifier' stream-app/streamd/POCSocketServer.mm
+          grep -q 'launch_via_privhelper' stream-app/streamd/POCSocketServer.mm
+          grep -q 'launch_helper_failed_or_limited_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 47' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 48' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 49' stream-app/streamd/POCSocketServer.mm

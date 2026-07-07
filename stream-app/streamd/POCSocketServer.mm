@@ -11,9 +11,12 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <signal.h>
+#include <spawn.h>
 #include <unistd.h>
 #include <netinet/tcp.h>
+#include <mach-o/dyld.h>
 #include <sys/sysctl.h>
+#include <sys/wait.h>
 #include <sys/utsname.h>
 #import <objc/message.h>
 
@@ -1713,7 +1716,8 @@ static pid_t TLinkPidForBundleId(NSString *bundleId)
 
 typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
 typedef CFStringRef (*TLinkSBSCopyFrontmostFn)(void);
-typedef int (*TLinkSBSProcessIDFn)(CFStringRef identifier);
+
+extern char **environ;
 
 static NSString *sTLinkLastFrontmostBundleId = nil;
 static NSString *sTLinkLastFrontmostSource = nil;
@@ -1784,29 +1788,9 @@ static NSString *TLinkSBSCopyFrontmostBundleId(void)
     return nil;
 }
 
-static pid_t TLinkSBSProcessIDForBundleId(NSString *bundleId)
-{
-    if (bundleId.length == 0) return 0;
-    void *handle = TLinkSpringBoardServicesHandle();
-    if (!handle) return 0;
-    const char *symbols[] = {
-        "SBSProcessIDForDisplayIdentifier",
-        NULL,
-    };
-    for (int i = 0; symbols[i] != NULL; i++) {
-        TLinkSBSProcessIDFn fn = (TLinkSBSProcessIDFn)dlsym(handle, symbols[i]);
-        if (!fn) continue;
-        int pid = fn((__bridge CFStringRef)bundleId);
-        if (pid > 0) return (pid_t)pid;
-    }
-    return 0;
-}
-
 static pid_t TLinkResolvePidForBundleId(NSString *bundleId)
 {
-    pid_t pid = TLinkSBSProcessIDForBundleId(bundleId);
-    if (pid <= 0) pid = TLinkPidForBundleId(bundleId);
-    return pid;
+    return TLinkPidForBundleId(bundleId);
 }
 
 static void TLinkRememberFrontmost(NSString *bundleId, NSString *source, pid_t pid)
@@ -2036,6 +2020,64 @@ static BOOL TLinkWorkspaceOpenBundleId(NSString *bundleId)
     return started;
 }
 
+static NSString *TLinkExecutableDirectory(void)
+{
+    char path[PATH_MAX] = {0};
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) != 0) return nil;
+    char resolved[PATH_MAX] = {0};
+    const char *finalPath = realpath(path, resolved) ? resolved : path;
+    NSString *exePath = [NSString stringWithUTF8String:finalPath] ?: @"";
+    return exePath.length > 0 ? [exePath stringByDeletingLastPathComponent] : nil;
+}
+
+static NSString *TLinkPrivhelperPath(void)
+{
+    NSString *dir = TLinkExecutableDirectory();
+    if (dir.length == 0) return nil;
+    NSString *path = [dir stringByAppendingPathComponent:@"privhelper"];
+    return [[NSFileManager defaultManager] isExecutableFileAtPath:path] ? path : nil;
+}
+
+static int TLinkRunPrivhelperOpenBundle(NSString *bundleId)
+{
+    if (bundleId.length == 0) return -100;
+    NSString *path = TLinkPrivhelperPath();
+    if (path.length == 0) return -101;
+    const char *cpath = [path fileSystemRepresentation];
+    char *arg0 = strdup(cpath);
+    char *arg1 = strdup("--open-bundle");
+    char *arg2 = strdup([bundleId UTF8String] ?: "");
+    if (!arg0 || !arg1 || !arg2) {
+        if (arg0) free(arg0);
+        if (arg1) free(arg1);
+        if (arg2) free(arg2);
+        return -102;
+    }
+    char *const argv[] = { arg0, arg1, arg2, NULL };
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, cpath, NULL, NULL, argv, environ);
+    free(arg0);
+    free(arg1);
+    free(arg2);
+    if (rc != 0 || pid <= 0) return rc != 0 ? rc : -103;
+
+    int status = 0;
+    for (int i = 0; i < 30; i++) {
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) {
+            if (WIFEXITED(status)) return WEXITSTATUS(status);
+            if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+            return -104;
+        }
+        if (w < 0) return -105;
+        usleep(100 * 1000);
+    }
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, 0);
+    return -106;
+}
+
 static BOOL TLinkWorkspaceOpenURL(NSURL *url)
 {
     id workspace = TLinkApplicationWorkspace();
@@ -2075,7 +2117,12 @@ static NSData *TLinkHandleOpenApplication(NSString *body)
     NSString *bundleId = TLinkCleanPayload(body);
     if (bundleId.length == 0) return TLinkError(@"open_app_missing_bundle_id");
     TLinkRememberFrontmost(bundleId, @"task11:expected", -1);
-    return TLinkSuccess([NSString stringWithFormat:@"frontmost_expected;;%@;;launch_disabled_on_trollstore", bundleId]);
+    int helperExit = TLinkRunPrivhelperOpenBundle(bundleId);
+    if (helperExit == 0) {
+        TLinkRememberFrontmost(bundleId, @"task11:privhelper", 0);
+        return TLinkSuccess([NSString stringWithFormat:@"frontmost_expected;;%@;;launch_via_privhelper", bundleId]);
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"frontmost_expected;;%@;;launch_helper_failed_or_limited_on_trollstore;;exit=%d", bundleId, helperExit]);
 }
 
 static NSData *TLinkHandleAppKill(NSString *body)
@@ -2264,8 +2311,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"tesseractOCR": @(NO),
         @"script": @(NO),
         @"appMgmt": @(YES),
-        @"appMgmtMode": @"limited_process_info_cache_launch_kill",
-        @"appLaunchMode": @"cache_only",
+        @"appMgmtMode": @"limited_process_info_helper_launch_kill",
+        @"appLaunchMode": @"privhelper_best_effort",
         @"frontmost": @(YES),
         @"clearData": @(NO),
         @"hidMonitor": @(YES),
@@ -2501,7 +2548,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,appInfo,appLaunchCacheOnly,appKillLimited,openURL,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,script,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_cache_launch_kill";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,appInfo,appLaunchPrivhelper,appKillLimited,openURL,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,script,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 
 #include <errno.h>
+#include <dlfcn.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -8,12 +10,15 @@
 #include <string.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
+#import <objc/message.h>
 
 #ifndef PROC_PIDPATHINFO_MAXSIZE
 #define PROC_PIDPATHINFO_MAXSIZE 4096
 #endif
 
 extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
+
+typedef int (*TLinkHelperSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
 
 static NSString *TLinkHelperLogPath(void)
 {
@@ -122,11 +127,87 @@ static int TLinkKillStreamd(pid_t exceptPid)
     return failed == 0 ? 0 : 10;
 }
 
+static void TLinkHelperLoadLaunchServices(void)
+{
+    dlopen("/System/Library/PrivateFrameworks/MobileCoreServices.framework/MobileCoreServices", RTLD_LAZY | RTLD_GLOBAL);
+    dlopen("/System/Library/PrivateFrameworks/LaunchServices.framework/LaunchServices", RTLD_LAZY | RTLD_GLOBAL);
+    dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices", RTLD_LAZY | RTLD_GLOBAL);
+}
+
+static BOOL TLinkHelperOpenBundleWithWorkspace(NSString *bundleId)
+{
+    TLinkHelperLoadLaunchServices();
+    Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
+    SEL defaultSel = NSSelectorFromString(@"defaultWorkspace");
+    if (!workspaceClass || ![workspaceClass respondsToSelector:defaultSel]) return NO;
+
+    id workspace = nil;
+    @try {
+        workspace = ((id (*)(Class, SEL))objc_msgSend)(workspaceClass, defaultSel);
+    } @catch (__unused NSException *exception) {
+        workspace = nil;
+    }
+    if (!workspace) return NO;
+
+    NSArray<NSString *> *selectors = @[@"openApplicationWithBundleID:", @"openApplicationWithBundleIdentifier:"];
+    for (NSString *selName in selectors) {
+        SEL sel = NSSelectorFromString(selName);
+        if (![workspace respondsToSelector:sel]) continue;
+        @try {
+            BOOL ok = ((BOOL (*)(id, SEL, NSString *))objc_msgSend)(workspace, sel, bundleId);
+            if (ok) return YES;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return NO;
+}
+
+static BOOL TLinkHelperOpenBundleWithSBS(NSString *bundleId, int *outRc)
+{
+    dlerror();
+    void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY | RTLD_GLOBAL);
+    if (!handle) {
+        const char *err = dlerror();
+        TLinkHelperLog([NSString stringWithFormat:@"open-bundle: SBS dlopen failed %s", err ?: "unknown"]);
+        return NO;
+    }
+    TLinkHelperSBSLaunchApplicationFn fn = (TLinkHelperSBSLaunchApplicationFn)dlsym(handle, "SBSLaunchApplicationWithIdentifier");
+    if (!fn) {
+        TLinkHelperLog(@"open-bundle: SBSLaunchApplicationWithIdentifier missing");
+        return NO;
+    }
+    int rc = fn((__bridge CFStringRef)bundleId, false);
+    if (outRc) *outRc = rc;
+    TLinkHelperLog([NSString stringWithFormat:@"open-bundle: SBS rc=%d bundle=%@", rc, bundleId]);
+    return rc == 0;
+}
+
+static int TLinkOpenBundle(NSString *bundleId)
+{
+    if (bundleId.length == 0) {
+        TLinkHelperLog(@"open-bundle: missing bundle id");
+        return 20;
+    }
+
+    if (TLinkHelperOpenBundleWithWorkspace(bundleId)) {
+        TLinkHelperLog([NSString stringWithFormat:@"open-bundle: workspace ok bundle=%@", bundleId]);
+        return 0;
+    }
+
+    int sbsRc = INT_MIN;
+    if (TLinkHelperOpenBundleWithSBS(bundleId, &sbsRc)) {
+        return 0;
+    }
+
+    TLinkHelperLog([NSString stringWithFormat:@"open-bundle: failed bundle=%@ sbs_rc=%d", bundleId, sbsRc]);
+    return 21;
+}
+
 int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=1 scope=kill-streamd");
+            TLinkHelperLog(@"privhelper version=2 scope=kill-streamd,open-bundle");
             return 0;
         }
 
@@ -141,7 +222,12 @@ int main(int argc, char *argv[])
             return TLinkKillStreamd(exceptPid);
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --kill-streamd [--except-pid pid]");
+        if (argc >= 3 && strcmp(argv[1], "--open-bundle") == 0) {
+            NSString *bundleId = [NSString stringWithUTF8String:argv[2]] ?: @"";
+            return TLinkOpenBundle(bundleId);
+        }
+
+        TLinkHelperLog(@"usage: privhelper --version | --kill-streamd [--except-pid pid] | --open-bundle bundle.id");
         return 64;
     }
 }
