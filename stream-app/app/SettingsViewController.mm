@@ -12,7 +12,7 @@
     self.title = @"Settings";
     _sections = @[
         @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"App/Process: limited", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: restart_streamd_only"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"App/Process: limited cache launch", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: restart_streamd_only"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];

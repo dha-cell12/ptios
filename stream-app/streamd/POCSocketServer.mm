@@ -2075,12 +2075,7 @@ static NSData *TLinkHandleOpenApplication(NSString *body)
     NSString *bundleId = TLinkCleanPayload(body);
     if (bundleId.length == 0) return TLinkError(@"open_app_missing_bundle_id");
     TLinkRememberFrontmost(bundleId, @"task11:expected", -1);
-    int sbsRc = INT_MIN;
-    if (TLinkSBSLaunchApplication(bundleId, &sbsRc) || TLinkWorkspaceOpenBundleId(bundleId)) {
-        TLinkRememberFrontmost(bundleId, @"task11", 0);
-        return TLinkSuccess(nil);
-    }
-    return TLinkSuccess([NSString stringWithFormat:@"frontmost_expected;;%@;;launch_failed_or_limited_on_trollstore;;sbs_rc=%d", bundleId, sbsRc]);
+    return TLinkSuccess([NSString stringWithFormat:@"frontmost_expected;;%@;;launch_disabled_on_trollstore", bundleId]);
 }
 
 static NSData *TLinkHandleAppKill(NSString *body)
@@ -2269,7 +2264,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"tesseractOCR": @(NO),
         @"script": @(NO),
         @"appMgmt": @(YES),
-        @"appMgmtMode": @"limited_process_info_launch_kill",
+        @"appMgmtMode": @"limited_process_info_cache_launch_kill",
+        @"appLaunchMode": @"cache_only",
         @"frontmost": @(YES),
         @"clearData": @(NO),
         @"hidMonitor": @(YES),
@@ -2505,7 +2501,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,appInfo,appLaunch,appKillLimited,openURL,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,script,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_launch_kill";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,appInfo,appLaunchCacheOnly,appKillLimited,openURL,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,script,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_cache_launch_kill";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

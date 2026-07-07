@@ -81,6 +81,7 @@ jobs:
           grep -q 'FrontBoardServices' stream-app/streamd/POCSocketServer.mm
           grep -q 'frontmost_cache' stream-app/streamd/POCSocketServer.mm
           grep -q 'task11:expected' stream-app/streamd/POCSocketServer.mm
+          grep -q 'launch_disabled_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'SBSProcessIDForDisplayIdentifier' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 47' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 48' stream-app/streamd/POCSocketServer.mm
