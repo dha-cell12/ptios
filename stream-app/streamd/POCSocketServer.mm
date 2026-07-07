@@ -1814,7 +1814,7 @@ static void TLinkRememberFrontmost(NSString *bundleId, NSString *source, pid_t p
     if (bundleId.length == 0) return;
     sTLinkLastFrontmostBundleId = bundleId;
     sTLinkLastFrontmostSource = source ?: @"unknown";
-    sTLinkLastFrontmostPid = pid > 0 ? pid : TLinkResolvePidForBundleId(bundleId);
+    sTLinkLastFrontmostPid = pid > 0 ? pid : (pid == 0 ? TLinkResolvePidForBundleId(bundleId) : 0);
     sTLinkLastFrontmostAtMs = TLinkNowMs();
 }
 
@@ -2015,17 +2015,25 @@ static BOOL TLinkWorkspaceOpenBundleId(NSString *bundleId)
 {
     id workspace = TLinkApplicationWorkspace();
     if (!workspace) return NO;
-    NSArray<NSString *> *selectors = @[@"openApplicationWithBundleID:", @"openApplicationWithBundleIdentifier:"];
-    for (NSString *selName in selectors) {
-        SEL sel = NSSelectorFromString(selName);
-        if (![workspace respondsToSelector:sel]) continue;
-        @try {
-            BOOL ok = ((BOOL (*)(id, SEL, NSString *))objc_msgSend)(workspace, sel, bundleId);
-            if (ok) return YES;
-        } @catch (__unused NSException *exception) {
+    __block BOOL started = NO;
+    void (^openBlock)(void) = ^{
+        NSArray<NSString *> *selectors = @[@"openApplicationWithBundleID:", @"openApplicationWithBundleIdentifier:"];
+        for (NSString *selName in selectors) {
+            SEL sel = NSSelectorFromString(selName);
+            if (![workspace respondsToSelector:sel]) continue;
+            @try {
+                BOOL ok = ((BOOL (*)(id, SEL, NSString *))objc_msgSend)(workspace, sel, bundleId);
+                if (ok) {
+                    started = YES;
+                    return;
+                }
+            } @catch (__unused NSException *exception) {
+            }
         }
-    }
-    return NO;
+    };
+    if ([NSThread isMainThread]) openBlock();
+    else dispatch_sync(dispatch_get_main_queue(), openBlock);
+    return started;
 }
 
 static BOOL TLinkWorkspaceOpenURL(NSURL *url)
@@ -2066,12 +2074,13 @@ static NSData *TLinkHandleOpenApplication(NSString *body)
 {
     NSString *bundleId = TLinkCleanPayload(body);
     if (bundleId.length == 0) return TLinkError(@"open_app_missing_bundle_id");
+    TLinkRememberFrontmost(bundleId, @"task11:expected", -1);
     int sbsRc = INT_MIN;
     if (TLinkSBSLaunchApplication(bundleId, &sbsRc) || TLinkWorkspaceOpenBundleId(bundleId)) {
         TLinkRememberFrontmost(bundleId, @"task11", 0);
         return TLinkSuccess(nil);
     }
-    return TLinkError([NSString stringWithFormat:@"open_app_failed_or_limited_on_trollstore bundle=%@ sbs_rc=%d", bundleId, sbsRc]);
+    return TLinkSuccess([NSString stringWithFormat:@"frontmost_expected;;%@;;launch_failed_or_limited_on_trollstore;;sbs_rc=%d", bundleId, sbsRc]);
 }
 
 static NSData *TLinkHandleAppKill(NSString *body)
