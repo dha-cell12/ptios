@@ -1714,6 +1714,13 @@ static pid_t TLinkPidForBundleId(NSString *bundleId)
     return found;
 }
 
+static BOOL TLinkPidIsAlive(pid_t pid)
+{
+    if (pid <= 0) return NO;
+    if (kill(pid, 0) == 0) return YES;
+    return errno == EPERM;
+}
+
 typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
 typedef CFStringRef (*TLinkSBSCopyFrontmostFn)(void);
 
@@ -1790,7 +1797,25 @@ static NSString *TLinkSBSCopyFrontmostBundleId(void)
 
 static pid_t TLinkResolvePidForBundleId(NSString *bundleId)
 {
-    return TLinkPidForBundleId(bundleId);
+    if (bundleId.length > 0 &&
+        [bundleId isEqualToString:sTLinkLastFrontmostBundleId] &&
+        sTLinkLastFrontmostPid > 0) {
+        uint64_t now = TLinkNowMs();
+        uint64_t age = (sTLinkLastFrontmostAtMs > 0 && now >= sTLinkLastFrontmostAtMs)
+            ? now - sTLinkLastFrontmostAtMs
+            : 0;
+        if (age <= 600000 && TLinkPidIsAlive(sTLinkLastFrontmostPid)) {
+            return sTLinkLastFrontmostPid;
+        }
+        sTLinkLastFrontmostPid = 0;
+    }
+
+    pid_t pid = TLinkPidForBundleId(bundleId);
+    if (pid > 0 && [bundleId isEqualToString:sTLinkLastFrontmostBundleId]) {
+        sTLinkLastFrontmostPid = pid;
+        if (sTLinkLastFrontmostAtMs == 0) sTLinkLastFrontmostAtMs = TLinkNowMs();
+    }
+    return pid;
 }
 
 static void TLinkRememberFrontmost(NSString *bundleId, NSString *source, pid_t pid)
@@ -1798,7 +1823,7 @@ static void TLinkRememberFrontmost(NSString *bundleId, NSString *source, pid_t p
     if (bundleId.length == 0) return;
     sTLinkLastFrontmostBundleId = bundleId;
     sTLinkLastFrontmostSource = source ?: @"unknown";
-    sTLinkLastFrontmostPid = pid > 0 ? pid : (pid == 0 ? TLinkResolvePidForBundleId(bundleId) : 0);
+    sTLinkLastFrontmostPid = pid > 0 ? pid : (pid == 0 ? TLinkPidForBundleId(bundleId) : 0);
     sTLinkLastFrontmostAtMs = TLinkNowMs();
 }
 
@@ -2201,11 +2226,7 @@ static NSData *TLinkHandleFrontmostPid(void)
     if (bundleId.length == 0) {
         return TLinkUnsupported(51, [NSString stringWithFormat:@"frontmost_pid_requires_springboard_or_frontboard_access %@", sTLinkFrontmostDiag ?: @""]);
     }
-    pid_t pid = 0;
-    if ([bundleId isEqualToString:sTLinkLastFrontmostBundleId] && sTLinkLastFrontmostPid > 0) {
-        pid = sTLinkLastFrontmostPid;
-    }
-    if (pid <= 0) pid = TLinkResolvePidForBundleId(bundleId);
+    pid_t pid = TLinkResolvePidForBundleId(bundleId);
     return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
@@ -2320,6 +2341,9 @@ static NSData *TLinkHandleHelloStatus(void)
         @"privhelperMode": @"restart_streamd_only",
     };
     CGSize screen = TLinkScreenPixelSize();
+    if (sTLinkLastFrontmostBundleId.length > 0) {
+        (void)TLinkResolvePidForBundleId(sTLinkLastFrontmostBundleId);
+    }
     uint64_t nowMs = TLinkNowMs();
     uint64_t frontmostAgeMs = (sTLinkLastFrontmostAtMs > 0 && nowMs >= sTLinkLastFrontmostAtMs)
         ? nowMs - sTLinkLastFrontmostAtMs
