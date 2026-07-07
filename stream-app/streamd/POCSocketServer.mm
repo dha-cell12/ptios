@@ -2020,31 +2020,6 @@ static NSString *TLinkFBSCurrentFrontmostBundleId(void)
     return asyncBundleId;
 }
 
-static BOOL TLinkWorkspaceOpenBundleId(NSString *bundleId)
-{
-    id workspace = TLinkApplicationWorkspace();
-    if (!workspace) return NO;
-    __block BOOL started = NO;
-    void (^openBlock)(void) = ^{
-        NSArray<NSString *> *selectors = @[@"openApplicationWithBundleID:", @"openApplicationWithBundleIdentifier:"];
-        for (NSString *selName in selectors) {
-            SEL sel = NSSelectorFromString(selName);
-            if (![workspace respondsToSelector:sel]) continue;
-            @try {
-                BOOL ok = ((BOOL (*)(id, SEL, NSString *))objc_msgSend)(workspace, sel, bundleId);
-                if (ok) {
-                    started = YES;
-                    return;
-                }
-            } @catch (__unused NSException *exception) {
-            }
-        }
-    };
-    if ([NSThread isMainThread]) openBlock();
-    else dispatch_sync(dispatch_get_main_queue(), openBlock);
-    return started;
-}
-
 static NSString *TLinkExecutableDirectory(void)
 {
     char path[PATH_MAX] = {0};
@@ -2064,31 +2039,44 @@ static NSString *TLinkPrivhelperPath(void)
     return [[NSFileManager defaultManager] isExecutableFileAtPath:path] ? path : nil;
 }
 
-static int TLinkRunPrivhelperOpenBundle(NSString *bundleId)
+static int TLinkRunPrivhelper(NSArray<NSString *> *arguments, int timeoutMs)
 {
-    if (bundleId.length == 0) return -100;
+    if (arguments.count == 0) return -100;
     NSString *path = TLinkPrivhelperPath();
     if (path.length == 0) return -101;
     const char *cpath = [path fileSystemRepresentation];
-    char *arg0 = strdup(cpath);
-    char *arg1 = strdup("--open-bundle");
-    char *arg2 = strdup([bundleId UTF8String] ?: "");
-    if (!arg0 || !arg1 || !arg2) {
-        if (arg0) free(arg0);
-        if (arg1) free(arg1);
-        if (arg2) free(arg2);
+
+    NSUInteger argc = arguments.count + 2;
+    char **argv = (char **)calloc(argc, sizeof(char *));
+    if (!argv) return -102;
+    argv[0] = strdup(cpath);
+    BOOL allocFailed = argv[0] == NULL;
+    for (NSUInteger i = 0; i < arguments.count; i++) {
+        NSString *arg = arguments[i] ?: @"";
+        argv[i + 1] = strdup([arg UTF8String] ?: "");
+        if (!argv[i + 1]) allocFailed = YES;
+    }
+    argv[argc - 1] = NULL;
+    if (allocFailed) {
+        for (NSUInteger i = 0; i < argc; i++) {
+            if (argv[i]) free(argv[i]);
+        }
+        free(argv);
         return -102;
     }
-    char *const argv[] = { arg0, arg1, arg2, NULL };
+
     pid_t pid = -1;
     int rc = posix_spawn(&pid, cpath, NULL, NULL, argv, environ);
-    free(arg0);
-    free(arg1);
-    free(arg2);
+    for (NSUInteger i = 0; i < argc; i++) {
+        if (argv[i]) free(argv[i]);
+    }
+    free(argv);
     if (rc != 0 || pid <= 0) return rc != 0 ? rc : -103;
 
     int status = 0;
-    for (int i = 0; i < 30; i++) {
+    int loops = timeoutMs > 0 ? timeoutMs / 100 : 30;
+    if (loops < 1) loops = 1;
+    for (int i = 0; i < loops; i++) {
         pid_t w = waitpid(pid, &status, WNOHANG);
         if (w == pid) {
             if (WIFEXITED(status)) return WEXITSTATUS(status);
@@ -2103,38 +2091,22 @@ static int TLinkRunPrivhelperOpenBundle(NSString *bundleId)
     return -106;
 }
 
-static BOOL TLinkWorkspaceOpenURL(NSURL *url)
+static int TLinkRunPrivhelperOpenBundle(NSString *bundleId)
 {
-    id workspace = TLinkApplicationWorkspace();
-    SEL openSel = NSSelectorFromString(@"openURL:");
-    if (workspace && [workspace respondsToSelector:openSel]) {
-        @try {
-            BOOL ok = ((BOOL (*)(id, SEL, NSURL *))objc_msgSend)(workspace, openSel, url);
-            if (ok) return YES;
-        } @catch (__unused NSException *exception) {
-        }
-    }
+    if (bundleId.length == 0) return -100;
+    return TLinkRunPrivhelper(@[@"--open-bundle", bundleId], 3000);
+}
 
-    __block BOOL started = NO;
-    void (^openBlock)(void) = ^{
-        @try {
-            UIApplication *app = [UIApplication sharedApplication];
-            if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
-                started = YES;
-                [app openURL:url options:@{} completionHandler:^(__unused BOOL success) {}];
-            } else {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                started = [app openURL:url];
-#pragma clang diagnostic pop
-            }
-        } @catch (__unused NSException *exception) {
-            started = NO;
-        }
-    };
-    if ([NSThread isMainThread]) openBlock();
-    else dispatch_sync(dispatch_get_main_queue(), openBlock);
-    return started;
+static int TLinkRunPrivhelperKillBundle(NSString *bundleId)
+{
+    if (bundleId.length == 0) return -100;
+    return TLinkRunPrivhelper(@[@"--kill-bundle", bundleId], 4000);
+}
+
+static int TLinkRunPrivhelperOpenURL(NSString *rawURL)
+{
+    if (rawURL.length == 0) return -100;
+    return TLinkRunPrivhelper(@[@"--open-url", rawURL], 3000);
 }
 
 static NSData *TLinkHandleOpenApplication(NSString *body)
@@ -2157,19 +2129,17 @@ static NSData *TLinkHandleAppKill(NSString *body)
     if ([bundleId isEqualToString:@"com.apple.springboard"]) {
         return TLinkUnsupported(31, @"refusing_to_kill_springboard");
     }
-    pid_t pid = TLinkPidForBundleId(bundleId);
-    if (pid <= 0) return TLinkError([NSString stringWithFormat:@"app_not_running bundle=%@", bundleId]);
-    if (kill(pid, SIGTERM) != 0) {
-        return TLinkError([NSString stringWithFormat:@"kill_app_sigterm_failed pid=%d errno=%d", pid, errno]);
+    int helperExit = TLinkRunPrivhelperKillBundle(bundleId);
+    if (helperExit != 0) {
+        return TLinkError([NSString stringWithFormat:@"kill_app_failed_or_limited_on_trollstore bundle=%@ exit=%d", bundleId, helperExit]);
     }
-    usleep(500 * 1000);
-    if (kill(pid, 0) == 0) {
-        int rc = kill(pid, SIGKILL);
-        if (rc != 0) {
-            return TLinkError([NSString stringWithFormat:@"kill_app_sigkill_failed pid=%d errno=%d", pid, errno]);
-        }
+    if ([sTLinkLastFrontmostBundleId isEqualToString:bundleId]) {
+        sTLinkLastFrontmostBundleId = @"";
+        sTLinkLastFrontmostSource = @"task31:privhelper-killed";
+        sTLinkLastFrontmostPid = 0;
+        sTLinkLastFrontmostAtMs = TLinkNowMs();
     }
-    return TLinkSuccess(nil);
+    return TLinkSuccess(@"kill_app_via_privhelper");
 }
 
 static NSData *TLinkHandleAppState(NSString *body)
@@ -2293,26 +2263,20 @@ static NSData *TLinkHandleOpenURL(NSString *body)
     NSString *raw = TLinkCleanPayload(body);
     if (raw.length == 0) return TLinkError(@"open_url_missing_url");
     NSString *lowerRaw = [raw lowercaseString];
-    NSString *fallback = nil;
     NSString *knownBundleId = nil;
     if ([lowerRaw hasPrefix:@"prefs:"]) {
-        fallback = [@"App-Prefs:" stringByAppendingString:[raw substringFromIndex:6]];
         knownBundleId = @"com.apple.Preferences";
     } else if ([lowerRaw hasPrefix:@"app-prefs:"]) {
         knownBundleId = @"com.apple.Preferences";
     }
     NSURL *url = [NSURL URLWithString:raw];
     if (!url) return TLinkError(@"open_url_invalid_url");
-    if (TLinkWorkspaceOpenURL(url)) {
-        if (knownBundleId.length > 0) TLinkRememberFrontmost(knownBundleId, @"task54", 0);
-        return TLinkSuccess(nil);
+    int helperExit = TLinkRunPrivhelperOpenURL(raw);
+    if (helperExit == 0) {
+        if (knownBundleId.length > 0) TLinkRememberFrontmost(knownBundleId, @"task54:privhelper", 0);
+        return TLinkSuccess(@"open_url_via_privhelper");
     }
-    NSURL *fallbackURL = fallback.length > 0 ? [NSURL URLWithString:fallback] : nil;
-    if (fallbackURL && TLinkWorkspaceOpenURL(fallbackURL)) {
-        if (knownBundleId.length > 0) TLinkRememberFrontmost(knownBundleId, @"task54:fallback", 0);
-        return TLinkSuccess(nil);
-    }
-    return TLinkError(@"open_url_failed_or_limited_on_trollstore");
+    return TLinkError([NSString stringWithFormat:@"open_url_failed_or_limited_on_trollstore exit=%d", helperExit]);
 }
 
 static NSData *TLinkHandleHelloStatus(void)
@@ -2334,11 +2298,13 @@ static NSData *TLinkHandleHelloStatus(void)
         @"appMgmt": @(YES),
         @"appMgmtMode": @"limited_process_info_helper_launch_kill",
         @"appLaunchMode": @"privhelper_best_effort",
+        @"appKillMode": @"privhelper_best_effort",
+        @"openURLMode": @"privhelper_best_effort",
         @"frontmost": @(YES),
         @"clearData": @(NO),
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
-        @"privhelperMode": @"restart_streamd_only",
+        @"privhelperMode": @"open_kill_restart",
     };
     CGSize screen = TLinkScreenPixelSize();
     if (sTLinkLastFrontmostBundleId.length > 0) {
@@ -2572,7 +2538,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,appInfo,appLaunchPrivhelper,appKillLimited,openURL,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,script,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,script,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

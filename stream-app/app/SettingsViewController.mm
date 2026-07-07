@@ -11,8 +11,8 @@
     [super viewDidLoad];
     self.title = @"Settings";
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"App/Process: helper launch", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: restart_streamd_only"],
+        @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -97,6 +97,12 @@
             break;
         case 10:
             line = @"530\n";
+            break;
+        case 11:
+            line = @"11com.apple.Preferences\n";
+            break;
+        case 12:
+            line = @"54App-Prefs:root=General\n";
             break;
         default: return;
     }
