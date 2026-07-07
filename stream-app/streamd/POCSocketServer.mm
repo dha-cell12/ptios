@@ -1716,9 +1716,15 @@ typedef CFStringRef (*TLinkSBSCopyFrontmostFn)(void);
 typedef int (*TLinkSBSProcessIDFn)(CFStringRef identifier);
 
 static NSString *sTLinkLastFrontmostBundleId = nil;
+static NSString *sTLinkLastFrontmostSource = nil;
+static pid_t sTLinkLastFrontmostPid = 0;
+static uint64_t sTLinkLastFrontmostAtMs = 0;
 static id sTLinkFBSDisplayLayoutMonitor = nil;
 static id sTLinkFBSDisplayLayoutBlock = nil;
 static NSString *sTLinkFrontmostDiag = nil;
+
+static pid_t TLinkResolvePidForBundleId(NSString *bundleId);
+static void TLinkRememberFrontmost(NSString *bundleId, NSString *source, pid_t pid);
 
 static void *TLinkSpringBoardServicesHandle(void)
 {
@@ -1770,7 +1776,7 @@ static NSString *TLinkSBSCopyFrontmostBundleId(void)
         NSString *bundleId = [(__bridge NSString *)front copy];
         if (strncmp(symbols[i], "SBSCopy", 7) == 0) CFRelease(front);
         if (bundleId.length > 0) {
-            sTLinkLastFrontmostBundleId = bundleId;
+            TLinkRememberFrontmost(bundleId, [NSString stringWithFormat:@"sbs:%s", symbols[i]], 0);
             return bundleId;
         }
     }
@@ -1785,7 +1791,6 @@ static pid_t TLinkSBSProcessIDForBundleId(NSString *bundleId)
     if (!handle) return 0;
     const char *symbols[] = {
         "SBSProcessIDForDisplayIdentifier",
-        "SBSCopyApplicationProcessIDForDisplayIdentifier",
         NULL,
     };
     for (int i = 0; symbols[i] != NULL; i++) {
@@ -1795,6 +1800,22 @@ static pid_t TLinkSBSProcessIDForBundleId(NSString *bundleId)
         if (pid > 0) return (pid_t)pid;
     }
     return 0;
+}
+
+static pid_t TLinkResolvePidForBundleId(NSString *bundleId)
+{
+    pid_t pid = TLinkSBSProcessIDForBundleId(bundleId);
+    if (pid <= 0) pid = TLinkPidForBundleId(bundleId);
+    return pid;
+}
+
+static void TLinkRememberFrontmost(NSString *bundleId, NSString *source, pid_t pid)
+{
+    if (bundleId.length == 0) return;
+    sTLinkLastFrontmostBundleId = bundleId;
+    sTLinkLastFrontmostSource = source ?: @"unknown";
+    sTLinkLastFrontmostPid = pid > 0 ? pid : TLinkResolvePidForBundleId(bundleId);
+    sTLinkLastFrontmostAtMs = TLinkNowMs();
 }
 
 static BOOL TLinkLooksLikeBundleId(NSString *candidate)
@@ -1931,7 +1952,7 @@ static NSString *TLinkFBSCurrentFrontmostBundleId(void)
 
         sTLinkFBSDisplayLayoutBlock = [^(id transition) {
             NSString *bundleId = TLinkBundleIdFromFBSObject(transition);
-            if (bundleId.length > 0) sTLinkLastFrontmostBundleId = bundleId;
+            if (bundleId.length > 0) TLinkRememberFrontmost(bundleId, @"fbs:transition", 0);
         } copy];
         SEL transitionHandlerSel = NSSelectorFromString(@"setTransitionHandler:");
         if ([config respondsToSelector:transitionHandlerSel]) {
@@ -1966,13 +1987,13 @@ static NSString *TLinkFBSCurrentFrontmostBundleId(void)
     id layout = TLinkObjectForSelectorOrKey(sTLinkFBSDisplayLayoutMonitor, @"currentLayout", nil);
     NSString *bundleId = TLinkBundleIdFromFBSObject(layout);
     if (bundleId.length > 0) {
-        sTLinkLastFrontmostBundleId = bundleId;
+        TLinkRememberFrontmost(bundleId, @"fbs:currentLayout", 0);
         return bundleId;
     }
 
     bundleId = TLinkBundleIdFromFBSObject(sTLinkFBSDisplayLayoutMonitor);
     if (bundleId.length > 0) {
-        sTLinkLastFrontmostBundleId = bundleId;
+        TLinkRememberFrontmost(bundleId, @"fbs:monitor", 0);
         return bundleId;
     }
 
@@ -2047,7 +2068,7 @@ static NSData *TLinkHandleOpenApplication(NSString *body)
     if (bundleId.length == 0) return TLinkError(@"open_app_missing_bundle_id");
     int sbsRc = INT_MIN;
     if (TLinkSBSLaunchApplication(bundleId, &sbsRc) || TLinkWorkspaceOpenBundleId(bundleId)) {
-        sTLinkLastFrontmostBundleId = bundleId;
+        TLinkRememberFrontmost(bundleId, @"task11", 0);
         return TLinkSuccess(nil);
     }
     return TLinkError([NSString stringWithFormat:@"open_app_failed_or_limited_on_trollstore bundle=%@ sbs_rc=%d", bundleId, sbsRc]);
@@ -2079,7 +2100,7 @@ static NSData *TLinkHandleAppState(NSString *body)
 {
     NSString *bundleId = TLinkCleanPayload(body);
     if (bundleId.length == 0) return TLinkError(@"app_state_missing_bundle_id");
-    return TLinkSuccess(TLinkPidForBundleId(bundleId) > 0 ? @"1" : @"0");
+    return TLinkSuccess(TLinkResolvePidForBundleId(bundleId) > 0 ? @"1" : @"0");
 }
 
 static NSData *TLinkHandleAppInfo(NSString *body)
@@ -2091,7 +2112,7 @@ static NSData *TLinkHandleAppInfo(NSString *body)
     NSString *name = TLinkProtocolSafeField(TLinkStringForSelectorOrKey(proxy, @"localizedName", @"localizedName"));
     NSString *shortVersion = TLinkProtocolSafeField(TLinkStringForSelectorOrKey(proxy, @"shortVersionString", @"shortVersionString"));
     NSString *bundleVersion = TLinkProtocolSafeField(TLinkStringForSelectorOrKey(proxy, @"bundleVersion", @"bundleVersion"));
-    NSString *state = TLinkPidForBundleId(bundleId) > 0 ? @"1" : @"0";
+    NSString *state = TLinkResolvePidForBundleId(bundleId) > 0 ? @"1" : @"0";
     return TLinkSuccess([NSString stringWithFormat:@"%@;;%@;;%@;;%@;;%@", bundleId, name, shortVersion, bundleVersion, state]);
 }
 
@@ -2117,8 +2138,7 @@ static NSData *TLinkHandleAppPid(NSString *body)
 {
     NSString *bundleId = TLinkCleanPayload(body);
     if (bundleId.length == 0) return TLinkError(@"app_pid_missing_bundle_id");
-    pid_t pid = TLinkSBSProcessIDForBundleId(bundleId);
-    if (pid <= 0) pid = TLinkPidForBundleId(bundleId);
+    pid_t pid = TLinkResolvePidForBundleId(bundleId);
     return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
@@ -2130,8 +2150,11 @@ static NSData *TLinkHandleFrontmostPid(void)
     if (bundleId.length == 0) {
         return TLinkUnsupported(51, [NSString stringWithFormat:@"frontmost_pid_requires_springboard_or_frontboard_access %@", sTLinkFrontmostDiag ?: @""]);
     }
-    pid_t pid = TLinkSBSProcessIDForBundleId(bundleId);
-    if (pid <= 0) pid = TLinkPidForBundleId(bundleId);
+    pid_t pid = 0;
+    if ([bundleId isEqualToString:sTLinkLastFrontmostBundleId] && sTLinkLastFrontmostPid > 0) {
+        pid = sTLinkLastFrontmostPid;
+    }
+    if (pid <= 0) pid = TLinkResolvePidForBundleId(bundleId);
     return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
@@ -2197,15 +2220,26 @@ static NSData *TLinkHandleOpenURL(NSString *body)
 {
     NSString *raw = TLinkCleanPayload(body);
     if (raw.length == 0) return TLinkError(@"open_url_missing_url");
+    NSString *lowerRaw = [raw lowercaseString];
     NSString *fallback = nil;
-    if ([[raw lowercaseString] hasPrefix:@"prefs:"]) {
+    NSString *knownBundleId = nil;
+    if ([lowerRaw hasPrefix:@"prefs:"]) {
         fallback = [@"App-Prefs:" stringByAppendingString:[raw substringFromIndex:6]];
+        knownBundleId = @"com.apple.Preferences";
+    } else if ([lowerRaw hasPrefix:@"app-prefs:"]) {
+        knownBundleId = @"com.apple.Preferences";
     }
     NSURL *url = [NSURL URLWithString:raw];
     if (!url) return TLinkError(@"open_url_invalid_url");
-    if (TLinkWorkspaceOpenURL(url)) return TLinkSuccess(nil);
+    if (TLinkWorkspaceOpenURL(url)) {
+        if (knownBundleId.length > 0) TLinkRememberFrontmost(knownBundleId, @"task54", 0);
+        return TLinkSuccess(nil);
+    }
     NSURL *fallbackURL = fallback.length > 0 ? [NSURL URLWithString:fallback] : nil;
-    if (fallbackURL && TLinkWorkspaceOpenURL(fallbackURL)) return TLinkSuccess(nil);
+    if (fallbackURL && TLinkWorkspaceOpenURL(fallbackURL)) {
+        if (knownBundleId.length > 0) TLinkRememberFrontmost(knownBundleId, @"task54:fallback", 0);
+        return TLinkSuccess(nil);
+    }
     return TLinkError(@"open_url_failed_or_limited_on_trollstore");
 }
 
@@ -2234,6 +2268,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"privhelperMode": @"restart_streamd_only",
     };
     CGSize screen = TLinkScreenPixelSize();
+    uint64_t nowMs = TLinkNowMs();
+    uint64_t frontmostAgeMs = (sTLinkLastFrontmostAtMs > 0 && nowMs >= sTLinkLastFrontmostAtMs)
+        ? nowMs - sTLinkLastFrontmostAtMs
+        : 0;
     NSDictionary *payload = @{
         @"runtime": @"trollstore",
         @"service": @"streamd",
@@ -2253,6 +2291,13 @@ static NSData *TLinkHandleHelloStatus(void)
             @"last_error_ts": @(0),
         },
         @"screen": @{@"width": @((int)screen.width), @"height": @((int)screen.height), @"scale": @([UIScreen mainScreen].scale)},
+        @"frontmost_cache": @{
+            @"bundle_id": sTLinkLastFrontmostBundleId ?: @"",
+            @"pid": @((int)sTLinkLastFrontmostPid),
+            @"source": sTLinkLastFrontmostSource ?: @"",
+            @"age_ms": @(frontmostAgeMs),
+            @"diag": sTLinkFrontmostDiag ?: @"",
+        },
         @"senderID": [NSString stringWithFormat:@"0x%llx", POCTouchCurrentSenderID()],
         @"dispatchVariant": @(POCTouchDispatchVariant()),
         @"ports": @{@"task": @6000, @"h264": @[@7001, @7002, @7003, @7004, @7005, @7006]},
