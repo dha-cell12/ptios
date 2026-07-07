@@ -1,4 +1,5 @@
 #import "ScriptsViewController.h"
+#import "ImageViewerViewController.h"
 #import "ScriptEditorViewController.h"
 #import "ScriptLogViewController.h"
 #import "TLinkSocketClient.h"
@@ -118,7 +119,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     if (isDirectory) return YES;
     if ([self isInsideScriptBundlePath:[self scriptsPath]]) return YES;
     NSString *ext = [name.pathExtension lowercaseString];
-    return [ext isEqualToString:@"tl"] || [ext isEqualToString:@"js"] || [ext isEqualToString:@"json"] || [ext isEqualToString:@"plist"] || [ext isEqualToString:@"txt"];
+    return [ext isEqualToString:@"tl"] || [ext isEqualToString:@"js"] || [ext isEqualToString:@"json"] || [ext isEqualToString:@"plist"] || [ext isEqualToString:@"txt"] || [self isImageFilePath:name];
 }
 
 - (BOOL)isPlayableFileEntry:(SCScriptEntry *)entry
@@ -126,6 +127,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     if (entry.directory) return NO;
     NSString *ext = [entry.path.pathExtension lowercaseString];
     return [ext isEqualToString:@"tl"] || [ext isEqualToString:@"js"];
+}
+
+- (BOOL)isImageFilePath:(NSString *)path
+{
+    NSString *ext = [path.pathExtension lowercaseString];
+    return [@[@"png", @"jpg", @"jpeg", @"bmp", @"gif", @"heic", @"heif"] containsObject:ext];
 }
 
 - (void)presentNamePromptWithTitle:(NSString *)title
@@ -418,7 +425,13 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     } else {
         cell.detailTextLabel.text = entry.path.lastPathComponent;
     }
-    cell.imageView.image = [UIImage systemImageNamed:entry.directory ? @"folder" : @"doc.text"];
+    if (entry.directory) {
+        cell.imageView.image = [UIImage systemImageNamed:@"folder"];
+    } else if ([self isImageFilePath:entry.path]) {
+        cell.imageView.image = [UIImage systemImageNamed:@"photo"];
+    } else {
+        cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
+    }
     BOOL canRun = entry.scriptBundle || [self isPlayableFileEntry:entry];
     cell.accessoryView = canRun ? [self playButtonForRow:indexPath.row] : nil;
     cell.accessoryType = canRun ? UITableViewCellAccessoryNone : (entry.directory ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone);
@@ -534,6 +547,11 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)openEditorForEntry:(SCScriptEntry *)entry
 {
+    if ([self isImageFilePath:entry.path]) {
+        SCImageViewerViewController *viewer = [[SCImageViewerViewController alloc] initWithImagePath:entry.path];
+        [self.navigationController pushViewController:viewer animated:YES];
+        return;
+    }
     SCScriptEditorViewController *editor = [[SCScriptEditorViewController alloc] initWithFilePath:entry.path];
     [self.navigationController pushViewController:editor animated:YES];
 }

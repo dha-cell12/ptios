@@ -1,17 +1,22 @@
 #import "SettingsViewController.h"
 #import "TLinkSocketClient.h"
 
+static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
+
 @implementation SCSettingsViewController {
     NSArray<NSArray<NSString *> *> *_sections;
     UITextView *_resultView;
+    NSMutableDictionary *_config;
 }
 
 - (void)viewDidLoad
 {
     [super viewDidLoad];
     self.title = @"Settings";
+    [self loadConfig];
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Touch Indicator On", @"Touch Indicator Off"],
+        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Touch Indicator On", @"Touch Indicator Off", @"Export Diagnostics"],
+        @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup"],
         @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Visual Feedback: foreground_overlay", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart"],
     ];
 
@@ -20,6 +25,130 @@
     _resultView.font = [UIFont fontWithName:@"Menlo" size:11.0] ?: [UIFont systemFontOfSize:11.0];
     _resultView.text = @"Diagnostics will appear here.";
     self.tableView.tableFooterView = _resultView;
+}
+
+- (void)loadConfig
+{
+    NSDictionary *loaded = [NSDictionary dictionaryWithContentsOfFile:kTLinkSettingsConfigPath];
+    _config = loaded ? [loaded mutableCopy] : [NSMutableDictionary dictionary];
+
+    NSMutableDictionary *touch = [_config[@"touch_indicator"] isKindOfClass:[NSDictionary class]]
+        ? [_config[@"touch_indicator"] mutableCopy]
+        : [NSMutableDictionary dictionary];
+    if (!touch[@"show"]) touch[@"show"] = @NO;
+    if (![touch[@"color"] isKindOfClass:[NSDictionary class]]) {
+        touch[@"color"] = @{@"r": @255, @"g": @0, @"b": @0, @"alpha": @0.7};
+    }
+    _config[@"touch_indicator"] = touch;
+    if (!_config[@"switch_app_before_run_script"]) _config[@"switch_app_before_run_script"] = @YES;
+    if (!_config[@"double_click_volume_show_popup"]) _config[@"double_click_volume_show_popup"] = @YES;
+}
+
+- (void)saveConfig
+{
+    NSString *parent = [kTLinkSettingsConfigPath stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:nil];
+    BOOL ok = [_config writeToFile:kTLinkSettingsConfigPath atomically:YES];
+    _resultView.text = ok ? [NSString stringWithFormat:@"Saved %@", kTLinkSettingsConfigPath] : @"Failed to save settings.";
+}
+
+- (BOOL)runtimeSettingEnabledAtRow:(NSInteger)row
+{
+    switch (row) {
+        case 0:
+            return [_config[@"touch_indicator"][@"show"] boolValue];
+        case 1:
+            return [_config[@"switch_app_before_run_script"] boolValue];
+        case 2:
+            return [_config[@"double_click_volume_show_popup"] boolValue];
+        default:
+            return NO;
+    }
+}
+
+- (NSString *)runtimeSettingDetailAtRow:(NSInteger)row
+{
+    switch (row) {
+        case 0:
+            return @"Show touch overlay events in foreground";
+        case 1:
+            return @"Saved for script compatibility";
+        case 2:
+            return @"Saved; Activator fallback is limited";
+        default:
+            return @"";
+    }
+}
+
+- (UISwitch *)runtimeSwitchForRow:(NSInteger)row
+{
+    UISwitch *switchView = [[UISwitch alloc] initWithFrame:CGRectZero];
+    switchView.tag = row;
+    [switchView setOn:[self runtimeSettingEnabledAtRow:row] animated:NO];
+    [switchView addTarget:self action:@selector(runtimeSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    return switchView;
+}
+
+- (void)runtimeSwitchChanged:(UISwitch *)switchView
+{
+    BOOL on = switchView.isOn;
+    switch (switchView.tag) {
+        case 0: {
+            NSMutableDictionary *touch = [_config[@"touch_indicator"] mutableCopy] ?: [NSMutableDictionary dictionary];
+            touch[@"show"] = @(on);
+            _config[@"touch_indicator"] = touch;
+            [self saveConfig];
+            NSString *line = on ? @"261\n" : @"260\n";
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                NSString *response = [TLinkSocketClient sendLineAndRead:line timeout:4.0];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    self->_resultView.text = [NSString stringWithFormat:@"Touch Indicator %@\n%@", on ? @"On" : @"Off", response ?: @"<nil>"];
+                });
+            });
+            break;
+        }
+        case 1:
+            _config[@"switch_app_before_run_script"] = @(on);
+            [self saveConfig];
+            break;
+        case 2:
+            _config[@"double_click_volume_show_popup"] = @(on);
+            [self saveConfig];
+            break;
+        default:
+            break;
+    }
+}
+
+- (void)exportDiagnostics
+{
+    _resultView.text = @"Exporting diagnostics...";
+    NSDictionary *configSnapshot = [_config copy] ?: @{};
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSMutableString *report = [NSMutableString string];
+        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+        formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss Z";
+        [report appendFormat:@"TLinkauto TrollStore Diagnostics\n%@\n\n", [formatter stringFromDate:[NSDate date]]];
+        [report appendFormat:@"config_path: %@\nconfig: %@\n\n", kTLinkSettingsConfigPath, configSnapshot];
+
+        NSArray<NSString *> *lines = @[@"97\n", @"60\n", @"98\n"];
+        NSArray<NSString *> *labels = @[@"task97_capability", @"task60_status", @"task98_capture_probe"];
+        for (NSUInteger i = 0; i < lines.count; i++) {
+            NSString *response = [TLinkSocketClient sendLineAndRead:lines[i] timeout:8.0];
+            [report appendFormat:@"[%@]\n%@\n\n", labels[i], response ?: @"<nil>"];
+        }
+
+        NSString *dir = @"/var/mobile/Library/TLinkauto/diagnostics";
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSDateFormatter *nameFormatter = [[NSDateFormatter alloc] init];
+        nameFormatter.dateFormat = @"yyyyMMdd-HHmmss";
+        NSString *path = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@"diagnostics-%@.txt", [nameFormatter stringFromDate:[NSDate date]]]];
+        NSError *err = nil;
+        BOOL ok = [report writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_resultView.text = ok ? [NSString stringWithFormat:@"Diagnostics exported:\n%@", path] : (err.localizedDescription ?: @"diagnostics export failed");
+        });
+    });
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
@@ -34,7 +163,9 @@
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
-    return section == 0 ? @"Diagnostics" : @"TrollStore Compatibility";
+    if (section == 0) return @"Diagnostics";
+    if (section == 1) return @"Runtime Settings";
+    return @"TrollStore Compatibility";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -46,16 +177,41 @@
     }
     NSString *title = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
     cell.textLabel.text = title;
-    cell.detailTextLabel.text = indexPath.section == 0 ? @"Tap to run" : @"Planned compatibility fallback";
-    cell.accessoryType = indexPath.section == 0 ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;
-    cell.selectionStyle = indexPath.section == 0 ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
+    cell.accessoryView = nil;
+    if (indexPath.section == 0) {
+        cell.detailTextLabel.text = @"Tap to run";
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    } else if (indexPath.section == 1) {
+        cell.detailTextLabel.text = [self runtimeSettingDetailAtRow:indexPath.row];
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.accessoryView = [self runtimeSwitchForRow:indexPath.row];
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    } else {
+        cell.detailTextLabel.text = @"Planned compatibility fallback";
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    }
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 1) {
+        UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+        UISwitch *switchView = [cell.accessoryView isKindOfClass:[UISwitch class]] ? (UISwitch *)cell.accessoryView : nil;
+        if (!switchView) return;
+        [switchView setOn:!switchView.isOn animated:YES];
+        [self runtimeSwitchChanged:switchView];
+        return;
+    }
     if (indexPath.section != 0) return;
+
+    if (indexPath.row == 18) {
+        [self exportDiagnostics];
+        return;
+    }
 
     NSString *line = nil;
     switch (indexPath.row) {

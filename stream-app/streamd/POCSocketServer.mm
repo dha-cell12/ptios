@@ -161,6 +161,7 @@ static NSMutableArray<NSDictionary *> *sTLinkVisualEvents = nil;
 static uint64_t sTLinkNextVisualEventId = 1;
 static uint64_t sTLinkLastVisualEventId = 0;
 static BOOL sTLinkTouchIndicatorEnabled = NO;
+static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 
 static NSString *TLinkVisualSafeText(NSString *text)
 {
@@ -3063,6 +3064,18 @@ static void TLinkEnsureRuntimeDirectories(void)
     [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto" withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/scripts" withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/config" withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/config/tweak" withIntermediateDirectories:YES attributes:nil error:nil];
+}
+
+static void TLinkLoadSettingsConfig(void)
+{
+    NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:kTLinkSettingsConfigPath];
+    NSDictionary *touch = [config[@"touch_indicator"] isKindOfClass:[NSDictionary class]] ? config[@"touch_indicator"] : nil;
+    BOOL enabled = [touch[@"show"] boolValue];
+    @synchronized (TLinkVisualFeedbackLock()) {
+        sTLinkTouchIndicatorEnabled = enabled;
+    }
+    POCLogf("settings: loaded touch_indicator.show=%d path=%s", enabled ? 1 : 0, [kTLinkSettingsConfigPath UTF8String]);
 }
 
 static NSData *TLinkHandleTaskLine(const char *line)
@@ -3524,5 +3537,7 @@ void POCStartSocketServer(void)
 
 void TLinkStartTaskServer(void)
 {
+    TLinkEnsureRuntimeDirectories();
+    TLinkLoadSettingsConfig();
     POCStartSocketServer();
 }
