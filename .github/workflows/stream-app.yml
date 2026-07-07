@@ -59,6 +59,8 @@ jobs:
           test -f stream-app/privhelper/main.mm
           test -f stream-app/app/TLinkSocketClient.mm
           test -f stream-app/app/ScriptsViewController.mm
+          test -f stream-app/app/ScriptEditorViewController.mm
+          test -f stream-app/app/ScriptLogViewController.mm
           test -f stream-app/app/SettingsViewController.mm
           grep -q 'privhelper' stream-app/Makefile
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
@@ -66,6 +68,8 @@ jobs:
           grep -q 'startVisualFeedbackMonitor' stream-app/app/AppDelegate.mm
           grep -q 'showToastOverlayWithMessage' stream-app/app/AppDelegate.mm
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
+          grep -q 'ScriptEditorViewController.mm' stream-app/app/Makefile
+          grep -q 'ScriptLogViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
           grep -q 'QuartzCore' stream-app/app/Makefile
           grep -q 'Restart streamd' stream-app/app/ViewController.mm
@@ -121,6 +125,13 @@ jobs:
           grep -q 'Touch Indicator On' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm
           grep -q 'createDemoScript' stream-app/app/ScriptsViewController.mm
+          grep -q 'showAddMenu' stream-app/app/ScriptsViewController.mm
+          grep -q 'New File' stream-app/app/ScriptsViewController.mm
+          grep -q 'New Folder' stream-app/app/ScriptsViewController.mm
+          grep -q 'openEditorForEntry' stream-app/app/ScriptsViewController.mm
+          grep -q 'SCScriptEditorViewController' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'showScriptLogs' stream-app/app/ScriptsViewController.mm
+          grep -q 'log_tail' stream-app/app/ScriptLogViewController.mm
           grep -q 'confirmDeleteEntryAtIndexPath' stream-app/app/ScriptsViewController.mm
           grep -q 'trailingSwipeActionsConfigurationForRowAtIndexPath' stream-app/app/ScriptsViewController.mm
           grep -q 'requestTask:20' stream-app/app/ScriptsViewController.mm
