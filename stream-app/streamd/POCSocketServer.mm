@@ -147,6 +147,69 @@ static uint64_t TLinkNowMs(void)
 static NSData *TLinkHandleTaskLine(const char *line);
 static NSString *TLinkCleanPayload(NSString *body);
 
+static NSObject *TLinkVisualFeedbackLock(void)
+{
+    static NSObject *lock = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        lock = [[NSObject alloc] init];
+    });
+    return lock;
+}
+
+static NSMutableArray<NSDictionary *> *sTLinkVisualEvents = nil;
+static uint64_t sTLinkNextVisualEventId = 1;
+static uint64_t sTLinkLastVisualEventId = 0;
+
+static NSString *TLinkVisualSafeText(NSString *text)
+{
+    NSMutableString *safe = [[text ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@" "] mutableCopy];
+    [safe replaceOccurrencesOfString:@"\n" withString:@" " options:0 range:NSMakeRange(0, safe.length)];
+    return safe ?: @"";
+}
+
+static uint64_t TLinkRecordToast(NSString *message, double duration, int type, int position, int fontSize, NSString *source)
+{
+    NSString *safeMessage = TLinkVisualSafeText(message);
+    if (safeMessage.length == 0) return 0;
+    if (duration <= 0.0) duration = 2.0;
+    if (duration > 30.0) duration = 30.0;
+    if (fontSize <= 0) fontSize = 15;
+    if (fontSize > 50) fontSize = 50;
+
+    uint64_t eventId = 0;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkVisualEvents) sTLinkVisualEvents = [NSMutableArray array];
+        eventId = sTLinkNextVisualEventId++;
+        sTLinkLastVisualEventId = eventId;
+        [sTLinkVisualEvents addObject:@{
+            @"id": @(eventId),
+            @"kind": @"toast",
+            @"message": safeMessage,
+            @"duration": @(duration),
+            @"type": @(type),
+            @"position": @(position),
+            @"fontSize": @(fontSize),
+            @"source": source ?: @"unknown",
+            @"ts_ms": @(TLinkNowMs()),
+        }];
+        while (sTLinkVisualEvents.count > 50) {
+            [sTLinkVisualEvents removeObjectAtIndex:0];
+        }
+    }
+    return eventId;
+}
+
+static NSDictionary *TLinkVisualFeedbackDictionary(void)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        return @{
+            @"last_event_id": @(sTLinkLastVisualEventId),
+            @"events": sTLinkVisualEvents ? [sTLinkVisualEvents copy] : @[],
+        };
+    }
+}
+
 @interface TLinkScriptSession : NSObject
 @property(nonatomic, copy) NSString *sessionId;
 @property(nonatomic, copy) NSString *bundlePath;
@@ -378,10 +441,19 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         TLinkScriptAppendLog(weakSession, [value toString] ?: @"");
     };
     device[@"toast"] = ^NSDictionary *(JSValue *message, JSValue *options) {
-        (void)options;
         NSString *text = [message toString] ?: @"";
         TLinkScriptAppendLog(weakSession, [NSString stringWithFormat:@"toast: %@", text]);
-        return @{@"ok": @YES, @"mode": @"log_only_on_trollstore"};
+        NSDictionary *opts = nil;
+        if (options && ![options isUndefined] && ![options isNull]) {
+            id obj = [options toObject];
+            if ([obj isKindOfClass:[NSDictionary class]]) opts = obj;
+        }
+        double duration = opts[@"duration"] ? [opts[@"duration"] doubleValue] : 2.0;
+        int type = opts[@"type"] ? [opts[@"type"] intValue] : 0;
+        int position = opts[@"position"] ? [opts[@"position"] intValue] : 2;
+        int fontSize = opts[@"fontSize"] ? [opts[@"fontSize"] intValue] : 15;
+        uint64_t eventId = TLinkRecordToast(text, duration, type, position, fontSize, @"script");
+        return @{@"ok": @YES, @"mode": @"app_foreground_overlay", @"event_id": @(eventId)};
     };
     device[@"shouldStop"] = ^BOOL {
         return TLinkScriptStopRequested(weakSession);
@@ -629,6 +701,19 @@ static NSData *TLinkHandleStopScript(NSString *body)
     }
     TLinkScriptAppendLog(session, @"stop requested");
     return TLinkSuccess([NSString stringWithFormat:@"script_stopping;;%@", session.sessionId ?: @""]);
+}
+
+static NSData *TLinkHandleToast(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    int type = parts.count >= 1 ? [parts[0] intValue] : 0;
+    NSString *message = parts.count >= 2 ? parts[1] : TLinkCleanPayload(body);
+    double duration = parts.count >= 3 ? [parts[2] doubleValue] : 2.0;
+    int position = parts.count >= 4 ? [parts[3] intValue] : 2;
+    int fontSize = parts.count >= 5 ? [parts[4] intValue] : 15;
+    uint64_t eventId = TLinkRecordToast(message, duration, type, position, fontSize, @"task22");
+    if (eventId == 0) return TLinkError(@"toast_missing_message");
+    return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu", eventId]);
 }
 
 @interface TLinkImageObject : NSObject
@@ -2784,6 +2869,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"tesseractOCR": @(NO),
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
+        @"visualFeedback": @(YES),
+        @"toastOverlay": @(YES),
         @"appMgmt": @(YES),
         @"appMgmtMode": @"limited_process_info_helper_launch_kill",
         @"appLaunchMode": @"privhelper_best_effort",
@@ -2816,6 +2903,7 @@ static NSData *TLinkHandleHelloStatus(void)
             @"model": TLinkModelName(),
         },
         @"script": TLinkScriptStatusDictionary(),
+        @"visual_feedback": TLinkVisualFeedbackDictionary(),
         @"screen": @{@"width": @((int)screen.width), @"height": @((int)screen.height), @"scale": @([UIScreen mainScreen].scale)},
         @"frontmost_cache": @{
             @"bundle_id": sTLinkLastFrontmostBundleId ?: @"",
@@ -2870,6 +2958,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 21) {
         return TLinkHandleTemplateMatch(body);
+    }
+
+    if (taskType == 22) {
+        return TLinkHandleToast(body);
     }
 
     if (taskType == 25) {
@@ -3030,7 +3122,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,19,20,21,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,19,20,21,22,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,visualFeedback,toastOverlay,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity,alertOverlay,touchIndicator keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

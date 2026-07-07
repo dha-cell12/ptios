@@ -46,9 +46,10 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
                                                                          target:self
                                                                          action:@selector(createDemoScript)];
     self.navigationItem.rightBarButtonItems = @[refresh, add];
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemStop
-                                                                                          target:self
-                                                                                          action:@selector(stopScript)];
+    UIBarButtonItem *stop = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemStop
+                                                                          target:self
+                                                                          action:@selector(stopScript)];
+    self.navigationItem.leftBarButtonItems = @[self.editButtonItem, stop];
 
     _emptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _emptyLabel.text = @"No scripts found";
@@ -169,6 +170,11 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     [self.tableView reloadData];
 }
 
+- (void)refreshEmptyState
+{
+    _emptyLabel.hidden = _entries.count > 0;
+}
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
     return _entries.count;
@@ -189,6 +195,82 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     cell.imageView.image = [UIImage systemImageNamed:entry.directory ? @"folder" : @"doc.text"];
     cell.accessoryType = entry.directory ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryDetailButton;
     return cell;
+}
+
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    (void)tableView;
+    return indexPath.row >= 0 && (NSUInteger)indexPath.row < _entries.count;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForDeleteConfirmationButtonForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    (void)tableView;
+    (void)indexPath;
+    return @"Delete";
+}
+
+- (void)confirmDeleteEntryAtIndexPath:(NSIndexPath *)indexPath completion:(void (^)(BOOL finished))completion
+{
+    if (indexPath.row < 0 || (NSUInteger)indexPath.row >= _entries.count) {
+        if (completion) completion(NO);
+        return;
+    }
+
+    SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    NSString *kind = entry.directory ? @"folder" : @"script";
+    NSString *message = [NSString stringWithFormat:@"Delete %@ \"%@\"?", kind, entry.name ?: entry.path.lastPathComponent];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Delete"
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                              style:UIAlertActionStyleCancel
+                                            handler:^(__unused UIAlertAction *action) {
+        if (completion) completion(NO);
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Delete"
+                                              style:UIAlertActionStyleDestructive
+                                            handler:^(__unused UIAlertAction *action) {
+        NSError *err = nil;
+        BOOL ok = [[NSFileManager defaultManager] removeItemAtPath:entry.path error:&err];
+        if (!ok) {
+            NSString *detail = err.localizedDescription ?: @"delete failed";
+            [self showMessageWithTitle:@"Delete" message:detail];
+            if (completion) completion(NO);
+            return;
+        }
+
+        NSUInteger idx = [self->_entries indexOfObjectIdenticalTo:entry];
+        if (idx != NSNotFound) {
+            [self->_entries removeObjectAtIndex:idx];
+            NSIndexPath *deletedPath = [NSIndexPath indexPathForRow:(NSInteger)idx inSection:0];
+            [self.tableView deleteRowsAtIndexPaths:@[deletedPath] withRowAnimation:UITableViewRowAnimationAutomatic];
+        } else {
+            [self reloadScripts];
+        }
+        [self refreshEmptyState];
+        if (completion) completion(YES);
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    if (editingStyle != UITableViewCellEditingStyleDelete) return;
+    [self confirmDeleteEntryAtIndexPath:indexPath completion:nil];
+}
+
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    (void)tableView;
+    UIContextualAction *deleteAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive
+                                                                               title:@"Delete"
+                                                                             handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completionHandler)(BOOL)) {
+        [self confirmDeleteEntryAtIndexPath:indexPath completion:completionHandler];
+    }];
+    UISwipeActionsConfiguration *config = [UISwipeActionsConfiguration configurationWithActions:@[deleteAction]];
+    config.performsFirstActionWithFullSwipe = NO;
+    return config;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath

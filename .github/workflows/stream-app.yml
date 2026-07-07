@@ -63,8 +63,11 @@ jobs:
           grep -q 'privhelper' stream-app/Makefile
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
           grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile
+          grep -q 'startVisualFeedbackMonitor' stream-app/app/AppDelegate.mm
+          grep -q 'showToastOverlayWithMessage' stream-app/app/AppDelegate.mm
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
+          grep -q 'QuartzCore' stream-app/app/Makefile
           grep -q 'Restart streamd' stream-app/app/ViewController.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
@@ -78,6 +81,7 @@ jobs:
           grep -q 'taskType == 11' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 19' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 20' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 22' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 23' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
@@ -100,6 +104,8 @@ jobs:
           grep -q '"visionOCR"' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptJS' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptTaskBridge' stream-app/streamd/POCSocketServer.mm
+          grep -q 'visual_feedback' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkRecordToast' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandlePlayScript' stream-app/streamd/POCSocketServer.mm
           grep -q '"appMgmtMode"' stream-app/streamd/POCSocketServer.mm
           grep -q '"keyboardClipboard"' stream-app/streamd/POCSocketServer.mm
@@ -108,6 +114,8 @@ jobs:
           grep -q 'Script Runtime: javascriptcore_mvp' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm
           grep -q 'createDemoScript' stream-app/app/ScriptsViewController.mm
+          grep -q 'confirmDeleteEntryAtIndexPath' stream-app/app/ScriptsViewController.mm
+          grep -q 'trailingSwipeActionsConfigurationForRowAtIndexPath' stream-app/app/ScriptsViewController.mm
           grep -q 'requestTask:20' stream-app/app/ScriptsViewController.mm
 
       - name: Build and package TrollStore .tipa

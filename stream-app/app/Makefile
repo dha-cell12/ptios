@@ -13,7 +13,7 @@ APPLICATION_NAME = StreamControl
 
 StreamControl_FILES = main.mm AppDelegate.mm ViewController.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm SettingsViewController.mm
 StreamControl_RESOURCE_FILES = Info.plist
-StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics
+StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics QuartzCore
 StreamControl_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 StreamControl_CCFLAGS = -std=c++14
 StreamControl_CODESIGN_FLAGS = -Sentitlements.plist
