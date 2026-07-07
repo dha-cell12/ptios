@@ -538,6 +538,14 @@ static BOOL TLinkSleepForScriptInterval(TLinkScriptSession *session, double seco
     return !TLinkScriptStopRequested(session);
 }
 
+static double TLinkScriptEffectiveSpeed(TLinkScriptSession *session)
+{
+    if (!session) return 1.0;
+    @synchronized (session) {
+        return session.speed > 0.0 ? session.speed : 1.0;
+    }
+}
+
 static NSString *TLinkScriptStoragePath(TLinkScriptSession *session, NSString *relativePath, BOOL writing, NSString **error)
 {
     if (!session || relativePath.length == 0) {
@@ -613,25 +621,29 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
     };
     device[@"sleep"] = ^NSDictionary *(double seconds) {
         TLinkScriptSession *strongSession = weakSession;
-        int totalMs = (int)llround(MAX(0.0, seconds) * 1000.0);
+        double speed = TLinkScriptEffectiveSpeed(strongSession);
+        int requestedMs = (int)llround(MAX(0.0, seconds) * 1000.0);
+        int totalMs = (int)llround((double)requestedMs / speed);
         int sleptMs = 0;
         while (sleptMs < totalMs && !TLinkScriptStopRequested(strongSession)) {
             int chunk = MIN(100, totalMs - sleptMs);
             usleep((useconds_t)chunk * 1000);
             sleptMs += chunk;
         }
-        return @{@"ok": @(!TLinkScriptStopRequested(strongSession)), @"slept_ms": @(sleptMs)};
+        return @{@"ok": @(!TLinkScriptStopRequested(strongSession)), @"requested_ms": @(requestedMs), @"slept_ms": @(sleptMs), @"speed": @(speed)};
     };
     device[@"usleep"] = ^NSDictionary *(double microseconds) {
         TLinkScriptSession *strongSession = weakSession;
-        int totalUs = (int)llround(MAX(0.0, microseconds));
+        double speed = TLinkScriptEffectiveSpeed(strongSession);
+        int requestedUs = (int)llround(MAX(0.0, microseconds));
+        int totalUs = (int)llround((double)requestedUs / speed);
         int sleptUs = 0;
         while (sleptUs < totalUs && !TLinkScriptStopRequested(strongSession)) {
             int chunk = MIN(100000, totalUs - sleptUs);
             usleep((useconds_t)chunk);
             sleptUs += chunk;
         }
-        return @{@"ok": @(!TLinkScriptStopRequested(strongSession)), @"slept_us": @(sleptUs)};
+        return @{@"ok": @(!TLinkScriptStopRequested(strongSession)), @"requested_us": @(requestedUs), @"slept_us": @(sleptUs), @"speed": @(speed)};
     };
     device[@"task"] = ^NSString *(double task, JSValue *bodyValue) {
         TLinkScriptSession *strongSession = weakSession;
@@ -666,6 +678,13 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
                 @"bundlePath": strongSession.bundlePath ?: @"",
                 @"entryPath": strongSession.entryPath ?: @"",
                 @"state": strongSession.state ?: @"",
+                @"currentRun": @(strongSession.currentRun),
+                @"totalRuns": @(strongSession.totalRuns),
+                @"playSettings": @{
+                    @"repeatTimes": @(strongSession.repeatTimes),
+                    @"interval": @(strongSession.intervalSeconds),
+                    @"speed": @(strongSession.speed),
+                },
                 @"stopRequested": @(strongSession.stopRequested),
             };
         }

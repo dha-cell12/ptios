@@ -122,8 +122,11 @@ jobs:
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/config.plist' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandlePlayScript' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkScriptPlaySettingsForPath' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkScriptEffectiveSpeed' stream-app/streamd/POCSocketServer.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptPlaySettings' stream-app/streamd/POCSocketServer.mm
+          grep -q 'requested_ms' stream-app/streamd/POCSocketServer.mm
+          grep -q 'playSettings' stream-app/streamd/POCSocketServer.mm
           grep -q '"appMgmtMode"' stream-app/streamd/POCSocketServer.mm
           grep -q '"keyboardClipboard"' stream-app/streamd/POCSocketServer.mm
           grep -q 'OCR Languages' stream-app/app/SettingsViewController.mm
@@ -139,10 +142,14 @@ jobs:
           grep -q 'Export Diagnostics' stream-app/app/SettingsViewController.mm
           grep -q 'diagnostics-' stream-app/app/SettingsViewController.mm
           grep -q 'createDemoScript' stream-app/app/ScriptsViewController.mm
+          grep -q 'info.playSettings.speed' stream-app/app/ScriptsViewController.mm
           grep -q 'showAddMenu' stream-app/app/ScriptsViewController.mm
           grep -q 'New File' stream-app/app/ScriptsViewController.mm
           grep -q 'New Folder' stream-app/app/ScriptsViewController.mm
           grep -q 'openEditorForEntry' stream-app/app/ScriptsViewController.mm
+          grep -q 'renameEntry' stream-app/app/ScriptsViewController.mm
+          grep -q 'duplicateEntry' stream-app/app/ScriptsViewController.mm
+          grep -q 'uniqueCopyPathForEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'playButtonTapped' stream-app/app/ScriptsViewController.mm
           grep -q 'settingsButtonTapped' stream-app/app/ScriptsViewController.mm
           grep -q 'showPlaySettingsForEntry' stream-app/app/ScriptsViewController.mm

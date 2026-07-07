@@ -24,7 +24,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     _rows = @[
         @{@"key": @"repeat_times", @"title": @"Repeat Times", @"detail": @"0 means run once"},
         @{@"key": @"interval", @"title": @"Interval", @"detail": @"Seconds between repeats"},
-        @{@"key": @"speed", @"title": @"Speed", @"detail": @"Saved for compatibility"},
+        @{@"key": @"speed", @"title": @"Speed", @"detail": @"Scales device.sleep/usleep"},
     ];
     [self loadSettings];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave

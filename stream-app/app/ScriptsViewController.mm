@@ -136,6 +136,39 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     return [@[@"png", @"jpg", @"jpeg", @"bmp", @"gif", @"heic", @"heif"] containsObject:ext];
 }
 
+- (NSString *)nameByPreservingScriptExtensionForEntry:(SCScriptEntry *)entry input:(NSString *)input
+{
+    NSString *name = [self safeNameFromInput:input];
+    if (!name) return nil;
+    if (entry.scriptBundle && ![[name.pathExtension lowercaseString] isEqualToString:@"tl"]) {
+        name = [name stringByAppendingPathExtension:@"tl"];
+    } else if ([self isPlayableFileEntry:entry] && name.pathExtension.length == 0) {
+        name = [name stringByAppendingPathExtension:entry.path.pathExtension];
+    }
+    return name;
+}
+
+- (NSString *)uniqueCopyPathForEntry:(SCScriptEntry *)entry
+{
+    NSString *parent = [entry.path stringByDeletingLastPathComponent];
+    NSString *ext = entry.path.pathExtension;
+    NSString *base = entry.path.lastPathComponent;
+    if (ext.length > 0) base = [base stringByDeletingPathExtension];
+
+    NSString *(^buildName)(NSInteger) = ^NSString *(NSInteger index) {
+        NSString *name = index <= 1 ? [base stringByAppendingString:@" Copy"] : [NSString stringWithFormat:@"%@ Copy %ld", base, (long)index];
+        return ext.length > 0 ? [name stringByAppendingPathExtension:ext] : name;
+    };
+
+    for (NSInteger i = 1; i < 1000; i++) {
+        NSString *candidate = [parent stringByAppendingPathComponent:buildName(i)];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:candidate]) return candidate;
+    }
+    NSString *fallback = [NSString stringWithFormat:@"%@ Copy %@", base, @((long long)[[NSDate date] timeIntervalSince1970])];
+    if (ext.length > 0) fallback = [fallback stringByAppendingPathExtension:ext];
+    return [parent stringByAppendingPathComponent:fallback];
+}
+
 - (void)presentNamePromptWithTitle:(NSString *)title
                            message:(NSString *)message
                        placeholder:(NSString *)placeholder
@@ -190,6 +223,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
              "device.toast('Hello from TLinkauto JS');\n"
              "var info = device.runtimeInfo();\n"
              "console.log('session=' + info.sessionId + ' entry=' + info.entryPath);\n"
+             "console.log('run=' + info.currentRun + '/' + info.totalRuns + ' speed=' + info.playSettings.speed);\n"
+             "console.log('sleep=' + JSON.stringify(device.sleep(0.2)));\n"
              "var screen = device.taskResult(25, '1');\n"
              "console.log('screen=' + screen.payload);\n"
              "var languages = device.ocrLanguages();\n"
@@ -200,6 +235,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         source =
             @"console.log('script started');\n"
              "device.toast('Script started');\n"
+             "var info = device.runtimeInfo();\n"
+             "console.log('run=' + info.currentRun + '/' + info.totalRuns + ' speed=' + info.playSettings.speed);\n"
              "\n"
              "// Call old TLinkauto tasks through the local bridge.\n"
              "var screen = device.taskResult(25, '1');\n"
@@ -526,6 +563,63 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     [self confirmDeleteEntryAtIndexPath:indexPath completion:nil];
 }
 
+- (void)renameEntry:(SCScriptEntry *)entry completion:(void (^)(BOOL finished))completion
+{
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Rename"
+                                                                   message:entry.path.lastPathComponent
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.text = entry.name ?: entry.path.lastPathComponent;
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
+        textField.autocapitalizationType = UITextAutocapitalizationTypeWords;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) {
+        if (completion) completion(NO);
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Rename" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        NSString *newName = [self nameByPreservingScriptExtensionForEntry:entry input:alert.textFields.firstObject.text ?: @""];
+        if (!newName) {
+            [self showMessageWithTitle:@"Rename" message:@"Use a normal name without / : or \\"];
+            if (completion) completion(NO);
+            return;
+        }
+        NSString *newPath = [[entry.path stringByDeletingLastPathComponent] stringByAppendingPathComponent:newName];
+        if ([newPath isEqualToString:entry.path]) {
+            if (completion) completion(NO);
+            return;
+        }
+        if ([[NSFileManager defaultManager] fileExistsAtPath:newPath]) {
+            [self showMessageWithTitle:@"Rename" message:@"A file or folder with that name already exists."];
+            if (completion) completion(NO);
+            return;
+        }
+        NSError *err = nil;
+        BOOL ok = [[NSFileManager defaultManager] moveItemAtPath:entry.path toPath:newPath error:&err];
+        if (!ok) {
+            [self showMessageWithTitle:@"Rename" message:err.localizedDescription ?: @"rename failed"];
+            if (completion) completion(NO);
+            return;
+        }
+        [self reloadScripts];
+        if (completion) completion(YES);
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)duplicateEntry:(SCScriptEntry *)entry completion:(void (^)(BOOL finished))completion
+{
+    NSString *target = [self uniqueCopyPathForEntry:entry];
+    NSError *err = nil;
+    BOOL ok = [[NSFileManager defaultManager] copyItemAtPath:entry.path toPath:target error:&err];
+    if (!ok) {
+        [self showMessageWithTitle:@"Duplicate" message:err.localizedDescription ?: @"copy failed"];
+        if (completion) completion(NO);
+        return;
+    }
+    [self reloadScripts];
+    if (completion) completion(YES);
+}
+
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     (void)tableView;
@@ -536,6 +630,22 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     }];
     SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
     NSMutableArray<UIContextualAction *> *actions = [NSMutableArray arrayWithObject:deleteAction];
+    UIContextualAction *renameAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+                                                                               title:@"Rename"
+                                                                             handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completionHandler)(BOOL)) {
+        [self renameEntry:entry completion:completionHandler];
+    }];
+    renameAction.backgroundColor = [UIColor systemBlueColor];
+    [actions addObject:renameAction];
+
+    UIContextualAction *duplicateAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+                                                                                  title:@"Duplicate"
+                                                                                handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completionHandler)(BOOL)) {
+        [self duplicateEntry:entry completion:completionHandler];
+    }];
+    duplicateAction.backgroundColor = [UIColor systemIndigoColor];
+    [actions addObject:duplicateAction];
+
     if (entry.scriptBundle || [self isPlayableFileEntry:entry]) {
         UIContextualAction *settingsAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
                                                                                      title:@"Settings"
