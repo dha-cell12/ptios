@@ -39,9 +39,16 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     _entries = [NSMutableArray array];
     self.tableView.backgroundColor = [UIColor systemBackgroundColor];
     self.tableView.rowHeight = 56.0;
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
-                                                                                           target:self
-                                                                                           action:@selector(reloadScripts)];
+    UIBarButtonItem *refresh = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
+                                                                             target:self
+                                                                             action:@selector(reloadScripts)];
+    UIBarButtonItem *add = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
+                                                                         target:self
+                                                                         action:@selector(createDemoScript)];
+    self.navigationItem.rightBarButtonItems = @[refresh, add];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemStop
+                                                                                          target:self
+                                                                                          action:@selector(stopScript)];
 
     _emptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _emptyLabel.text = @"No scripts found";
@@ -50,6 +57,85 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     _emptyLabel.font = [UIFont systemFontOfSize:15.0];
     self.tableView.backgroundView = _emptyLabel;
     [self reloadScripts];
+}
+
+- (NSString *)uniqueScriptPathWithBaseName:(NSString *)baseName
+{
+    NSString *folder = [self scriptsPath];
+    NSString *candidate = [folder stringByAppendingPathComponent:[baseName stringByAppendingString:@".tl"]];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:candidate]) return candidate;
+    for (NSInteger i = 2; i < 1000; i++) {
+        candidate = [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ %ld.tl", baseName, (long)i]];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:candidate]) return candidate;
+    }
+    return [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ %@.tl", baseName, @((long long)[[NSDate date] timeIntervalSince1970])]];
+}
+
+- (void)showMessageWithTitle:(NSString *)title message:(NSString *)message
+{
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)createDemoScript
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *basePath = [self scriptsPath];
+    [fm createDirectoryAtPath:basePath withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *scriptPath = [self uniqueScriptPathWithBaseName:@"Demo Script"];
+
+    NSError *err = nil;
+    [fm createDirectoryAtPath:scriptPath withIntermediateDirectories:YES attributes:nil error:&err];
+    if (err) {
+        [self showMessageWithTitle:@"Create Script" message:err.localizedDescription ?: @"create failed"];
+        return;
+    }
+
+    NSDictionary *info = @{@"Entry": @"main.js", @"FrontApp": @"", @"Orientation": @"1"};
+    [info writeToFile:[scriptPath stringByAppendingPathComponent:@"info.plist"] atomically:YES];
+
+    NSDictionary *manifest = @{
+        @"runtime": @"javascriptcore",
+        @"runtimeLocation": @"in-process",
+        @"entry": @"main.js",
+        @"apiVersion": @1,
+        @"coordinateSpace": @"native-pixels",
+    };
+    NSData *manifestData = [NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingPrettyPrinted error:nil];
+    [manifestData writeToFile:[scriptPath stringByAppendingPathComponent:@"manifest.json"] atomically:YES];
+
+    NSString *source =
+        @"console.log('TLinkauto TrollStore demo started');\n"
+         "device.toast('Hello from TLinkauto JS');\n"
+         "var info = device.runtimeInfo();\n"
+         "console.log('session=' + info.sessionId + ' entry=' + info.entryPath);\n"
+         "var screen = device.taskResult(25, '1');\n"
+         "console.log('screen=' + screen.payload);\n"
+         "var languages = device.ocrLanguages();\n"
+         "console.log('ocrLanguages=' + languages.payload);\n"
+         "device.writeJSON('storage/last-run.json', { at: Date.now(), screen: screen.payload, languages: languages.payload });\n"
+         "console.log('TLinkauto TrollStore demo finished');\n";
+    [source writeToFile:[scriptPath stringByAppendingPathComponent:@"main.js"] atomically:YES encoding:NSUTF8StringEncoding error:&err];
+    if (err) {
+        [self showMessageWithTitle:@"Create Script" message:err.localizedDescription ?: @"write failed"];
+        return;
+    }
+
+    [self reloadScripts];
+    [self showMessageWithTitle:@"Create Script" message:[NSString stringWithFormat:@"Created %@", scriptPath.lastPathComponent]];
+}
+
+- (void)stopScript
+{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *response = [TLinkSocketClient requestTask:20 args:@[] timeout:4.0];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self showMessageWithTitle:@"Stop Script" message:response ?: @"<nil>"];
+        });
+    });
 }
 
 - (void)reloadScripts
@@ -129,11 +215,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *response = [TLinkSocketClient requestTask:19 args:@[entry.path] timeout:8.0];
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:entry.name
-                                                                           message:response
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
+            [self showMessageWithTitle:entry.name message:response ?: @"<nil>"];
         });
     });
 }

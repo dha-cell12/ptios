@@ -76,6 +76,8 @@ jobs:
           grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 96' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 11' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 19' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 20' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 23' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
@@ -93,13 +95,20 @@ jobs:
           grep -q 'taskType == 49' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 66' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 70' stream-app/streamd/POCSocketServer.mm
-          grep -q 'Vision ImageIO' stream-app/streamd/Makefile
+          grep -q 'Vision ImageIO JavaScriptCore' stream-app/streamd/Makefile
           grep -q '"tlinkauto"' stream-app/streamd/POCSocketServer.mm
           grep -q '"visionOCR"' stream-app/streamd/POCSocketServer.mm
+          grep -q 'scriptJS' stream-app/streamd/POCSocketServer.mm
+          grep -q 'scriptTaskBridge' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandlePlayScript' stream-app/streamd/POCSocketServer.mm
           grep -q '"appMgmtMode"' stream-app/streamd/POCSocketServer.mm
           grep -q '"keyboardClipboard"' stream-app/streamd/POCSocketServer.mm
           grep -q 'OCR Languages' stream-app/app/SettingsViewController.mm
+          grep -q 'Script Status' stream-app/app/SettingsViewController.mm
+          grep -q 'Script Runtime: javascriptcore_mvp' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm
+          grep -q 'createDemoScript' stream-app/app/ScriptsViewController.mm
+          grep -q 'requestTask:20' stream-app/app/ScriptsViewController.mm
 
       - name: Build and package TrollStore .tipa
         working-directory: stream-app

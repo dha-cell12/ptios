@@ -11,8 +11,8 @@
     [super viewDidLoad];
     self.title = @"Settings";
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart"],
+        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Touch Indicator: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -61,8 +61,9 @@
     switch (indexPath.row) {
         case 0: line = @"97\n"; break;
         case 1: line = @"60\n"; break;
-        case 2: line = @"98\n"; break;
-        case 3: {
+        case 2: line = @"60\n"; break;
+        case 3: line = @"98\n"; break;
+        case 4: {
             CGFloat scale = [UIScreen mainScreen].scale;
             CGSize size = [UIScreen mainScreen].bounds.size;
             int x = (int)(size.width * scale / 2.0);
@@ -70,7 +71,7 @@
             line = [NSString stringWithFormat:@"62%d;;%d;;50;;0\n", x, y];
             break;
         }
-        case 4: {
+        case 5: {
             CGFloat scale = [UIScreen mainScreen].scale;
             CGSize size = [UIScreen mainScreen].bounds.size;
             int x = (int)(size.width * scale / 2.0);
@@ -78,30 +79,30 @@
             line = [NSString stringWithFormat:@"23%d;;%d\n", x, y];
             break;
         }
-        case 5:
+        case 6:
             line = @"281;;0;;0;;0;;0;;0;;255;;0;;255;;0;;255;;8\n";
             break;
-        case 6:
+        case 7:
             line = @"661;;1;;1000\n";
             break;
-        case 7:
+        case 8:
             line = @"272;;0\n";
             break;
-        case 8: {
+        case 9: {
             NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
             line = [NSString stringWithFormat:@"33%@\n", bundleId];
             break;
         }
-        case 9:
+        case 10:
             line = @"34\n";
             break;
-        case 10:
+        case 11:
             line = @"530\n";
             break;
-        case 11:
+        case 12:
             line = @"11com.apple.Preferences\n";
             break;
-        case 12:
+        case 13:
             line = @"54App-Prefs:root=General\n";
             break;
         default: return;
