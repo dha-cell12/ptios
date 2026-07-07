@@ -2,6 +2,7 @@
 #import "TLinkSocketClient.h"
 
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
+static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist";
 
 @implementation SCSettingsViewController {
     NSArray<NSArray<NSString *> *> *_sections;
@@ -130,6 +131,8 @@ static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkaut
         formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss Z";
         [report appendFormat:@"TLinkauto TrollStore Diagnostics\n%@\n\n", [formatter stringFromDate:[NSDate date]]];
         [report appendFormat:@"config_path: %@\nconfig: %@\n\n", kTLinkSettingsConfigPath, configSnapshot];
+        NSDictionary *playConfig = [NSDictionary dictionaryWithContentsOfFile:kTLinkScriptPlayConfigPath] ?: @{};
+        [report appendFormat:@"play_config_path: %@\nplay_config: %@\n\n", kTLinkScriptPlayConfigPath, playConfig];
 
         NSArray<NSString *> *lines = @[@"97\n", @"60\n", @"98\n"];
         NSArray<NSString *> *labels = @[@"task97_capability", @"task60_status", @"task98_capture_probe"];

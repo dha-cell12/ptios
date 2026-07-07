@@ -62,6 +62,7 @@ jobs:
           test -f stream-app/app/ScriptEditorViewController.mm
           test -f stream-app/app/ScriptLogViewController.mm
           test -f stream-app/app/ImageViewerViewController.mm
+          test -f stream-app/app/PlaySettingsViewController.mm
           test -f stream-app/app/SettingsViewController.mm
           grep -q 'privhelper' stream-app/Makefile
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
@@ -72,6 +73,7 @@ jobs:
           grep -q 'ScriptEditorViewController.mm' stream-app/app/Makefile
           grep -q 'ScriptLogViewController.mm' stream-app/app/Makefile
           grep -q 'ImageViewerViewController.mm' stream-app/app/Makefile
+          grep -q 'PlaySettingsViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
           grep -q 'QuartzCore' stream-app/app/Makefile
           grep -q 'Restart streamd' stream-app/app/ViewController.mm
@@ -119,6 +121,9 @@ jobs:
           grep -q 'TLinkLoadSettingsConfig' stream-app/streamd/POCSocketServer.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/config.plist' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandlePlayScript' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkScriptPlaySettingsForPath' stream-app/streamd/POCSocketServer.mm
+          grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/streamd/POCSocketServer.mm
+          grep -q 'scriptPlaySettings' stream-app/streamd/POCSocketServer.mm
           grep -q '"appMgmtMode"' stream-app/streamd/POCSocketServer.mm
           grep -q '"keyboardClipboard"' stream-app/streamd/POCSocketServer.mm
           grep -q 'OCR Languages' stream-app/app/SettingsViewController.mm
@@ -139,10 +144,15 @@ jobs:
           grep -q 'New Folder' stream-app/app/ScriptsViewController.mm
           grep -q 'openEditorForEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'playButtonTapped' stream-app/app/ScriptsViewController.mm
+          grep -q 'settingsButtonTapped' stream-app/app/ScriptsViewController.mm
+          grep -q 'showPlaySettingsForEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'play.circle.fill' stream-app/app/ScriptsViewController.mm
           grep -q 'SCScriptEditorViewController' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'SCPlaySettingsViewController' stream-app/app/PlaySettingsViewController.mm
+          grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/app/PlaySettingsViewController.mm
           grep -q 'showScriptLogs' stream-app/app/ScriptsViewController.mm
           grep -q 'log_tail' stream-app/app/ScriptLogViewController.mm
+          grep -q 'play_settings' stream-app/app/ScriptLogViewController.mm
           grep -q 'SCImageViewerViewController' stream-app/app/ImageViewerViewController.mm
           grep -q 'isImageFilePath' stream-app/app/ScriptsViewController.mm
           grep -q 'confirmDeleteEntryAtIndexPath' stream-app/app/ScriptsViewController.mm

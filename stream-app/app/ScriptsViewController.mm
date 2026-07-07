@@ -1,5 +1,6 @@
 #import "ScriptsViewController.h"
 #import "ImageViewerViewController.h"
+#import "PlaySettingsViewController.h"
 #import "ScriptEditorViewController.h"
 #import "ScriptLogViewController.h"
 #import "TLinkSocketClient.h"
@@ -409,6 +410,30 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     return button;
 }
 
+- (UIButton *)settingsButtonForRow:(NSInteger)row
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.frame = CGRectMake(0.0, 0.0, 36.0, 44.0);
+    [button setImage:[UIImage systemImageNamed:@"gearshape"] forState:UIControlStateNormal];
+    button.tintColor = [UIColor systemGrayColor];
+    button.accessibilityLabel = @"Play Settings";
+    button.tag = row;
+    [button addTarget:self action:@selector(settingsButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (UIView *)scriptAccessoryViewForRow:(NSInteger)row
+{
+    UIStackView *stack = [[UIStackView alloc] initWithFrame:CGRectMake(0.0, 0.0, 84.0, 44.0)];
+    stack.axis = UILayoutConstraintAxisHorizontal;
+    stack.alignment = UIStackViewAlignmentCenter;
+    stack.distribution = UIStackViewDistributionEqualSpacing;
+    stack.spacing = 4.0;
+    [stack addArrangedSubview:[self settingsButtonForRow:row]];
+    [stack addArrangedSubview:[self playButtonForRow:row]];
+    return stack;
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     static NSString *cellID = @"ScriptCell";
@@ -433,7 +458,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
     }
     BOOL canRun = entry.scriptBundle || [self isPlayableFileEntry:entry];
-    cell.accessoryView = canRun ? [self playButtonForRow:indexPath.row] : nil;
+    cell.accessoryView = canRun ? [self scriptAccessoryViewForRow:indexPath.row] : nil;
     cell.accessoryType = canRun ? UITableViewCellAccessoryNone : (entry.directory ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone);
     return cell;
 }
@@ -509,7 +534,19 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
                                                                              handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completionHandler)(BOOL)) {
         [self confirmDeleteEntryAtIndexPath:indexPath completion:completionHandler];
     }];
-    UISwipeActionsConfiguration *config = [UISwipeActionsConfiguration configurationWithActions:@[deleteAction]];
+    SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    NSMutableArray<UIContextualAction *> *actions = [NSMutableArray arrayWithObject:deleteAction];
+    if (entry.scriptBundle || [self isPlayableFileEntry:entry]) {
+        UIContextualAction *settingsAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
+                                                                                     title:@"Settings"
+                                                                                   handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completionHandler)(BOOL)) {
+            [self showPlaySettingsForEntry:entry];
+            completionHandler(YES);
+        }];
+        settingsAction.backgroundColor = [UIColor systemGrayColor];
+        [actions addObject:settingsAction];
+    }
+    UISwipeActionsConfiguration *config = [UISwipeActionsConfiguration configurationWithActions:actions];
     config.performsFirstActionWithFullSwipe = NO;
     return config;
 }
@@ -543,6 +580,19 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     if (entry.scriptBundle || [self isPlayableFileEntry:entry]) {
         [self playScript:entry];
     }
+}
+
+- (void)settingsButtonTapped:(UIButton *)button
+{
+    NSInteger row = button.tag;
+    if (row < 0 || (NSUInteger)row >= _entries.count) return;
+    [self showPlaySettingsForEntry:_entries[(NSUInteger)row]];
+}
+
+- (void)showPlaySettingsForEntry:(SCScriptEntry *)entry
+{
+    SCPlaySettingsViewController *settings = [[SCPlaySettingsViewController alloc] initWithScriptPath:entry.path];
+    [self.navigationController pushViewController:settings animated:YES];
 }
 
 - (void)openEditorForEntry:(SCScriptEntry *)entry

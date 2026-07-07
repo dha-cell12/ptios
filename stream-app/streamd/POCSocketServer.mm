@@ -311,6 +311,11 @@ static NSDictionary *TLinkVisualFeedbackDictionary(void)
 @property(nonatomic, copy) NSString *lastError;
 @property(nonatomic, assign) uint64_t startedAtMs;
 @property(nonatomic, assign) uint64_t endedAtMs;
+@property(nonatomic, assign) NSInteger repeatTimes;
+@property(nonatomic, assign) NSInteger totalRuns;
+@property(nonatomic, assign) NSInteger currentRun;
+@property(nonatomic, assign) double intervalSeconds;
+@property(nonatomic, assign) double speed;
 @property(nonatomic, assign) BOOL stopRequested;
 @property(nonatomic, strong) NSMutableArray<NSString *> *logs;
 @end
@@ -319,6 +324,7 @@ static NSDictionary *TLinkVisualFeedbackDictionary(void)
 @end
 
 static NSString *const kTLinkScriptsRootPath = @"/var/mobile/Library/TLinkauto/scripts";
+static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist";
 static TLinkScriptSession *sTLinkScriptSession = nil;
 static uint64_t sTLinkNextScriptSessionId = 1;
 static NSString *sTLinkLastScriptError = @"script_runtime_not_started";
@@ -477,6 +483,59 @@ static BOOL TLinkResolveScriptPaths(NSString *body, NSString **outBundlePath, NS
     if (outBundlePath) *outBundlePath = bundlePath;
     if (outEntryPath) *outEntryPath = entryPath;
     return YES;
+}
+
+static NSString *TLinkRequestedScriptPathFromBody(NSString *body)
+{
+    NSString *raw = TLinkCleanPayload(body);
+    if (raw.length == 0) return @"";
+    NSString *candidate = [raw hasPrefix:@"/"] ? raw : [kTLinkScriptsRootPath stringByAppendingPathComponent:raw];
+    return TLinkNormalizePath(candidate);
+}
+
+static NSDictionary *TLinkScriptPlaySettingsForPath(NSString *requestedPath, NSString *bundlePath)
+{
+    NSDictionary *root = [NSDictionary dictionaryWithContentsOfFile:kTLinkScriptPlayConfigPath];
+    NSDictionary *individual = [root[@"individual_configs"] isKindOfClass:[NSDictionary class]] ? root[@"individual_configs"] : nil;
+    if (!individual) return @{};
+    NSDictionary *settings = [individual[requestedPath ?: @""] isKindOfClass:[NSDictionary class]] ? individual[requestedPath ?: @""] : nil;
+    if (!settings && bundlePath.length > 0) {
+        settings = [individual[bundlePath] isKindOfClass:[NSDictionary class]] ? individual[bundlePath] : nil;
+    }
+    return settings ?: @{};
+}
+
+static NSInteger TLinkPlaySettingInteger(NSDictionary *settings, NSString *key, NSInteger defaultValue, NSInteger maxValue)
+{
+    id value = settings[key];
+    NSInteger result = [value respondsToSelector:@selector(integerValue)] ? [value integerValue] : defaultValue;
+    if (result < 0) result = 0;
+    if (maxValue > 0 && result > maxValue) result = maxValue;
+    return result;
+}
+
+static double TLinkPlaySettingDouble(NSDictionary *settings, NSString *key, double defaultValue, double maxValue)
+{
+    id value = settings[key];
+    double result = [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : defaultValue;
+    if (result < 0.0) result = 0.0;
+    if (maxValue > 0.0 && result > maxValue) result = maxValue;
+    return result;
+}
+
+static BOOL TLinkSleepForScriptInterval(TLinkScriptSession *session, double seconds)
+{
+    if (seconds <= 0.0) return !TLinkScriptStopRequested(session);
+    uint64_t deadline = TLinkNowMs() + (uint64_t)(seconds * 1000.0);
+    while (TLinkNowMs() < deadline) {
+        if (TLinkScriptStopRequested(session)) return NO;
+        uint64_t now = TLinkNowMs();
+        uint64_t remainingMs = deadline > now ? deadline - now : 0;
+        useconds_t sleepUs = (useconds_t)MIN((uint64_t)100000, remainingMs * 1000);
+        if (sleepUs == 0) break;
+        usleep(sleepUs);
+    }
+    return !TLinkScriptStopRequested(session);
 }
 
 static NSString *TLinkScriptStoragePath(TLinkScriptSession *session, NSString *relativePath, BOOL writing, NSString **error)
@@ -693,6 +752,13 @@ static NSDictionary *TLinkScriptStatusDictionary(void)
             @"entry_path": session.entryPath ?: @"",
             @"started_at_ms": @(session.startedAtMs),
             @"ended_at_ms": @(session.endedAtMs),
+            @"current_run": @(session.currentRun),
+            @"total_runs": @(session.totalRuns),
+            @"play_settings": @{
+                @"repeat_times": @(session.repeatTimes),
+                @"interval": @(session.intervalSeconds),
+                @"speed": @(session.speed),
+            },
             @"last_error": session.lastError.length > 0 ? session.lastError : (sTLinkLastScriptError ?: @""),
             @"last_error_ts": @(sTLinkLastScriptErrorTs),
             @"log_tail": tail,
@@ -715,32 +781,57 @@ static void TLinkRunScriptSession(TLinkScriptSession *session)
             TLinkScriptMarkTerminal(session, @"cancelled", @"");
             return;
         }
-        TLinkScriptAppendLog(session, [NSString stringWithFormat:@"start %@", session.entryPath]);
+        NSInteger totalRuns = session.totalRuns > 0 ? session.totalRuns : 1;
+        TLinkScriptAppendLog(session, [NSString stringWithFormat:@"start %@ repeat=%ld interval=%.3f speed=%.3f", session.entryPath, (long)session.repeatTimes, session.intervalSeconds, session.speed]);
 
-        NSError *readErr = nil;
-        NSString *source = [NSString stringWithContentsOfFile:session.entryPath encoding:NSUTF8StringEncoding error:&readErr];
-        if (!source) {
-            TLinkScriptMarkTerminal(session, @"failed", [NSString stringWithFormat:@"script_read_failed %@", readErr.localizedDescription ?: @"unknown"]);
-            return;
-        }
+        for (NSInteger run = 1; run <= totalRuns; run++) {
+            if (TLinkScriptStopRequested(session)) {
+                TLinkScriptAppendLog(session, @"cancelled");
+                TLinkScriptMarkTerminal(session, @"cancelled", @"");
+                return;
+            }
 
-        JSContext *context = [[JSContext alloc] init];
-        __block NSString *exceptionText = nil;
-        context.exceptionHandler = ^(__unused JSContext *ctx, JSValue *exception) {
-            exceptionText = [exception toString] ?: @"javascript_exception";
-        };
-        TLinkConfigureScriptContext(context, session);
-        [context evaluateScript:source withSourceURL:[NSURL fileURLWithPath:session.entryPath]];
+            @synchronized (session) {
+                session.currentRun = run;
+                session.state = @"running";
+            }
+            TLinkScriptAppendLog(session, [NSString stringWithFormat:@"run %ld/%ld", (long)run, (long)totalRuns]);
 
-        if (exceptionText.length > 0) {
-            TLinkScriptAppendLog(session, [NSString stringWithFormat:@"exception %@", exceptionText]);
-            TLinkScriptMarkTerminal(session, @"failed", exceptionText);
-            return;
-        }
-        if (TLinkScriptStopRequested(session)) {
-            TLinkScriptAppendLog(session, @"cancelled");
-            TLinkScriptMarkTerminal(session, @"cancelled", @"");
-            return;
+            NSError *readErr = nil;
+            NSString *source = [NSString stringWithContentsOfFile:session.entryPath encoding:NSUTF8StringEncoding error:&readErr];
+            if (!source) {
+                TLinkScriptMarkTerminal(session, @"failed", [NSString stringWithFormat:@"script_read_failed %@", readErr.localizedDescription ?: @"unknown"]);
+                return;
+            }
+
+            JSContext *context = [[JSContext alloc] init];
+            __block NSString *exceptionText = nil;
+            context.exceptionHandler = ^(__unused JSContext *ctx, JSValue *exception) {
+                exceptionText = [exception toString] ?: @"javascript_exception";
+            };
+            TLinkConfigureScriptContext(context, session);
+            [context evaluateScript:source withSourceURL:[NSURL fileURLWithPath:session.entryPath]];
+
+            if (exceptionText.length > 0) {
+                TLinkScriptAppendLog(session, [NSString stringWithFormat:@"exception %@", exceptionText]);
+                TLinkScriptMarkTerminal(session, @"failed", exceptionText);
+                return;
+            }
+            if (TLinkScriptStopRequested(session)) {
+                TLinkScriptAppendLog(session, @"cancelled");
+                TLinkScriptMarkTerminal(session, @"cancelled", @"");
+                return;
+            }
+            TLinkScriptAppendLog(session, [NSString stringWithFormat:@"run %ld/%ld finished", (long)run, (long)totalRuns]);
+
+            if (run < totalRuns && session.intervalSeconds > 0.0) {
+                TLinkScriptAppendLog(session, [NSString stringWithFormat:@"interval %.3fs", session.intervalSeconds]);
+                if (!TLinkSleepForScriptInterval(session, session.intervalSeconds)) {
+                    TLinkScriptAppendLog(session, @"cancelled during interval");
+                    TLinkScriptMarkTerminal(session, @"cancelled", @"");
+                    return;
+                }
+            }
         }
         TLinkScriptAppendLog(session, @"finished");
         TLinkScriptMarkTerminal(session, @"finished", @"");
@@ -762,6 +853,13 @@ static NSData *TLinkHandlePlayScript(NSString *body)
         return TLinkError([NSString stringWithFormat:@"script_already_playing session=%@", sTLinkScriptSession.sessionId ?: @""]);
     }
 
+    NSString *requestedPath = TLinkRequestedScriptPathFromBody(body);
+    NSDictionary *playSettings = TLinkScriptPlaySettingsForPath(requestedPath, bundlePath);
+    NSInteger repeatTimes = TLinkPlaySettingInteger(playSettings, @"repeat_times", 0, 10000);
+    double intervalSeconds = TLinkPlaySettingDouble(playSettings, @"interval", 0.0, 86400.0);
+    double speed = TLinkPlaySettingDouble(playSettings, @"speed", 1.0, 100.0);
+    if (speed <= 0.0) speed = 1.0;
+
     TLinkScriptSession *session = [[TLinkScriptSession alloc] init];
     session.sessionId = [NSString stringWithFormat:@"%llu", sTLinkNextScriptSessionId++];
     session.bundlePath = bundlePath;
@@ -769,6 +867,11 @@ static NSData *TLinkHandlePlayScript(NSString *body)
     session.state = @"starting";
     session.startedAtMs = TLinkNowMs();
     session.endedAtMs = 0;
+    session.repeatTimes = repeatTimes;
+    session.totalRuns = repeatTimes + 1;
+    session.currentRun = 0;
+    session.intervalSeconds = intervalSeconds;
+    session.speed = speed;
     session.stopRequested = NO;
     session.logs = [NSMutableArray array];
     sTLinkScriptSession = session;
@@ -779,7 +882,7 @@ static NSData *TLinkHandlePlayScript(NSString *body)
         TLinkRunScriptSession(session);
     });
 
-    return TLinkSuccess([NSString stringWithFormat:@"script_started;;%@;;%@", session.sessionId, entryPath]);
+    return TLinkSuccess([NSString stringWithFormat:@"script_started;;%@;;%@;;repeat=%ld;;interval=%.3f", session.sessionId, entryPath, (long)repeatTimes, intervalSeconds]);
 }
 
 static NSData *TLinkHandleStopScript(NSString *body)
@@ -3002,6 +3105,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"tesseractOCR": @(NO),
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
+        @"scriptPlaySettings": @(YES),
         @"visualFeedback": @(YES),
         @"toastOverlay": @(YES),
         @"alertOverlay": @(YES),
@@ -3278,7 +3382,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,visualFeedback,toastOverlay,alertOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,visualFeedback,toastOverlay,alertOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

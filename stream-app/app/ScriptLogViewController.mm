@@ -89,6 +89,12 @@
     [text appendFormat:@"playing: %@\n", [script[@"is_playing"] boolValue] ? @"yes" : @"no"];
     [text appendFormat:@"session: %@\n", [self stringValue:script[@"session_id"]]];
     [text appendFormat:@"entry: %@\n", [self stringValue:script[@"entry_path"]]];
+    [text appendFormat:@"run: %@/%@\n", [self stringValue:script[@"current_run"]], [self stringValue:script[@"total_runs"]]];
+    NSDictionary *playSettings = [script[@"play_settings"] isKindOfClass:[NSDictionary class]] ? script[@"play_settings"] : @{};
+    [text appendFormat:@"repeat: %@ interval: %@ speed: %@\n",
+                       [self stringValue:playSettings[@"repeat_times"]],
+                       [self stringValue:playSettings[@"interval"]],
+                       [self stringValue:playSettings[@"speed"]]];
     [text appendFormat:@"last_error: %@\n", [self stringValue:script[@"last_error"]]];
     [text appendString:@"\n"];
 

@@ -11,7 +11,7 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = StreamControl
 
-StreamControl_FILES = main.mm AppDelegate.mm ViewController.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm ScriptEditorViewController.mm ScriptLogViewController.mm ImageViewerViewController.mm SettingsViewController.mm
+StreamControl_FILES = main.mm AppDelegate.mm ViewController.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm ScriptEditorViewController.mm ScriptLogViewController.mm ImageViewerViewController.mm PlaySettingsViewController.mm SettingsViewController.mm
 StreamControl_RESOURCE_FILES = Info.plist
 StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics QuartzCore
 StreamControl_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
