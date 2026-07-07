@@ -129,6 +129,8 @@ jobs:
           grep -q 'New File' stream-app/app/ScriptsViewController.mm
           grep -q 'New Folder' stream-app/app/ScriptsViewController.mm
           grep -q 'openEditorForEntry' stream-app/app/ScriptsViewController.mm
+          grep -q 'playButtonTapped' stream-app/app/ScriptsViewController.mm
+          grep -q 'play.circle.fill' stream-app/app/ScriptsViewController.mm
           grep -q 'SCScriptEditorViewController' stream-app/app/ScriptEditorViewController.mm
           grep -q 'showScriptLogs' stream-app/app/ScriptsViewController.mm
           grep -q 'log_tail' stream-app/app/ScriptLogViewController.mm

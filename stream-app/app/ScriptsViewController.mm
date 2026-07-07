@@ -390,6 +390,18 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     return _entries.count;
 }
 
+- (UIButton *)playButtonForRow:(NSInteger)row
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.frame = CGRectMake(0.0, 0.0, 44.0, 44.0);
+    [button setImage:[UIImage systemImageNamed:@"play.circle.fill"] forState:UIControlStateNormal];
+    button.tintColor = [UIColor systemGreenColor];
+    button.accessibilityLabel = @"Run Script";
+    button.tag = row;
+    [button addTarget:self action:@selector(playButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     static NSString *cellID = @"ScriptCell";
@@ -407,7 +419,9 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         cell.detailTextLabel.text = entry.path.lastPathComponent;
     }
     cell.imageView.image = [UIImage systemImageNamed:entry.directory ? @"folder" : @"doc.text"];
-    cell.accessoryType = entry.directory ? (entry.scriptBundle ? UITableViewCellAccessoryDetailDisclosureButton : UITableViewCellAccessoryDisclosureIndicator) : ([self isPlayableFileEntry:entry] ? UITableViewCellAccessoryDetailButton : UITableViewCellAccessoryNone);
+    BOOL canRun = entry.scriptBundle || [self isPlayableFileEntry:entry];
+    cell.accessoryView = canRun ? [self playButtonForRow:indexPath.row] : nil;
+    cell.accessoryType = canRun ? UITableViewCellAccessoryNone : (entry.directory ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone);
     return cell;
 }
 
@@ -503,6 +517,16 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (void)tableView:(UITableView *)tableView accessoryButtonTappedForRowWithIndexPath:(NSIndexPath *)indexPath
 {
     SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    if (entry.scriptBundle || [self isPlayableFileEntry:entry]) {
+        [self playScript:entry];
+    }
+}
+
+- (void)playButtonTapped:(UIButton *)button
+{
+    NSInteger row = button.tag;
+    if (row < 0 || (NSUInteger)row >= _entries.count) return;
+    SCScriptEntry *entry = _entries[(NSUInteger)row];
     if (entry.scriptBundle || [self isPlayableFileEntry:entry]) {
         [self playScript:entry];
     }
