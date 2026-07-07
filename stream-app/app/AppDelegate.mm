@@ -75,7 +75,7 @@
 - (void)startVisualFeedbackMonitor
 {
     if (self.visualFeedbackTimer) return;
-    self.visualFeedbackTimer = [NSTimer timerWithTimeInterval:0.5
+    self.visualFeedbackTimer = [NSTimer timerWithTimeInterval:0.25
                                                        target:self
                                                      selector:@selector(pollVisualFeedback)
                                                      userInfo:nil
@@ -127,19 +127,103 @@
 
         id kindObject = event[@"kind"];
         NSString *kind = [kindObject isKindOfClass:[NSString class]] ? kindObject : @"";
-        if (![kind isEqualToString:@"toast"]) continue;
         uint64_t tsMs = [event[@"ts_ms"] unsignedLongLongValue];
         if (tsMs > 0 && nowMs > tsMs && nowMs - tsMs > 10000) continue;
 
-        id messageObject = event[@"message"];
-        NSString *message = [messageObject isKindOfClass:[NSString class]] ? messageObject : @"";
-        if (message.length == 0) continue;
-        NSTimeInterval duration = [event[@"duration"] doubleValue];
-        NSInteger position = [event[@"position"] integerValue];
-        CGFloat fontSize = (CGFloat)[event[@"fontSize"] doubleValue];
-        [self showToastOverlayWithMessage:message duration:duration position:position fontSize:fontSize];
+        if ([kind isEqualToString:@"toast"]) {
+            id messageObject = event[@"message"];
+            NSString *message = [messageObject isKindOfClass:[NSString class]] ? messageObject : @"";
+            if (message.length == 0) continue;
+            NSTimeInterval duration = [event[@"duration"] doubleValue];
+            NSInteger position = [event[@"position"] integerValue];
+            CGFloat fontSize = (CGFloat)[event[@"fontSize"] doubleValue];
+            [self showToastOverlayWithMessage:message duration:duration position:position fontSize:fontSize];
+        } else if ([kind isEqualToString:@"alert"]) {
+            id titleObject = event[@"title"];
+            id messageObject = event[@"message"];
+            NSString *title = [titleObject isKindOfClass:[NSString class]] ? titleObject : @"TLinkauto";
+            NSString *message = [messageObject isKindOfClass:[NSString class]] ? messageObject : @"";
+            if (message.length == 0) continue;
+            [self showAlertOverlayWithTitle:title message:message duration:[event[@"duration"] doubleValue]];
+        } else if ([kind isEqualToString:@"touch"]) {
+            [self showTouchIndicatorAtX:[event[@"x"] doubleValue]
+                                      y:[event[@"y"] doubleValue]
+                            screenWidth:[event[@"screen_width"] doubleValue]
+                           screenHeight:[event[@"screen_height"] doubleValue]
+                                   type:[event[@"type"] integerValue]];
+        }
     }
     self.lastVisualEventId = maxSeen;
+}
+
+- (UIViewController *)topViewControllerFromViewController:(UIViewController *)viewController
+{
+    if (!viewController) return nil;
+    UIViewController *presented = viewController.presentedViewController;
+    if (presented) return [self topViewControllerFromViewController:presented];
+    if ([viewController isKindOfClass:[UINavigationController class]]) {
+        return [self topViewControllerFromViewController:[(UINavigationController *)viewController visibleViewController]];
+    }
+    if ([viewController isKindOfClass:[UITabBarController class]]) {
+        return [self topViewControllerFromViewController:[(UITabBarController *)viewController selectedViewController]];
+    }
+    return viewController;
+}
+
+- (void)showAlertOverlayWithTitle:(NSString *)title message:(NSString *)message duration:(NSTimeInterval)duration
+{
+    if (message.length == 0 || [UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
+    UIViewController *presenter = [self topViewControllerFromViewController:self.window.rootViewController];
+    if (!presenter || [presenter isKindOfClass:[UIAlertController class]]) return;
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title.length > 0 ? title : @"TLinkauto"
+                                                                   message:message
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [presenter presentViewController:alert animated:YES completion:nil];
+
+    if (duration > 0.0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (alert.presentingViewController) {
+                [alert dismissViewControllerAnimated:YES completion:nil];
+            }
+        });
+    }
+}
+
+- (void)showTouchIndicatorAtX:(CGFloat)x y:(CGFloat)y screenWidth:(CGFloat)screenWidth screenHeight:(CGFloat)screenHeight type:(NSInteger)type
+{
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
+    UIWindow *window = self.window;
+    if (!window || screenWidth <= 0.0 || screenHeight <= 0.0) return;
+
+    CGFloat px = x / screenWidth * CGRectGetWidth(window.bounds);
+    CGFloat py = y / screenHeight * CGRectGetHeight(window.bounds);
+    CGFloat size = type == 2 ? 22.0 : 30.0;
+    UIView *dot = [[UIView alloc] initWithFrame:CGRectMake(px - size / 2.0, py - size / 2.0, size, size)];
+    dot.userInteractionEnabled = NO;
+    dot.backgroundColor = [[UIColor systemRedColor] colorWithAlphaComponent:type == 2 ? 0.35 : 0.45];
+    dot.layer.cornerRadius = size / 2.0;
+    dot.layer.borderWidth = 2.0;
+    dot.layer.borderColor = [[UIColor systemRedColor] colorWithAlphaComponent:0.85].CGColor;
+    dot.transform = CGAffineTransformMakeScale(0.6, 0.6);
+    dot.alpha = 0.0;
+    [window addSubview:dot];
+
+    [UIView animateWithDuration:0.08 animations:^{
+        dot.alpha = 1.0;
+        dot.transform = CGAffineTransformIdentity;
+    } completion:^(__unused BOOL finished) {
+        [UIView animateWithDuration:0.28
+                              delay:0.08
+                            options:UIViewAnimationOptionCurveEaseOut
+                         animations:^{
+            dot.alpha = 0.0;
+            dot.transform = CGAffineTransformMakeScale(1.45, 1.45);
+        } completion:^(__unused BOOL done) {
+            [dot removeFromSuperview];
+        }];
+    }];
 }
 
 - (void)showToastOverlayWithMessage:(NSString *)message duration:(NSTimeInterval)duration position:(NSInteger)position fontSize:(CGFloat)fontSize

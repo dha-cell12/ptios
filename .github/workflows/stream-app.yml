@@ -79,10 +79,12 @@ jobs:
           grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 96' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 11' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 12' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 19' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 20' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 22' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 23' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 26' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
@@ -106,12 +108,17 @@ jobs:
           grep -q 'scriptTaskBridge' stream-app/streamd/POCSocketServer.mm
           grep -q 'visual_feedback' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRecordToast' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleAlertBox' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleTouchIndicator' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandlePlayScript' stream-app/streamd/POCSocketServer.mm
           grep -q '"appMgmtMode"' stream-app/streamd/POCSocketServer.mm
           grep -q '"keyboardClipboard"' stream-app/streamd/POCSocketServer.mm
           grep -q 'OCR Languages' stream-app/app/SettingsViewController.mm
           grep -q 'Script Status' stream-app/app/SettingsViewController.mm
           grep -q 'Script Runtime: javascriptcore_mvp' stream-app/app/SettingsViewController.mm
+          grep -q 'Toast Overlay' stream-app/app/SettingsViewController.mm
+          grep -q 'Alert Box' stream-app/app/SettingsViewController.mm
+          grep -q 'Touch Indicator On' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm
           grep -q 'createDemoScript' stream-app/app/ScriptsViewController.mm
           grep -q 'confirmDeleteEntryAtIndexPath' stream-app/app/ScriptsViewController.mm

@@ -160,6 +160,7 @@ static NSObject *TLinkVisualFeedbackLock(void)
 static NSMutableArray<NSDictionary *> *sTLinkVisualEvents = nil;
 static uint64_t sTLinkNextVisualEventId = 1;
 static uint64_t sTLinkLastVisualEventId = 0;
+static BOOL sTLinkTouchIndicatorEnabled = NO;
 
 static NSString *TLinkVisualSafeText(NSString *text)
 {
@@ -200,11 +201,102 @@ static uint64_t TLinkRecordToast(NSString *message, double duration, int type, i
     return eventId;
 }
 
+static uint64_t TLinkRecordAlert(NSString *title, NSString *message, double duration, NSString *source)
+{
+    NSString *safeTitle = TLinkVisualSafeText(title.length > 0 ? title : @"TLinkauto");
+    NSString *safeMessage = TLinkVisualSafeText(message);
+    if (safeMessage.length == 0) return 0;
+    if (duration < 0.0) duration = 0.0;
+    if (duration > 1000.0) duration = 1000.0;
+
+    uint64_t eventId = 0;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkVisualEvents) sTLinkVisualEvents = [NSMutableArray array];
+        eventId = sTLinkNextVisualEventId++;
+        sTLinkLastVisualEventId = eventId;
+        [sTLinkVisualEvents addObject:@{
+            @"id": @(eventId),
+            @"kind": @"alert",
+            @"title": safeTitle,
+            @"message": safeMessage,
+            @"duration": @(duration),
+            @"source": source ?: @"unknown",
+            @"ts_ms": @(TLinkNowMs()),
+        }];
+        while (sTLinkVisualEvents.count > 50) {
+            [sTLinkVisualEvents removeObjectAtIndex:0];
+        }
+    }
+    return eventId;
+}
+
+static CGSize TLinkVisualScreenPixelSize(void)
+{
+    UIScreen *screen = [UIScreen mainScreen];
+    CGSize bounds = screen.bounds.size;
+    CGFloat scale = screen.scale;
+    return CGSizeMake(bounds.width * scale, bounds.height * scale);
+}
+
+static uint64_t TLinkRecordTouchIndicator(CGFloat x, CGFloat y, int touchType, NSString *source)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkTouchIndicatorEnabled) return 0;
+    }
+    CGSize screen = TLinkVisualScreenPixelSize();
+    uint64_t eventId = 0;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkVisualEvents) sTLinkVisualEvents = [NSMutableArray array];
+        eventId = sTLinkNextVisualEventId++;
+        sTLinkLastVisualEventId = eventId;
+        [sTLinkVisualEvents addObject:@{
+            @"id": @(eventId),
+            @"kind": @"touch",
+            @"x": @(x),
+            @"y": @(y),
+            @"type": @(touchType),
+            @"screen_width": @((int)screen.width),
+            @"screen_height": @((int)screen.height),
+            @"source": source ?: @"touch",
+            @"ts_ms": @(TLinkNowMs()),
+        }];
+        while (sTLinkVisualEvents.count > 80) {
+            [sTLinkVisualEvents removeObjectAtIndex:0];
+        }
+    }
+    return eventId;
+}
+
+static void TLinkRecordLegacyTouchIndicatorEvents(NSString *body, NSString *source)
+{
+    if (body.length < 1) return;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkTouchIndicatorEnabled) return;
+    }
+    const char *bytes = [body UTF8String];
+    if (!bytes) return;
+    int count = bytes[0] - '0';
+    if (count <= 0 || count > 9) return;
+    NSUInteger len = strlen(bytes);
+    NSUInteger offset = 1;
+    for (int i = 0; i < count && offset + 13 <= len; i++, offset += 13) {
+        int touchType = bytes[offset] - '0';
+        char xbuf[6] = {0};
+        char ybuf[6] = {0};
+        memcpy(xbuf, bytes + offset + 3, 5);
+        memcpy(ybuf, bytes + offset + 8, 5);
+        CGFloat x = (CGFloat)atoi(xbuf) / 10.0f;
+        CGFloat y = (CGFloat)atoi(ybuf) / 10.0f;
+        TLinkRecordTouchIndicator(x, y, touchType, source);
+    }
+}
+
 static NSDictionary *TLinkVisualFeedbackDictionary(void)
 {
     @synchronized (TLinkVisualFeedbackLock()) {
         return @{
             @"last_event_id": @(sTLinkLastVisualEventId),
+            @"touch_indicator_enabled": @(sTLinkTouchIndicatorEnabled),
             @"events": sTLinkVisualEvents ? [sTLinkVisualEvents copy] : @[],
         };
     }
@@ -414,6 +506,7 @@ static NSString *TLinkScriptStoragePath(TLinkScriptSession *session, NSString *r
 static NSString *TLinkScriptRunTask(int taskType, NSString *body)
 {
     if (taskType == 10) {
+        TLinkRecordLegacyTouchIndicatorEvents(body ?: @"", @"script-task10");
         POCPerformTouchFromRawData((const unsigned char *)[(body ?: @"") UTF8String]);
         return @"0";
     }
@@ -714,6 +807,43 @@ static NSData *TLinkHandleToast(NSString *body)
     uint64_t eventId = TLinkRecordToast(message, duration, type, position, fontSize, @"task22");
     if (eventId == 0) return TLinkError(@"toast_missing_message");
     return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu", eventId]);
+}
+
+static NSData *TLinkHandleAlertBox(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    NSString *title = parts.count >= 1 ? parts[0] : @"TLinkauto";
+    NSString *message = parts.count >= 2 ? parts[1] : @"";
+    double duration = parts.count >= 3 ? [parts[2] doubleValue] : 0.0;
+    uint64_t eventId = TLinkRecordAlert(title, message, duration, @"task12");
+    if (eventId == 0) return TLinkError(@"alert_missing_message");
+    return TLinkSuccess([NSString stringWithFormat:@"alert_queued;;%llu", eventId]);
+}
+
+static NSData *TLinkHandleTouchIndicator(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    int action = parts.count >= 1 ? [parts[0] intValue] : [TLinkCleanPayload(body) intValue];
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (action == 0) {
+            sTLinkTouchIndicatorEnabled = NO;
+        } else if (action == 1 || action == 2) {
+            sTLinkTouchIndicatorEnabled = YES;
+        } else {
+            return TLinkError([NSString stringWithFormat:@"unknown_touch_indicator_action %d", action]);
+        }
+    }
+    NSString *state = sTLinkTouchIndicatorEnabled ? @"enabled" : @"disabled";
+    uint64_t eventId = TLinkRecordToast([NSString stringWithFormat:@"Touch indicator %@", state],
+                                        1.2,
+                                        0,
+                                        2,
+                                        14,
+                                        @"task26");
+    if (action == 2) {
+        return TLinkSuccess([NSString stringWithFormat:@"touch_indicator_reloaded;;%@;;%llu", state, eventId]);
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"touch_indicator_%@;;%llu", state, eventId]);
 }
 
 @interface TLinkImageObject : NSObject
@@ -1076,6 +1206,7 @@ static NSString *TLinkTouchPayload(int type, int finger, CGFloat x, CGFloat y)
 static void TLinkPerformSingleTouch(int type, int finger, CGFloat x, CGFloat y)
 {
     NSString *payload = TLinkTouchPayload(type, finger, x, y);
+    TLinkRecordTouchIndicator(x, y, type, @"native-touch");
     POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
 }
 
@@ -1188,6 +1319,7 @@ static BOOL TLinkHandleNativeBatch(NSString *body, NSString **error)
         NSString *payload = [cmd substringFromIndex:2];
         if (task == 10) {
             if ([payload hasPrefix:@";;"]) payload = [payload substringFromIndex:2];
+            TLinkRecordLegacyTouchIndicatorEvents(payload, @"native-batch-task10");
             POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
         } else if (task == 62) {
             if (!TLinkHandleNativeTap(payload, error)) return NO;
@@ -2871,6 +3003,9 @@ static NSData *TLinkHandleHelloStatus(void)
         @"scriptMode": @"javascriptcore_mvp",
         @"visualFeedback": @(YES),
         @"toastOverlay": @(YES),
+        @"alertOverlay": @(YES),
+        @"touchIndicator": @(YES),
+        @"touchIndicatorEnabled": @(sTLinkTouchIndicatorEnabled),
         @"appMgmt": @(YES),
         @"appMgmtMode": @"limited_process_info_helper_launch_kill",
         @"appLaunchMode": @"privhelper_best_effort",
@@ -2941,6 +3076,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleOpenApplication(body);
     }
 
+    if (taskType == 12) {
+        return TLinkHandleAlertBox(body);
+    }
+
     if (taskType == 18) {
         int us = [body intValue];
         if (us < 0) us = 0;
@@ -2966,6 +3105,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 25) {
         return TLinkHandleDeviceInfo(body);
+    }
+
+    if (taskType == 26) {
+        return TLinkHandleTouchIndicator(body);
     }
 
     if (taskType == 27) {
@@ -3122,7 +3265,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,18,19,20,21,22,23,24,25,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,visualFeedback,toastOverlay,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity,alertOverlay,touchIndicator keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,visualFeedback,toastOverlay,alertOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
@@ -3167,6 +3310,7 @@ static NSData *POCHandleLine(const char *line)
         NSString *bodyString = [NSString stringWithUTF8String:body];
         if (!bodyString) bodyString = @"";
         POCLogf("socket: task10 received body='%s' len=%lu", body, (unsigned long)strlen(body));
+        TLinkRecordLegacyTouchIndicatorEvents(bodyString, @"socket-task10");
 
         dispatch_async(dispatch_get_main_queue(), ^{
             const char *mainBody = [bodyString UTF8String];
