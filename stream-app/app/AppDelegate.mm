@@ -17,6 +17,8 @@
 @property(nonatomic, strong) NSTimer *visualFeedbackTimer;
 @property(nonatomic, assign) BOOL visualFeedbackPollInFlight;
 @property(nonatomic, assign) uint64_t lastVisualEventId;
+@property(nonatomic, assign) NSInteger lastVisualFeedbackPid;
+@property(nonatomic, assign) NSInteger visualFeedbackBurstPollsRemaining;
 @end
 
 @implementation SCAppDelegate
@@ -55,6 +57,10 @@
 
     self.window.rootViewController = tabs;
     [self.window makeKeyAndVisible];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(requestVisualFeedbackBurstPoll:)
+                                                 name:@"TLinkVisualFeedbackNeedsPoll"
+                                               object:nil];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -84,11 +90,20 @@
     [self pollVisualFeedback];
 }
 
+- (void)requestVisualFeedbackBurstPoll:(NSNotification *)notification
+{
+    (void)notification;
+    [self startVisualFeedbackMonitor];
+    self.visualFeedbackBurstPollsRemaining = MAX(self.visualFeedbackBurstPollsRemaining, 12);
+    [self pollVisualFeedback];
+}
+
 - (void)stopVisualFeedbackMonitor
 {
     [self.visualFeedbackTimer invalidate];
     self.visualFeedbackTimer = nil;
     self.visualFeedbackPollInFlight = NO;
+    self.visualFeedbackBurstPollsRemaining = 0;
 }
 
 - (void)pollVisualFeedback
@@ -100,6 +115,12 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             self.visualFeedbackPollInFlight = NO;
             [self handleVisualFeedbackStatusResponse:response];
+            if (self.visualFeedbackBurstPollsRemaining > 0) {
+                self.visualFeedbackBurstPollsRemaining--;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [self pollVisualFeedback];
+                });
+            }
         });
     });
 }
@@ -113,9 +134,22 @@
     NSDictionary *status = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
     if (![status isKindOfClass:[NSDictionary class]]) return;
 
+    NSInteger streamdPid = [status[@"pid"] integerValue];
+    if (streamdPid > 0) {
+        if (self.lastVisualFeedbackPid > 0 && self.lastVisualFeedbackPid != streamdPid) {
+            self.lastVisualEventId = 0;
+        }
+        self.lastVisualFeedbackPid = streamdPid;
+    }
+
     NSDictionary *visualFeedback = status[@"visual_feedback"];
     NSArray *events = [visualFeedback isKindOfClass:[NSDictionary class]] ? visualFeedback[@"events"] : nil;
     if (![events isKindOfClass:[NSArray class]]) return;
+
+    uint64_t serverLastEventId = [visualFeedback[@"last_event_id"] unsignedLongLongValue];
+    if (serverLastEventId > 0 && serverLastEventId < self.lastVisualEventId) {
+        self.lastVisualEventId = 0;
+    }
 
     uint64_t maxSeen = self.lastVisualEventId;
     uint64_t nowMs = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);

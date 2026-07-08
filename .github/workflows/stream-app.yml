@@ -69,6 +69,9 @@ jobs:
           grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile
           grep -q 'startVisualFeedbackMonitor' stream-app/app/AppDelegate.mm
           grep -q 'showToastOverlayWithMessage' stream-app/app/AppDelegate.mm
+          grep -q 'lastVisualFeedbackPid' stream-app/app/AppDelegate.mm
+          grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/AppDelegate.mm
+          grep -q 'serverLastEventId' stream-app/app/AppDelegate.mm
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
           grep -q 'ScriptEditorViewController.mm' stream-app/app/Makefile
           grep -q 'ScriptLogViewController.mm' stream-app/app/Makefile
@@ -147,6 +150,8 @@ jobs:
           grep -q 'New File' stream-app/app/ScriptsViewController.mm
           grep -q 'New Folder' stream-app/app/ScriptsViewController.mm
           grep -q 'openEditorForEntry' stream-app/app/ScriptsViewController.mm
+          grep -q 'showStatus' stream-app/app/ScriptsViewController.mm
+          grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/ScriptsViewController.mm
           grep -q 'renameEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'duplicateEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'uniqueCopyPathForEntry' stream-app/app/ScriptsViewController.mm

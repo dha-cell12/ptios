@@ -20,6 +20,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 @implementation SCScriptsViewController {
     NSMutableArray<SCScriptEntry *> *_entries;
     UILabel *_emptyLabel;
+    UILabel *_statusLabel;
     NSString *_scriptsPath;
 }
 
@@ -66,6 +67,15 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     _emptyLabel.textAlignment = NSTextAlignmentCenter;
     _emptyLabel.font = [UIFont systemFontOfSize:15.0];
     self.tableView.backgroundView = _emptyLabel;
+
+    _statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 52.0)];
+    _statusLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    _statusLabel.textAlignment = NSTextAlignmentCenter;
+    _statusLabel.textColor = [UIColor secondaryLabelColor];
+    _statusLabel.font = [UIFont systemFontOfSize:13.0];
+    _statusLabel.numberOfLines = 2;
+    _statusLabel.text = @"";
+    self.tableView.tableFooterView = _statusLabel;
     [self reloadScripts];
 }
 
@@ -88,6 +98,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showStatus:(NSString *)status
+{
+    _statusLabel.text = status ?: @"";
+    self.tableView.tableFooterView = _statusLabel;
 }
 
 - (NSString *)safeNameFromInput:(NSString *)input
@@ -718,10 +734,19 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)playScript:(SCScriptEntry *)entry
 {
+    [self showStatus:[NSString stringWithFormat:@"Starting %@...", entry.name ?: entry.path.lastPathComponent]];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"TLinkVisualFeedbackNeedsPoll" object:nil];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *response = [TLinkSocketClient requestTask:19 args:@[entry.path] timeout:8.0];
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self showMessageWithTitle:entry.name message:response ?: @"<nil>"];
+            BOOL ok = [response hasPrefix:@"0;;"] || [response isEqualToString:@"0"];
+            if (ok) {
+                [self showStatus:[NSString stringWithFormat:@"Running %@\n%@", entry.name ?: entry.path.lastPathComponent, response ?: @""]];
+                [[NSNotificationCenter defaultCenter] postNotificationName:@"TLinkVisualFeedbackNeedsPoll" object:nil];
+            } else {
+                [self showStatus:[NSString stringWithFormat:@"Failed %@\n%@", entry.name ?: entry.path.lastPathComponent, response ?: @"<nil>"]];
+                [self showMessageWithTitle:entry.name message:response ?: @"<nil>"];
+            }
         });
     });
 }
