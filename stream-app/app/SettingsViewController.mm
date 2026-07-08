@@ -16,9 +16,9 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     self.title = @"Settings";
     [self loadConfig];
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Touch Indicator On", @"Touch Indicator Off", @"Export Diagnostics"],
+        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Export Diagnostics"],
         @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Visual Feedback: foreground_overlay", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -211,7 +211,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     }
     if (indexPath.section != 0) return;
 
-    if (indexPath.row == 18) {
+    if (indexPath.row == 20) {
         [self exportDiagnostics];
         return;
     }
@@ -271,9 +271,15 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             line = @"12TLinkauto;;Alert overlay is active;;3\n";
             break;
         case 16:
-            line = @"261\n";
+            line = @"42TLinkauto;;Dialog overlay is active;;OK;;Cancel\n";
             break;
         case 17:
+            line = @"43\n";
+            break;
+        case 18:
+            line = @"261\n";
+            break;
+        case 19:
             line = @"260\n";
             break;
         default: return;
@@ -283,6 +289,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *response = [TLinkSocketClient sendLineAndRead:line timeout:8.0];
         dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"TLinkVisualFeedbackNeedsPoll" object:nil];
             self->_resultView.text = response ?: @"<nil>";
         });
     });

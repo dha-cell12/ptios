@@ -161,6 +161,7 @@ static NSMutableArray<NSDictionary *> *sTLinkVisualEvents = nil;
 static uint64_t sTLinkNextVisualEventId = 1;
 static uint64_t sTLinkLastVisualEventId = 0;
 static BOOL sTLinkTouchIndicatorEnabled = NO;
+static NSString *sTLinkLastDialogValue = @"";
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 
 static NSString *TLinkVisualSafeText(NSString *text)
@@ -221,6 +222,37 @@ static uint64_t TLinkRecordAlert(NSString *title, NSString *message, double dura
             @"title": safeTitle,
             @"message": safeMessage,
             @"duration": @(duration),
+            @"source": source ?: @"unknown",
+            @"ts_ms": @(TLinkNowMs()),
+        }];
+        while (sTLinkVisualEvents.count > 50) {
+            [sTLinkVisualEvents removeObjectAtIndex:0];
+        }
+    }
+    return eventId;
+}
+
+static uint64_t TLinkRecordDialog(NSString *title, NSString *message, NSString *okTitle, NSString *cancelTitle, NSString *source)
+{
+    NSString *safeTitle = TLinkVisualSafeText(title.length > 0 ? title : @"TLinkauto");
+    NSString *safeMessage = TLinkVisualSafeText(message);
+    NSString *safeOK = TLinkVisualSafeText(okTitle.length > 0 ? okTitle : @"OK");
+    NSString *safeCancel = TLinkVisualSafeText(cancelTitle.length > 0 ? cancelTitle : @"Cancel");
+    if (safeTitle.length == 0 && safeMessage.length == 0) return 0;
+
+    uint64_t eventId = 0;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkVisualEvents) sTLinkVisualEvents = [NSMutableArray array];
+        eventId = sTLinkNextVisualEventId++;
+        sTLinkLastVisualEventId = eventId;
+        [sTLinkVisualEvents addObject:@{
+            @"id": @(eventId),
+            @"kind": @"dialog",
+            @"title": safeTitle,
+            @"message": safeMessage,
+            @"ok": safeOK,
+            @"cancel": safeCancel,
+            @"mode": @"nonblocking_foreground_overlay",
             @"source": source ?: @"unknown",
             @"ts_ms": @(TLinkNowMs()),
         }];
@@ -297,6 +329,7 @@ static NSDictionary *TLinkVisualFeedbackDictionary(void)
     @synchronized (TLinkVisualFeedbackLock()) {
         return @{
             @"last_event_id": @(sTLinkLastVisualEventId),
+            @"last_dialog_value": sTLinkLastDialogValue ?: @"",
             @"touch_indicator_enabled": @(sTLinkTouchIndicatorEnabled),
             @"events": sTLinkVisualEvents ? [sTLinkVisualEvents copy] : @[],
         };
@@ -615,6 +648,48 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         int fontSize = opts[@"fontSize"] ? [opts[@"fontSize"] intValue] : 15;
         uint64_t eventId = TLinkRecordToast(text, duration, type, position, fontSize, @"script");
         return @{@"ok": @YES, @"mode": @"app_foreground_overlay", @"event_id": @(eventId)};
+    };
+    device[@"alert"] = ^NSDictionary *(JSValue *titleValue, JSValue *messageValue, JSValue *options) {
+        NSString *title = titleValue && ![titleValue isUndefined] && ![titleValue isNull] ? [titleValue toString] : @"TLinkauto";
+        NSString *message = messageValue && ![messageValue isUndefined] && ![messageValue isNull] ? [messageValue toString] : @"";
+        NSDictionary *opts = nil;
+        if (options && ![options isUndefined] && ![options isNull]) {
+            id obj = [options toObject];
+            if ([obj isKindOfClass:[NSDictionary class]]) opts = obj;
+        }
+        double duration = 0.0;
+        if (opts[@"duration"]) {
+            duration = [opts[@"duration"] doubleValue];
+        } else if (options && ![options isUndefined] && ![options isNull]) {
+            duration = [options toDouble];
+        }
+        TLinkScriptAppendLog(weakSession, [NSString stringWithFormat:@"alert: %@", message]);
+        uint64_t eventId = TLinkRecordAlert(title, message, duration, @"script");
+        return @{@"ok": @(eventId > 0), @"mode": @"app_foreground_overlay", @"event_id": @(eventId)};
+    };
+    device[@"dialog"] = ^NSDictionary *(JSValue *options) {
+        NSDictionary *opts = nil;
+        if (options && ![options isUndefined] && ![options isNull]) {
+            id obj = [options toObject];
+            if ([obj isKindOfClass:[NSDictionary class]]) opts = obj;
+        }
+        NSString *title = [opts[@"title"] isKindOfClass:[NSString class]] ? opts[@"title"] : @"TLinkauto";
+        NSString *message = [opts[@"message"] isKindOfClass:[NSString class]] ? opts[@"message"] : @"";
+        NSString *okTitle = [opts[@"ok"] isKindOfClass:[NSString class]] ? opts[@"ok"] : @"OK";
+        NSString *cancelTitle = [opts[@"cancel"] isKindOfClass:[NSString class]] ? opts[@"cancel"] : @"Cancel";
+        sTLinkLastDialogValue = @"0";
+        TLinkScriptAppendLog(weakSession, [NSString stringWithFormat:@"dialog: %@", message]);
+        uint64_t eventId = TLinkRecordDialog(title, message, okTitle, cancelTitle, @"script");
+        return @{
+            @"ok": @(eventId > 0),
+            @"response": sTLinkLastDialogValue ?: @"0",
+            @"mode": @"limited_nonblocking_foreground_overlay",
+            @"event_id": @(eventId),
+        };
+    };
+    device[@"clearDialogValues"] = ^NSDictionary *{
+        sTLinkLastDialogValue = @"";
+        return @{@"ok": @YES};
     };
     device[@"shouldStop"] = ^BOOL {
         return TLinkScriptStopRequested(weakSession);
@@ -941,6 +1016,26 @@ static NSData *TLinkHandleAlertBox(NSString *body)
     uint64_t eventId = TLinkRecordAlert(title, message, duration, @"task12");
     if (eventId == 0) return TLinkError(@"alert_missing_message");
     return TLinkSuccess([NSString stringWithFormat:@"alert_queued;;%llu", eventId]);
+}
+
+static NSData *TLinkHandleDialog(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    NSString *title = parts.count >= 1 ? parts[0] : @"TLinkauto";
+    NSString *message = parts.count >= 2 ? parts[1] : @"";
+    NSString *okTitle = parts.count >= 3 ? parts[2] : @"OK";
+    NSString *cancelTitle = parts.count >= 4 ? parts[3] : @"Cancel";
+    sTLinkLastDialogValue = @"0";
+    uint64_t eventId = TLinkRecordDialog(title, message, okTitle, cancelTitle, @"task42");
+    if (eventId == 0) return TLinkError(@"dialog_missing_content");
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;dialog_queued;;%llu;;limited_nonblocking_foreground_overlay", sTLinkLastDialogValue ?: @"0", eventId]);
+}
+
+static NSData *TLinkHandleClearDialog(NSString *body)
+{
+    (void)body;
+    sTLinkLastDialogValue = @"";
+    return TLinkSuccess(nil);
 }
 
 static NSData *TLinkHandleTouchIndicator(NSString *body)
@@ -3128,6 +3223,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"visualFeedback": @(YES),
         @"toastOverlay": @(YES),
         @"alertOverlay": @(YES),
+        @"dialogOverlay": @(YES),
+        @"dialogOverlayMode": @"limited_nonblocking_foreground_overlay",
         @"touchIndicator": @(YES),
         @"touchIndicatorEnabled": @(sTLinkTouchIndicatorEnabled),
         @"appMgmt": @(YES),
@@ -3287,6 +3384,14 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleFrontmostOrientation();
     }
 
+    if (taskType == 42) {
+        return TLinkHandleDialog(body);
+    }
+
+    if (taskType == 43) {
+        return TLinkHandleClearDialog(body);
+    }
+
     if (taskType == 44 || taskType == 45) {
         TLinkEnsureRuntimeDirectories();
         return TLinkSuccess(@"/var/mobile/Library/TLinkauto");
@@ -3401,7 +3506,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,visualFeedback,toastOverlay,alertOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore dialog=limited_nonblocking_foreground_overlay imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

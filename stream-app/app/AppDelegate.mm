@@ -179,6 +179,16 @@
             NSString *message = [messageObject isKindOfClass:[NSString class]] ? messageObject : @"";
             if (message.length == 0) continue;
             [self showAlertOverlayWithTitle:title message:message duration:[event[@"duration"] doubleValue]];
+        } else if ([kind isEqualToString:@"dialog"]) {
+            id titleObject = event[@"title"];
+            id messageObject = event[@"message"];
+            id okObject = event[@"ok"];
+            id cancelObject = event[@"cancel"];
+            NSString *title = [titleObject isKindOfClass:[NSString class]] ? titleObject : @"TLinkauto";
+            NSString *message = [messageObject isKindOfClass:[NSString class]] ? messageObject : @"";
+            NSString *okTitle = [okObject isKindOfClass:[NSString class]] ? okObject : @"OK";
+            NSString *cancelTitle = [cancelObject isKindOfClass:[NSString class]] ? cancelObject : @"Cancel";
+            [self showDialogOverlayWithTitle:title message:message okTitle:okTitle cancelTitle:cancelTitle];
         } else if ([kind isEqualToString:@"touch"]) {
             [self showTouchIndicatorAtX:[event[@"x"] doubleValue]
                                       y:[event[@"y"] doubleValue]
@@ -223,6 +233,26 @@
             }
         });
     }
+}
+
+- (void)showDialogOverlayWithTitle:(NSString *)title message:(NSString *)message okTitle:(NSString *)okTitle cancelTitle:(NSString *)cancelTitle
+{
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
+    UIViewController *presenter = [self topViewControllerFromViewController:self.window.rootViewController];
+    if (!presenter || [presenter isKindOfClass:[UIAlertController class]]) return;
+
+    UIAlertController *dialog = [UIAlertController alertControllerWithTitle:title.length > 0 ? title : @"TLinkauto"
+                                                                    message:message ?: @""
+                                                             preferredStyle:UIAlertControllerStyleAlert];
+    [dialog addAction:[UIAlertAction actionWithTitle:okTitle.length > 0 ? okTitle : @"OK"
+                                               style:UIAlertActionStyleDefault
+                                             handler:nil]];
+    if (cancelTitle.length > 0) {
+        [dialog addAction:[UIAlertAction actionWithTitle:cancelTitle
+                                                   style:UIAlertActionStyleCancel
+                                                 handler:nil]];
+    }
+    [presenter presentViewController:dialog animated:YES completion:nil];
 }
 
 - (void)showTouchIndicatorAtX:(CGFloat)x y:(CGFloat)y screenWidth:(CGFloat)screenWidth screenHeight:(CGFloat)screenHeight type:(NSInteger)type

@@ -99,6 +99,8 @@ jobs:
           grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 42' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 43' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 54' stream-app/streamd/POCSocketServer.mm
           grep -q 'FrontBoardServices' stream-app/streamd/POCSocketServer.mm
           grep -q 'frontmost_cache' stream-app/streamd/POCSocketServer.mm
@@ -120,6 +122,8 @@ jobs:
           grep -q 'visual_feedback' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRecordToast' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleAlertBox' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleDialog' stream-app/streamd/POCSocketServer.mm
+          grep -q 'dialogOverlay' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleTouchIndicator' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLoadSettingsConfig' stream-app/streamd/POCSocketServer.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/config.plist' stream-app/streamd/POCSocketServer.mm
@@ -137,6 +141,8 @@ jobs:
           grep -q 'Script Runtime: javascriptcore_mvp' stream-app/app/SettingsViewController.mm
           grep -q 'Toast Overlay' stream-app/app/SettingsViewController.mm
           grep -q 'Alert Box' stream-app/app/SettingsViewController.mm
+          grep -q 'Dialog Overlay' stream-app/app/SettingsViewController.mm
+          grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/SettingsViewController.mm
           grep -q 'Touch Indicator On' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm
           grep -q 'Runtime Settings' stream-app/app/SettingsViewController.mm
