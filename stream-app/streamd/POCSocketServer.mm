@@ -3236,7 +3236,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"clearData": @(NO),
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
-        @"privhelperMode": @"open_kill_restart",
+        @"privhelperMode": @"open_kill_restart_ensure_streamd",
+        @"serviceMode": @"helper_ensure_streamd_best_effort",
     };
     CGSize screen = TLinkScreenPixelSize();
     if (sTLinkLastFrontmostBundleId.length > 0) {
@@ -3506,7 +3507,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore dialog=limited_nonblocking_foreground_overlay imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

@@ -3,14 +3,20 @@
 #include <errno.h>
 #include <dlfcn.h>
 #include <limits.h>
+#include <spawn.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
 #import <objc/message.h>
+
+extern char **environ;
 
 #ifndef PROC_PIDPATHINFO_MAXSIZE
 #define PROC_PIDPATHINFO_MAXSIZE 4096
@@ -203,6 +209,119 @@ static BOOL TLinkHelperPidIsAlive(pid_t pid)
     if (pid <= 0) return NO;
     if (kill(pid, 0) == 0) return YES;
     return errno == EPERM;
+}
+
+static NSString *TLinkHelperSendLocalTaskLine(NSString *line, int timeoutSec)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return nil;
+
+    struct timeval tv;
+    tv.tv_sec = timeoutSec > 0 ? timeoutSec : 1;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(6000);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        return nil;
+    }
+
+    NSString *payload = [line hasSuffix:@"\n"] ? line : [line stringByAppendingString:@"\n"];
+    const char *bytes = [payload UTF8String];
+    send(sock, bytes, strlen(bytes), 0);
+
+    NSMutableData *data = [NSMutableData data];
+    char buf[2048];
+    while (true) {
+        ssize_t n = recv(sock, buf, sizeof(buf), 0);
+        if (n <= 0) break;
+        [data appendBytes:buf length:(NSUInteger)n];
+        if (memchr(buf, '\n', (size_t)n)) break;
+        if (data.length > 64 * 1024) break;
+    }
+    close(sock);
+
+    if (data.length == 0) return nil;
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+static BOOL TLinkHelperStreamdPathAllowed(NSString *streamdPath)
+{
+    NSString *normalized = TLinkHelperNormalizedPath(streamdPath);
+    if (normalized.length == 0) return NO;
+    if (![[normalized lastPathComponent] isEqualToString:@"streamd"]) return NO;
+    return [normalized hasSuffix:@"/StreamControl.app/streamd"];
+}
+
+static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
+{
+    NSString *normalized = TLinkHelperNormalizedPath(streamdPath);
+    if (!TLinkHelperStreamdPathAllowed(normalized)) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: refused path=%@", streamdPath ?: @""]);
+        return 40;
+    }
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:normalized]) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: not executable path=%@", normalized]);
+        return 41;
+    }
+
+    NSString *before = TLinkHelperSendLocalTaskLine(@"97\n", 1);
+    if (before.length > 0 && !replaceExisting) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: already responding %@", [before stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+        return 0;
+    }
+
+    if (before.length > 0) {
+        NSString *shutdown = TLinkHelperSendLocalTaskLine(@"96\n", 1);
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: task96 response %@", [shutdown stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"<nil>"]);
+        usleep(400000);
+    }
+
+    int killExit = TLinkKillStreamd(-1);
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: cleanup exit=%d replace=%d", killExit, replaceExisting ? 1 : 0]);
+    usleep(250000);
+
+    const char *cpath = [normalized fileSystemRepresentation];
+    char *arg0 = strdup(cpath);
+    char *arg1 = strdup("--daemon");
+    if (!arg0 || !arg1) {
+        free(arg0); free(arg1);
+        TLinkHelperLog(@"ensure-streamd: argv alloc failed");
+        return 42;
+    }
+    char *const spawnArgv[] = { arg0, arg1, NULL };
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, cpath, NULL, &attr, spawnArgv, environ);
+    posix_spawnattr_destroy(&attr);
+    free(arg0); free(arg1);
+
+    if (rc != 0) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: spawn failed rc=%d path=%@", rc, normalized]);
+        return 43;
+    }
+
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: spawned pid=%d path=%@ uid=%d euid=%d", pid, normalized, getuid(), geteuid()]);
+    for (int i = 0; i < 12; i++) {
+        usleep(250000);
+        NSString *probe = TLinkHelperSendLocalTaskLine(@"97\n", 1);
+        if (probe.length > 0) {
+            TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: probe ok attempt=%d %@", i + 1, [probe stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+            return 0;
+        }
+    }
+
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: spawned pid=%d but tcp/6000 did not respond", pid]);
+    return 44;
 }
 
 static pid_t TLinkHelperPidForBundleId(NSString *bundleId)
@@ -421,8 +540,17 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=3 scope=kill-streamd,open-bundle,kill-bundle,open-url");
+            TLinkHelperLog(@"privhelper version=4 scope=ensure-streamd,kill-streamd,open-bundle,kill-bundle,open-url");
             return 0;
+        }
+
+        if (argc >= 3 && strcmp(argv[1], "--ensure-streamd") == 0) {
+            NSString *streamdPath = [NSString stringWithUTF8String:argv[2]] ?: @"";
+            BOOL replaceExisting = NO;
+            for (int i = 3; i < argc; i++) {
+                if (strcmp(argv[i], "--replace") == 0) replaceExisting = YES;
+            }
+            return TLinkEnsureStreamd(streamdPath, replaceExisting);
         }
 
         if (argc >= 2 && strcmp(argv[1], "--kill-streamd") == 0) {
@@ -451,7 +579,7 @@ int main(int argc, char *argv[])
             return TLinkOpenURL(rawURL);
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url");
+        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url");
         return 64;
     }
 }

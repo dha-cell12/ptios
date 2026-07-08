@@ -3,13 +3,12 @@
 // ---------------------------------------------------------------------------
 // SCStreamSupervisor
 //
-// Spawns and watchdogs the bundled `streamd` binary (NON-root). Mirrors a
-// minimal version of the Tlinkauto TRWatchDog model: spawn by relative path
-// from the app bundle, monitor liveness, and respawn on unexpected exit.
+// Ensures and watchdogs the bundled `streamd` binary. Foreground app launches
+// can use a direct child process, while service mode asks the TrollStore root
+// helper to keep a detached streamd process alive outside the app UI lifecycle.
 //
-// streamd is bundled at StreamControl.app/streamd and spawned via posix_spawn.
-// No root is required for the click/stream paths, so this does NOT use
-// spawnRoot/persona-mgmt (those are reserved for the future privhelper).
+// streamd is bundled at StreamControl.app/streamd and spawned by relative path.
+// Core automation stays in streamd; the helper only starts/stops/replaces it.
 // ---------------------------------------------------------------------------
 
 @protocol SCStreamSupervisorDelegate <NSObject>
@@ -30,8 +29,11 @@
 // Absolute path to the streamd binary inside the app bundle.
 - (NSString *)streamdPath;
 
-// Spawn streamd (--daemon). No-op if already running.
+// Ensure streamd is listening on tcp/6000. No-op if it already responds.
 - (void)start;
+
+// Explicit service-mode ensure used by app lifecycle hooks.
+- (void)ensureService;
 
 // Terminate streamd and disable respawn for this stop.
 - (void)stop;

@@ -71,6 +71,9 @@ jobs:
           grep -q 'showToastOverlayWithMessage' stream-app/app/AppDelegate.mm
           grep -q 'lastVisualFeedbackPid' stream-app/app/AppDelegate.mm
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/AppDelegate.mm
+          grep -q 'applicationDidEnterBackground' stream-app/app/AppDelegate.mm
+          grep -q 'beginBackgroundTaskWithName' stream-app/app/AppDelegate.mm
+          grep -q 'ensureStreamServiceForReason' stream-app/app/AppDelegate.mm
           grep -q 'serverLastEventId' stream-app/app/AppDelegate.mm
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
           grep -q 'ScriptEditorViewController.mm' stream-app/app/Makefile
@@ -79,10 +82,16 @@ jobs:
           grep -q 'PlaySettingsViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
           grep -q 'QuartzCore' stream-app/app/Makefile
+          grep -q 'Ensure Service' stream-app/app/ViewController.mm
           grep -q 'Restart streamd' stream-app/app/ViewController.mm
+          grep -q 'ensureService' stream-app/app/StreamSupervisor.h
+          grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
+          grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
+          grep -q -- '--ensure-streamd' stream-app/privhelper/main.mm
+          grep -q 'privhelper version=4' stream-app/privhelper/main.mm
           grep -q -- '--open-bundle' stream-app/privhelper/main.mm
           grep -q -- '--kill-bundle' stream-app/privhelper/main.mm
           grep -q -- '--open-url' stream-app/privhelper/main.mm
@@ -132,6 +141,8 @@ jobs:
           grep -q 'TLinkScriptEffectiveSpeed' stream-app/streamd/POCSocketServer.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptPlaySettings' stream-app/streamd/POCSocketServer.mm
+          grep -q 'privhelperEnsureStreamd' stream-app/streamd/POCSocketServer.mm
+          grep -q 'helper_ensure_streamd_best_effort' stream-app/streamd/POCSocketServer.mm
           grep -q 'requested_ms' stream-app/streamd/POCSocketServer.mm
           grep -q 'playSettings' stream-app/streamd/POCSocketServer.mm
           grep -q '"appMgmtMode"' stream-app/streamd/POCSocketServer.mm
@@ -142,6 +153,7 @@ jobs:
           grep -q 'Toast Overlay' stream-app/app/SettingsViewController.mm
           grep -q 'Alert Box' stream-app/app/SettingsViewController.mm
           grep -q 'Dialog Overlay' stream-app/app/SettingsViewController.mm
+          grep -q 'Service Mode: helper ensure streamd' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/SettingsViewController.mm
           grep -q 'Touch Indicator On' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm

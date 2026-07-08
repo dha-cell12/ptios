@@ -2,6 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import "ScriptsViewController.h"
 #import "SettingsViewController.h"
+#import "StreamSupervisor.h"
 #import "TLinkSocketClient.h"
 #import "ViewController.h"
 
@@ -19,6 +20,7 @@
 @property(nonatomic, assign) uint64_t lastVisualEventId;
 @property(nonatomic, assign) NSInteger lastVisualFeedbackPid;
 @property(nonatomic, assign) NSInteger visualFeedbackBurstPollsRemaining;
+@property(nonatomic, strong) SCStreamSupervisor *serviceSupervisor;
 @end
 
 @implementation SCAppDelegate
@@ -61,6 +63,8 @@
                                              selector:@selector(requestVisualFeedbackBurstPoll:)
                                                  name:@"TLinkVisualFeedbackNeedsPoll"
                                                object:nil];
+    self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
+    [self ensureStreamServiceForReason:@"launch" background:NO];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -69,6 +73,7 @@
 - (void)applicationDidBecomeActive:(UIApplication *)application
 {
     (void)application;
+    [self ensureStreamServiceForReason:@"active" background:NO];
     [self startVisualFeedbackMonitor];
 }
 
@@ -76,6 +81,37 @@
 {
     (void)application;
     [self stopVisualFeedbackMonitor];
+}
+
+- (void)applicationDidEnterBackground:(UIApplication *)application
+{
+    (void)application;
+    [self ensureStreamServiceForReason:@"background" background:YES];
+}
+
+- (void)ensureStreamServiceForReason:(NSString *)reason background:(BOOL)background
+{
+    if (!self.serviceSupervisor) self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
+    NSLog(@"[StreamControl] ensure streamd service reason=%@", reason ?: @"unknown");
+
+    if (background) {
+        __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+        task = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"TLinkEnsureStreamd"
+                                                             expirationHandler:^{
+            if (task != UIBackgroundTaskInvalid) {
+                [[UIApplication sharedApplication] endBackgroundTask:task];
+                task = UIBackgroundTaskInvalid;
+            }
+        }];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (task != UIBackgroundTaskInvalid) {
+                [[UIApplication sharedApplication] endBackgroundTask:task];
+                task = UIBackgroundTaskInvalid;
+            }
+        });
+    }
+
+    [self.serviceSupervisor ensureService];
 }
 
 - (void)startVisualFeedbackMonitor

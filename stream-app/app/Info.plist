@@ -42,7 +42,7 @@
 
 	<!-- ================================================================ -->
 	<!-- TrollStore root helper. Paths are relative to this Info.plist.    -->
-	<!-- Current scope: kill stale streamd processes that keep tcp/6000.   -->
+	<!-- Current scope: ensure/restart/kill streamd and app open/kill/url. -->
 	<!-- Broader app-data/keychain helper tasks are added in later phases. -->
 	<!-- ================================================================ -->
 	<key>TSRootBinaries</key>

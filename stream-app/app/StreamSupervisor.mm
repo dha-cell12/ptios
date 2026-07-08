@@ -94,12 +94,17 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
 
 - (void)start
 {
+    [self ensureService];
+}
+
+- (void)ensureService
+{
     dispatch_async(_queue, ^{
-        if (self->_running) {
-            [self emitLog:@"supervisor: already running"];
+        self->_autoRespawn = YES;
+        if ([self ensureServiceLockedWithReplace:NO reason:@"ensure"]) {
             return;
         }
-        self->_autoRespawn = YES;
+        [self emitLog:@"supervisor: helper ensure failed; falling back to direct app spawn"];
         [self spawnLocked];
     });
 }
@@ -129,19 +134,16 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
 - (void)restart
 {
     dispatch_async(_queue, ^{
-        [self emitLog:@"supervisor: restart requested; replacing any existing streamd"];
+        [self emitLog:@"supervisor: restart requested; replacing service streamd"];
         self->_autoRespawn = NO;
-        [self requestTaskServerShutdownLocked:@"restart"];
-        if (self->_pid > 0) {
-            errno = 0;
-            int rc = kill(self->_pid, SIGTERM);
-            [self emitLog:[NSString stringWithFormat:@"supervisor: current child pid=%d kill rc=%d errno=%d", self->_pid, rc, errno]];
-            usleep(300000);
-        }
         self->_running = NO;
         self->_pid = -1;
         [self emitRunning:NO pid:-1];
         self->_autoRespawn = YES;
+        if ([self ensureServiceLockedWithReplace:YES reason:@"restart"]) {
+            return;
+        }
+        [self emitLog:@"supervisor: helper restart failed; falling back to direct app spawn"];
         [self spawnLocked];
     });
 }
@@ -185,6 +187,56 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
 
     if (data.length == 0) return nil;
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+- (pid_t)streamdPidFromHelloStatusLocked
+{
+    NSString *response = [self sendLocalTaskLineLocked:@"60\n" timeout:2];
+    if (![response hasPrefix:@"0;;"]) return 0;
+    NSString *payload = [[response substringFromIndex:3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:payload options:0];
+    if (jsonData.length == 0) return 0;
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+    if (![json isKindOfClass:[NSDictionary class]]) return 0;
+    return (pid_t)[json[@"pid"] intValue];
+}
+
+- (BOOL)probeTaskServerAndUpdateLocked:(NSString *)reason
+{
+    NSString *status = [self sendLocalTaskLineLocked:@"97\n" timeout:2];
+    if (status.length == 0) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: %@ probe tcp/6000 no response", reason ?: @"service"]];
+        self->_running = NO;
+        self->_pid = -1;
+        [self emitRunning:NO pid:-1];
+        return NO;
+    }
+
+    pid_t pid = [self streamdPidFromHelloStatusLocked];
+    self->_running = YES;
+    self->_pid = pid > 0 ? pid : self->_pid;
+    [self emitRunning:YES pid:self->_pid];
+    [self emitLog:[NSString stringWithFormat:@"supervisor: %@ probe ok pid=%d -> %@",
+                   reason ?: @"service",
+                   self->_pid,
+                   [status stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]];
+    return YES;
+}
+
+- (BOOL)ensureServiceLockedWithReplace:(BOOL)replaceExisting reason:(NSString *)reason
+{
+    if (!replaceExisting && [self probeTaskServerAndUpdateLocked:reason ?: @"ensure"]) {
+        return YES;
+    }
+
+    int exitCode = [self runPrivhelperEnsureStreamdLocked:replaceExisting];
+    [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper ensure exit=%d replace=%d", exitCode, replaceExisting ? 1 : 0]];
+
+    for (int i = 0; i < 8; i++) {
+        if ([self probeTaskServerAndUpdateLocked:reason ?: @"ensure"]) return YES;
+        usleep(250000);
+    }
+    return NO;
 }
 
 - (void)requestTaskServerShutdownLocked:(NSString *)reason
@@ -243,6 +295,56 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
     int exitCode = -1;
     if (w == pid && WIFEXITED(status)) exitCode = WEXITSTATUS(status);
     [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper pid=%d wait=%d status=%d exit=%d persona=%d uid=%d gid=%d",
+                   pid, w, status, exitCode, persona, personaUid, personaGid]];
+    return exitCode;
+}
+
+- (int)runPrivhelperEnsureStreamdLocked:(BOOL)replaceExisting
+{
+    NSString *helperPath = [self privhelperPath];
+    NSString *streamdPath = [self streamdPath];
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:helperPath]) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper missing/not executable at %@", helperPath]];
+        return -1;
+    }
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:streamdPath]) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: streamd missing/not executable at %@", streamdPath]];
+        return -2;
+    }
+
+    const char *cpath = [helperPath fileSystemRepresentation];
+    char *arg0 = strdup(cpath);
+    char *arg1 = strdup("--ensure-streamd");
+    char *arg2 = strdup([streamdPath fileSystemRepresentation]);
+    char *arg3 = replaceExisting ? strdup("--replace") : NULL;
+    if (!arg0 || !arg1 || !arg2 || (replaceExisting && !arg3)) {
+        free(arg0); free(arg1); free(arg2); free(arg3);
+        [self emitLog:@"supervisor: privhelper ensure argv alloc failed"];
+        return -3;
+    }
+    char *const argv[] = { arg0, arg1, arg2, arg3, NULL };
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    int persona = posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+    int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 0);
+    int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 0);
+
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, cpath, NULL, &attr, argv, environ);
+    posix_spawnattr_destroy(&attr);
+    free(arg0); free(arg1); free(arg2); free(arg3);
+
+    if (rc != 0) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper ensure spawn failed rc=%d persona=%d uid=%d gid=%d", rc, persona, personaUid, personaGid]];
+        return rc;
+    }
+
+    int status = 0;
+    pid_t w = waitpid(pid, &status, 0);
+    int exitCode = -1;
+    if (w == pid && WIFEXITED(status)) exitCode = WEXITSTATUS(status);
+    [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper ensure pid=%d wait=%d status=%d exit=%d persona=%d uid=%d gid=%d",
                    pid, w, status, exitCode, persona, personaUid, personaGid]];
     return exitCode;
 }

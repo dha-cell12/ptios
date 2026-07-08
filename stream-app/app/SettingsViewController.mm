@@ -18,7 +18,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     _sections = @[
         @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Export Diagnostics"],
         @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];

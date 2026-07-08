@@ -61,7 +61,7 @@
     [self.view addSubview:_statusLabel];
     y += 40;
 
-    _startButton = [self makeButton:@"Start" action:@selector(onStart) frame:CGRectMake(margin, y, (width - 12) / 2, 44)];
+    _startButton = [self makeButton:@"Ensure Service" action:@selector(onStart) frame:CGRectMake(margin, y, (width - 12) / 2, 44)];
     [self.view addSubview:_startButton];
     _stopButton = [self makeButton:@"Stop" action:@selector(onStop) frame:CGRectMake(margin + (width - 12) / 2 + 12, y, (width - 12) / 2, 44)];
     [self.view addSubview:_stopButton];
@@ -102,8 +102,8 @@
 
 - (void)onStart
 {
-    [_supervisor start];
-    [self scheduleStatusProbesWithPrefix:@"start"];
+    [_supervisor ensureService];
+    [self scheduleStatusProbesWithPrefix:@"ensure"];
 }
 
 - (void)onRestart
@@ -240,11 +240,9 @@
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         self->_statusLabel.text = running
-            ? [NSString stringWithFormat:@"Status: running (pid %d)", pid]
+            ? (pid > 0 ? [NSString stringWithFormat:@"Status: running (pid %d)", pid] : @"Status: running (service-managed)")
             : @"Status: stopped";
     });
 }
 
 @end
-
-
