@@ -100,6 +100,7 @@ jobs:
           grep -q 'taskType == 96' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 11' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 12' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 13' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 19' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 20' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 22' stream-app/streamd/POCSocketServer.mm
@@ -108,6 +109,7 @@ jobs:
           grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 41' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 42' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 43' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 54' stream-app/streamd/POCSocketServer.mm
@@ -123,6 +125,9 @@ jobs:
           grep -q 'taskType == 49' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 66' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 70' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 71' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 90' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 91' stream-app/streamd/POCSocketServer.mm
           grep -q 'Vision ImageIO JavaScriptCore' stream-app/streamd/Makefile
           grep -q '"tlinkauto"' stream-app/streamd/POCSocketServer.mm
           grep -q '"visionOCR"' stream-app/streamd/POCSocketServer.mm
@@ -141,6 +146,13 @@ jobs:
           grep -q 'TLinkScriptEffectiveSpeed' stream-app/streamd/POCSocketServer.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptPlaySettings' stream-app/streamd/POCSocketServer.mm
+          grep -q 'settingsCache' stream-app/streamd/POCSocketServer.mm
+          grep -q '"settings": TLinkRuntimeSettingsDictionary' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleUpdateCache' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleKnownUnsupportedTask' stream-app/streamd/POCSocketServer.mm
+          grep -q 'shell_disabled_on_trollstore' stream-app/streamd/POCSocketServer.mm
+          grep -q 'tesseract_ocr_not_bundled' stream-app/streamd/POCSocketServer.mm
+          grep -q 'connectivity_private_framework_not_ported' stream-app/streamd/POCSocketServer.mm
           grep -q 'privhelperEnsureStreamd' stream-app/streamd/POCSocketServer.mm
           grep -q 'helper_ensure_streamd_best_effort' stream-app/streamd/POCSocketServer.mm
           grep -q 'requested_ms' stream-app/streamd/POCSocketServer.mm
@@ -154,6 +166,8 @@ jobs:
           grep -q 'Alert Box' stream-app/app/SettingsViewController.mm
           grep -q 'Dialog Overlay' stream-app/app/SettingsViewController.mm
           grep -q 'Service Mode: helper ensure streamd' stream-app/app/SettingsViewController.mm
+          grep -q 'Legacy Stop Script' stream-app/app/SettingsViewController.mm
+          grep -q 'Update Cache' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/SettingsViewController.mm
           grep -q 'Touch Indicator On' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm

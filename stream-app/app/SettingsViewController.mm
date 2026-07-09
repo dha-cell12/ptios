@@ -16,7 +16,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     self.title = @"Settings";
     [self loadConfig];
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Export Diagnostics"],
+        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Legacy Stop Script", @"Update Cache", @"Export Diagnostics"],
         @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup"],
         @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
     ];
@@ -211,7 +211,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     }
     if (indexPath.section != 0) return;
 
-    if (indexPath.row == 20) {
+    if (indexPath.row == 22) {
         [self exportDiagnostics];
         return;
     }
@@ -281,6 +281,12 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             break;
         case 19:
             line = @"260\n";
+            break;
+        case 20:
+            line = @"41\n";
+            break;
+        case 21:
+            line = @"902\n";
             break;
         default: return;
     }

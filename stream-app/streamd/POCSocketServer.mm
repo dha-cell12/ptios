@@ -161,6 +161,8 @@ static NSMutableArray<NSDictionary *> *sTLinkVisualEvents = nil;
 static uint64_t sTLinkNextVisualEventId = 1;
 static uint64_t sTLinkLastVisualEventId = 0;
 static BOOL sTLinkTouchIndicatorEnabled = NO;
+static BOOL sTLinkSwitchAppBeforeRunScript = YES;
+static BOOL sTLinkDoubleClickVolumeShowPopup = YES;
 static NSString *sTLinkLastDialogValue = @"";
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 
@@ -332,6 +334,18 @@ static NSDictionary *TLinkVisualFeedbackDictionary(void)
             @"last_dialog_value": sTLinkLastDialogValue ?: @"",
             @"touch_indicator_enabled": @(sTLinkTouchIndicatorEnabled),
             @"events": sTLinkVisualEvents ? [sTLinkVisualEvents copy] : @[],
+        };
+    }
+}
+
+static NSDictionary *TLinkRuntimeSettingsDictionary(void)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        return @{
+            @"config_path": kTLinkSettingsConfigPath,
+            @"touch_indicator_show": @(sTLinkTouchIndicatorEnabled),
+            @"switch_app_before_run_script": @(sTLinkSwitchAppBeforeRunScript),
+            @"double_click_volume_show_popup": @(sTLinkDoubleClickVolumeShowPopup),
         };
     }
 }
@@ -3220,6 +3234,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
+        @"settingsCache": @(YES),
         @"visualFeedback": @(YES),
         @"toastOverlay": @(YES),
         @"alertOverlay": @(YES),
@@ -3234,6 +3249,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"openURLMode": @"privhelper_best_effort",
         @"frontmost": @(YES),
         @"clearData": @(NO),
+        @"shell": @(NO),
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
         @"privhelperMode": @"open_kill_restart_ensure_streamd",
@@ -3260,6 +3276,7 @@ static NSData *TLinkHandleHelloStatus(void)
             @"model": TLinkModelName(),
         },
         @"script": TLinkScriptStatusDictionary(),
+        @"settings": TLinkRuntimeSettingsDictionary(),
         @"visual_feedback": TLinkVisualFeedbackDictionary(),
         @"screen": @{@"width": @((int)screen.width), @"height": @((int)screen.height), @"scale": @([UIScreen mainScreen].scale)},
         @"frontmost_cache": @{
@@ -3293,10 +3310,69 @@ static void TLinkLoadSettingsConfig(void)
     NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:kTLinkSettingsConfigPath];
     NSDictionary *touch = [config[@"touch_indicator"] isKindOfClass:[NSDictionary class]] ? config[@"touch_indicator"] : nil;
     BOOL enabled = [touch[@"show"] boolValue];
+    BOOL switchApp = config[@"switch_app_before_run_script"] ? [config[@"switch_app_before_run_script"] boolValue] : YES;
+    BOOL popup = config[@"double_click_volume_show_popup"] ? [config[@"double_click_volume_show_popup"] boolValue] : YES;
     @synchronized (TLinkVisualFeedbackLock()) {
         sTLinkTouchIndicatorEnabled = enabled;
+        sTLinkSwitchAppBeforeRunScript = switchApp;
+        sTLinkDoubleClickVolumeShowPopup = popup;
     }
-    POCLogf("settings: loaded touch_indicator.show=%d path=%s", enabled ? 1 : 0, [kTLinkSettingsConfigPath UTF8String]);
+    POCLogf("settings: loaded touch_indicator.show=%d switch_app_before_run_script=%d double_click_volume_show_popup=%d path=%s",
+            enabled ? 1 : 0,
+            switchApp ? 1 : 0,
+            popup ? 1 : 0,
+            [kTLinkSettingsConfigPath UTF8String]);
+}
+
+static NSData *TLinkHandleUpdateCache(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    int type = parts.count >= 1 ? [parts[0] intValue] : 0;
+    TLinkLoadSettingsConfig();
+    NSDictionary *settings = TLinkRuntimeSettingsDictionary();
+    NSString *summary = [NSString stringWithFormat:@"cache_updated;;type=%d;;touch_indicator_show=%d;;switch_app_before_run_script=%d;;double_click_volume_show_popup=%d",
+                         type,
+                         [settings[@"touch_indicator_show"] boolValue] ? 1 : 0,
+                         [settings[@"switch_app_before_run_script"] boolValue] ? 1 : 0,
+                         [settings[@"double_click_volume_show_popup"] boolValue] ? 1 : 0];
+    return TLinkSuccess(summary);
+}
+
+static NSData *TLinkHandleShellUnsupported(int taskType)
+{
+    return TLinkUnsupported(taskType, @"shell_disabled_on_trollstore");
+}
+
+static NSData *TLinkHandleTesseractOCRUnsupported(NSString *body)
+{
+    NSString *raw = [TLinkCleanPayload(body) lowercaseString];
+    if ([raw isEqualToString:@"check_langs"]) {
+        return TLinkError(@"unsupported_on_trollstore task=91 tesseract_ocr_not_bundled langs=");
+    }
+    return TLinkError(@"unsupported_on_trollstore task=91 tesseract_ocr_not_bundled use_task_27_vision_ocr");
+}
+
+static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
+{
+    if (taskType == 14 || taskType == 15) {
+        return TLinkUnsupported(taskType, @"touch_recording_requires_hid_monitor_not_ported");
+    }
+    if (taskType == 16 || taskType == 17) {
+        return TLinkUnsupported(taskType, @"legacy_repeated_tap_macro_not_ported use_task_61_65");
+    }
+    if (taskType == 30) {
+        return TLinkUnsupported(taskType, @"hardware_key_hid_event_not_ported");
+    }
+    if (taskType >= 36 && taskType <= 39) {
+        return TLinkUnsupported(taskType, @"auto_launch_timer_requires_redesign_on_trollstore");
+    }
+    if (taskType == 40) {
+        return TLinkUnsupported(taskType, @"keep_awake_power_assertion_not_ported");
+    }
+    if (taskType >= 55 && taskType <= 59) {
+        return TLinkUnsupported(taskType, @"connectivity_private_framework_not_ported");
+    }
+    return TLinkUnsupported(taskType, nil);
 }
 
 static NSData *TLinkHandleTaskLine(const char *line)
@@ -3312,6 +3388,14 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 12) {
         return TLinkHandleAlertBox(body);
+    }
+
+    if (taskType == 13) {
+        return TLinkHandleShellUnsupported(taskType);
+    }
+
+    if (taskType == 14 || taskType == 15 || taskType == 16 || taskType == 17) {
+        return TLinkHandleKnownUnsupportedTask(taskType);
     }
 
     if (taskType == 18) {
@@ -3385,6 +3469,14 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleFrontmostOrientation();
     }
 
+    if (taskType == 30 || (taskType >= 36 && taskType <= 40)) {
+        return TLinkHandleKnownUnsupportedTask(taskType);
+    }
+
+    if (taskType == 41) {
+        return TLinkHandleStopScript(body);
+    }
+
     if (taskType == 42) {
         return TLinkHandleDialog(body);
     }
@@ -3433,6 +3525,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 54) {
         return TLinkHandleOpenURL(body);
+    }
+
+    if (taskType >= 55 && taskType <= 59) {
+        return TLinkHandleKnownUnsupportedTask(taskType);
     }
 
     if (taskType == 60) {
@@ -3496,6 +3592,18 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleFrameBatch(body);
     }
 
+    if (taskType == 71) {
+        return TLinkHandleShellUnsupported(taskType);
+    }
+
+    if (taskType == 90) {
+        return TLinkHandleUpdateCache(body);
+    }
+
+    if (taskType == 91) {
+        return TLinkHandleTesseractOCRUnsupported(body);
+    }
+
     if (taskType == 96) {
         POCLogf("task-server: task96 shutdown requested");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)),
@@ -3507,7 +3615,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity keyboard=limited_on_trollstore dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,settingsCache,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,30,36,37,38,39,40,55,56,57,58,59,71,91 keyboard=limited_on_trollstore dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
