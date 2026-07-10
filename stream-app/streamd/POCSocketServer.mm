@@ -24,6 +24,9 @@
 #include "POCSocketServer.h"
 #include "TouchInjector.h"
 #include "HIDInjectCore.h"
+#include "headers/IOHIDEvent.h"
+#include "headers/IOHIDEventTypes.h"
+#include "headers/IOHIDEventSystemClient.h"
 #import "CaptureCore.h"
 #import "StreamCaptureProbe.h"
 
@@ -173,8 +176,22 @@ static uint64_t sTLinkLastAutoLaunchRunMs = 0;
 static NSInteger sTLinkLastAutoLaunchEnabledCount = 0;
 static NSInteger sTLinkLastAutoLaunchStartedCount = 0;
 static NSString *sTLinkLastAutoLaunchResult = @"";
+static BOOL sTLinkRecordingActive = NO;
+static NSString *sTLinkRecordingBundlePath = @"";
+static NSString *sTLinkRecordingRawPath = @"";
+static NSString *sTLinkRecordingLastError = @"";
+static uint64_t sTLinkRecordingStartedAtMs = 0;
+static uint64_t sTLinkRecordingStoppedAtMs = 0;
+static NSInteger sTLinkRecordingEventCount = 0;
+static CFAbsoluteTime sTLinkRecordingLastEventTime = 0;
+static double sTLinkRecordingScreenWidth = 0;
+static double sTLinkRecordingScreenHeight = 0;
+static NSFileHandle *sTLinkRecordingFileHandle = nil;
+static IOHIDEventSystemClientRef sTLinkRecordingClient = NULL;
+static CFRunLoopRef sTLinkRecordingRunLoop = NULL;
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 static NSString *const kTLinkAutoLaunchConfigPath = @"/var/mobile/Library/TLinkauto/autolaunch.plist";
+static NSString *const kTLinkRecordingScriptsPath = @"/var/mobile/Library/TLinkauto/scripts/recording";
 
 static NSString *TLinkVisualSafeText(NSString *text)
 {
@@ -383,6 +400,22 @@ static NSDictionary *TLinkSchedulerStatusDictionary(void)
             @"last_autolaunch_result": sTLinkLastAutoLaunchResult ?: @"",
             @"timer_count": @((int)(sTLinkTimerInfoRegistry ? sTLinkTimerInfoRegistry.count : 0)),
             @"timers": sTLinkTimerInfoRegistry ? [sTLinkTimerInfoRegistry copy] : @{},
+        };
+    }
+}
+
+static NSDictionary *TLinkRecordingStatusDictionary(void)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        return @{
+            @"active": @(sTLinkRecordingActive),
+            @"mode": @"iohid_monitor_raw_js_replay",
+            @"bundle_path": sTLinkRecordingBundlePath ?: @"",
+            @"raw_path": sTLinkRecordingRawPath ?: @"",
+            @"event_count": @(sTLinkRecordingEventCount),
+            @"started_at_ms": @(sTLinkRecordingStartedAtMs),
+            @"stopped_at_ms": @(sTLinkRecordingStoppedAtMs),
+            @"last_error": sTLinkRecordingLastError ?: @"",
         };
     }
 }
@@ -1731,6 +1764,211 @@ static NSData *TLinkHandleHardwareKey(NSString *body)
                          result.clientPtr,
                          result.senderID,
                          result.errnoValue]);
+}
+
+static NSString *TLinkRecordingReplaySource(NSString *rawFileName)
+{
+    NSString *safeRaw = TLinkVisualSafeText(rawFileName ?: @"record.raw");
+    return [NSString stringWithFormat:
+            @"console.log('TLinkauto recording replay started: %@');\n"
+             "var raw = device.readText('%@') || '';\n"
+             "var lines = raw.split(/\\r?\\n/);\n"
+             "for (var i = 0; i < lines.length; i++) {\n"
+             "  var line = (lines[i] || '').trim();\n"
+             "  if (!line || device.shouldStop()) continue;\n"
+             "  if (line.indexOf('18') === 0) {\n"
+             "    var us = parseFloat(line.substring(2));\n"
+             "    if (!isNaN(us) && us > 0) device.usleep(us);\n"
+             "  } else if (line.indexOf('10') === 0) {\n"
+             "    device.task(10, line.substring(2));\n"
+             "  }\n"
+             "}\n"
+             "console.log('TLinkauto recording replay finished');\n",
+            safeRaw, safeRaw];
+}
+
+static void TLinkRecordTouchFromHIDEvent(IOHIDEventRef event)
+{
+    if (!event || IOHIDEventGetType(event) != kIOHIDEventTypeDigitizer) return;
+
+    IOHIDFloat x = IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerX);
+    IOHIDFloat y = IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerY);
+    int eventMask = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerEventMask);
+    int touch = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerTouch);
+    int index = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerIndex);
+    int touchType = -1;
+    if (touch == 1 && (eventMask & kIOHIDDigitizerEventTouch)) {
+        touchType = 1;
+    } else if (touch == 1 && (eventMask & kIOHIDDigitizerEventPosition)) {
+        touchType = 2;
+    } else if (!touch && (eventMask & kIOHIDDigitizerEventTouch)) {
+        touchType = 0;
+    }
+    if (touchType < 0) return;
+    if (index < 0) index = 0;
+    if (index > 99) index = 99;
+
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkRecordingActive || !sTLinkRecordingFileHandle) return;
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        double sleepUsec = sTLinkRecordingLastEventTime > 0 ? (now - sTLinkRecordingLastEventTime) * 1000000.0 : 0.0;
+        sTLinkRecordingLastEventTime = now;
+        double rawX = MAX(0.0, MIN(99999.0, x * sTLinkRecordingScreenWidth * 10.0));
+        double rawY = MAX(0.0, MIN(99999.0, y * sTLinkRecordingScreenHeight * 10.0));
+        NSString *line = [NSString stringWithFormat:@"18%.0f\n10%d%02d%05.0f%05.0f\n",
+                          sleepUsec,
+                          touchType,
+                          index,
+                          rawX,
+                          rawY];
+        @try {
+            [sTLinkRecordingFileHandle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+            sTLinkRecordingEventCount++;
+        } @catch (NSException *exception) {
+            sTLinkRecordingLastError = exception.reason ?: @"recording_write_exception";
+        }
+    }
+}
+
+static void TLinkRecordingHIDCallback(void *target, void *refcon, IOHIDEventQueueRef queue, IOHIDEventRef parentEvent)
+{
+    (void)target;
+    (void)refcon;
+    (void)queue;
+    if (!parentEvent) return;
+    if (IOHIDEventGetType(parentEvent) != kIOHIDEventTypeDigitizer) return;
+    CFArrayRef childrenRef = IOHIDEventGetChildren(parentEvent);
+    NSArray *children = (__bridge NSArray *)childrenRef;
+    if (children.count == 0) {
+        TLinkRecordTouchFromHIDEvent(parentEvent);
+        return;
+    }
+    for (id child in children) {
+        TLinkRecordTouchFromHIDEvent((__bridge IOHIDEventRef)child);
+    }
+}
+
+static void TLinkStopRecordingLocked(NSString *reason)
+{
+    if (sTLinkRecordingClient) {
+        IOHIDEventSystemClientUnregisterEventCallback(sTLinkRecordingClient);
+        if (sTLinkRecordingRunLoop) {
+            IOHIDEventSystemClientUnscheduleWithRunLoop(sTLinkRecordingClient, sTLinkRecordingRunLoop, kCFRunLoopDefaultMode);
+        }
+        CFRelease(sTLinkRecordingClient);
+        sTLinkRecordingClient = NULL;
+    }
+    if (sTLinkRecordingFileHandle) {
+        @try {
+            [sTLinkRecordingFileHandle synchronizeFile];
+            [sTLinkRecordingFileHandle closeFile];
+        } @catch (__unused NSException *exception) {
+        }
+        sTLinkRecordingFileHandle = nil;
+    }
+    if (sTLinkRecordingRunLoop) {
+        CFRunLoopStop(sTLinkRecordingRunLoop);
+        CFRelease(sTLinkRecordingRunLoop);
+        sTLinkRecordingRunLoop = NULL;
+    }
+    sTLinkRecordingActive = NO;
+    sTLinkRecordingStoppedAtMs = TLinkNowMs();
+    if (reason.length > 0) sTLinkRecordingLastError = reason;
+}
+
+static NSData *TLinkHandleStartRecording(NSString *body)
+{
+    (void)body;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (sTLinkRecordingActive) {
+            return TLinkError([NSString stringWithFormat:@"recording_already_started path=%@", sTLinkRecordingBundlePath ?: @""]);
+        }
+    }
+
+    CGSize screen = TLinkScreenPixelSize();
+    if (screen.width <= 0 || screen.height <= 0) {
+        return TLinkError(@"recording_screen_size_unavailable");
+    }
+
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.dateFormat = @"yyMMddHHmmss";
+    NSString *name = [formatter stringFromDate:[NSDate date]] ?: [NSString stringWithFormat:@"%llu", TLinkNowMs()];
+    NSString *bundlePath = [kTLinkRecordingScriptsPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.tl", name]];
+    NSString *rawFileName = [NSString stringWithFormat:@"%@.raw", name];
+    NSString *rawPath = [bundlePath stringByAppendingPathComponent:rawFileName];
+    NSError *err = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:bundlePath withIntermediateDirectories:YES attributes:nil error:&err];
+    if (err) return TLinkError([NSString stringWithFormat:@"recording_create_bundle_failed %@", err.localizedDescription ?: @""]);
+
+    NSDictionary *info = @{@"Entry": @"main.js", @"FrontApp": @"", @"Orientation": @"1"};
+    [info writeToFile:[bundlePath stringByAppendingPathComponent:@"info.plist"] atomically:YES];
+    NSDictionary *manifest = @{@"entry": @"main.js", @"name": name, @"kind": @"recording", @"raw": rawFileName};
+    NSData *manifestData = [NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingPrettyPrinted error:nil];
+    [manifestData writeToFile:[bundlePath stringByAppendingPathComponent:@"manifest.json"] atomically:YES];
+    NSString *source = TLinkRecordingReplaySource(rawFileName);
+    if (![source writeToFile:[bundlePath stringByAppendingPathComponent:@"main.js"] atomically:YES encoding:NSUTF8StringEncoding error:&err]) {
+        return TLinkError([NSString stringWithFormat:@"recording_write_main_failed %@", err.localizedDescription ?: @""]);
+    }
+    if (![[NSFileManager defaultManager] createFileAtPath:rawPath contents:nil attributes:nil]) {
+        return TLinkError(@"recording_create_raw_failed");
+    }
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:rawPath];
+    if (!fh) return TLinkError(@"recording_open_raw_failed");
+
+    IOHIDEventSystemClientRef client = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    if (!client) {
+        [fh closeFile];
+        return TLinkError(@"unsupported_on_trollstore task=14 hid_monitor_client_unavailable");
+    }
+
+    @synchronized (TLinkVisualFeedbackLock()) {
+        sTLinkRecordingActive = YES;
+        sTLinkRecordingBundlePath = bundlePath;
+        sTLinkRecordingRawPath = rawPath;
+        sTLinkRecordingLastError = @"";
+        sTLinkRecordingStartedAtMs = TLinkNowMs();
+        sTLinkRecordingStoppedAtMs = 0;
+        sTLinkRecordingEventCount = 0;
+        sTLinkRecordingLastEventTime = CFAbsoluteTimeGetCurrent();
+        sTLinkRecordingScreenWidth = screen.width;
+        sTLinkRecordingScreenHeight = screen.height;
+        sTLinkRecordingFileHandle = fh;
+        sTLinkRecordingClient = client;
+    }
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        @autoreleasepool {
+            @synchronized (TLinkVisualFeedbackLock()) {
+                if (!sTLinkRecordingActive || !sTLinkRecordingClient) return;
+                CFRunLoopRef runLoop = CFRunLoopGetCurrent();
+                CFRetain(runLoop);
+                sTLinkRecordingRunLoop = runLoop;
+                IOHIDEventSystemClientScheduleWithRunLoop(sTLinkRecordingClient, runLoop, kCFRunLoopDefaultMode);
+                IOHIDEventSystemClientRegisterEventCallback(sTLinkRecordingClient, TLinkRecordingHIDCallback, NULL, NULL);
+            }
+            CFRunLoopRun();
+        }
+    });
+
+    TLinkRecordToast(@"Recording started", 2.0, 0, 2, 14, @"task14");
+    return TLinkSuccess([NSString stringWithFormat:@"recording_started;;%@", bundlePath]);
+}
+
+static NSData *TLinkHandleStopRecording(NSString *body)
+{
+    (void)body;
+    NSString *bundlePath = @"";
+    NSInteger count = 0;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkRecordingActive) {
+            return TLinkSuccess(@"recording_not_active");
+        }
+        bundlePath = sTLinkRecordingBundlePath ?: @"";
+        count = sTLinkRecordingEventCount;
+        TLinkStopRecordingLocked(@"");
+    }
+    TLinkRecordToast([NSString stringWithFormat:@"Recording saved (%ld events)", (long)count], 2.5, 0, 2, 14, @"task15");
+    return TLinkSuccess([NSString stringWithFormat:@"recording_stopped;;%@;;events=%ld", bundlePath, (long)count]);
 }
 
 static CaptureOutcome *TLinkRunCaptureOnMain(void)
@@ -3336,6 +3574,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"touch": @(YES),
         @"touchAck": @(YES),
         @"nativeTouch": @(YES),
+        @"touchRecording": @(YES),
+        @"touchRecordingMode": @"iohid_monitor_raw_js_replay",
         @"capture": @(YES),
         @"h264": @(YES),
         @"image": @(YES),
@@ -3399,6 +3639,7 @@ static NSData *TLinkHandleHelloStatus(void)
             @"model": TLinkModelName(),
         },
         @"script": TLinkScriptStatusDictionary(),
+        @"recording": TLinkRecordingStatusDictionary(),
         @"scheduler": TLinkSchedulerStatusDictionary(),
         @"settings": TLinkRuntimeSettingsDictionary(),
         @"keep_awake": TLinkKeepAwakeDictionary(),
@@ -3426,6 +3667,7 @@ static void TLinkEnsureRuntimeDirectories(void)
     NSFileManager *fm = [NSFileManager defaultManager];
     [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto" withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/scripts" withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:kTLinkRecordingScriptsPath withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/config" withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/config/tweak" withIntermediateDirectories:YES attributes:nil error:nil];
 }
@@ -3703,9 +3945,6 @@ static void TLinkScheduleAutoLaunchStartup(void)
 
 static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
 {
-    if (taskType == 14 || taskType == 15) {
-        return TLinkUnsupported(taskType, @"touch_recording_requires_hid_monitor_not_ported");
-    }
     if (taskType == 16 || taskType == 17) {
         return TLinkUnsupported(taskType, @"legacy_repeated_tap_macro_not_ported use_task_61_65");
     }
@@ -3734,7 +3973,15 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleShellUnsupported(taskType);
     }
 
-    if (taskType == 14 || taskType == 15 || taskType == 16 || taskType == 17) {
+    if (taskType == 14) {
+        return TLinkHandleStartRecording(body);
+    }
+
+    if (taskType == 15) {
+        return TLinkHandleStopRecording(body);
+    }
+
+    if (taskType == 16 || taskType == 17) {
         return TLinkHandleKnownUnsupportedTask(taskType);
     }
 
@@ -3975,7 +4222,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,55,56,57,58,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,14,15,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,touchRecording,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,16,17,55,56,57,58,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

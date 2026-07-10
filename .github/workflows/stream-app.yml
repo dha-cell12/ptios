@@ -102,6 +102,8 @@ jobs:
           grep -q 'taskType == 11' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 12' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 13' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 14' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 15' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 19' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 20' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 22' stream-app/streamd/POCSocketServer.mm
@@ -169,6 +171,10 @@ jobs:
           grep -q 'pressHardwareKey' stream-app/streamd/POCSocketServer.mm
           grep -q 'HIDInjectDispatchHardwareKey' stream-app/streamd/HIDInjectCore.mm
           grep -q 'hardwareKey=hid_keyboard_event' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleStartRecording' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleStopRecording' stream-app/streamd/POCSocketServer.mm
+          grep -q 'touchRecording=iohid_monitor_raw_js_replay' stream-app/streamd/POCSocketServer.mm
+          grep -q '"recording": TLinkRecordingStatusDictionary' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleUpdateCache' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleKnownUnsupportedTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_disabled_on_trollstore' stream-app/streamd/POCSocketServer.mm
@@ -189,6 +195,8 @@ jobs:
           grep -q 'Set Auto Launch' stream-app/app/SettingsViewController.mm
           grep -q 'Set Timer Demo' stream-app/app/SettingsViewController.mm
           grep -q 'Keep Awake On' stream-app/app/SettingsViewController.mm
+          grep -q 'Start Touch Recording' stream-app/app/SettingsViewController.mm
+          grep -q 'Stop Touch Recording' stream-app/app/SettingsViewController.mm
           grep -q 'Hardware Key Home' stream-app/app/SettingsViewController.mm
           grep -q 'Service Mode: helper ensure streamd' stream-app/app/SettingsViewController.mm
           grep -q 'Legacy Stop Script' stream-app/app/SettingsViewController.mm
