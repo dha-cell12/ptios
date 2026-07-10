@@ -150,6 +150,7 @@ static uint64_t TLinkNowMs(void)
 
 static NSData *TLinkHandleTaskLine(const char *line);
 static NSString *TLinkCleanPayload(NSString *body);
+static CGSize TLinkScreenPixelSize(void);
 
 static NSObject *TLinkVisualFeedbackLock(void)
 {
@@ -2922,7 +2923,11 @@ static VNRequestTextRecognitionLevel TLinkVisionOCRLevelFromValue(int value)
 
 static NSData *TLinkHandleVisionOCR(NSString *body)
 {
-    if (!@available(iOS 13.0, *)) {
+    BOOL visionAvailable = NO;
+    if (@available(iOS 13.0, *)) {
+        visionAvailable = YES;
+    }
+    if (!visionAvailable) {
         return TLinkUnsupported(27, @"vision_requires_ios13");
     }
 
