@@ -165,7 +165,15 @@ static BOOL sTLinkSwitchAppBeforeRunScript = YES;
 static BOOL sTLinkDoubleClickVolumeShowPopup = YES;
 static BOOL sTLinkKeepAwakeEnabled = NO;
 static NSString *sTLinkLastDialogValue = @"";
+static NSMutableDictionary<NSString *, id> *sTLinkTimerRegistry = nil;
+static NSMutableDictionary<NSString *, NSMutableDictionary *> *sTLinkTimerInfoRegistry = nil;
+static BOOL sTLinkAutoLaunchScheduled = NO;
+static uint64_t sTLinkLastAutoLaunchRunMs = 0;
+static NSInteger sTLinkLastAutoLaunchEnabledCount = 0;
+static NSInteger sTLinkLastAutoLaunchStartedCount = 0;
+static NSString *sTLinkLastAutoLaunchResult = @"";
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
+static NSString *const kTLinkAutoLaunchConfigPath = @"/var/mobile/Library/TLinkauto/autolaunch.plist";
 
 static NSString *TLinkVisualSafeText(NSString *text)
 {
@@ -357,6 +365,23 @@ static NSDictionary *TLinkKeepAwakeDictionary(void)
         return @{
             @"enabled": @(sTLinkKeepAwakeEnabled),
             @"mode": @"app_foreground_idle_timer",
+        };
+    }
+}
+
+static NSDictionary *TLinkSchedulerStatusDictionary(void)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        return @{
+            @"mode": @"streamd_lite",
+            @"autolaunch_path": kTLinkAutoLaunchConfigPath,
+            @"startup_scheduled": @(sTLinkAutoLaunchScheduled),
+            @"last_autolaunch_run_ms": @(sTLinkLastAutoLaunchRunMs),
+            @"last_autolaunch_enabled_count": @(sTLinkLastAutoLaunchEnabledCount),
+            @"last_autolaunch_started_count": @(sTLinkLastAutoLaunchStartedCount),
+            @"last_autolaunch_result": sTLinkLastAutoLaunchResult ?: @"",
+            @"timer_count": @((int)(sTLinkTimerInfoRegistry ? sTLinkTimerInfoRegistry.count : 0)),
+            @"timers": sTLinkTimerInfoRegistry ? [sTLinkTimerInfoRegistry copy] : @{},
         };
     }
 }
@@ -3245,6 +3270,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
+        @"scheduler": @(YES),
+        @"schedulerMode": @"streamd_lite",
+        @"schedulerAutoLaunch": @(YES),
+        @"autoLaunchMode": @"startup_after_streamd",
         @"settingsCache": @(YES),
         @"keepAwake": @(YES),
         @"keepAwakeMode": @"app_foreground_idle_timer",
@@ -3289,6 +3318,7 @@ static NSData *TLinkHandleHelloStatus(void)
             @"model": TLinkModelName(),
         },
         @"script": TLinkScriptStatusDictionary(),
+        @"scheduler": TLinkSchedulerStatusDictionary(),
         @"settings": TLinkRuntimeSettingsDictionary(),
         @"keep_awake": TLinkKeepAwakeDictionary(),
         @"visual_feedback": TLinkVisualFeedbackDictionary(),
@@ -3384,6 +3414,212 @@ static NSData *TLinkHandleKeepAwake(NSString *body)
                          eventId]);
 }
 
+static NSMutableDictionary *TLinkLoadAutoLaunchConfig(void)
+{
+    NSMutableDictionary *config = [NSMutableDictionary dictionaryWithContentsOfFile:kTLinkAutoLaunchConfigPath];
+    return config ?: [NSMutableDictionary dictionary];
+}
+
+static BOOL TLinkSaveAutoLaunchConfig(NSDictionary *config)
+{
+    NSString *parent = [kTLinkAutoLaunchConfigPath stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:nil];
+    return [config writeToFile:kTLinkAutoLaunchConfigPath atomically:YES];
+}
+
+static NSData *TLinkHandleSetAutoLaunch(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 3) {
+        return TLinkError(@"auto_launch_bad_payload expected=name;;script;;enabled");
+    }
+    NSString *name = parts[0] ?: @"";
+    NSString *script = parts[1] ?: @"";
+    BOOL enabled = [parts[2] intValue] != 0;
+    if (name.length == 0 || script.length == 0) {
+        return TLinkError(@"auto_launch_requires_name_and_script");
+    }
+
+    NSMutableDictionary *config = TLinkLoadAutoLaunchConfig();
+    config[name] = @{@"script": script, @"enabled": @(enabled)};
+    if (!TLinkSaveAutoLaunchConfig(config)) {
+        return TLinkError(@"auto_launch_save_failed");
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"auto_launch_set;;%@;;%d", name, enabled ? 1 : 0]);
+}
+
+static NSData *TLinkHandleListAutoLaunch(void)
+{
+    NSDictionary *config = TLinkLoadAutoLaunchConfig();
+    NSMutableArray<NSString *> *entries = [NSMutableArray array];
+    NSArray<NSString *> *keys = [[config allKeys] sortedArrayUsingSelector:@selector(compare:)];
+    for (NSString *key in keys) {
+        NSDictionary *obj = [config[key] isKindOfClass:[NSDictionary class]] ? config[key] : @{};
+        NSString *script = [obj[@"script"] isKindOfClass:[NSString class]] ? obj[@"script"] : @"";
+        NSString *enabled = [obj[@"enabled"] boolValue] ? @"1" : @"0";
+        [entries addObject:[NSString stringWithFormat:@"%@,,%@,,%@", key ?: @"", script, enabled]];
+    }
+    return TLinkSuccess([entries componentsJoinedByString:@";;"]);
+}
+
+static void TLinkEnsureTimerRegistryLocked(void)
+{
+    if (!sTLinkTimerRegistry) sTLinkTimerRegistry = [NSMutableDictionary dictionary];
+    if (!sTLinkTimerInfoRegistry) sTLinkTimerInfoRegistry = [NSMutableDictionary dictionary];
+}
+
+static void TLinkCancelTimerLocked(NSString *name)
+{
+    TLinkEnsureTimerRegistryLocked();
+    dispatch_source_t existing = (dispatch_source_t)sTLinkTimerRegistry[name];
+    if (existing) {
+        dispatch_source_cancel(existing);
+        [sTLinkTimerRegistry removeObjectForKey:name];
+    }
+    [sTLinkTimerInfoRegistry removeObjectForKey:name];
+}
+
+static void TLinkSchedulerTimerFired(NSString *name)
+{
+    NSMutableDictionary *info = nil;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        info = [sTLinkTimerInfoRegistry[name] mutableCopy];
+    }
+    if (![info isKindOfClass:[NSDictionary class]]) return;
+
+    NSString *script = [info[@"script"] isKindOfClass:[NSString class]] ? info[@"script"] : @"";
+    BOOL repeat = [info[@"repeat"] boolValue];
+    NSString *result = @"";
+    if (script.length > 0) {
+        NSData *response = TLinkHandlePlayScript(script);
+        result = TLinkResponseStringFromData(response);
+    } else {
+        result = @"-1;;timer_missing_script";
+    }
+
+    @synchronized (TLinkVisualFeedbackLock()) {
+        NSMutableDictionary *stored = sTLinkTimerInfoRegistry[name];
+        if (stored) {
+            stored[@"last_fired_ms"] = @(TLinkNowMs());
+            stored[@"last_result"] = result ?: @"";
+        }
+        if (!repeat) {
+            TLinkCancelTimerLocked(name);
+        }
+    }
+}
+
+static NSData *TLinkHandleSetTimer(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 4) {
+        return TLinkError(@"timer_bad_payload expected=name;;interval;;repeat;;script");
+    }
+    NSString *name = parts[0] ?: @"";
+    double interval = [parts[1] doubleValue];
+    BOOL repeat = [parts[2] intValue] != 0;
+    NSString *script = TLinkJoinParts(parts, 3);
+    if (name.length == 0) return TLinkError(@"timer_name_required");
+    if (script.length == 0) return TLinkError(@"timer_script_required");
+    if (interval <= 0.0) return TLinkError(@"timer_interval_must_be_positive");
+    if (interval > 86400.0) return TLinkError(@"timer_interval_too_large");
+
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    if (!timer) return TLinkError(@"timer_create_failed");
+    uint64_t intervalNs = (uint64_t)(interval * (double)NSEC_PER_SEC);
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)intervalNs), repeat ? intervalNs : DISPATCH_TIME_FOREVER, (uint64_t)(0.05 * (double)NSEC_PER_SEC));
+    NSString *timerName = [name copy];
+    dispatch_source_set_event_handler(timer, ^{
+        TLinkSchedulerTimerFired(timerName);
+    });
+
+    @synchronized (TLinkVisualFeedbackLock()) {
+        TLinkCancelTimerLocked(name);
+        TLinkEnsureTimerRegistryLocked();
+        sTLinkTimerRegistry[name] = timer;
+        sTLinkTimerInfoRegistry[name] = [@{
+            @"name": name,
+            @"script": script,
+            @"interval": @(interval),
+            @"repeat": @(repeat),
+            @"created_ms": @(TLinkNowMs()),
+            @"last_fired_ms": @0,
+            @"last_result": @"",
+        } mutableCopy];
+    }
+    dispatch_resume(timer);
+    return TLinkSuccess([NSString stringWithFormat:@"timer_set;;%@;;interval=%.3f;;repeat=%d", name, interval, repeat ? 1 : 0]);
+}
+
+static NSData *TLinkHandleRemoveTimer(NSString *body)
+{
+    NSString *name = TLinkCleanPayload(body);
+    if (name.length == 0) return TLinkError(@"timer_name_required");
+    @synchronized (TLinkVisualFeedbackLock()) {
+        TLinkCancelTimerLocked(name);
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"timer_removed;;%@", name]);
+}
+
+static BOOL TLinkAutoLaunchEntryEnabled(id obj, NSString **scriptOut)
+{
+    if (![obj isKindOfClass:[NSDictionary class]]) return NO;
+    NSDictionary *entry = (NSDictionary *)obj;
+    NSString *script = [entry[@"script"] isKindOfClass:[NSString class]] ? entry[@"script"] : @"";
+    if (scriptOut) *scriptOut = script ?: @"";
+    return script.length > 0 && [entry[@"enabled"] boolValue];
+}
+
+static void TLinkRunAutoLaunchEntries(void)
+{
+    NSDictionary *config = TLinkLoadAutoLaunchConfig();
+    NSArray<NSString *> *keys = [[config allKeys] sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray<NSString *> *results = [NSMutableArray array];
+    NSInteger enabledCount = 0;
+    NSInteger startedCount = 0;
+
+    for (NSString *key in keys) {
+        NSString *script = @"";
+        if (!TLinkAutoLaunchEntryEnabled(config[key], &script)) continue;
+        enabledCount++;
+        NSData *response = TLinkHandlePlayScript(script);
+        NSString *result = TLinkResponseStringFromData(response);
+        if ([result hasPrefix:@"0;;"] || [result isEqualToString:@"0"]) startedCount++;
+        NSString *safeResult = TLinkVisualSafeText(result ?: @"");
+        [results addObject:[NSString stringWithFormat:@"%@=%@", key ?: @"", safeResult]];
+    }
+
+    NSString *summary = [results componentsJoinedByString:@" | "];
+    @synchronized (TLinkVisualFeedbackLock()) {
+        sTLinkLastAutoLaunchRunMs = TLinkNowMs();
+        sTLinkLastAutoLaunchEnabledCount = enabledCount;
+        sTLinkLastAutoLaunchStartedCount = startedCount;
+        sTLinkLastAutoLaunchResult = summary ?: @"";
+    }
+
+    if (enabledCount > 0) {
+        TLinkRecordToast([NSString stringWithFormat:@"Auto launch %ld/%ld", (long)startedCount, (long)enabledCount],
+                         2.0,
+                         0,
+                         2,
+                         14,
+                         @"scheduler");
+    }
+}
+
+static void TLinkScheduleAutoLaunchStartup(void)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (sTLinkAutoLaunchScheduled) return;
+        sTLinkAutoLaunchScheduled = YES;
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * (double)NSEC_PER_SEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        TLinkRunAutoLaunchEntries();
+    });
+}
+
 static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
 {
     if (taskType == 14 || taskType == 15) {
@@ -3394,9 +3630,6 @@ static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
     }
     if (taskType == 30) {
         return TLinkUnsupported(taskType, @"hardware_key_hid_event_not_ported");
-    }
-    if (taskType >= 36 && taskType <= 39) {
-        return TLinkUnsupported(taskType, @"auto_launch_timer_requires_redesign_on_trollstore");
     }
     if (taskType >= 55 && taskType <= 59) {
         return TLinkUnsupported(taskType, @"connectivity_private_framework_not_ported");
@@ -3498,8 +3731,24 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleFrontmostOrientation();
     }
 
-    if (taskType == 30 || (taskType >= 36 && taskType <= 39)) {
+    if (taskType == 30) {
         return TLinkHandleKnownUnsupportedTask(taskType);
+    }
+
+    if (taskType == 36) {
+        return TLinkHandleSetAutoLaunch(body);
+    }
+
+    if (taskType == 37) {
+        return TLinkHandleListAutoLaunch();
+    }
+
+    if (taskType == 38) {
+        return TLinkHandleSetTimer(body);
+    }
+
+    if (taskType == 39) {
+        return TLinkHandleRemoveTimer(body);
     }
 
     if (taskType == 40) {
@@ -3648,7 +3897,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,30,36,37,38,39,55,56,57,58,59,71,91 keyboard=limited_on_trollstore keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,30,55,56,57,58,59,71,91 keyboard=limited_on_trollstore scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
@@ -3910,4 +4159,5 @@ void TLinkStartTaskServer(void)
     TLinkEnsureRuntimeDirectories();
     TLinkLoadSettingsConfig();
     POCStartSocketServer();
+    TLinkScheduleAutoLaunchStartup();
 }

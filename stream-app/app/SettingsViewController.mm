@@ -16,9 +16,9 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     self.title = @"Settings";
     [self loadConfig];
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Legacy Stop Script", @"Update Cache", @"Export Diagnostics"],
+        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Export Diagnostics"],
         @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Keep Awake: foreground idle timer", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Scheduler: streamd_lite + autolaunch", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Keep Awake: foreground idle timer", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -211,7 +211,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     }
     if (indexPath.section != 0) return;
 
-    if (indexPath.row == 24) {
+    if (indexPath.row == 28) {
         [self exportDiagnostics];
         return;
     }
@@ -289,9 +289,21 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             line = @"400\n";
             break;
         case 22:
-            line = @"41\n";
+            line = @"36demo;;Demo Script.tl;;1\n";
             break;
         case 23:
+            line = @"37\n";
+            break;
+        case 24:
+            line = @"38demo-timer;;5;;0;;Demo Script.tl\n";
+            break;
+        case 25:
+            line = @"39demo-timer\n";
+            break;
+        case 26:
+            line = @"41\n";
+            break;
+        case 27:
             line = @"902\n";
             break;
         default: return;
