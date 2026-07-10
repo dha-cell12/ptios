@@ -189,6 +189,16 @@ static double sTLinkRecordingScreenHeight = 0;
 static NSFileHandle *sTLinkRecordingFileHandle = nil;
 static IOHIDEventSystemClientRef sTLinkRecordingClient = NULL;
 static CFRunLoopRef sTLinkRecordingRunLoop = NULL;
+static BOOL sTLinkTapMacroActive = NO;
+static BOOL sTLinkTapMacroStopRequested = NO;
+static uint64_t sTLinkNextTapMacroSessionId = 1;
+static uint64_t sTLinkTapMacroSessionId = 0;
+static NSInteger sTLinkTapMacroCompletedCount = 0;
+static NSInteger sTLinkTapMacroTargetCount = 0;
+static NSString *sTLinkTapMacroMode = @"";
+static NSString *sTLinkTapMacroLastError = @"";
+static uint64_t sTLinkTapMacroStartedAtMs = 0;
+static uint64_t sTLinkTapMacroEndedAtMs = 0;
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 static NSString *const kTLinkAutoLaunchConfigPath = @"/var/mobile/Library/TLinkauto/autolaunch.plist";
 static NSString *const kTLinkRecordingScriptsPath = @"/var/mobile/Library/TLinkauto/scripts/recording";
@@ -416,6 +426,22 @@ static NSDictionary *TLinkRecordingStatusDictionary(void)
             @"started_at_ms": @(sTLinkRecordingStartedAtMs),
             @"stopped_at_ms": @(sTLinkRecordingStoppedAtMs),
             @"last_error": sTLinkRecordingLastError ?: @"",
+        };
+    }
+}
+
+static NSDictionary *TLinkTapMacroStatusDictionary(void)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        return @{
+            @"active": @(sTLinkTapMacroActive),
+            @"mode": sTLinkTapMacroMode ?: @"",
+            @"session_id": @(sTLinkTapMacroSessionId),
+            @"completed_count": @(sTLinkTapMacroCompletedCount),
+            @"target_count": @(sTLinkTapMacroTargetCount),
+            @"started_at_ms": @(sTLinkTapMacroStartedAtMs),
+            @"ended_at_ms": @(sTLinkTapMacroEndedAtMs),
+            @"last_error": sTLinkTapMacroLastError ?: @"",
         };
     }
 }
@@ -866,6 +892,33 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         NSMutableDictionary *result = [TLinkTaskResultFromResponseString(up) mutableCopy];
         result[@"down"] = downResult;
         return result;
+    };
+    device[@"tapMacro"] = ^NSDictionary *(double x, double y, JSValue *options) {
+        TLinkScriptSession *strongSession = weakSession;
+        if (TLinkScriptStopRequested(strongSession)) {
+            return @{@"ok": @NO, @"code": @-1, @"payload": @"script_stop_requested", @"raw": @"-1;;script_stop_requested"};
+        }
+        NSDictionary *opts = nil;
+        if (options && ![options isUndefined] && ![options isNull]) {
+            id obj = [options toObject];
+            if ([obj isKindOfClass:[NSDictionary class]]) opts = obj;
+        }
+        int count = opts[@"count"] ? [opts[@"count"] intValue] : 10;
+        int intervalMs = opts[@"intervalMs"] ? [opts[@"intervalMs"] intValue] : 80;
+        int durationMs = opts[@"durationMs"] ? [opts[@"durationMs"] intValue] : 20;
+        int finger = opts[@"finger"] ? [opts[@"finger"] intValue] : 0;
+        int task = opts[@"mode"] && [[opts[@"mode"] description] isEqualToString:@"crazy"] ? 16 : 17;
+        NSString *body = [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d;;%d",
+                          (int)x,
+                          (int)y,
+                          count,
+                          intervalMs,
+                          durationMs,
+                          finger];
+        return TLinkTaskResultFromResponseString(TLinkScriptRunTask(task, body));
+    };
+    device[@"stopTapMacro"] = ^NSDictionary *{
+        return TLinkTaskResultFromResponseString(TLinkScriptRunTask(17, @"stop"));
     };
     device[@"pickColor"] = ^NSDictionary *(double x, double y) {
         NSString *raw = TLinkScriptRunTask(23, [NSString stringWithFormat:@"%d;;%d", (int)x, (int)y]);
@@ -1578,6 +1631,104 @@ static BOOL TLinkHandleNativeTap(NSString *body, NSString **error)
     if (durationMs > 0) usleep((useconds_t)durationMs * 1000);
     TLinkPerformSingleTouch(POC_TOUCH_UP, finger, x, y);
     return YES;
+}
+
+static BOOL TLinkTapMacroShouldStop(uint64_t sessionId)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        return !sTLinkTapMacroActive ||
+               sTLinkTapMacroSessionId != sessionId ||
+               sTLinkTapMacroStopRequested;
+    }
+}
+
+static NSData *TLinkHandleTapMacro(int taskType, NSString *body)
+{
+    NSString *raw = [TLinkCleanPayload(body) lowercaseString];
+    if ([raw isEqualToString:@"0"] || [raw isEqualToString:@"stop"] || [raw isEqualToString:@"cancel"]) {
+        @synchronized (TLinkVisualFeedbackLock()) {
+            sTLinkTapMacroStopRequested = YES;
+            sTLinkTapMacroLastError = @"stop_requested";
+        }
+        return TLinkSuccess(@"tap_macro_stop_requested");
+    }
+
+    CGSize screen = TLinkScreenPixelSize();
+    CGFloat defaultX = screen.width / 2.0;
+    CGFloat defaultY = screen.height / 2.0;
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    CGFloat x = parts.count >= 1 && parts[0].length > 0 ? [parts[0] floatValue] : defaultX;
+    CGFloat y = parts.count >= 2 && parts[1].length > 0 ? [parts[1] floatValue] : defaultY;
+    int count = parts.count >= 3 ? [parts[2] intValue] : (taskType == 16 ? 50 : 10);
+    int intervalMs = parts.count >= 4 ? [parts[3] intValue] : (taskType == 16 ? 40 : 80);
+    int durationMs = parts.count >= 5 ? [parts[4] intValue] : 20;
+    int finger = parts.count >= 6 ? [parts[5] intValue] : 0;
+    if (count <= 0) return TLinkError(@"tap_macro_count_must_be_positive");
+    if (count > 10000) count = 10000;
+    if (intervalMs < 0) intervalMs = 0;
+    if (intervalMs > 60000) intervalMs = 60000;
+    if (durationMs < 0) durationMs = 0;
+    if (durationMs > 5000) durationMs = 5000;
+
+    uint64_t sessionId = 0;
+    NSString *mode = taskType == 16 ? @"crazy_tap" : @"rapid_fire_tap";
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (sTLinkTapMacroActive) {
+            return TLinkError([NSString stringWithFormat:@"tap_macro_already_running session=%llu", sTLinkTapMacroSessionId]);
+        }
+        sessionId = sTLinkNextTapMacroSessionId++;
+        sTLinkTapMacroActive = YES;
+        sTLinkTapMacroStopRequested = NO;
+        sTLinkTapMacroSessionId = sessionId;
+        sTLinkTapMacroCompletedCount = 0;
+        sTLinkTapMacroTargetCount = count;
+        sTLinkTapMacroMode = mode;
+        sTLinkTapMacroLastError = @"";
+        sTLinkTapMacroStartedAtMs = TLinkNowMs();
+        sTLinkTapMacroEndedAtMs = 0;
+    }
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        NSInteger completed = 0;
+        for (int i = 0; i < count; i++) {
+            if (TLinkTapMacroShouldStop(sessionId)) break;
+            TLinkPerformSingleTouch(POC_TOUCH_DOWN, finger, x, y);
+            if (durationMs > 0) usleep((useconds_t)durationMs * 1000);
+            TLinkPerformSingleTouch(POC_TOUCH_UP, finger, x, y);
+            completed++;
+            @synchronized (TLinkVisualFeedbackLock()) {
+                if (sTLinkTapMacroSessionId == sessionId) {
+                    sTLinkTapMacroCompletedCount = completed;
+                }
+            }
+            if (intervalMs > 0 && i < count - 1) {
+                usleep((useconds_t)intervalMs * 1000);
+            }
+        }
+        @synchronized (TLinkVisualFeedbackLock()) {
+            if (sTLinkTapMacroSessionId == sessionId) {
+                sTLinkTapMacroCompletedCount = completed;
+                sTLinkTapMacroActive = NO;
+                sTLinkTapMacroStopRequested = NO;
+                sTLinkTapMacroEndedAtMs = TLinkNowMs();
+            }
+        }
+        TLinkRecordToast([NSString stringWithFormat:@"%@ finished %ld/%d", mode, (long)completed, count],
+                         1.5,
+                         0,
+                         2,
+                         14,
+                         @"tap-macro");
+    });
+
+    return TLinkSuccess([NSString stringWithFormat:@"tap_macro_started;;%@;;session=%llu;;x=%.1f;;y=%.1f;;count=%d;;interval_ms=%d;;duration_ms=%d",
+                         mode,
+                         sessionId,
+                         x,
+                         y,
+                         count,
+                         intervalMs,
+                         durationMs]);
 }
 
 static BOOL TLinkHandleNativeSwipe(NSString *body, NSString **error)
@@ -3576,6 +3727,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"nativeTouch": @(YES),
         @"touchRecording": @(YES),
         @"touchRecordingMode": @"iohid_monitor_raw_js_replay",
+        @"tapMacro": @(YES),
+        @"tapMacroMode": @"bounded_async_native_tap",
         @"capture": @(YES),
         @"h264": @(YES),
         @"image": @(YES),
@@ -3591,6 +3744,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
         @"scriptHardwareKey": @(YES),
+        @"scriptTapMacro": @(YES),
         @"scheduler": @(YES),
         @"schedulerMode": @"streamd_lite",
         @"schedulerAutoLaunch": @(YES),
@@ -3640,6 +3794,7 @@ static NSData *TLinkHandleHelloStatus(void)
         },
         @"script": TLinkScriptStatusDictionary(),
         @"recording": TLinkRecordingStatusDictionary(),
+        @"tap_macro": TLinkTapMacroStatusDictionary(),
         @"scheduler": TLinkSchedulerStatusDictionary(),
         @"settings": TLinkRuntimeSettingsDictionary(),
         @"keep_awake": TLinkKeepAwakeDictionary(),
@@ -3945,9 +4100,6 @@ static void TLinkScheduleAutoLaunchStartup(void)
 
 static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
 {
-    if (taskType == 16 || taskType == 17) {
-        return TLinkUnsupported(taskType, @"legacy_repeated_tap_macro_not_ported use_task_61_65");
-    }
     if (taskType >= 55 && taskType <= 59) {
         return TLinkUnsupported(taskType, @"connectivity_private_framework_not_ported");
     }
@@ -3982,7 +4134,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 16 || taskType == 17) {
-        return TLinkHandleKnownUnsupportedTask(taskType);
+        return TLinkHandleTapMacro(taskType, body);
     }
 
     if (taskType == 18) {
@@ -4222,7 +4374,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,14,15,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,touchRecording,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,16,17,55,56,57,58,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,55,56,57,58,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
