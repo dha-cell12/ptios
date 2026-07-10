@@ -80,6 +80,7 @@
 - (void)applicationWillResignActive:(UIApplication *)application
 {
     (void)application;
+    [UIApplication sharedApplication].idleTimerDisabled = NO;
     [self stopVisualFeedbackMonitor];
 }
 
@@ -169,6 +170,14 @@
     if (jsonData.length == 0) return;
     NSDictionary *status = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
     if (![status isKindOfClass:[NSDictionary class]]) return;
+
+    NSDictionary *keepAwake = status[@"keep_awake"];
+    if ([keepAwake isKindOfClass:[NSDictionary class]]) {
+        BOOL enabled = [keepAwake[@"enabled"] boolValue];
+        if ([UIApplication sharedApplication].idleTimerDisabled != enabled) {
+            [UIApplication sharedApplication].idleTimerDisabled = enabled;
+        }
+    }
 
     NSInteger streamdPid = [status[@"pid"] integerValue];
     if (streamdPid > 0) {

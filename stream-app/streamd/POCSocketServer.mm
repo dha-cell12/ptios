@@ -163,6 +163,7 @@ static uint64_t sTLinkLastVisualEventId = 0;
 static BOOL sTLinkTouchIndicatorEnabled = NO;
 static BOOL sTLinkSwitchAppBeforeRunScript = YES;
 static BOOL sTLinkDoubleClickVolumeShowPopup = YES;
+static BOOL sTLinkKeepAwakeEnabled = NO;
 static NSString *sTLinkLastDialogValue = @"";
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 
@@ -346,6 +347,16 @@ static NSDictionary *TLinkRuntimeSettingsDictionary(void)
             @"touch_indicator_show": @(sTLinkTouchIndicatorEnabled),
             @"switch_app_before_run_script": @(sTLinkSwitchAppBeforeRunScript),
             @"double_click_volume_show_popup": @(sTLinkDoubleClickVolumeShowPopup),
+        };
+    }
+}
+
+static NSDictionary *TLinkKeepAwakeDictionary(void)
+{
+    @synchronized (TLinkVisualFeedbackLock()) {
+        return @{
+            @"enabled": @(sTLinkKeepAwakeEnabled),
+            @"mode": @"app_foreground_idle_timer",
         };
     }
 }
@@ -3235,6 +3246,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
         @"settingsCache": @(YES),
+        @"keepAwake": @(YES),
+        @"keepAwakeMode": @"app_foreground_idle_timer",
         @"visualFeedback": @(YES),
         @"toastOverlay": @(YES),
         @"alertOverlay": @(YES),
@@ -3277,6 +3290,7 @@ static NSData *TLinkHandleHelloStatus(void)
         },
         @"script": TLinkScriptStatusDictionary(),
         @"settings": TLinkRuntimeSettingsDictionary(),
+        @"keep_awake": TLinkKeepAwakeDictionary(),
         @"visual_feedback": TLinkVisualFeedbackDictionary(),
         @"screen": @{@"width": @((int)screen.width), @"height": @((int)screen.height), @"scale": @([UIScreen mainScreen].scale)},
         @"frontmost_cache": @{
@@ -3352,6 +3366,24 @@ static NSData *TLinkHandleTesseractOCRUnsupported(NSString *body)
     return TLinkError(@"unsupported_on_trollstore task=91 tesseract_ocr_not_bundled use_task_27_vision_ocr");
 }
 
+static NSData *TLinkHandleKeepAwake(NSString *body)
+{
+    NSString *raw = TLinkCleanPayload(body);
+    BOOL enabled = [raw intValue] != 0;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        sTLinkKeepAwakeEnabled = enabled;
+    }
+    uint64_t eventId = TLinkRecordToast([NSString stringWithFormat:@"Keep Awake %@", enabled ? @"On" : @"Off"],
+                                        1.5,
+                                        0,
+                                        2,
+                                        14,
+                                        @"task40");
+    return TLinkSuccess([NSString stringWithFormat:@"keep_awake_%@;;mode=app_foreground_idle_timer;;event=%llu",
+                         enabled ? @"enabled" : @"disabled",
+                         eventId]);
+}
+
 static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
 {
     if (taskType == 14 || taskType == 15) {
@@ -3365,9 +3397,6 @@ static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
     }
     if (taskType >= 36 && taskType <= 39) {
         return TLinkUnsupported(taskType, @"auto_launch_timer_requires_redesign_on_trollstore");
-    }
-    if (taskType == 40) {
-        return TLinkUnsupported(taskType, @"keep_awake_power_assertion_not_ported");
     }
     if (taskType >= 55 && taskType <= 59) {
         return TLinkUnsupported(taskType, @"connectivity_private_framework_not_ported");
@@ -3469,8 +3498,12 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleFrontmostOrientation();
     }
 
-    if (taskType == 30 || (taskType >= 36 && taskType <= 40)) {
+    if (taskType == 30 || (taskType >= 36 && taskType <= 39)) {
         return TLinkHandleKnownUnsupportedTask(taskType);
+    }
+
+    if (taskType == 40) {
+        return TLinkHandleKeepAwake(body);
     }
 
     if (taskType == 41) {
@@ -3615,7 +3648,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,settingsCache,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,30,36,37,38,39,40,55,56,57,58,59,71,91 keyboard=limited_on_trollstore dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,30,36,37,38,39,55,56,57,58,59,71,91 keyboard=limited_on_trollstore keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
