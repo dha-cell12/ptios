@@ -27,6 +27,7 @@ static double sScreenHeight = 0;
 static int    sVariant      = 0;
 static unsigned long long sSenderID = 0;
 static IOHIDEventSystemClientRef sClients[4] = { NULL, NULL, NULL, NULL };
+static IOHIDEventSystemClientRef sHardwareKeyClient = NULL;
 
 void HIDInjectCoreInit(double w, double h, int variant) {
     sScreenWidth  = w;
@@ -86,6 +87,79 @@ static HIDInjectResult HIDPostParent(IOHIDEventRef parent) {
     IOHIDEventSystemClientDispatchEvent(client, parent);
     r.errnoValue = errno;
     r.dispatched = 1;
+    return r;
+}
+
+static bool HIDHardwareKeyUsage(int keyType, uint16_t *usagePage, uint16_t *usage) {
+    if (!usagePage || !usage) return false;
+    switch (keyType) {
+        case HID_KEY_HOME:
+            *usagePage = 0x0C;
+            *usage = 0x0223;
+            return true;
+        case HID_KEY_VOLUME_UP:
+            *usagePage = 0x0C;
+            *usage = 0x00E9;
+            return true;
+        case HID_KEY_VOLUME_DOWN:
+            *usagePage = 0x0C;
+            *usage = 0x00EA;
+            return true;
+        case HID_KEY_LOCK:
+            *usagePage = 0x0C;
+            *usage = 0x0030;
+            return true;
+        default:
+            return false;
+    }
+}
+
+HIDInjectResult HIDInjectDispatchHardwareKey(int action, int keyType) {
+    HIDInjectResult r = {0};
+    if (action != HID_KEY_ACTION_UP && action != HID_KEY_ACTION_DOWN) {
+        r.errnoValue = EINVAL;
+        return r;
+    }
+
+    uint16_t usagePage = 0;
+    uint16_t usage = 0;
+    if (!HIDHardwareKeyUsage(keyType, &usagePage, &usage)) {
+        r.errnoValue = EINVAL;
+        return r;
+    }
+
+    IOHIDEventRef event = IOHIDEventCreateKeyboardEvent(kCFAllocatorDefault,
+                                                        mach_absolute_time(),
+                                                        usagePage,
+                                                        usage,
+                                                        action == HID_KEY_ACTION_DOWN,
+                                                        0);
+    if (!event) {
+        r.errnoValue = errno;
+        return r;
+    }
+
+    if (!sHardwareKeyClient) {
+        sHardwareKeyClient = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    }
+    r.clientPtr = (void *)sHardwareKeyClient;
+    r.clientCreated = sHardwareKeyClient ? 1 : 0;
+    r.eventCreated = 1;
+    if (!sHardwareKeyClient) {
+        r.errnoValue = errno;
+        CFRelease(event);
+        return r;
+    }
+    if (sSenderID != 0) {
+        IOHIDEventSetSenderID(event, sSenderID);
+        r.senderIDUsed = 1;
+        r.senderID = sSenderID;
+    }
+    errno = 0;
+    IOHIDEventSystemClientDispatchEvent(sHardwareKeyClient, event);
+    r.errnoValue = errno;
+    r.dispatched = 1;
+    CFRelease(event);
     return r;
 }
 

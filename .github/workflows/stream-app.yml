@@ -109,6 +109,7 @@ jobs:
           grep -q 'taskType == 26' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 30' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 36' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 37' stream-app/streamd/POCSocketServer.mm
@@ -139,6 +140,7 @@ jobs:
           grep -q '"visionOCR"' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptJS' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptTaskBridge' stream-app/streamd/POCSocketServer.mm
+          grep -q 'scriptHardwareKey' stream-app/streamd/POCSocketServer.mm
           grep -q 'visual_feedback' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRecordToast' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleAlertBox' stream-app/streamd/POCSocketServer.mm
@@ -163,6 +165,10 @@ jobs:
           grep -q '"settings": TLinkRuntimeSettingsDictionary' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleKeepAwake' stream-app/streamd/POCSocketServer.mm
           grep -q 'app_foreground_idle_timer' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleHardwareKey' stream-app/streamd/POCSocketServer.mm
+          grep -q 'pressHardwareKey' stream-app/streamd/POCSocketServer.mm
+          grep -q 'HIDInjectDispatchHardwareKey' stream-app/streamd/HIDInjectCore.mm
+          grep -q 'hardwareKey=hid_keyboard_event' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleUpdateCache' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleKnownUnsupportedTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_disabled_on_trollstore' stream-app/streamd/POCSocketServer.mm
@@ -183,6 +189,7 @@ jobs:
           grep -q 'Set Auto Launch' stream-app/app/SettingsViewController.mm
           grep -q 'Set Timer Demo' stream-app/app/SettingsViewController.mm
           grep -q 'Keep Awake On' stream-app/app/SettingsViewController.mm
+          grep -q 'Hardware Key Home' stream-app/app/SettingsViewController.mm
           grep -q 'Service Mode: helper ensure streamd' stream-app/app/SettingsViewController.mm
           grep -q 'Legacy Stop Script' stream-app/app/SettingsViewController.mm
           grep -q 'Update Cache' stream-app/app/SettingsViewController.mm

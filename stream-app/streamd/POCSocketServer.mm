@@ -23,6 +23,7 @@
 
 #include "POCSocketServer.h"
 #include "TouchInjector.h"
+#include "HIDInjectCore.h"
 #import "CaptureCore.h"
 #import "StreamCaptureProbe.h"
 
@@ -666,6 +667,24 @@ static NSString *TLinkScriptRunTask(int taskType, NSString *body)
     return TLinkResponseStringFromData(response);
 }
 
+static int TLinkScriptHardwareKeyType(NSString *key)
+{
+    NSString *normalized = [[key ?: @"" lowercaseString] stringByReplacingOccurrencesOfString:@"_" withString:@"-"];
+    if ([normalized isEqualToString:@"home"]) return HID_KEY_HOME;
+    if ([normalized isEqualToString:@"volume-up"] || [normalized isEqualToString:@"vol-up"]) return HID_KEY_VOLUME_UP;
+    if ([normalized isEqualToString:@"volume-down"] || [normalized isEqualToString:@"vol-down"]) return HID_KEY_VOLUME_DOWN;
+    if ([normalized isEqualToString:@"lock"] || [normalized isEqualToString:@"power"]) return HID_KEY_LOCK;
+    return 0;
+}
+
+static int TLinkScriptHardwareKeyAction(NSString *action)
+{
+    NSString *normalized = [[action ?: @"" lowercaseString] stringByReplacingOccurrencesOfString:@"_" withString:@"-"];
+    if ([normalized isEqualToString:@"down"]) return HID_KEY_ACTION_DOWN;
+    if ([normalized isEqualToString:@"up"]) return HID_KEY_ACTION_UP;
+    return -1;
+}
+
 static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *session)
 {
     __weak TLinkScriptSession *weakSession = session;
@@ -783,6 +802,37 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         }
         NSString *body = bodyValue && ![bodyValue isUndefined] && ![bodyValue isNull] ? [bodyValue toString] : @"";
         return TLinkTaskResultFromResponseString(TLinkScriptRunTask((int)task, body));
+    };
+    device[@"hardwareKey"] = ^NSDictionary *(NSString *key, NSString *action) {
+        TLinkScriptSession *strongSession = weakSession;
+        if (TLinkScriptStopRequested(strongSession)) {
+            return @{@"ok": @NO, @"code": @-1, @"payload": @"script_stop_requested", @"raw": @"-1;;script_stop_requested"};
+        }
+        int keyType = TLinkScriptHardwareKeyType(key);
+        int keyAction = TLinkScriptHardwareKeyAction(action);
+        if (keyType <= 0 || keyAction < 0) {
+            return @{@"ok": @NO, @"code": @-1, @"payload": @"hardwareKey supports key home/volume-up/volume-down/lock and action down/up"};
+        }
+        NSString *raw = TLinkScriptRunTask(30, [NSString stringWithFormat:@"%d;;%d", keyAction, keyType]);
+        return TLinkTaskResultFromResponseString(raw);
+    };
+    device[@"pressHardwareKey"] = ^NSDictionary *(NSString *key) {
+        TLinkScriptSession *strongSession = weakSession;
+        if (TLinkScriptStopRequested(strongSession)) {
+            return @{@"ok": @NO, @"code": @-1, @"payload": @"script_stop_requested", @"raw": @"-1;;script_stop_requested"};
+        }
+        int keyType = TLinkScriptHardwareKeyType(key);
+        if (keyType <= 0) {
+            return @{@"ok": @NO, @"code": @-1, @"payload": @"pressHardwareKey supports key home/volume-up/volume-down/lock"};
+        }
+        NSString *down = TLinkScriptRunTask(30, [NSString stringWithFormat:@"%d;;%d", HID_KEY_ACTION_DOWN, keyType]);
+        NSDictionary *downResult = TLinkTaskResultFromResponseString(down);
+        if (![downResult[@"ok"] boolValue]) return downResult;
+        usleep(80000);
+        NSString *up = TLinkScriptRunTask(30, [NSString stringWithFormat:@"%d;;%d", HID_KEY_ACTION_UP, keyType]);
+        NSMutableDictionary *result = [TLinkTaskResultFromResponseString(up) mutableCopy];
+        result[@"down"] = downResult;
+        return result;
     };
     device[@"pickColor"] = ^NSDictionary *(double x, double y) {
         NSString *raw = TLinkScriptRunTask(23, [NSString stringWithFormat:@"%d;;%d", (int)x, (int)y]);
@@ -1653,6 +1703,34 @@ static NSData *TLinkHandleDeviceInfo(NSString *body)
         return TLinkSuccess([NSString stringWithFormat:@"%d;;%f", state, level]);
     }
     return TLinkError([NSString stringWithFormat:@"Unknown device info task type: %d", subtask]);
+}
+
+static NSData *TLinkHandleHardwareKey(NSString *body)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 2) {
+        return TLinkError(@"hardware_key_bad_payload expected=action;;keyType");
+    }
+
+    int action = [parts[0] intValue];
+    int keyType = [parts[1] intValue];
+    HIDInjectResult result = HIDInjectDispatchHardwareKey(action, keyType);
+    if (result.errnoValue == EINVAL) {
+        return TLinkError([NSString stringWithFormat:@"hardware_key_invalid action=%d keyType=%d", action, keyType]);
+    }
+    if (!result.clientCreated) {
+        return TLinkError([NSString stringWithFormat:@"hardware_key_client_unavailable errno=%d", result.errnoValue]);
+    }
+    if (!result.eventCreated) {
+        return TLinkError([NSString stringWithFormat:@"hardware_key_event_create_failed errno=%d", result.errnoValue]);
+    }
+
+    return TLinkSuccess([NSString stringWithFormat:@"hardware_key_dispatched;;action=%d;;keyType=%d;;client=%p;;sender=0x%llx;;errno=%d",
+                         action,
+                         keyType,
+                         result.clientPtr,
+                         result.senderID,
+                         result.errnoValue]);
 }
 
 static CaptureOutcome *TLinkRunCaptureOnMain(void)
@@ -3264,12 +3342,15 @@ static NSData *TLinkHandleHelloStatus(void)
         @"color": @(YES),
         @"frame": @(YES),
         @"keyboardClipboard": @(YES),
+        @"hardwareKey": @(YES),
+        @"hardwareKeyMode": @"hid_keyboard_event",
         @"ocr": @(YES),
         @"visionOCR": @(YES),
         @"tesseractOCR": @(NO),
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
+        @"scriptHardwareKey": @(YES),
         @"scheduler": @(YES),
         @"schedulerMode": @"streamd_lite",
         @"schedulerAutoLaunch": @(YES),
@@ -3628,9 +3709,6 @@ static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
     if (taskType == 16 || taskType == 17) {
         return TLinkUnsupported(taskType, @"legacy_repeated_tap_macro_not_ported use_task_61_65");
     }
-    if (taskType == 30) {
-        return TLinkUnsupported(taskType, @"hardware_key_hid_event_not_ported");
-    }
     if (taskType >= 55 && taskType <= 59) {
         return TLinkUnsupported(taskType, @"connectivity_private_framework_not_ported");
     }
@@ -3732,7 +3810,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 30) {
-        return TLinkHandleKnownUnsupportedTask(taskType);
+        return TLinkHandleHardwareKey(body);
     }
 
     if (taskType == 36) {
@@ -3897,7 +3975,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,30,55,56,57,58,59,71,91 keyboard=limited_on_trollstore scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,14,15,16,17,55,56,57,58,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
