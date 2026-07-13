@@ -15,6 +15,8 @@
 #include <spawn.h>
 #include <unistd.h>
 #include <netinet/tcp.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <mach-o/dyld.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
@@ -4103,6 +4105,47 @@ static NSString *TLinkConnectivityLoadedClassSummary(NSArray<NSString *> *tokens
         : @"classes=no_match";
 }
 
+static NSString *TLinkConnectivityMethodSummaryForClass(Class cls, BOOL classMethods, NSArray<NSString *> *tokens)
+{
+    if (!cls) return @"methods=none";
+    Class target = classMethods ? object_getClass(cls) : cls;
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(target, &count);
+    if (!methods || count == 0) {
+        if (methods) free(methods);
+        return @"methods=none";
+    }
+    NSMutableArray<NSString *> *matches = [NSMutableArray array];
+    for (unsigned int i = 0; i < count && matches.count < 16; i++) {
+        SEL sel = method_getName(methods[i]);
+        if (!sel) continue;
+        NSString *name = NSStringFromSelector(sel);
+        for (NSString *token in tokens) {
+            if ([name rangeOfString:token options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [matches addObject:name];
+                break;
+            }
+        }
+    }
+    free(methods);
+    return matches.count > 0
+        ? [matches componentsJoinedByString:@","]
+        : @"no_match";
+}
+
+static NSString *TLinkConnectivityClassMethodSummary(NSArray<NSString *> *classNames, NSArray<NSString *> *tokens)
+{
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSString *className in classNames) {
+        Class cls = NSClassFromString(className);
+        if (!cls) continue;
+        NSString *classMethods = TLinkConnectivityMethodSummaryForClass(cls, YES, tokens);
+        NSString *instanceMethods = TLinkConnectivityMethodSummaryForClass(cls, NO, tokens);
+        [parts addObject:[NSString stringWithFormat:@"%@ class=%@ instance=%@", className, classMethods, instanceMethods]];
+    }
+    return parts.count > 0 ? [parts componentsJoinedByString:@" | "] : @"method_classes=no_match";
+}
+
 static BOOL TLinkParseConnectivityAction(NSString *body, int *outAction, int *outValue, NSString **error)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
@@ -4130,7 +4173,17 @@ static id TLinkSharedConnectivityObject(NSArray<NSString *> *classNames)
     for (NSString *className in classNames) {
         Class cls = NSClassFromString(className);
         if (!cls) continue;
-        NSArray<NSString *> *selectors = @[@"sharedInstance", @"sharedManager", @"sharedController", @"sharedBluetoothManager", @"defaultManager"];
+        NSArray<NSString *> *selectors = @[
+            @"sharedInstance",
+            @"sharedManager",
+            @"sharedController",
+            @"sharedBluetoothManager",
+            @"defaultManager",
+            @"sharedLocalDevice",
+            @"localDevice",
+            @"defaultLocalDevice",
+            @"sharedDevice"
+        ];
         for (NSString *selectorName in selectors) {
             SEL sel = NSSelectorFromString(selectorName);
             if ([cls respondsToSelector:sel]) {
@@ -4257,6 +4310,26 @@ static BOOL TLinkMobileWiFiState(BOOL setState, BOOL requestedValue, BOOL *outVa
     return success;
 }
 
+static BOOL TLinkWiFiInterfaceActive(void)
+{
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces) != 0 || !interfaces) return NO;
+    BOOL active = NO;
+    for (struct ifaddrs *ifa = interfaces; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_name || !ifa->ifa_addr) continue;
+        if (strcmp(ifa->ifa_name, "en0") != 0) continue;
+        int family = ifa->ifa_addr->sa_family;
+        if ((family == AF_INET || family == AF_INET6) &&
+            (ifa->ifa_flags & IFF_UP) &&
+            (ifa->ifa_flags & IFF_RUNNING)) {
+            active = YES;
+            break;
+        }
+    }
+    freeifaddrs(interfaces);
+    return active;
+}
+
 static NSData *TLinkHandleConnectivity(NSString *body,
                                        int taskType,
                                        NSString *label,
@@ -4275,7 +4348,13 @@ static NSData *TLinkHandleWiFiConnectivity(NSString *body, int taskType)
 
     BOOL enabled = NO;
     if (TLinkMobileWiFiState(action == 1, requestedValue != 0, &enabled)) {
+        if (action == 0 && !enabled && TLinkWiFiInterfaceActive()) {
+            enabled = YES;
+        }
         return TLinkSuccess(enabled ? @"1" : @"0");
+    }
+    if (action == 0 && TLinkWiFiInterfaceActive()) {
+        return TLinkSuccess(@"1");
     }
 
     NSData *fallback = TLinkHandleConnectivity(body,
@@ -4303,7 +4382,8 @@ static NSData *TLinkHandleConnectivity(NSString *body,
 
     id controller = TLinkSharedConnectivityObject(classNames);
     if (!controller) {
-        return TLinkUnsupported(taskType, [NSString stringWithFormat:@"%@_controller_unavailable %@", label, TLinkConnectivityLoadedClassSummary(classNames)]);
+        NSArray<NSString *> *methodTokens = @[@"shared", @"default", @"local", @"manager", @"device", @"bluetooth"];
+        return TLinkUnsupported(taskType, [NSString stringWithFormat:@"%@_controller_unavailable %@ %@", label, TLinkConnectivityLoadedClassSummary(classNames), TLinkConnectivityClassMethodSummary(classNames, methodTokens)]);
     }
 
     if (action == 1) {
@@ -4318,7 +4398,8 @@ static NSData *TLinkHandleConnectivity(NSString *body,
         if (action == 1) {
             enabled = requestedValue != 0;
         } else {
-            return TLinkUnsupported(taskType, [NSString stringWithFormat:@"%@_get_selector_unavailable controller=%@", label, NSStringFromClass([controller class])]);
+            NSArray<NSString *> *methodTokens = @[@"enabled", @"cellular", @"data", @"radio", @"airplane", @"power", @"bluetooth"];
+            return TLinkUnsupported(taskType, [NSString stringWithFormat:@"%@_get_selector_unavailable controller=%@ instance=%@", label, NSStringFromClass([controller class]), TLinkConnectivityMethodSummaryForClass([controller class], NO, methodTokens)]);
         }
     }
     return TLinkSuccess(enabled ? @"1" : @"0");
@@ -4333,9 +4414,9 @@ static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
         return TLinkHandleConnectivity(body,
                                        taskType,
                                        @"bluetooth",
-                                       @[@"BluetoothManager", @"BTLocalDevice"],
-                                       @[@"powered", @"enabled", @"isEnabled", @"powerState"],
-                                       @[@"setPowered:", @"setEnabled:", @"setPowerState:"]);
+                                       @[@"BluetoothManager", @"BTLocalDevice", @"BluetoothDevice"],
+                                       @[@"powered", @"enabled", @"isEnabled", @"powerState", @"isPowered"],
+                                       @[@"setPowered:", @"setEnabled:", @"setPowerState:", @"setPower:"]);
     }
     if (taskType == 57) {
         return TLinkHandleConnectivity(body,
@@ -4350,7 +4431,7 @@ static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
                                        taskType,
                                        @"cellular_data",
                                        @[@"RadiosPreferences"],
-                                       @[@"cellularDataEnabled", @"isCellularDataEnabled", @"dataEnabled"],
+                                       @[@"cellularDataEnabled", @"isCellularDataEnabled", @"dataEnabled", @"getCellularDataEnabled"],
                                        @[@"setCellularDataEnabled:", @"setDataEnabled:"]);
     }
     return TLinkUnsupported(taskType, @"vpn_control_requires_profile_or_private_entitlement");
