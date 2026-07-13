@@ -185,7 +185,13 @@ jobs:
           grep -q 'TLinkHandleKnownUnsupportedTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_disabled_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_ocr_not_bundled' stream-app/streamd/POCSocketServer.mm
-          grep -q 'connectivity_private_framework_not_ported' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleConnectivityTask' stream-app/streamd/POCSocketServer.mm
+          grep -q 'best_effort_private_framework' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vpn_control_requires_profile_or_private_entitlement' stream-app/streamd/POCSocketServer.mm
+          grep -q 'Wi-Fi Status' stream-app/app/SettingsViewController.mm
+          grep -q 'Bluetooth Status' stream-app/app/SettingsViewController.mm
+          grep -q 'Airplane Status' stream-app/app/SettingsViewController.mm
+          grep -q 'Cellular Status' stream-app/app/SettingsViewController.mm
           grep -q 'privhelperEnsureStreamd' stream-app/streamd/POCSocketServer.mm
           grep -q 'helper_ensure_streamd_best_effort' stream-app/streamd/POCSocketServer.mm
           grep -q 'requested_ms' stream-app/streamd/POCSocketServer.mm

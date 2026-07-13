@@ -3769,6 +3769,13 @@ static NSData *TLinkHandleHelloStatus(void)
         @"appLaunchMode": @"privhelper_best_effort",
         @"appKillMode": @"privhelper_best_effort",
         @"openURLMode": @"privhelper_best_effort",
+        @"connectivity": @(YES),
+        @"connectivityMode": @"best_effort_private_framework",
+        @"wifi": @(YES),
+        @"bluetooth": @(YES),
+        @"airplane": @(YES),
+        @"cellularData": @(YES),
+        @"vpn": @(NO),
         @"frontmost": @(YES),
         @"clearData": @(NO),
         @"shell": @(NO),
@@ -4044,6 +4051,174 @@ static NSData *TLinkHandleRemoveTimer(NSString *body)
     return TLinkSuccess([NSString stringWithFormat:@"timer_removed;;%@", name]);
 }
 
+static void TLinkLoadConnectivityFrameworks(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSArray<NSString *> *paths = @[
+            @"/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
+            @"/System/Library/PrivateFrameworks/BluetoothManager.framework/BluetoothManager",
+            @"/System/Library/PrivateFrameworks/Preferences.framework/Preferences",
+            @"/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport",
+        ];
+        for (NSString *path in paths) {
+            dlopen([path fileSystemRepresentation], RTLD_LAZY | RTLD_GLOBAL);
+        }
+    });
+}
+
+static BOOL TLinkParseConnectivityAction(NSString *body, int *outAction, int *outValue, NSString **error)
+{
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    int action = parts.count >= 1 && parts[0].length > 0 ? [parts[0] intValue] : 0;
+    int value = 0;
+    if (action != 0 && action != 1) {
+        if (error) *error = @"connectivity_action_must_be_0_query_or_1_set";
+        return NO;
+    }
+    if (action == 1) {
+        if (parts.count < 2) {
+            if (error) *error = @"connectivity_set_requires_value";
+            return NO;
+        }
+        value = [parts[1] intValue] ? 1 : 0;
+    }
+    if (outAction) *outAction = action;
+    if (outValue) *outValue = value;
+    return YES;
+}
+
+static id TLinkSharedConnectivityObject(NSArray<NSString *> *classNames)
+{
+    TLinkLoadConnectivityFrameworks();
+    for (NSString *className in classNames) {
+        Class cls = NSClassFromString(className);
+        if (!cls) continue;
+        NSArray<NSString *> *selectors = @[@"sharedInstance", @"sharedManager"];
+        for (NSString *selectorName in selectors) {
+            SEL sel = NSSelectorFromString(selectorName);
+            if ([cls respondsToSelector:sel]) {
+                @try {
+                    id obj = ((id (*)(Class, SEL))objc_msgSend)(cls, sel);
+                    if (obj) return obj;
+                } @catch (__unused NSException *exception) {
+                }
+            }
+        }
+        @try {
+            id allocated = ((id (*)(Class, SEL))objc_msgSend)(cls, @selector(alloc));
+            id obj = allocated ? ((id (*)(id, SEL))objc_msgSend)(allocated, @selector(init)) : nil;
+            if (obj) return obj;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return nil;
+}
+
+static BOOL TLinkConnectivityGetBool(id obj, NSArray<NSString *> *selectorNames, BOOL *outValue)
+{
+    if (!obj) return NO;
+    for (NSString *selectorName in selectorNames) {
+        SEL sel = NSSelectorFromString(selectorName);
+        if (![obj respondsToSelector:sel]) continue;
+        @try {
+            BOOL value = ((BOOL (*)(id, SEL))objc_msgSend)(obj, sel);
+            if (outValue) *outValue = value;
+            return YES;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return NO;
+}
+
+static BOOL TLinkConnectivitySetBool(id obj, NSArray<NSString *> *selectorNames, BOOL value)
+{
+    if (!obj) return NO;
+    for (NSString *selectorName in selectorNames) {
+        SEL sel = NSSelectorFromString(selectorName);
+        if (![obj respondsToSelector:sel]) continue;
+        @try {
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(obj, sel, value);
+            return YES;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return NO;
+}
+
+static NSData *TLinkHandleConnectivity(NSString *body,
+                                       int taskType,
+                                       NSString *label,
+                                       NSArray<NSString *> *classNames,
+                                       NSArray<NSString *> *getters,
+                                       NSArray<NSString *> *setters)
+{
+    int action = 0;
+    int requestedValue = 0;
+    NSString *parseError = nil;
+    if (!TLinkParseConnectivityAction(body, &action, &requestedValue, &parseError)) {
+        return TLinkError(parseError ?: @"connectivity_bad_payload");
+    }
+
+    id controller = TLinkSharedConnectivityObject(classNames);
+    if (!controller) {
+        return TLinkUnsupported(taskType, [NSString stringWithFormat:@"%@_controller_unavailable", label]);
+    }
+
+    if (action == 1) {
+        if (!TLinkConnectivitySetBool(controller, setters, requestedValue != 0)) {
+            return TLinkUnsupported(taskType, [NSString stringWithFormat:@"%@_set_selector_unavailable", label]);
+        }
+    }
+
+    BOOL enabled = NO;
+    if (!TLinkConnectivityGetBool(controller, getters, &enabled)) {
+        if (action == 1) {
+            enabled = requestedValue != 0;
+        } else {
+            return TLinkUnsupported(taskType, [NSString stringWithFormat:@"%@_get_selector_unavailable", label]);
+        }
+    }
+    return TLinkSuccess(enabled ? @"1" : @"0");
+}
+
+static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
+{
+    if (taskType == 55) {
+        return TLinkHandleConnectivity(body,
+                                       taskType,
+                                       @"wifi",
+                                       @[@"SBWiFiManager"],
+                                       @[@"wiFiEnabled", @"wifiEnabled", @"isWiFiEnabled"],
+                                       @[@"setWiFiEnabled:", @"setWifiEnabled:"]);
+    }
+    if (taskType == 56) {
+        return TLinkHandleConnectivity(body,
+                                       taskType,
+                                       @"bluetooth",
+                                       @[@"BluetoothManager"],
+                                       @[@"powered", @"enabled", @"isEnabled"],
+                                       @[@"setPowered:", @"setEnabled:"]);
+    }
+    if (taskType == 57) {
+        return TLinkHandleConnectivity(body,
+                                       taskType,
+                                       @"airplane",
+                                       @[@"RadiosPreferences", @"SBAirplaneModeController"],
+                                       @[@"airplaneMode", @"airplaneModeEnabled", @"isAirplaneModeEnabled"],
+                                       @[@"setAirplaneMode:", @"setAirplaneModeEnabled:"]);
+    }
+    if (taskType == 58) {
+        return TLinkHandleConnectivity(body,
+                                       taskType,
+                                       @"cellular_data",
+                                       @[@"RadiosPreferences"],
+                                       @[@"cellularDataEnabled", @"isCellularDataEnabled"],
+                                       @[@"setCellularDataEnabled:"]);
+    }
+    return TLinkUnsupported(taskType, @"vpn_control_requires_profile_or_private_entitlement");
+}
+
 static BOOL TLinkAutoLaunchEntryEnabled(id obj, NSString **scriptOut)
 {
     if (![obj isKindOfClass:[NSDictionary class]]) return NO;
@@ -4105,8 +4280,8 @@ static void TLinkScheduleAutoLaunchStartup(void)
 
 static NSData *TLinkHandleKnownUnsupportedTask(int taskType)
 {
-    if (taskType >= 55 && taskType <= 59) {
-        return TLinkUnsupported(taskType, @"connectivity_private_framework_not_ported");
+    if (taskType == 59) {
+        return TLinkUnsupported(taskType, @"vpn_control_requires_profile_or_private_entitlement");
     }
     return TLinkUnsupported(taskType, nil);
 }
@@ -4292,7 +4467,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType >= 55 && taskType <= 59) {
-        return TLinkHandleKnownUnsupportedTask(taskType);
+        return TLinkHandleConnectivityTask(taskType, body);
     }
 
     if (taskType == 60) {
@@ -4379,7 +4554,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,connectivity,shell unsupportedTasks=13,55,56,57,58,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpn,shell unsupportedTasks=13,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
