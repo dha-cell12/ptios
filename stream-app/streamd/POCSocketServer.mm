@@ -4173,6 +4173,13 @@ static id TLinkSharedConnectivityObjectWithAlloc(NSArray<NSString *> *classNames
     for (NSString *className in classNames) {
         Class cls = NSClassFromString(className);
         if (!cls) continue;
+        SEL queueSel = NSSelectorFromString(@"setSharedInstanceQueue:");
+        if ([cls respondsToSelector:queueSel]) {
+            @try {
+                ((void (*)(Class, SEL, dispatch_queue_t))objc_msgSend)(cls, queueSel, POCSocketQueue());
+            } @catch (__unused NSException *exception) {
+            }
+        }
         NSArray<NSString *> *selectors = @[
             @"sharedInstance",
             @"sharedManager",
@@ -4218,6 +4225,22 @@ static BOOL TLinkConnectivityGetBool(id obj, NSArray<NSString *> *selectorNames,
         if (![obj respondsToSelector:sel]) continue;
         @try {
             BOOL value = ((BOOL (*)(id, SEL))objc_msgSend)(obj, sel);
+            if (outValue) *outValue = value;
+            return YES;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return NO;
+}
+
+static BOOL TLinkConnectivityGetInt(id obj, NSArray<NSString *> *selectorNames, int *outValue)
+{
+    if (!obj) return NO;
+    for (NSString *selectorName in selectorNames) {
+        SEL sel = NSSelectorFromString(selectorName);
+        if (![obj respondsToSelector:sel]) continue;
+        @try {
+            int value = ((int (*)(id, SEL))objc_msgSend)(obj, sel);
             if (outValue) *outValue = value;
             return YES;
         } @catch (__unused NSException *exception) {
@@ -4432,7 +4455,7 @@ static NSData *TLinkHandleBluetoothConnectivity(NSString *body, int taskType)
     }
 
     NSArray<NSString *> *classNames = @[@"BluetoothManager", @"BTLocalDevice"];
-    id controller = TLinkSharedConnectivityObjectWithAlloc(classNames, NO);
+    id controller = TLinkSharedConnectivityObjectWithAlloc(classNames, YES);
     if (!controller) {
         NSArray<NSString *> *methodTokens = @[@"shared", @"default", @"local", @"manager", @"device", @"bluetooth"];
         return TLinkUnsupported(taskType, [NSString stringWithFormat:@"bluetooth_controller_unavailable %@ %@", TLinkConnectivityLoadedClassSummary(classNames), TLinkConnectivityClassMethodSummary(classNames, methodTokens)]);
@@ -4445,8 +4468,11 @@ static NSData *TLinkHandleBluetoothConnectivity(NSString *body, int taskType)
     }
 
     BOOL enabled = NO;
-    if (!(TLinkConnectivityGetBool(controller, @[@"powered", @"enabled", @"isEnabled", @"powerState", @"isPowered"], &enabled) ||
-          TLinkConnectivityGetBoolOutParam(controller, @[@"getEnabled:", @"getPowered:"], &enabled))) {
+    int state = 0;
+    if (TLinkConnectivityGetInt(controller, @[@"bluetoothState", @"powerState"], &state)) {
+        enabled = state == 5;
+    } else if (!(TLinkConnectivityGetBool(controller, @[@"powered", @"enabled", @"isEnabled", @"isPowered"], &enabled) ||
+                 TLinkConnectivityGetBoolOutParam(controller, @[@"getEnabled:", @"getPowered:"], &enabled))) {
         NSArray<NSString *> *methodTokens = @[@"enabled", @"power", @"bluetooth", @"state"];
         return TLinkUnsupported(taskType, [NSString stringWithFormat:@"bluetooth_get_selector_unavailable controller=%@ instance=%@", NSStringFromClass([controller class]), TLinkConnectivityMethodSummaryForClass([controller class], NO, methodTokens)]);
     }

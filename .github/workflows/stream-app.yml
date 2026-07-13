@@ -187,6 +187,9 @@ jobs:
           grep -q 'tesseract_ocr_not_bundled' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleConnectivityTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleBluetoothConnectivity' stream-app/streamd/POCSocketServer.mm
+          grep -q 'setSharedInstanceQueue' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkConnectivityGetInt' stream-app/streamd/POCSocketServer.mm
+          grep -q 'bluetoothState' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleCellularConnectivity' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkCellularInterfaceActive' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkMobileWiFiState' stream-app/streamd/POCSocketServer.mm
