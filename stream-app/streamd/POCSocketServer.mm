@@ -4167,7 +4167,7 @@ static BOOL TLinkParseConnectivityAction(NSString *body, int *outAction, int *ou
     return YES;
 }
 
-static id TLinkSharedConnectivityObject(NSArray<NSString *> *classNames)
+static id TLinkSharedConnectivityObjectWithAlloc(NSArray<NSString *> *classNames, BOOL allowAlloc)
 {
     TLinkLoadConnectivityFrameworks();
     for (NSString *className in classNames) {
@@ -4194,6 +4194,7 @@ static id TLinkSharedConnectivityObject(NSArray<NSString *> *classNames)
                 }
             }
         }
+        if (!allowAlloc) continue;
         @try {
             id allocated = ((id (*)(Class, SEL))objc_msgSend)(cls, @selector(alloc));
             id obj = allocated ? ((id (*)(id, SEL))objc_msgSend)(allocated, @selector(init)) : nil;
@@ -4202,6 +4203,11 @@ static id TLinkSharedConnectivityObject(NSArray<NSString *> *classNames)
         }
     }
     return nil;
+}
+
+static id TLinkSharedConnectivityObject(NSArray<NSString *> *classNames)
+{
+    return TLinkSharedConnectivityObjectWithAlloc(classNames, YES);
 }
 
 static BOOL TLinkConnectivityGetBool(id obj, NSArray<NSString *> *selectorNames, BOOL *outValue)
@@ -4310,14 +4316,15 @@ static BOOL TLinkMobileWiFiState(BOOL setState, BOOL requestedValue, BOOL *outVa
     return success;
 }
 
-static BOOL TLinkWiFiInterfaceActive(void)
+static BOOL TLinkNetworkInterfaceActive(const char *name, const char *prefix)
 {
     struct ifaddrs *interfaces = NULL;
     if (getifaddrs(&interfaces) != 0 || !interfaces) return NO;
     BOOL active = NO;
     for (struct ifaddrs *ifa = interfaces; ifa; ifa = ifa->ifa_next) {
         if (!ifa->ifa_name || !ifa->ifa_addr) continue;
-        if (strcmp(ifa->ifa_name, "en0") != 0) continue;
+        if (name && strcmp(ifa->ifa_name, name) != 0) continue;
+        if (prefix && strncmp(ifa->ifa_name, prefix, strlen(prefix)) != 0) continue;
         int family = ifa->ifa_addr->sa_family;
         if ((family == AF_INET || family == AF_INET6) &&
             (ifa->ifa_flags & IFF_UP) &&
@@ -4328,6 +4335,16 @@ static BOOL TLinkWiFiInterfaceActive(void)
     }
     freeifaddrs(interfaces);
     return active;
+}
+
+static BOOL TLinkWiFiInterfaceActive(void)
+{
+    return TLinkNetworkInterfaceActive("en0", NULL);
+}
+
+static BOOL TLinkCellularInterfaceActive(void)
+{
+    return TLinkNetworkInterfaceActive(NULL, "pdp_ip");
 }
 
 static NSData *TLinkHandleConnectivity(NSString *body,
@@ -4405,18 +4422,72 @@ static NSData *TLinkHandleConnectivity(NSString *body,
     return TLinkSuccess(enabled ? @"1" : @"0");
 }
 
+static NSData *TLinkHandleBluetoothConnectivity(NSString *body, int taskType)
+{
+    int action = 0;
+    int requestedValue = 0;
+    NSString *parseError = nil;
+    if (!TLinkParseConnectivityAction(body, &action, &requestedValue, &parseError)) {
+        return TLinkError(parseError ?: @"connectivity_bad_payload");
+    }
+
+    NSArray<NSString *> *classNames = @[@"BluetoothManager", @"BTLocalDevice"];
+    id controller = TLinkSharedConnectivityObjectWithAlloc(classNames, NO);
+    if (!controller) {
+        NSArray<NSString *> *methodTokens = @[@"shared", @"default", @"local", @"manager", @"device", @"bluetooth"];
+        return TLinkUnsupported(taskType, [NSString stringWithFormat:@"bluetooth_controller_unavailable %@ %@", TLinkConnectivityLoadedClassSummary(classNames), TLinkConnectivityClassMethodSummary(classNames, methodTokens)]);
+    }
+
+    if (action == 1) {
+        if (!TLinkConnectivitySetBool(controller, @[@"setPowered:", @"setEnabled:", @"setPowerState:", @"setPower:"], requestedValue != 0)) {
+            return TLinkUnsupported(taskType, [NSString stringWithFormat:@"bluetooth_set_selector_unavailable controller=%@", NSStringFromClass([controller class])]);
+        }
+    }
+
+    BOOL enabled = NO;
+    if (!(TLinkConnectivityGetBool(controller, @[@"powered", @"enabled", @"isEnabled", @"powerState", @"isPowered"], &enabled) ||
+          TLinkConnectivityGetBoolOutParam(controller, @[@"getEnabled:", @"getPowered:"], &enabled))) {
+        NSArray<NSString *> *methodTokens = @[@"enabled", @"power", @"bluetooth", @"state"];
+        return TLinkUnsupported(taskType, [NSString stringWithFormat:@"bluetooth_get_selector_unavailable controller=%@ instance=%@", NSStringFromClass([controller class]), TLinkConnectivityMethodSummaryForClass([controller class], NO, methodTokens)]);
+    }
+    return TLinkSuccess(enabled ? @"1" : @"0");
+}
+
+static NSData *TLinkHandleCellularConnectivity(NSString *body, int taskType)
+{
+    int action = 0;
+    int requestedValue = 0;
+    NSString *parseError = nil;
+    if (!TLinkParseConnectivityAction(body, &action, &requestedValue, &parseError)) {
+        return TLinkError(parseError ?: @"connectivity_bad_payload");
+    }
+
+    if (action == 0) {
+        id controller = TLinkSharedConnectivityObject(@[@"RadiosPreferences"]);
+        BOOL enabled = NO;
+        if (controller &&
+            (TLinkConnectivityGetBool(controller, @[@"cellularDataEnabled", @"isCellularDataEnabled", @"dataEnabled", @"getCellularDataEnabled"], &enabled) ||
+             TLinkConnectivityGetBoolOutParam(controller, @[@"getCellularDataEnabled:"], &enabled))) {
+            return TLinkSuccess(enabled ? @"1" : @"0");
+        }
+        return TLinkSuccess(TLinkCellularInterfaceActive() ? @"1" : @"0");
+    }
+
+    return TLinkHandleConnectivity(body,
+                                   taskType,
+                                   @"cellular_data",
+                                   @[@"RadiosPreferences"],
+                                   @[@"cellularDataEnabled", @"isCellularDataEnabled", @"dataEnabled", @"getCellularDataEnabled"],
+                                   @[@"setCellularDataEnabled:", @"setDataEnabled:"]);
+}
+
 static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
 {
     if (taskType == 55) {
         return TLinkHandleWiFiConnectivity(body, taskType);
     }
     if (taskType == 56) {
-        return TLinkHandleConnectivity(body,
-                                       taskType,
-                                       @"bluetooth",
-                                       @[@"BluetoothManager", @"BTLocalDevice", @"BluetoothDevice"],
-                                       @[@"powered", @"enabled", @"isEnabled", @"powerState", @"isPowered"],
-                                       @[@"setPowered:", @"setEnabled:", @"setPowerState:", @"setPower:"]);
+        return TLinkHandleBluetoothConnectivity(body, taskType);
     }
     if (taskType == 57) {
         return TLinkHandleConnectivity(body,
@@ -4427,12 +4498,7 @@ static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
                                        @[@"setAirplaneMode:", @"setAirplaneModeEnabled:"]);
     }
     if (taskType == 58) {
-        return TLinkHandleConnectivity(body,
-                                       taskType,
-                                       @"cellular_data",
-                                       @[@"RadiosPreferences"],
-                                       @[@"cellularDataEnabled", @"isCellularDataEnabled", @"dataEnabled", @"getCellularDataEnabled"],
-                                       @[@"setCellularDataEnabled:", @"setDataEnabled:"]);
+        return TLinkHandleCellularConnectivity(body, taskType);
     }
     return TLinkUnsupported(taskType, @"vpn_control_requires_profile_or_private_entitlement");
 }
