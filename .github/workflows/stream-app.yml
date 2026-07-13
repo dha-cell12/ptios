@@ -187,6 +187,8 @@ jobs:
           grep -q 'TLinkPersistShellTaskEnabled' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_task_set' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_disabled_by_settings' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkShellRunMiniCommand' stream-app/streamd/POCSocketServer.mm
+          grep -q 'shell_unavailable_no_sh' stream-app/streamd/POCSocketServer.mm
           grep -q 'shellTaskGated' stream-app/streamd/POCSocketServer.mm
           grep -q 'Enable Shell Task' stream-app/app/SettingsViewController.mm
           grep -q '90shell' stream-app/app/SettingsViewController.mm

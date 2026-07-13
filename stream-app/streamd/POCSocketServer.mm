@@ -3929,6 +3929,116 @@ static void TLinkShellAppendAvailable(int fd, NSMutableData *data, NSUInteger ma
     }
 }
 
+static NSString *TLinkShellBase64Payload(NSString *output, int exitCode)
+{
+    NSData *data = [(output ?: @"") dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+    NSString *encoded = [data base64EncodedStringWithOptions:0] ?: @"";
+    return [NSString stringWithFormat:@"%d;;%@", exitCode, encoded];
+}
+
+static BOOL TLinkShellFindExecutable(NSString *name, NSString **outPath)
+{
+    if (name.length == 0) return NO;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([name hasPrefix:@"/"] && [fm isExecutableFileAtPath:name]) {
+        if (outPath) *outPath = name;
+        return YES;
+    }
+    NSArray<NSString *> *dirs = @[@"/bin", @"/usr/bin", @"/usr/sbin", @"/sbin", @"/var/jb/bin", @"/var/jb/usr/bin"];
+    for (NSString *dir in dirs) {
+        NSString *path = [dir stringByAppendingPathComponent:name];
+        if ([fm isExecutableFileAtPath:path]) {
+            if (outPath) *outPath = path;
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static NSString *TLinkShellTrimCommand(NSString *command)
+{
+    return [command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"";
+}
+
+static BOOL TLinkShellRunMiniCommand(NSString *command, NSString **outText, int *outExitCode)
+{
+    NSString *trimmed = TLinkShellTrimCommand(command);
+    if (trimmed.length == 0) {
+        if (outText) *outText = @"";
+        if (outExitCode) *outExitCode = 0;
+        return YES;
+    }
+
+    NSArray<NSString *> *andParts = [trimmed componentsSeparatedByString:@"&&"];
+    if (andParts.count > 1) {
+        NSMutableString *combined = [NSMutableString string];
+        int exitCode = 0;
+        for (NSString *part in andParts) {
+            NSString *text = @"";
+            int partExit = 0;
+            if (!TLinkShellRunMiniCommand(part, &text, &partExit)) return NO;
+            if (text.length > 0) [combined appendString:text];
+            exitCode = partExit;
+            if (partExit != 0) break;
+        }
+        if (outText) *outText = combined;
+        if (outExitCode) *outExitCode = exitCode;
+        return YES;
+    }
+
+    if ([trimmed hasPrefix:@"echo "]) {
+        if (outText) *outText = [[trimmed substringFromIndex:5] stringByAppendingString:@"\n"];
+        if (outExitCode) *outExitCode = 0;
+        return YES;
+    }
+    if ([trimmed isEqualToString:@"echo"]) {
+        if (outText) *outText = @"\n";
+        if (outExitCode) *outExitCode = 0;
+        return YES;
+    }
+    if ([trimmed isEqualToString:@"pwd"]) {
+        if (outText) *outText = [[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingString:@"\n"];
+        if (outExitCode) *outExitCode = 0;
+        return YES;
+    }
+    if ([trimmed isEqualToString:@"whoami"]) {
+        if (outText) *outText = [NSString stringWithFormat:@"%s\n", getuid() == 0 ? "root" : "mobile"];
+        if (outExitCode) *outExitCode = 0;
+        return YES;
+    }
+    if ([trimmed isEqualToString:@"id"]) {
+        uid_t uid = getuid();
+        gid_t gid = getgid();
+        if (outText) *outText = [NSString stringWithFormat:@"uid=%d gid=%d euid=%d egid=%d\n", uid, gid, geteuid(), getegid()];
+        if (outExitCode) *outExitCode = 0;
+        return YES;
+    }
+    if ([trimmed isEqualToString:@"uname"] || [trimmed isEqualToString:@"uname -a"]) {
+        struct utsname u;
+        memset(&u, 0, sizeof(u));
+        if (uname(&u) == 0) {
+            if ([trimmed isEqualToString:@"uname"]) {
+                if (outText) *outText = [NSString stringWithFormat:@"%s\n", u.sysname];
+            } else {
+                if (outText) *outText = [NSString stringWithFormat:@"%s %s %s %s %s\n", u.sysname, u.nodename, u.release, u.version, u.machine];
+            }
+            if (outExitCode) *outExitCode = 0;
+            return YES;
+        }
+    }
+    if ([trimmed isEqualToString:@"true"]) {
+        if (outText) *outText = @"";
+        if (outExitCode) *outExitCode = 0;
+        return YES;
+    }
+    if ([trimmed isEqualToString:@"false"]) {
+        if (outText) *outText = @"";
+        if (outExitCode) *outExitCode = 1;
+        return YES;
+    }
+    return NO;
+}
+
 static NSData *TLinkHandleShellTask(NSString *body, int taskType)
 {
     TLinkLoadSettingsConfig();
@@ -3953,6 +4063,33 @@ static NSData *TLinkHandleShellTask(NSString *body, int taskType)
     if (timeout > 30.0) timeout = 30.0;
     if (command.length == 0) return TLinkError(@"shell_empty_command");
     if (command.length > 4096) return TLinkError(@"shell_command_too_long");
+
+    NSArray<NSString *> *shellCandidates = @[@"/bin/sh", @"/usr/bin/sh", @"/var/jb/bin/sh", @"/var/jb/usr/bin/sh"];
+    NSString *shellPath = nil;
+    for (NSString *candidate in shellCandidates) {
+        if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
+            shellPath = candidate;
+            break;
+        }
+    }
+    if (shellPath.length == 0) {
+        NSString *miniOutput = nil;
+        int miniExit = 127;
+        if (TLinkShellRunMiniCommand(command, &miniOutput, &miniExit)) {
+            return TLinkSuccess(TLinkShellBase64Payload(miniOutput, miniExit));
+        }
+
+        NSArray<NSString *> *tokens = [command componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSMutableArray<NSString *> *cleanTokens = [NSMutableArray array];
+        for (NSString *token in tokens) {
+            if (token.length > 0) [cleanTokens addObject:token];
+        }
+        NSString *exePath = nil;
+        if (cleanTokens.count > 0 && TLinkShellFindExecutable(cleanTokens[0], &exePath)) {
+            return TLinkError([NSString stringWithFormat:@"shell_unavailable_no_sh direct_exec_not_supported executable=%@", exePath ?: @""]);
+        }
+        return TLinkError(@"shell_unavailable_no_sh mini_shell_unsupported_command");
+    }
 
     int outPipe[2] = {-1, -1};
     int errPipe[2] = {-1, -1};
@@ -3980,8 +4117,8 @@ static NSData *TLinkHandleShellTask(NSString *body, int taskType)
     posix_spawnattr_setpgroup(&attr, 0);
 
     pid_t pid = -1;
-    const char *argv[] = {"/bin/sh", "-c", [command UTF8String], NULL};
-    int spawnErr = posix_spawn(&pid, "/bin/sh", &actions, &attr, (char *const *)argv, NULL);
+    const char *argv[] = {[shellPath UTF8String], "-c", [command UTF8String], NULL};
+    int spawnErr = posix_spawn(&pid, [shellPath fileSystemRepresentation], &actions, &attr, (char *const *)argv, NULL);
 
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
@@ -4049,8 +4186,8 @@ static NSData *TLinkHandleShellTask(NSString *body, int taskType)
         NSData *truncNote = [@"\n[tlinkauto] shell output truncated\n" dataUsingEncoding:NSUTF8StringEncoding];
         [combined appendData:truncNote];
     }
-    NSString *encoded = [combined base64EncodedStringWithOptions:0] ?: @"";
-    return TLinkSuccess([NSString stringWithFormat:@"%d;;%@", exitCode, encoded]);
+    NSString *output = [[NSString alloc] initWithData:combined encoding:NSUTF8StringEncoding] ?: @"";
+    return TLinkSuccess(TLinkShellBase64Payload(output, exitCode));
 }
 
 static NSData *TLinkHandleTesseractOCRUnsupported(NSString *body)
@@ -5037,7 +5174,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,71,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpn unsupportedTasks=59,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework shell=local_sh_gated_disabled_by_default serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,71,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpn unsupportedTasks=59,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework shell=local_sh_or_mini_shell_gated_disabled_by_default serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
