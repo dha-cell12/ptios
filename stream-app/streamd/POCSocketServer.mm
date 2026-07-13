@@ -3753,6 +3753,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocr": @(YES),
         @"visionOCR": @(YES),
         @"tesseractOCR": @(NO),
+        @"tesseractOCRCompat": @(YES),
+        @"tesseractOCRMode": @"vision_fallback_task91",
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
@@ -4191,13 +4193,110 @@ static NSData *TLinkHandleShellTask(NSString *body, int taskType)
     return TLinkSuccess(TLinkShellBase64Payload(output, exitCode));
 }
 
-static NSData *TLinkHandleTesseractOCRUnsupported(NSString *body)
+static NSString *TLinkBase64String(NSString *value)
 {
-    NSString *raw = [TLinkCleanPayload(body) lowercaseString];
-    if ([raw isEqualToString:@"check_langs"]) {
-        return TLinkError(@"unsupported_on_trollstore task=91 tesseract_ocr_not_bundled langs=");
+    NSData *data = [(value ?: @"") dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+    return [data base64EncodedStringWithOptions:0] ?: @"";
+}
+
+static NSString *TLinkVisionLanguageFromTesseractLanguage(NSString *lang)
+{
+    NSString *lower = [[lang ?: @"" lowercaseString] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (lower.length == 0) return @"";
+    NSDictionary<NSString *, NSString *> *map = @{
+        @"eng": @"en-US",
+        @"en": @"en-US",
+        @"en-us": @"en-US",
+        @"fra": @"fr-FR",
+        @"fre": @"fr-FR",
+        @"fr": @"fr-FR",
+        @"ita": @"it-IT",
+        @"it": @"it-IT",
+        @"deu": @"de-DE",
+        @"ger": @"de-DE",
+        @"de": @"de-DE",
+        @"spa": @"es-ES",
+        @"es": @"es-ES",
+        @"por": @"pt-BR",
+        @"pt": @"pt-BR",
+        @"chi_sim": @"zh-Hans",
+        @"zh-hans": @"zh-Hans",
+        @"chi_tra": @"zh-Hant",
+        @"zh-hant": @"zh-Hant",
+    };
+    return map[lower] ?: @"";
+}
+
+static NSString *TLinkVisionLanguagesFromTesseractLanguage(NSString *lang)
+{
+    NSArray<NSString *> *rawParts = [lang componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"+,"]];
+    NSMutableArray<NSString *> *mapped = [NSMutableArray array];
+    for (NSString *part in rawParts) {
+        NSString *visionLang = TLinkVisionLanguageFromTesseractLanguage(part);
+        if (visionLang.length > 0 && ![mapped containsObject:visionLang]) {
+            [mapped addObject:visionLang];
+        }
     }
-    return TLinkError(@"unsupported_on_trollstore task=91 tesseract_ocr_not_bundled use_task_27_vision_ocr");
+    return [mapped componentsJoinedByString:@",,"];
+}
+
+static NSData *TLinkHandleTesseractOCRCompat(NSString *body)
+{
+    NSString *raw = TLinkCleanPayload(body);
+    if ([[raw lowercaseString] isEqualToString:@"check_langs"]) {
+        BOOL visionAvailable = NO;
+        if (@available(iOS 13.0, *)) {
+            visionAvailable = YES;
+        }
+        if (!visionAvailable) return TLinkError(@"unsupported_on_trollstore task=91 vision_fallback_requires_ios13");
+        NSError *visionErr = nil;
+        NSArray<NSString *> *languages = [VNRecognizeTextRequest supportedRecognitionLanguagesForTextRecognitionLevel:VNRequestTextRecognitionLevelAccurate
+                                                                                                             revision:TLinkVisionOCRRevision()
+                                                                                                                error:&visionErr];
+        if (!languages) return TLinkError([NSString stringWithFormat:@"vision_fallback_languages_failed %@", visionErr.localizedDescription ?: @"unknown"]);
+        return TLinkSuccess([NSString stringWithFormat:@"check_langs;;%@", TLinkBase64String([languages componentsJoinedByString:@","])]);
+    }
+
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count < 13) {
+        return TLinkError(@"tesseract_vision_fallback_format frame_id;;x;;y;;w;;h;;lang;;oem;;psm;;whitelist_b64;;scale_up;;threshold_mode;;coord;;max_age_ms");
+    }
+
+    int x = [parts[1] intValue];
+    int y = [parts[2] intValue];
+    int w = [parts[3] intValue];
+    int h = [parts[4] intValue];
+    NSString *lang = parts[5] ?: @"";
+    NSString *visionLanguages = TLinkVisionLanguagesFromTesseractLanguage(lang);
+    NSString *visionPayload = [NSString stringWithFormat:@"1;;%d,,%d,,%d,,%d;;;;0;;0;;%@;;1;;",
+                               x,
+                               y,
+                               w,
+                               h,
+                               visionLanguages ?: @""];
+    CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+    NSData *response = TLinkHandleVisionOCR(visionPayload);
+    double totalMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0;
+    NSString *rawResponse = TLinkResponseStringFromData(response);
+    NSDictionary *result = TLinkTaskResultFromResponseString(rawResponse);
+    if (![result[@"ok"] boolValue]) {
+        return TLinkError([NSString stringWithFormat:@"tesseract_vision_fallback_failed %@", result[@"payload"] ?: rawResponse]);
+    }
+
+    NSString *payload = result[@"payload"] ?: @"";
+    NSArray<NSString *> *observations = payload.length > 0 ? [payload componentsSeparatedByString:@";;"] : @[];
+    NSMutableArray<NSString *> *texts = [NSMutableArray array];
+    for (NSString *obs in observations) {
+        NSArray<NSString *> *fields = [obs componentsSeparatedByString:@",,"];
+        if (fields.count > 0 && [fields[0] length] > 0) {
+            [texts addObject:fields[0]];
+        }
+    }
+    NSString *text = [texts componentsJoinedByString:@"\n"];
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;-1.00;;0;;%.3f;;0.000;;%.3f",
+                         TLinkBase64String(text),
+                         totalMs,
+                         totalMs]);
 }
 
 static NSData *TLinkHandleKeepAwake(NSString *body)
@@ -5182,7 +5281,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 91) {
-        return TLinkHandleTesseractOCRUnsupported(body);
+        return TLinkHandleTesseractOCRCompat(body);
     }
 
     if (taskType == 96) {
@@ -5196,7 +5295,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpnControl unsupportedTasks=91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default tesseractOCR=vision_fallback_task91 serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

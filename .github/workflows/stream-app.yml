@@ -192,7 +192,9 @@ jobs:
           grep -q 'shellTaskGated' stream-app/streamd/POCSocketServer.mm
           grep -q 'Enable Shell Task' stream-app/app/SettingsViewController.mm
           grep -q '90shell' stream-app/app/SettingsViewController.mm
-          grep -q 'tesseract_ocr_not_bundled' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleTesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
+          grep -q 'tesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vision_fallback_task91' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleConnectivityTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleBluetoothConnectivity' stream-app/streamd/POCSocketServer.mm
           grep -q 'setSharedInstanceQueue' stream-app/streamd/POCSocketServer.mm
