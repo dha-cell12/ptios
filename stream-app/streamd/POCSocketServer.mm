@@ -10,10 +10,13 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <dlfcn.h>
 #include <signal.h>
 #include <spawn.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <netinet/tcp.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -171,6 +174,7 @@ static uint64_t sTLinkLastVisualEventId = 0;
 static BOOL sTLinkTouchIndicatorEnabled = NO;
 static BOOL sTLinkSwitchAppBeforeRunScript = YES;
 static BOOL sTLinkDoubleClickVolumeShowPopup = YES;
+static BOOL sTLinkShellTaskEnabled = NO;
 static BOOL sTLinkKeepAwakeEnabled = NO;
 static NSString *sTLinkLastDialogValue = @"";
 static NSMutableDictionary<NSString *, id> *sTLinkTimerRegistry = nil;
@@ -387,6 +391,7 @@ static NSDictionary *TLinkRuntimeSettingsDictionary(void)
             @"touch_indicator_show": @(sTLinkTouchIndicatorEnabled),
             @"switch_app_before_run_script": @(sTLinkSwitchAppBeforeRunScript),
             @"double_click_volume_show_popup": @(sTLinkDoubleClickVolumeShowPopup),
+            @"shell_task_enabled": @(sTLinkShellTaskEnabled),
         };
     }
 }
@@ -3781,7 +3786,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"vpn": @(NO),
         @"frontmost": @(YES),
         @"clearData": @(NO),
-        @"shell": @(NO),
+        @"shell": @(sTLinkShellTaskEnabled),
+        @"shellMode": sTLinkShellTaskEnabled ? @"local_sh_gated_timeout_base64_json" : @"disabled_by_settings",
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
         @"privhelperMode": @"open_kill_restart_ensure_streamd",
@@ -3849,15 +3855,19 @@ static void TLinkLoadSettingsConfig(void)
     BOOL enabled = [touch[@"show"] boolValue];
     BOOL switchApp = config[@"switch_app_before_run_script"] ? [config[@"switch_app_before_run_script"] boolValue] : YES;
     BOOL popup = config[@"double_click_volume_show_popup"] ? [config[@"double_click_volume_show_popup"] boolValue] : YES;
+    NSDictionary *shell = [config[@"shell"] isKindOfClass:[NSDictionary class]] ? config[@"shell"] : nil;
+    BOOL shellEnabled = [shell[@"enabled"] boolValue];
     @synchronized (TLinkVisualFeedbackLock()) {
         sTLinkTouchIndicatorEnabled = enabled;
         sTLinkSwitchAppBeforeRunScript = switchApp;
         sTLinkDoubleClickVolumeShowPopup = popup;
+        sTLinkShellTaskEnabled = shellEnabled;
     }
-    POCLogf("settings: loaded touch_indicator.show=%d switch_app_before_run_script=%d double_click_volume_show_popup=%d path=%s",
+    POCLogf("settings: loaded touch_indicator.show=%d switch_app_before_run_script=%d double_click_volume_show_popup=%d shell.enabled=%d path=%s",
             enabled ? 1 : 0,
             switchApp ? 1 : 0,
             popup ? 1 : 0,
+            shellEnabled ? 1 : 0,
             [kTLinkSettingsConfigPath UTF8String]);
 }
 
@@ -3867,17 +3877,156 @@ static NSData *TLinkHandleUpdateCache(NSString *body)
     int type = parts.count >= 1 ? [parts[0] intValue] : 0;
     TLinkLoadSettingsConfig();
     NSDictionary *settings = TLinkRuntimeSettingsDictionary();
-    NSString *summary = [NSString stringWithFormat:@"cache_updated;;type=%d;;touch_indicator_show=%d;;switch_app_before_run_script=%d;;double_click_volume_show_popup=%d",
+    NSString *summary = [NSString stringWithFormat:@"cache_updated;;type=%d;;touch_indicator_show=%d;;switch_app_before_run_script=%d;;double_click_volume_show_popup=%d;;shell_task_enabled=%d",
                          type,
                          [settings[@"touch_indicator_show"] boolValue] ? 1 : 0,
                          [settings[@"switch_app_before_run_script"] boolValue] ? 1 : 0,
-                         [settings[@"double_click_volume_show_popup"] boolValue] ? 1 : 0];
+                         [settings[@"double_click_volume_show_popup"] boolValue] ? 1 : 0,
+                         [settings[@"shell_task_enabled"] boolValue] ? 1 : 0];
     return TLinkSuccess(summary);
 }
 
-static NSData *TLinkHandleShellUnsupported(int taskType)
+static void TLinkShellAppendAvailable(int fd, NSMutableData *data, NSUInteger maxBytes, BOOL *truncated)
 {
-    return TLinkUnsupported(taskType, @"shell_disabled_on_trollstore");
+    if (fd < 0 || !data) return;
+    uint8_t buffer[4096];
+    while (YES) {
+        ssize_t n = read(fd, buffer, sizeof(buffer));
+        if (n > 0) {
+            NSUInteger remaining = data.length >= maxBytes ? 0 : maxBytes - data.length;
+            NSUInteger accepted = MIN((NSUInteger)n, remaining);
+            if (accepted > 0) [data appendBytes:buffer length:accepted];
+            if (accepted < (NSUInteger)n && truncated) *truncated = YES;
+            continue;
+        }
+        if (n == 0) break;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) break;
+        break;
+    }
+}
+
+static NSData *TLinkHandleShellTask(NSString *body, int taskType)
+{
+    TLinkLoadSettingsConfig();
+    @synchronized (TLinkVisualFeedbackLock()) {
+        if (!sTLinkShellTaskEnabled) {
+            return TLinkUnsupported(taskType, @"shell_disabled_by_settings enable config shell.enabled");
+        }
+    }
+
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    double timeout = 8.0;
+    NSString *command = TLinkCleanPayload(body);
+    if (parts.count >= 2 && parts[0].length > 0) {
+        NSScanner *scanner = [NSScanner scannerWithString:parts[0]];
+        double parsedTimeout = 0.0;
+        if ([scanner scanDouble:&parsedTimeout] && parsedTimeout > 0.0) {
+            timeout = parsedTimeout;
+            command = TLinkJoinParts(parts, 1);
+        }
+    }
+    if (timeout < 1.0) timeout = 1.0;
+    if (timeout > 30.0) timeout = 30.0;
+    if (command.length == 0) return TLinkError(@"shell_empty_command");
+    if (command.length > 4096) return TLinkError(@"shell_command_too_long");
+
+    int outPipe[2] = {-1, -1};
+    int errPipe[2] = {-1, -1};
+    if (pipe(outPipe) != 0 || pipe(errPipe) != 0) {
+        if (outPipe[0] >= 0) close(outPipe[0]);
+        if (outPipe[1] >= 0) close(outPipe[1]);
+        if (errPipe[0] >= 0) close(errPipe[0]);
+        if (errPipe[1] >= 0) close(errPipe[1]);
+        return TLinkError(@"shell_pipe_failed");
+    }
+
+    fcntl(outPipe[0], F_SETFL, O_NONBLOCK);
+    fcntl(errPipe[0], F_SETFL, O_NONBLOCK);
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, errPipe[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions, outPipe[0]);
+    posix_spawn_file_actions_addclose(&actions, errPipe[0]);
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attr, 0);
+
+    pid_t pid = -1;
+    const char *argv[] = {"/bin/sh", "-c", [command UTF8String], NULL};
+    int spawnErr = posix_spawn(&pid, "/bin/sh", &actions, &attr, (char *const *)argv, NULL);
+
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
+    close(outPipe[1]);
+    close(errPipe[1]);
+
+    if (spawnErr != 0) {
+        close(outPipe[0]);
+        close(errPipe[0]);
+        return TLinkError([NSString stringWithFormat:@"shell_spawn_failed code=%d", spawnErr]);
+    }
+
+    NSMutableData *stdoutData = [NSMutableData data];
+    NSMutableData *stderrData = [NSMutableData data];
+    BOOL stdoutTruncated = NO;
+    BOOL stderrTruncated = NO;
+    BOOL timedOut = NO;
+    int exitCode = -1;
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + timeout;
+    static const NSUInteger kShellMaxOutputBytes = 256 * 1024;
+
+    while (YES) {
+        struct pollfd fds[2] = {
+            { outPipe[0], POLLIN | POLLHUP | POLLERR, 0 },
+            { errPipe[0], POLLIN | POLLHUP | POLLERR, 0 },
+        };
+        (void)poll(fds, 2, 50);
+        TLinkShellAppendAvailable(outPipe[0], stdoutData, kShellMaxOutputBytes, &stdoutTruncated);
+        TLinkShellAppendAvailable(errPipe[0], stderrData, kShellMaxOutputBytes, &stderrTruncated);
+
+        int status = 0;
+        pid_t waitResult = waitpid(pid, &status, WNOHANG);
+        if (waitResult == pid) {
+            if (WIFEXITED(status)) exitCode = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) exitCode = 128 + WTERMSIG(status);
+            break;
+        }
+        if (CFAbsoluteTimeGetCurrent() >= deadline) {
+            timedOut = YES;
+            kill(-pid, SIGTERM);
+            usleep(150 * 1000);
+            if (waitpid(pid, &status, WNOHANG) == 0) kill(-pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            exitCode = 124;
+            break;
+        }
+    }
+
+    TLinkShellAppendAvailable(outPipe[0], stdoutData, kShellMaxOutputBytes, &stdoutTruncated);
+    TLinkShellAppendAvailable(errPipe[0], stderrData, kShellMaxOutputBytes, &stderrTruncated);
+    close(outPipe[0]);
+    close(errPipe[0]);
+
+    NSMutableData *combined = [NSMutableData dataWithData:stdoutData];
+    if (stderrData.length > 0) {
+        NSData *prefix = [@"\n[stderr]\n" dataUsingEncoding:NSUTF8StringEncoding];
+        [combined appendData:prefix];
+        [combined appendData:stderrData];
+    }
+    if (timedOut) {
+        NSData *timeoutNote = [[NSString stringWithFormat:@"\n[tlinkauto] shell timed out after %.1fs\n", timeout] dataUsingEncoding:NSUTF8StringEncoding];
+        [combined appendData:timeoutNote];
+    }
+    if (stdoutTruncated || stderrTruncated) {
+        NSData *truncNote = [@"\n[tlinkauto] shell output truncated\n" dataUsingEncoding:NSUTF8StringEncoding];
+        [combined appendData:truncNote];
+    }
+    NSString *encoded = [combined base64EncodedStringWithOptions:0] ?: @"";
+    return TLinkSuccess([NSString stringWithFormat:@"%d;;%@", exitCode, encoded]);
 }
 
 static NSData *TLinkHandleTesseractOCRUnsupported(NSString *body)
@@ -4612,7 +4761,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 13) {
-        return TLinkHandleShellUnsupported(taskType);
+        return TLinkHandleShellTask(body, taskType);
     }
 
     if (taskType == 14) {
@@ -4842,7 +4991,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 71) {
-        return TLinkHandleShellUnsupported(taskType);
+        return TLinkHandleShellTask(body, taskType);
     }
 
     if (taskType == 90) {
@@ -4864,7 +5013,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpn,shell unsupportedTasks=13,59,71,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,71,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpn unsupportedTasks=59,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework shell=local_sh_gated_disabled_by_default serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

@@ -17,8 +17,8 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     [self loadConfig];
     _sections = @[
         @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"Export Diagnostics"],
-        @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Scheduler: streamd_lite + autolaunch", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Keep Awake: foreground idle timer", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
+        @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Scheduler: streamd_lite + autolaunch", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"Shell: gated local sh", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Keep Awake: foreground idle timer", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -43,6 +43,11 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     _config[@"touch_indicator"] = touch;
     if (!_config[@"switch_app_before_run_script"]) _config[@"switch_app_before_run_script"] = @YES;
     if (!_config[@"double_click_volume_show_popup"]) _config[@"double_click_volume_show_popup"] = @YES;
+    NSMutableDictionary *shell = [_config[@"shell"] isKindOfClass:[NSDictionary class]]
+        ? [_config[@"shell"] mutableCopy]
+        : [NSMutableDictionary dictionary];
+    if (!shell[@"enabled"]) shell[@"enabled"] = @NO;
+    _config[@"shell"] = shell;
 }
 
 - (void)saveConfig
@@ -62,6 +67,8 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             return [_config[@"switch_app_before_run_script"] boolValue];
         case 2:
             return [_config[@"double_click_volume_show_popup"] boolValue];
+        case 3:
+            return [_config[@"shell"][@"enabled"] boolValue];
         default:
             return NO;
     }
@@ -76,6 +83,8 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             return @"Saved for script compatibility";
         case 2:
             return @"Saved; Activator fallback is limited";
+        case 3:
+            return @"Run task 13/71 via local /bin/sh with timeout";
         default:
             return @"";
     }
@@ -116,6 +125,19 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             _config[@"double_click_volume_show_popup"] = @(on);
             [self saveConfig];
             break;
+        case 3: {
+            NSMutableDictionary *shell = [_config[@"shell"] mutableCopy] ?: [NSMutableDictionary dictionary];
+            shell[@"enabled"] = @(on);
+            _config[@"shell"] = shell;
+            [self saveConfig];
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                NSString *response = [TLinkSocketClient sendLineAndRead:@"902\n" timeout:4.0];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    self->_resultView.text = [NSString stringWithFormat:@"Shell Task %@\n%@", on ? @"Enabled" : @"Disabled", response ?: @"<nil>"];
+                });
+            });
+            break;
+        }
         default:
             break;
     }
