@@ -16,9 +16,9 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     self.title = @"Settings";
     [self loadConfig];
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"Export Diagnostics"],
+        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Export Diagnostics"],
         @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"],
-        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Scheduler: streamd_lite + autolaunch", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"Shell: gated local sh", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Keep Awake: foreground idle timer", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
+        @[@"Color/Image/Frame: active", @"Vision OCR: active", @"Script Runtime: javascriptcore_mvp", @"Scheduler: streamd_lite + autolaunch", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: foreground_overlay", @"Dialog Overlay: nonblocking", @"Keep Awake: foreground idle timer", @"Service Mode: helper ensure streamd", @"App/Process: helper launch/kill/url", @"Keyboard Clipboard: limited_on_trollstore", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -234,7 +234,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     }
     if (indexPath.section != 0) return;
 
-    if (indexPath.row == 37) {
+    if (indexPath.row == 38) {
         [self exportDiagnostics];
         return;
     }
@@ -370,6 +370,9 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             break;
         case 36:
             line = @"580\n";
+            break;
+        case 37:
+            line = @"590\n";
             break;
         default: return;
     }

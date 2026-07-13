@@ -200,6 +200,9 @@ jobs:
           grep -q 'bluetoothState' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleCellularConnectivity' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkCellularInterfaceActive' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleVPNConnectivity' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkVPNInterfaceActive' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vpn=query_only_interface_probe' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkMobileWiFiState' stream-app/streamd/POCSocketServer.mm
           grep -q 'MobileWiFi.framework' stream-app/streamd/POCSocketServer.mm
           grep -q 'best_effort_private_framework' stream-app/streamd/POCSocketServer.mm
@@ -208,6 +211,7 @@ jobs:
           grep -q 'Bluetooth Status' stream-app/app/SettingsViewController.mm
           grep -q 'Airplane Status' stream-app/app/SettingsViewController.mm
           grep -q 'Cellular Status' stream-app/app/SettingsViewController.mm
+          grep -q 'VPN Status' stream-app/app/SettingsViewController.mm
           grep -q 'privhelperEnsureStreamd' stream-app/streamd/POCSocketServer.mm
           grep -q 'helper_ensure_streamd_best_effort' stream-app/streamd/POCSocketServer.mm
           grep -q 'requested_ms' stream-app/streamd/POCSocketServer.mm

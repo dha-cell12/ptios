@@ -3783,7 +3783,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"bluetooth": @(YES),
         @"airplane": @(YES),
         @"cellularData": @(YES),
-        @"vpn": @(NO),
+        @"vpn": @(YES),
+        @"vpnMode": @"query_only_interface_probe",
         @"frontmost": @(YES),
         @"clearData": @(NO),
         @"shell": @(sTLinkShellTaskEnabled),
@@ -4680,6 +4681,13 @@ static BOOL TLinkCellularInterfaceActive(void)
     return TLinkNetworkInterfaceActive(NULL, "pdp_ip");
 }
 
+static BOOL TLinkVPNInterfaceActive(void)
+{
+    return TLinkNetworkInterfaceActive(NULL, "utun") ||
+           TLinkNetworkInterfaceActive(NULL, "ipsec") ||
+           TLinkNetworkInterfaceActive(NULL, "ppp");
+}
+
 static NSData *TLinkHandleConnectivity(NSString *body,
                                        int taskType,
                                        NSString *label,
@@ -4817,6 +4825,20 @@ static NSData *TLinkHandleCellularConnectivity(NSString *body, int taskType)
                                    @[@"setCellularDataEnabled:", @"setDataEnabled:"]);
 }
 
+static NSData *TLinkHandleVPNConnectivity(NSString *body, int taskType)
+{
+    int action = 0;
+    int requestedValue = 0;
+    NSString *parseError = nil;
+    if (!TLinkParseConnectivityAction(body, &action, &requestedValue, &parseError)) {
+        return TLinkError(parseError ?: @"connectivity_bad_payload");
+    }
+    if (action == 0) {
+        return TLinkSuccess(TLinkVPNInterfaceActive() ? @"1" : @"0");
+    }
+    return TLinkUnsupported(taskType, @"vpn_control_requires_profile_or_private_entitlement query_only_supported");
+}
+
 static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
 {
     if (taskType == 55) {
@@ -4836,7 +4858,7 @@ static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
     if (taskType == 58) {
         return TLinkHandleCellularConnectivity(body, taskType);
     }
-    return TLinkUnsupported(taskType, @"vpn_control_requires_profile_or_private_entitlement");
+    return TLinkHandleVPNConnectivity(body, taskType);
 }
 
 static BOOL TLinkAutoLaunchEntryEnabled(id obj, NSString **scriptOut)
@@ -5174,7 +5196,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,60,61,62,63,64,65,66,67,68,69,70,71,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpn unsupportedTasks=59,91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework shell=local_sh_or_mini_shell_gated_disabled_by_default serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=tesseractOCR,clearData,keychain,vpnControl unsupportedTasks=91 keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
