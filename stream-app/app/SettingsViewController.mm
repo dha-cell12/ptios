@@ -131,7 +131,8 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
             _config[@"shell"] = shell;
             [self saveConfig];
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                NSString *response = [TLinkSocketClient sendLineAndRead:@"902\n" timeout:4.0];
+                NSString *line = [NSString stringWithFormat:@"90shell;;%d\n", on ? 1 : 0];
+                NSString *response = [TLinkSocketClient sendLineAndRead:line timeout:4.0];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     self->_resultView.text = [NSString stringWithFormat:@"Shell Task %@\n%@", on ? @"Enabled" : @"Disabled", response ?: @"<nil>"];
                 });

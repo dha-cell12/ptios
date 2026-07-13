@@ -184,9 +184,12 @@ jobs:
           grep -q 'TLinkHandleUpdateCache' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleKnownUnsupportedTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleShellTask' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkPersistShellTaskEnabled' stream-app/streamd/POCSocketServer.mm
+          grep -q 'shell_task_set' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_disabled_by_settings' stream-app/streamd/POCSocketServer.mm
           grep -q 'shellTaskGated' stream-app/streamd/POCSocketServer.mm
           grep -q 'Enable Shell Task' stream-app/app/SettingsViewController.mm
+          grep -q '90shell' stream-app/app/SettingsViewController.mm
           grep -q 'tesseract_ocr_not_bundled' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleConnectivityTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleBluetoothConnectivity' stream-app/streamd/POCSocketServer.mm

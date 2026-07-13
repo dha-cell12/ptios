@@ -3871,9 +3871,33 @@ static void TLinkLoadSettingsConfig(void)
             [kTLinkSettingsConfigPath UTF8String]);
 }
 
+static BOOL TLinkPersistShellTaskEnabled(BOOL enabled)
+{
+    TLinkEnsureRuntimeDirectories();
+    NSDictionary *loaded = [NSDictionary dictionaryWithContentsOfFile:kTLinkSettingsConfigPath];
+    NSMutableDictionary *config = loaded ? [loaded mutableCopy] : [NSMutableDictionary dictionary];
+    NSMutableDictionary *shell = [config[@"shell"] isKindOfClass:[NSDictionary class]]
+        ? [config[@"shell"] mutableCopy]
+        : [NSMutableDictionary dictionary];
+    shell[@"enabled"] = @(enabled);
+    config[@"shell"] = shell;
+    return [config writeToFile:kTLinkSettingsConfigPath atomically:YES];
+}
+
 static NSData *TLinkHandleUpdateCache(NSString *body)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
+    NSString *mode = parts.count >= 1 ? [parts[0] lowercaseString] : @"";
+    if ([mode isEqualToString:@"shell"]) {
+        if (parts.count < 2) return TLinkError(@"shell_setting_requires_value");
+        BOOL enabled = [parts[1] intValue] != 0;
+        @synchronized (TLinkVisualFeedbackLock()) {
+            sTLinkShellTaskEnabled = enabled;
+        }
+        BOOL persisted = TLinkPersistShellTaskEnabled(enabled);
+        return TLinkSuccess([NSString stringWithFormat:@"shell_task_set;;%d;;persisted=%d", enabled ? 1 : 0, persisted ? 1 : 0]);
+    }
+
     int type = parts.count >= 1 ? [parts[0] intValue] : 0;
     TLinkLoadSettingsConfig();
     NSDictionary *settings = TLinkRuntimeSettingsDictionary();
