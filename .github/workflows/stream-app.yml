@@ -186,6 +186,8 @@ jobs:
           grep -q 'shell_disabled_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_ocr_not_bundled' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleConnectivityTask' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkMobileWiFiState' stream-app/streamd/POCSocketServer.mm
+          grep -q 'MobileWiFi.framework' stream-app/streamd/POCSocketServer.mm
           grep -q 'best_effort_private_framework' stream-app/streamd/POCSocketServer.mm
           grep -q 'vpn_control_requires_profile_or_private_entitlement' stream-app/streamd/POCSocketServer.mm
           grep -q 'Wi-Fi Status' stream-app/app/SettingsViewController.mm
