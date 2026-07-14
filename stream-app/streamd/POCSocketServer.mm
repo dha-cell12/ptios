@@ -2930,8 +2930,82 @@ static VNRequestTextRecognitionLevel TLinkVisionOCRLevelFromValue(int value)
     return value == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
 }
 
+static char sTLinkOCRWorkerOutputPath[PATH_MAX + 1] = {0};
+static char sTLinkOCRWorkerPhase[96] = "not_started";
+
+static size_t TLinkSafeCStringLength(const char *value, size_t maxLen)
+{
+    size_t len = 0;
+    if (!value) return 0;
+    while (len < maxLen && value[len] != '\0') len++;
+    return len;
+}
+
+static void TLinkSetOCRWorkerOutputPath(const char *path)
+{
+    if (!path) {
+        sTLinkOCRWorkerOutputPath[0] = '\0';
+        return;
+    }
+    snprintf(sTLinkOCRWorkerOutputPath, sizeof(sTLinkOCRWorkerOutputPath), "%s", path);
+}
+
+static void TLinkSetOCRWorkerPhase(const char *phase)
+{
+    if (!phase) phase = "unknown";
+    snprintf(sTLinkOCRWorkerPhase, sizeof(sTLinkOCRWorkerPhase), "%s", phase);
+}
+
+static void TLinkWriteIntForSignalHandler(int fd, int value)
+{
+    char buf[16];
+    int i = (int)sizeof(buf) - 1;
+    buf[i] = '\0';
+    if (value == 0) {
+        buf[--i] = '0';
+    } else {
+        int n = value;
+        while (n > 0 && i > 0) {
+            buf[--i] = (char)('0' + (n % 10));
+            n /= 10;
+        }
+    }
+    write(fd, &buf[i], (size_t)((int)sizeof(buf) - 1 - i));
+}
+
+static void TLinkOCRWorkerSignalHandler(int signalNumber)
+{
+    if (sTLinkOCRWorkerOutputPath[0] != '\0') {
+        int fd = open(sTLinkOCRWorkerOutputPath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd >= 0) {
+            const char *prefix = "-1;;ocr_worker_crashed signal=";
+            write(fd, prefix, TLinkSafeCStringLength(prefix, 64));
+            TLinkWriteIntForSignalHandler(fd, signalNumber);
+            const char *middle = " phase=";
+            write(fd, middle, TLinkSafeCStringLength(middle, 16));
+            write(fd, sTLinkOCRWorkerPhase, TLinkSafeCStringLength(sTLinkOCRWorkerPhase, sizeof(sTLinkOCRWorkerPhase)));
+            const char *suffix = " port_6000_preserved\r\n";
+            write(fd, suffix, TLinkSafeCStringLength(suffix, 32));
+            close(fd);
+        }
+    }
+    _exit(128 + signalNumber);
+}
+
+static void TLinkInstallOCRWorkerSignalHandlers(const char *outputPath)
+{
+    TLinkSetOCRWorkerOutputPath(outputPath);
+    TLinkSetOCRWorkerPhase("worker_start");
+    signal(SIGSEGV, TLinkOCRWorkerSignalHandler);
+    signal(SIGBUS, TLinkOCRWorkerSignalHandler);
+    signal(SIGABRT, TLinkOCRWorkerSignalHandler);
+    signal(SIGILL, TLinkOCRWorkerSignalHandler);
+    signal(SIGFPE, TLinkOCRWorkerSignalHandler);
+}
+
 static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
 {
+    TLinkSetOCRWorkerPhase("vision_enter");
     BOOL visionAvailable = NO;
     if (@available(iOS 13.0, *)) {
         visionAvailable = YES;
@@ -2945,6 +3019,7 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
     int subtask = [parts[0] intValue];
 
     if (subtask == 2) {
+        TLinkSetOCRWorkerPhase("vision_languages");
         int levelValue = parts.count >= 2 ? [parts[1] intValue] : 0;
         VNRequestTextRecognitionLevel level = TLinkVisionOCRLevelFromValue(levelValue);
         NSError *visionErr = nil;
@@ -2963,6 +3038,7 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
         return TLinkError(@"ocr format: 1;;x,,y,,w,,h;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path");
     }
 
+    TLinkSetOCRWorkerPhase("vision_parse_region");
     NSArray<NSString *> *rectParts = [parts[1] componentsSeparatedByString:@",,"];
     if (rectParts.count < 4) return TLinkError(@"ocr_bad_region");
     int requestedW = [rectParts[2] intValue];
@@ -2975,9 +3051,11 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
     }
 
     NSString *err = nil;
+    TLinkSetOCRWorkerPhase("vision_capture");
     UIImage *screen = TLinkScreenImageForVision(&err);
     if (!screen || !screen.CGImage) return TLinkError(err ?: @"ocr_capture_failed");
 
+    TLinkSetOCRWorkerPhase("vision_crop");
     int screenW = (int)CGImageGetWidth(screen.CGImage);
     int screenH = (int)CGImageGetHeight(screen.CGImage);
     CGRect region = TLinkClampRectToImage(CGRectMake([rectParts[0] intValue],
@@ -2995,11 +3073,13 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
         return TLinkError(err);
     }
 
+    TLinkSetOCRWorkerPhase("vision_png_encode");
     NSData *visionImageData = UIImagePNGRepresentation(cropped);
     if (visionImageData.length == 0) {
         return TLinkError(@"ocr_png_encode_failed");
     }
 
+    TLinkSetOCRWorkerPhase("vision_request_setup");
     int levelValue = [parts[4] intValue];
     VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
         // Results are read after performRequests returns.
@@ -3019,10 +3099,12 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithData:visionImageData
                                                                          options:@{}];
     NSError *visionErr = nil;
+    TLinkSetOCRWorkerPhase("vision_perform_requests");
     if (![handler performRequests:@[request] error:&visionErr]) {
         return TLinkError([NSString stringWithFormat:@"ocr_failed %@", visionErr.localizedDescription ?: @"unknown"]);
     }
 
+    TLinkSetOCRWorkerPhase("vision_collect_results");
     CGSize regionSize = region.size;
     NSMutableArray<NSString *> *output = [NSMutableArray array];
     for (VNRecognizedTextObservation *observation in request.results) {
@@ -3045,7 +3127,9 @@ int TLinkRunVisionOCRWorker(const char *payloadBase64, const char *outputPath)
 {
     @autoreleasepool {
         if (!payloadBase64 || !outputPath || outputPath[0] == '\0') return 64;
+        TLinkInstallOCRWorkerSignalHandlers(outputPath);
 
+        TLinkSetOCRWorkerPhase("vision_worker_decode_payload");
         NSString *encoded = [NSString stringWithUTF8String:payloadBase64];
         NSData *payloadData = [[NSData alloc] initWithBase64EncodedString:encoded ?: @"" options:0];
         NSString *payload = payloadData ? [[NSString alloc] initWithData:payloadData encoding:NSUTF8StringEncoding] : nil;
@@ -3053,6 +3137,7 @@ int TLinkRunVisionOCRWorker(const char *payloadBase64, const char *outputPath)
 
         NSData *response = nil;
         @try {
+            TLinkSetOCRWorkerPhase("vision_worker_call_handler");
             response = TLinkHandleVisionOCRInProcess(payload);
         } @catch (NSException *exception) {
             response = TLinkError([NSString stringWithFormat:@"ocr_worker_exception %@",
@@ -3060,6 +3145,7 @@ int TLinkRunVisionOCRWorker(const char *payloadBase64, const char *outputPath)
         }
         if (response.length == 0) return 66;
 
+        TLinkSetOCRWorkerPhase("vision_worker_write_response");
         NSString *target = [NSString stringWithUTF8String:outputPath];
         return [response writeToFile:target atomically:NO] ? 0 : 67;
     }
@@ -3156,7 +3242,9 @@ static NSData *TLinkRunOCRWorkerProcess(NSString *body, const char *workerMode)
 
     if (WIFSIGNALED(status)) {
         int signalNumber = WTERMSIG(status);
+        NSData *response = [NSData dataWithContentsOfFile:outputPath];
         unlink(outputTemplate);
+        if (response.length > 0) return response;
         return TLinkError([NSString stringWithFormat:@"ocr_worker_crashed signal=%d port_6000_preserved", signalNumber]);
     }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
@@ -3901,6 +3989,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"visionOCR": @(YES),
         @"ocrInputMode": @"png_data",
         @"ocrWorkerIsolation": @(YES),
+        @"ocrWorkerBreadcrumbs": @(YES),
         @"tesseractOCR": @(NO),
         @"tesseractOCRCompat": @(YES),
         @"tesseractOCRMode": @"vision_fallback_task91_tiled_png_isolated",
@@ -4440,8 +4529,10 @@ static BOOL TLinkAppendVisionOCRTextForRegion(int x,
 
 static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
 {
+    TLinkSetOCRWorkerPhase("tesseract_compat_enter");
     NSString *raw = TLinkCleanPayload(body);
     if ([[raw lowercaseString] isEqualToString:@"check_langs"]) {
+        TLinkSetOCRWorkerPhase("tesseract_compat_check_langs");
         BOOL visionAvailable = NO;
         if (@available(iOS 13.0, *)) {
             visionAvailable = YES;
@@ -4460,6 +4551,7 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
         return TLinkError(@"tesseract_vision_fallback_format frame_id;;x;;y;;w;;h;;lang;;oem;;psm;;whitelist_b64;;scale_up;;threshold_mode;;coord;;max_age_ms");
     }
 
+    TLinkSetOCRWorkerPhase("tesseract_compat_parse");
     int x = [parts[1] intValue];
     int y = [parts[2] intValue];
     int w = [parts[3] intValue];
@@ -4506,6 +4598,7 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
     }
 
     NSString *captureError = nil;
+    TLinkSetOCRWorkerPhase("tesseract_compat_capture");
     UIImage *workerScreen = TLinkCaptureScreenImage(&captureError);
     if (!workerScreen || !workerScreen.CGImage) {
         return TLinkError([NSString stringWithFormat:@"tesseract_vision_fallback_capture_failed %@",
@@ -4517,6 +4610,7 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
     NSString *ocrError = nil;
     for (int tileY = y; tileY < y + h; tileY += tileH) {
         @autoreleasepool {
+            TLinkSetOCRWorkerPhase("tesseract_compat_tile");
             int currentH = MIN(tileH, y + h - tileY);
             if (currentH <= 0) break;
             tileCount++;
@@ -4536,6 +4630,7 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
     }
 
     NSString *text = [texts componentsJoinedByString:@"\n"];
+    TLinkSetOCRWorkerPhase("tesseract_compat_success");
     return TLinkSuccess([NSString stringWithFormat:@"%@;;-1.00;;0;;%.3f;;0.000;;%.3f",
                          TLinkBase64String(text),
                          totalMs,
@@ -4546,7 +4641,9 @@ int TLinkRunTesseractOCRWorker(const char *payloadBase64, const char *outputPath
 {
     @autoreleasepool {
         if (!payloadBase64 || !outputPath || outputPath[0] == '\0') return 64;
+        TLinkInstallOCRWorkerSignalHandlers(outputPath);
 
+        TLinkSetOCRWorkerPhase("tesseract_worker_decode_payload");
         NSString *encoded = [NSString stringWithUTF8String:payloadBase64];
         NSData *payloadData = [[NSData alloc] initWithBase64EncodedString:encoded ?: @"" options:0];
         NSString *payload = payloadData ? [[NSString alloc] initWithData:payloadData encoding:NSUTF8StringEncoding] : nil;
@@ -4554,6 +4651,7 @@ int TLinkRunTesseractOCRWorker(const char *payloadBase64, const char *outputPath
 
         NSData *response = nil;
         @try {
+            TLinkSetOCRWorkerPhase("tesseract_worker_call_handler");
             response = TLinkHandleTesseractOCRCompatInProcess(payload);
         } @catch (NSException *exception) {
             sTLinkKeptScreenImage = nil;
@@ -4562,6 +4660,7 @@ int TLinkRunTesseractOCRWorker(const char *payloadBase64, const char *outputPath
         }
         if (response.length == 0) return 66;
 
+        TLinkSetOCRWorkerPhase("tesseract_worker_write_response");
         NSString *target = [NSString stringWithUTF8String:outputPath];
         return [response writeToFile:target atomically:NO] ? 0 : 67;
     }
@@ -5568,7 +5667,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default tesseractOCR=vision_fallback_task91_tiled_png_isolated serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default tesseractOCR=vision_fallback_task91_tiled_png_isolated serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
