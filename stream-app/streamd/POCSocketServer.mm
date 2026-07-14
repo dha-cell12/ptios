@@ -4106,7 +4106,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrAppAccurateRetry": @(YES),
         @"tesseractOCR": @(YES),
         @"tesseractOCRCompat": @(YES),
-        @"tesseractOCRMode": @"true_tesseract_static_libs_requires_traineddata",
+        @"tesseractOCRMode": @"true_tesseract_static_libs_memory_fallback_requires_traineddata",
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
@@ -4646,6 +4646,27 @@ static tesseract::OcrEngineMode TLinkTesseractOEM(int oem)
     }
 }
 
+static NSString *TLinkTesseractOEMName(int oem)
+{
+    switch (oem) {
+        case 0: return @"tesseract";
+        case 1: return @"lstm";
+        case 2: return @"combined";
+        case 3: return @"default";
+        default: return [NSString stringWithFormat:@"unknown_%d", oem];
+    }
+}
+
+static NSArray<NSNumber *> *TLinkTesseractOEMAttempts(int requestedOEM)
+{
+    NSMutableArray<NSNumber *> *attempts = [NSMutableArray array];
+    NSArray<NSNumber *> *ordered = @[@(requestedOEM), @3, @1, @2, @0];
+    for (NSNumber *n in ordered) {
+        if (![attempts containsObject:n]) [attempts addObject:n];
+    }
+    return attempts;
+}
+
 static UIImage *TLinkScaledImageForTesseract(UIImage *image, int scaleUp)
 {
     if (!image || scaleUp <= 1) return image;
@@ -4693,12 +4714,74 @@ static NSData *TLinkRunTrueTesseractOCR(UIImage *image,
 
     CFAbsoluteTime totalStart = CFAbsoluteTimeGetCurrent();
     tesseract::TessBaseAPI api;
-    int init = api.Init([root fileSystemRepresentation],
-                        [language UTF8String],
-                        TLinkTesseractOEM(oem));
-    if (init != 0) {
+    BOOL initialized = NO;
+    NSMutableArray<NSString *> *attempts = [NSMutableArray array];
+    NSMutableArray<NSString *> *dataPaths = [NSMutableArray array];
+    NSArray<NSString *> *orderedDataPaths = @[
+        [tessdataDir stringByAppendingString:@"/"],
+        tessdataDir,
+        [root stringByAppendingString:@"/"],
+        root,
+    ];
+    for (NSString *dataPath in orderedDataPaths) {
+        if (dataPath.length > 0 && ![dataPaths containsObject:dataPath]) {
+            [dataPaths addObject:dataPath];
+        }
+    }
+    for (NSString *dataPath in dataPaths) {
+        if (initialized) break;
+        for (NSNumber *attemptOEMNumber in TLinkTesseractOEMAttempts(oem)) {
+            int attemptOEM = [attemptOEMNumber intValue];
+            NSString *attemptName = TLinkTesseractOEMName(attemptOEM);
+            int init = api.Init([dataPath fileSystemRepresentation],
+                                [language UTF8String],
+                                TLinkTesseractOEM(attemptOEM));
+            if (init == 0) {
+                initialized = YES;
+                break;
+            }
+            [attempts addObject:[NSString stringWithFormat:@"%@:%@", dataPath, attemptName]];
+            api.End();
+        }
+    }
+    if (!initialized && [language rangeOfString:@"+"].location == NSNotFound) {
+        NSData *trainedDataBytes = [NSData dataWithContentsOfFile:trainedData];
+        if (trainedDataBytes.length > 0 && trainedDataBytes.length <= INT_MAX) {
+            for (NSNumber *attemptOEMNumber in TLinkTesseractOEMAttempts(oem)) {
+                int attemptOEM = [attemptOEMNumber intValue];
+                NSString *attemptName = TLinkTesseractOEMName(attemptOEM);
+                int init = api.Init((const char *)trainedDataBytes.bytes,
+                                    (int)trainedDataBytes.length,
+                                    [language UTF8String],
+                                    TLinkTesseractOEM(attemptOEM),
+                                    nullptr,
+                                    0,
+                                    nullptr,
+                                    nullptr,
+                                    false,
+                                    nullptr);
+                if (init == 0) {
+                    initialized = YES;
+                    break;
+                }
+                [attempts addObject:[NSString stringWithFormat:@"memory:%@", attemptName]];
+                api.End();
+            }
+        } else {
+            [attempts addObject:[NSString stringWithFormat:@"memory:unreadable_or_too_large bytes=%llu",
+                                 (unsigned long long)trainedDataBytes.length]];
+        }
+    }
+    if (!initialized) {
+        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:trainedData error:nil] ?: @{};
+        unsigned long long fileSize = [attrs fileSize];
         pixDestroy(&pix);
-        return TLinkError([NSString stringWithFormat:@"tesseract_init_failed lang=%@ root=%@", language, root]);
+        return TLinkError([NSString stringWithFormat:@"tesseract_init_failed lang=%@ root=%@ tessdata=%@ size=%llu attempts=%@",
+                           language,
+                           root,
+                           trainedData,
+                           fileSize,
+                           [attempts componentsJoinedByString:@","]]);
     }
     api.SetPageSegMode(TLinkTesseractPSM(psm));
     if (whitelist.length > 0) {
@@ -5888,7 +5971,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default ocr=tesseract_true_static_libs tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

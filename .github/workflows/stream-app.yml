@@ -194,7 +194,7 @@ jobs:
           grep -q '90shell' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkHandleTesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
-          grep -q 'true_tesseract_static_libs_requires_traineddata' stream-app/streamd/POCSocketServer.mm
+          grep -q 'true_tesseract_static_libs_memory_fallback_requires_traineddata' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract/baseapi.h' stream-app/streamd/POCSocketServer.mm
           grep -q 'leptonica/allheaders.h' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunTrueTesseractOCR' stream-app/streamd/POCSocketServer.mm
