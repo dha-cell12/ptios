@@ -197,12 +197,15 @@ jobs:
           grep -q 'vision_fallback_task91_app_side_bridge' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocrPNGInput' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocrAppSideBridge' stream-app/streamd/POCSocketServer.mm
+          grep -q 'ocrAppRGBBridge' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunAppSideVisionOCR' stream-app/streamd/POCSocketServer.mm
           grep -q '/var/mobile/Library/TLinkauto/tmp' stream-app/streamd/POCSocketServer.mm
           grep -q 'appocr-XXXXXX' stream-app/streamd/POCSocketServer.mm
           grep -q 'fchmod(imageFd, 0644)' stream-app/streamd/POCSocketServer.mm
           grep -q 'startAppSideOCRServer' stream-app/app/AppDelegate.mm
           grep -q '127.0.0.1:6011' stream-app/app/AppDelegate.mm
+          grep -q 'newRGBImageFromImageData' stream-app/app/AppDelegate.mm
+          grep -q 'initWithCGImage:rgbImage' stream-app/app/AppDelegate.mm
           grep -q 'app_ocr_png_missing path=' stream-app/app/AppDelegate.mm
           grep -q 'Vision ImageIO' stream-app/app/Makefile
           grep -q 'ocrWorkerBreadcrumbs' stream-app/streamd/POCSocketServer.mm

@@ -275,6 +275,58 @@
     return safe ?: @"";
 }
 
+- (CGImageRef)newRGBImageFromImageData:(NSData *)imageData error:(NSString **)error CF_RETURNS_RETAINED
+{
+    if (imageData.length == 0) {
+        if (error) *error = @"empty_image_data";
+        return nil;
+    }
+
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
+    if (!source) {
+        if (error) *error = @"image_source_create_failed";
+        return nil;
+    }
+    CGImageRef decoded = CGImageSourceCreateImageAtIndex(source, 0, NULL);
+    CFRelease(source);
+    if (!decoded) {
+        if (error) *error = @"image_decode_failed";
+        return nil;
+    }
+
+    size_t width = CGImageGetWidth(decoded);
+    size_t height = CGImageGetHeight(decoded);
+    if (width == 0 || height == 0 || width > 12000 || height > 12000) {
+        CGImageRelease(decoded);
+        if (error) *error = @"image_bad_dimensions";
+        return nil;
+    }
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    size_t bytesPerRow = width * 4;
+    CGContextRef context = CGBitmapContextCreate(NULL,
+                                                 width,
+                                                 height,
+                                                 8,
+                                                 bytesPerRow,
+                                                 colorSpace,
+                                                 kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst);
+    CGColorSpaceRelease(colorSpace);
+    if (!context) {
+        CGImageRelease(decoded);
+        if (error) *error = @"rgb_context_create_failed";
+        return nil;
+    }
+
+    CGContextSetBlendMode(context, kCGBlendModeCopy);
+    CGContextDrawImage(context, CGRectMake(0, 0, (CGFloat)width, (CGFloat)height), decoded);
+    CGImageRef rgbImage = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    CGImageRelease(decoded);
+    if (!rgbImage && error) *error = @"rgb_image_create_failed";
+    return rgbImage;
+}
+
 - (NSString *)performAppSideOCRRequestLine:(NSString *)line
 {
     NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@";;"];
@@ -299,9 +351,19 @@
         request.recognitionLevel = levelValue == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
         request.usesLanguageCorrection = NO;
 
-        VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithData:imageData options:@{}];
+        NSString *decodeError = nil;
+        CGImageRef rgbImage = [self newRGBImageFromImageData:imageData error:&decodeError];
+        if (!rgbImage) {
+            return [NSString stringWithFormat:@"-1;;app_ocr_rgb_decode_failed %@\r\n", decodeError ?: @"unknown"];
+        }
+
+        VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:rgbImage
+                                                                            orientation:kCGImagePropertyOrientationUp
+                                                                                options:@{}];
         NSError *visionError = nil;
-        if (![handler performRequests:@[request] error:&visionError]) {
+        BOOL ok = [handler performRequests:@[request] error:&visionError];
+        CGImageRelease(rgbImage);
+        if (!ok) {
             return [NSString stringWithFormat:@"-1;;app_ocr_failed %@\r\n", visionError.localizedDescription ?: @"unknown"];
         }
 
