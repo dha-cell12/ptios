@@ -4,7 +4,7 @@
 # Ports 7001-7006 are opened by H264Stream.mm.
 
 TARGET = iphone:clang:latest:14.0
-ARCHS = arm64 arm64e
+ARCHS = arm64
 
 include $(THEOS)/makefiles/common.mk
 
@@ -15,8 +15,11 @@ streamd_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics QuartzCore IOS
 streamd_PRIVATE_FRAMEWORKS = IOKit
 streamd_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -Iheaders
 streamd_CCFLAGS = -std=c++14
+TESSERACT_ROOT = $(THEOS_PROJECT_DIR)/../../third_party/TesseractOCR/TesseractOCR
+streamd_CFLAGS += -I$(TESSERACT_ROOT)/xcframework/Tesseract.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/Leptonica.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/JPEG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/PNG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/TIFF.xcframework/ios-arm64/Headers
+streamd_CCFLAGS += -I$(TESSERACT_ROOT)/xcframework/Tesseract.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/Leptonica.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/JPEG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/PNG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/TIFF.xcframework/ios-arm64/Headers
+streamd_LDFLAGS += $(TESSERACT_ROOT)/xcframework/Tesseract.xcframework/ios-arm64/libtesseract.a $(TESSERACT_ROOT)/xcframework/Leptonica.xcframework/ios-arm64/libleptonica.a $(TESSERACT_ROOT)/xcframework/PNG.xcframework/ios-arm64/libpng16.a $(TESSERACT_ROOT)/xcframework/JPEG.xcframework/ios-arm64/libjpeg.a $(TESSERACT_ROOT)/xcframework/TIFF.xcframework/ios-arm64/libtiff.a -lz -lc++
 streamd_CODESIGN_FLAGS = -Sentitlements.plist
 streamd_INSTALL_PATH = /usr/bin
 
 include $(THEOS_MAKE_PATH)/tool.mk
-

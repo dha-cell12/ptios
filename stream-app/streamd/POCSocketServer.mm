@@ -28,6 +28,8 @@
 #include <sys/utsname.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#include <tesseract/baseapi.h>
+#include <leptonica/allheaders.h>
 
 #include "POCSocketServer.h"
 #include "TouchInjector.h"
@@ -2932,6 +2934,8 @@ static VNRequestTextRecognitionLevel TLinkVisionOCRLevelFromValue(int value)
     return value == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
 }
 
+static NSString *TLinkBase64String(NSString *value);
+
 static BOOL TLinkWriteAllToFd(int fd, const void *bytes, size_t length)
 {
     const uint8_t *cursor = (const uint8_t *)bytes;
@@ -4100,9 +4104,9 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrAppSideBridge": @(YES),
         @"ocrAppRGBBridge": @(YES),
         @"ocrAppAccurateRetry": @(YES),
-        @"tesseractOCR": @(NO),
+        @"tesseractOCR": @(YES),
         @"tesseractOCRCompat": @(YES),
-        @"tesseractOCRMode": @"vision_fallback_task91_app_side_bridge",
+        @"tesseractOCRMode": @"true_tesseract_static_libs_requires_traineddata",
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
@@ -4588,6 +4592,140 @@ static NSString *TLinkVisionLanguagesFromTesseractLanguage(NSString *lang)
     return [mapped componentsJoinedByString:@",,"];
 }
 
+static NSString *TLinkTessdataRoot(void)
+{
+    NSArray<NSString *> *roots = @[
+        @"/var/mobile/Library/TLinkauto",
+        [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent] ?: @"",
+        [[NSBundle mainBundle] bundlePath] ?: @"",
+    ];
+    for (NSString *root in roots) {
+        if (root.length == 0) continue;
+        NSString *dir = [root stringByAppendingPathComponent:@"tessdata"];
+        BOOL isDir = NO;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:dir isDirectory:&isDir] && isDir) {
+            return root;
+        }
+    }
+    return @"/var/mobile/Library/TLinkauto";
+}
+
+static NSArray<NSString *> *TLinkAvailableTesseractLanguages(void)
+{
+    NSString *dir = [TLinkTessdataRoot() stringByAppendingPathComponent:@"tessdata"];
+    NSArray<NSString *> *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
+    NSMutableArray<NSString *> *langs = [NSMutableArray array];
+    for (NSString *file in files ?: @[]) {
+        if ([[file pathExtension] isEqualToString:@"traineddata"]) {
+            [langs addObject:[file stringByDeletingPathExtension]];
+        }
+    }
+    [langs sortUsingSelector:@selector(compare:)];
+    return langs;
+}
+
+static tesseract::PageSegMode TLinkTesseractPSM(int psm)
+{
+    switch (psm) {
+        case 3: return tesseract::PSM_AUTO;
+        case 6: return tesseract::PSM_SINGLE_BLOCK;
+        case 8: return tesseract::PSM_SINGLE_WORD;
+        case 7:
+        default: return tesseract::PSM_SINGLE_LINE;
+    }
+}
+
+static tesseract::OcrEngineMode TLinkTesseractOEM(int oem)
+{
+    switch (oem) {
+        case 0: return tesseract::OEM_TESSERACT_ONLY;
+        case 2: return tesseract::OEM_TESSERACT_LSTM_COMBINED;
+        case 3: return tesseract::OEM_DEFAULT;
+        case 1:
+        default: return tesseract::OEM_LSTM_ONLY;
+    }
+}
+
+static UIImage *TLinkScaledImageForTesseract(UIImage *image, int scaleUp)
+{
+    if (!image || scaleUp <= 1) return image;
+    if (scaleUp > 4) scaleUp = 4;
+    CGSize size = CGSizeMake(image.size.width * scaleUp, image.size.height * scaleUp);
+    UIGraphicsBeginImageContextWithOptions(size, YES, 1.0);
+    [image drawInRect:CGRectMake(0, 0, size.width, size.height)];
+    UIImage *scaled = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return scaled ?: image;
+}
+
+static NSData *TLinkRunTrueTesseractOCR(UIImage *image,
+                                        NSString *lang,
+                                        int oem,
+                                        int psm,
+                                        NSString *whitelist,
+                                        int scaleUp,
+                                        uint64_t frameAgeMs,
+                                        double captureMs)
+{
+    if (!image) return TLinkError(@"tesseract_capture_image_missing");
+    NSString *root = TLinkTessdataRoot();
+    NSString *tessdataDir = [root stringByAppendingPathComponent:@"tessdata"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:tessdataDir]) {
+        return TLinkError([NSString stringWithFormat:@"tesseract_tessdata_missing path=%@", tessdataDir]);
+    }
+
+    NSString *language = lang.length > 0 ? lang : @"eng";
+    NSString *trainedData = [tessdataDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.traineddata", language]];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:trainedData]) {
+        NSArray<NSString *> *langs = TLinkAvailableTesseractLanguages();
+        return TLinkError([NSString stringWithFormat:@"tesseract_traineddata_missing lang=%@ path=%@ available=%@",
+                           language,
+                           trainedData,
+                           [langs componentsJoinedByString:@","]]);
+    }
+
+    UIImage *workImage = TLinkScaledImageForTesseract(image, scaleUp);
+    NSData *png = UIImagePNGRepresentation(workImage);
+    if (png.length == 0) return TLinkError(@"tesseract_png_encode_failed");
+
+    PIX *pix = pixReadMem((const l_uint8 *)png.bytes, (size_t)png.length);
+    if (!pix) return TLinkError(@"tesseract_pix_read_failed");
+
+    CFAbsoluteTime totalStart = CFAbsoluteTimeGetCurrent();
+    tesseract::TessBaseAPI api;
+    int init = api.Init([root fileSystemRepresentation],
+                        [language UTF8String],
+                        TLinkTesseractOEM(oem));
+    if (init != 0) {
+        pixDestroy(&pix);
+        return TLinkError([NSString stringWithFormat:@"tesseract_init_failed lang=%@ root=%@", language, root]);
+    }
+    api.SetPageSegMode(TLinkTesseractPSM(psm));
+    if (whitelist.length > 0) {
+        api.SetVariable("tessedit_char_whitelist", [whitelist UTF8String]);
+    }
+    api.SetImage(pix);
+
+    CFAbsoluteTime ocrStart = CFAbsoluteTimeGetCurrent();
+    char *utf8 = api.GetUTF8Text();
+    double ocrMs = (CFAbsoluteTimeGetCurrent() - ocrStart) * 1000.0;
+    int confidence = api.MeanTextConf();
+    NSString *text = utf8 ? [NSString stringWithUTF8String:utf8] : @"";
+    if (utf8) delete [] utf8;
+    api.End();
+    pixDestroy(&pix);
+
+    text = [[text ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
+    double totalMs = (CFAbsoluteTimeGetCurrent() - totalStart) * 1000.0;
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;%.2f;;%llu;;%.3f;;%.3f;;%.3f",
+                         TLinkBase64String(text),
+                         (double)confidence,
+                         (unsigned long long)frameAgeMs,
+                         ocrMs,
+                         captureMs,
+                         totalMs]);
+}
+
 static BOOL TLinkAppendVisionOCRTextForRegion(int x,
                                               int y,
                                               int w,
@@ -4644,16 +4782,7 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
     NSString *raw = TLinkCleanPayload(body);
     if ([[raw lowercaseString] isEqualToString:@"check_langs"]) {
         TLinkSetOCRWorkerPhase("tesseract_compat_check_langs");
-        BOOL visionAvailable = NO;
-        if (@available(iOS 13.0, *)) {
-            visionAvailable = YES;
-        }
-        if (!visionAvailable) return TLinkError(@"unsupported_on_trollstore task=91 vision_fallback_requires_ios13");
-        NSError *visionErr = nil;
-        NSArray<NSString *> *languages = [VNRecognizeTextRequest supportedRecognitionLanguagesForTextRecognitionLevel:VNRequestTextRecognitionLevelAccurate
-                                                                                                             revision:TLinkVisionOCRRevision()
-                                                                                                                error:&visionErr];
-        if (!languages) return TLinkError([NSString stringWithFormat:@"vision_fallback_languages_failed %@", visionErr.localizedDescription ?: @"unknown"]);
+        NSArray<NSString *> *languages = TLinkAvailableTesseractLanguages();
         return TLinkSuccess([NSString stringWithFormat:@"check_langs;;%@", TLinkBase64String([languages componentsJoinedByString:@","])]);
     }
 
@@ -4667,8 +4796,16 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
     int y = [parts[2] intValue];
     int w = [parts[3] intValue];
     int h = [parts[4] intValue];
-    NSString *lang = parts[5] ?: @"";
-    NSString *visionLanguages = TLinkVisionLanguagesFromTesseractLanguage(lang);
+    NSString *lang = parts[5].length > 0 ? parts[5] : @"eng";
+    int oem = parts[6].length > 0 ? [parts[6] intValue] : 1;
+    int psm = parts[7].length > 0 ? [parts[7] intValue] : 7;
+    NSString *whitelist = @"";
+    if (parts[8].length > 0) {
+        NSData *decoded = [[NSData alloc] initWithBase64EncodedString:parts[8] options:0];
+        whitelist = decoded ? [[NSString alloc] initWithData:decoded encoding:NSUTF8StringEncoding] ?: @"" : @"";
+    }
+    int scaleUp = parts[9].length > 0 ? [parts[9] intValue] : 2;
+    NSString *coord = parts[11].length > 0 ? parts[11] : @"pixel";
     CGSize screen = TLinkScreenPixelSize();
     int screenW = (int)llround(screen.width);
     int screenH = (int)llround(screen.height);
@@ -4690,22 +4827,12 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
     if (w <= 0 || h <= 0) return TLinkError(@"tesseract_vision_fallback_invalid_region");
 
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-    NSMutableArray<NSString *> *texts = [NSMutableArray array];
     const uint64_t maxCompatOCRPixels = 4000000;
-    const int maxTilePixels = 650000;
-    int tileH = h;
     uint64_t totalPixels = (uint64_t)w * (uint64_t)h;
     if (totalPixels > maxCompatOCRPixels) {
-        return TLinkError([NSString stringWithFormat:@"tesseract_vision_fallback_region_too_large max_pixels=%llu requested_pixels=%llu use_smaller_region",
+        return TLinkError([NSString stringWithFormat:@"tesseract_region_too_large max_pixels=%llu requested_pixels=%llu use_smaller_region",
                            (unsigned long long)maxCompatOCRPixels,
                            (unsigned long long)totalPixels]);
-    }
-    // Fast recognition is substantially more stable in a headless TrollStore
-    // process on older devices. Task 27 still exposes the requested Vision
-    // level; task 91 is explicitly a compatibility fallback.
-    int level = 1;
-    if (totalPixels > (uint64_t)maxTilePixels) {
-        tileH = MAX(120, maxTilePixels / MAX(w, 1));
     }
 
     NSString *captureError = nil;
@@ -4715,37 +4842,20 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
         return TLinkError([NSString stringWithFormat:@"tesseract_vision_fallback_capture_failed %@",
                            captureError ?: @"unknown"]);
     }
-    sTLinkKeptScreenImage = workerScreen;
 
-    int tileCount = 0;
-    NSString *ocrError = nil;
-    for (int tileY = y; tileY < y + h; tileY += tileH) {
-        @autoreleasepool {
-            TLinkSetOCRWorkerPhase("tesseract_compat_tile");
-            int currentH = MIN(tileH, y + h - tileY);
-            if (currentH <= 0) break;
-            tileCount++;
-            if (tileCount > 16) {
-                ocrError = @"tesseract_vision_fallback_region_too_large max_tiles=16";
-                break;
-            }
-            if (!TLinkAppendVisionOCRTextForRegion(x, tileY, w, currentH, visionLanguages, level, texts, &ocrError)) {
-                break;
-            }
-        }
+    CGRect region = CGRectMake(x, y, w, h);
+    if ([coord.lowercaseString isEqualToString:@"point"]) {
+        CGFloat scale = [UIScreen mainScreen].scale;
+        region = CGRectMake(x * scale, y * scale, w * scale, h * scale);
     }
-    sTLinkKeptScreenImage = nil;
-    double totalMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0;
-    if (ocrError.length > 0) {
-        return TLinkError(ocrError);
-    }
+    NSString *cropError = nil;
+    TLinkSetOCRWorkerPhase("tesseract_compat_crop");
+    UIImage *cropped = TLinkCropImage(workerScreen, region, &cropError);
+    if (!cropped) return TLinkError(cropError ?: @"tesseract_crop_failed");
 
-    NSString *text = [texts componentsJoinedByString:@"\n"];
-    TLinkSetOCRWorkerPhase("tesseract_compat_success");
-    return TLinkSuccess([NSString stringWithFormat:@"%@;;-1.00;;0;;%.3f;;0.000;;%.3f",
-                         TLinkBase64String(text),
-                         totalMs,
-                         totalMs]);
+    double captureMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0;
+    TLinkSetOCRWorkerPhase("tesseract_true_ocr");
+    return TLinkRunTrueTesseractOCR(cropped, lang, oem, psm, whitelist, scaleUp, 0, captureMs);
 }
 
 int TLinkRunTesseractOCRWorker(const char *payloadBase64, const char *outputPath)
@@ -5778,7 +5888,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default ocr=app_side_bridge_rgb_accurate_retry tesseractOCR=vision_fallback_task91_app_side_bridge serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default ocr=tesseract_true_static_libs tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
