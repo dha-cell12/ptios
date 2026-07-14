@@ -194,7 +194,8 @@ jobs:
           grep -q '90shell' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkHandleTesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
-          grep -q 'vision_fallback_task91_tiled_isolated' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vision_fallback_task91_tiled_png_isolated' stream-app/streamd/POCSocketServer.mm
+          grep -q 'ocrPNGInput' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkAppendVisionOCRTextForRegion' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunVisionOCRWorker' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunTesseractOCRWorker' stream-app/streamd/POCSocketServer.mm
