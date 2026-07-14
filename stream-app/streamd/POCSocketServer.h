@@ -23,6 +23,12 @@ void TLinkStartTaskServer(void);
 // from the original PoC naming.
 void POCStartSocketServer(void);
 
+// Runs one Vision request without starting the socket/video services. Used by
+// streamd's isolated OCR worker mode so a Vision native crash cannot take down
+// tcp/6000.
+int TLinkRunVisionOCRWorker(const char *payloadBase64, const char *outputPath);
+int TLinkRunTesseractOCRWorker(const char *payloadBase64, const char *outputPath);
+
 #ifdef __cplusplus
 }
 #endif

@@ -194,8 +194,14 @@ jobs:
           grep -q '90shell' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkHandleTesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
-          grep -q 'vision_fallback_task91_tiled_region_limited' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vision_fallback_task91_tiled_isolated' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkAppendVisionOCRTextForRegion' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkRunVisionOCRWorker' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkRunTesseractOCRWorker' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vision-ocr-worker' stream-app/streamd/main.mm
+          grep -q 'tesseract-ocr-worker' stream-app/streamd/main.mm
+          grep -q 'copyImageDetachedFromIOSurface' stream-app/streamd/CaptureCore.mm
+          grep -q 'ocr_worker_crashed' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_vision_fallback_exception' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_vision_fallback_region_too_large' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocr_region_too_large' stream-app/streamd/POCSocketServer.mm

@@ -30,6 +30,13 @@ static void streamdLog(const char *msg)
 int main(int argc, char *argv[])
 {
     @autoreleasepool {
+        if (argc == 4 && strcmp(argv[1], "--vision-ocr-worker") == 0) {
+            return TLinkRunVisionOCRWorker(argv[2], argv[3]);
+        }
+        if (argc == 4 && strcmp(argv[1], "--tesseract-ocr-worker") == 0) {
+            return TLinkRunTesseractOCRWorker(argv[2], argv[3]);
+        }
+
         BOOL daemon = NO;
         for (int i = 1; i < argc; i++) {
             if (strcmp(argv[i], "--daemon") == 0 || strcmp(argv[i], "-d") == 0) {
@@ -72,5 +79,3 @@ int main(int argc, char *argv[])
     }
     return 0;
 }
-
-

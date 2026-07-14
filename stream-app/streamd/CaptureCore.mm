@@ -78,6 +78,44 @@ static void appendCaptureEntitlementSnapshot(NSMutableString *log) {
     [log appendString:@"-- end entitlement snapshot --\n"];
 }
 
+static CGImageRef copyImageDetachedFromIOSurface(CGImageRef source, NSMutableString *log) {
+    if (!source) return NULL;
+
+    CGDataProviderRef sourceProvider = CGImageGetDataProvider(source);
+    if (!sourceProvider) {
+        [log appendString:@"detach: source data provider unavailable\n"];
+        return NULL;
+    }
+
+    CFDataRef pixelData = CGDataProviderCopyData(sourceProvider);
+    if (!pixelData) {
+        [log appendString:@"detach: failed to copy IOSurface pixel data\n"];
+        return NULL;
+    }
+
+    CGDataProviderRef detachedProvider = CGDataProviderCreateWithCFData(pixelData);
+    CGColorSpaceRef colorSpace = CGImageGetColorSpace(source);
+    CGImageRef detached = NULL;
+    if (detachedProvider && colorSpace) {
+        detached = CGImageCreate(CGImageGetWidth(source),
+                                 CGImageGetHeight(source),
+                                 CGImageGetBitsPerComponent(source),
+                                 CGImageGetBitsPerPixel(source),
+                                 CGImageGetBytesPerRow(source),
+                                 colorSpace,
+                                 CGImageGetBitmapInfo(source),
+                                 detachedProvider,
+                                 NULL,
+                                 CGImageGetShouldInterpolate(source),
+                                 CGImageGetRenderingIntent(source));
+    }
+
+    if (detachedProvider) CGDataProviderRelease(detachedProvider);
+    CFRelease(pixelData);
+    [log appendFormat:@"detach: copied IOSurface image -> %p\n", (void *)detached];
+    return detached;
+}
+
 @implementation CaptureOutcome
 @end
 
@@ -156,7 +194,22 @@ static void appendCaptureEntitlementSnapshot(NSMutableString *log) {
     // 4. Classify: sample pixels to detect a uniform/black (secure-blocked) frame.
     CaptureResult classification = [self classifyImage:cgImage log:log];
 
-    UIImage *uiImage = [UIImage imageWithCGImage:cgImage];
+    // UICreateCGImageFromIOSurface may leave the CGImage backed by the surface.
+    // Vision reads image providers lazily, so returning that image after the
+    // surface is unlocked/released can crash the daemon. Materialize an owned
+    // provider before releasing the IOSurface.
+    CGImageRef detachedImage = copyImageDetachedFromIOSurface(cgImage, log);
+    if (!detachedImage) {
+        CGImageRelease(cgImage);
+        IOSurfaceUnlock(surface, 0, NULL);
+        CFRelease(surface);
+        outcome.result = CaptureResultFail;
+        [log appendString:@"FAIL: unable to detach captured image from IOSurface\n"];
+        outcome.diagnostics = log;
+        return outcome;
+    }
+
+    UIImage *uiImage = [UIImage imageWithCGImage:detachedImage];
     outcome.image = uiImage;
     outcome.result = classification;
 
@@ -173,6 +226,7 @@ static void appendCaptureEntitlementSnapshot(NSMutableString *log) {
         }
     }
 
+    CGImageRelease(detachedImage);
     CGImageRelease(cgImage);
     IOSurfaceUnlock(surface, 0, NULL);
     CFRelease(surface);
