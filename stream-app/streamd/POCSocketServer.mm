@@ -3065,16 +3065,39 @@ int TLinkRunVisionOCRWorker(const char *payloadBase64, const char *outputPath)
     }
 }
 
+static NSString *TLinkCurrentStreamdExecutablePath(void)
+{
+    char procPath[PROC_PIDPATHINFO_MAXSIZE] = {0};
+    int procLen = proc_pidpath(getpid(), procPath, sizeof(procPath));
+    if (procLen > 0 && procPath[0] != '\0') {
+        NSString *path = [NSString stringWithUTF8String:procPath];
+        if (path.length > 0 && [[NSFileManager defaultManager] isExecutableFileAtPath:path]) return path;
+    }
+
+    char dyldPath[PATH_MAX + 1] = {0};
+    uint32_t dyldSize = sizeof(dyldPath);
+    if (_NSGetExecutablePath(dyldPath, &dyldSize) == 0 && dyldPath[0] != '\0') {
+        NSString *path = [NSString stringWithUTF8String:dyldPath];
+        if (path.length > 0 && [[NSFileManager defaultManager] isExecutableFileAtPath:path]) return path;
+    }
+
+    NSString *bundleExecutable = [[NSBundle mainBundle] executablePath];
+    if (bundleExecutable.length > 0 && [[NSFileManager defaultManager] isExecutableFileAtPath:bundleExecutable]) {
+        return bundleExecutable;
+    }
+
+    return nil;
+}
+
 static NSData *TLinkRunOCRWorkerProcess(NSString *body, const char *workerMode)
 {
     NSData *payloadData = [(body ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
     NSString *encodedPayload = [payloadData base64EncodedStringWithOptions:0];
     if (encodedPayload.length == 0) return TLinkError(@"ocr_worker_payload_encode_failed");
 
-    char executablePath[PATH_MAX + 1] = {0};
-    uint32_t bufferSize = sizeof(executablePath);
-    if (_NSGetExecutablePath(executablePath, &bufferSize) != 0) {
-        return TLinkError(@"ocr_worker_executable_path_failed");
+    NSString *executable = TLinkCurrentStreamdExecutablePath();
+    if (executable.length == 0) {
+        return TLinkError(@"ocr_worker_executable_path_failed proc_pidpath_and_dyld_empty");
     }
 
     char outputTemplate[] = "/tmp/tlinkauto-ocr-XXXXXX";
@@ -3084,7 +3107,6 @@ static NSData *TLinkRunOCRWorkerProcess(NSString *body, const char *workerMode)
     }
     close(outputFd);
 
-    NSString *executable = [NSString stringWithUTF8String:executablePath] ?: @"";
     NSString *outputPath = [NSString stringWithUTF8String:outputTemplate] ?: @"";
     char *const workerArgv[] = {
         (char *)[executable fileSystemRepresentation],
@@ -3103,7 +3125,9 @@ static NSData *TLinkRunOCRWorkerProcess(NSString *body, const char *workerMode)
                                  environ);
     if (spawnError != 0 || workerPid <= 0) {
         unlink(outputTemplate);
-        return TLinkError([NSString stringWithFormat:@"ocr_worker_spawn_failed code=%d", spawnError]);
+        return TLinkError([NSString stringWithFormat:@"ocr_worker_spawn_failed code=%d path=%@",
+                           spawnError,
+                           executable]);
     }
 
     int status = 0;

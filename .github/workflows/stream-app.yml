@@ -199,6 +199,8 @@ jobs:
           grep -q 'TLinkAppendVisionOCRTextForRegion' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunVisionOCRWorker' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunTesseractOCRWorker' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkCurrentStreamdExecutablePath' stream-app/streamd/POCSocketServer.mm
+          grep -q 'proc_pidpath(getpid' stream-app/streamd/POCSocketServer.mm
           grep -q 'vision-ocr-worker' stream-app/streamd/main.mm
           grep -q 'tesseract-ocr-worker' stream-app/streamd/main.mm
           grep -q 'copyImageDetachedFromIOSurface' stream-app/streamd/CaptureCore.mm
