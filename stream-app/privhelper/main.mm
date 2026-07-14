@@ -204,6 +204,39 @@ static NSString *TLinkHelperBundlePathForBundleId(NSString *bundleId)
     return nil;
 }
 
+static NSString *TLinkHelperDataPathForBundleId(NSString *bundleId)
+{
+    id proxy = TLinkHelperApplicationProxyForBundleId(bundleId);
+    if (!proxy) return nil;
+    NSArray<NSString *> *selectors = @[@"dataContainerURL", @"containerURL"];
+    for (NSString *selectorName in selectors) {
+        id value = TLinkHelperObjectForSelectorOrKey(proxy, selectorName, selectorName);
+        NSString *path = TLinkHelperPathFromObject(value);
+        if (path.length > 0) return TLinkHelperNormalizedPath(path);
+    }
+    return nil;
+}
+
+static BOOL TLinkHelperDataPathAllowed(NSString *path)
+{
+    NSString *normalized = TLinkHelperNormalizedPath(path);
+    if (normalized.length == 0) return NO;
+    if ([normalized isEqualToString:@"/var/mobile"] ||
+        [normalized isEqualToString:@"/private/var/mobile"]) {
+        return NO;
+    }
+    NSArray<NSString *> *allowedPrefixes = @[
+        @"/var/mobile/Containers/Data/Application/",
+        @"/private/var/mobile/Containers/Data/Application/",
+    ];
+    for (NSString *prefix in allowedPrefixes) {
+        if ([normalized hasPrefix:prefix] && normalized.length > prefix.length) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static BOOL TLinkHelperPidIsAlive(pid_t pid)
 {
     if (pid <= 0) return NO;
@@ -472,6 +505,72 @@ static int TLinkKillBundle(NSString *bundleId)
     return 0;
 }
 
+static int TLinkClearBundleData(NSString *bundleId)
+{
+    if (bundleId.length == 0) {
+        TLinkHelperLog(@"clear-data: missing bundle id");
+        return 50;
+    }
+    if ([bundleId isEqualToString:@"com.apple.springboard"] ||
+        [bundleId isEqualToString:@"com.tlinkauto.streamcontrol"]) {
+        TLinkHelperLog([NSString stringWithFormat:@"clear-data: refusing protected bundle=%@", bundleId]);
+        return 51;
+    }
+
+    NSString *dataPath = TLinkHelperDataPathForBundleId(bundleId);
+    if (!TLinkHelperDataPathAllowed(dataPath)) {
+        TLinkHelperLog([NSString stringWithFormat:@"clear-data: refused unsafe data path bundle=%@ path=%@", bundleId, dataPath ?: @""]);
+        return 52;
+    }
+
+    int killExit = TLinkKillBundle(bundleId);
+    if (killExit != 0 && killExit != 24) {
+        TLinkHelperLog([NSString stringWithFormat:@"clear-data: kill failed bundle=%@ exit=%d", bundleId, killExit]);
+        return 53;
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:dataPath isDirectory:&isDir] || !isDir) {
+        TLinkHelperLog([NSString stringWithFormat:@"clear-data: data path missing bundle=%@ path=%@", bundleId, dataPath]);
+        return 54;
+    }
+
+    NSError *listError = nil;
+    NSArray<NSString *> *items = [fm contentsOfDirectoryAtPath:dataPath error:&listError];
+    if (!items) {
+        TLinkHelperLog([NSString stringWithFormat:@"clear-data: list failed bundle=%@ path=%@ error=%@", bundleId, dataPath, listError.localizedDescription ?: @"unknown"]);
+        return 55;
+    }
+
+    int removed = 0;
+    int failed = 0;
+    NSSet<NSString *> *preserve = [NSSet setWithObjects:
+        @".com.apple.mobile_container_manager.metadata.plist",
+        @".com.apple.mobile_container_manager.metadata.plist.lockfile",
+        nil];
+    for (NSString *item in items) {
+        if ([preserve containsObject:item]) continue;
+        NSString *child = [dataPath stringByAppendingPathComponent:item];
+        NSString *normalizedChild = TLinkHelperNormalizedPath(child);
+        if (![normalizedChild hasPrefix:[dataPath stringByAppendingString:@"/"]]) {
+            TLinkHelperLog([NSString stringWithFormat:@"clear-data: skipped suspicious child=%@", child]);
+            failed++;
+            continue;
+        }
+        NSError *removeError = nil;
+        if ([fm removeItemAtPath:child error:&removeError]) {
+            removed++;
+        } else {
+            failed++;
+            TLinkHelperLog([NSString stringWithFormat:@"clear-data: remove failed child=%@ error=%@", child, removeError.localizedDescription ?: @"unknown"]);
+        }
+    }
+
+    TLinkHelperLog([NSString stringWithFormat:@"clear-data: bundle=%@ path=%@ removed=%d failed=%d killExit=%d", bundleId, dataPath, removed, failed, killExit]);
+    return failed == 0 ? 0 : 56;
+}
+
 static BOOL TLinkHelperOpenURLWithWorkspace(NSString *rawURL)
 {
     if (rawURL.length == 0) return NO;
@@ -540,7 +639,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=4 scope=ensure-streamd,kill-streamd,open-bundle,kill-bundle,open-url");
+            TLinkHelperLog(@"privhelper version=5 scope=ensure-streamd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data");
             return 0;
         }
 
@@ -579,7 +678,12 @@ int main(int argc, char *argv[])
             return TLinkOpenURL(rawURL);
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url");
+        if (argc >= 3 && strcmp(argv[1], "--clear-data") == 0) {
+            NSString *bundleId = [NSString stringWithUTF8String:argv[2]] ?: @"";
+            return TLinkClearBundleData(bundleId);
+        }
+
+        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id");
         return 64;
     }
 }

@@ -42,8 +42,8 @@
 
 	<!-- ================================================================ -->
 	<!-- TrollStore root helper. Paths are relative to this Info.plist.    -->
-	<!-- Current scope: ensure/restart/kill streamd and app open/kill/url. -->
-	<!-- Broader app-data/keychain helper tasks are added in later phases. -->
+	<!-- Current scope: ensure/restart/kill streamd, app open/kill/url, -->
+	<!-- and best-effort app data clear. Keychain remains deferred.       -->
 	<!-- ================================================================ -->
 	<key>TSRootBinaries</key>
 	<array>

@@ -3909,6 +3909,12 @@ static int TLinkRunPrivhelperOpenURL(NSString *rawURL)
     return TLinkRunPrivhelper(@[@"--open-url", rawURL], 3000);
 }
 
+static int TLinkRunPrivhelperClearData(NSString *bundleId)
+{
+    if (bundleId.length == 0) return -100;
+    return TLinkRunPrivhelper(@[@"--clear-data", bundleId], 7000);
+}
+
 static NSData *TLinkHandleOpenApplication(NSString *body)
 {
     NSString *bundleId = TLinkCleanPayload(body);
@@ -3940,6 +3946,27 @@ static NSData *TLinkHandleAppKill(NSString *body)
         sTLinkLastFrontmostAtMs = TLinkNowMs();
     }
     return TLinkSuccess(@"kill_app_via_privhelper");
+}
+
+static NSData *TLinkHandleClearAppData(NSString *body)
+{
+    NSString *bundleId = TLinkCleanPayload(body);
+    if (bundleId.length == 0) return TLinkError(@"clear_app_data_missing_bundle_id");
+    if ([bundleId isEqualToString:@"com.apple.springboard"] ||
+        [bundleId isEqualToString:@"com.tlinkauto.streamcontrol"]) {
+        return TLinkUnsupported(72, @"refusing_to_clear_protected_bundle");
+    }
+    int helperExit = TLinkRunPrivhelperClearData(bundleId);
+    if (helperExit != 0) {
+        return TLinkError([NSString stringWithFormat:@"clear_app_data_failed_or_refused bundle=%@ exit=%d", bundleId, helperExit]);
+    }
+    if ([sTLinkLastFrontmostBundleId isEqualToString:bundleId]) {
+        sTLinkLastFrontmostBundleId = @"";
+        sTLinkLastFrontmostSource = @"task72:privhelper-cleared";
+        sTLinkLastFrontmostPid = 0;
+        sTLinkLastFrontmostAtMs = TLinkNowMs();
+    }
+    return TLinkSuccess(@"clear_data_via_privhelper");
 }
 
 static NSData *TLinkHandleAppState(NSString *body)
@@ -4146,7 +4173,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"vpn": @(YES),
         @"vpnMode": @"query_only_interface_probe",
         @"frontmost": @(YES),
-        @"clearData": @(NO),
+        @"clearData": @(YES),
+        @"clearDataMode": @"privhelper_best_effort_data_container_only",
         @"shell": @(sTLinkShellTaskEnabled),
         @"shellMode": sTLinkShellTaskEnabled ? @"local_sh_gated_timeout_base64_json" : @"disabled_by_settings",
         @"hidMonitor": @(YES),
@@ -5968,6 +5996,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleShellTask(body, taskType);
     }
 
+    if (taskType == 72) {
+        return TLinkHandleClearAppData(body);
+    }
+
     if (taskType == 90) {
         return TLinkHandleUpdateCache(body);
     }
@@ -5987,7 +6019,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);

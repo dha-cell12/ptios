@@ -92,10 +92,11 @@ jobs:
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
           grep -q -- '--ensure-streamd' stream-app/privhelper/main.mm
-          grep -q 'privhelper version=4' stream-app/privhelper/main.mm
+          grep -q 'privhelper version=5' stream-app/privhelper/main.mm
           grep -q -- '--open-bundle' stream-app/privhelper/main.mm
           grep -q -- '--kill-bundle' stream-app/privhelper/main.mm
           grep -q -- '--open-url' stream-app/privhelper/main.mm
+          grep -q -- '--clear-data' stream-app/privhelper/main.mm
           grep -q 'TLinkStartTaskServer' stream-app/streamd/main.mm
           grep -q 'unsupported_on_trollstore' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 96' stream-app/streamd/POCSocketServer.mm
@@ -137,6 +138,7 @@ jobs:
           grep -q 'taskType == 66' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 70' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 71' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 72' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 90' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 91' stream-app/streamd/POCSocketServer.mm
           grep -q 'Vision ImageIO JavaScriptCore Accelerate' stream-app/streamd/Makefile
@@ -190,6 +192,8 @@ jobs:
           grep -q 'TLinkShellRunMiniCommand' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_unavailable_no_sh' stream-app/streamd/POCSocketServer.mm
           grep -q 'shellTaskGated' stream-app/streamd/POCSocketServer.mm
+          grep -q 'clearDataPrivhelper' stream-app/streamd/POCSocketServer.mm
+          grep -q 'privhelper_best_effort_data_container_only' stream-app/streamd/POCSocketServer.mm
           grep -q 'Enable Shell Task' stream-app/app/SettingsViewController.mm
           grep -q '90shell' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkHandleTesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
