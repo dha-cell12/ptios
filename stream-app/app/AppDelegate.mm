@@ -1,5 +1,14 @@
 #import "AppDelegate.h"
 #import <QuartzCore/QuartzCore.h>
+#import <Vision/Vision.h>
+#import <ImageIO/ImageIO.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <math.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #import "ScriptsViewController.h"
 #import "SettingsViewController.h"
 #import "StreamSupervisor.h"
@@ -21,6 +30,7 @@
 @property(nonatomic, assign) NSInteger lastVisualFeedbackPid;
 @property(nonatomic, assign) NSInteger visualFeedbackBurstPollsRemaining;
 @property(nonatomic, strong) SCStreamSupervisor *serviceSupervisor;
+@property(nonatomic, assign) BOOL ocrServerStarted;
 @end
 
 @implementation SCAppDelegate
@@ -65,6 +75,7 @@
                                                object:nil];
     self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
     [self ensureStreamServiceForReason:@"launch" background:NO];
+    [self startAppSideOCRServer];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -74,6 +85,7 @@
 {
     (void)application;
     [self ensureStreamServiceForReason:@"active" background:NO];
+    [self startAppSideOCRServer];
     [self startVisualFeedbackMonitor];
 }
 
@@ -243,6 +255,152 @@
         }
     }
     self.lastVisualEventId = maxSeen;
+}
+
+- (void)startAppSideOCRServer
+{
+    if (self.ocrServerStarted) return;
+    self.ocrServerStarted = YES;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        [self runAppSideOCRServer];
+    });
+}
+
+- (NSString *)protocolSafeOCRText:(NSString *)text
+{
+    NSMutableString *safe = [[text ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@" "] mutableCopy];
+    [safe replaceOccurrencesOfString:@"\n" withString:@" " options:0 range:NSMakeRange(0, safe.length)];
+    [safe replaceOccurrencesOfString:@";;" withString:@"; " options:0 range:NSMakeRange(0, safe.length)];
+    [safe replaceOccurrencesOfString:@",," withString:@", " options:0 range:NSMakeRange(0, safe.length)];
+    return safe ?: @"";
+}
+
+- (NSString *)performAppSideOCRRequestLine:(NSString *)line
+{
+    NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@";;"];
+    if (parts.count < 7 || ![parts[0] isEqualToString:@"1"]) return @"-1;;app_ocr_bad_request\r\n";
+    NSString *imagePath = parts[1];
+    NSData *imageData = [NSData dataWithContentsOfFile:imagePath];
+    if (imageData.length == 0) return @"-1;;app_ocr_png_missing\r\n";
+
+    if (@available(iOS 13.0, *)) {
+        CGFloat originX = [parts[2] doubleValue];
+        CGFloat originY = [parts[3] doubleValue];
+        CGFloat regionW = MAX(1.0, [parts[4] doubleValue]);
+        CGFloat regionH = MAX(1.0, [parts[5] doubleValue]);
+        int levelValue = [parts[6] intValue];
+
+        VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
+            (void)finishedRequest;
+            (void)error;
+        }];
+        request.recognitionLevel = levelValue == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
+        request.usesLanguageCorrection = NO;
+
+        VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithData:imageData options:@{}];
+        NSError *visionError = nil;
+        if (![handler performRequests:@[request] error:&visionError]) {
+            return [NSString stringWithFormat:@"-1;;app_ocr_failed %@\r\n", visionError.localizedDescription ?: @"unknown"];
+        }
+
+        NSMutableArray<NSString *> *output = [NSMutableArray array];
+        for (VNRecognizedTextObservation *observation in request.results) {
+            if (![observation isKindOfClass:[VNRecognizedTextObservation class]]) continue;
+            VNRecognizedText *candidate = [[observation topCandidates:1] firstObject];
+            if (!candidate.string.length) continue;
+            CGRect bb = observation.boundingBox;
+            int x = (int)llround(originX + bb.origin.x * regionW);
+            int y = (int)llround(originY + (1.0 - bb.origin.y - bb.size.height) * regionH);
+            int w = (int)llround(bb.size.width * regionW);
+            int h = (int)llround(bb.size.height * regionH);
+            [output addObject:[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d",
+                               [self protocolSafeOCRText:candidate.string], x, y, w, h]];
+        }
+        return [NSString stringWithFormat:@"0;;%@\r\n", [output componentsJoinedByString:@";;"]];
+    }
+
+    return @"-1;;app_ocr_requires_ios13\r\n";
+}
+
+- (void)writeString:(NSString *)string toSocket:(int)client
+{
+    NSData *data = [(string ?: @"-1;;app_ocr_empty_response\r\n") dataUsingEncoding:NSUTF8StringEncoding];
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger remaining = data.length;
+    while (remaining > 0) {
+        ssize_t written = write(client, bytes, remaining);
+        if (written <= 0) break;
+        bytes += written;
+        remaining -= (NSUInteger)written;
+    }
+}
+
+- (NSString *)readLineFromSocket:(int)client
+{
+    NSMutableData *data = [NSMutableData data];
+    char ch = 0;
+    while (data.length < 16384) {
+        ssize_t n = read(client, &ch, 1);
+        if (n <= 0) break;
+        if (ch == '\n') break;
+        [data appendBytes:&ch length:1];
+    }
+    if (data.length == 0) return nil;
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+- (void)handleAppSideOCRClient:(int)client
+{
+    @autoreleasepool {
+        NSString *line = [self readLineFromSocket:client];
+        NSString *response = line.length > 0 ? [self performAppSideOCRRequestLine:line] : @"-1;;app_ocr_empty_request\r\n";
+        [self writeString:response toSocket:client];
+        close(client);
+    }
+}
+
+- (void)runAppSideOCRServer
+{
+    @autoreleasepool {
+        int server = socket(AF_INET, SOCK_STREAM, 0);
+        if (server < 0) {
+            NSLog(@"[StreamControl][OCR] socket failed errno=%d", errno);
+            self.ocrServerStarted = NO;
+            return;
+        }
+        int yes = 1;
+        setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(6011);
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+        if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+            NSLog(@"[StreamControl][OCR] bind 127.0.0.1:6011 failed errno=%d", errno);
+            close(server);
+            self.ocrServerStarted = NO;
+            return;
+        }
+        if (listen(server, 4) != 0) {
+            NSLog(@"[StreamControl][OCR] listen failed errno=%d", errno);
+            close(server);
+            self.ocrServerStarted = NO;
+            return;
+        }
+        NSLog(@"[StreamControl][OCR] app-side OCR server listening on 127.0.0.1:6011");
+
+        while (1) {
+            int client = accept(server, NULL, NULL);
+            if (client < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            [self handleAppSideOCRClient:client];
+        }
+        close(server);
+        self.ocrServerStarted = NO;
+    }
 }
 
 - (UIViewController *)topViewControllerFromViewController:(UIViewController *)viewController

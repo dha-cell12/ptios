@@ -20,6 +20,7 @@
 #include <netinet/tcp.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <sys/time.h>
 #include <mach-o/dyld.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
@@ -2930,6 +2931,92 @@ static VNRequestTextRecognitionLevel TLinkVisionOCRLevelFromValue(int value)
     return value == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
 }
 
+static BOOL TLinkWriteAllToFd(int fd, const void *bytes, size_t length)
+{
+    const uint8_t *cursor = (const uint8_t *)bytes;
+    size_t remaining = length;
+    while (remaining > 0) {
+        ssize_t written = write(fd, cursor, remaining);
+        if (written <= 0) return NO;
+        cursor += written;
+        remaining -= (size_t)written;
+    }
+    return YES;
+}
+
+static NSData *TLinkReadSocketResponse(int fd)
+{
+    NSMutableData *response = [NSMutableData data];
+    char buffer[2048];
+    while (response.length < 262144) {
+        ssize_t n = read(fd, buffer, sizeof(buffer));
+        if (n <= 0) break;
+        [response appendBytes:buffer length:(NSUInteger)n];
+        if (memchr(buffer, '\n', (size_t)n) != NULL) break;
+    }
+    return response;
+}
+
+static NSData *TLinkRunAppSideVisionOCR(NSData *pngData, CGRect region, int levelValue)
+{
+    if (pngData.length == 0) return TLinkError(@"app_ocr_bridge_empty_png");
+
+    char imageTemplate[] = "/tmp/tlinkauto-appocr-XXXXXX";
+    int imageFd = mkstemp(imageTemplate);
+    if (imageFd < 0) {
+        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_temp_failed errno=%d", errno]);
+    }
+    BOOL wroteImage = TLinkWriteAllToFd(imageFd, pngData.bytes, pngData.length);
+    close(imageFd);
+    if (!wroteImage) {
+        unlink(imageTemplate);
+        return TLinkError(@"app_ocr_bridge_png_write_failed");
+    }
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        unlink(imageTemplate);
+        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_socket_failed errno=%d", errno]);
+    }
+    struct timeval timeout;
+    timeout.tv_sec = 8;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(6011);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        int connectErrno = errno;
+        close(sock);
+        unlink(imageTemplate);
+        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_unavailable errno=%d open_StreamControl_foreground", connectErrno]);
+    }
+
+    NSString *line = [NSString stringWithFormat:@"1;;%s;;%.0f;;%.0f;;%.0f;;%.0f;;%d\n",
+                      imageTemplate,
+                      region.origin.x,
+                      region.origin.y,
+                      region.size.width,
+                      region.size.height,
+                      levelValue];
+    NSData *lineData = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (!TLinkWriteAllToFd(sock, lineData.bytes, lineData.length)) {
+        close(sock);
+        unlink(imageTemplate);
+        return TLinkError(@"app_ocr_bridge_request_write_failed");
+    }
+
+    NSData *response = TLinkReadSocketResponse(sock);
+    close(sock);
+    unlink(imageTemplate);
+    if (response.length == 0) return TLinkError(@"app_ocr_bridge_empty_response");
+    return response;
+}
+
 static char sTLinkOCRWorkerOutputPath[PATH_MAX + 1] = {0};
 static char sTLinkOCRWorkerPhase[96] = "not_started";
 
@@ -3078,6 +3165,10 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
     if (visionImageData.length == 0) {
         return TLinkError(@"ocr_png_encode_failed");
     }
+
+    int bridgeLevelValue = [parts[4] intValue];
+    TLinkSetOCRWorkerPhase("vision_app_side_bridge");
+    return TLinkRunAppSideVisionOCR(visionImageData, region, bridgeLevelValue);
 
     TLinkSetOCRWorkerPhase("vision_request_setup");
     int levelValue = [parts[4] intValue];
@@ -3991,10 +4082,11 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrInputMode": @"png_data",
         @"ocrWorkerIsolation": @(YES),
         @"ocrWorkerBreadcrumbs": @(YES),
-        @"ocrVisionProfile": @"minimal_no_revision_no_language_correction",
+        @"ocrVisionProfile": @"app_side_bridge_foreground",
+        @"ocrAppSideBridge": @(YES),
         @"tesseractOCR": @(NO),
         @"tesseractOCRCompat": @(YES),
-        @"tesseractOCRMode": @"vision_fallback_task91_tiled_png_minimal_isolated",
+        @"tesseractOCRMode": @"vision_fallback_task91_app_side_bridge",
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
@@ -5670,7 +5762,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrVisionMinimal,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default tesseractOCR=vision_fallback_task91_tiled_png_minimal_isolated serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default ocr=app_side_bridge_foreground tesseractOCR=vision_fallback_task91_app_side_bridge serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

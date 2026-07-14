@@ -194,9 +194,13 @@ jobs:
           grep -q '90shell' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkHandleTesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
-          grep -q 'vision_fallback_task91_tiled_png_minimal_isolated' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vision_fallback_task91_app_side_bridge' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocrPNGInput' stream-app/streamd/POCSocketServer.mm
-          grep -q 'ocrVisionMinimal' stream-app/streamd/POCSocketServer.mm
+          grep -q 'ocrAppSideBridge' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkRunAppSideVisionOCR' stream-app/streamd/POCSocketServer.mm
+          grep -q 'startAppSideOCRServer' stream-app/app/AppDelegate.mm
+          grep -q '127.0.0.1:6011' stream-app/app/AppDelegate.mm
+          grep -q 'Vision ImageIO' stream-app/app/Makefile
           grep -q 'ocrWorkerBreadcrumbs' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkOCRWorkerSignalHandler' stream-app/streamd/POCSocketServer.mm
           grep -q 'phase=' stream-app/streamd/POCSocketServer.mm
