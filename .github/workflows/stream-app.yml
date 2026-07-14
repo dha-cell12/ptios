@@ -231,7 +231,7 @@ jobs:
           grep -q 'copyImageDetachedFromIOSurface' stream-app/streamd/CaptureCore.mm
           grep -q 'ocr_worker_crashed' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_vision_fallback_exception' stream-app/streamd/POCSocketServer.mm
-          grep -q 'tesseract_vision_fallback_region_too_large' stream-app/streamd/POCSocketServer.mm
+          grep -q 'tesseract_region_too_large' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocr_region_too_large' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleConnectivityTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleBluetoothConnectivity' stream-app/streamd/POCSocketServer.mm
