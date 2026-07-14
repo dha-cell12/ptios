@@ -3087,7 +3087,6 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
         (void)error;
     }];
     request.recognitionLevel = TLinkVisionOCRLevelFromValue(levelValue);
-    request.revision = TLinkVisionOCRRevision();
     CGFloat minimumHeight = (CGFloat)[parts[3] doubleValue];
     if (minimumHeight > 0.0) request.minimumTextHeight = minimumHeight;
     NSArray<NSString *> *customWords = TLinkSplitNonEmpty(parts[2], @",,");
@@ -3992,9 +3991,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrInputMode": @"png_data",
         @"ocrWorkerIsolation": @(YES),
         @"ocrWorkerBreadcrumbs": @(YES),
+        @"ocrVisionProfile": @"minimal_no_revision_no_language_correction",
         @"tesseractOCR": @(NO),
         @"tesseractOCRCompat": @(YES),
-        @"tesseractOCRMode": @"vision_fallback_task91_tiled_png_isolated",
+        @"tesseractOCRMode": @"vision_fallback_task91_tiled_png_minimal_isolated",
         @"script": @(YES),
         @"scriptMode": @"javascriptcore_mvp",
         @"scriptPlaySettings": @(YES),
@@ -4489,14 +4489,15 @@ static BOOL TLinkAppendVisionOCRTextForRegion(int x,
                                               NSMutableArray<NSString *> *texts,
                                               NSString **error)
 {
-    NSString *visionPayload = [NSString stringWithFormat:@"1;;%d,,%d,,%d,,%d;;;;0;;%d;;%@;;%d;;",
+    // Task 91 uses the safest Vision profile for headless TrollStore: fast
+    // recognition, no forced language list, and no language correction.
+    (void)visionLanguages;
+    NSString *visionPayload = [NSString stringWithFormat:@"1;;%d,,%d,,%d,,%d;;;;0;;%d;;;;0;;",
                                x,
                                y,
                                w,
                                h,
-                               level,
-                               visionLanguages ?: @"",
-                               level == 0 ? 1 : 0];
+                               level];
     NSData *response = nil;
     @try {
         response = TLinkHandleVisionOCRInProcess(visionPayload);
@@ -5669,7 +5670,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default tesseractOCR=vision_fallback_task91_tiled_png_isolated serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrVisionMinimal,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=trueTesseractOCR,clearData,keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default tesseractOCR=vision_fallback_task91_tiled_png_minimal_isolated serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }
