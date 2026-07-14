@@ -281,7 +281,9 @@
     if (parts.count < 7 || ![parts[0] isEqualToString:@"1"]) return @"-1;;app_ocr_bad_request\r\n";
     NSString *imagePath = parts[1];
     NSData *imageData = [NSData dataWithContentsOfFile:imagePath];
-    if (imageData.length == 0) return @"-1;;app_ocr_png_missing\r\n";
+    if (imageData.length == 0) {
+        return [NSString stringWithFormat:@"-1;;app_ocr_png_missing path=%@\r\n", imagePath ?: @""];
+    }
 
     if (@available(iOS 13.0, *)) {
         CGFloat originX = [parts[2] doubleValue];

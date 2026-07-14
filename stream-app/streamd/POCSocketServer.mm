@@ -21,6 +21,7 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 #include <mach-o/dyld.h>
 #include <sys/sysctl.h>
 #include <sys/wait.h>
@@ -2961,13 +2962,26 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData, CGRect region, int leve
 {
     if (pngData.length == 0) return TLinkError(@"app_ocr_bridge_empty_png");
 
-    char imageTemplate[] = "/tmp/tlinkauto-appocr-XXXXXX";
+    NSString *tmpDir = @"/var/mobile/Library/TLinkauto/tmp";
+    NSError *mkdirError = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:tmpDir
+                                   withIntermediateDirectories:YES
+                                                    attributes:@{NSFilePosixPermissions: @0755}
+                                                         error:&mkdirError]) {
+        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_tmpdir_failed %@", mkdirError.localizedDescription ?: tmpDir]);
+    }
+    chmod([tmpDir fileSystemRepresentation], 0755);
+
+    char imageTemplate[PATH_MAX + 1] = {0};
+    snprintf(imageTemplate, sizeof(imageTemplate), "%s", [[tmpDir stringByAppendingPathComponent:@"appocr-XXXXXX"] fileSystemRepresentation]);
     int imageFd = mkstemp(imageTemplate);
     if (imageFd < 0) {
         return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_temp_failed errno=%d", errno]);
     }
     BOOL wroteImage = TLinkWriteAllToFd(imageFd, pngData.bytes, pngData.length);
+    fchmod(imageFd, 0644);
     close(imageFd);
+    chmod(imageTemplate, 0644);
     if (!wroteImage) {
         unlink(imageTemplate);
         return TLinkError(@"app_ocr_bridge_png_write_failed");
