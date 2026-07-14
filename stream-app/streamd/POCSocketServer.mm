@@ -41,6 +41,7 @@
 #endif
 
 extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
+extern char **environ;
 
 // ---------------------------------------------------------------------------
 // POC socket server
@@ -3295,8 +3296,6 @@ static BOOL TLinkPidIsAlive(pid_t pid)
 
 typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
 typedef CFStringRef (*TLinkSBSCopyFrontmostFn)(void);
-
-extern char **environ;
 
 static NSString *sTLinkLastFrontmostBundleId = nil;
 static NSString *sTLinkLastFrontmostSource = nil;
