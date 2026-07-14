@@ -208,7 +208,7 @@ jobs:
           grep -q 'newRGBImageFromImageData' stream-app/app/AppDelegate.mm
           grep -q 'performTextRecognitionWithImage' stream-app/app/AppDelegate.mm
           grep -q 'VNRequestTextRecognitionLevelAccurate' stream-app/app/AppDelegate.mm
-          grep -q 'initWithCGImage:rgbImage' stream-app/app/AppDelegate.mm
+          grep -q 'initWithCGImage:image' stream-app/app/AppDelegate.mm
           grep -q 'app_ocr_png_missing path=' stream-app/app/AppDelegate.mm
           grep -q 'Vision ImageIO' stream-app/app/Makefile
           grep -q 'ocrWorkerBreadcrumbs' stream-app/streamd/POCSocketServer.mm
