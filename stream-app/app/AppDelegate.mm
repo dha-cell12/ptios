@@ -327,6 +327,32 @@
     return rgbImage;
 }
 
+- (BOOL)performTextRecognitionWithImage:(CGImageRef)image
+                                  level:(VNRequestTextRecognitionLevel)level
+                                request:(VNRecognizeTextRequest **)outRequest
+                                  error:(NSError **)outError
+{
+    if (!image) return NO;
+    VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
+        (void)finishedRequest;
+        (void)error;
+    }];
+    request.recognitionLevel = level;
+    request.usesLanguageCorrection = NO;
+
+    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:image
+                                                                        orientation:kCGImagePropertyOrientationUp
+                                                                            options:@{}];
+    NSError *visionError = nil;
+    BOOL ok = [handler performRequests:@[request] error:&visionError];
+    if (ok) {
+        if (outRequest) *outRequest = request;
+        return YES;
+    }
+    if (outError) *outError = visionError;
+    return NO;
+}
+
 - (NSString *)performAppSideOCRRequestLine:(NSString *)line
 {
     NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@";;"];
@@ -344,27 +370,32 @@
         CGFloat regionH = MAX(1.0, [parts[5] doubleValue]);
         int levelValue = [parts[6] intValue];
 
-        VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
-            (void)finishedRequest;
-            (void)error;
-        }];
-        request.recognitionLevel = levelValue == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
-        request.usesLanguageCorrection = NO;
-
         NSString *decodeError = nil;
         CGImageRef rgbImage = [self newRGBImageFromImageData:imageData error:&decodeError];
         if (!rgbImage) {
             return [NSString stringWithFormat:@"-1;;app_ocr_rgb_decode_failed %@\r\n", decodeError ?: @"unknown"];
         }
 
-        VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:rgbImage
-                                                                            orientation:kCGImagePropertyOrientationUp
-                                                                                options:@{}];
+        VNRequestTextRecognitionLevel requestedLevel = levelValue == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
+        VNRecognizeTextRequest *request = nil;
         NSError *visionError = nil;
-        BOOL ok = [handler performRequests:@[request] error:&visionError];
+        BOOL ok = [self performTextRecognitionWithImage:rgbImage
+                                                  level:requestedLevel
+                                                request:&request
+                                                  error:&visionError];
+        NSString *firstError = visionError.localizedDescription ?: @"unknown";
+        if (!ok && requestedLevel == VNRequestTextRecognitionLevelFast) {
+            visionError = nil;
+            ok = [self performTextRecognitionWithImage:rgbImage
+                                                 level:VNRequestTextRecognitionLevelAccurate
+                                               request:&request
+                                                 error:&visionError];
+        }
         CGImageRelease(rgbImage);
         if (!ok) {
-            return [NSString stringWithFormat:@"-1;;app_ocr_failed %@\r\n", visionError.localizedDescription ?: @"unknown"];
+            return [NSString stringWithFormat:@"-1;;app_ocr_failed first=%@ retry=%@\r\n",
+                    firstError,
+                    visionError.localizedDescription ?: @"unknown"];
         }
 
         NSMutableArray<NSString *> *output = [NSMutableArray array];
