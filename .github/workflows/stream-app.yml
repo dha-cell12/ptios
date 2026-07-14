@@ -114,6 +114,10 @@ jobs:
           grep -q 'taskType == 26' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 27' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 28' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 29' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkSaveImagePathToPhotoAlbum' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkClearPhotoAlbum' stream-app/streamd/POCSocketServer.mm
+          grep -q 'screenshotAlbum' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 30' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 36' stream-app/streamd/POCSocketServer.mm
@@ -141,7 +145,7 @@ jobs:
           grep -q 'taskType == 72' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 90' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 91' stream-app/streamd/POCSocketServer.mm
-          grep -q 'Vision ImageIO JavaScriptCore Accelerate' stream-app/streamd/Makefile
+          grep -q 'Vision ImageIO JavaScriptCore Accelerate Photos' stream-app/streamd/Makefile
           grep -q '"tlinkauto"' stream-app/streamd/POCSocketServer.mm
           grep -q '"visionOCR"' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptJS' stream-app/streamd/POCSocketServer.mm

@@ -39,6 +39,10 @@
 	</array>
 	<key>UIStatusBarHidden</key>
 	<false/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TLinkauto saves and clears screenshots in its own photo album when requested.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>TLinkauto saves screenshots to its own photo album when requested.</string>
 
 	<!-- ================================================================ -->
 	<!-- TrollStore root helper. Paths are relative to this Info.plist.    -->

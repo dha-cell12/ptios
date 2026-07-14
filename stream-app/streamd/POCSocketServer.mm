@@ -3,6 +3,7 @@
 #import <Vision/Vision.h>
 #import <ImageIO/ImageIO.h>
 #import <JavaScriptCore/JavaScriptCore.h>
+#import <Photos/Photos.h>
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
@@ -2152,12 +2153,96 @@ static CaptureOutcome *TLinkRunCaptureOnMain(void)
     return outcome;
 }
 
+static NSString *const kTLinkPhotoAlbumName = @"TLinkauto";
+
+static PHAssetCollection *TLinkFetchPhotoAlbum(void)
+{
+    PHFetchOptions *fetchOptions = [[PHFetchOptions alloc] init];
+    fetchOptions.predicate = [NSPredicate predicateWithFormat:@"title = %@", kTLinkPhotoAlbumName];
+    PHFetchResult<PHAssetCollection *> *result = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeAlbum
+                                                                                          subtype:PHAssetCollectionSubtypeAlbumRegular
+                                                                                          options:fetchOptions];
+    return result.firstObject;
+}
+
+static PHAssetCollection *TLinkEnsurePhotoAlbum(NSString **error)
+{
+    if (!NSClassFromString(@"PHPhotoLibrary")) {
+        if (error) *error = @"photos_framework_unavailable";
+        return nil;
+    }
+    PHAssetCollection *album = TLinkFetchPhotoAlbum();
+    if (album) return album;
+
+    NSError *creationError = nil;
+    [[PHPhotoLibrary sharedPhotoLibrary] performChangesAndWait:^{
+        [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:kTLinkPhotoAlbumName];
+    } error:&creationError];
+    if (creationError) {
+        if (error) *error = [NSString stringWithFormat:@"photo_album_create_failed %@", creationError.localizedDescription ?: @"unknown"];
+        return nil;
+    }
+    album = TLinkFetchPhotoAlbum();
+    if (!album && error) *error = @"photo_album_fetch_after_create_failed";
+    return album;
+}
+
+static NSData *TLinkSaveImagePathToPhotoAlbum(NSString *path)
+{
+    if (path.length == 0) return TLinkError(@"save_album_missing_file_path");
+    UIImage *image = [UIImage imageWithContentsOfFile:path];
+    if (!image) return TLinkError([NSString stringWithFormat:@"save_album_image_not_found path=%@", path]);
+
+    NSString *err = nil;
+    PHAssetCollection *album = TLinkEnsurePhotoAlbum(&err);
+    if (!album) return TLinkError(err ?: @"photo_album_unavailable");
+
+    NSError *saveError = nil;
+    [[PHPhotoLibrary sharedPhotoLibrary] performChangesAndWait:^{
+        PHAssetChangeRequest *assetRequest = [PHAssetChangeRequest creationRequestForAssetFromImage:image];
+        PHObjectPlaceholder *placeholder = assetRequest.placeholderForCreatedAsset;
+        if (placeholder) {
+            PHAssetCollectionChangeRequest *albumRequest = [PHAssetCollectionChangeRequest changeRequestForAssetCollection:album];
+            [albumRequest addAssets:@[placeholder]];
+        }
+    } error:&saveError];
+    if (saveError) {
+        return TLinkError([NSString stringWithFormat:@"save_album_failed %@", saveError.localizedDescription ?: @"unknown"]);
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"saved_to_album;;%@", kTLinkPhotoAlbumName]);
+}
+
+static NSData *TLinkClearPhotoAlbum(void)
+{
+    PHAssetCollection *album = TLinkFetchPhotoAlbum();
+    if (!album) return TLinkSuccess(@"album_not_found;;0");
+    PHFetchResult<PHAsset *> *assets = [PHAsset fetchAssetsInAssetCollection:album options:nil];
+    NSUInteger count = assets.count;
+    if (count == 0) return TLinkSuccess(@"album_empty;;0");
+
+    NSError *deleteError = nil;
+    [[PHPhotoLibrary sharedPhotoLibrary] performChangesAndWait:^{
+        [PHAssetChangeRequest deleteAssets:assets];
+    } error:&deleteError];
+    if (deleteError) {
+        return TLinkError([NSString stringWithFormat:@"clear_album_failed %@", deleteError.localizedDescription ?: @"unknown"]);
+    }
+    return TLinkSuccess([NSString stringWithFormat:@"album_cleared;;%lu", (unsigned long)count]);
+}
+
 static NSData *TLinkHandleScreenshot(NSString *body)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
     int action = parts.count > 0 ? [parts[0] intValue] : 0;
+    if (action == 2) {
+        if (parts.count < 2 || parts[1].length == 0) return TLinkError(@"save_album_missing_file_path");
+        return TLinkSaveImagePathToPhotoAlbum(parts[1]);
+    }
+    if (action == 3) {
+        return TLinkClearPhotoAlbum();
+    }
     if (action != 1) {
-        return TLinkUnsupported(29, @"screenshot album save/clear is not ported yet");
+        return TLinkError([NSString stringWithFormat:@"unknown_screenshot_action action=%d", action]);
     }
     if (parts.count < 2 || parts[1].length == 0) {
         return TLinkError(@"Screenshot task missing output path");
@@ -4118,6 +4203,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"tapMacroMode": @"bounded_async_native_tap",
         @"capture": @(YES),
         @"captureMode": @"detached_iosurface_bitmap",
+        @"screenshotAlbum": @(YES),
+        @"screenshotAlbumMode": @"photos_framework_tlinkauto_album",
         @"h264": @(YES),
         @"image": @(YES),
         @"color": @(YES),
@@ -6019,7 +6106,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
