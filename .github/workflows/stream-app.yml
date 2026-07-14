@@ -198,6 +198,8 @@ jobs:
           grep -q 'tesseract/baseapi.h' stream-app/streamd/POCSocketServer.mm
           grep -q 'leptonica/allheaders.h' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunTrueTesseractOCR' stream-app/streamd/POCSocketServer.mm
+          grep -q 'tesseract_init_source=' stream-app/streamd/POCSocketServer.mm
+          grep -q 'tesseractInitSource' stream-app/streamd/POCSocketServer.mm
           grep -q 'Tesseract.xcframework/ios-arm64/libtesseract.a' stream-app/streamd/Makefile
           grep -q 'Leptonica.xcframework/ios-arm64/libleptonica.a' stream-app/streamd/Makefile
           grep -q 'ARCHS = arm64' stream-app/streamd/Makefile

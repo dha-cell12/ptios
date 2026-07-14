@@ -165,5 +165,12 @@ App TLinkauto TrollStore có giao diện tương đương gốc:
 Không còn phụ thuộc Substrate/SpringBoard injection cho core automation.
 Các task không thể port được có fallback hoặc lỗi rõ ràng (unsupported_on_trollstore).
 Script storage và config giữ nguyên path cũ (/var/mobile/Library/TLinkauto/...).
+
+Known unresolved issues / deferred investigation:
+- Vision OCR is currently deferred on TrollStore. Headless streamd Vision OCR previously crashed the worker during `vision_perform_requests` with signal 11; app-side Vision bridge avoided the streamd crash but failed on the test device with `Could not create buffer with format '420f' (-6662)`, even after RGB/accurate retry attempts.
+- Current stable OCR path is task 91 using true static Tesseract libraries plus `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
+- Task 91 now reports Tesseract init source so tests can distinguish normal path init from memory fallback: response suffix `tesseract_init_source=path:...` or `tesseract_init_source=memory:...`; task 60 also exposes `tesseractInitSource`, `tesseractInitAttempts`, and `tesseractInitAtMs`.
+- Revisit Vision later with a dedicated sample app/device matrix, pixel buffer format investigation, and possibly a pure CGImage/VNImageRequestHandler path that avoids the failing `420f` conversion.
+
 Nói gọn: nên biến stream-app thành “TLinkauto TrollStore runtime” chính thức, rồi kéo từng module từ pccontrol sang theo thứ tự: touch/capture trước, image/OCR tiếp, script runtime sau, cuối cùng mới đến admin/process/connectivity.
 **UI Parity là tiêu chí bắt buộc** để người dùng dễ sử dụng và chuyển đổi mượt mà.
