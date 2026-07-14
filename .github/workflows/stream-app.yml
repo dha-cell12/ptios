@@ -199,6 +199,7 @@ jobs:
           grep -q 'ocrWorkerBreadcrumbs' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkOCRWorkerSignalHandler' stream-app/streamd/POCSocketServer.mm
           grep -q 'phase=' stream-app/streamd/POCSocketServer.mm
+          grep -q 'ocr_worker_failed exit=%d' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkAppendVisionOCRTextForRegion' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunVisionOCRWorker' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunTesseractOCRWorker' stream-app/streamd/POCSocketServer.mm

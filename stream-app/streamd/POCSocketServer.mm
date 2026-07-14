@@ -3249,7 +3249,9 @@ static NSData *TLinkRunOCRWorkerProcess(NSString *body, const char *workerMode)
     }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         int exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        NSData *response = [NSData dataWithContentsOfFile:outputPath];
         unlink(outputTemplate);
+        if (response.length > 0) return response;
         return TLinkError([NSString stringWithFormat:@"ocr_worker_failed exit=%d", exitCode]);
     }
 
