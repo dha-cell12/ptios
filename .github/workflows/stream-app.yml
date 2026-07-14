@@ -117,6 +117,8 @@ jobs:
           grep -q 'taskType == 29' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkSaveImagePathToPhotoAlbum' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkClearPhotoAlbum' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkPhotoLibraryAuthorized' stream-app/streamd/POCSocketServer.mm
+          grep -q 'removeAssets' stream-app/streamd/POCSocketServer.mm
           grep -q 'screenshotAlbum' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 30' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 31' stream-app/streamd/POCSocketServer.mm
@@ -226,7 +228,7 @@ jobs:
           grep -q 'VNRequestTextRecognitionLevelAccurate' stream-app/app/AppDelegate.mm
           grep -q 'initWithCGImage:image' stream-app/app/AppDelegate.mm
           grep -q 'app_ocr_png_missing path=' stream-app/app/AppDelegate.mm
-          grep -q 'Vision ImageIO' stream-app/app/Makefile
+          grep -q 'Vision ImageIO Photos' stream-app/app/Makefile
           grep -q 'ocrWorkerBreadcrumbs' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkOCRWorkerSignalHandler' stream-app/streamd/POCSocketServer.mm
           grep -q 'phase=' stream-app/streamd/POCSocketServer.mm
@@ -289,6 +291,8 @@ jobs:
           grep -q 'Touch Indicator On' stream-app/app/SettingsViewController.mm
           grep -q 'App Info Self' stream-app/app/SettingsViewController.mm
           grep -q 'Runtime Settings' stream-app/app/SettingsViewController.mm
+          grep -q 'Photo Access' stream-app/app/SettingsViewController.mm
+          grep -q 'requestPhotoAccess' stream-app/app/SettingsViewController.mm
           grep -q 'runtimeSwitchChanged' stream-app/app/SettingsViewController.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/config.plist' stream-app/app/SettingsViewController.mm
           grep -q 'Export Diagnostics' stream-app/app/SettingsViewController.mm

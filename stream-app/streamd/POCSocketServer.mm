@@ -2155,6 +2155,46 @@ static CaptureOutcome *TLinkRunCaptureOnMain(void)
 
 static NSString *const kTLinkPhotoAlbumName = @"TLinkauto";
 
+static NSString *TLinkPhotoAuthorizationStatusName(PHAuthorizationStatus status)
+{
+    switch (status) {
+        case PHAuthorizationStatusNotDetermined: return @"not_determined";
+        case PHAuthorizationStatusRestricted: return @"restricted";
+        case PHAuthorizationStatusDenied: return @"denied";
+        case PHAuthorizationStatusAuthorized: return @"authorized";
+        case PHAuthorizationStatusLimited: return @"limited";
+        default: return [NSString stringWithFormat:@"unknown_%ld", (long)status];
+    }
+}
+
+static BOOL TLinkPhotoLibraryAuthorized(NSString **error)
+{
+    if (!NSClassFromString(@"PHPhotoLibrary")) {
+        if (error) *error = @"photos_framework_unavailable";
+        return NO;
+    }
+
+    PHAuthorizationStatus status = PHAuthorizationStatusNotDetermined;
+    if (@available(iOS 14.0, *)) {
+        status = [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelReadWrite];
+    } else {
+        status = [PHPhotoLibrary authorizationStatus];
+    }
+
+    if (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited) {
+        return YES;
+    }
+    if (error) {
+        NSString *name = TLinkPhotoAuthorizationStatusName(status);
+        if (status == PHAuthorizationStatusNotDetermined) {
+            *error = [NSString stringWithFormat:@"photo_permission_not_determined status=%@ open StreamControl.app Settings > Photo Access first", name];
+        } else {
+            *error = [NSString stringWithFormat:@"photo_permission_unavailable status=%@ grant Photos access in iOS Settings", name];
+        }
+    }
+    return NO;
+}
+
 static PHAssetCollection *TLinkFetchPhotoAlbum(void)
 {
     PHFetchOptions *fetchOptions = [[PHFetchOptions alloc] init];
@@ -2167,10 +2207,7 @@ static PHAssetCollection *TLinkFetchPhotoAlbum(void)
 
 static PHAssetCollection *TLinkEnsurePhotoAlbum(NSString **error)
 {
-    if (!NSClassFromString(@"PHPhotoLibrary")) {
-        if (error) *error = @"photos_framework_unavailable";
-        return nil;
-    }
+    if (!TLinkPhotoLibraryAuthorized(error)) return nil;
     PHAssetCollection *album = TLinkFetchPhotoAlbum();
     if (album) return album;
 
@@ -2214,20 +2251,23 @@ static NSData *TLinkSaveImagePathToPhotoAlbum(NSString *path)
 
 static NSData *TLinkClearPhotoAlbum(void)
 {
+    NSString *err = nil;
+    if (!TLinkPhotoLibraryAuthorized(&err)) return TLinkError(err ?: @"photo_permission_unavailable");
     PHAssetCollection *album = TLinkFetchPhotoAlbum();
     if (!album) return TLinkSuccess(@"album_not_found;;0");
     PHFetchResult<PHAsset *> *assets = [PHAsset fetchAssetsInAssetCollection:album options:nil];
     NSUInteger count = assets.count;
     if (count == 0) return TLinkSuccess(@"album_empty;;0");
 
-    NSError *deleteError = nil;
+    NSError *removeError = nil;
     [[PHPhotoLibrary sharedPhotoLibrary] performChangesAndWait:^{
-        [PHAssetChangeRequest deleteAssets:assets];
-    } error:&deleteError];
-    if (deleteError) {
-        return TLinkError([NSString stringWithFormat:@"clear_album_failed %@", deleteError.localizedDescription ?: @"unknown"]);
+        PHAssetCollectionChangeRequest *albumRequest = [PHAssetCollectionChangeRequest changeRequestForAssetCollection:album];
+        [albumRequest removeAssets:assets];
+    } error:&removeError];
+    if (removeError) {
+        return TLinkError([NSString stringWithFormat:@"clear_album_failed %@", removeError.localizedDescription ?: @"unknown"]);
     }
-    return TLinkSuccess([NSString stringWithFormat:@"album_cleared;;%lu", (unsigned long)count]);
+    return TLinkSuccess([NSString stringWithFormat:@"album_cleared;;%lu;;removed_from_album_only", (unsigned long)count]);
 }
 
 static NSData *TLinkHandleScreenshot(NSString *body)
