@@ -194,9 +194,11 @@ jobs:
           grep -q '90shell' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkHandleTesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseractOCRCompat' stream-app/streamd/POCSocketServer.mm
-          grep -q 'vision_fallback_task91_tiled' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vision_fallback_task91_tiled_region_limited' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkAppendVisionOCRTextForRegion' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_vision_fallback_exception' stream-app/streamd/POCSocketServer.mm
+          grep -q 'tesseract_vision_fallback_region_too_large' stream-app/streamd/POCSocketServer.mm
+          grep -q 'ocr_region_too_large' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleConnectivityTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleBluetoothConnectivity' stream-app/streamd/POCSocketServer.mm
           grep -q 'setSharedInstanceQueue' stream-app/streamd/POCSocketServer.mm
