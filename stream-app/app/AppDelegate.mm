@@ -77,6 +77,7 @@
     self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
     [self ensureStreamServiceForReason:@"launch" background:NO];
     [self startAppSideOCRServer];
+    [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -87,6 +88,7 @@
     (void)application;
     [self ensureStreamServiceForReason:@"active" background:NO];
     [self startAppSideOCRServer];
+    [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
 }
 
@@ -450,6 +452,9 @@
 
 - (NSString *)performClipboardBody:(NSString *)body
 {
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) {
+        return @"-1;;app_clipboard_requires_foreground\r\n";
+    }
     NSArray<NSString *> *parts = [body ?: @"" componentsSeparatedByString:@";;"];
     if (parts.count < 1) return @"-1;;app_clipboard_missing_subtask\r\n";
     int subtask = [parts[0] intValue];
@@ -462,6 +467,11 @@
         if (parts.count < 2) return @"-1;;app_clipboard_save_text_missing_content\r\n";
         NSString *text = [[parts subarrayWithRange:NSMakeRange(1, parts.count - 1)] componentsJoinedByString:@";;"];
         pasteboard.string = text ?: @"";
+        NSString *stored = pasteboard.string ?: @"";
+        if (![stored isEqualToString:text ?: @""]) {
+            return [NSString stringWithFormat:@"-1;;app_clipboard_text_verify_failed expected=%lu actual=%lu\r\n",
+                    (unsigned long)text.length, (unsigned long)stored.length];
+        }
         return @"0\r\n";
     }
     if (subtask == 8) {
@@ -598,10 +608,10 @@
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(6012);
+        addr.sin_port = htons(6013);
         inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
         if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-            NSLog(@"[StreamControl][Clipboard] bind 127.0.0.1:6012 failed errno=%d", errno);
+            NSLog(@"[StreamControl][Clipboard] bind 127.0.0.1:6013 failed errno=%d", errno);
             close(server);
             self.clipboardServerStarted = NO;
             return;
@@ -612,7 +622,7 @@
             self.clipboardServerStarted = NO;
             return;
         }
-        NSLog(@"[StreamControl][Clipboard] app-side clipboard server listening on 127.0.0.1:6012");
+        NSLog(@"[StreamControl][Clipboard] app-side clipboard server listening on 127.0.0.1:6013");
 
         while (1) {
             int client = accept(server, NULL, NULL);
@@ -620,6 +630,10 @@
                 if (errno == EINTR) continue;
                 break;
             }
+#ifdef SO_NOSIGPIPE
+            int noSigPipe = 1;
+            setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+#endif
             [self handleAppSideClipboardClient:client];
         }
         close(server);

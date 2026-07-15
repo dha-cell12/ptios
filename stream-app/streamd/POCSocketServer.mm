@@ -3780,6 +3780,7 @@ static NSData *TLinkHandleFrameBatch(NSString *body)
 }
 
 static NSData *TLinkRunAppSideClipboard(NSString *body);
+static NSData *TLinkRunForegroundClipboardBroker(NSString *body);
 
 static NSData *TLinkHandleKeyboard(NSString *body)
 {
@@ -3917,7 +3918,7 @@ static NSData *TLinkReadSocketResponse(int fd)
     return response;
 }
 
-static NSData *TLinkRunAppSideClipboard(NSString *body)
+static NSData *TLinkRunClipboardService(NSString *body, uint16_t port, int timeoutMs)
 {
     NSData *bodyData = [(body ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
     NSString *encodedBody = bodyData ? [bodyData base64EncodedStringWithOptions:0] : @"";
@@ -3931,22 +3932,21 @@ static NSData *TLinkRunAppSideClipboard(NSString *body)
     setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
 #endif
     struct timeval timeout;
-    // clipboardd normally responds in a few milliseconds. A short deadline
-    // keeps the serial legacy task queue healthy if the companion dies.
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+    if (timeoutMs < 100) timeoutMs = 100;
+    timeout.tv_sec = timeoutMs / 1000;
+    timeout.tv_usec = (timeoutMs % 1000) * 1000;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(6012);
+    addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         int connectErrno = errno;
         close(sock);
-        return TLinkError([NSString stringWithFormat:@"clipboard_service_unavailable errno=%d restart_StreamControl_once", connectErrno]);
+        return TLinkError([NSString stringWithFormat:@"clipboard_service_unavailable port=%u errno=%d", port, connectErrno]);
     }
 
     NSString *line = [NSString stringWithFormat:@"1;;%@\n", encodedBody ?: @""];
@@ -3960,6 +3960,32 @@ static NSData *TLinkRunAppSideClipboard(NSString *body)
     close(sock);
     if (response.length == 0) return TLinkError(@"clipboard_service_timeout_or_empty_response port_6000_preserved");
     return response;
+}
+
+static BOOL TLinkClipboardResponseSucceeded(NSData *response)
+{
+    NSString *value = TLinkResponseStringFromData(response);
+    return [value isEqualToString:@"0"] || [value hasPrefix:@"0;;"];
+}
+
+static NSData *TLinkRunAppSideClipboard(NSString *body)
+{
+    // Task 249 reports the selected mode and preserves the daemon details as
+    // base64 so nested legacy delimiters cannot corrupt the response shape.
+    if ([body isEqualToString:@"9"]) {
+        NSData *daemonResponse = TLinkRunClipboardService(body, 6012, 500);
+        NSString *daemonText = TLinkResponseStringFromData(daemonResponse) ?: @"";
+        NSData *diagnosticData = [daemonText dataUsingEncoding:NSUTF8StringEncoding];
+        NSString *diagnosticB64 = [diagnosticData base64EncodedStringWithOptions:0] ?: @"";
+        return TLinkSuccess([NSString stringWithFormat:@"clipboard_foreground_broker_ready;;app_port=6013;;daemon_port=6012;;daemon_direct_write=0;;daemon_diag_b64=%@",
+                             diagnosticB64]);
+    }
+
+    // This succeeds without an app switch while StreamControl is already active.
+    NSData *appResponse = TLinkRunClipboardService(body, 6013, 250);
+    if (TLinkClipboardResponseSucceeded(appResponse)) return appResponse;
+
+    return TLinkRunForegroundClipboardBroker(body);
 }
 
 static NSData *TLinkRunAppSideVisionOCR(NSData *pngData, CGRect region, int levelValue)
@@ -4894,6 +4920,53 @@ static int TLinkRunPrivhelperOpenBundle(NSString *bundleId)
     return TLinkRunPrivhelper(@[@"--open-bundle", bundleId], 3000);
 }
 
+static NSData *TLinkRunForegroundClipboardBroker(NSString *body)
+{
+    static NSString *const streamControlBundleId = @"com.tlinkauto.streamcontrol";
+
+    NSString *restoreBundleId = TLinkSBSCopyFrontmostBundleId();
+    if (restoreBundleId.length == 0 && sTLinkLastFrontmostBundleId.length > 0) {
+        uint64_t now = TLinkNowMs();
+        uint64_t age = (sTLinkLastFrontmostAtMs > 0 && now >= sTLinkLastFrontmostAtMs)
+            ? now - sTLinkLastFrontmostAtMs
+            : UINT64_MAX;
+        if (age <= 60000) restoreBundleId = sTLinkLastFrontmostBundleId;
+    }
+    if ([restoreBundleId isEqualToString:streamControlBundleId] ||
+        [restoreBundleId isEqualToString:@"com.apple.springboard"]) {
+        restoreBundleId = nil;
+    }
+
+    int launchExit = TLinkRunPrivhelper(@[@"--open-bundle", streamControlBundleId], 1500);
+    if (launchExit != 0) {
+        return TLinkError([NSString stringWithFormat:@"clipboard_foreground_broker_launch_failed exit=%d", launchExit]);
+    }
+
+    NSData *lastResponse = nil;
+    for (int attempt = 0; attempt < 6; attempt++) {
+        usleep(attempt == 0 ? 200 * 1000 : 120 * 1000);
+        lastResponse = TLinkRunClipboardService(body, 6013, 300);
+        if (!TLinkClipboardResponseSucceeded(lastResponse)) continue;
+
+        NSString *bundleToRestore = [restoreBundleId copy];
+        if (bundleToRestore.length > 0) {
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                usleep(250 * 1000);
+                int restoreExit = TLinkRunPrivhelperOpenBundle(bundleToRestore);
+                POCLogf("clipboard-broker: restore bundle=%s exit=%d",
+                        bundleToRestore.UTF8String ?: "", restoreExit);
+            });
+        }
+        POCLogf("clipboard-broker: app-side request succeeded restore=%s",
+                restoreBundleId.UTF8String ?: "");
+        return lastResponse;
+    }
+
+    NSString *lastText = TLinkResponseStringFromData(lastResponse);
+    return TLinkError([NSString stringWithFormat:@"clipboard_foreground_broker_failed %@",
+                       lastText.length > 0 ? lastText : @"app_bridge_no_response"]);
+}
+
 static int TLinkRunPrivhelperKillBundle(NSString *bundleId)
 {
     if (bundleId.length == 0) return -100;
@@ -5123,8 +5196,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"frame": @(YES),
         @"keyboardClipboard": @(YES),
         @"clipboardImage": @(YES),
-        @"clipboardUIDaemon": @(YES),
-        @"clipboardMode": @"persistent_uidaemon_loopback",
+        @"clipboardUIDaemonDiagnostic": @(YES),
+        @"clipboardDirectWrite": @(NO),
+        @"clipboardForegroundBroker": @(YES),
+        @"clipboardMode": @"foreground_app_bridge_with_daemon_diagnostic",
         @"keyboardMode": @"clipboard_text_image_only",
         @"keyboardInputMode": @"limited_requires_springboard_keyboard_observer",
         @"hardwareKey": @(YES),
@@ -5192,7 +5267,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"shellMode": sTLinkShellTaskEnabled ? @"local_sh_gated_timeout_base64_json" : @"disabled_by_settings",
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
-        @"privhelperMode": @"open_kill_restart_ensure_streamd_clipboardd",
+        @"privhelperMode": @"open_kill_restart_ensure_streamd_clipboardd_foreground_broker",
         @"serviceMode": @"helper_ensure_streamd_best_effort",
     };
     CGSize screen = TLinkScreenPixelSize();
@@ -7061,11 +7136,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardAppSideBridge,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,textInputControl unsupportedTasks=none keyboard=clipboard_text_image_only clipboard=app_side_bridge_foreground keyboardInput=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
-        cap = [cap stringByReplacingOccurrencesOfString:@"clipboardAppSideBridge"
-                                             withString:@"clipboardUIDaemon"];
-        cap = [cap stringByReplacingOccurrencesOfString:@"clipboard=app_side_bridge_foreground"
-                                             withString:@"clipboard=persistent_uidaemon_loopback"];
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemonDiagnostic,clipboardForegroundBroker,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,textInputControl unsupportedTasks=none keyboard=clipboard_text_image_only clipboard=foreground_app_bridge_with_daemon_diagnostic keyboardInput=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
