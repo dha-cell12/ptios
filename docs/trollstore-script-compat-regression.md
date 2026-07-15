@@ -18,7 +18,7 @@ Expected markers:
 - `scriptStorageAPI`
 - `scriptKeyboardAPI`
 - `clipboardImage`
-- `clipboardAppSideBridge`
+- `clipboardUIDaemon`
 - `scriptColorFrameAPI`
 - `scriptImageAPI`
 - `scriptOCRAPI`
@@ -68,10 +68,11 @@ where available:
 Keyboard backend smoke:
 
 ```powershell
-# Open StreamControl.app foreground first so the app-side clipboard bridge on
-# 127.0.0.1:6012 is listening.
+# Open StreamControl.app once after install so privhelper starts persistent
+# clipboardd on 127.0.0.1:6012. The app may then move to background.
 Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 
 # This should save the text to clipboard, then report limited for actual insert:
 Invoke-TLinkTask -HostIP $iphoneIP -Task "241;;hello from tlinkauto"
@@ -84,8 +85,8 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
 - Vision OCR remains deferred; task `91` Tesseract is the stable OCR path.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
 - Keyboard API names are exposed for rootfull script compatibility. TrollStore
-  supports clipboard text and native `UIPasteboard` clipboard images through an
-  app-side bridge, so `StreamControl.app` must be foreground/alive. Insert,
+  supports clipboard text and native `UIPasteboard` clipboard images through
+  persistent `clipboardd`, so `StreamControl.app` does not need to stay foreground. Insert,
   paste, delete, cursor movement, and show/hide keyboard still require the
   rootfull SpringBoard keyboard observer and return `limited_on_trollstore`
   instead of silent success.

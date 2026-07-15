@@ -46,12 +46,13 @@
 
 	<!-- ================================================================ -->
 	<!-- TrollStore root helper. Paths are relative to this Info.plist.    -->
-	<!-- Current scope: ensure/restart/kill streamd, app open/kill/url, -->
+	<!-- Current scope: ensure/restart/kill streamd + clipboardd, app open/kill/url, -->
 	<!-- and best-effort app data clear. Keychain remains deferred.       -->
 	<!-- ================================================================ -->
 	<key>TSRootBinaries</key>
 	<array>
 		<string>privhelper</string>
+		<string>clipboardd</string>
 	</array>
 </dict>
 </plist>

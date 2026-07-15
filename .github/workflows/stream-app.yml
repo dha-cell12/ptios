@@ -55,6 +55,9 @@ jobs:
           test -f stream-app/Makefile
           test -f stream-app/app/Makefile
           test -f stream-app/streamd/Makefile
+          test -f stream-app/clipboardd/Makefile
+          test -f stream-app/clipboardd/main.mm
+          test -f stream-app/clipboardd/entitlements.plist
           test -f stream-app/privhelper/Makefile
           test -f stream-app/privhelper/main.mm
           test -f stream-app/app/TLinkSocketClient.mm
@@ -69,7 +72,9 @@ jobs:
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
           grep -q 'Vision OCR remains deferred' docs/trollstore-runtime-status.md
           grep -q 'privhelper' stream-app/Makefile
+          grep -q 'clipboardd' stream-app/Makefile
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
+          grep -q '<string>clipboardd</string>' stream-app/app/Info.plist
           grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile
           grep -q 'startVisualFeedbackMonitor' stream-app/app/AppDelegate.mm
           grep -q 'showToastOverlayWithMessage' stream-app/app/AppDelegate.mm
@@ -96,7 +101,9 @@ jobs:
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
           grep -q -- '--ensure-streamd' stream-app/privhelper/main.mm
-          grep -q 'privhelper version=5' stream-app/privhelper/main.mm
+          grep -q 'privhelper version=6' stream-app/privhelper/main.mm
+          grep -q 'TLinkEnsureClipboardd' stream-app/privhelper/main.mm
+          grep -q 'clipboardUIDaemon' stream-app/streamd/POCSocketServer.mm
           grep -q -- '--open-bundle' stream-app/privhelper/main.mm
           grep -q -- '--kill-bundle' stream-app/privhelper/main.mm
           grep -q -- '--open-url' stream-app/privhelper/main.mm
@@ -343,6 +350,7 @@ jobs:
           grep 'Payload/StreamControl.app/Info.plist' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/StreamControl' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/streamd' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/clipboardd' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/privhelper' stream-app/packages/StreamControl.tipa.contents.txt
 
           APP="stream-app/app/.theos/_/Applications/StreamControl.app"
@@ -352,12 +360,15 @@ jobs:
           test -d "$APP"
           test -x "$APP/StreamControl"
           test -x "$APP/streamd"
+          test -x "$APP/clipboardd"
           test -x "$APP/privhelper"
 
           echo "--- StreamControl entitlements ---"
           ldid -e "$APP/StreamControl" || true
           echo "--- streamd entitlements ---"
           ldid -e "$APP/streamd" || true
+          echo "--- clipboardd entitlements ---"
+          ldid -e "$APP/clipboardd" || true
           echo "--- privhelper entitlements ---"
           ldid -e "$APP/privhelper" || true
           echo "--- bundle files ---"

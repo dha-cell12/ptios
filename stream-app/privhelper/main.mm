@@ -244,10 +244,14 @@ static BOOL TLinkHelperPidIsAlive(pid_t pid)
     return errno == EPERM;
 }
 
-static NSString *TLinkHelperSendLocalTaskLine(NSString *line, int timeoutSec)
+static NSString *TLinkHelperSendLoopbackLine(NSString *line, uint16_t port, int timeoutSec)
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) return nil;
+#ifdef SO_NOSIGPIPE
+    int noSigPipe = 1;
+    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+#endif
 
     struct timeval tv;
     tv.tv_sec = timeoutSec > 0 ? timeoutSec : 1;
@@ -258,7 +262,7 @@ static NSString *TLinkHelperSendLocalTaskLine(NSString *line, int timeoutSec)
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(6000);
+    addr.sin_port = htons(port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
@@ -285,6 +289,93 @@ static NSString *TLinkHelperSendLocalTaskLine(NSString *line, int timeoutSec)
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 }
 
+static NSString *TLinkHelperSendLocalTaskLine(NSString *line, int timeoutSec)
+{
+    return TLinkHelperSendLoopbackLine(line, 6000, timeoutSec);
+}
+
+static BOOL TLinkHelperProcessHasName(struct kinfo_proc *proc, const char *name)
+{
+    if (!proc || !name) return NO;
+    const char *comm = proc->kp_proc.p_comm;
+    if (comm && strcmp(comm, name) == 0) return YES;
+    char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {0};
+    int got = proc_pidpath(proc->kp_proc.p_pid, pathbuf, sizeof(pathbuf));
+    if (got <= 0) return NO;
+    const char *base = strrchr(pathbuf, '/');
+    base = base ? base + 1 : pathbuf;
+    return strcmp(base, name) == 0;
+}
+
+static void TLinkHelperKillClipboardd(void)
+{
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
+    size_t len = 0;
+    if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0 || len == 0) return;
+    struct kinfo_proc *procs = (struct kinfo_proc *)calloc(1, len);
+    if (!procs) return;
+    if (sysctl(mib, 4, procs, &len, NULL, 0) != 0) {
+        free(procs);
+        return;
+    }
+    int count = (int)(len / sizeof(struct kinfo_proc));
+    for (int i = 0; i < count; i++) {
+        pid_t pid = procs[i].kp_proc.p_pid;
+        if (pid <= 1 || pid == getpid()) continue;
+        if (TLinkHelperProcessHasName(&procs[i], "clipboardd")) kill(pid, SIGKILL);
+    }
+    free(procs);
+    usleep(200000);
+}
+
+static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
+{
+    NSString *clipboarddPath = [[streamdPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"clipboardd"];
+    if (![[clipboarddPath lastPathComponent] isEqualToString:@"clipboardd"] ||
+        ![clipboarddPath hasSuffix:@"/StreamControl.app/clipboardd"] ||
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:clipboarddPath]) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: invalid path=%@", clipboarddPath ?: @""]);
+        return 50;
+    }
+
+    NSString *probe = TLinkHelperSendLoopbackLine(@"1;;OQ==\n", 6012, 1);
+    if ([probe hasPrefix:@"0;;clipboardd_ready"] && !replaceExisting) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: already responding %@",
+                        [probe stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+        return 0;
+    }
+
+    TLinkHelperKillClipboardd();
+    const char *path = [clipboarddPath fileSystemRepresentation];
+    char *arg0 = strdup(path);
+    char *arg1 = strdup("--daemon");
+    if (!arg0 || !arg1) {
+        free(arg0); free(arg1);
+        return 51;
+    }
+    char *const argv[] = { arg0, arg1, NULL };
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, path, NULL, NULL, argv, environ);
+    free(arg0); free(arg1);
+    if (rc != 0 || pid <= 0) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: spawn failed rc=%d path=%@", rc, clipboarddPath]);
+        return 52;
+    }
+
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: spawned pid=%d uid=%d euid=%d", pid, getuid(), geteuid()]);
+    for (int i = 0; i < 12; i++) {
+        usleep(250000);
+        probe = TLinkHelperSendLoopbackLine(@"1;;OQ==\n", 6012, 1);
+        if ([probe hasPrefix:@"0;;clipboardd_ready"]) {
+            TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: probe ok %@",
+                            [probe stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+            return 0;
+        }
+    }
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: pid=%d did not become ready", pid]);
+    return 53;
+}
+
 static BOOL TLinkHelperStreamdPathAllowed(NSString *streamdPath)
 {
     NSString *normalized = TLinkHelperNormalizedPath(streamdPath);
@@ -304,6 +395,10 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
         TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: not executable path=%@", normalized]);
         return 41;
     }
+
+    int clipboardExit = TLinkEnsureClipboardd(normalized, replaceExisting);
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: clipboardd exit=%d replace=%d",
+                    clipboardExit, replaceExisting ? 1 : 0]);
 
     NSString *before = TLinkHelperSendLocalTaskLine(@"97\n", 1);
     if (before.length > 0 && !replaceExisting) {
@@ -639,7 +734,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=5 scope=ensure-streamd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data");
+            TLinkHelperLog(@"privhelper version=6 scope=ensure-streamd,ensure-clipboardd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data");
             return 0;
         }
 

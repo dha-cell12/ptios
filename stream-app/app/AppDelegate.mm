@@ -77,7 +77,6 @@
     self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
     [self ensureStreamServiceForReason:@"launch" background:NO];
     [self startAppSideOCRServer];
-    [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -88,7 +87,6 @@
     (void)application;
     [self ensureStreamServiceForReason:@"active" background:NO];
     [self startAppSideOCRServer];
-    [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
 }
 

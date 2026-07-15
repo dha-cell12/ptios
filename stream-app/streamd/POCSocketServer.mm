@@ -3829,6 +3829,9 @@ static NSData *TLinkHandleKeyboard(NSString *body)
         if (path.length == 0) return TLinkError(@"clipboard image empty file path");
         return TLinkRunAppSideClipboard([NSString stringWithFormat:@"8;;file;;%@", path]);
     }
+    if (subtask == 9) {
+        return TLinkRunAppSideClipboard(@"9");
+    }
     return TLinkUnsupported(24, @"limited_on_trollstore unknown_keyboard_subtask");
 }
 
@@ -3921,10 +3924,16 @@ static NSData *TLinkRunAppSideClipboard(NSString *body)
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        return TLinkError([NSString stringWithFormat:@"app_clipboard_bridge_socket_failed errno=%d", errno]);
+        return TLinkError([NSString stringWithFormat:@"clipboard_service_socket_failed errno=%d", errno]);
     }
+#ifdef SO_NOSIGPIPE
+    int noSigPipe = 1;
+    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+#endif
     struct timeval timeout;
-    timeout.tv_sec = 3;
+    // clipboardd normally responds in a few milliseconds. A short deadline
+    // keeps the serial legacy task queue healthy if the companion dies.
+    timeout.tv_sec = 1;
     timeout.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
@@ -3937,19 +3946,19 @@ static NSData *TLinkRunAppSideClipboard(NSString *body)
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         int connectErrno = errno;
         close(sock);
-        return TLinkError([NSString stringWithFormat:@"app_clipboard_bridge_unavailable errno=%d open_StreamControl_foreground", connectErrno]);
+        return TLinkError([NSString stringWithFormat:@"clipboard_service_unavailable errno=%d restart_StreamControl_once", connectErrno]);
     }
 
     NSString *line = [NSString stringWithFormat:@"1;;%@\n", encodedBody ?: @""];
     NSData *lineData = [line dataUsingEncoding:NSUTF8StringEncoding];
     if (!TLinkWriteAllToFd(sock, lineData.bytes, lineData.length)) {
         close(sock);
-        return TLinkError(@"app_clipboard_bridge_request_write_failed");
+        return TLinkError(@"clipboard_service_request_write_failed port_6000_preserved");
     }
 
     NSData *response = TLinkReadSocketResponse(sock);
     close(sock);
-    if (response.length == 0) return TLinkError(@"app_clipboard_bridge_empty_response");
+    if (response.length == 0) return TLinkError(@"clipboard_service_timeout_or_empty_response port_6000_preserved");
     return response;
 }
 
@@ -5114,7 +5123,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"frame": @(YES),
         @"keyboardClipboard": @(YES),
         @"clipboardImage": @(YES),
-        @"clipboardAppSideBridge": @(YES),
+        @"clipboardUIDaemon": @(YES),
+        @"clipboardMode": @"persistent_uidaemon_loopback",
         @"keyboardMode": @"clipboard_text_image_only",
         @"keyboardInputMode": @"limited_requires_springboard_keyboard_observer",
         @"hardwareKey": @(YES),
@@ -5182,7 +5192,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"shellMode": sTLinkShellTaskEnabled ? @"local_sh_gated_timeout_base64_json" : @"disabled_by_settings",
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
-        @"privhelperMode": @"open_kill_restart_ensure_streamd",
+        @"privhelperMode": @"open_kill_restart_ensure_streamd_clipboardd",
         @"serviceMode": @"helper_ensure_streamd_best_effort",
     };
     CGSize screen = TLinkScreenPixelSize();
@@ -7052,6 +7062,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 97) {
         NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardAppSideBridge,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,textInputControl unsupportedTasks=none keyboard=clipboard_text_image_only clipboard=app_side_bridge_foreground keyboardInput=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
+        cap = [cap stringByReplacingOccurrencesOfString:@"clipboardAppSideBridge"
+                                             withString:@"clipboardUIDaemon"];
+        cap = [cap stringByReplacingOccurrencesOfString:@"clipboard=app_side_bridge_foreground"
+                                             withString:@"clipboard=persistent_uidaemon_loopback"];
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
