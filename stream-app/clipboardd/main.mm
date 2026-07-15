@@ -191,30 +191,26 @@ static void TLinkScheduleCFUserNotification(NSDictionary *payload, NSString *rea
         if (duration > 30.0) duration = 30.0;
 
         SInt32 result = -1;
-        if ([kind isEqualToString:@"dialog"] || [kind isEqualToString:@"alert"]) {
-            TLinkCFUserNotificationDisplayAlertFn displayAlert =
-                (TLinkCFUserNotificationDisplayAlertFn)dlsym(RTLD_DEFAULT, "CFUserNotificationDisplayAlert");
-            if (displayAlert) {
-                CFOptionFlags responseFlags = 0;
-                result = displayAlert(duration,
-                                      0,
-                                      NULL,
-                                      NULL,
-                                      NULL,
-                                      (__bridge CFStringRef)(title.length > 0 ? title : @"TLinkauto"),
-                                      (__bridge CFStringRef)message,
-                                      (__bridge CFStringRef)okTitle,
-                                      [kind isEqualToString:@"dialog"] ? (__bridge CFStringRef)cancelTitle : NULL,
-                                      NULL,
-                                      &responseFlags);
-                TLinkClipboardLog([NSString stringWithFormat:@"CFUserNotification alert kind=%@ result=%d response=%lu reason=%@",
-                                   kind, (int)result, (unsigned long)responseFlags, reason ?: @"direct"]);
-            } else {
-                sTLinkLastBackgroundVisualResult = @"cfusernotification_alert_symbol_unavailable";
-                TLinkClipboardLog(@"CFUserNotificationDisplayAlert unavailable");
-                return;
-            }
-        } else {
+        TLinkCFUserNotificationDisplayAlertFn displayAlert =
+            (TLinkCFUserNotificationDisplayAlertFn)dlsym(RTLD_DEFAULT, "CFUserNotificationDisplayAlert");
+        if (displayAlert) {
+            BOOL toastMode = [kind isEqualToString:@"toast"];
+            CFOptionFlags responseFlags = 0;
+            CFOptionFlags flags = toastMode ? kCFUserNotificationNoDefaultButtonFlag : 0;
+            result = displayAlert(duration,
+                                  flags,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  (__bridge CFStringRef)(title.length > 0 ? title : @"TLinkauto"),
+                                  (__bridge CFStringRef)message,
+                                  toastMode ? NULL : (__bridge CFStringRef)okTitle,
+                                  [kind isEqualToString:@"dialog"] ? (__bridge CFStringRef)cancelTitle : NULL,
+                                  NULL,
+                                  &responseFlags);
+            TLinkClipboardLog([NSString stringWithFormat:@"CFUserNotification alert kind=%@ no_button=%d result=%d response=%lu reason=%@",
+                               kind, toastMode ? 1 : 0, (int)result, (unsigned long)responseFlags, reason ?: @"direct"]);
+        } else if ([kind isEqualToString:@"toast"]) {
             TLinkCFUserNotificationDisplayNoticeFn displayNotice =
                 (TLinkCFUserNotificationDisplayNoticeFn)dlsym(RTLD_DEFAULT, "CFUserNotificationDisplayNotice");
             if (displayNotice) {
@@ -233,8 +229,12 @@ static void TLinkScheduleCFUserNotification(NSDictionary *payload, NSString *rea
                 TLinkClipboardLog(@"CFUserNotificationDisplayNotice unavailable");
                 return;
             }
+        } else {
+            sTLinkLastBackgroundVisualResult = @"cfusernotification_alert_symbol_unavailable";
+            TLinkClipboardLog(@"CFUserNotificationDisplayAlert unavailable");
+            return;
         }
-        sTLinkLastBackgroundVisualResult = [NSString stringWithFormat:@"cfusernotification_result_%d", (int)result];
+        sTLinkLastBackgroundVisualResult = [NSString stringWithFormat:@"cfusernotification_%@_result_%d", kind, (int)result];
     });
 }
 
@@ -362,7 +362,7 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=8;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;background_visual_mode=cfusernotification_system_alert;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=9;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;background_visual_mode=cfusernotification_alert_all_kinds;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), (long)state, (long)systemState,
                 sTLinkClipboardWriteVerified ? 1 : 0,
                 sTLinkNotificationCenterMode ?: @"unknown",
