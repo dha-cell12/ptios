@@ -39,12 +39,14 @@ extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 // ---------------------------------------------------------------------------
 
 static const NSTimeInterval kSCRespawnThrottle = 3.0;
+static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=12";
 
 @implementation SCStreamSupervisor {
     dispatch_queue_t _queue;
     pid_t _pid;
     BOOL _running;
     NSDate *_lastSpawn;
+    BOOL _requiresReplacement;
 }
 
 - (instancetype)init
@@ -54,6 +56,7 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
         _queue = dispatch_queue_create("com.tlinkauto.streamcontrol.supervisor", DISPATCH_QUEUE_SERIAL);
         _pid = -1;
         _running = NO;
+        _requiresReplacement = NO;
         _autoRespawn = YES;
     }
     return self;
@@ -208,13 +211,41 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
         [self emitLog:[NSString stringWithFormat:@"supervisor: %@ probe tcp/6000 no response", reason ?: @"service"]];
         self->_running = NO;
         self->_pid = -1;
+        self->_requiresReplacement = NO;
         [self emitRunning:NO pid:-1];
         return NO;
     }
 
     pid_t pid = [self streamdPidFromHelloStatusLocked];
+    BOOL versionMatches = [status containsString:kSCRequiredStreamdServiceMarker];
+    BOOL pathMatches = YES;
+    NSString *runningPath = @"";
+    if (pid > 0) {
+        char pathBuffer[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        int pathLength = proc_pidpath(pid, pathBuffer, sizeof(pathBuffer));
+        if (pathLength > 0) {
+            runningPath = [NSString stringWithUTF8String:pathBuffer] ?: @"";
+            NSString *expectedPath = [[[self streamdPath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
+            NSString *actualPath = [[runningPath stringByStandardizingPath] stringByResolvingSymlinksInPath];
+            pathMatches = expectedPath.length > 0 && [actualPath isEqualToString:expectedPath];
+        }
+    }
+    if (!versionMatches || !pathMatches) {
+        self->_running = NO;
+        self->_pid = pid > 0 ? pid : -1;
+        self->_requiresReplacement = YES;
+        [self emitRunning:NO pid:self->_pid];
+        [self emitLog:[NSString stringWithFormat:@"supervisor: %@ found stale streamd pid=%d version=%@ path=%@; replacement required",
+                       reason ?: @"service",
+                       self->_pid,
+                       versionMatches ? @"current" : @"outdated",
+                       runningPath.length > 0 ? runningPath : @"unknown"]];
+        return NO;
+    }
+
     self->_running = YES;
     self->_pid = pid > 0 ? pid : self->_pid;
+    self->_requiresReplacement = NO;
     [self emitRunning:YES pid:self->_pid];
     [self emitLog:[NSString stringWithFormat:@"supervisor: %@ probe ok pid=%d -> %@",
                    reason ?: @"service",
@@ -231,8 +262,9 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
         return YES;
     }
 
-    int exitCode = [self runPrivhelperEnsureStreamdLocked:replaceExisting];
-    [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper ensure exit=%d replace=%d", exitCode, replaceExisting ? 1 : 0]];
+    BOOL shouldReplace = replaceExisting || self->_requiresReplacement;
+    int exitCode = [self runPrivhelperEnsureStreamdLocked:shouldReplace];
+    [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper ensure exit=%d replace=%d", exitCode, shouldReplace ? 1 : 0]];
 
     for (int i = 0; i < 8; i++) {
         if ([self probeTaskServerAndUpdateLocked:reason ?: @"ensure"]) return YES;

@@ -125,6 +125,9 @@ jobs:
           grep -q 'Restart streamd' stream-app/app/ViewController.mm
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
+          grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=12' stream-app/app/StreamSupervisor.mm
+          grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
@@ -150,6 +153,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
+          grep -q 'serviceVersion=12' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @12' stream-app/streamd/POCSocketServer.mm
           grep -q '../../shared/TLinkJSFileHandle.mm' stream-app/streamd/Makefile
           grep -q 'TLinkJSFileHandleCreateJSObject' shared/TLinkJSFileHandle.mm
           grep -Fq 'device[@"openFile"]' tlinkauto-jsd/TLinkJSHelperServer.mm
