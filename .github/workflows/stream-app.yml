@@ -124,8 +124,12 @@ jobs:
           grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
           grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
           grep -q 'kTCCServicePasteboard' stream-app/clipboardd/entitlements.plist
-          grep -q 'version=9' stream-app/clipboardd/main.mm
+          grep -q 'version=10' stream-app/clipboardd/main.mm
           grep -q 'kCFUserNotificationNoDefaultButtonFlag' stream-app/clipboardd/main.mm
+          grep -q 'TLinkShowGlobalToastOverlay' stream-app/clipboardd/main.mm
+          grep -q 'TLinkToastWindow' stream-app/clipboardd/main.mm
+          grep -q 'toast_overlay_visible' stream-app/clipboardd/main.mm
+          grep -q 'QuartzCore' stream-app/clipboardd/Makefile
           grep -q 'initWithBundleIdentifier' stream-app/clipboardd/main.mm
           grep -q 'CFUserNotificationDisplayNotice' stream-app/clipboardd/main.mm
           grep -q 'CFUserNotificationDisplayAlert' stream-app/clipboardd/main.mm
@@ -135,6 +139,9 @@ jobs:
           grep -q 'background_ui_bridge=1' stream-app/clipboardd/main.mm
           grep -q 'app_notification_auth' stream-app/clipboardd/main.mm
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
+          grep -q 'backgroundPositionedToastOverlay' stream-app/streamd/POCSocketServer.mm
+          grep -q 'containsString:@"version=10"' stream-app/streamd/POCSocketServer.mm
+          grep -q 'containsString:@"version=10"' stream-app/privhelper/main.mm
           grep -q 'app_foreground_heartbeat' stream-app/app/AppDelegate.mm
           grep -q 'Notification Access' stream-app/app/SettingsViewController.mm
           grep -q 'clipboardUIDaemon' stream-app/streamd/POCSocketServer.mm
