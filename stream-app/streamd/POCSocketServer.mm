@@ -1131,7 +1131,9 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
                 return @{@"ok": @NO, @"code": @-1, @"error": @"batch commands must be strings or objects"};
             }
             NSDictionary *dict = (NSDictionary *)command;
-            NSString *type = [[dict[@"type"] ?: dict[@"kind"] ?: @"tap"] description].lowercaseString;
+            id rawType = dict[@"type"];
+            if (!rawType || rawType == (id)kCFNull) rawType = dict[@"kind"];
+            NSString *type = [[rawType ? rawType : @"tap"] description].lowercaseString;
             if ([type isEqualToString:@"tap"]) {
                 [wire addObject:[NSString stringWithFormat:@"62%.0f;;%.0f;;%d",
                                  [dict[@"x"] doubleValue],
