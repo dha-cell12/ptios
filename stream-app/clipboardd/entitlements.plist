@@ -27,6 +27,21 @@
 	<true/>
 	<key>com.apple.springboard.CFUserNotification</key>
 	<true/>
+
+	<!-- Background system-pasteboard access. These are the relevant private
+	     entitlements used by a working TrollStore automation runtime. -->
+	<key>com.apple.Pasteboard.background-access</key>
+	<true/>
+	<key>com.apple.Pasteboard.originating-bundle-id-query</key>
+	<true/>
+	<key>com.apple.Pasteboard.trigger-janitor</key>
+	<true/>
+	<key>com.apple.Pasteboard.paste-unchecked</key>
+	<true/>
+	<key>com.apple.private.tcc.allow</key>
+	<array>
+		<string>kTCCServicePasteboard</string>
+	</array>
 	<key>com.apple.security.exception.mach-lookup.global-name</key>
 	<array>
 		<string>com.apple.backboard.hid.services</string>

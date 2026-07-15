@@ -18,7 +18,8 @@ Expected markers:
 - `scriptStorageAPI`
 - `scriptKeyboardAPI`
 - `clipboardImage`
-- `clipboardUIDaemonDiagnostic`
+- `clipboardUIDaemon`
+- `clipboardBackgroundEntitlement`
 - `clipboardForegroundBroker`
 - `scriptColorFrameAPI`
 - `scriptImageAPI`
@@ -69,8 +70,8 @@ where available:
 Keyboard backend smoke:
 
 ```powershell
-# Open StreamControl.app once after install. clipboardd on 6012 is diagnostic;
-# streamd auto-foregrounds the app-side bridge on 6013 when direct access fails.
+# Open StreamControl.app once after install so privhelper replaces clipboardd v3
+# with entitled clipboardd v4 on 6012. Port 6013 is fallback only.
 Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
@@ -81,22 +82,21 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "244;;5"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
 ```
 
-Task `249` should contain `clipboard_foreground_broker_ready`, `app_port=6013`,
-and `daemon_direct_write=0`. A successful task `247` should return `0`; task
+Task `249` should contain `clipboard_backend_ready`, `version=4` in its decoded
+diagnostic, and `daemon_direct_write=1` after a successful task `247`. Task
 `246` should then return `0;;hello from tlinkauto`. When another app is active,
-a short switch to StreamControl is expected. Automatic restore is best-effort
-and requires a frontmost cache no older than 60 seconds.
+StreamControl should not appear. A short app switch means the daemon entitlement
+was ignored and the foreground fallback ran.
 
 ## Known Limits
 
 - Vision OCR remains deferred; task `91` Tesseract is the stable OCR path.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
-- Keyboard API names are exposed for rootfull script compatibility. On this iOS
-  target, pasteboardd rejects writes from the background UIDaemon even after
-  changing its effective UID. The runtime therefore opens `StreamControl.app`
-  briefly, performs the operation through its foreground bridge on port `6013`,
-  and restores a recently cached foreground app when available. This may cause a
-  short visible app switch. Insert, paste, delete, cursor movement, and show/hide keyboard still require the
+- Keyboard API names are exposed for rootfull script compatibility. The v3
+  UIDaemon failed because it lacked the private background Pasteboard entitlement,
+  not because background clipboard access is categorically impossible. Version 4
+  adds the entitlement set and keeps the foreground bridge only as a verified
+  fallback. Insert, paste, delete, cursor movement, and show/hide keyboard still require the
   rootfull SpringBoard keyboard observer and return `limited_on_trollstore`
   instead of silent success.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.

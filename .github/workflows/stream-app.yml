@@ -103,6 +103,10 @@ jobs:
           grep -q -- '--ensure-streamd' stream-app/privhelper/main.mm
           grep -q 'privhelper version=6' stream-app/privhelper/main.mm
           grep -q 'TLinkEnsureClipboardd' stream-app/privhelper/main.mm
+          grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
+          grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
+          grep -q 'kTCCServicePasteboard' stream-app/clipboardd/entitlements.plist
+          grep -q 'version=4' stream-app/clipboardd/main.mm
           grep -q 'clipboardUIDaemon' stream-app/streamd/POCSocketServer.mm
           grep -q 'clipboardForegroundBroker' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkRunForegroundClipboardBroker' stream-app/streamd/POCSocketServer.mm

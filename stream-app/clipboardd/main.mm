@@ -115,6 +115,8 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         NSString *type = TLinkClipboardImageType(imageData);
         if (!type.length) return @"-1;;clipboardd_image_unsupported_format\r\n";
         pasteboard.items = @[@{type: imageData}];
+        if (pasteboard.items.count == 0) return @"-1;;clipboardd_image_verify_failed\r\n";
+        sTLinkClipboardWriteVerified = YES;
         return [NSString stringWithFormat:@"0;;clipboard_image_data;;%@;;%lu\r\n",
                 type, (unsigned long)imageData.length];
     }
@@ -124,7 +126,7 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=3;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=4;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1\r\n",
                 getpid(), getuid(), geteuid(), (long)state, (long)systemState, sTLinkClipboardWriteVerified ? 1 : 0];
     }
         return @"-1;;clipboardd_unsupported_subtask\r\n";
