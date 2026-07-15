@@ -145,6 +145,9 @@ JSExportAs(setTimer,
 JSExportAs(writeText,
 - (NSDictionary *)writeText:(NSString *)path text:(NSString *)text
 );
+JSExportAs(openFile,
+- (JSValue *)openFile:(NSString *)path mode:(NSString *)mode
+);
 - (NSDictionary *)readJSON:(NSString *)path;
 JSExportAs(writeJSON,
 - (NSDictionary *)writeJSON:(NSString *)path value:(JSValue *)value
@@ -158,6 +161,7 @@ JSExportAs(writeJSON,
 
 @interface TLinkautoDeviceBridge : NSObject <TLinkautoDeviceJSExport>
 @property(nonatomic, weak) id runtime;
+- (void)closeOpenFiles;
 @end
 
 #endif

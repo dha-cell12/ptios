@@ -4,10 +4,14 @@ on:
   push:
     paths:
       - 'stream-app/**'
+      - 'shared/**'
+      - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
     paths:
       - 'stream-app/**'
+      - 'shared/**'
+      - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
 
@@ -55,6 +59,11 @@ jobs:
           test -f stream-app/Makefile
           test -f stream-app/app/Makefile
           test -f stream-app/streamd/Makefile
+          test -f shared/TLinkJSFileHandle.h
+          test -f shared/TLinkJSFileHandle.mm
+          test -f tlinkauto-jsd/Makefile
+          test -f tlinkauto-jsd/TLinkJSHelperServer.mm
+          test -f pccontrol/jsruntime/TLinkautoDeviceBridge.h
           test -f stream-app/clipboardd/Makefile
           test -f stream-app/clipboardd/main.mm
           test -f stream-app/clipboardd/entitlements.plist
@@ -73,6 +82,7 @@ jobs:
           test -f 'stream-app/app/CompatibilityExamples/04 Screenshot Image.js'
           test -f 'stream-app/app/CompatibilityExamples/05 OCR.js'
           test -f 'stream-app/app/CompatibilityExamples/06 App Process Shell.js'
+          test -f 'stream-app/app/CompatibilityExamples/07 File Handle.js'
           test -f docs/trollstore-runtime-status.md
           grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
@@ -106,6 +116,7 @@ jobs:
           grep -q 'CompatibilityExamples' stream-app/Makefile
           grep -q 'device.captureFrame' 'stream-app/app/CompatibilityExamples/03 Color Frame.js'
           grep -q 'device.ocr' 'stream-app/app/CompatibilityExamples/05 OCR.js'
+          grep -q 'device.openFile' 'stream-app/app/CompatibilityExamples/01 Runtime Storage.js'
           for script in stream-app/app/CompatibilityExamples/*.js; do
             node --check "$script"
           done
@@ -124,12 +135,10 @@ jobs:
           grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
           grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
           grep -q 'kTCCServicePasteboard' stream-app/clipboardd/entitlements.plist
-          grep -q 'version=10' stream-app/clipboardd/main.mm
+          grep -q 'version=11' stream-app/clipboardd/main.mm
           grep -q 'kCFUserNotificationNoDefaultButtonFlag' stream-app/clipboardd/main.mm
-          grep -q 'TLinkShowGlobalToastOverlay' stream-app/clipboardd/main.mm
-          grep -q 'TLinkToastWindow' stream-app/clipboardd/main.mm
           grep -q 'toast_overlay_visible' stream-app/clipboardd/main.mm
-          grep -q 'QuartzCore' stream-app/clipboardd/Makefile
+          grep -q 'toast_effective_position=center' stream-app/clipboardd/main.mm
           grep -q 'initWithBundleIdentifier' stream-app/clipboardd/main.mm
           grep -q 'CFUserNotificationDisplayNotice' stream-app/clipboardd/main.mm
           grep -q 'CFUserNotificationDisplayAlert' stream-app/clipboardd/main.mm
@@ -139,9 +148,21 @@ jobs:
           grep -q 'background_ui_bridge=1' stream-app/clipboardd/main.mm
           grep -q 'app_notification_auth' stream-app/clipboardd/main.mm
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
-          grep -q 'backgroundPositionedToastOverlay' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=10"' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=10"' stream-app/privhelper/main.mm
+          grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
+          grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
+          grep -q '../../shared/TLinkJSFileHandle.mm' stream-app/streamd/Makefile
+          grep -q 'TLinkJSFileHandleCreateJSObject' shared/TLinkJSFileHandle.mm
+          grep -Fq 'device[@"openFile"]' tlinkauto-jsd/TLinkJSHelperServer.mm
+          grep -q '../shared/TLinkJSFileHandle.mm' tlinkauto-jsd/Makefile
+          grep -q 'scriptFileHandleAPI' tlinkauto-jsd/TLinkJSHelperServer.mm
+          grep -q 'kTLinkJSHelperVersion = @"1.1.0"' tlinkauto-jsd/TLinkJSHelperServer.mm
+          grep -Fq 'openFile:(NSString *)path mode:(NSString *)mode' pccontrol/jsruntime/TLinkautoDeviceBridge.h
+          grep -Fq '../shared/TLinkJSFileHandle.mm' pccontrol/Makefile
+          grep -q 'resolvedOpenFilePath' pccontrol/TLinkautoJSRuntime.mm
+          grep -q '\[deviceBridge closeOpenFiles\]' pccontrol/jsruntime/TLinkJSRuntimeCore.mm
+          grep -q 'backgroundToastFixedCenter' stream-app/streamd/POCSocketServer.mm
+          grep -q 'containsString:@"version=11"' stream-app/streamd/POCSocketServer.mm
+          grep -q 'containsString:@"version=11"' stream-app/privhelper/main.mm
           grep -q 'app_foreground_heartbeat' stream-app/app/AppDelegate.mm
           grep -q 'Notification Access' stream-app/app/SettingsViewController.mm
           grep -q 'clipboardUIDaemon' stream-app/streamd/POCSocketServer.mm
@@ -402,6 +423,7 @@ jobs:
           grep 'Payload/StreamControl.app/privhelper' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/01 Runtime Storage.js' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/06 App Process Shell.js' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/CompatibilityExamples/07 File Handle.js' stream-app/packages/StreamControl.tipa.contents.txt
 
           APP="stream-app/app/.theos/_/Applications/StreamControl.app"
           if [ ! -d "$APP" ]; then
@@ -414,6 +436,7 @@ jobs:
           test -x "$APP/privhelper"
           test -f "$APP/CompatibilityExamples/01 Runtime Storage.js"
           test -f "$APP/CompatibilityExamples/06 App Process Shell.js"
+          test -f "$APP/CompatibilityExamples/07 File Handle.js"
 
           echo "--- StreamControl entitlements ---"
           ldid -e "$APP/StreamControl" || true

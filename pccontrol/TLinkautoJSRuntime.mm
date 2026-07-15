@@ -16,6 +16,7 @@
 #import "jsruntime/TLinkInProcessNativeBridge.h"
 #import "jsruntime/TLinkautoDeviceBridge.h"
 #import "jsruntime/TLinkJSHelperClient.h"
+#import "../shared/TLinkJSFileHandle.h"
 
 typedef NS_ENUM(int, TLinkJSRuntimeTaskCode) {
     TASK_PERFORM_TOUCH = 10,
@@ -79,6 +80,7 @@ static const NSUInteger kTLinkautoJSMaxResponseBytes = 1024 * 1024;
 static const unsigned long long kTLinkautoJSMaxBundleFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
+static const NSUInteger kTLinkautoJSMaxOpenFiles = 32;
 static NSString * const kTLinkautoJSHelperConfigPath = @"/var/mobile/Library/TLinkauto/config.json";
 static const NSUInteger kTLinkautoJSNativeRPCCacheLimit = 256;
 
@@ -1175,7 +1177,70 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 @end
 
+@interface TLinkautoDeviceBridge ()
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *openFileHandles;
+@property(nonatomic, assign) NSUInteger nextOpenFileHandleId;
+@end
+
 @implementation TLinkautoDeviceBridge
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self) {
+        _openFileHandles = [NSMutableDictionary dictionary];
+        _nextOpenFileHandleId = 1;
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    [self closeOpenFiles];
+}
+
+- (void)closeOpenFiles
+{
+    NSArray<TLinkJSFileHandle *> *handles = nil;
+    @synchronized (self) {
+        handles = [self.openFileHandles.allValues copy];
+        [self.openFileHandles removeAllObjects];
+    }
+    for (TLinkJSFileHandle *handle in handles) [handle close];
+}
+
+- (NSDictionary *)resolvedOpenFilePath:(NSString *)relativePath writing:(BOOL)writing
+{
+    NSString *bundlePath = [[[self.runtime currentBundlePath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
+    if (![bundlePath isKindOfClass:[NSString class]] || bundlePath.length == 0) {
+        return @{ @"ok": @NO, @"error": @"script_session_unavailable" };
+    }
+    if (![relativePath isKindOfClass:[NSString class]] || relativePath.length == 0) {
+        return @{ @"ok": @NO, @"error": @"storage_missing_path" };
+    }
+    if ([relativePath hasPrefix:@"/"]) return @{ @"ok": @NO, @"error": @"storage_path_must_be_relative" };
+    if ([relativePath rangeOfString:@"\0"].location != NSNotFound) return @{ @"ok": @NO, @"error": @"storage_path_contains_nul" };
+
+    NSString *candidate = [[[bundlePath stringByAppendingPathComponent:relativePath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
+    NSString *prefix = [bundlePath hasSuffix:@"/"] ? bundlePath : [bundlePath stringByAppendingString:@"/"];
+    if (![candidate hasPrefix:prefix]) return @{ @"ok": @NO, @"error": @"storage_path_outside_bundle" };
+    if (writing) {
+        NSString *name = [candidate lastPathComponent];
+        if ([name isEqualToString:@"manifest.json"] || [name isEqualToString:@"info.plist"] ||
+            [[[candidate pathExtension] lowercaseString] isEqualToString:@"js"]) {
+            return @{ @"ok": @NO, @"error": @"storage_path_is_protected" };
+        }
+        NSError *mkdirError = nil;
+        NSString *parent = [candidate stringByDeletingLastPathComponent];
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:parent
+                                       withIntermediateDirectories:YES
+                                                        attributes:nil
+                                                             error:&mkdirError]) {
+            return @{ @"ok": @NO, @"error": mkdirError.localizedDescription ?: @"create_parent_failed", @"path": candidate ?: @"" };
+        }
+    }
+    return @{ @"ok": @YES, @"path": candidate ?: @"" };
+}
 
 - (NSDictionary *)runTask:(int)task payload:(NSString *)payload
 {
@@ -1643,6 +1708,56 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     return [self.runtime executeNativeRequest:TLinkJSNativeMethodWriteText arguments:@[path ?: @"", text ?: @""]];
 }
 
+- (JSValue *)openFile:(NSString *)path mode:(NSString *)mode
+{
+    JSContext *context = [JSContext currentContext];
+    if (!context) return nil;
+
+    NSString *openMode = mode.length > 0 ? mode : @"r";
+    if (!TLinkJSFileModeIsValid(openMode)) {
+        return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"invalid_file_mode", @"mode": openMode}
+                              inContext:context];
+    }
+    BOOL writing = TLinkJSFileModeWrites(openMode);
+    NSDictionary *resolved = [self resolvedOpenFilePath:path writing:writing];
+    if (![resolved[@"ok"] boolValue]) return [JSValue valueWithObject:resolved inContext:context];
+    NSString *resolvedPath = resolved[@"path"] ?: @"";
+
+    __block NSUInteger handleId = 0;
+    @synchronized (self) {
+        if (self.openFileHandles.count >= kTLinkautoJSMaxOpenFiles) {
+            return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"too_many_open_files", @"limit": @(kTLinkautoJSMaxOpenFiles)}
+                                      inContext:context];
+        }
+        handleId = self.nextOpenFileHandleId++;
+    }
+
+    NSString *openError = nil;
+    TLinkJSFileHandle *handle = [TLinkJSFileHandle openPath:resolvedPath
+                                                      mode:openMode
+                                                  handleId:handleId
+                                          maxTransferBytes:(NSUInteger)kTLinkautoJSMaxStorageFileBytes
+                                                     error:&openError];
+    if (!handle) {
+        return [JSValue valueWithObject:@{@"ok": @NO,
+                                          @"error": openError ?: @"file_open_failed",
+                                          @"path": resolvedPath,
+                                          @"mode": openMode}
+                              inContext:context];
+    }
+    @synchronized (self) {
+        self.openFileHandles[@(handleId)] = handle;
+    }
+    __weak TLinkautoDeviceBridge *weakSelf = self;
+    return TLinkJSFileHandleCreateJSObject(context, handle, ^(NSUInteger closedId) {
+        TLinkautoDeviceBridge *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        @synchronized (strongSelf) {
+            [strongSelf.openFileHandles removeObjectForKey:@(closedId)];
+        }
+    });
+}
+
 - (NSDictionary *)readJSON:(NSString *)path
 {
     return [self.runtime executeNativeRequest:TLinkJSNativeMethodReadJSON arguments:@[path ?: @""]];
@@ -1700,6 +1815,10 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"cooperativeCancellation": @YES,
         @"autoReleaseHandles": @YES,
         @"storageLocal": @YES,
+        @"fileHandleAPI": @YES,
+        @"fileHandleModes": @[@"r", @"rb", @"r+", @"rb+", @"w", @"wb", @"w+", @"wb+", @"a", @"ab", @"a+", @"ab+"],
+        @"maxOpenFiles": @(kTLinkautoJSMaxOpenFiles),
+        @"maxFileTransferBytes": @(kTLinkautoJSMaxStorageFileBytes),
         @"frameHandleRPC": @YES,
         @"imageHandleRPC": @YES,
         @"ocrRPC": @YES,

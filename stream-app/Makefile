@@ -78,6 +78,7 @@ embed: streamd clipboardd app privhelper
 	test -x "$$APP/privhelper"; \
 	test -f "$$APP/CompatibilityExamples/01 Runtime Storage.js"; \
 	test -f "$$APP/CompatibilityExamples/06 App Process Shell.js"; \
+	test -f "$$APP/CompatibilityExamples/07 File Handle.js"; \
 	echo "Embedded streamd and clipboardd into $$APP"
 
 package: embed
@@ -95,6 +96,7 @@ package: embed
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/clipboardd"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/privhelper"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/01 Runtime Storage.js"; \
+	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/07 File Handle.js"; \
 	( cd _payload && zip -qr9 ../$(TIPA) Payload ); \
 	echo "Created $(TIPA)"
 

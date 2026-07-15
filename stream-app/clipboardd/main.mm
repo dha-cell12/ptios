@@ -1,6 +1,5 @@
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
-#import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 
@@ -55,18 +54,6 @@ typedef SInt32 (*TLinkCFUserNotificationDisplayAlertFn)(CFTimeInterval,
 @implementation TLinkClipboardApplicationDelegate
 @end
 
-@interface TLinkToastWindow : UIWindow
-@end
-
-@implementation TLinkToastWindow
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event
-{
-    (void)point;
-    (void)event;
-    return nil;
-}
-@end
-
 @interface UNUserNotificationCenter (TLinkPrivateBundleCenter)
 - (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier;
 - (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier queue:(dispatch_queue_t)queue;
@@ -77,9 +64,6 @@ static BOOL sTLinkKeepAwakeRequested = NO;
 static NSInteger sTLinkNotificationAuthorizationStatus = -1;
 static NSString *sTLinkLastBackgroundVisualResult = @"none";
 static NSString *sTLinkNotificationCenterMode = @"uninitialized";
-static TLinkToastWindow *sTLinkToastWindow = nil;
-static UIView *sTLinkToastBubble = nil;
-static uint64_t sTLinkToastGeneration = 0;
 static NSInteger sTLinkToastLastPosition = -1;
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 static NSString *const kTLinkStreamControlBundleIdentifier = @"com.tlinkauto.streamcontrol";
@@ -174,115 +158,6 @@ static NSInteger TLinkAppNotificationAuthorizationStatus(void)
                                                 encoding:NSUTF8StringEncoding
                                                    error:nil];
     return value.length > 0 ? [value integerValue] : -1;
-}
-
-static BOOL TLinkNotificationStatusAllowsDelivery(NSInteger status)
-{
-    return status == UNAuthorizationStatusAuthorized ||
-           status == UNAuthorizationStatusProvisional ||
-           status == UNAuthorizationStatusEphemeral;
-}
-
-static BOOL TLinkShowGlobalToastOverlay(NSDictionary *payload)
-{
-    if (![NSThread isMainThread]) return NO;
-    NSString *message = [payload[@"message"] isKindOfClass:[NSString class]] ? payload[@"message"] : @"";
-    if (message.length == 0) return NO;
-
-    @try {
-        UIScreen *screen = [UIScreen mainScreen];
-        CGRect bounds = screen.bounds;
-        if (CGRectIsEmpty(bounds)) return NO;
-
-        NSInteger position = [payload[@"position"] integerValue];
-        if (position < 0 || position > 2) position = 2;
-        CGFloat fontSize = [payload[@"fontSize"] doubleValue];
-        if (fontSize <= 0.0) fontSize = 15.0;
-        if (fontSize > 50.0) fontSize = 50.0;
-        NSTimeInterval duration = [payload[@"duration"] doubleValue];
-        if (duration <= 0.0) duration = 2.0;
-        if (duration > 30.0) duration = 30.0;
-
-        if (!sTLinkToastWindow) {
-            sTLinkToastWindow = [[TLinkToastWindow alloc] initWithFrame:bounds];
-            UIViewController *root = [[UIViewController alloc] init];
-            root.view.backgroundColor = [UIColor clearColor];
-            root.view.userInteractionEnabled = NO;
-            sTLinkToastWindow.rootViewController = root;
-            sTLinkToastWindow.backgroundColor = [UIColor clearColor];
-            sTLinkToastWindow.userInteractionEnabled = NO;
-            sTLinkToastWindow.windowLevel = UIWindowLevelAlert + 1000.0;
-            sTLinkToastWindow.screen = screen;
-        }
-        sTLinkToastWindow.frame = bounds;
-        sTLinkToastWindow.rootViewController.view.frame = bounds;
-        [sTLinkToastBubble removeFromSuperview];
-
-        CGFloat maxWidth = MAX(120.0, CGRectGetWidth(bounds) - 48.0);
-        UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
-        label.text = message;
-        label.textColor = [UIColor whiteColor];
-        label.font = [UIFont systemFontOfSize:fontSize weight:UIFontWeightSemibold];
-        label.numberOfLines = 0;
-        label.textAlignment = NSTextAlignmentCenter;
-        label.userInteractionEnabled = NO;
-
-        CGSize labelSize = [label sizeThatFits:CGSizeMake(maxWidth - 32.0, CGFLOAT_MAX)];
-        CGFloat bubbleWidth = MIN(maxWidth, ceil(labelSize.width + 32.0));
-        CGFloat bubbleHeight = MAX(40.0, ceil(labelSize.height + 20.0));
-        CGFloat y = 0.0;
-        if (position == 0) {
-            y = 54.0;
-        } else if (position == 1) {
-            y = (CGRectGetHeight(bounds) - bubbleHeight) / 2.0;
-        } else {
-            y = CGRectGetHeight(bounds) - bubbleHeight - 92.0;
-        }
-        CGFloat x = (CGRectGetWidth(bounds) - bubbleWidth) / 2.0;
-
-        UIView *bubble = [[UIView alloc] initWithFrame:CGRectMake(x, y, bubbleWidth, bubbleHeight)];
-        bubble.userInteractionEnabled = NO;
-        bubble.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
-        bubble.layer.cornerRadius = 10.0;
-        bubble.layer.shadowColor = [UIColor blackColor].CGColor;
-        bubble.layer.shadowOpacity = 0.22;
-        bubble.layer.shadowRadius = 10.0;
-        bubble.layer.shadowOffset = CGSizeMake(0.0, 4.0);
-        bubble.alpha = 0.0;
-        label.frame = CGRectInset(bubble.bounds, 16.0, 10.0);
-        label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [bubble addSubview:label];
-        [sTLinkToastWindow.rootViewController.view addSubview:bubble];
-        sTLinkToastBubble = bubble;
-        sTLinkToastLastPosition = position;
-        uint64_t generation = ++sTLinkToastGeneration;
-        sTLinkToastWindow.hidden = NO;
-
-        [UIView animateWithDuration:0.15 animations:^{
-            bubble.alpha = 1.0;
-        }];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            if (generation != sTLinkToastGeneration) return;
-            [UIView animateWithDuration:0.18 animations:^{
-                bubble.alpha = 0.0;
-            } completion:^(__unused BOOL finished) {
-                if (generation != sTLinkToastGeneration) return;
-                [bubble removeFromSuperview];
-                sTLinkToastBubble = nil;
-                sTLinkToastWindow.hidden = YES;
-            }];
-        });
-        sTLinkLastBackgroundVisualResult = [NSString stringWithFormat:@"uidaemon_toast_presented_position_%ld", (long)position];
-        TLinkClipboardLog([NSString stringWithFormat:@"UIDaemon toast presented position=%ld frame=%@ duration=%.2f window_level=%.1f",
-                           (long)position, NSStringFromCGRect(bubble.frame), duration, sTLinkToastWindow.windowLevel]);
-        return YES;
-    } @catch (NSException *exception) {
-        sTLinkLastBackgroundVisualResult = @"uidaemon_toast_exception";
-        TLinkClipboardLog([NSString stringWithFormat:@"UIDaemon toast exception=%@",
-                           exception.reason ?: exception.name]);
-        return NO;
-    }
 }
 
 static dispatch_queue_t TLinkBackgroundVisualQueue(void)
@@ -383,57 +258,18 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
     }
 
     NSString *kind = [payload[@"kind"] isKindOfClass:[NSString class]] ? payload[@"kind"] : @"toast";
-    NSString *title = [payload[@"title"] isKindOfClass:[NSString class]] ? payload[@"title"] : @"TLinkauto";
     NSString *message = [payload[@"message"] isKindOfClass:[NSString class]] ? payload[@"message"] : @"";
     if (message.length == 0) return @"-1;;background_visual_missing_message\r\n";
-    NSInteger appAuthorization = TLinkAppNotificationAuthorizationStatus();
     if ([kind isEqualToString:@"toast"]) {
-        if (TLinkShowGlobalToastOverlay(payload)) {
-            return [NSString stringWithFormat:@"0;;background_visual_uidaemon_toast_presented;;position=%ld\r\n",
-                    (long)sTLinkToastLastPosition];
-        }
-        TLinkScheduleCFUserNotification(payload, @"uidaemon_toast_failed");
-        return @"0;;background_visual_uidaemon_toast_failed_cfusernotification_queued\r\n";
+        NSInteger requestedPosition = [payload[@"position"] integerValue];
+        if (requestedPosition < 0 || requestedPosition > 2) requestedPosition = 2;
+        sTLinkToastLastPosition = requestedPosition;
+        TLinkScheduleCFUserNotification(payload, @"uidaemon_window_not_compositor_hosted");
+        return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;toast;;requested_position=%ld;;effective_position=center;;limited_on_trollstore\r\n",
+                (long)requestedPosition];
     }
-    if (!TLinkNotificationStatusAllowsDelivery(sTLinkNotificationAuthorizationStatus)) {
-        TLinkScheduleCFUserNotification(payload, @"daemon_notification_center_not_authorized");
-        return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;%@;;daemon_authorization=%ld;;app_authorization=%ld\r\n",
-                kind, (long)sTLinkNotificationAuthorizationStatus, (long)appAuthorization];
-    }
-
-    UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
-    content.title = title.length > 0 ? title : @"TLinkauto";
-    content.body = message;
-    content.userInfo = @{
-        @"tlink_kind": kind ?: @"toast",
-        @"tlink_event_id": payload[@"event_id"] ?: @0,
-    };
-    NSString *identifier = [NSString stringWithFormat:@"tlinkauto.%@.%@",
-                            kind.length > 0 ? kind : @"visual",
-                            payload[@"event_id"] ?: @((long long)(NSDate.date.timeIntervalSince1970 * 1000.0))];
-    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier
-                                                                          content:content
-                                                                          trigger:nil];
-    sTLinkLastBackgroundVisualResult = @"pending";
-    [TLinkNotificationCenter()
-        addNotificationRequest:request
-         withCompletionHandler:^(NSError *error) {
-            if (error) {
-                sTLinkLastBackgroundVisualResult = [NSString stringWithFormat:@"failed_%@_%ld",
-                    error.domain ?: @"unknown", (long)error.code];
-                TLinkClipboardLog([NSString stringWithFormat:@"background visual failed kind=%@ error=%@",
-                                   kind, error.localizedDescription ?: @"unknown"]);
-                TLinkScheduleCFUserNotification(payload, [NSString stringWithFormat:@"usernotifications_%@_%ld",
-                    error.domain ?: @"unknown", (long)error.code]);
-            } else {
-                sTLinkLastBackgroundVisualResult = @"accepted";
-                TLinkClipboardLog([NSString stringWithFormat:@"background visual queued kind=%@ id=%@",
-                                   kind, payload[@"event_id"] ?: @0]);
-            }
-        }];
-    TLinkRefreshNotificationAuthorizationStatus();
-    return [NSString stringWithFormat:@"0;;background_visual_notification_queued;;%@;;daemon_authorization=%ld;;app_authorization=%ld\r\n",
-            kind, (long)sTLinkNotificationAuthorizationStatus, (long)appAuthorization];
+    TLinkScheduleCFUserNotification(payload, @"v11_background_visual");
+    return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;%@\r\n", kind];
 }
 
 static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
@@ -489,10 +325,9 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=10;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;background_visual_mode=uidaemon_positioned_toast_cfusernotification_alert;;toast_overlay_visible=%d;;toast_position=%ld;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=11;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), (long)state, (long)systemState,
                 sTLinkClipboardWriteVerified ? 1 : 0,
-                (sTLinkToastWindow && !sTLinkToastWindow.hidden && sTLinkToastBubble) ? 1 : 0,
                 (long)sTLinkToastLastPosition,
                 sTLinkNotificationCenterMode ?: @"unknown",
                 NSBundle.mainBundle.bundleIdentifier ?: @"<nil>",

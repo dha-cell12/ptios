@@ -16,6 +16,7 @@ Expected markers:
 - `scriptCompatFacade`
 - `scriptRunTaskAlias`
 - `scriptStorageAPI`
+- `scriptFileHandleAPI`
 - `scriptKeyboardAPI`
 - `clipboardImage`
 - `clipboardUIDaemon`
@@ -47,7 +48,7 @@ Packaged example scripts:
 
 - On first launch after install, the root `Scripts` tab seeds a
   `Compatibility Tests` folder automatically when it is missing. The folder
-  contains six editable `.tl` bundles covering runtime/storage, background
+  contains seven editable `.tl` bundles covering runtime/storage, file handles, background
   clipboard, color/frame, screenshot/image, Tesseract OCR, and
   app/process/shell.
 - In `Scripts`, tap `+` then `Compatibility Suite` only when you want to
@@ -70,13 +71,13 @@ where available:
 - OCR: `ocrLanguages`, `ocrFrame`, `ocr`
 - App/process: `openApp`, `killApp`, `clearAppData`, `appState`, `appInfo`, `appPid`, `frontMostAppId`, `frontMostPid`, `appPaths`, `listBundles`, `openUrl`
 - Paths/info: `rootDir`, `currentDir`, `botPath`, `info`, `batteryInfo`, `getScreenSize`
-- Raw task/storage: `task`, `taskResult`, `runTask`, `readText`, `writeText`, `readJSON`, `writeJSON`, `fileExists`, `deleteFile`
+- Raw task/storage: `task`, `taskResult`, `runTask`, `readText`, `writeText`, `readJSON`, `writeJSON`, `fileExists`, `deleteFile`, `openFile`
 - Keyboard/shell/connectivity: `showKeyboard`, `hideKeyboard`, `pasteFromClipboard`, `getClipboardText`, `setClipboardText`, `setClipboardImage`, `insertText`, `deleteCharacters`, `moveCursor`, `runShell`, `wifi`, `setWifi`, `bluetooth`, `setBluetooth`, `airplaneMode`, `setAirplaneMode`, `cellularData`, `setCellularData`
 
 Keyboard backend smoke:
 
 ```powershell
-# Open StreamControl.app once after install so privhelper installs clipboardd v10
+# Open StreamControl.app once after install so privhelper installs clipboardd v11
 # on 6012. Port 6013 is clipboard fallback only.
 Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
@@ -89,7 +90,22 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "244;;5"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
 ```
 
-Task `249` should contain `clipboard_backend_ready`, `version=10` in its decoded
+File-handle parity smoke:
+
+1. Open `Scripts > Compatibility Tests > 07 File Handle.tl`.
+2. Tap Play and inspect its log.
+3. Confirm `open.ok=true`, both writes succeed, `readLine.data` is
+   `first line`, `readRest.data` contains `second line`, and `finalText.text`
+   contains the appended third line.
+4. Run the same `.tl` bundle under rootfull once with the in-process runtime
+   and once with the helper runtime. All three paths expose the same methods
+   and normalized result objects.
+
+`device.openFile` is bundle-relative and deliberately does not expose
+arbitrary absolute paths. Writable modes cannot modify `.js`, `manifest.json`,
+or `info.plist`. Handles are closed automatically when an evaluation ends.
+
+Task `249` should contain `clipboard_backend_ready`, `version=11` in its decoded
 diagnostic, and `daemon_direct_write=1` after a successful task `247`. Task
 `246` should then return `0;;hello from tlinkauto`. When another app is active,
 StreamControl should not appear. A short app switch means the daemon entitlement
@@ -107,8 +123,8 @@ was ignored and the foreground fallback ran.
   HID Backspace and arrow keys. Show/hide keyboard still requires the rootfull
   SpringBoard keyboard observer and returns `limited_on_trollstore`.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
-- Foreground overlays use UIKit. A background toast uses the clipboardd v10
-  passthrough window and preserves position `0/1/2`; alert/dialog use a
-  CFUserNotification system-alert fallback. Dialog responses are not bridged back
-  to the original synchronous task, and a global touch indicator still requires
-  SpringBoard injection.
+- Foreground overlays use UIKit and toast preserves position `0/1/2`.
+  Background toast/alert/dialog use the clipboardd v11 CFUserNotification system
+  alert and toast position is fixed at center. Dialog responses are not bridged
+  back to the original synchronous task, and a global touch indicator still
+  requires SpringBoard injection.

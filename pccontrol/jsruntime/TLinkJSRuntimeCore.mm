@@ -348,7 +348,8 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     [runtimeFacade beginOwnedHandleTracking];
     
     _cancelState->aborted.store(false, std::memory_order_release);
-    
+
+    TLinkautoDeviceBridge *deviceBridge = nil;
     @try {
 
     JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
@@ -366,9 +367,9 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
         [strongFacade showDebugToast:[NSString stringWithFormat:@"JS error: %@", message] type:1];
     };
 
-    TLinkautoDeviceBridge *bridge = [[TLinkautoDeviceBridge alloc] init];
-    bridge.runtime = facade;
-    context[@"device"] = bridge;
+    deviceBridge = [[TLinkautoDeviceBridge alloc] init];
+    deviceBridge.runtime = facade;
+    context[@"device"] = deviceBridge;
     context[@"manifest"] = _manifest ?: @{};
 
     context[@"sleep"] = ^(double ms) {
@@ -548,6 +549,7 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     }
     return success;
     } @finally {
+        [deviceBridge closeOpenFiles];
         [runtimeFacade releaseOwnedHandles];
         [self clearWatchdogForContext:_context];
         _context = nil;

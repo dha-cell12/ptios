@@ -63,6 +63,7 @@ Helper-local storage is bundle-relative and path-safe:
 - `device.writeJSON(path, value)`
 - `device.fileExists(path)`
 - `device.deleteFile(path)`
+- `device.openFile(path, mode)`
 
 These APIs return normalized dictionaries. Successful reads include `text` or
 `value`; successful writes include `bytes`; `fileExists` includes `exists` and
@@ -70,6 +71,32 @@ These APIs return normalized dictionaries. Successful reads include `text` or
 `error`.
 
 Paths must remain inside the current script bundle. Bundle metadata/source files are protected from modification.
+
+### File handles
+
+`device.openFile` is implemented by the same native core in the rootfull
+in-process runtime, rootfull helper, and TrollStore streamd runtime. Supported modes are `r`, `rb`, `r+`, `w`,
+`wb`, `w+`, `a`, `ab`, and `a+` (including the equivalent `rb+`, `wb+`, and
+`ab+` spellings). A successful open returns a session-owned handle:
+
+```js
+const file = device.openFile('storage/example.txt', 'w+');
+if (!file.ok) throw new Error(file.error);
+
+file.write('first line\nsecond line\n');
+file.seek('set', 0);
+console.log(file.readLine().line);
+console.log(file.read('*a').data);
+file.flush();
+file.close();
+```
+
+Handle methods are `read(request)`, `readLine()`, `write(text)`,
+`writeBase64(data)`, `seek(whence, offset)`, `tell()`, `flush()`, `isClosed()`,
+and `close()`. `read` accepts `*a`, `*l`, or a byte count and returns both UTF-8
+`data` and `base64`. Each script may keep at most 32 handles open and each
+read/write operation is limited to 512 KiB. Unclosed handles are closed after
+each script evaluation, including stop and exception paths.
 
 ## Clipboard image API
 

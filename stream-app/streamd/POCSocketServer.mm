@@ -4,6 +4,7 @@
 #import <ImageIO/ImageIO.h>
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <Photos/Photos.h>
+#import "../../shared/TLinkJSFileHandle.h"
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
@@ -514,6 +515,8 @@ static NSDictionary *TLinkTapMacroStatusDictionary(void)
 @property(nonatomic, assign) double speed;
 @property(nonatomic, assign) BOOL stopRequested;
 @property(nonatomic, strong) NSMutableArray<NSString *> *logs;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *fileHandles;
+@property(nonatomic, assign) NSUInteger nextFileHandleId;
 @end
 
 @implementation TLinkScriptSession
@@ -521,6 +524,8 @@ static NSDictionary *TLinkTapMacroStatusDictionary(void)
 
 static NSString *const kTLinkScriptsRootPath = @"/var/mobile/Library/TLinkauto/scripts";
 static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist";
+static const NSUInteger kTLinkScriptMaxOpenFiles = 32;
+static const NSUInteger kTLinkScriptMaxFileTransferBytes = 512 * 1024;
 static TLinkScriptSession *sTLinkScriptSession = nil;
 static uint64_t sTLinkNextScriptSessionId = 1;
 static NSString *sTLinkLastScriptError = @"script_runtime_not_started";
@@ -738,9 +743,21 @@ static BOOL TLinkScriptStopRequested(TLinkScriptSession *session)
     }
 }
 
+static void TLinkScriptCloseOpenFiles(TLinkScriptSession *session)
+{
+    if (!session) return;
+    NSArray<TLinkJSFileHandle *> *openHandles = nil;
+    @synchronized (session) {
+        openHandles = [session.fileHandles.allValues copy];
+        [session.fileHandles removeAllObjects];
+    }
+    for (TLinkJSFileHandle *handle in openHandles) [handle close];
+}
+
 static void TLinkScriptMarkTerminal(TLinkScriptSession *session, NSString *state, NSString *error)
 {
     if (!session) return;
+    TLinkScriptCloseOpenFiles(session);
     @synchronized (session) {
         session.state = state ?: @"finished";
         session.endedAtMs = TLinkNowMs();
@@ -901,14 +918,19 @@ static NSString *TLinkScriptStoragePath(TLinkScriptSession *session, NSString *r
         if (error) *error = @"storage_path_must_be_relative";
         return nil;
     }
+    if ([relativePath rangeOfString:@"\0"].location != NSNotFound) {
+        if (error) *error = @"storage_path_contains_nul";
+        return nil;
+    }
     NSString *target = TLinkNormalizePath([session.bundlePath stringByAppendingPathComponent:relativePath]);
     if (!TLinkPathIsInside(target, session.bundlePath)) {
         if (error) *error = @"storage_path_outside_bundle";
         return nil;
     }
     if (writing) {
-        NSArray<NSString *> *protectedNames = @[@"main.js", @"manifest.json", @"info.plist"];
-        if ([protectedNames containsObject:[target lastPathComponent]]) {
+        NSArray<NSString *> *protectedNames = @[@"manifest.json", @"info.plist"];
+        if ([protectedNames containsObject:[target lastPathComponent]] ||
+            [[[target pathExtension] lowercaseString] isEqualToString:@"js"]) {
             if (error) *error = @"storage_path_is_protected";
             return nil;
         }
@@ -977,7 +999,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         int position = opts[@"position"] ? [opts[@"position"] intValue] : 2;
         int fontSize = opts[@"fontSize"] ? [opts[@"fontSize"] intValue] : 15;
         uint64_t eventId = TLinkRecordToast(text, duration, type, position, fontSize, @"script");
-        return @{@"ok": @YES, @"mode": @"foreground_overlay_or_background_positioned_uidaemon_toast", @"event_id": @(eventId)};
+        return @{@"ok": @YES, @"mode": @"foreground_positioned_or_background_cfusernotification_fixed_center", @"event_id": @(eventId)};
     };
     device[@"alert"] = ^NSDictionary *(JSValue *titleValue, JSValue *messageValue, JSValue *options) {
         NSString *title = titleValue && ![titleValue isUndefined] && ![titleValue isNull] ? [titleValue toString] : @"TLinkauto";
@@ -1757,6 +1779,10 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
             return @{
                 @"runtime": @"javascriptcore",
                 @"runtimeLocation": @"streamd",
+                @"fileHandleAPI": @YES,
+                @"fileHandleModes": @[@"r", @"rb", @"r+", @"rb+", @"w", @"wb", @"w+", @"wb+", @"a", @"ab", @"a+", @"ab+"],
+                @"maxOpenFiles": @(kTLinkScriptMaxOpenFiles),
+                @"maxFileTransferBytes": @(kTLinkScriptMaxFileTransferBytes),
                 @"sessionId": strongSession.sessionId ?: @"",
                 @"bundlePath": strongSession.bundlePath ?: @"",
                 @"entryPath": strongSession.entryPath ?: @"",
@@ -1795,6 +1821,62 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         BOOL ok = [safeText writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&writeErr];
         NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];
         return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(byteCount)} : @{@"ok": @NO, @"path": path, @"error": writeErr.localizedDescription ?: @"write_failed"};
+    };
+    device[@"openFile"] = ^JSValue *(NSString *relativePath, NSString *mode) {
+        JSContext *currentContext = [JSContext currentContext] ?: context;
+        TLinkScriptSession *strongSession = weakSession;
+        NSString *openMode = mode.length > 0 ? mode : @"r";
+        if (!strongSession) {
+            return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"script_session_unavailable"} inContext:currentContext];
+        }
+        if (!TLinkJSFileModeIsValid(openMode)) {
+            return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"invalid_file_mode", @"mode": openMode} inContext:currentContext];
+        }
+        BOOL writing = TLinkJSFileModeWrites(openMode);
+        NSString *pathError = nil;
+        NSString *path = TLinkScriptStoragePath(strongSession, relativePath, writing, &pathError);
+        if (!path) {
+            return [JSValue valueWithObject:@{@"ok": @NO, @"error": pathError ?: @"storage_path_error", @"path": relativePath ?: @""} inContext:currentContext];
+        }
+        if (writing) {
+            NSError *mkdirError = nil;
+            NSString *parent = [path stringByDeletingLastPathComponent];
+            if (![[NSFileManager defaultManager] createDirectoryAtPath:parent
+                                           withIntermediateDirectories:YES
+                                                            attributes:nil
+                                                                 error:&mkdirError]) {
+                return [JSValue valueWithObject:@{@"ok": @NO, @"error": mkdirError.localizedDescription ?: @"create_parent_failed", @"path": path} inContext:currentContext];
+            }
+        }
+
+        __block NSUInteger handleId = 0;
+        @synchronized (strongSession) {
+            if (!strongSession.fileHandles) strongSession.fileHandles = [NSMutableDictionary dictionary];
+            if (strongSession.fileHandles.count >= kTLinkScriptMaxOpenFiles) {
+                return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"too_many_open_files", @"limit": @(kTLinkScriptMaxOpenFiles)} inContext:currentContext];
+            }
+            handleId = strongSession.nextFileHandleId++;
+        }
+        NSString *openError = nil;
+        TLinkJSFileHandle *handle = [TLinkJSFileHandle openPath:path
+                                                          mode:openMode
+                                                      handleId:handleId
+                                              maxTransferBytes:kTLinkScriptMaxFileTransferBytes
+                                                         error:&openError];
+        if (!handle) {
+            return [JSValue valueWithObject:@{@"ok": @NO, @"error": openError ?: @"file_open_failed", @"path": path, @"mode": openMode} inContext:currentContext];
+        }
+        @synchronized (strongSession) {
+            strongSession.fileHandles[@(handleId)] = handle;
+        }
+        __weak TLinkScriptSession *closeSession = strongSession;
+        return TLinkJSFileHandleCreateJSObject(currentContext, handle, ^(NSUInteger closedId) {
+            TLinkScriptSession *sessionForClose = closeSession;
+            if (!sessionForClose) return;
+            @synchronized (sessionForClose) {
+                [sessionForClose.fileHandles removeObjectForKey:@(closedId)];
+            }
+        });
     };
     device[@"fileExists"] = ^NSDictionary *(NSString *relativePath) {
         NSString *err = nil;
@@ -1931,6 +2013,7 @@ static void TLinkRunScriptSession(TLinkScriptSession *session)
             };
             TLinkConfigureScriptContext(context, session);
             [context evaluateScript:source withSourceURL:[NSURL fileURLWithPath:session.entryPath]];
+            TLinkScriptCloseOpenFiles(session);
 
             if (exceptionText.length > 0) {
                 TLinkScriptAppendLog(session, [NSString stringWithFormat:@"exception %@", exceptionText]);
@@ -1994,6 +2077,8 @@ static NSData *TLinkHandlePlayScript(NSString *body)
     session.speed = speed;
     session.stopRequested = NO;
     session.logs = [NSMutableArray array];
+    session.fileHandles = [NSMutableDictionary dictionary];
+    session.nextFileHandleId = 1;
     sTLinkScriptSession = session;
     sTLinkLastScriptError = @"";
     sTLinkLastScriptErrorTs = 0;
@@ -2030,7 +2115,7 @@ static NSData *TLinkHandleToast(NSString *body)
     int fontSize = parts.count >= 5 ? [parts[4] intValue] : 15;
     uint64_t eventId = TLinkRecordToast(message, duration, type, position, fontSize, @"task22");
     if (eventId == 0) return TLinkError(@"toast_missing_message");
-    return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu;;foreground_overlay_or_background_positioned_uidaemon_toast", eventId]);
+    return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu;;foreground_positioned_or_background_cfusernotification_fixed_center;;requested_position=%d", eventId, position]);
 }
 
 static NSData *TLinkHandleAlertBox(NSString *body)
@@ -4128,7 +4213,7 @@ static void TLinkUpdateClipboardDaemonVerification(NSData *diagnosticResponse)
 {
     NSString *diagnostic = TLinkResponseStringFromData(diagnosticResponse);
     sTLinkClipboardDaemonWriteVerified =
-        [diagnostic containsString:@"version=10"] &&
+        [diagnostic containsString:@"version=11"] &&
         [diagnostic containsString:@"background_entitlement=1"] &&
         [diagnostic containsString:@"write_verified=1"];
 }
@@ -5384,7 +5469,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"backgroundUIBridge": @(YES),
         @"backgroundVisualNotifications": @(YES),
         @"backgroundVisualCFUserNotification": @(YES),
-        @"backgroundPositionedToastOverlay": @(YES),
+        @"backgroundPositionedToastOverlay": @(NO),
+        @"backgroundToastFixedCenter": @(YES),
         @"clipboardMode": @"background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback",
         @"keyboardHIDPaste": @(YES),
         @"keyboardHIDEditing": @(YES),
@@ -5414,6 +5500,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"scriptResponseShape": @"ok_code_payload_error_fields",
         @"scriptRunTaskAlias": @(YES),
         @"scriptStorageAPI": @(YES),
+        @"scriptFileHandleAPI": @(YES),
+        @"scriptFileHandleMode": @"shared_rootfull_trollstore_bundle_relative",
+        @"scriptFileHandleMaxOpen": @(kTLinkScriptMaxOpenFiles),
+        @"scriptFileHandleMaxTransferBytes": @(kTLinkScriptMaxFileTransferBytes),
         @"scriptKeyboardAPI": @(YES),
         @"scriptColorFrameAPI": @(YES),
         @"scriptImageAPI": @(YES),
@@ -5430,7 +5520,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"keepAwake": @(YES),
         @"keepAwakeMode": @"foreground_app_plus_background_uidaemon_best_effort",
         @"visualFeedback": @(YES),
-        @"visualFeedbackMode": @"foreground_overlay_with_positioned_uidaemon_toast_and_cfusernotification_alert",
+        @"visualFeedbackMode": @"foreground_positioned_overlay_background_cfusernotification_fixed_center",
         @"toastOverlay": @(YES),
         @"alertOverlay": @(YES),
         @"dialogOverlay": @(YES),
@@ -7327,7 +7417,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_with_positioned_uidaemon_toast_and_cfusernotification_alert toast=positioned_uidaemon_passthrough_window dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastFixedCenter,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,backgroundPositionedToastOverlay unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_positioned_overlay_background_cfusernotification_fixed_center toast=foreground_positioned_background_fixed_center_limited_on_trollstore dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);

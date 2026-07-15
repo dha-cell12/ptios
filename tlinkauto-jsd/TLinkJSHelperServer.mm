@@ -1,5 +1,6 @@
 #import "TLinkJSHelperServer.h"
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
+#import "../shared/TLinkJSFileHandle.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
 #include <sys/socket.h>
@@ -16,10 +17,11 @@
 
 static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkauto/run/js-helper.sock";
 static NSString * const kTLinkJSHelperPidPath = @"/var/mobile/Library/TLinkauto/run/js-helper.pid";
-static NSString * const kTLinkJSHelperVersion = @"1.0.0";
+static NSString * const kTLinkJSHelperVersion = @"1.1.0";
 static const unsigned long long kTLinkJSHelperMaxBundleFileBytes = 512 * 1024;
 static const unsigned long long kTLinkJSHelperMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkJSHelperMaxConsoleLogBytes = 512 * 1024;
+static const NSUInteger kTLinkJSHelperMaxOpenFiles = 32;
 static const double kTLinkJSHelperWatchdogInterval = 0.1;
 
 typedef bool (*TLinkJSHelperShouldTerminateCallback)(JSContextRef ctx, void *opaque);
@@ -64,6 +66,8 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 @property(nonatomic, strong) NSCondition *rpcCondition;
 @property(nonatomic, copy) NSDictionary *pendingNativeRequest;
 @property(nonatomic, strong) NSMutableDictionary *nativeResponses;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *activeFileHandles;
+@property(nonatomic, assign) NSUInteger nextFileHandleId;
 @end
 
 @implementation TLinkJSHelperServer
@@ -78,6 +82,8 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
         _sleepCondition = [[NSCondition alloc] init];
         _rpcCondition = [[NSCondition alloc] init];
         _nativeResponses = [NSMutableDictionary dictionary];
+        _activeFileHandles = [NSMutableDictionary dictionary];
+        _nextFileHandleId = 1;
         _activeState = kTLinkJSHelperStateIdle;
         _cancelState = new TLinkJSHelperCancelState();
         _cancelState->stopped.store(false, std::memory_order_relaxed);
@@ -89,6 +95,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 
 - (void)dealloc
 {
+    for (TLinkJSFileHandle *handle in self.activeFileHandles.allValues) [handle close];
     delete _cancelState;
 }
 
@@ -143,6 +150,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         @"rpcFailedCount": @(self.nativeRPCFailedCount),
         @"blockedRpcCount": @(self.nativeRPCBlockedCount),
         @"storageOpsCount": @(self.storageOpsCount),
+        @"openFileHandles": @(self.activeFileHandles.count),
         @"pendingNativeRPC": @(self.pendingNativeRequest != nil),
         @"rpcAvgMs": @(self.nativeRPCCount > 0 ? (self.nativeRPCTotalMs / (double)self.nativeRPCCount) : 0),
         @"rpcMaxMs": @(self.nativeRPCMaxMs),
@@ -253,11 +261,11 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
-    NSString *root = [bundlePath stringByStandardizingPath];
+    NSString *root = [[bundlePath stringByStandardizingPath] stringByResolvingSymlinksInPath];
     if (![root isKindOfClass:[NSString class]] || [root length] == 0) return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
     if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) return @{ @"ok": @NO, @"error": @"module path is required" };
     if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) return @{ @"ok": @NO, @"error": @"module path must be bundle-relative" };
-    NSString *candidate = [[root stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
+    NSString *candidate = [[[root stringByAppendingPathComponent:relativePath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
     NSString *prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
     if (![candidate hasPrefix:prefix]) return @{ @"ok": @NO, @"error": @"module path escapes bundle" };
     NSString *extension = [[candidate pathExtension] lowercaseString];
@@ -272,18 +280,26 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 }
 
 
-- (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath createParent:(BOOL)createParent
+- (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath
+                                        bundlePath:(NSString *)bundlePath
+                                           writing:(BOOL)writing
+                                      createParent:(BOOL)createParent
 {
-    NSString *root = [bundlePath stringByStandardizingPath];
-    if (![root isKindOfClass:[NSString class]] || [root length] == 0) return @{ @"ok": @NO, @"error": @"bundle path is unavailable" };
-    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) return @{ @"ok": @NO, @"error": @"path is required" };
-    if ([relativePath hasPrefix:@"/"] || [relativePath rangeOfString:@"\0"].location != NSNotFound) return @{ @"ok": @NO, @"error": @"path must be bundle-relative" };
-    NSString *candidate = [[root stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
+    NSString *root = [[bundlePath stringByStandardizingPath] stringByResolvingSymlinksInPath];
+    if (![root isKindOfClass:[NSString class]] || [root length] == 0) return @{ @"ok": @NO, @"error": @"script_session_unavailable" };
+    if (![relativePath isKindOfClass:[NSString class]] || [relativePath length] == 0) return @{ @"ok": @NO, @"error": @"storage_missing_path" };
+    if ([relativePath hasPrefix:@"/"]) return @{ @"ok": @NO, @"error": @"storage_path_must_be_relative" };
+    if ([relativePath rangeOfString:@"\0"].location != NSNotFound) return @{ @"ok": @NO, @"error": @"storage_path_contains_nul" };
+    NSString *candidate = [[[root stringByAppendingPathComponent:relativePath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
     NSString *prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
-    if (![candidate hasPrefix:prefix]) return @{ @"ok": @NO, @"error": @"path escapes bundle" };
-    NSString *name = [candidate lastPathComponent];
-    if ([name isEqualToString:@"manifest.json"] || [name isEqualToString:@"info.plist"]) return @{ @"ok": @NO, @"error": @"refusing to modify bundle metadata" };
-    if ([[[candidate pathExtension] lowercaseString] isEqualToString:@"js"]) return @{ @"ok": @NO, @"error": @"refusing to modify JavaScript source files" };
+    if (![candidate hasPrefix:prefix]) return @{ @"ok": @NO, @"error": @"storage_path_outside_bundle" };
+    if (writing) {
+        NSString *name = [candidate lastPathComponent];
+        if ([name isEqualToString:@"manifest.json"] || [name isEqualToString:@"info.plist"] ||
+            [[[candidate pathExtension] lowercaseString] isEqualToString:@"js"]) {
+            return @{ @"ok": @NO, @"error": @"storage_path_is_protected" };
+        }
+    }
     if (createParent) {
         NSString *dir = [candidate stringByDeletingLastPathComponent];
         NSError *mkdirError = nil;
@@ -297,7 +313,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 - (NSDictionary *)readTextAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
     self.storageOpsCount++;
-    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath writing:NO createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
@@ -312,7 +328,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 - (NSDictionary *)writeText:(NSString *)text atRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
     self.storageOpsCount++;
-    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:YES];
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath writing:YES createParent:YES];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
     NSString *safeText = [text isKindOfClass:[NSString class]] ? text : [text description];
@@ -323,6 +339,65 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     BOOL ok = [safeText writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err];
     if (!ok) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to write file", @"path": path ?: @"" };
     return @{ @"ok": @YES, @"path": path ?: @"", @"bytes": @([data length]) };
+}
+
+- (void)closeActiveFileHandles
+{
+    NSArray<TLinkJSFileHandle *> *handles = nil;
+    @synchronized (self) {
+        handles = [self.activeFileHandles.allValues copy];
+        [self.activeFileHandles removeAllObjects];
+    }
+    for (TLinkJSFileHandle *handle in handles) [handle close];
+}
+
+- (JSValue *)openFileAtRelativePath:(NSString *)relativePath
+                               mode:(NSString *)mode
+                         bundlePath:(NSString *)bundlePath
+                            context:(JSContext *)context
+                          sessionId:(NSString *)sessionId
+{
+    self.storageOpsCount++;
+    NSString *openMode = mode.length > 0 ? mode : @"r";
+    if (!TLinkJSFileModeIsValid(openMode)) {
+        return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"invalid_file_mode", @"mode": openMode} inContext:context];
+    }
+    BOOL writing = TLinkJSFileModeWrites(openMode);
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath
+                                                          bundlePath:bundlePath
+                                                             writing:writing
+                                                        createParent:writing];
+    if (![resolved[@"ok"] boolValue]) return [JSValue valueWithObject:resolved inContext:context];
+    NSString *path = resolved[@"path"] ?: @"";
+
+    __block NSUInteger handleId = 0;
+    @synchronized (self) {
+        if (self.activeFileHandles.count >= kTLinkJSHelperMaxOpenFiles) {
+            return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"too_many_open_files", @"limit": @(kTLinkJSHelperMaxOpenFiles)} inContext:context];
+        }
+        handleId = self.nextFileHandleId++;
+    }
+    NSString *openError = nil;
+    TLinkJSFileHandle *handle = [TLinkJSFileHandle openPath:path
+                                                      mode:openMode
+                                                  handleId:handleId
+                                          maxTransferBytes:(NSUInteger)kTLinkJSHelperMaxStorageFileBytes
+                                                     error:&openError];
+    if (!handle) {
+        return [JSValue valueWithObject:@{@"ok": @NO, @"error": openError ?: @"file_open_failed", @"path": path, @"mode": openMode} inContext:context];
+    }
+    @synchronized (self) {
+        self.activeFileHandles[@(handleId)] = handle;
+    }
+    __weak TLinkJSHelperServer *weakSelf = self;
+    NSString *ownerSessionId = [sessionId copy];
+    return TLinkJSFileHandleCreateJSObject(context, handle, ^(NSUInteger closedId) {
+        TLinkJSHelperServer *strongSelf = weakSelf;
+        if (!strongSelf || ![strongSelf.activeSessionId isEqualToString:ownerSessionId]) return;
+        @synchronized (strongSelf) {
+            [strongSelf.activeFileHandles removeObjectForKey:@(closedId)];
+        }
+    });
 }
 
 - (NSDictionary *)readJSONAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
@@ -354,7 +429,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 - (NSDictionary *)fileExistsAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
     self.storageOpsCount++;
-    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath writing:NO createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
     BOOL isDir = NO;
@@ -365,7 +440,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 - (NSDictionary *)deleteFileAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
     self.storageOpsCount++;
-    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath createParent:NO];
+    NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath writing:YES createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
     NSString *path = resolved[@"path"];
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return @{ @"ok": @YES, @"path": path ?: @"", @"deleted": @NO };
@@ -398,6 +473,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 - (void)finishSessionId:(NSString *)sessionId state:(NSString *)state reason:(NSString *)reason errorText:(NSString *)errorText logPath:(NSString *)logPath latestPath:(NSString *)latestPath
 {
     if (sessionId && self.activeSessionId && ![sessionId isEqualToString:self.activeSessionId]) return;
+    [self closeActiveFileHandles];
     self.activeState = state ?: kTLinkJSHelperStateFailed;
     self.activeExitReason = reason ?: @"unknown";
     self.activeEndedAt = [NSDate date];
@@ -431,6 +507,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 {
     @autoreleasepool {
         NSLog(@"tlinkauto-jsd: starting session=%@ script=%@ bundle=%@", sessionId, scriptPath, bundlePath);
+        [self closeActiveFileHandles];
+        self.activeFileHandles = [NSMutableDictionary dictionary];
+        self.nextFileHandleId = 1;
         NSString *logPath = [self consoleLogPathForBundlePath:bundlePath runId:runId latest:NO];
         NSString *latestPath = [self consoleLogPathForBundlePath:bundlePath runId:runId latest:YES];
         self.lastConsoleLogPath = logPath;
@@ -485,6 +564,10 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 @"nativeAPIs": @NO,
                 @"nativeRPC": @YES,
                 @"storageLocal": @YES,
+                @"fileHandleAPI": @YES,
+                @"fileHandleModes": @[@"r", @"rb", @"r+", @"rb+", @"w", @"wb", @"w+", @"wb+", @"a", @"ab", @"a+", @"ab+"],
+                @"maxOpenFiles": @(kTLinkJSHelperMaxOpenFiles),
+                @"maxFileTransferBytes": @(kTLinkJSHelperMaxStorageFileBytes),
                 @"frameHandleRPC": @YES,
                 @"imageHandleRPC": @YES,
                 @"ocrRPC": @YES,
@@ -564,6 +647,14 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         };
         device[@"readText"] = ^NSDictionary *(NSString *path) { return [weakSelf readTextAtRelativePath:path bundlePath:bundlePath]; };
         device[@"writeText"] = ^NSDictionary *(NSString *path, NSString *text) { return [weakSelf writeText:text atRelativePath:path bundlePath:bundlePath]; };
+        device[@"openFile"] = ^JSValue *(NSString *path, NSString *mode) {
+            JSContext *currentContext = [JSContext currentContext] ?: ctx;
+            return [weakSelf openFileAtRelativePath:path
+                                               mode:mode
+                                         bundlePath:bundlePath
+                                            context:currentContext
+                                          sessionId:sessionId];
+        };
         device[@"readJSON"] = ^NSDictionary *(NSString *path) { return [weakSelf readJSONAtRelativePath:path bundlePath:bundlePath]; };
         device[@"writeJSON"] = ^NSDictionary *(NSString *path, id value) { return [weakSelf writeJSONValue:value atRelativePath:path bundlePath:bundlePath]; };
         device[@"fileExists"] = ^NSDictionary *(NSString *path) { return [weakSelf fileExistsAtRelativePath:path bundlePath:bundlePath]; };
@@ -612,6 +703,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         } @finally {
             self.evalDurationMs = [[NSDate date] timeIntervalSinceDate:evalStartedAt] * 1000.0;
             if (_clearExecutionTimeLimit) _clearExecutionTimeLimit(group);
+            [self closeActiveFileHandles];
         }
         if (_cancelState->stopped.load(std::memory_order_acquire)) {
             self.activeState = kTLinkJSHelperStateCancelled;

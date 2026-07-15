@@ -90,7 +90,7 @@ Touch recording 14-15: có thể thử bằng HID monitor entitlement đã có.
 Hardware key 30: chuyển sang HID key event nếu khả thi.
 
 Nhóm cần thiết kế lại:
-Toast/alert/dialog/touch indicator 12, 22, 26, 42, 43: Xem chi tiết trong phần "Giao diện người dùng (UI Parity)". Foreground dùng overlay window của app-process; background toast dùng positioned UIDaemon window với CFUserNotification fallback, còn alert/dialog dùng CFUserNotification system alert.
+Toast/alert/dialog/touch indicator 12, 22, 26, 42, 43: Xem chi tiết trong phần "Giao diện người dùng (UI Parity)". Foreground dùng overlay window của app-process. Background toast/alert/dialog dùng CFUserNotification system alert; toast background hiện cố định ở giữa màn hình.
 Text input 24: ưu tiên pasteboard + HID keyboard event; nếu app đích chặn paste thì cần fallback riêng.
 App management 11, 31-35, 50-54: thử private APIs từ unsandboxed platform app; nếu không ổn, đưa phần kill/data vào privhelper.
 Connectivity 55-59: nhiều khả năng cần private framework/entitlement riêng; xếp phase sau.
@@ -166,9 +166,15 @@ Không còn phụ thuộc Substrate/SpringBoard injection cho core automation.
 Các task không thể port được có fallback hoặc lỗi rõ ràng (unsupported_on_trollstore).
 Script storage và config giữ nguyên path cũ (/var/mobile/Library/TLinkauto/...).
 
+Script file parity: rootfull in-process `pccontrol`, rootfull `tlinkauto-jsd`,
+and TrollStore `streamd` share the same `device.openFile` implementation.
+Handles support read/write/append,
+text/base64, seek/tell/flush/close, are bundle-relative, and are automatically
+closed at the end of every script evaluation.
+
 Known unresolved issues / deferred investigation:
-- Foreground dependency reduction now uses the proven clipboard UIDaemon pattern. `clipboardd` v10 keeps direct background Pasteboard access, handles best-effort keep-awake requests, and attempts a noninteractive global UIKit window for positioned background toast (`0` top, `1` center, `2` bottom). Alert/dialog retain the CFUserNotification system-alert path. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
-- Toast/alert/dialog no longer require StreamControl to remain foreground to enqueue feedback. Foreground uses the app UIKit overlay; background toast uses the v10 UIDaemon passthrough window with CFUserNotification fallback, while alert/dialog use CFUserNotification directly. Dialog button results are not yet bridged back to the original task. The UIDaemon window still requires device validation: if diagnostics show `toast_overlay_visible=1` without visible pixels above the active app, private compositor/window-hosting work remains.
+- Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v11 keeps direct background Pasteboard access, handles best-effort keep-awake requests, and sends background toast/alert/dialog through CFUserNotification. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
+- Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.
 - Keep-awake through the UIKit UIDaemon is best-effort. A guaranteed global display/power assertion remains deferred until a proven private IOKit/SpringBoard path is available.
 - Vision OCR is currently deferred on TrollStore. Headless streamd Vision OCR previously crashed the worker during `vision_perform_requests` with signal 11; app-side Vision bridge avoided the streamd crash but failed on the test device with `Could not create buffer with format '420f' (-6662)`, even after RGB/accurate retry attempts.
