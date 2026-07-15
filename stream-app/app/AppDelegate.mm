@@ -31,6 +31,7 @@
 @property(nonatomic, assign) NSInteger visualFeedbackBurstPollsRemaining;
 @property(nonatomic, strong) SCStreamSupervisor *serviceSupervisor;
 @property(nonatomic, assign) BOOL ocrServerStarted;
+@property(nonatomic, assign) BOOL clipboardServerStarted;
 @end
 
 @implementation SCAppDelegate
@@ -76,6 +77,7 @@
     self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
     [self ensureStreamServiceForReason:@"launch" background:NO];
     [self startAppSideOCRServer];
+    [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -86,6 +88,7 @@
     (void)application;
     [self ensureStreamServiceForReason:@"active" background:NO];
     [self startAppSideOCRServer];
+    [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
 }
 
@@ -417,6 +420,80 @@
     return @"-1;;app_ocr_requires_ios13\r\n";
 }
 
+- (void)startAppSideClipboardServer
+{
+    if (self.clipboardServerStarted) return;
+    self.clipboardServerStarted = YES;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        [self runAppSideClipboardServer];
+    });
+}
+
+- (NSString *)pasteboardImageTypeForData:(NSData *)imageData
+{
+    if (imageData.length < 4) return nil;
+    const unsigned char *bytes = (const unsigned char *)imageData.bytes;
+    if (imageData.length >= 8 &&
+        bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+        bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A) {
+        return @"public.png";
+    }
+    if (bytes[0] == 0xFF && bytes[1] == 0xD8) return @"public.jpeg";
+    if (imageData.length >= 6 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == '8') {
+        return @"com.compuserve.gif";
+    }
+    if (imageData.length >= 12 &&
+        bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F' &&
+        bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+        return @"org.webmproject.webp";
+    }
+    return nil;
+}
+
+- (NSString *)performClipboardBody:(NSString *)body
+{
+    NSArray<NSString *> *parts = [body ?: @"" componentsSeparatedByString:@";;"];
+    if (parts.count < 1) return @"-1;;app_clipboard_missing_subtask\r\n";
+    int subtask = [parts[0] intValue];
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+
+    if (subtask == 6) {
+        return [NSString stringWithFormat:@"0;;%@\r\n", pasteboard.string ?: @""];
+    }
+    if (subtask == 7) {
+        if (parts.count < 2) return @"-1;;app_clipboard_save_text_missing_content\r\n";
+        NSString *text = [[parts subarrayWithRange:NSMakeRange(1, parts.count - 1)] componentsJoinedByString:@";;"];
+        pasteboard.string = text ?: @"";
+        return @"0\r\n";
+    }
+    if (subtask == 8) {
+        if (parts.count < 3 || ![parts[1] isEqualToString:@"file"]) return @"-1;;app_clipboard_image_requires_file_path\r\n";
+        NSString *imagePath = [[parts subarrayWithRange:NSMakeRange(2, parts.count - 2)] componentsJoinedByString:@";;"];
+        NSData *imageData = [NSData dataWithContentsOfFile:imagePath];
+        if (imageData.length == 0) return [NSString stringWithFormat:@"-1;;app_clipboard_image_read_failed path=%@\r\n", imagePath ?: @""];
+        NSString *type = [self pasteboardImageTypeForData:imageData];
+        if (!type.length) return @"-1;;app_clipboard_image_unsupported_format\r\n";
+        pasteboard.items = @[@{type: imageData}];
+        return [NSString stringWithFormat:@"0;;clipboard_image_data;;%@;;%lu\r\n", type, (unsigned long)imageData.length];
+    }
+    return @"-1;;app_clipboard_unsupported_subtask\r\n";
+}
+
+- (NSString *)performAppSideClipboardRequestLine:(NSString *)line
+{
+    NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@";;"];
+    if (parts.count < 2 || ![parts[0] isEqualToString:@"1"]) return @"-1;;app_clipboard_bad_request\r\n";
+    NSData *bodyData = [[NSData alloc] initWithBase64EncodedString:parts[1] options:0];
+    NSString *body = bodyData ? [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding] : nil;
+    if (!body) return @"-1;;app_clipboard_bad_body_base64\r\n";
+
+    __block NSString *response = nil;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        response = [self performClipboardBody:body];
+    });
+    return response ?: @"-1;;app_clipboard_empty_response\r\n";
+}
+
 - (void)writeString:(NSString *)string toSocket:(int)client
 {
     NSData *data = [(string ?: @"-1;;app_ocr_empty_response\r\n") dataUsingEncoding:NSUTF8StringEncoding];
@@ -449,6 +526,16 @@
     @autoreleasepool {
         NSString *line = [self readLineFromSocket:client];
         NSString *response = line.length > 0 ? [self performAppSideOCRRequestLine:line] : @"-1;;app_ocr_empty_request\r\n";
+        [self writeString:response toSocket:client];
+        close(client);
+    }
+}
+
+- (void)handleAppSideClipboardClient:(int)client
+{
+    @autoreleasepool {
+        NSString *line = [self readLineFromSocket:client];
+        NSString *response = line.length > 0 ? [self performAppSideClipboardRequestLine:line] : @"-1;;app_clipboard_empty_request\r\n";
         [self writeString:response toSocket:client];
         close(client);
     }
@@ -495,6 +582,50 @@
         }
         close(server);
         self.ocrServerStarted = NO;
+    }
+}
+
+- (void)runAppSideClipboardServer
+{
+    @autoreleasepool {
+        int server = socket(AF_INET, SOCK_STREAM, 0);
+        if (server < 0) {
+            NSLog(@"[StreamControl][Clipboard] socket failed errno=%d", errno);
+            self.clipboardServerStarted = NO;
+            return;
+        }
+        int yes = 1;
+        setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(6012);
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+        if (bind(server, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+            NSLog(@"[StreamControl][Clipboard] bind 127.0.0.1:6012 failed errno=%d", errno);
+            close(server);
+            self.clipboardServerStarted = NO;
+            return;
+        }
+        if (listen(server, 4) != 0) {
+            NSLog(@"[StreamControl][Clipboard] listen failed errno=%d", errno);
+            close(server);
+            self.clipboardServerStarted = NO;
+            return;
+        }
+        NSLog(@"[StreamControl][Clipboard] app-side clipboard server listening on 127.0.0.1:6012");
+
+        while (1) {
+            int client = accept(server, NULL, NULL);
+            if (client < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            [self handleAppSideClipboardClient:client];
+        }
+        close(server);
+        self.clipboardServerStarted = NO;
     }
 }
 

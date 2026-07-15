@@ -18,6 +18,7 @@ Expected markers:
 - `scriptStorageAPI`
 - `scriptKeyboardAPI`
 - `clipboardImage`
+- `clipboardAppSideBridge`
 - `scriptColorFrameAPI`
 - `scriptImageAPI`
 - `scriptOCRAPI`
@@ -67,10 +68,12 @@ where available:
 Keyboard backend smoke:
 
 ```powershell
+# Open StreamControl.app foreground first so the app-side clipboard bridge on
+# 127.0.0.1:6012 is listening.
 Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
 
-# TrollStore currently reports limited for these instead of silent success:
+# This should save the text to clipboard, then report limited for actual insert:
 Invoke-TLinkTask -HostIP $iphoneIP -Task "241;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "244;;5"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
@@ -81,9 +84,10 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
 - Vision OCR remains deferred; task `91` Tesseract is the stable OCR path.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
 - Keyboard API names are exposed for rootfull script compatibility. TrollStore
-  supports clipboard text and native `UIPasteboard` clipboard images. Insert,
-  paste, delete, cursor movement, and show/hide keyboard require the rootfull
-  SpringBoard keyboard observer and return `limited_on_trollstore` instead of
-  silent success.
+  supports clipboard text and native `UIPasteboard` clipboard images through an
+  app-side bridge, so `StreamControl.app` must be foreground/alive. Insert,
+  paste, delete, cursor movement, and show/hide keyboard still require the
+  rootfull SpringBoard keyboard observer and return `limited_on_trollstore`
+  instead of silent success.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
 - Foreground overlays replace SpringBoard injection overlays.

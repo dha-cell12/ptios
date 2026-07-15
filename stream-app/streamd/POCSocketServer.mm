@@ -3779,35 +3779,21 @@ static NSData *TLinkHandleFrameBatch(NSString *body)
     return TLinkSuccess([NSString stringWithFormat:@"%@;;%llu;;%.3f", [results componentsJoinedByString:@"@@"], (unsigned long long)ageMs, totalMs]);
 }
 
-static NSString *TLinkPasteboardTypeForImageData(NSData *data)
-{
-    if (data.length >= 8) {
-        const unsigned char *b = (const unsigned char *)data.bytes;
-        if (b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) return @"public.png";
-        if (b[0] == 0xFF && b[1] == 0xD8) return @"public.jpeg";
-        if (b[0] == 'G' && b[1] == 'I' && b[2] == 'F') return @"com.compuserve.gif";
-        if (b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F' &&
-            data.length >= 12 && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P') {
-            return @"public.webp";
-        }
-        if ((b[0] == 'I' && b[1] == 'I' && b[2] == 0x2A && b[3] == 0x00) ||
-            (b[0] == 'M' && b[1] == 'M' && b[2] == 0x00 && b[3] == 0x2A)) {
-            return @"public.tiff";
-        }
-    }
-    return @"";
-}
+static NSData *TLinkRunAppSideClipboard(NSString *body);
 
 static NSData *TLinkHandleKeyboard(NSString *body)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
     if (parts.count < 1) return TLinkError(@"keyboard task missing subtask");
     int subtask = [parts[0] intValue];
-    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
     if (subtask == 1) {
         if (parts.count < 2) return TLinkError(@"insert text missing content");
         NSString *text = TLinkJoinParts(parts, 1);
-        pasteboard.string = text ?: @"";
+        NSData *saveResponse = TLinkRunAppSideClipboard([NSString stringWithFormat:@"7;;%@", text ?: @""]);
+        NSString *saveText = TLinkResponseStringFromData(saveResponse);
+        if (![saveText isEqualToString:@"0"] && ![saveText hasPrefix:@"0;;"]) {
+            return TLinkUnsupported(24, [NSString stringWithFormat:@"limited_on_trollstore insert_text_requires_springboard_keyboard_observer clipboard_save_failed %@", saveText ?: @""]);
+        }
         return TLinkUnsupported(24, [NSString stringWithFormat:@"limited_on_trollstore insert_text_requires_springboard_keyboard_observer text_saved_to_clipboard length=%lu", (unsigned long)text.length]);
     }
     if (subtask == 2) {
@@ -3830,35 +3816,18 @@ static NSData *TLinkHandleKeyboard(NSString *body)
         return TLinkUnsupported(24, @"limited_on_trollstore paste_from_clipboard_requires_springboard_keyboard_observer");
     }
     if (subtask == 6) {
-        return TLinkSuccess(pasteboard.string ?: @"");
+        return TLinkRunAppSideClipboard(@"6");
     }
     if (subtask == 7) {
         if (parts.count < 2) return TLinkError(@"clipboard save text missing content");
-        pasteboard.string = TLinkJoinParts(parts, 1);
-        return TLinkSuccess(nil);
+        return TLinkRunAppSideClipboard([NSString stringWithFormat:@"7;;%@", TLinkJoinParts(parts, 1)]);
     }
     if (subtask == 8) {
         if (parts.count < 2) return TLinkError(@"clipboard image missing file path");
         NSString *payload = TLinkJoinParts(parts, 1);
         NSString *path = [payload hasPrefix:@"file;;"] ? [payload substringFromIndex:6] : payload;
         if (path.length == 0) return TLinkError(@"clipboard image empty file path");
-        NSData *data = [NSData dataWithContentsOfFile:path];
-        if (data.length == 0) return TLinkError([NSString stringWithFormat:@"clipboard image read failed path=%@", path]);
-        NSString *type = TLinkPasteboardTypeForImageData(data);
-        if ([type isEqualToString:@"com.compuserve.gif"] || [type isEqualToString:@"public.webp"]) {
-            [pasteboard setData:data forPasteboardType:type];
-            return TLinkSuccess([NSString stringWithFormat:@"clipboard_image_data;;%@;;%lu", type, (unsigned long)data.length]);
-        }
-        UIImage *image = [UIImage imageWithData:data];
-        if (image) {
-            pasteboard.image = image;
-            return TLinkSuccess([NSString stringWithFormat:@"clipboard_image;;%@;;%lu", type.length > 0 ? type : @"UIImage", (unsigned long)data.length]);
-        }
-        if (type.length > 0) {
-            [pasteboard setData:data forPasteboardType:type];
-            return TLinkSuccess([NSString stringWithFormat:@"clipboard_image_data;;%@;;%lu", type, (unsigned long)data.length]);
-        }
-        return TLinkError(@"clipboard image unsupported data");
+        return TLinkRunAppSideClipboard([NSString stringWithFormat:@"8;;file;;%@", path]);
     }
     return TLinkUnsupported(24, @"limited_on_trollstore unknown_keyboard_subtask");
 }
@@ -3942,6 +3911,45 @@ static NSData *TLinkReadSocketResponse(int fd)
         [response appendBytes:buffer length:(NSUInteger)n];
         if (memchr(buffer, '\n', (size_t)n) != NULL) break;
     }
+    return response;
+}
+
+static NSData *TLinkRunAppSideClipboard(NSString *body)
+{
+    NSData *bodyData = [(body ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
+    NSString *encodedBody = bodyData ? [bodyData base64EncodedStringWithOptions:0] : @"";
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return TLinkError([NSString stringWithFormat:@"app_clipboard_bridge_socket_failed errno=%d", errno]);
+    }
+    struct timeval timeout;
+    timeout.tv_sec = 3;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(6012);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        int connectErrno = errno;
+        close(sock);
+        return TLinkError([NSString stringWithFormat:@"app_clipboard_bridge_unavailable errno=%d open_StreamControl_foreground", connectErrno]);
+    }
+
+    NSString *line = [NSString stringWithFormat:@"1;;%@\n", encodedBody ?: @""];
+    NSData *lineData = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (!TLinkWriteAllToFd(sock, lineData.bytes, lineData.length)) {
+        close(sock);
+        return TLinkError(@"app_clipboard_bridge_request_write_failed");
+    }
+
+    NSData *response = TLinkReadSocketResponse(sock);
+    close(sock);
+    if (response.length == 0) return TLinkError(@"app_clipboard_bridge_empty_response");
     return response;
 }
 
@@ -5106,6 +5114,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"frame": @(YES),
         @"keyboardClipboard": @(YES),
         @"clipboardImage": @(YES),
+        @"clipboardAppSideBridge": @(YES),
         @"keyboardMode": @"clipboard_text_image_only",
         @"keyboardInputMode": @"limited_requires_springboard_keyboard_observer",
         @"hardwareKey": @(YES),
@@ -7042,7 +7051,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,textInputControl unsupportedTasks=none keyboard=clipboard_text_image_only keyboardInput=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardAppSideBridge,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,textInputControl unsupportedTasks=none keyboard=clipboard_text_image_only clipboard=app_side_bridge_foreground keyboardInput=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
