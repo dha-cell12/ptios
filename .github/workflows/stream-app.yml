@@ -33,7 +33,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           brew install ldid xz
 
       - name: Set up Theos
@@ -154,7 +154,7 @@ jobs:
           grep -q 'TLinkJSFileHandleCreateJSObject' shared/TLinkJSFileHandle.mm
           grep -Fq 'device[@"openFile"]' tlinkauto-jsd/TLinkJSHelperServer.mm
           grep -q '../shared/TLinkJSFileHandle.mm' tlinkauto-jsd/Makefile
-          grep -q 'scriptFileHandleAPI' tlinkauto-jsd/TLinkJSHelperServer.mm
+          grep -q 'fileHandleAPI' tlinkauto-jsd/TLinkJSHelperServer.mm
           grep -q 'kTLinkJSHelperVersion = @"1.1.0"' tlinkauto-jsd/TLinkJSHelperServer.mm
           grep -Fq 'openFile:(NSString *)path mode:(NSString *)mode' pccontrol/jsruntime/TLinkautoDeviceBridge.h
           grep -Fq '../shared/TLinkJSFileHandle.mm' pccontrol/Makefile
