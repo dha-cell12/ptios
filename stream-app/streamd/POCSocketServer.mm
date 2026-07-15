@@ -265,6 +265,7 @@ static uint64_t TLinkRecordToast(NSString *message, double duration, int type, i
         @"kind": @"toast",
         @"title": @"TLinkauto",
         @"message": safeMessage,
+        @"duration": @(duration),
         @"event_id": @(eventId),
     });
     return eventId;
@@ -301,6 +302,7 @@ static uint64_t TLinkRecordAlert(NSString *title, NSString *message, double dura
         @"kind": @"alert",
         @"title": safeTitle,
         @"message": safeMessage,
+        @"duration": @(duration),
         @"event_id": @(eventId),
     });
     return eventId;
@@ -326,7 +328,7 @@ static uint64_t TLinkRecordDialog(NSString *title, NSString *message, NSString *
             @"message": safeMessage,
             @"ok": safeOK,
             @"cancel": safeCancel,
-            @"mode": @"foreground_overlay_with_background_notification",
+            @"mode": @"foreground_overlay_with_background_cfusernotification_alert",
             @"source": source ?: @"unknown",
             @"ts_ms": @(TLinkNowMs()),
         }];
@@ -339,6 +341,9 @@ static uint64_t TLinkRecordDialog(NSString *title, NSString *message, NSString *
         @"kind": @"dialog",
         @"title": safeTitle,
         @"message": safeMessage,
+        @"ok": safeOK,
+        @"cancel": safeCancel,
+        @"duration": @30,
         @"event_id": @(eventId),
     });
     return eventId;
@@ -413,7 +418,7 @@ static NSDictionary *TLinkVisualFeedbackDictionary(void)
             @"last_dialog_value": sTLinkLastDialogValue ?: @"",
             @"touch_indicator_enabled": @(sTLinkTouchIndicatorEnabled),
             @"foreground_app_active": @(TLinkAppForegroundHeartbeatIsFresh()),
-            @"background_fallback_mode": @"local_notification",
+            @"background_fallback_mode": @"cfusernotification_system_alert",
             @"events": sTLinkVisualEvents ? [sTLinkVisualEvents copy] : @[],
         };
     }
@@ -969,7 +974,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         int position = opts[@"position"] ? [opts[@"position"] intValue] : 2;
         int fontSize = opts[@"fontSize"] ? [opts[@"fontSize"] intValue] : 15;
         uint64_t eventId = TLinkRecordToast(text, duration, type, position, fontSize, @"script");
-        return @{@"ok": @YES, @"mode": @"foreground_overlay_or_background_notification", @"event_id": @(eventId)};
+        return @{@"ok": @YES, @"mode": @"foreground_overlay_or_background_cfusernotification", @"event_id": @(eventId)};
     };
     device[@"alert"] = ^NSDictionary *(JSValue *titleValue, JSValue *messageValue, JSValue *options) {
         NSString *title = titleValue && ![titleValue isUndefined] && ![titleValue isNull] ? [titleValue toString] : @"TLinkauto";
@@ -987,7 +992,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         }
         TLinkScriptAppendLog(weakSession, [NSString stringWithFormat:@"alert: %@", message]);
         uint64_t eventId = TLinkRecordAlert(title, message, duration, @"script");
-        return @{@"ok": @(eventId > 0), @"mode": @"foreground_overlay_or_background_notification", @"event_id": @(eventId)};
+        return @{@"ok": @(eventId > 0), @"mode": @"foreground_overlay_or_background_cfusernotification", @"event_id": @(eventId)};
     };
     device[@"dialog"] = ^NSDictionary *(JSValue *options) {
         NSDictionary *opts = nil;
@@ -1005,7 +1010,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         return @{
             @"ok": @(eventId > 0),
             @"response": sTLinkLastDialogValue ?: @"0",
-            @"mode": @"limited_nonblocking_foreground_overlay_or_background_notification",
+            @"mode": @"foreground_overlay_or_background_cfusernotification_alert",
             @"event_id": @(eventId),
         };
     };
@@ -2022,7 +2027,7 @@ static NSData *TLinkHandleToast(NSString *body)
     int fontSize = parts.count >= 5 ? [parts[4] intValue] : 15;
     uint64_t eventId = TLinkRecordToast(message, duration, type, position, fontSize, @"task22");
     if (eventId == 0) return TLinkError(@"toast_missing_message");
-    return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu;;foreground_overlay_or_background_notification", eventId]);
+    return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu;;foreground_overlay_or_background_cfusernotification", eventId]);
 }
 
 static NSData *TLinkHandleAlertBox(NSString *body)
@@ -2033,7 +2038,7 @@ static NSData *TLinkHandleAlertBox(NSString *body)
     double duration = parts.count >= 3 ? [parts[2] doubleValue] : 0.0;
     uint64_t eventId = TLinkRecordAlert(title, message, duration, @"task12");
     if (eventId == 0) return TLinkError(@"alert_missing_message");
-    return TLinkSuccess([NSString stringWithFormat:@"alert_queued;;%llu;;foreground_overlay_or_background_notification", eventId]);
+    return TLinkSuccess([NSString stringWithFormat:@"alert_queued;;%llu;;foreground_overlay_or_background_cfusernotification", eventId]);
 }
 
 static NSData *TLinkHandleDialog(NSString *body)
@@ -2046,7 +2051,7 @@ static NSData *TLinkHandleDialog(NSString *body)
     sTLinkLastDialogValue = @"0";
     uint64_t eventId = TLinkRecordDialog(title, message, okTitle, cancelTitle, @"task42");
     if (eventId == 0) return TLinkError(@"dialog_missing_content");
-    return TLinkSuccess([NSString stringWithFormat:@"%@;;dialog_queued;;%llu;;limited_nonblocking_foreground_overlay_or_background_notification", sTLinkLastDialogValue ?: @"0", eventId]);
+    return TLinkSuccess([NSString stringWithFormat:@"%@;;dialog_queued;;%llu;;foreground_overlay_or_background_cfusernotification_alert", sTLinkLastDialogValue ?: @"0", eventId]);
 }
 
 static NSData *TLinkHandleClearDialog(NSString *body)
@@ -4120,7 +4125,7 @@ static void TLinkUpdateClipboardDaemonVerification(NSData *diagnosticResponse)
 {
     NSString *diagnostic = TLinkResponseStringFromData(diagnosticResponse);
     sTLinkClipboardDaemonWriteVerified =
-        [diagnostic containsString:@"version=7"] &&
+        [diagnostic containsString:@"version=8"] &&
         [diagnostic containsString:@"background_entitlement=1"] &&
         [diagnostic containsString:@"write_verified=1"];
 }
@@ -5375,6 +5380,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"clipboardForegroundBroker": @(YES),
         @"backgroundUIBridge": @(YES),
         @"backgroundVisualNotifications": @(YES),
+        @"backgroundVisualCFUserNotification": @(YES),
         @"clipboardMode": @"background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback",
         @"keyboardHIDPaste": @(YES),
         @"keyboardHIDEditing": @(YES),
@@ -5420,11 +5426,11 @@ static NSData *TLinkHandleHelloStatus(void)
         @"keepAwake": @(YES),
         @"keepAwakeMode": @"foreground_app_plus_background_uidaemon_best_effort",
         @"visualFeedback": @(YES),
-        @"visualFeedbackMode": @"foreground_overlay_with_background_local_notification",
+        @"visualFeedbackMode": @"foreground_overlay_with_cfusernotification_system_alert_fallback",
         @"toastOverlay": @(YES),
         @"alertOverlay": @(YES),
         @"dialogOverlay": @(YES),
-        @"dialogOverlayMode": @"limited_nonblocking_foreground_overlay_or_background_notification",
+        @"dialogOverlayMode": @"foreground_overlay_or_background_cfusernotification_alert",
         @"touchIndicator": @(YES),
         @"touchIndicatorEnabled": @(sTLinkTouchIndicatorEnabled),
         @"appMgmt": @(YES),
@@ -7317,7 +7323,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,backgroundUIBridge,backgroundVisualNotifications,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_with_background_local_notification dialog=limited_nonblocking_foreground_overlay_or_background_notification touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_with_cfusernotification_system_alert_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);

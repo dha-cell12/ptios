@@ -82,7 +82,6 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
     [self ensureStreamServiceForReason:@"launch" background:NO];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
-    [self requestBackgroundVisualNotificationPermission];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -94,7 +93,6 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
     [self ensureStreamServiceForReason:@"active" background:NO];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
-    [self requestBackgroundVisualNotificationPermission];
     [self startVisualFeedbackMonitor];
 }
 

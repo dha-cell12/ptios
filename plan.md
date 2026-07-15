@@ -90,7 +90,7 @@ Touch recording 14-15: có thể thử bằng HID monitor entitlement đã có.
 Hardware key 30: chuyển sang HID key event nếu khả thi.
 
 Nhóm cần thiết kế lại:
-Toast/alert/dialog/touch indicator 12, 22, 26, 42, 43: Xem chi tiết trong phần "Giao diện người dùng (UI Parity)". Làm bằng overlay window của app-process (khi foreground) + local notification fallback.
+Toast/alert/dialog/touch indicator 12, 22, 26, 42, 43: Xem chi tiết trong phần "Giao diện người dùng (UI Parity)". Làm bằng overlay window của app-process (khi foreground) + CFUserNotification system-alert fallback.
 Text input 24: ưu tiên pasteboard + HID keyboard event; nếu app đích chặn paste thì cần fallback riêng.
 App management 11, 31-35, 50-54: thử private APIs từ unsandboxed platform app; nếu không ổn, đưa phần kill/data vào privhelper.
 Connectivity 55-59: nhiều khả năng cần private framework/entitlement riêng; xếp phase sau.
@@ -167,8 +167,8 @@ Các task không thể port được có fallback hoặc lỗi rõ ràng (unsupp
 Script storage và config giữ nguyên path cũ (/var/mobile/Library/TLinkauto/...).
 
 Known unresolved issues / deferred investigation:
-- Foreground dependency reduction now uses the proven clipboard UIDaemon pattern. `clipboardd` v7 keeps direct background Pasteboard access and also handles background local-notification fallback plus best-effort keep-awake requests. The notification center is explicitly bound to `com.tlinkauto.streamcontrol`; a process-default center returned `UNErrorDomain` code 1 despite the app having authorization. StreamControl writes a short-lived foreground heartbeat so foreground overlays and background notifications are not duplicated.
-- Toast/alert/dialog no longer require StreamControl to remain foreground to produce visible feedback: foreground uses the UIKit overlay, background uses a local notification. The user must grant notification permission once. Background dialog notifications are deliberately non-interactive.
+- Foreground dependency reduction now uses the proven clipboard UIDaemon pattern. `clipboardd` v8 keeps direct background Pasteboard access and also handles background CFUserNotification system-alert fallback plus best-effort keep-awake requests. UserNotifications returned `UNErrorDomain` code 1 even with an explicit app bundle center and app authorization, because the daemon audit identity is not an authorized app/extension. StreamControl writes a short-lived foreground heartbeat so foreground overlays and background system alerts are not duplicated.
+- Toast/alert/dialog no longer require StreamControl to remain foreground to produce visible feedback: foreground uses the UIKit overlay, background uses a SpringBoard CFUserNotification system notice/alert. This path uses the daemon entitlement and does not depend on app notification permission. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.
 - Keep-awake through the UIKit UIDaemon is best-effort. A guaranteed global display/power assertion remains deferred until a proven private IOKit/SpringBoard path is available.
 - Vision OCR is currently deferred on TrollStore. Headless streamd Vision OCR previously crashed the worker during `vision_perform_requests` with signal 11; app-side Vision bridge avoided the streamd crash but failed on the test device with `Could not create buffer with format '420f' (-6662)`, even after RGB/accurate retry attempts.
