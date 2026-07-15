@@ -22,6 +22,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     UILabel *_emptyLabel;
     UILabel *_statusLabel;
     NSString *_scriptsPath;
+    BOOL _attemptedCompatibilitySeed;
 }
 
 - (instancetype)initWithScriptsPath:(NSString *)path
@@ -76,6 +77,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     _statusLabel.numberOfLines = 2;
     _statusLabel.text = @"";
     self.tableView.tableFooterView = _statusLabel;
+    [self seedCompatibilitySuiteIfNeeded];
     [self reloadScripts];
 }
 
@@ -533,6 +535,9 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
         NSString *scriptName = [[resourceName stringByDeletingPathExtension] stringByAppendingPathExtension:@"tl"];
         NSString *scriptPath = [suitePath stringByAppendingPathComponent:scriptName];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:scriptPath]) {
+            continue;
+        }
         NSError *writeError = nil;
         if ([self writeCompatibilityScriptAtPath:scriptPath source:source error:&writeError]) {
             installed++;
@@ -548,6 +553,93 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         message = [message stringByAppendingFormat:@"\n\nFailures:\n%@", [failures componentsJoinedByString:@"\n"]];
     }
     [self showMessageWithTitle:@"Compatibility Suite" message:message];
+}
+
+- (NSArray<NSString *> *)packagedCompatibilityExampleNamesWithError:(NSError **)error
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *resourcePath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"CompatibilityExamples"];
+    NSArray<NSString *> *resourceNames = [fm contentsOfDirectoryAtPath:resourcePath error:error];
+    NSMutableArray<NSString *> *javascriptNamesMutable = [NSMutableArray array];
+    for (NSString *name in resourceNames ?: @[]) {
+        if ([[name.pathExtension lowercaseString] isEqualToString:@"js"]) {
+            [javascriptNamesMutable addObject:name];
+        }
+    }
+    return [javascriptNamesMutable sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+}
+
+- (NSUInteger)installCompatibilityExamples:(NSArray<NSString *> *)javascriptNames
+                                suitePath:(NSString *)suitePath
+                                 failures:(NSMutableArray<NSString *> *)failures
+{
+    NSString *resourcePath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"CompatibilityExamples"];
+    NSUInteger installed = 0;
+    for (NSString *resourceName in javascriptNames) {
+        NSString *sourcePath = [resourcePath stringByAppendingPathComponent:resourceName];
+        NSError *readError = nil;
+        NSString *source = [NSString stringWithContentsOfFile:sourcePath encoding:NSUTF8StringEncoding error:&readError];
+        if (!source) {
+            [failures addObject:[NSString stringWithFormat:@"%@: %@", resourceName, readError.localizedDescription ?: @"read failed"]];
+            continue;
+        }
+
+        NSString *scriptName = [[resourceName stringByDeletingPathExtension] stringByAppendingPathExtension:@"tl"];
+        NSString *scriptPath = [suitePath stringByAppendingPathComponent:scriptName];
+        NSError *writeError = nil;
+        if ([self writeCompatibilityScriptAtPath:scriptPath source:source error:&writeError]) {
+            installed++;
+        } else {
+            [failures addObject:[NSString stringWithFormat:@"%@: %@", scriptName, writeError.localizedDescription ?: @"write failed"]];
+        }
+    }
+    return installed;
+}
+
+- (void)seedCompatibilitySuiteIfNeeded
+{
+    if (_attemptedCompatibilitySeed) return;
+    _attemptedCompatibilitySeed = YES;
+    if (![[self scriptsPath] isEqualToString:kTLinkScriptsPath]) return;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *suitePath = [[self scriptsPath] stringByAppendingPathComponent:@"Compatibility Tests"];
+    BOOL isDir = NO;
+    if ([fm fileExistsAtPath:suitePath isDirectory:&isDir] && isDir) {
+        NSString *firstScript = [suitePath stringByAppendingPathComponent:@"01 Runtime Storage.tl"];
+        NSString *lastScript = [suitePath stringByAppendingPathComponent:@"06 App Process Shell.tl"];
+        if ([fm fileExistsAtPath:firstScript] && [fm fileExistsAtPath:lastScript]) return;
+    }
+
+    NSString *permissionError = nil;
+    if (![self ensureScriptsPathWritableWithError:&permissionError]) {
+        [self showStatus:permissionError ?: @"Scripts path is not writable"];
+        return;
+    }
+
+    NSError *listError = nil;
+    NSArray<NSString *> *javascriptNames = [self packagedCompatibilityExampleNamesWithError:&listError];
+    if (javascriptNames.count == 0) {
+        [self showStatus:listError.localizedDescription ?: @"Packaged compatibility examples are missing"];
+        return;
+    }
+
+    NSError *createError = nil;
+    if (![fm createDirectoryAtPath:suitePath withIntermediateDirectories:YES attributes:nil error:&createError]) {
+        [self showStatus:createError.localizedDescription ?: @"Unable to create Compatibility Tests"];
+        return;
+    }
+
+    NSMutableArray<NSString *> *failures = [NSMutableArray array];
+    NSUInteger installed = [self installCompatibilityExamples:javascriptNames suitePath:suitePath failures:failures];
+    if (failures.count > 0) {
+        [self showStatus:[NSString stringWithFormat:@"Compatibility seed: %lu/%lu installed, %lu failed",
+                          (unsigned long)installed,
+                          (unsigned long)javascriptNames.count,
+                          (unsigned long)failures.count]];
+    } else if (installed > 0) {
+        [self showStatus:[NSString stringWithFormat:@"Compatibility Tests installed: %lu scripts", (unsigned long)installed]];
+    }
 }
 
 - (void)stopScript

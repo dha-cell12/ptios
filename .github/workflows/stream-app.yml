@@ -82,6 +82,7 @@ jobs:
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
           grep -q '<string>clipboardd</string>' stream-app/app/Info.plist
           grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile
+          grep -q 'StreamControl_RESOURCE_DIRS = CompatibilityExamples' stream-app/app/Makefile
           grep -q 'startVisualFeedbackMonitor' stream-app/app/AppDelegate.mm
           grep -q 'showToastOverlayWithMessage' stream-app/app/AppDelegate.mm
           grep -q 'lastVisualFeedbackPid' stream-app/app/AppDelegate.mm
@@ -99,6 +100,9 @@ jobs:
           grep -q 'PlaySettingsViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
           grep -q 'Compatibility Suite' stream-app/app/ScriptsViewController.mm
+          grep -q 'seedCompatibilitySuiteIfNeeded' stream-app/app/ScriptsViewController.mm
+          grep -q 'Compatibility Tests installed' stream-app/app/ScriptsViewController.mm
+          grep -q 'packagedCompatibilityExampleNamesWithError' stream-app/app/ScriptsViewController.mm
           grep -q 'CompatibilityExamples' stream-app/Makefile
           grep -q 'device.captureFrame' 'stream-app/app/CompatibilityExamples/03 Color Frame.js'
           grep -q 'device.ocr' 'stream-app/app/CompatibilityExamples/05 OCR.js'

@@ -43,11 +43,15 @@ Expected markers:
    - `screenshot=`
    - `ocrLanguages=`
 
-Packaged example script:
+Packaged example scripts:
 
-- In `Scripts`, tap `+` then `Compatibility Suite`. The app installs six
-  editable `.tl` bundles covering runtime/storage, background clipboard,
-  color/frame, screenshot/image, Tesseract OCR, and app/process/shell.
+- On first launch after install, the root `Scripts` tab seeds a
+  `Compatibility Tests` folder automatically when it is missing. The folder
+  contains six editable `.tl` bundles covering runtime/storage, background
+  clipboard, color/frame, screenshot/image, Tesseract OCR, and
+  app/process/shell.
+- In `Scripts`, tap `+` then `Compatibility Suite` only when you want to
+  install another copy of the packaged suite manually.
 - Every script logs `compat/<group> start`, normalized result objects, and a
   matching `finished` marker so failures can be isolated from the script log.
 
