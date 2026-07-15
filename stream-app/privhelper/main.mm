@@ -330,7 +330,7 @@ static void TLinkHelperKillClipboardd(void)
 
 static BOOL TLinkClipboarddProbeIsCurrent(NSString *probe)
 {
-    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=6"];
+    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=7"];
 }
 
 static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)

@@ -34,11 +34,18 @@ typedef void (*TLinkUIKitBootstrapFn)(void);
 @implementation TLinkClipboardApplicationDelegate
 @end
 
+@interface UNUserNotificationCenter (TLinkPrivateBundleCenter)
+- (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier;
+- (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier queue:(dispatch_queue_t)queue;
+@end
+
 static BOOL sTLinkClipboardWriteVerified = NO;
 static BOOL sTLinkKeepAwakeRequested = NO;
 static NSInteger sTLinkNotificationAuthorizationStatus = -1;
 static NSString *sTLinkLastBackgroundVisualResult = @"none";
+static NSString *sTLinkNotificationCenterMode = @"uninitialized";
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
+static NSString *const kTLinkStreamControlBundleIdentifier = @"com.tlinkauto.streamcontrol";
 
 static void TLinkClipboardLog(NSString *message)
 {
@@ -81,9 +88,44 @@ static NSString *TLinkClipboardImageType(NSData *data)
     return nil;
 }
 
+static UNUserNotificationCenter *TLinkNotificationCenter(void)
+{
+    static UNUserNotificationCenter *center = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        @try {
+            id candidate = [UNUserNotificationCenter alloc];
+            if ([candidate respondsToSelector:@selector(initWithBundleIdentifier:)]) {
+                center = [candidate initWithBundleIdentifier:kTLinkStreamControlBundleIdentifier];
+                sTLinkNotificationCenterMode = @"explicit_bundle_identifier";
+            } else {
+                candidate = [UNUserNotificationCenter alloc];
+                if ([candidate respondsToSelector:@selector(initWithBundleIdentifier:queue:)]) {
+                    center = [candidate initWithBundleIdentifier:kTLinkStreamControlBundleIdentifier
+                                                           queue:dispatch_get_main_queue()];
+                    sTLinkNotificationCenterMode = @"explicit_bundle_identifier_queue";
+                }
+            }
+        } @catch (NSException *exception) {
+            TLinkClipboardLog([NSString stringWithFormat:@"notification center private init exception=%@",
+                               exception.reason ?: exception.name]);
+            center = nil;
+        }
+        if (!center) {
+            center = [UNUserNotificationCenter currentNotificationCenter];
+            sTLinkNotificationCenterMode = @"current_process_fallback";
+        }
+        TLinkClipboardLog([NSString stringWithFormat:@"notification center mode=%@ main_bundle=%@ target_bundle=%@",
+                           sTLinkNotificationCenterMode,
+                           NSBundle.mainBundle.bundleIdentifier ?: @"<nil>",
+                           kTLinkStreamControlBundleIdentifier]);
+    });
+    return center;
+}
+
 static void TLinkRefreshNotificationAuthorizationStatus(void)
 {
-    [[UNUserNotificationCenter currentNotificationCenter]
+    [TLinkNotificationCenter()
         getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
             sTLinkNotificationAuthorizationStatus = settings.authorizationStatus;
         }];
@@ -159,7 +201,7 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
                                                                           content:content
                                                                           trigger:nil];
     sTLinkLastBackgroundVisualResult = @"pending";
-    [[UNUserNotificationCenter currentNotificationCenter]
+    [TLinkNotificationCenter()
         addNotificationRequest:request
          withCompletionHandler:^(NSError *error) {
             if (error) {
@@ -231,9 +273,11 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=6;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=7;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), (long)state, (long)systemState,
                 sTLinkClipboardWriteVerified ? 1 : 0,
+                sTLinkNotificationCenterMode ?: @"unknown",
+                NSBundle.mainBundle.bundleIdentifier ?: @"<nil>",
                 (long)sTLinkNotificationAuthorizationStatus,
                 (long)TLinkAppNotificationAuthorizationStatus(),
                 sTLinkLastBackgroundVisualResult ?: @"none",

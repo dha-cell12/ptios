@@ -4120,7 +4120,7 @@ static void TLinkUpdateClipboardDaemonVerification(NSData *diagnosticResponse)
 {
     NSString *diagnostic = TLinkResponseStringFromData(diagnosticResponse);
     sTLinkClipboardDaemonWriteVerified =
-        [diagnostic containsString:@"version=6"] &&
+        [diagnostic containsString:@"version=7"] &&
         [diagnostic containsString:@"background_entitlement=1"] &&
         [diagnostic containsString:@"write_verified=1"];
 }

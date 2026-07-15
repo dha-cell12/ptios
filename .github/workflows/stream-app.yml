@@ -124,7 +124,8 @@ jobs:
           grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
           grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
           grep -q 'kTCCServicePasteboard' stream-app/clipboardd/entitlements.plist
-          grep -q 'version=6' stream-app/clipboardd/main.mm
+          grep -q 'version=7' stream-app/clipboardd/main.mm
+          grep -q 'initWithBundleIdentifier' stream-app/clipboardd/main.mm
           grep -q 'UserNotifications' stream-app/clipboardd/Makefile
           grep -q 'TLinkHandleBackgroundUIBridge' stream-app/clipboardd/main.mm
           grep -q 'background_ui_bridge=1' stream-app/clipboardd/main.mm
