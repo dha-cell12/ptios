@@ -167,6 +167,10 @@ Các task không thể port được có fallback hoặc lỗi rõ ràng (unsupp
 Script storage và config giữ nguyên path cũ (/var/mobile/Library/TLinkauto/...).
 
 Known unresolved issues / deferred investigation:
+- Foreground dependency reduction now uses the proven clipboard UIDaemon pattern. `clipboardd` v5 keeps direct background Pasteboard access and also handles background local-notification fallback plus best-effort keep-awake requests. StreamControl writes a short-lived foreground heartbeat so foreground overlays and background notifications are not duplicated.
+- Toast/alert/dialog no longer require StreamControl to remain foreground to produce visible feedback: foreground uses the UIKit overlay, background uses a local notification. The user must grant notification permission once. Background dialog notifications are deliberately non-interactive.
+- A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.
+- Keep-awake through the UIKit UIDaemon is best-effort. A guaranteed global display/power assertion remains deferred until a proven private IOKit/SpringBoard path is available.
 - Vision OCR is currently deferred on TrollStore. Headless streamd Vision OCR previously crashed the worker during `vision_perform_requests` with signal 11; app-side Vision bridge avoided the streamd crash but failed on the test device with `Could not create buffer with format '420f' (-6662)`, even after RGB/accurate retry attempts.
 - Current stable OCR path is task 91 using true static Tesseract libraries plus `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
 - Task 91 now reports Tesseract init source so tests can distinguish normal path init from memory fallback: response suffix `tesseract_init_source=path:...` or `tesseract_init_source=memory:...`; task 60 also exposes `tesseractInitSource`, `tesseractInitAttempts`, and `tesseractInitAtMs`.

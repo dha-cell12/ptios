@@ -76,8 +76,8 @@ where available:
 Keyboard backend smoke:
 
 ```powershell
-# Open StreamControl.app once after install so privhelper replaces clipboardd v3
-# with entitled clipboardd v4 on 6012. Port 6013 is fallback only.
+# Open StreamControl.app once after install so privhelper installs clipboardd v5
+# on 6012 and iOS can ask for notification permission. Port 6013 is fallback only.
 Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
@@ -89,7 +89,7 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "244;;5"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
 ```
 
-Task `249` should contain `clipboard_backend_ready`, `version=4` in its decoded
+Task `249` should contain `clipboard_backend_ready`, `version=5` in its decoded
 diagnostic, and `daemon_direct_write=1` after a successful task `247`. Task
 `246` should then return `0;;hello from tlinkauto`. When another app is active,
 StreamControl should not appear. A short app switch means the daemon entitlement
@@ -101,10 +101,12 @@ was ignored and the foreground fallback ran.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
 - Keyboard API names are exposed for rootfull script compatibility. The v3
   UIDaemon failed because it lacked the private background Pasteboard entitlement,
-  not because background clipboard access is categorically impossible. Version 4
+  not because background clipboard access is categorically impossible. Version 5
   adds the entitlement set and keeps the foreground bridge only as a verified
   fallback. Insert and paste use HID `Command+V`; delete and cursor movement use
   HID Backspace and arrow keys. Show/hide keyboard still requires the rootfull
   SpringBoard keyboard observer and returns `limited_on_trollstore`.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
-- Foreground overlays replace SpringBoard injection overlays.
+- Foreground overlays use local notifications as a background fallback. Dialog
+  notifications are non-interactive and a global touch indicator still requires
+  SpringBoard injection.

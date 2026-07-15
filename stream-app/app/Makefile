@@ -14,7 +14,7 @@ APPLICATION_NAME = StreamControl
 StreamControl_FILES = main.mm AppDelegate.mm ViewController.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm ScriptEditorViewController.mm ScriptLogViewController.mm ImageViewerViewController.mm PlaySettingsViewController.mm SettingsViewController.mm
 StreamControl_RESOURCE_FILES = Info.plist
 StreamControl_RESOURCE_DIRS = CompatibilityExamples
-StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics QuartzCore Vision ImageIO Photos
+StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics QuartzCore Vision ImageIO Photos UserNotifications
 StreamControl_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 StreamControl_CCFLAGS = -std=c++14
 StreamControl_CODESIGN_FLAGS = -Sentitlements.plist

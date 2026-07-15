@@ -8,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
 TOOL_NAME = clipboardd
 
 clipboardd_FILES = main.mm
-clipboardd_FRAMEWORKS = Foundation UIKit CoreFoundation
+clipboardd_FRAMEWORKS = Foundation UIKit CoreFoundation UserNotifications
 clipboardd_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 clipboardd_CCFLAGS = -std=c++14
 clipboardd_CODESIGN_FLAGS = -Sentitlements.plist

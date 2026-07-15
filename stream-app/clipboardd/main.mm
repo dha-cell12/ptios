@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <UserNotifications/UserNotifications.h>
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -34,6 +35,8 @@ typedef void (*TLinkUIKitBootstrapFn)(void);
 @end
 
 static BOOL sTLinkClipboardWriteVerified = NO;
+static BOOL sTLinkKeepAwakeRequested = NO;
+static NSInteger sTLinkNotificationAuthorizationStatus = -1;
 
 static void TLinkClipboardLog(NSString *message)
 {
@@ -76,12 +79,88 @@ static NSString *TLinkClipboardImageType(NSData *data)
     return nil;
 }
 
+static void TLinkRefreshNotificationAuthorizationStatus(void)
+{
+    [[UNUserNotificationCenter currentNotificationCenter]
+        getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+            sTLinkNotificationAuthorizationStatus = settings.authorizationStatus;
+        }];
+}
+
+static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
+{
+    if (parts.count < 2) return @"-1;;background_ui_missing_payload\r\n";
+    NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:parts[1] options:0];
+    NSDictionary *payload = jsonData
+        ? [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil]
+        : nil;
+    if (![payload isKindOfClass:[NSDictionary class]]) {
+        return @"-1;;background_ui_bad_payload\r\n";
+    }
+
+    NSString *action = [payload[@"action"] isKindOfClass:[NSString class]] ? payload[@"action"] : @"";
+    if ([action isEqualToString:@"keep_awake"]) {
+        BOOL enabled = [payload[@"enabled"] boolValue];
+        [UIApplication sharedApplication].idleTimerDisabled = enabled;
+        sTLinkKeepAwakeRequested = enabled;
+        return [NSString stringWithFormat:@"0;;background_keep_awake_%@;;idle_timer_disabled=%d;;best_effort=1\r\n",
+                enabled ? @"enabled" : @"disabled",
+                [UIApplication sharedApplication].idleTimerDisabled ? 1 : 0];
+    }
+
+    if (![action isEqualToString:@"visual"]) {
+        return @"-1;;background_ui_unsupported_action\r\n";
+    }
+
+    NSString *kind = [payload[@"kind"] isKindOfClass:[NSString class]] ? payload[@"kind"] : @"toast";
+    NSString *title = [payload[@"title"] isKindOfClass:[NSString class]] ? payload[@"title"] : @"TLinkauto";
+    NSString *message = [payload[@"message"] isKindOfClass:[NSString class]] ? payload[@"message"] : @"";
+    if (message.length == 0) return @"-1;;background_visual_missing_message\r\n";
+    if (sTLinkNotificationAuthorizationStatus == UNAuthorizationStatusDenied) {
+        return @"-1;;background_visual_notification_permission_denied open_StreamControl_Settings_notifications\r\n";
+    }
+    if (sTLinkNotificationAuthorizationStatus == UNAuthorizationStatusNotDetermined) {
+        return @"-1;;background_visual_notification_permission_not_determined open_StreamControl_once\r\n";
+    }
+
+    UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
+    content.title = title.length > 0 ? title : @"TLinkauto";
+    content.body = message;
+    content.userInfo = @{
+        @"tlink_kind": kind ?: @"toast",
+        @"tlink_event_id": payload[@"event_id"] ?: @0,
+    };
+    NSString *identifier = [NSString stringWithFormat:@"tlinkauto.%@.%@",
+                            kind.length > 0 ? kind : @"visual",
+                            payload[@"event_id"] ?: @((long long)(NSDate.date.timeIntervalSince1970 * 1000.0))];
+    UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier
+                                                                          content:content
+                                                                          trigger:nil];
+    [[UNUserNotificationCenter currentNotificationCenter]
+        addNotificationRequest:request
+         withCompletionHandler:^(NSError *error) {
+            if (error) {
+                TLinkClipboardLog([NSString stringWithFormat:@"background visual failed kind=%@ error=%@",
+                                   kind, error.localizedDescription ?: @"unknown"]);
+            } else {
+                TLinkClipboardLog([NSString stringWithFormat:@"background visual queued kind=%@ id=%@",
+                                   kind, payload[@"event_id"] ?: @0]);
+            }
+        }];
+    TLinkRefreshNotificationAuthorizationStatus();
+    return [NSString stringWithFormat:@"0;;background_visual_notification_queued;;%@;;authorization=%ld\r\n",
+            kind, (long)sTLinkNotificationAuthorizationStatus];
+}
+
 static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
 {
     NSArray<NSString *> *parts = [body ?: @"" componentsSeparatedByString:@";;"];
     if (parts.count < 1) return @"-1;;clipboardd_missing_subtask\r\n";
     int subtask = [parts[0] intValue];
     @try {
+        if (subtask == 90) {
+            return TLinkHandleBackgroundUIBridge(parts);
+        }
         UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
 
     if (subtask == 6) {
@@ -126,8 +205,12 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=4;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1\r\n",
-                getpid(), getuid(), geteuid(), (long)state, (long)systemState, sTLinkClipboardWriteVerified ? 1 : 0];
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=5;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;notification_auth=%ld;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+                getpid(), getuid(), geteuid(), (long)state, (long)systemState,
+                sTLinkClipboardWriteVerified ? 1 : 0,
+                (long)sTLinkNotificationAuthorizationStatus,
+                sTLinkKeepAwakeRequested ? 1 : 0,
+                application.idleTimerDisabled ? 1 : 0];
     }
         return @"-1;;clipboardd_unsupported_subtask\r\n";
     } @catch (NSException *exception) {
@@ -302,6 +385,7 @@ int main(int argc, char *argv[])
         signal(SIGPIPE, SIG_IGN);
         TLinkClipboardLog([NSString stringWithFormat:@"starting pid=%d uid=%d euid=%d", getpid(), getuid(), geteuid()]);
         TLinkInitializeUIKitPlugin();
+        TLinkRefreshNotificationAuthorizationStatus();
         NSThread *serverThread = [[NSThread alloc] initWithBlock:^{
             TLinkRunClipboardServer();
         }];

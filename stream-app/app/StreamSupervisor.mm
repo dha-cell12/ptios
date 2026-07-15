@@ -226,6 +226,8 @@ static const NSTimeInterval kSCRespawnThrottle = 3.0;
 - (BOOL)ensureServiceLockedWithReplace:(BOOL)replaceExisting reason:(NSString *)reason
 {
     if (!replaceExisting && [self probeTaskServerAndUpdateLocked:reason ?: @"ensure"]) {
+        int auxiliaryExit = [self runPrivhelperEnsureStreamdLocked:NO];
+        [self emitLog:[NSString stringWithFormat:@"supervisor: auxiliary service ensure exit=%d", auxiliaryExit]];
         return YES;
     }
 

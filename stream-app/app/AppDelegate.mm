@@ -2,6 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <Vision/Vision.h>
 #import <ImageIO/ImageIO.h>
+#import <UserNotifications/UserNotifications.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <math.h>
@@ -22,6 +23,8 @@
 // the Tlinkauto app's visual style. The supervisor is created/owned by the
 // root view controller so its lifecycle is tied to the UI.
 // ---------------------------------------------------------------------------
+
+static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/TLinkauto/runtime/app_foreground_heartbeat";
 
 @interface SCAppDelegate ()
 @property(nonatomic, strong) NSTimer *visualFeedbackTimer;
@@ -78,6 +81,7 @@
     [self ensureStreamServiceForReason:@"launch" background:NO];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
+    [self requestBackgroundVisualNotificationPermission];
     [self startVisualFeedbackMonitor];
 
     return YES;
@@ -132,6 +136,7 @@
 
 - (void)startVisualFeedbackMonitor
 {
+    [self writeForegroundHeartbeat];
     if (self.visualFeedbackTimer) return;
     self.visualFeedbackTimer = [NSTimer timerWithTimeInterval:0.25
                                                        target:self
@@ -156,10 +161,12 @@
     self.visualFeedbackTimer = nil;
     self.visualFeedbackPollInFlight = NO;
     self.visualFeedbackBurstPollsRemaining = 0;
+    [[NSFileManager defaultManager] removeItemAtPath:kTLinkAppForegroundHeartbeatPath error:nil];
 }
 
 - (void)pollVisualFeedback
 {
+    [self writeForegroundHeartbeat];
     if (self.visualFeedbackPollInFlight) return;
     self.visualFeedbackPollInFlight = YES;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -175,6 +182,34 @@
             }
         });
     });
+}
+
+- (void)writeForegroundHeartbeat
+{
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
+    NSString *directory = [kTLinkAppForegroundHeartbeatPath stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    uint64_t nowMs = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+    [[NSString stringWithFormat:@"%llu", nowMs] writeToFile:kTLinkAppForegroundHeartbeatPath
+                                                   atomically:NO
+                                                     encoding:NSUTF8StringEncoding
+                                                        error:nil];
+}
+
+- (void)requestBackgroundVisualNotificationPermission
+{
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+        if (settings.authorizationStatus != UNAuthorizationStatusNotDetermined) return;
+        [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert
+                              completionHandler:^(BOOL granted, NSError *error) {
+            NSLog(@"[StreamControl][Visual] notification permission granted=%d error=%@",
+                  granted ? 1 : 0, error.localizedDescription ?: @"none");
+        }];
+    }];
 }
 
 - (void)handleVisualFeedbackStatusResponse:(NSString *)response
