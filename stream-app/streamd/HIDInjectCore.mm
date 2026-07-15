@@ -114,16 +114,10 @@ static bool HIDHardwareKeyUsage(int keyType, uint16_t *usagePage, uint16_t *usag
     }
 }
 
-HIDInjectResult HIDInjectDispatchHardwareKey(int action, int keyType) {
+HIDInjectResult HIDInjectDispatchKeyboardKey(int action, uint16_t usagePage, uint16_t usage) {
     HIDInjectResult r = {0};
-    if (action != HID_KEY_ACTION_UP && action != HID_KEY_ACTION_DOWN) {
-        r.errnoValue = EINVAL;
-        return r;
-    }
-
-    uint16_t usagePage = 0;
-    uint16_t usage = 0;
-    if (!HIDHardwareKeyUsage(keyType, &usagePage, &usage)) {
+    if ((action != HID_KEY_ACTION_UP && action != HID_KEY_ACTION_DOWN) ||
+        usagePage == 0 || usage == 0) {
         r.errnoValue = EINVAL;
         return r;
     }
@@ -161,6 +155,17 @@ HIDInjectResult HIDInjectDispatchHardwareKey(int action, int keyType) {
     r.dispatched = 1;
     CFRelease(event);
     return r;
+}
+
+HIDInjectResult HIDInjectDispatchHardwareKey(int action, int keyType) {
+    HIDInjectResult r = {0};
+    uint16_t usagePage = 0;
+    uint16_t usage = 0;
+    if (!HIDHardwareKeyUsage(keyType, &usagePage, &usage)) {
+        r.errnoValue = EINVAL;
+        return r;
+    }
+    return HIDInjectDispatchKeyboardKey(action, usagePage, usage);
 }
 
 HIDInjectResult HIDInjectDispatchTouch(int type, int finger, double xPx, double yPx) {

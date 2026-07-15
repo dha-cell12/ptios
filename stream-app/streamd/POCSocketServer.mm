@@ -3782,6 +3782,62 @@ static NSData *TLinkHandleFrameBatch(NSString *body)
 static NSData *TLinkRunAppSideClipboard(NSString *body);
 static NSData *TLinkRunForegroundClipboardBroker(NSString *body);
 
+static BOOL TLinkKeyboardResultSucceeded(HIDInjectResult result)
+{
+    return result.clientCreated && result.eventCreated && result.dispatched;
+}
+
+static BOOL TLinkDispatchKeyboardStroke(uint16_t usage, int count, NSString **error)
+{
+    if (count < 1) count = 1;
+    for (int index = 0; index < count; index++) {
+        HIDInjectResult down = HIDInjectDispatchKeyboardKey(HID_KEY_ACTION_DOWN, 0x07, usage);
+        if (!TLinkKeyboardResultSucceeded(down)) {
+            if (error) *error = [NSString stringWithFormat:@"keyboard_key_down_failed usage=0x%x errno=%d", usage, down.errnoValue];
+            return NO;
+        }
+        usleep(12000);
+        HIDInjectResult up = HIDInjectDispatchKeyboardKey(HID_KEY_ACTION_UP, 0x07, usage);
+        if (!TLinkKeyboardResultSucceeded(up)) {
+            if (error) *error = [NSString stringWithFormat:@"keyboard_key_up_failed usage=0x%x errno=%d", usage, up.errnoValue];
+            return NO;
+        }
+        if (index + 1 < count) usleep(12000);
+    }
+    return YES;
+}
+
+static BOOL TLinkDispatchPasteShortcut(NSString **error)
+{
+    // USB HID keyboard usages: Left GUI/Command=0xE3 and V=0x19.
+    HIDInjectResult commandDown = HIDInjectDispatchKeyboardKey(HID_KEY_ACTION_DOWN, 0x07, 0xE3);
+    if (!TLinkKeyboardResultSucceeded(commandDown)) {
+        if (error) *error = [NSString stringWithFormat:@"command_key_down_failed errno=%d", commandDown.errnoValue];
+        return NO;
+    }
+
+    usleep(20000);
+    HIDInjectResult vDown = HIDInjectDispatchKeyboardKey(HID_KEY_ACTION_DOWN, 0x07, 0x19);
+    usleep(25000);
+    HIDInjectResult vUp = HIDInjectDispatchKeyboardKey(HID_KEY_ACTION_UP, 0x07, 0x19);
+    usleep(12000);
+    HIDInjectResult commandUp = HIDInjectDispatchKeyboardKey(HID_KEY_ACTION_UP, 0x07, 0xE3);
+
+    if (!TLinkKeyboardResultSucceeded(vDown) ||
+        !TLinkKeyboardResultSucceeded(vUp) ||
+        !TLinkKeyboardResultSucceeded(commandUp)) {
+        if (error) {
+            *error = [NSString stringWithFormat:@"paste_shortcut_dispatch_failed v_down=%d v_up=%d command_up=%d errno=%d/%d/%d",
+                      TLinkKeyboardResultSucceeded(vDown),
+                      TLinkKeyboardResultSucceeded(vUp),
+                      TLinkKeyboardResultSucceeded(commandUp),
+                      vDown.errnoValue, vUp.errnoValue, commandUp.errnoValue];
+        }
+        return NO;
+    }
+    return YES;
+}
+
 static NSData *TLinkHandleKeyboard(NSString *body)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
@@ -3793,9 +3849,15 @@ static NSData *TLinkHandleKeyboard(NSString *body)
         NSData *saveResponse = TLinkRunAppSideClipboard([NSString stringWithFormat:@"7;;%@", text ?: @""]);
         NSString *saveText = TLinkResponseStringFromData(saveResponse);
         if (![saveText isEqualToString:@"0"] && ![saveText hasPrefix:@"0;;"]) {
-            return TLinkUnsupported(24, [NSString stringWithFormat:@"limited_on_trollstore insert_text_requires_springboard_keyboard_observer clipboard_save_failed %@", saveText ?: @""]);
+            return TLinkError([NSString stringWithFormat:@"insert_text_clipboard_save_failed %@", saveText ?: @""]);
         }
-        return TLinkUnsupported(24, [NSString stringWithFormat:@"limited_on_trollstore insert_text_requires_springboard_keyboard_observer text_saved_to_clipboard length=%lu", (unsigned long)text.length]);
+        usleep(80000);
+        NSString *hidError = nil;
+        if (!TLinkDispatchPasteShortcut(&hidError)) {
+            return TLinkError([NSString stringWithFormat:@"insert_text_hid_paste_failed %@ text_saved_to_clipboard length=%lu",
+                               hidError ?: @"unknown", (unsigned long)text.length]);
+        }
+        return TLinkSuccess([NSString stringWithFormat:@"insert_text_via_background_clipboard_hid;;%lu", (unsigned long)text.length]);
     }
     if (subtask == 2) {
         NSString *mode = parts.count > 1 ? parts[1] : @"";
@@ -3805,16 +3867,30 @@ static NSData *TLinkHandleKeyboard(NSString *body)
         int offset = parts.count > 1 ? [parts[1] intValue] : 0;
         if (offset > 1024) offset = 1024;
         if (offset < -1024) offset = -1024;
-        return TLinkUnsupported(24, [NSString stringWithFormat:@"limited_on_trollstore move_cursor_requires_springboard_keyboard_observer offset=%d", offset]);
+        if (offset == 0) return TLinkSuccess(@"move_cursor_hid;;0");
+        NSString *hidError = nil;
+        uint16_t usage = offset < 0 ? 0x50 : 0x4F;
+        if (!TLinkDispatchKeyboardStroke(usage, abs(offset), &hidError)) {
+            return TLinkError([NSString stringWithFormat:@"move_cursor_hid_failed %@", hidError ?: @"unknown"]);
+        }
+        return TLinkSuccess([NSString stringWithFormat:@"move_cursor_hid;;%d", offset]);
     }
     if (subtask == 4) {
         int count = parts.count > 1 ? [parts[1] intValue] : 1;
         if (count <= 0) count = 1;
         if (count > 1024) count = 1024;
-        return TLinkUnsupported(24, [NSString stringWithFormat:@"limited_on_trollstore delete_characters_requires_springboard_keyboard_observer count=%d", count]);
+        NSString *hidError = nil;
+        if (!TLinkDispatchKeyboardStroke(0x2A, count, &hidError)) {
+            return TLinkError([NSString stringWithFormat:@"delete_characters_hid_failed %@", hidError ?: @"unknown"]);
+        }
+        return TLinkSuccess([NSString stringWithFormat:@"delete_characters_hid;;%d", count]);
     }
     if (subtask == 5) {
-        return TLinkUnsupported(24, @"limited_on_trollstore paste_from_clipboard_requires_springboard_keyboard_observer");
+        NSString *hidError = nil;
+        if (!TLinkDispatchPasteShortcut(&hidError)) {
+            return TLinkError([NSString stringWithFormat:@"paste_from_clipboard_hid_failed %@", hidError ?: @"unknown"]);
+        }
+        return TLinkSuccess(@"paste_from_background_clipboard_hid");
     }
     if (subtask == 6) {
         return TLinkRunAppSideClipboard(@"6");
@@ -5228,8 +5304,11 @@ static NSData *TLinkHandleHelloStatus(void)
         @"clipboardDirectWrite": @(YES),
         @"clipboardForegroundBroker": @(YES),
         @"clipboardMode": @"background_entitled_uidaemon_with_foreground_fallback",
-        @"keyboardMode": @"clipboard_text_image_only",
-        @"keyboardInputMode": @"limited_requires_springboard_keyboard_observer",
+        @"keyboardHIDPaste": @(YES),
+        @"keyboardHIDEditing": @(YES),
+        @"keyboardMode": @"background_clipboard_hid_paste_cursor_delete",
+        @"keyboardInputMode": @"clipboard_command_v_best_effort",
+        @"keyboardVisibilityMode": @"limited_requires_springboard_keyboard_observer",
         @"hardwareKey": @(YES),
         @"hardwareKeyMode": @"hid_keyboard_event",
         @"ocr": @(YES),
@@ -7164,7 +7243,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,textInputControl unsupportedTasks=none keyboard=clipboard_text_image_only clipboard=background_entitled_uidaemon_with_foreground_fallback keyboardInput=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);

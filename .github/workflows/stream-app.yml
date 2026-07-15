@@ -198,6 +198,10 @@ jobs:
           grep -q 'TLinkHandleHardwareKey' stream-app/streamd/POCSocketServer.mm
           grep -q 'pressHardwareKey' stream-app/streamd/POCSocketServer.mm
           grep -q 'HIDInjectDispatchHardwareKey' stream-app/streamd/HIDInjectCore.mm
+          grep -q 'HIDInjectDispatchKeyboardKey' stream-app/streamd/HIDInjectCore.mm
+          grep -q 'insert_text_via_background_clipboard_hid' stream-app/streamd/POCSocketServer.mm
+          grep -q 'paste_from_background_clipboard_hid' stream-app/streamd/POCSocketServer.mm
+          grep -q 'keyboardHIDPaste' stream-app/streamd/POCSocketServer.mm
           grep -q 'hardwareKey=hid_keyboard_event' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleStartRecording' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleStopRecording' stream-app/streamd/POCSocketServer.mm

@@ -2,6 +2,7 @@
 #define HID_INJECT_CORE_H
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,10 @@ HIDInjectResult HIDInjectDispatchTap(double xPx, double yPx);
 // Dispatch a hardware-key event using Consumer HID usages. `action` is
 // HID_KEY_ACTION_UP/DOWN and `keyType` is HID_KEY_HOME/VOLUME_UP/VOLUME_DOWN/LOCK.
 HIDInjectResult HIDInjectDispatchHardwareKey(int action, int keyType);
+
+// Dispatch a standard keyboard usage. This is used for shortcuts such as
+// Command+V and for cursor/delete operations without SpringBoard injection.
+HIDInjectResult HIDInjectDispatchKeyboardKey(int action, uint16_t usagePage, uint16_t usage);
 
 // Dispatch a single touch event (down/up/move). Used by the legacy wire
 // protocol path where the Python client sends down and up as separate packets.

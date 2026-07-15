@@ -76,7 +76,8 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 
-# This should save the text to clipboard, then report limited for actual insert:
+# Focus a text field first. These should insert, delete five characters, then
+# move the cursor two positions left using HID keyboard events:
 Invoke-TLinkTask -HostIP $iphoneIP -Task "241;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "244;;5"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
@@ -96,8 +97,8 @@ was ignored and the foreground fallback ran.
   UIDaemon failed because it lacked the private background Pasteboard entitlement,
   not because background clipboard access is categorically impossible. Version 4
   adds the entitlement set and keeps the foreground bridge only as a verified
-  fallback. Insert, paste, delete, cursor movement, and show/hide keyboard still require the
-  rootfull SpringBoard keyboard observer and return `limited_on_trollstore`
-  instead of silent success.
+  fallback. Insert and paste use HID `Command+V`; delete and cursor movement use
+  HID Backspace and arrow keys. Show/hide keyboard still requires the rootfull
+  SpringBoard keyboard observer and returns `limited_on_trollstore`.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
 - Foreground overlays replace SpringBoard injection overlays.
