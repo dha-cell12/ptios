@@ -106,6 +106,37 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     self.tableView.tableFooterView = _statusLabel;
 }
 
+- (BOOL)ensureScriptsPathWritableWithError:(NSString **)error
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *basePath = [self scriptsPath];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:basePath isDirectory:&isDir] || !isDir) {
+        [fm createDirectoryAtPath:basePath withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+    if ([fm isWritableFileAtPath:basePath]) return YES;
+
+    NSString *repairResponse = [TLinkSocketClient requestTask:44 args:@[] timeout:3.0];
+    if (![fm fileExistsAtPath:basePath isDirectory:&isDir] || !isDir) {
+        [fm createDirectoryAtPath:basePath withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+    if ([fm isWritableFileAtPath:basePath]) return YES;
+
+    NSDictionary *attrs = [fm attributesOfItemAtPath:basePath error:nil] ?: @{};
+    NSNumber *owner = attrs[NSFileOwnerAccountID];
+    NSNumber *group = attrs[NSFileGroupOwnerAccountID];
+    NSNumber *perms = attrs[NSFilePosixPermissions];
+    if (error) {
+        *error = [NSString stringWithFormat:@"Scripts path is not writable: %@ owner=%@ group=%@ mode=%@ repair=%@",
+                  basePath,
+                  owner ?: @"?",
+                  group ?: @"?",
+                  perms ? [NSString stringWithFormat:@"%o", [perms intValue]] : @"?",
+                  repairResponse ?: @"<nil>"];
+    }
+    return NO;
+}
+
 - (NSString *)safeNameFromInput:(NSString *)input
 {
     NSString *trimmed = [input stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -214,6 +245,16 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (BOOL)writeScriptBundleAtPath:(NSString *)scriptPath demo:(BOOL)demo error:(NSError **)error
 {
+    NSString *permissionError = nil;
+    if (![self ensureScriptsPathWritableWithError:&permissionError]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"TLinkautoScripts"
+                                         code:13
+                                     userInfo:@{NSLocalizedDescriptionKey: permissionError ?: @"Scripts path is not writable"}];
+        }
+        return NO;
+    }
+
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm createDirectoryAtPath:scriptPath withIntermediateDirectories:YES attributes:nil error:error]) {
         return NO;
@@ -292,6 +333,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)createFolderNamed:(NSString *)name
 {
+    NSString *permissionError = nil;
+    if (![self ensureScriptsPathWritableWithError:&permissionError]) {
+        [self showMessageWithTitle:@"Create Folder" message:permissionError ?: @"Scripts path is not writable"];
+        return;
+    }
+
     NSString *folderPath = [[self scriptsPath] stringByAppendingPathComponent:name];
     if ([[NSFileManager defaultManager] fileExistsAtPath:folderPath]) {
         [self showMessageWithTitle:@"Create Folder" message:@"A script or folder with that name already exists."];
@@ -311,6 +358,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)createFileNamed:(NSString *)name
 {
+    NSString *permissionError = nil;
+    if (![self ensureScriptsPathWritableWithError:&permissionError]) {
+        [self showMessageWithTitle:@"Create File" message:permissionError ?: @"Scripts path is not writable"];
+        return;
+    }
+
     NSString *fileName = name.pathExtension.length > 0 ? name : [name stringByAppendingString:@".js"];
     NSString *filePath = [[self scriptsPath] stringByAppendingPathComponent:fileName];
     if ([[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
@@ -385,6 +438,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)createDemoScript
 {
+    NSString *permissionError = nil;
+    if (![self ensureScriptsPathWritableWithError:&permissionError]) {
+        [self showMessageWithTitle:@"Create Script" message:permissionError ?: @"Scripts path is not writable"];
+        return;
+    }
+
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *basePath = [self scriptsPath];
     [fm createDirectoryAtPath:basePath withIntermediateDirectories:YES attributes:nil error:nil];
@@ -426,6 +485,14 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     NSString *basePath = [self scriptsPath];
     if (![fm fileExistsAtPath:basePath isDirectory:&isDir] || !isDir) {
         [fm createDirectoryAtPath:basePath withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+    if (![fm isWritableFileAtPath:basePath]) {
+        NSString *permissionError = nil;
+        if ([self ensureScriptsPathWritableWithError:&permissionError]) {
+            [self showStatus:@""];
+        } else {
+            [self showStatus:permissionError ?: @"Scripts path is read-only"];
+        }
     }
 
     NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:basePath error:nil] ?: @[];

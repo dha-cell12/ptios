@@ -5106,11 +5106,40 @@ static NSData *TLinkHandleHelloStatus(void)
 static void TLinkEnsureRuntimeDirectories(void)
 {
     NSFileManager *fm = [NSFileManager defaultManager];
-    [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto" withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/scripts" withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm createDirectoryAtPath:kTLinkRecordingScriptsPath withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/config" withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm createDirectoryAtPath:@"/var/mobile/Library/TLinkauto/config/tweak" withIntermediateDirectories:YES attributes:nil error:nil];
+    NSDictionary *dirAttrs = @{NSFilePosixPermissions: @0775};
+    NSArray<NSString *> *dirs = @[
+        @"/var/mobile/Library/TLinkauto",
+        @"/var/mobile/Library/TLinkauto/scripts",
+        kTLinkRecordingScriptsPath,
+        @"/var/mobile/Library/TLinkauto/config",
+        @"/var/mobile/Library/TLinkauto/config/tweak",
+        @"/var/mobile/Library/TLinkauto/screenshots",
+        @"/var/mobile/Library/TLinkauto/tmp",
+    ];
+    for (NSString *dir in dirs) {
+        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:dirAttrs error:nil];
+        lchown([dir fileSystemRepresentation], 501, 501);
+        chmod([dir fileSystemRepresentation], 0775);
+    }
+
+    NSArray<NSString *> *repairRoots = @[
+        @"/var/mobile/Library/TLinkauto/scripts",
+        @"/var/mobile/Library/TLinkauto/config",
+        @"/var/mobile/Library/TLinkauto/screenshots",
+    ];
+    for (NSString *root in repairRoots) {
+        NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:root];
+        for (NSString *relative in enumerator) {
+            NSString *path = [root stringByAppendingPathComponent:relative];
+            BOOL isDir = NO;
+            [fm fileExistsAtPath:path isDirectory:&isDir];
+            const char *fsPath = [path fileSystemRepresentation];
+            struct stat st;
+            if (lstat(fsPath, &st) == 0 && S_ISLNK(st.st_mode)) continue;
+            lchown(fsPath, 501, 501);
+            chmod(fsPath, isDir ? 0775 : 0664);
+        }
+    }
 }
 
 static void TLinkLoadSettingsConfig(void)
