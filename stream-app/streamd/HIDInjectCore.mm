@@ -163,6 +163,52 @@ HIDInjectResult HIDInjectDispatchHardwareKey(int action, int keyType) {
     return r;
 }
 
+HIDInjectResult HIDInjectDispatchKeyboardUsage(int action, unsigned short usage) {
+    HIDInjectResult r = {0};
+    if (action != HID_KEY_ACTION_UP && action != HID_KEY_ACTION_DOWN) {
+        r.errnoValue = EINVAL;
+        return r;
+    }
+    if (usage == 0) {
+        r.errnoValue = EINVAL;
+        return r;
+    }
+
+    IOHIDEventRef event = IOHIDEventCreateKeyboardEvent(kCFAllocatorDefault,
+                                                        mach_absolute_time(),
+                                                        0x07,
+                                                        usage,
+                                                        action == HID_KEY_ACTION_DOWN,
+                                                        0);
+    if (!event) {
+        r.errnoValue = errno;
+        return r;
+    }
+
+    if (!sHardwareKeyClient) {
+        sHardwareKeyClient = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    }
+    r.clientPtr = (void *)sHardwareKeyClient;
+    r.clientCreated = sHardwareKeyClient ? 1 : 0;
+    r.eventCreated = 1;
+    if (!sHardwareKeyClient) {
+        r.errnoValue = errno;
+        CFRelease(event);
+        return r;
+    }
+    if (sSenderID != 0) {
+        IOHIDEventSetSenderID(event, sSenderID);
+        r.senderIDUsed = 1;
+        r.senderID = sSenderID;
+    }
+    errno = 0;
+    IOHIDEventSystemClientDispatchEvent(sHardwareKeyClient, event);
+    r.errnoValue = errno;
+    r.dispatched = 1;
+    CFRelease(event);
+    return r;
+}
+
 HIDInjectResult HIDInjectDispatchTouch(int type, int finger, double xPx, double yPx) {
     HIDInjectResult r = {0};
     if (sScreenWidth <= 0 || sScreenHeight <= 0) { r.errnoValue = EINVAL; return r; }

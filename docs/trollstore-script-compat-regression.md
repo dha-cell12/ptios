@@ -17,6 +17,8 @@ Expected markers:
 - `scriptRunTaskAlias`
 - `scriptStorageAPI`
 - `scriptKeyboardAPI`
+- `keyboardHIDPaste`
+- `clipboardImage`
 - `scriptColorFrameAPI`
 - `scriptImageAPI`
 - `scriptOCRAPI`
@@ -63,13 +65,25 @@ where available:
 - Raw task/storage: `task`, `taskResult`, `runTask`, `readText`, `writeText`, `readJSON`, `writeJSON`, `fileExists`, `deleteFile`
 - Keyboard/shell/connectivity: `showKeyboard`, `hideKeyboard`, `pasteFromClipboard`, `getClipboardText`, `setClipboardText`, `setClipboardImage`, `insertText`, `deleteCharacters`, `moveCursor`, `runShell`, `wifi`, `setWifi`, `bluetooth`, `setBluetooth`, `airplaneMode`, `setAirplaneMode`, `cellularData`, `setCellularData`
 
+Keyboard backend smoke:
+
+```powershell
+Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
+
+# Focus a text field on the device before these:
+Invoke-TLinkTask -HostIP $iphoneIP -Task "241;;hello from tlinkauto"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "244;;5"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
+```
+
 ## Known Limits
 
 - Vision OCR remains deferred; task `91` Tesseract is the stable OCR path.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
-- Keyboard API names are exposed for rootfull script compatibility, but TrollStore
-  currently guarantees clipboard text get/set only. Text insertion, cursor
-  movement, delete, paste, and clipboard image may return
-  `limited_on_trollstore` until task `24` grows a full HID/paste fallback.
+- Keyboard API names are exposed for rootfull script compatibility. TrollStore
+  uses pasteboard + HID best-effort for insert/paste/delete/cursor movement,
+  and native `UIPasteboard` for clipboard images. It still requires a focused
+  text input in the target app; show-keyboard remains limited.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
 - Foreground overlays replace SpringBoard injection overlays.
