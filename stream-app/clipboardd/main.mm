@@ -37,6 +37,8 @@ typedef void (*TLinkUIKitBootstrapFn)(void);
 static BOOL sTLinkClipboardWriteVerified = NO;
 static BOOL sTLinkKeepAwakeRequested = NO;
 static NSInteger sTLinkNotificationAuthorizationStatus = -1;
+static NSString *sTLinkLastBackgroundVisualResult = @"none";
+static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 
 static void TLinkClipboardLog(NSString *message)
 {
@@ -87,6 +89,21 @@ static void TLinkRefreshNotificationAuthorizationStatus(void)
         }];
 }
 
+static NSInteger TLinkAppNotificationAuthorizationStatus(void)
+{
+    NSString *value = [NSString stringWithContentsOfFile:kTLinkAppNotificationAuthorizationPath
+                                                encoding:NSUTF8StringEncoding
+                                                   error:nil];
+    return value.length > 0 ? [value integerValue] : -1;
+}
+
+static BOOL TLinkNotificationStatusAllowsDelivery(NSInteger status)
+{
+    return status == UNAuthorizationStatusAuthorized ||
+           status == UNAuthorizationStatusProvisional ||
+           status == UNAuthorizationStatusEphemeral;
+}
+
 static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
 {
     if (parts.count < 2) return @"-1;;background_ui_missing_payload\r\n";
@@ -116,10 +133,15 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
     NSString *title = [payload[@"title"] isKindOfClass:[NSString class]] ? payload[@"title"] : @"TLinkauto";
     NSString *message = [payload[@"message"] isKindOfClass:[NSString class]] ? payload[@"message"] : @"";
     if (message.length == 0) return @"-1;;background_visual_missing_message\r\n";
-    if (sTLinkNotificationAuthorizationStatus == UNAuthorizationStatusDenied) {
+    NSInteger appAuthorization = TLinkAppNotificationAuthorizationStatus();
+    BOOL deliveryAllowed = TLinkNotificationStatusAllowsDelivery(sTLinkNotificationAuthorizationStatus) ||
+                           TLinkNotificationStatusAllowsDelivery(appAuthorization);
+    if (!deliveryAllowed && (sTLinkNotificationAuthorizationStatus == UNAuthorizationStatusDenied ||
+                             appAuthorization == UNAuthorizationStatusDenied)) {
         return @"-1;;background_visual_notification_permission_denied open_StreamControl_Settings_notifications\r\n";
     }
-    if (sTLinkNotificationAuthorizationStatus == UNAuthorizationStatusNotDetermined) {
+    if (!deliveryAllowed && sTLinkNotificationAuthorizationStatus == UNAuthorizationStatusNotDetermined &&
+        (appAuthorization < 0 || appAuthorization == UNAuthorizationStatusNotDetermined)) {
         return @"-1;;background_visual_notification_permission_not_determined open_StreamControl_once\r\n";
     }
 
@@ -136,20 +158,24 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
     UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier
                                                                           content:content
                                                                           trigger:nil];
+    sTLinkLastBackgroundVisualResult = @"pending";
     [[UNUserNotificationCenter currentNotificationCenter]
         addNotificationRequest:request
          withCompletionHandler:^(NSError *error) {
             if (error) {
+                sTLinkLastBackgroundVisualResult = [NSString stringWithFormat:@"failed_%@_%ld",
+                    error.domain ?: @"unknown", (long)error.code];
                 TLinkClipboardLog([NSString stringWithFormat:@"background visual failed kind=%@ error=%@",
                                    kind, error.localizedDescription ?: @"unknown"]);
             } else {
+                sTLinkLastBackgroundVisualResult = @"accepted";
                 TLinkClipboardLog([NSString stringWithFormat:@"background visual queued kind=%@ id=%@",
                                    kind, payload[@"event_id"] ?: @0]);
             }
         }];
     TLinkRefreshNotificationAuthorizationStatus();
-    return [NSString stringWithFormat:@"0;;background_visual_notification_queued;;%@;;authorization=%ld\r\n",
-            kind, (long)sTLinkNotificationAuthorizationStatus];
+    return [NSString stringWithFormat:@"0;;background_visual_notification_queued;;%@;;daemon_authorization=%ld;;app_authorization=%ld\r\n",
+            kind, (long)sTLinkNotificationAuthorizationStatus, (long)appAuthorization];
 }
 
 static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
@@ -205,10 +231,12 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=5;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;notification_auth=%ld;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=6;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), (long)state, (long)systemState,
                 sTLinkClipboardWriteVerified ? 1 : 0,
                 (long)sTLinkNotificationAuthorizationStatus,
+                (long)TLinkAppNotificationAuthorizationStatus(),
+                sTLinkLastBackgroundVisualResult ?: @"none",
                 sTLinkKeepAwakeRequested ? 1 : 0,
                 application.idleTimerDisabled ? 1 : 0];
     }

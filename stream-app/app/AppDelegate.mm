@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 
 static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/TLinkauto/runtime/app_foreground_heartbeat";
+static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 
 @interface SCAppDelegate ()
 @property(nonatomic, strong) NSTimer *visualFeedbackTimer;
@@ -93,6 +94,7 @@ static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/
     [self ensureStreamServiceForReason:@"active" background:NO];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
+    [self requestBackgroundVisualNotificationPermission];
     [self startVisualFeedbackMonitor];
 }
 
@@ -203,13 +205,32 @@ static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/
 {
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
     [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+        [self persistNotificationAuthorizationStatus:settings.authorizationStatus];
         if (settings.authorizationStatus != UNAuthorizationStatusNotDetermined) return;
-        [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert
-                              completionHandler:^(BOOL granted, NSError *error) {
-            NSLog(@"[StreamControl][Visual] notification permission granted=%d error=%@",
-                  granted ? 1 : 0, error.localizedDescription ?: @"none");
-        }];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert
+                                  completionHandler:^(BOOL granted, NSError *error) {
+                NSLog(@"[StreamControl][Visual] notification permission granted=%d error=%@",
+                      granted ? 1 : 0, error.localizedDescription ?: @"none");
+                [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *updated) {
+                    [self persistNotificationAuthorizationStatus:updated.authorizationStatus];
+                }];
+            }];
+        });
     }];
+}
+
+- (void)persistNotificationAuthorizationStatus:(UNAuthorizationStatus)status
+{
+    NSString *directory = [kTLinkAppNotificationAuthorizationPath stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    [[NSString stringWithFormat:@"%ld", (long)status] writeToFile:kTLinkAppNotificationAuthorizationPath
+                                                         atomically:NO
+                                                           encoding:NSUTF8StringEncoding
+                                                              error:nil];
 }
 
 - (void)handleVisualFeedbackStatusResponse:(NSString *)response

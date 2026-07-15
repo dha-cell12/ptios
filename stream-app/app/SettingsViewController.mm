@@ -1,9 +1,11 @@
 #import "SettingsViewController.h"
 #import "TLinkSocketClient.h"
 #import <Photos/Photos.h>
+#import <UserNotifications/UserNotifications.h>
 
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist";
+static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 
 @implementation SCSettingsViewController {
     NSArray<NSArray<NSString *> *> *_sections;
@@ -17,9 +19,9 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     self.title = @"Settings";
     [self loadConfig];
     _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics"],
+        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access"],
         @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"],
-        @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Scheduler: streamd_lite + autolaunch", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: overlay + background notification", @"Dialog: background notification is non-interactive", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v5", @"App/Process: helper launch/kill/url", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
+        @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Scheduler: streamd_lite + autolaunch", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: overlay + background notification", @"Dialog: background notification is non-interactive", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v6", @"App/Process: helper launch/kill/url", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure"],
     ];
 
     _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
@@ -215,6 +217,61 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     }
 }
 
+- (NSString *)notificationAuthorizationStatusText:(UNAuthorizationStatus)status
+{
+    switch (status) {
+        case UNAuthorizationStatusNotDetermined: return @"not_determined";
+        case UNAuthorizationStatusDenied: return @"denied";
+        case UNAuthorizationStatusAuthorized: return @"authorized";
+        case UNAuthorizationStatusProvisional: return @"provisional";
+        case UNAuthorizationStatusEphemeral: return @"ephemeral";
+        default: return [NSString stringWithFormat:@"unknown_%ld", (long)status];
+    }
+}
+
+- (void)persistNotificationAuthorizationStatus:(UNAuthorizationStatus)status
+{
+    NSString *directory = [kTLinkAppNotificationAuthorizationPath stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+    [[NSString stringWithFormat:@"%ld", (long)status] writeToFile:kTLinkAppNotificationAuthorizationPath
+                                                         atomically:NO
+                                                           encoding:NSUTF8StringEncoding
+                                                              error:nil];
+}
+
+- (void)requestNotificationAccess
+{
+    _resultView.text = @"Checking notification access...";
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
+        [self persistNotificationAuthorizationStatus:settings.authorizationStatus];
+        if (settings.authorizationStatus == UNAuthorizationStatusNotDetermined) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert
+                                      completionHandler:^(__unused BOOL granted, NSError *error) {
+                    [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *updated) {
+                        [self persistNotificationAuthorizationStatus:updated.authorizationStatus];
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            self->_resultView.text = [NSString stringWithFormat:@"Notification access: %@%@",
+                                [self notificationAuthorizationStatusText:updated.authorizationStatus],
+                                error ? [NSString stringWithFormat:@"\n%@", error.localizedDescription] : @""];
+                        });
+                    }];
+                }];
+            });
+            return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_resultView.text = [NSString stringWithFormat:@"Notification access: %@",
+                [self notificationAuthorizationStatusText:settings.authorizationStatus]];
+            if (settings.authorizationStatus == UNAuthorizationStatusDenied) {
+                NSURL *url = [NSURL URLWithString:UIApplicationOpenSettingsURLString];
+                if (url) [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+            }
+        });
+    }];
+}
+
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
     return (NSInteger)_sections.count;
@@ -275,6 +332,11 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
     NSString *title = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
     if ([title isEqualToString:@"Photo Access"]) {
         [self requestPhotoAccess];
+        return;
+    }
+
+    if ([title isEqualToString:@"Notification Access"]) {
+        [self requestNotificationAccess];
         return;
     }
 
