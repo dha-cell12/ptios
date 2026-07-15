@@ -50,10 +50,6 @@ HIDInjectResult HIDInjectDispatchTap(double xPx, double yPx);
 // HID_KEY_ACTION_UP/DOWN and `keyType` is HID_KEY_HOME/VOLUME_UP/VOLUME_DOWN/LOCK.
 HIDInjectResult HIDInjectDispatchHardwareKey(int action, int keyType);
 
-// Dispatch a generic keyboard usage from HID usage page 0x07. This is used for
-// best-effort text helpers such as paste, delete, and cursor movement.
-HIDInjectResult HIDInjectDispatchKeyboardUsage(int action, unsigned short usage);
-
 // Dispatch a single touch event (down/up/move). Used by the legacy wire
 // protocol path where the Python client sends down and up as separate packets.
 // `type` is one of HID_TOUCH_UP / HID_TOUCH_DOWN / HID_TOUCH_MOVE.

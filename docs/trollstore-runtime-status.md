@@ -12,7 +12,7 @@ TrollStore runtime.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
 - Script runtime: task `19/20` JavaScriptCore with a rootfull compatibility facade for common `device.*` APIs, `runTask`/task bridge, normalized storage responses, keyboard wrappers, color/frame/image/OCR wrappers, and app/process wrappers.
-- Keyboard/text: task `24` supports clipboard text get/set, clipboard image, and best-effort paste/delete/cursor movement through HID keyboard events. Insert text uses pasteboard + Cmd+V, so the target app must have a focused text field.
+- Keyboard/text: task `24` supports clipboard text get/set and clipboard image. Insert, paste, delete, cursor movement, and show/hide keyboard depend on the rootfull SpringBoard keyboard observer and return `limited_on_trollstore` on TrollStore instead of silent success.
 - App/process: `11`, `31-35`, `50-54` via streamd plus privhelper where needed.
 - Admin extension: task `72` clears safe app data containers through privhelper. It refuses protected bundles and unsafe paths.
 - Shell: task `13/71` is gated by settings and disabled by default.

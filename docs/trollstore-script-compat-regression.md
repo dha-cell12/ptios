@@ -17,7 +17,6 @@ Expected markers:
 - `scriptRunTaskAlias`
 - `scriptStorageAPI`
 - `scriptKeyboardAPI`
-- `keyboardHIDPaste`
 - `clipboardImage`
 - `scriptColorFrameAPI`
 - `scriptImageAPI`
@@ -71,7 +70,7 @@ Keyboard backend smoke:
 Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
 
-# Focus a text field on the device before these:
+# TrollStore currently reports limited for these instead of silent success:
 Invoke-TLinkTask -HostIP $iphoneIP -Task "241;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "244;;5"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
@@ -82,8 +81,9 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "243;;-2"
 - Vision OCR remains deferred; task `91` Tesseract is the stable OCR path.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
 - Keyboard API names are exposed for rootfull script compatibility. TrollStore
-  uses pasteboard + HID best-effort for insert/paste/delete/cursor movement,
-  and native `UIPasteboard` for clipboard images. It still requires a focused
-  text input in the target app; show-keyboard remains limited.
+  supports clipboard text and native `UIPasteboard` clipboard images. Insert,
+  paste, delete, cursor movement, and show/hide keyboard require the rootfull
+  SpringBoard keyboard observer and return `limited_on_trollstore` instead of
+  silent success.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
 - Foreground overlays replace SpringBoard injection overlays.
