@@ -1133,7 +1133,8 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
             NSDictionary *dict = (NSDictionary *)command;
             id rawType = dict[@"type"];
             if (!rawType || rawType == (id)kCFNull) rawType = dict[@"kind"];
-            NSString *type = [[rawType ? rawType : @"tap"] description].lowercaseString;
+            if (!rawType || rawType == (id)kCFNull) rawType = @"tap";
+            NSString *type = [[rawType description] lowercaseString];
             if ([type isEqualToString:@"tap"]) {
                 [wire addObject:[NSString stringWithFormat:@"62%.0f;;%.0f;;%d",
                                  [dict[@"x"] doubleValue],
