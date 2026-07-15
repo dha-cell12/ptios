@@ -64,6 +64,11 @@ Helper-local storage is bundle-relative and path-safe:
 - `device.fileExists(path)`
 - `device.deleteFile(path)`
 
+These APIs return normalized dictionaries. Successful reads include `text` or
+`value`; successful writes include `bytes`; `fileExists` includes `exists` and
+`directory`; delete includes `deleted`. Failures include `ok: false` and
+`error`.
+
 Paths must remain inside the current script bundle. Bundle metadata/source files are protected from modification.
 
 ## Clipboard image API

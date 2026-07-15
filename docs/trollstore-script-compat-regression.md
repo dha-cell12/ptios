@@ -14,6 +14,9 @@ Expected markers:
 
 - `script=javascriptcore_rootfull_compat_facade`
 - `scriptCompatFacade`
+- `scriptRunTaskAlias`
+- `scriptStorageAPI`
+- `scriptKeyboardAPI`
 - `scriptColorFrameAPI`
 - `scriptImageAPI`
 - `scriptOCRAPI`
@@ -36,6 +39,12 @@ Expected markers:
    - `screenshot=`
    - `ocrLanguages=`
 
+Packaged example script:
+
+- `examples/Rootfull Compatibility Smoke.tl` exercises `runTask`, storage,
+  clipboard text, color/frame, screenshot, OCR language listing, and app state
+  wrappers without changing system settings.
+
 ## Script API Smoke
 
 The TrollStore facade should expose these rootfull-style APIs with a normalized
@@ -51,11 +60,16 @@ where available:
 - OCR: `ocrLanguages`, `ocrFrame`, `ocr`
 - App/process: `openApp`, `killApp`, `clearAppData`, `appState`, `appInfo`, `appPid`, `frontMostAppId`, `frontMostPid`, `appPaths`, `listBundles`, `openUrl`
 - Paths/info: `rootDir`, `currentDir`, `botPath`, `info`, `batteryInfo`, `getScreenSize`
-- Keyboard/shell/connectivity: `getClipboardText`, `setClipboardText`, `insertText`, `runShell`, `wifi`, `setWifi`, `bluetooth`, `setBluetooth`, `airplaneMode`, `setAirplaneMode`, `cellularData`, `setCellularData`
+- Raw task/storage: `task`, `taskResult`, `runTask`, `readText`, `writeText`, `readJSON`, `writeJSON`, `fileExists`, `deleteFile`
+- Keyboard/shell/connectivity: `showKeyboard`, `hideKeyboard`, `pasteFromClipboard`, `getClipboardText`, `setClipboardText`, `setClipboardImage`, `insertText`, `deleteCharacters`, `moveCursor`, `runShell`, `wifi`, `setWifi`, `bluetooth`, `setBluetooth`, `airplaneMode`, `setAirplaneMode`, `cellularData`, `setCellularData`
 
 ## Known Limits
 
 - Vision OCR remains deferred; task `91` Tesseract is the stable OCR path.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
+- Keyboard API names are exposed for rootfull script compatibility, but TrollStore
+  currently guarantees clipboard text get/set only. Text insertion, cursor
+  movement, delete, paste, and clipboard image may return
+  `limited_on_trollstore` until task `24` grows a full HID/paste fallback.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
 - Foreground overlays replace SpringBoard injection overlays.

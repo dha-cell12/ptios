@@ -524,12 +524,14 @@ static NSDictionary *TLinkTaskResultFromResponseString(NSString *raw)
     if ([text hasPrefix:@"0;;"] || [text hasPrefix:@"-1;;"]) {
         payload = [text substringFromIndex:3] ?: @"";
     }
-    return @{
+    NSMutableDictionary *result = [@{
         @"ok": @(ok),
         @"code": ok ? @0 : @-1,
         @"payload": payload ?: @"",
         @"raw": text,
-    };
+    } mutableCopy];
+    if (!ok) result[@"error"] = payload.length > 0 ? payload : @"unknown_error";
+    return result;
 }
 
 static NSString *TLinkScriptRunTask(int taskType, NSString *body);
@@ -1021,11 +1023,15 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
     };
     device[@"taskResult"] = ^NSDictionary *(double task, JSValue *bodyValue) {
         TLinkScriptSession *strongSession = weakSession;
-        if (TLinkScriptStopRequested(strongSession)) {
-            return @{@"ok": @NO, @"code": @-1, @"payload": @"script_stop_requested", @"raw": @"-1;;script_stop_requested"};
-        }
+        if (TLinkScriptStopRequested(strongSession)) return TLinkScriptStoppedResult();
         NSString *body = bodyValue && ![bodyValue isUndefined] && ![bodyValue isNull] ? [bodyValue toString] : @"";
-        return TLinkTaskResultFromResponseString(TLinkScriptRunTask((int)task, body));
+        return TLinkScriptTaskResult(strongSession, (int)task, body);
+    };
+    device[@"runTask"] = ^NSDictionary *(double task, JSValue *bodyValue) {
+        TLinkScriptSession *strongSession = weakSession;
+        if (TLinkScriptStopRequested(strongSession)) return TLinkScriptStoppedResult();
+        NSString *body = bodyValue && ![bodyValue isUndefined] && ![bodyValue isNull] ? [bodyValue toString] : @"";
+        return TLinkScriptTaskResult(strongSession, (int)task, body);
     };
     device[@"hardwareKey"] = ^NSDictionary *(NSString *key, NSString *action) {
         TLinkScriptSession *strongSession = weakSession;
@@ -1580,7 +1586,27 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"7;;%@", text ?: @""]);
     };
     device[@"insertText"] = ^NSDictionary *(NSString *text) {
-        return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"7;;%@", text ?: @""]);
+        return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"1;;%@", text ?: @""]);
+    };
+    device[@"showKeyboard"] = ^NSDictionary *{
+        return TLinkScriptTaskResult(weakSession, 24, @"2;;2");
+    };
+    device[@"hideKeyboard"] = ^NSDictionary *{
+        return TLinkScriptTaskResult(weakSession, 24, @"2;;1");
+    };
+    device[@"pasteFromClipboard"] = ^NSDictionary *{
+        return TLinkScriptTaskResult(weakSession, 24, @"5");
+    };
+    device[@"setClipboardImage"] = ^NSDictionary *(NSString *path) {
+        return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"8;;file;;%@", path ?: @""]);
+    };
+    device[@"deleteCharacters"] = ^NSDictionary *(double count) {
+        int value = (int)llround(MAX(1.0, MIN(1024.0, count)));
+        return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"4;;%d", value]);
+    };
+    device[@"moveCursor"] = ^NSDictionary *(double offset) {
+        int value = (int)llround(MAX(-1024.0, MIN(1024.0, offset)));
+        return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"3;;%d", value]);
     };
     device[@"runShell"] = ^NSDictionary *(NSString *command, double timeoutSeconds) {
         int timeout = timeoutSeconds > 0 ? (int)llround(timeoutSeconds) : 10;
@@ -1711,44 +1737,60 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
             };
         }
     };
-    device[@"readText"] = ^NSString *(NSString *relativePath) {
+    device[@"readText"] = ^NSDictionary *(NSString *relativePath) {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, NO, &err);
-        if (!path) return nil;
-        NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-        return text;
+        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
+        NSError *readErr = nil;
+        NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&readErr];
+        if (!text) {
+            NSString *message = readErr.localizedDescription ?: @"read_failed";
+            return @{@"ok": @NO, @"error": message, @"path": path};
+        }
+        return @{@"ok": @YES, @"path": path, @"text": text};
     };
     device[@"writeText"] = ^NSDictionary *(NSString *relativePath, NSString *text) {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, YES, &err);
-        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error"};
+        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
         NSString *parent = [path stringByDeletingLastPathComponent];
         [[NSFileManager defaultManager] createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:nil];
         NSError *writeErr = nil;
-        BOOL ok = [text ?: @"" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&writeErr];
-        return ok ? @{@"ok": @YES, @"path": path} : @{@"ok": @NO, @"error": writeErr.localizedDescription ?: @"write_failed"};
+        NSString *safeText = text ?: @"";
+        BOOL ok = [safeText writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&writeErr];
+        NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];
+        return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(byteCount)} : @{@"ok": @NO, @"path": path, @"error": writeErr.localizedDescription ?: @"write_failed"};
     };
-    device[@"fileExists"] = ^BOOL(NSString *relativePath) {
+    device[@"fileExists"] = ^NSDictionary *(NSString *relativePath) {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, NO, &err);
-        return path.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:path];
+        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @"", @"exists": @NO};
+        BOOL isDir = NO;
+        BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir];
+        return @{@"ok": @YES, @"path": path, @"exists": @(exists), @"directory": @(exists && isDir)};
     };
     device[@"deleteFile"] = ^NSDictionary *(NSString *relativePath) {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, YES, &err);
-        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error"};
+        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            return @{@"ok": @YES, @"path": path, @"deleted": @NO};
+        }
         NSError *deleteErr = nil;
         BOOL ok = [[NSFileManager defaultManager] removeItemAtPath:path error:&deleteErr];
-        if (ok || deleteErr.code == NSFileNoSuchFileError) return @{@"ok": @YES};
-        return @{@"ok": @NO, @"error": deleteErr.localizedDescription ?: @"delete_failed"};
+        if (ok || deleteErr.code == NSFileNoSuchFileError) return @{@"ok": @YES, @"path": path, @"deleted": @YES};
+        return @{@"ok": @NO, @"path": path, @"error": deleteErr.localizedDescription ?: @"delete_failed"};
     };
-    device[@"readJSON"] = ^id(NSString *relativePath) {
+    device[@"readJSON"] = ^NSDictionary *(NSString *relativePath) {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, NO, &err);
-        if (!path) return nil;
+        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
         NSData *data = [NSData dataWithContentsOfFile:path];
-        if (data.length == 0) return nil;
-        return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if (data.length == 0) return @{@"ok": @NO, @"path": path, @"error": @"read_failed"};
+        NSError *jsonErr = nil;
+        id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
+        if (!object) return @{@"ok": @NO, @"path": path, @"error": jsonErr.localizedDescription ?: @"json_parse_failed"};
+        return @{@"ok": @YES, @"path": path, @"value": object};
     };
     device[@"writeJSON"] = ^NSDictionary *(NSString *relativePath, JSValue *value) {
         id object = [value toObject];
@@ -1757,12 +1799,14 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         }
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, YES, &err);
-        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error"};
+        if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
         NSString *parent = [path stringByDeletingLastPathComponent];
         [[NSFileManager defaultManager] createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:nil];
-        NSData *data = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingPrettyPrinted error:nil];
+        NSError *jsonErr = nil;
+        NSData *data = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingPrettyPrinted error:&jsonErr];
+        if (!data) return @{@"ok": @NO, @"path": path, @"error": jsonErr.localizedDescription ?: @"json_encode_failed"};
         BOOL ok = [data writeToFile:path atomically:YES];
-        return ok ? @{@"ok": @YES, @"path": path} : @{@"ok": @NO, @"error": @"write_json_failed"};
+        return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(data.length)} : @{@"ok": @NO, @"path": path, @"error": @"write_json_failed"};
     };
     context[@"device"] = device;
 }
@@ -2683,7 +2727,8 @@ static NSString *TLinkRecordingReplaySource(NSString *rawFileName)
     NSString *safeRaw = TLinkVisualSafeText(rawFileName ?: @"record.raw");
     return [NSString stringWithFormat:
             @"console.log('TLinkauto recording replay started: %@');\n"
-             "var raw = device.readText('%@') || '';\n"
+             "var rawResult = device.readText('%@');\n"
+             "var raw = rawResult && rawResult.ok ? (rawResult.text || '') : '';\n"
              "var lines = raw.split(/\\r?\\n/);\n"
              "for (var i = 0; i < lines.length; i++) {\n"
              "  var line = (lines[i] || '').trim();\n"
@@ -5014,6 +5059,9 @@ static NSData *TLinkHandleHelloStatus(void)
         @"scriptMode": @"javascriptcore_rootfull_compat_facade",
         @"scriptCompatFacade": @(YES),
         @"scriptResponseShape": @"ok_code_payload_error_fields",
+        @"scriptRunTaskAlias": @(YES),
+        @"scriptStorageAPI": @(YES),
+        @"scriptKeyboardAPI": @(YES),
         @"scriptColorFrameAPI": @(YES),
         @"scriptImageAPI": @(YES),
         @"scriptOCRAPI": @(YES),
@@ -6924,7 +6972,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);

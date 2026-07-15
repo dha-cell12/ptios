@@ -11,7 +11,7 @@ TrollStore runtime.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
-- Script runtime: task `19/20` JavaScriptCore with a rootfull compatibility facade for common `device.*` APIs, storage, task bridge, color/frame/image/OCR wrappers, and app/process wrappers.
+- Script runtime: task `19/20` JavaScriptCore with a rootfull compatibility facade for common `device.*` APIs, `runTask`/task bridge, normalized storage responses, keyboard wrappers, color/frame/image/OCR wrappers, and app/process wrappers.
 - App/process: `11`, `31-35`, `50-54` via streamd plus privhelper where needed.
 - Admin extension: task `72` clears safe app data containers through privhelper. It refuses protected bundles and unsafe paths.
 - Shell: task `13/71` is gated by settings and disabled by default.
