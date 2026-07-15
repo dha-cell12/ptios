@@ -76,7 +76,7 @@ static NSString *TLinkClipboardImageType(NSData *data)
     return nil;
 }
 
-static NSString *TLinkClipboardHandleBody(NSString *body)
+static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
 {
     NSArray<NSString *> *parts = [body ?: @"" componentsSeparatedByString:@";;"];
     if (parts.count < 1) return @"-1;;clipboardd_missing_subtask\r\n";
@@ -124,14 +124,31 @@ static NSString *TLinkClipboardHandleBody(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=2;;pid=%d;;uid=%d;;state=%ld;;system_state=%ld;;write_verified=%d\r\n",
-                getpid(), getuid(), (long)state, (long)systemState, sTLinkClipboardWriteVerified ? 1 : 0];
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=3;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d\r\n",
+                getpid(), getuid(), geteuid(), (long)state, (long)systemState, sTLinkClipboardWriteVerified ? 1 : 0];
     }
         return @"-1;;clipboardd_unsupported_subtask\r\n";
     } @catch (NSException *exception) {
         TLinkClipboardLog([NSString stringWithFormat:@"pasteboard exception=%@", exception.reason ?: exception.name]);
         return [NSString stringWithFormat:@"-1;;clipboardd_exception %@\r\n", exception.reason ?: exception.name ?: @"unknown"];
     }
+}
+
+static NSString *TLinkClipboardHandleBody(NSString *body)
+{
+    uid_t originalEUID = geteuid();
+    BOOL switchedToMobile = originalEUID == 0 && seteuid(501) == 0;
+    if (originalEUID == 0 && !switchedToMobile) {
+        int switchError = errno;
+        return [NSString stringWithFormat:@"-1;;clipboardd_switch_mobile_euid_failed errno=%d\r\n", switchError];
+    }
+    NSString *response = TLinkClipboardHandleBodyForCurrentEUID(body);
+    int restoreError = 0;
+    if (switchedToMobile && seteuid(originalEUID) != 0) restoreError = errno;
+    if (restoreError != 0) {
+        return [NSString stringWithFormat:@"-1;;clipboardd_restore_root_euid_failed errno=%d\r\n", restoreError];
+    }
+    return response;
 }
 
 static NSString *TLinkClipboardHandleLine(NSString *line)
