@@ -13,12 +13,27 @@
 
 typedef void (*TLinkUIApplicationInitializeFn)(void);
 typedef void (*TLinkUIApplicationInstantiateSingletonFn)(Class);
+typedef void (*TLinkUIKitBootstrapFn)(void);
+
+@interface TLinkClipboardApplication : UIApplication
+- (UIApplicationState)tlinkSystemApplicationState;
+@end
+
+@implementation TLinkClipboardApplication
+- (UIApplicationState)applicationState { return UIApplicationStateActive; }
+- (UIApplicationState)tlinkSystemApplicationState { return [super applicationState]; }
+- (BOOL)_isBackground { return NO; }
+- (BOOL)_isApplicationBackgrounded { return NO; }
+- (BOOL)_isSuspended { return NO; }
+@end
 
 @interface TLinkClipboardApplicationDelegate : UIResponder <UIApplicationDelegate>
 @end
 
 @implementation TLinkClipboardApplicationDelegate
 @end
+
+static BOOL sTLinkClipboardWriteVerified = NO;
 
 static void TLinkClipboardLog(NSString *message)
 {
@@ -75,12 +90,17 @@ static NSString *TLinkClipboardHandleBody(NSString *body)
     if (subtask == 7) {
         if (parts.count < 2) return @"-1;;clipboardd_save_text_missing_content\r\n";
         NSString *text = [[parts subarrayWithRange:NSMakeRange(1, parts.count - 1)] componentsJoinedByString:@";;"];
-        pasteboard.items = @[@{@"public.utf8-plain-text": text ?: @""}];
+        pasteboard.string = text ?: @"";
         NSString *saved = pasteboard.string ?: @"";
+        if (![saved isEqualToString:text ?: @""]) {
+            pasteboard.items = @[@{@"public.utf8-plain-text": text ?: @""}];
+            saved = pasteboard.string ?: @"";
+        }
         if (![saved isEqualToString:text ?: @""]) {
             return [NSString stringWithFormat:@"-1;;clipboardd_text_verify_failed expected=%lu actual=%lu\r\n",
                     (unsigned long)(text ?: @"").length, (unsigned long)saved.length];
         }
+        sTLinkClipboardWriteVerified = YES;
         return @"0\r\n";
     }
     if (subtask == 8) {
@@ -99,9 +119,13 @@ static NSString *TLinkClipboardHandleBody(NSString *body)
                 type, (unsigned long)imageData.length];
     }
     if (subtask == 9) {
-        UIApplicationState state = [UIApplication sharedApplication].applicationState;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;pid=%d;;uid=%d;;state=%ld\r\n",
-                getpid(), getuid(), (long)state];
+        UIApplication *application = [UIApplication sharedApplication];
+        UIApplicationState state = application.applicationState;
+        UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
+            ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
+            : state;
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=2;;pid=%d;;uid=%d;;state=%ld;;system_state=%ld;;write_verified=%d\r\n",
+                getpid(), getuid(), (long)state, (long)systemState, sTLinkClipboardWriteVerified ? 1 : 0];
     }
         return @"-1;;clipboardd_unsupported_subtask\r\n";
     } @catch (NSException *exception) {
@@ -198,13 +222,33 @@ static void TLinkRunClipboardServer(void)
 
 static void TLinkInitializeUIKitPlugin(void)
 {
+    void *graphics = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices",
+                            RTLD_LAZY | RTLD_GLOBAL);
+    void *backboard = dlopen("/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices",
+                             RTLD_LAZY | RTLD_GLOBAL);
+    TLinkUIKitBootstrapFn gsInitialize = graphics
+        ? (TLinkUIKitBootstrapFn)dlsym(graphics, "GSInitialize")
+        : NULL;
+    TLinkUIKitBootstrapFn bksDisplayServicesStart = backboard
+        ? (TLinkUIKitBootstrapFn)dlsym(backboard, "BKSDisplayServicesStart")
+        : NULL;
     TLinkUIApplicationInitializeFn initialize =
         (TLinkUIApplicationInitializeFn)dlsym(RTLD_DEFAULT, "UIApplicationInitialize");
     TLinkUIApplicationInstantiateSingletonFn instantiate =
         (TLinkUIApplicationInstantiateSingletonFn)dlsym(RTLD_DEFAULT, "UIApplicationInstantiateSingleton");
+
+    Class screenClass = NSClassFromString(@"UIScreen");
+    SEL initializeSelector = NSSelectorFromString(@"initialize");
+    if (screenClass && [screenClass respondsToSelector:initializeSelector]) {
+        ((void (*)(id, SEL))objc_msgSend)(screenClass, initializeSelector);
+    }
+    (void)CFRunLoopGetCurrent();
+    if (gsInitialize) gsInitialize();
+    if (bksDisplayServicesStart) bksDisplayServicesStart();
     if (initialize) initialize();
-    if (instantiate) instantiate([UIApplication class]);
-    TLinkClipboardLog([NSString stringWithFormat:@"UIKit symbols initialize=%d instantiate=%d",
+    if (instantiate) instantiate([TLinkClipboardApplication class]);
+    TLinkClipboardLog([NSString stringWithFormat:@"UIKit bootstrap gs=%d bks=%d initialize=%d instantiate=%d",
+                       gsInitialize ? 1 : 0, bksDisplayServicesStart ? 1 : 0,
                        initialize ? 1 : 0, instantiate ? 1 : 0]);
 
     @try {
@@ -212,12 +256,20 @@ static void TLinkInitializeUIKitPlugin(void)
         static TLinkClipboardApplicationDelegate *delegate = nil;
         if (!delegate) delegate = [[TLinkClipboardApplicationDelegate alloc] init];
         application.delegate = delegate;
+        SEL accessibilityInit = NSSelectorFromString(@"_accessibilityInit");
+        if ([application respondsToSelector:accessibilityInit]) {
+            ((void (*)(id, SEL))objc_msgSend)(application, accessibilityInit);
+        }
         SEL complete = NSSelectorFromString(@"__completeAndRunAsPlugin");
         if (application && [application respondsToSelector:complete]) {
             ((void (*)(id, SEL))objc_msgSend)(application, complete);
         }
-        TLinkClipboardLog([NSString stringWithFormat:@"UIKit plugin ready app=%d state=%ld",
-                           application ? 1 : 0, (long)application.applicationState]);
+        UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
+            ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
+            : application.applicationState;
+        TLinkClipboardLog([NSString stringWithFormat:@"UIKit plugin ready app=%d class=%@ state=%ld system_state=%ld",
+                           application ? 1 : 0, NSStringFromClass(application.class),
+                           (long)application.applicationState, (long)systemState]);
     } @catch (__unused NSException *exception) {
         TLinkClipboardLog([NSString stringWithFormat:@"UIKit plugin exception=%@", exception.reason ?: exception.name]);
     }

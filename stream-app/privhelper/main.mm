@@ -328,6 +328,11 @@ static void TLinkHelperKillClipboardd(void)
     usleep(200000);
 }
 
+static BOOL TLinkClipboarddProbeIsCurrent(NSString *probe)
+{
+    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=2"];
+}
+
 static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 {
     NSString *clipboarddPath = [[streamdPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"clipboardd"];
@@ -339,7 +344,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
     }
 
     NSString *probe = TLinkHelperSendLoopbackLine(@"1;;OQ==\n", 6012, 1);
-    if ([probe hasPrefix:@"0;;clipboardd_ready"] && !replaceExisting) {
+    if (TLinkClipboarddProbeIsCurrent(probe) && !replaceExisting) {
         TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: already responding %@",
                         [probe stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
         return 0;
@@ -366,7 +371,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
     for (int i = 0; i < 12; i++) {
         usleep(250000);
         probe = TLinkHelperSendLoopbackLine(@"1;;OQ==\n", 6012, 1);
-        if ([probe hasPrefix:@"0;;clipboardd_ready"]) {
+        if (TLinkClipboarddProbeIsCurrent(probe)) {
             TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: probe ok %@",
                             [probe stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
             return 0;
