@@ -67,6 +67,12 @@ jobs:
           test -f stream-app/app/ImageViewerViewController.mm
           test -f stream-app/app/PlaySettingsViewController.mm
           test -f stream-app/app/SettingsViewController.mm
+          test -f 'stream-app/app/CompatibilityExamples/01 Runtime Storage.js'
+          test -f 'stream-app/app/CompatibilityExamples/02 Clipboard Keyboard.js'
+          test -f 'stream-app/app/CompatibilityExamples/03 Color Frame.js'
+          test -f 'stream-app/app/CompatibilityExamples/04 Screenshot Image.js'
+          test -f 'stream-app/app/CompatibilityExamples/05 OCR.js'
+          test -f 'stream-app/app/CompatibilityExamples/06 App Process Shell.js'
           test -f docs/trollstore-runtime-status.md
           grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
@@ -81,6 +87,7 @@ jobs:
           grep -q 'lastVisualFeedbackPid' stream-app/app/AppDelegate.mm
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/AppDelegate.mm
           grep -q 'applicationDidEnterBackground' stream-app/app/AppDelegate.mm
+          grep -q 'tabs.selectedIndex = 0' stream-app/app/AppDelegate.mm
           grep -q 'beginBackgroundTaskWithName' stream-app/app/AppDelegate.mm
           grep -q 'ensureStreamServiceForReason' stream-app/app/AppDelegate.mm
           grep -q 'idleTimerDisabled' stream-app/app/AppDelegate.mm
@@ -91,6 +98,13 @@ jobs:
           grep -q 'ImageViewerViewController.mm' stream-app/app/Makefile
           grep -q 'PlaySettingsViewController.mm' stream-app/app/Makefile
           grep -q 'SettingsViewController.mm' stream-app/app/Makefile
+          grep -q 'Compatibility Suite' stream-app/app/ScriptsViewController.mm
+          grep -q 'CompatibilityExamples' stream-app/Makefile
+          grep -q 'device.captureFrame' 'stream-app/app/CompatibilityExamples/03 Color Frame.js'
+          grep -q 'device.ocr' 'stream-app/app/CompatibilityExamples/05 OCR.js'
+          for script in stream-app/app/CompatibilityExamples/*.js; do
+            node --check "$script"
+          done
           grep -q 'QuartzCore' stream-app/app/Makefile
           grep -q 'Ensure Service' stream-app/app/ViewController.mm
           grep -q 'Restart streamd' stream-app/app/ViewController.mm
@@ -363,6 +377,8 @@ jobs:
           grep 'Payload/StreamControl.app/streamd' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/clipboardd' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/privhelper' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/CompatibilityExamples/01 Runtime Storage.js' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/CompatibilityExamples/06 App Process Shell.js' stream-app/packages/StreamControl.tipa.contents.txt
 
           APP="stream-app/app/.theos/_/Applications/StreamControl.app"
           if [ ! -d "$APP" ]; then
@@ -373,6 +389,8 @@ jobs:
           test -x "$APP/streamd"
           test -x "$APP/clipboardd"
           test -x "$APP/privhelper"
+          test -f "$APP/CompatibilityExamples/01 Runtime Storage.js"
+          test -f "$APP/CompatibilityExamples/06 App Process Shell.js"
 
           echo "--- StreamControl entitlements ---"
           ldid -e "$APP/StreamControl" || true

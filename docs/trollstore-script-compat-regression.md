@@ -45,9 +45,11 @@ Expected markers:
 
 Packaged example script:
 
-- `examples/Rootfull Compatibility Smoke.tl` exercises `runTask`, storage,
-  clipboard text, color/frame, screenshot, OCR language listing, and app state
-  wrappers without changing system settings.
+- In `Scripts`, tap `+` then `Compatibility Suite`. The app installs six
+  editable `.tl` bundles covering runtime/storage, background clipboard,
+  color/frame, screenshot/image, Tesseract OCR, and app/process/shell.
+- Every script logs `compat/<group> start`, normalized result objects, and a
+  matching `finished` marker so failures can be isolated from the script log.
 
 ## Script API Smoke
 

@@ -63,6 +63,8 @@ embed: streamd clipboardd app privhelper
 	chmod 755 "$$APP/clipboardd"; \
 	cp "$$PRIVHELPER" "$$APP/privhelper"; \
 	chmod 755 "$$APP/privhelper"; \
+	rm -rf "$$APP/CompatibilityExamples"; \
+	cp -R app/CompatibilityExamples "$$APP/CompatibilityExamples"; \
 	if command -v ldid >/dev/null 2>&1; then \
 	  ldid -Sstreamd/entitlements.plist "$$APP/streamd"; \
 	  ldid -Sclipboardd/entitlements.plist "$$APP/clipboardd"; \
@@ -74,6 +76,8 @@ embed: streamd clipboardd app privhelper
 	test -x "$$APP/streamd"; \
 	test -x "$$APP/clipboardd"; \
 	test -x "$$APP/privhelper"; \
+	test -f "$$APP/CompatibilityExamples/01 Runtime Storage.js"; \
+	test -f "$$APP/CompatibilityExamples/06 App Process Shell.js"; \
 	echo "Embedded streamd and clipboardd into $$APP"
 
 package: embed
@@ -90,6 +94,7 @@ package: embed
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/streamd"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/clipboardd"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/privhelper"; \
+	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/01 Runtime Storage.js"; \
 	( cd _payload && zip -qr9 ../$(TIPA) Payload ); \
 	echo "Created $(TIPA)"
 

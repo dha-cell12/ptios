@@ -62,7 +62,7 @@
 
     UITabBarController *tabs = [[UITabBarController alloc] init];
     tabs.viewControllers = @[scriptsNav, serviceNav, settingsNav];
-    tabs.selectedIndex = 1;
+    tabs.selectedIndex = 0;
 
     if (@available(iOS 13.0, *)) {
         self.window.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;

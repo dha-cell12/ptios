@@ -91,6 +91,18 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     return [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ %@.tl", baseName, @((long long)[[NSDate date] timeIntervalSince1970])]];
 }
 
+- (NSString *)uniqueFolderPathWithBaseName:(NSString *)baseName
+{
+    NSString *folder = [self scriptsPath];
+    NSString *candidate = [folder stringByAppendingPathComponent:baseName];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:candidate]) return candidate;
+    for (NSInteger i = 2; i < 1000; i++) {
+        candidate = [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ %ld", baseName, (long)i]];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:candidate]) return candidate;
+    }
+    return [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ %@", baseName, @((long long)[[NSDate date] timeIntervalSince1970])]];
+}
+
 - (void)showMessageWithTitle:(NSString *)title message:(NSString *)message
 {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
@@ -313,6 +325,17 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
                          error:error];
 }
 
+- (BOOL)writeCompatibilityScriptAtPath:(NSString *)scriptPath
+                                source:(NSString *)source
+                                 error:(NSError **)error
+{
+    if (![self writeScriptBundleAtPath:scriptPath demo:NO error:error]) return NO;
+    return [source writeToFile:[scriptPath stringByAppendingPathComponent:@"main.js"]
+                    atomically:YES
+                      encoding:NSUTF8StringEncoding
+                         error:error];
+}
+
 - (void)createScriptNamed:(NSString *)name
 {
     NSString *scriptName = [[name.pathExtension lowercaseString] isEqualToString:@"tl"] ? name : [name stringByAppendingString:@".tl"];
@@ -428,6 +451,11 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
                                             handler:^(__unused UIAlertAction *action) {
         [self createDemoScript];
     }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Compatibility Suite"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        [self installCompatibilitySuite];
+    }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     UIPopoverPresentationController *popover = sheet.popoverPresentationController;
     if (popover) {
@@ -458,6 +486,68 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
     [self reloadScripts];
     [self showMessageWithTitle:@"Create Script" message:[NSString stringWithFormat:@"Created %@", scriptPath.lastPathComponent]];
+}
+
+- (void)installCompatibilitySuite
+{
+    NSString *permissionError = nil;
+    if (![self ensureScriptsPathWritableWithError:&permissionError]) {
+        [self showMessageWithTitle:@"Compatibility Suite" message:permissionError ?: @"Scripts path is not writable"];
+        return;
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *resourcePath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"CompatibilityExamples"];
+    NSError *listError = nil;
+    NSArray<NSString *> *resourceNames = [fm contentsOfDirectoryAtPath:resourcePath error:&listError];
+    NSMutableArray<NSString *> *javascriptNamesMutable = [NSMutableArray array];
+    for (NSString *name in resourceNames ?: @[]) {
+        if ([[name.pathExtension lowercaseString] isEqualToString:@"js"]) {
+            [javascriptNamesMutable addObject:name];
+        }
+    }
+    NSArray<NSString *> *javascriptNames = [javascriptNamesMutable sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+    if (javascriptNames.count == 0) {
+        [self showMessageWithTitle:@"Compatibility Suite"
+                           message:listError.localizedDescription ?: @"Packaged compatibility examples are missing"];
+        return;
+    }
+
+    NSString *suitePath = [self uniqueFolderPathWithBaseName:@"Compatibility Tests"];
+    NSError *createError = nil;
+    if (![fm createDirectoryAtPath:suitePath withIntermediateDirectories:YES attributes:nil error:&createError]) {
+        [self showMessageWithTitle:@"Compatibility Suite" message:createError.localizedDescription ?: @"Unable to create suite folder"];
+        return;
+    }
+
+    NSUInteger installed = 0;
+    NSMutableArray<NSString *> *failures = [NSMutableArray array];
+    for (NSString *resourceName in javascriptNames) {
+        NSString *sourcePath = [resourcePath stringByAppendingPathComponent:resourceName];
+        NSError *readError = nil;
+        NSString *source = [NSString stringWithContentsOfFile:sourcePath encoding:NSUTF8StringEncoding error:&readError];
+        if (!source) {
+            [failures addObject:[NSString stringWithFormat:@"%@: %@", resourceName, readError.localizedDescription ?: @"read failed"]];
+            continue;
+        }
+
+        NSString *scriptName = [[resourceName stringByDeletingPathExtension] stringByAppendingPathExtension:@"tl"];
+        NSString *scriptPath = [suitePath stringByAppendingPathComponent:scriptName];
+        NSError *writeError = nil;
+        if ([self writeCompatibilityScriptAtPath:scriptPath source:source error:&writeError]) {
+            installed++;
+        } else {
+            [failures addObject:[NSString stringWithFormat:@"%@: %@", scriptName, writeError.localizedDescription ?: @"write failed"]];
+        }
+    }
+
+    [self reloadScripts];
+    NSString *message = [NSString stringWithFormat:@"Installed %lu scripts in %@",
+                         (unsigned long)installed, suitePath.lastPathComponent];
+    if (failures.count > 0) {
+        message = [message stringByAppendingFormat:@"\n\nFailures:\n%@", [failures componentsJoinedByString:@"\n"]];
+    }
+    [self showMessageWithTitle:@"Compatibility Suite" message:message];
 }
 
 - (void)stopScript
