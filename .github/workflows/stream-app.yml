@@ -64,6 +64,10 @@ jobs:
           test -f stream-app/app/ImageViewerViewController.mm
           test -f stream-app/app/PlaySettingsViewController.mm
           test -f stream-app/app/SettingsViewController.mm
+          test -f docs/trollstore-runtime-status.md
+          grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
+          grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
+          grep -q 'Vision OCR remains deferred' docs/trollstore-runtime-status.md
           grep -q 'privhelper' stream-app/Makefile
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
           grep -q 'TLinkSocketClient.mm' stream-app/app/Makefile

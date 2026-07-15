@@ -532,6 +532,153 @@ static NSDictionary *TLinkTaskResultFromResponseString(NSString *raw)
     };
 }
 
+static NSString *TLinkScriptRunTask(int taskType, NSString *body);
+static BOOL TLinkScriptStopRequested(TLinkScriptSession *session);
+
+static NSDictionary *TLinkScriptStoppedResult(void)
+{
+    return @{@"ok": @NO, @"code": @-1, @"payload": @"script_stop_requested", @"error": @"script_stop_requested", @"raw": @"-1;;script_stop_requested"};
+}
+
+static NSArray<NSString *> *TLinkScriptResultParts(NSDictionary *result)
+{
+    NSString *payload = [result[@"payload"] isKindOfClass:[NSString class]] ? result[@"payload"] : @"";
+    return payload.length > 0 ? TLinkSplitBody(payload) : @[];
+}
+
+static NSDictionary *TLinkScriptResultByAdding(NSDictionary *result, NSDictionary *extra)
+{
+    NSMutableDictionary *merged = [NSMutableDictionary dictionaryWithDictionary:result ?: @{}];
+    if (![merged[@"ok"] boolValue] && !merged[@"error"]) merged[@"error"] = merged[@"payload"] ?: @"unknown_error";
+    [extra enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+        (void)stop;
+        if (key && obj) merged[key] = obj;
+    }];
+    return merged;
+}
+
+static NSDictionary *TLinkScriptTaskResult(TLinkScriptSession *session, int task, NSString *body)
+{
+    if (TLinkScriptStopRequested(session)) return TLinkScriptStoppedResult();
+    NSDictionary *result = TLinkTaskResultFromResponseString(TLinkScriptRunTask(task, body ?: @""));
+    if (![result[@"ok"] boolValue]) {
+        return TLinkScriptResultByAdding(result, @{@"error": result[@"payload"] ?: @"unknown_error"});
+    }
+    return result;
+}
+
+static NSDictionary *TLinkScriptDictionaryFromJSValue(JSValue *value)
+{
+    if (!value || [value isUndefined] || [value isNull]) return nil;
+    id obj = [value toObject];
+    return [obj isKindOfClass:[NSDictionary class]] ? obj : nil;
+}
+
+static NSArray *TLinkScriptArrayFromJSValue(JSValue *value)
+{
+    if (!value || [value isUndefined] || [value isNull]) return nil;
+    id obj = [value toObject];
+    return [obj isKindOfClass:[NSArray class]] ? obj : nil;
+}
+
+static NSString *TLinkScriptStringOption(NSDictionary *options, NSString *key, NSString *fallback)
+{
+    id value = options[key];
+    if (!value || value == (id)kCFNull) return fallback ?: @"";
+    if ([value isKindOfClass:[NSString class]]) return value;
+    return [value description] ?: (fallback ?: @"");
+}
+
+static int TLinkScriptIntOption(NSDictionary *options, NSString *key, int fallback)
+{
+    id value = options[key];
+    return value && value != (id)kCFNull ? [value intValue] : fallback;
+}
+
+static double TLinkScriptDoubleOption(NSDictionary *options, NSString *key, double fallback)
+{
+    id value = options[key];
+    return value && value != (id)kCFNull ? [value doubleValue] : fallback;
+}
+
+static NSString *TLinkScriptBase64Decode(NSString *value)
+{
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:value ?: @"" options:0];
+    return data ? ([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"") : @"";
+}
+
+static NSString *TLinkScriptBase64Encode(NSString *value)
+{
+    NSData *data = [(value ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
+    return data ? [data base64EncodedStringWithOptions:0] : @"";
+}
+
+static BOOL TLinkScriptPointFromObject(id item, double *x, double *y, int *r, int *g, int *b, BOOL requireColor)
+{
+    if ([item isKindOfClass:[NSArray class]]) {
+        NSArray *arr = (NSArray *)item;
+        if (arr.count < (requireColor ? 5 : 2)) return NO;
+        if (x) *x = [arr[0] doubleValue];
+        if (y) *y = [arr[1] doubleValue];
+        if (requireColor) {
+            if (r) *r = [arr[2] intValue];
+            if (g) *g = [arr[3] intValue];
+            if (b) *b = [arr[4] intValue];
+        }
+        return YES;
+    }
+    if ([item isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dict = (NSDictionary *)item;
+        id xValue = dict[@"x"];
+        id yValue = dict[@"y"];
+        if (!xValue || !yValue) return NO;
+        if (x) *x = [xValue doubleValue];
+        if (y) *y = [yValue doubleValue];
+        if (requireColor) {
+            id rValue = dict[@"r"] ?: dict[@"red"];
+            id gValue = dict[@"g"] ?: dict[@"green"];
+            id bValue = dict[@"b"] ?: dict[@"blue"];
+            if (!rValue || !gValue || !bValue) return NO;
+            if (r) *r = [rValue intValue];
+            if (g) *g = [gValue intValue];
+            if (b) *b = [bValue intValue];
+        }
+        return YES;
+    }
+    return NO;
+}
+
+static NSString *TLinkScriptPointList(id points, BOOL requireColor, NSString **error)
+{
+    if (![points isKindOfClass:[NSArray class]] || [(NSArray *)points count] == 0) {
+        if (error) *error = requireColor ? @"requires non-empty point color array" : @"requires non-empty point array";
+        return nil;
+    }
+    NSMutableArray<NSString *> *encoded = [NSMutableArray array];
+    for (id item in (NSArray *)points) {
+        double x = 0, y = 0;
+        int r = 0, g = 0, b = 0;
+        if (!TLinkScriptPointFromObject(item, &x, &y, &r, &g, &b, requireColor)) {
+            if (error) *error = requireColor ? @"point colors must be [x,y,r,g,b] or {x,y,r,g,b}" : @"points must be [x,y] or {x,y}";
+            return nil;
+        }
+        if (requireColor) {
+            [encoded addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", (int)llround(x), (int)llround(y), r, g, b]];
+        } else {
+            [encoded addObject:[NSString stringWithFormat:@"%d,%d", (int)llround(x), (int)llround(y)]];
+        }
+    }
+    return [encoded componentsJoinedByString:@"|"];
+}
+
+static NSString *TLinkScriptDefaultScreenshotPath(TLinkScriptSession *session)
+{
+    NSString *base = session.bundlePath.length > 0 ? session.bundlePath : @"/var/mobile/Library/TLinkauto/scripts";
+    NSString *folder = [base stringByAppendingPathComponent:@"screenshots"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+    return [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"screenshot_%llu.png", (unsigned long long)TLinkNowMs()]];
+}
+
 static void TLinkScriptAppendLog(TLinkScriptSession *session, NSString *line)
 {
     if (!session || line.length == 0) return;
@@ -939,13 +1086,606 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         return TLinkTaskResultFromResponseString(TLinkScriptRunTask(17, @"stop"));
     };
     device[@"pickColor"] = ^NSDictionary *(double x, double y) {
-        NSString *raw = TLinkScriptRunTask(23, [NSString stringWithFormat:@"%d;;%d", (int)x, (int)y]);
-        return TLinkTaskResultFromResponseString(raw);
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 23, [NSString stringWithFormat:@"%d;;%d", (int)x, (int)y]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 3) return result;
+        return TLinkScriptResultByAdding(result, @{
+            @"red": @([parts[0] intValue]),
+            @"green": @([parts[1] intValue]),
+            @"blue": @([parts[2] intValue]),
+        });
+    };
+    device[@"tap"] = ^NSDictionary *(double x, double y) {
+        return TLinkScriptTaskResult(weakSession, 62, [NSString stringWithFormat:@"%.0f;;%.0f", x, y]);
+    };
+    device[@"swipe"] = ^NSDictionary *(double x1, double y1, double x2, double y2, double duration) {
+        int durationMs = duration > 20.0 ? (int)llround(duration) : (int)llround(MAX(0.0, duration) * 1000.0);
+        return TLinkScriptTaskResult(weakSession, 63, [NSString stringWithFormat:@"%.0f;;%.0f;;%.0f;;%.0f;;%d", x1, y1, x2, y2, durationMs]);
+    };
+    device[@"longPress"] = ^NSDictionary *(double x, double y, double duration) {
+        int durationMs = duration > 20.0 ? (int)llround(duration) : (int)llround(MAX(0.0, duration) * 1000.0);
+        return TLinkScriptTaskResult(weakSession, 62, [NSString stringWithFormat:@"%.0f;;%.0f;;%d", x, y, durationMs]);
+    };
+    device[@"gesture"] = ^NSDictionary *(JSValue *pointsValue, JSValue *optionsValue) {
+        NSArray *points = TLinkScriptArrayFromJSValue(pointsValue);
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *err = nil;
+        NSString *pointList = TLinkScriptPointList(points, NO, &err);
+        if (!pointList) return @{@"ok": @NO, @"code": @-1, @"error": err ?: @"invalid_gesture_points"};
+        int finger = TLinkScriptIntOption(opts, @"finger", 0);
+        int durationMs = TLinkScriptIntOption(opts, @"durationMs", (int)llround(TLinkScriptDoubleOption(opts, @"duration", 0.3) * 1000.0));
+        return TLinkScriptTaskResult(weakSession, 64, [NSString stringWithFormat:@"%d;;%d;;%@", finger, durationMs, pointList]);
+    };
+    device[@"batch"] = ^NSDictionary *(JSValue *commandsValue) {
+        NSArray *commands = TLinkScriptArrayFromJSValue(commandsValue);
+        if (![commands isKindOfClass:[NSArray class]] || commands.count == 0) {
+            return @{@"ok": @NO, @"code": @-1, @"error": @"batch requires non-empty command array"};
+        }
+        NSMutableArray<NSString *> *wire = [NSMutableArray array];
+        for (id command in commands) {
+            if ([command isKindOfClass:[NSString class]]) {
+                [wire addObject:command];
+                continue;
+            }
+            if (![command isKindOfClass:[NSDictionary class]]) {
+                return @{@"ok": @NO, @"code": @-1, @"error": @"batch commands must be strings or objects"};
+            }
+            NSDictionary *dict = (NSDictionary *)command;
+            NSString *type = [[dict[@"type"] ?: dict[@"kind"] ?: @"tap"] description].lowercaseString;
+            if ([type isEqualToString:@"tap"]) {
+                [wire addObject:[NSString stringWithFormat:@"62%.0f;;%.0f;;%d",
+                                 [dict[@"x"] doubleValue],
+                                 [dict[@"y"] doubleValue],
+                                 TLinkScriptIntOption(dict, @"durationMs", 50)]];
+            } else if ([type isEqualToString:@"swipe"]) {
+                [wire addObject:[NSString stringWithFormat:@"63%.0f;;%.0f;;%.0f;;%.0f;;%d",
+                                 [dict[@"x1"] doubleValue],
+                                 [dict[@"y1"] doubleValue],
+                                 [dict[@"x2"] doubleValue],
+                                 [dict[@"y2"] doubleValue],
+                                 TLinkScriptIntOption(dict, @"durationMs", 300)]];
+            } else {
+                return @{@"ok": @NO, @"code": @-1, @"error": [NSString stringWithFormat:@"unsupported_batch_command %@", type]};
+            }
+        }
+        return TLinkScriptTaskResult(weakSession, 65, [wire componentsJoinedByString:@"||"]);
+    };
+    device[@"defaultScreenshotPath"] = ^NSString *{
+        return TLinkScriptDefaultScreenshotPath(weakSession);
+    };
+    device[@"screenshotTo"] = ^NSDictionary *(NSString *path) {
+        NSString *target = path.length > 0 ? path : TLinkScriptDefaultScreenshotPath(weakSession);
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 29, [NSString stringWithFormat:@"1;;%@", target]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        return TLinkScriptResultByAdding(result, @{@"path": parts.count > 0 ? parts[0] : target});
+    };
+    device[@"screenshot"] = ^NSDictionary *{
+        NSString *target = TLinkScriptDefaultScreenshotPath(weakSession);
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 29, [NSString stringWithFormat:@"1;;%@", target]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        return TLinkScriptResultByAdding(result, @{@"path": parts.count > 0 ? parts[0] : target});
+    };
+    device[@"screenshotRegion"] = ^NSDictionary *(NSString *path, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *target = path.length > 0 ? path : TLinkScriptDefaultScreenshotPath(weakSession);
+        NSString *body = [NSString stringWithFormat:@"1;;%@;;%.0f;;%.0f;;%.0f;;%.0f",
+                          target,
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 29, body);
+        return TLinkScriptResultByAdding(result, @{@"path": target});
+    };
+    device[@"saveScreenshotToAlbum"] = ^NSDictionary *(NSString *path) {
+        return TLinkScriptTaskResult(weakSession, 29, [NSString stringWithFormat:@"2;;%@", path ?: @""]);
+    };
+    device[@"clearScreenshotAlbum"] = ^NSDictionary *{
+        return TLinkScriptTaskResult(weakSession, 29, @"3");
+    };
+    device[@"captureFrame"] = ^NSDictionary *(JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *body = [NSString stringWithFormat:@"%d;;%d;;%d",
+                          TLinkScriptIntOption(opts, @"gray", 1),
+                          TLinkScriptIntOption(opts, @"bgra", 1),
+                          TLinkScriptIntOption(opts, @"ttlMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 66, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 14) return result;
+        return TLinkScriptResultByAdding(result, @{
+            @"id": @([parts[0] intValue]),
+            @"width": @([parts[1] intValue]),
+            @"height": @([parts[2] intValue]),
+            @"bytesPerRow": @([parts[3] intValue]),
+            @"scale": @([parts[4] doubleValue]),
+            @"coord": parts[5] ?: @"pixel",
+            @"format": parts[6] ?: @"RGBA",
+            @"hasBGRA": @([parts[7] intValue] != 0),
+            @"hasGray": @([parts[8] intValue] != 0),
+            @"createdAtMs": @([parts[9] longLongValue]),
+            @"captureMs": @([parts[10] doubleValue]),
+            @"bgraMs": @([parts[11] doubleValue]),
+            @"totalMs": @([parts[13] doubleValue]),
+        });
+    };
+    device[@"releaseFrame"] = ^NSDictionary *(double frameId) {
+        return TLinkScriptTaskResult(weakSession, 67, [NSString stringWithFormat:@"%d", (int)frameId]);
+    };
+    device[@"releaseAllFrames"] = ^NSDictionary *{
+        return TLinkScriptTaskResult(weakSession, 67, @"all");
+    };
+    device[@"framePickColor"] = ^NSDictionary *(double frameId, double x, double y, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *body = [NSString stringWithFormat:@"%d;;pick;;%.0f;;%.0f;;%@;;%d",
+                          (int)frameId,
+                          x,
+                          y,
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 69, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 6) return result;
+        return TLinkScriptResultByAdding(result, @{
+            @"red": @([parts[0] intValue]),
+            @"green": @([parts[1] intValue]),
+            @"blue": @([parts[2] intValue]),
+            @"ageMs": @([parts[3] longLongValue]),
+            @"totalMs": @([parts[5] doubleValue]),
+        });
+    };
+    device[@"framePickColors"] = ^NSDictionary *(double frameId, JSValue *pointsValue, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *err = nil;
+        NSString *pointList = TLinkScriptPointList(TLinkScriptArrayFromJSValue(pointsValue), NO, &err);
+        if (!pointList) return @{@"ok": @NO, @"code": @-1, @"error": err ?: @"invalid_points"};
+        NSString *body = [NSString stringWithFormat:@"%d;;pick_many;;%@;;%@;;%d",
+                          (int)frameId,
+                          pointList,
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 69, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 4) return result;
+        NSMutableArray *colors = [NSMutableArray array];
+        for (NSString *item in [parts[0] componentsSeparatedByString:@"|"]) {
+            NSArray<NSString *> *fields = [item componentsSeparatedByString:@","];
+            if (fields.count == 5) {
+                [colors addObject:@{@"x": @([fields[0] intValue]), @"y": @([fields[1] intValue]), @"red": @([fields[2] intValue]), @"green": @([fields[3] intValue]), @"blue": @([fields[4] intValue])}];
+            }
+        }
+        return TLinkScriptResultByAdding(result, @{@"colors": colors, @"ageMs": @([parts[1] longLongValue]), @"totalMs": @([parts[3] doubleValue])});
+    };
+    device[@"frameFindColor"] = ^NSDictionary *(double frameId, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *body = [NSString stringWithFormat:@"%d;;search_single;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d;;%@;;%d",
+                          (int)frameId,
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0),
+                          TLinkScriptIntOption(opts, @"redMin", TLinkScriptIntOption(opts, @"rMin", 0)),
+                          TLinkScriptIntOption(opts, @"redMax", TLinkScriptIntOption(opts, @"rMax", 255)),
+                          TLinkScriptIntOption(opts, @"greenMin", TLinkScriptIntOption(opts, @"gMin", 0)),
+                          TLinkScriptIntOption(opts, @"greenMax", TLinkScriptIntOption(opts, @"gMax", 255)),
+                          TLinkScriptIntOption(opts, @"blueMin", TLinkScriptIntOption(opts, @"bMin", 0)),
+                          TLinkScriptIntOption(opts, @"blueMax", TLinkScriptIntOption(opts, @"bMax", 255)),
+                          TLinkScriptIntOption(opts, @"skip", 0),
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 69, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 8) return result;
+        int foundX = [parts[0] intValue], foundY = [parts[1] intValue];
+        return TLinkScriptResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY), @"red": @([parts[2] intValue]), @"green": @([parts[3] intValue]), @"blue": @([parts[4] intValue]), @"ageMs": @([parts[5] longLongValue]), @"totalMs": @([parts[7] doubleValue])});
+    };
+    device[@"frameIsColors"] = ^NSDictionary *(double frameId, JSValue *pointsValue, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *err = nil;
+        NSString *table = TLinkScriptPointList(TLinkScriptArrayFromJSValue(pointsValue), YES, &err);
+        if (!table) return @{@"ok": @NO, @"code": @-1, @"error": err ?: @"invalid_point_colors"};
+        NSString *body = [NSString stringWithFormat:@"%d;;is_colors;;%@;;%d;;%.4f;;%@;;%d",
+                          (int)frameId,
+                          table,
+                          TLinkScriptIntOption(opts, @"mode", 1),
+                          TLinkScriptDoubleOption(opts, @"value", TLinkScriptDoubleOption(opts, @"tolerance", 0)),
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 69, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 4) return result;
+        BOOL matched = [parts[0] intValue] != 0;
+        return TLinkScriptResultByAdding(result, @{@"matched": @(matched), @"value": @(matched), @"ageMs": @([parts[1] longLongValue]), @"totalMs": @([parts[3] doubleValue])});
+    };
+    device[@"frameFindMultiColor"] = ^NSDictionary *(double frameId, JSValue *pointsValue, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *err = nil;
+        NSString *table = TLinkScriptPointList(TLinkScriptArrayFromJSValue(pointsValue), YES, &err);
+        if (!table) return @{@"ok": @NO, @"code": @-1, @"error": err ?: @"invalid_point_colors"};
+        NSString *body = [NSString stringWithFormat:@"%d;;find_multi_point;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d;;%@;;%d",
+                          (int)frameId,
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0),
+                          table,
+                          TLinkScriptIntOption(opts, @"mode", 1),
+                          TLinkScriptDoubleOption(opts, @"value", TLinkScriptDoubleOption(opts, @"tolerance", 0)),
+                          TLinkScriptIntOption(opts, @"skip", 0),
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 69, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 5) return result;
+        int foundX = [parts[0] intValue], foundY = [parts[1] intValue];
+        return TLinkScriptResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY), @"ageMs": @([parts[2] longLongValue]), @"totalMs": @([parts[4] doubleValue])});
+    };
+    device[@"findColor"] = ^NSDictionary *(JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *body = [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d",
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0),
+                          TLinkScriptIntOption(opts, @"redMin", TLinkScriptIntOption(opts, @"rMin", 0)),
+                          TLinkScriptIntOption(opts, @"redMax", TLinkScriptIntOption(opts, @"rMax", 255)),
+                          TLinkScriptIntOption(opts, @"greenMin", TLinkScriptIntOption(opts, @"gMin", 0)),
+                          TLinkScriptIntOption(opts, @"greenMax", TLinkScriptIntOption(opts, @"gMax", 255)),
+                          TLinkScriptIntOption(opts, @"blueMin", TLinkScriptIntOption(opts, @"bMin", 0)),
+                          TLinkScriptIntOption(opts, @"blueMax", TLinkScriptIntOption(opts, @"bMax", 255)),
+                          TLinkScriptIntOption(opts, @"skip", 0)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 28, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 5) return result;
+        int foundX = [parts[0] intValue], foundY = [parts[1] intValue];
+        return TLinkScriptResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY), @"red": @([parts[2] intValue]), @"green": @([parts[3] intValue]), @"blue": @([parts[4] intValue])});
+    };
+    device[@"isColors"] = ^NSDictionary *(JSValue *pointsValue, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *err = nil;
+        NSString *table = TLinkScriptPointList(TLinkScriptArrayFromJSValue(pointsValue), YES, &err);
+        if (!table) return @{@"ok": @NO, @"code": @-1, @"error": err ?: @"invalid_point_colors"};
+        NSString *body = [NSString stringWithFormat:@"2;;%@;;%d;;%.4f", table, TLinkScriptIntOption(opts, @"mode", 1), TLinkScriptDoubleOption(opts, @"value", TLinkScriptDoubleOption(opts, @"tolerance", 0))];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 28, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        BOOL matched = [parts[0] intValue] != 0;
+        return TLinkScriptResultByAdding(result, @{@"matched": @(matched), @"value": @(matched)});
+    };
+    device[@"findMultiColor"] = ^NSDictionary *(JSValue *pointsValue, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *err = nil;
+        NSString *table = TLinkScriptPointList(TLinkScriptArrayFromJSValue(pointsValue), YES, &err);
+        if (!table) return @{@"ok": @NO, @"code": @-1, @"error": err ?: @"invalid_point_colors"};
+        NSString *body = [NSString stringWithFormat:@"3;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d",
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0),
+                          table,
+                          TLinkScriptIntOption(opts, @"mode", 1),
+                          TLinkScriptDoubleOption(opts, @"value", TLinkScriptDoubleOption(opts, @"tolerance", 0)),
+                          TLinkScriptIntOption(opts, @"skip", 0)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 28, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 2) return result;
+        int foundX = [parts[0] intValue], foundY = [parts[1] intValue];
+        return TLinkScriptResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY)});
+    };
+    device[@"openImage"] = ^NSDictionary *(NSString *path) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 48, [NSString stringWithFormat:@"2;;%@", path ?: @""]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 3) return result;
+        return TLinkScriptResultByAdding(result, @{@"id": @([parts[0] intValue]), @"width": @([parts[1] intValue]), @"height": @([parts[2] intValue])});
+    };
+    device[@"captureImage"] = ^NSDictionary *(double x, double y, double width, double height) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 48, [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f", x, y, width, height]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 3) return result;
+        return TLinkScriptResultByAdding(result, @{@"id": @([parts[0] intValue]), @"width": @([parts[1] intValue]), @"height": @([parts[2] intValue])});
+    };
+    device[@"releaseImage"] = ^NSDictionary *(double imageId) {
+        return TLinkScriptTaskResult(weakSession, 48, [NSString stringWithFormat:@"3;;%d", (int)imageId]);
+    };
+    device[@"findImageInFrame"] = ^NSDictionary *(double frameId, double imageId, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *body = [NSString stringWithFormat:@"%d;;%d;;%.0f;;%.0f;;%.0f;;%.0f;;%.4f;;%.4f;;%.4f;;%.4f;;%d;;%@;;%d",
+                          (int)frameId,
+                          (int)imageId,
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0),
+                          TLinkScriptDoubleOption(opts, @"acceptable", 0.95),
+                          TLinkScriptDoubleOption(opts, @"scaleMin", 1.0),
+                          TLinkScriptDoubleOption(opts, @"scaleMax", 1.0),
+                          TLinkScriptDoubleOption(opts, @"scaleStep", 1.0),
+                          TLinkScriptIntOption(opts, @"pixelSkip", 0),
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 68, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 11) return result;
+        int matchX = [parts[0] intValue], matchY = [parts[1] intValue];
+        return TLinkScriptResultByAdding(result, @{@"matched": @(matchX >= 0 && matchY >= 0), @"x": @(matchX), @"y": @(matchY), @"width": @([parts[2] intValue]), @"height": @([parts[3] intValue]), @"centerX": @([parts[4] doubleValue]), @"centerY": @([parts[5] doubleValue]), @"score": @([parts[6] doubleValue]), @"ageMs": @([parts[7] longLongValue]), @"totalMs": @([parts[10] doubleValue])});
+    };
+    device[@"matchTemplate"] = ^NSDictionary *(NSString *path, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 21, [NSString stringWithFormat:@"%@;;0;;%.4f", path ?: @"", TLinkScriptDoubleOption(opts, @"acceptable", TLinkScriptDoubleOption(opts, @"threshold", 0.8))]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 4) return result;
+        int matchX = [parts[0] intValue], matchY = [parts[1] intValue];
+        return TLinkScriptResultByAdding(result, @{@"matched": @(matchX >= 0 && matchY >= 0), @"x": @(matchX), @"y": @(matchY), @"width": @([parts[2] intValue]), @"height": @([parts[3] intValue])});
     };
     device[@"ocrLanguages"] = ^NSDictionary *{
-        NSString *raw = TLinkScriptRunTask(27, @"2;;0");
-        return TLinkTaskResultFromResponseString(raw);
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 91, @"check_langs");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 2) return result;
+        NSString *langsText = TLinkScriptBase64Decode(parts[1]);
+        return TLinkScriptResultByAdding(result, @{@"languages": langsText.length > 0 ? [langsText componentsSeparatedByString:@","] : @[], @"value": langsText ?: @""});
     };
+    device[@"ocrFrame"] = ^NSDictionary *(double frameId, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSString *whitelist = TLinkScriptStringOption(opts, @"whitelist", @"");
+        NSString *body = [NSString stringWithFormat:@"%d;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%d;;%@;;%d;;%d;;%@;;%d",
+                          (int)frameId,
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0),
+                          TLinkScriptStringOption(opts, @"lang", @"eng"),
+                          TLinkScriptIntOption(opts, @"oem", 1),
+                          TLinkScriptIntOption(opts, @"psm", 7),
+                          TLinkScriptBase64Encode(whitelist),
+                          TLinkScriptIntOption(opts, @"scaleUp", 2),
+                          TLinkScriptIntOption(opts, @"thresholdMode", 0),
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 91, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 6) return result;
+        NSMutableDictionary *extra = [@{
+            @"text": TLinkScriptBase64Decode(parts[0]),
+            @"confidence": @([parts[1] doubleValue]),
+            @"ageMs": @([parts[2] longLongValue]),
+            @"ocrMs": @([parts[3] doubleValue]),
+            @"preprocessMs": @([parts[4] doubleValue]),
+            @"totalMs": @([parts[5] doubleValue]),
+        } mutableCopy];
+        if (parts.count >= 7) extra[@"initSource"] = parts[6];
+        return TLinkScriptResultByAdding(result, extra);
+    };
+    device[@"ocr"] = ^NSDictionary *(JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        NSDictionary *frame = TLinkScriptTaskResult(weakSession, 66, [NSString stringWithFormat:@"1;;0;;%d", TLinkScriptIntOption(opts, @"ttlMs", 1000)]);
+        NSArray<NSString *> *frameParts = TLinkScriptResultParts(frame);
+        if (![frame[@"ok"] boolValue] || frameParts.count < 1) return frame;
+        int frameId = [frameParts[0] intValue];
+        NSString *whitelist = TLinkScriptStringOption(opts, @"whitelist", @"");
+        NSString *body = [NSString stringWithFormat:@"%d;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%d;;%@;;%d;;%d;;%@;;%d",
+                          frameId,
+                          TLinkScriptDoubleOption(opts, @"x", 0),
+                          TLinkScriptDoubleOption(opts, @"y", 0),
+                          TLinkScriptDoubleOption(opts, @"width", 0),
+                          TLinkScriptDoubleOption(opts, @"height", 0),
+                          TLinkScriptStringOption(opts, @"lang", @"eng"),
+                          TLinkScriptIntOption(opts, @"oem", 1),
+                          TLinkScriptIntOption(opts, @"psm", 7),
+                          TLinkScriptBase64Encode(whitelist),
+                          TLinkScriptIntOption(opts, @"scaleUp", 2),
+                          TLinkScriptIntOption(opts, @"thresholdMode", 0),
+                          TLinkScriptStringOption(opts, @"coord", @"pixel"),
+                          TLinkScriptIntOption(opts, @"maxAgeMs", 1000)];
+        NSDictionary *ocrResult = TLinkScriptTaskResult(weakSession, 91, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(ocrResult);
+        if ([ocrResult[@"ok"] boolValue] && parts.count >= 6) {
+            NSMutableDictionary *extra = [@{
+                @"text": TLinkScriptBase64Decode(parts[0]),
+                @"confidence": @([parts[1] doubleValue]),
+                @"ageMs": @([parts[2] longLongValue]),
+                @"ocrMs": @([parts[3] doubleValue]),
+                @"preprocessMs": @([parts[4] doubleValue]),
+                @"totalMs": @([parts[5] doubleValue]),
+            } mutableCopy];
+            if (parts.count >= 7) extra[@"initSource"] = parts[6];
+            ocrResult = TLinkScriptResultByAdding(ocrResult, extra);
+        }
+        TLinkScriptTaskResult(weakSession, 67, [NSString stringWithFormat:@"%d", frameId]);
+        return ocrResult;
+    };
+    device[@"frontMostAppId"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 34, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"bundleId": parts[0] ?: @""});
+    };
+    device[@"orientation"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 35, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"value": @([parts[0] intValue])});
+    };
+    device[@"openApp"] = ^NSDictionary *(NSString *bundleId) {
+        return TLinkScriptTaskResult(weakSession, 11, bundleId ?: @"");
+    };
+    device[@"killApp"] = ^NSDictionary *(NSString *bundleId) {
+        return TLinkScriptTaskResult(weakSession, 31, bundleId ?: @"");
+    };
+    device[@"clearAppData"] = ^NSDictionary *(NSString *bundleId) {
+        return TLinkScriptTaskResult(weakSession, 72, bundleId ?: @"");
+    };
+    device[@"appState"] = ^NSDictionary *(NSString *bundleId) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 32, bundleId ?: @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        int state = [parts[0] intValue];
+        return TLinkScriptResultByAdding(result, @{@"state": @(state), @"running": @(state > 0)});
+    };
+    device[@"appInfo"] = ^NSDictionary *(NSString *bundleId) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 33, bundleId ?: @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 5) return result;
+        return TLinkScriptResultByAdding(result, @{@"bundleId": parts[0] ?: @"", @"name": parts[1] ?: @"", @"shortVersion": parts[2] ?: @"", @"bundleVersion": parts[3] ?: @"", @"state": @([parts[4] intValue])});
+    };
+    device[@"appPid"] = ^NSDictionary *(NSString *bundleId) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 50, bundleId ?: @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"pid": @([parts[0] intValue])});
+    };
+    device[@"frontMostPid"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 51, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"pid": @([parts[0] intValue])});
+    };
+    device[@"appPaths"] = ^NSDictionary *(NSString *bundleId) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 52, bundleId ?: @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"bundlePath": parts[0] ?: @"", @"dataPath": parts.count > 1 ? parts[1] : @""});
+    };
+    device[@"listBundles"] = ^NSDictionary *(BOOL withInfo) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 53, withInfo ? @"1" : @"0");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        if (withInfo) {
+            NSData *decoded = [[NSData alloc] initWithBase64EncodedString:parts[0] options:0];
+            id json = decoded ? [NSJSONSerialization JSONObjectWithData:decoded options:0 error:nil] : nil;
+            NSDictionary *jsonDict = [json isKindOfClass:[NSDictionary class]] ? (NSDictionary *)json : nil;
+            NSArray *items = [jsonDict[@"items"] isKindOfClass:[NSArray class]] ? jsonDict[@"items"] : @[];
+            return TLinkScriptResultByAdding(result, @{@"items": items});
+        }
+        return TLinkScriptResultByAdding(result, @{@"bundleIds": parts[0].length > 0 ? [parts[0] componentsSeparatedByString:@",,"] : @[]});
+    };
+    device[@"openUrl"] = ^NSDictionary *(NSString *url) {
+        return TLinkScriptTaskResult(weakSession, 54, url ?: @"");
+    };
+    device[@"keyboardTask"] = ^NSDictionary *(double kind, NSString *content) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"%d;;%@", (int)kind, content ?: @""]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if ((int)kind == 6 && [result[@"ok"] boolValue]) {
+            return TLinkScriptResultByAdding(result, @{@"text": parts.count > 0 ? parts[0] : @""});
+        }
+        return result;
+    };
+    device[@"getClipboardText"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 24, @"6");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        return TLinkScriptResultByAdding(result, @{@"text": parts.count > 0 ? parts[0] : @""});
+    };
+    device[@"setClipboardText"] = ^NSDictionary *(NSString *text) {
+        return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"7;;%@", text ?: @""]);
+    };
+    device[@"insertText"] = ^NSDictionary *(NSString *text) {
+        return TLinkScriptTaskResult(weakSession, 24, [NSString stringWithFormat:@"7;;%@", text ?: @""]);
+    };
+    device[@"runShell"] = ^NSDictionary *(NSString *command, double timeoutSeconds) {
+        int timeout = timeoutSeconds > 0 ? (int)llround(timeoutSeconds) : 10;
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 71, [NSString stringWithFormat:@"%d;;%@", timeout, command ?: @""]);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 2) return result;
+        return TLinkScriptResultByAdding(result, @{@"exitCode": @([parts[0] intValue]), @"output": TLinkScriptBase64Decode(parts[1])});
+    };
+    device[@"pathTask"] = ^NSDictionary *(double task, NSString *key) {
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, (int)task, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        NSMutableDictionary *extra = [@{@"path": parts[0] ?: @""} mutableCopy];
+        extra[key.length > 0 ? key : @"value"] = parts[0] ?: @"";
+        return TLinkScriptResultByAdding(result, extra);
+    };
+    device[@"rootDir"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 44, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        return [result[@"ok"] boolValue] && parts.count > 0 ? TLinkScriptResultByAdding(result, @{@"path": parts[0], @"rootDir": parts[0]}) : result;
+    };
+    device[@"currentDir"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 45, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        return [result[@"ok"] boolValue] && parts.count > 0 ? TLinkScriptResultByAdding(result, @{@"path": parts[0], @"currentDir": parts[0]}) : result;
+    };
+    device[@"botPath"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 46, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        return [result[@"ok"] boolValue] && parts.count > 0 ? TLinkScriptResultByAdding(result, @{@"path": parts[0], @"botPath": parts[0]}) : result;
+    };
+    device[@"info"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 25, @"30");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 5) return result;
+        return TLinkScriptResultByAdding(result, @{@"name": parts[0] ?: @"", @"systemName": parts[1] ?: @"", @"systemVersion": parts[2] ?: @"", @"model": parts[3] ?: @"", @"identifierForVendor": parts[4] ?: @""});
+    };
+    device[@"batteryInfo"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 25, @"31");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 2) return result;
+        return TLinkScriptResultByAdding(result, @{@"state": @([parts[0] intValue]), @"level": @([parts[1] doubleValue])});
+    };
+    device[@"getScreenSize"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 25, @"1");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 2) return result;
+        return TLinkScriptResultByAdding(result, @{@"width": @([parts[0] doubleValue]), @"height": @([parts[1] doubleValue])});
+    };
+    device[@"touchIndicator"] = ^NSDictionary *(NSString *action) {
+        NSString *lower = (action ?: @"toggle").lowercaseString;
+        int value = [lower isEqualToString:@"on"] || [lower isEqualToString:@"show"] || [lower isEqualToString:@"1"] ? 1 :
+                    ([lower isEqualToString:@"off"] || [lower isEqualToString:@"hide"] || [lower isEqualToString:@"0"] ? 0 : 2);
+        return TLinkScriptTaskResult(weakSession, 26, [NSString stringWithFormat:@"%d", value]);
+    };
+    device[@"keepAwake"] = ^NSDictionary *(BOOL enabled) {
+        return TLinkScriptTaskResult(weakSession, 40, enabled ? @"1" : @"0");
+    };
+    device[@"setAutoLaunch"] = ^NSDictionary *(NSString *name, NSString *script, BOOL enabled) {
+        return TLinkScriptTaskResult(weakSession, 36, [NSString stringWithFormat:@"%@;;%@;;%d", name ?: @"", script ?: @"", enabled ? 1 : 0]);
+    };
+    device[@"listAutoLaunch"] = ^NSDictionary *{
+        return TLinkScriptTaskResult(weakSession, 37, @"");
+    };
+    device[@"setTimer"] = ^NSDictionary *(NSString *name, double interval, BOOL repeat, NSString *script) {
+        return TLinkScriptTaskResult(weakSession, 38, [NSString stringWithFormat:@"%@;;%.3f;;%d;;%@", name ?: @"", interval, repeat ? 1 : 0, script ?: @""]);
+    };
+    device[@"removeTimer"] = ^NSDictionary *(NSString *name) {
+        return TLinkScriptTaskResult(weakSession, 39, name ?: @"");
+    };
+    device[@"connectivityTask"] = ^NSDictionary *(double task, NSString *enabledKey, JSValue *value) {
+        NSString *body = @"";
+        if (value && ![value isUndefined] && ![value isNull]) body = [value toBool] ? @"1" : @"0";
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, (int)task, body);
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        NSMutableDictionary *extra = [NSMutableDictionary dictionary];
+        extra[enabledKey.length > 0 ? enabledKey : @"enabled"] = @([parts[0] intValue] != 0);
+        return TLinkScriptResultByAdding(result, extra);
+    };
+    device[@"wifi"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 55, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"enabled": @([parts[0] intValue] != 0)});
+    };
+    device[@"setWifi"] = ^NSDictionary *(BOOL enabled) { return TLinkScriptTaskResult(weakSession, 55, enabled ? @"1" : @"0"); };
+    device[@"bluetooth"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 56, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"enabled": @([parts[0] intValue] != 0)});
+    };
+    device[@"setBluetooth"] = ^NSDictionary *(BOOL enabled) { return TLinkScriptTaskResult(weakSession, 56, enabled ? @"1" : @"0"); };
+    device[@"airplaneMode"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 57, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"enabled": @([parts[0] intValue] != 0)});
+    };
+    device[@"setAirplaneMode"] = ^NSDictionary *(BOOL enabled) { return TLinkScriptTaskResult(weakSession, 57, enabled ? @"1" : @"0"); };
+    device[@"cellularData"] = ^NSDictionary *{
+        NSDictionary *result = TLinkScriptTaskResult(weakSession, 58, @"");
+        NSArray<NSString *> *parts = TLinkScriptResultParts(result);
+        if (![result[@"ok"] boolValue] || parts.count < 1) return result;
+        return TLinkScriptResultByAdding(result, @{@"enabled": @([parts[0] intValue] != 0)});
+    };
+    device[@"setCellularData"] = ^NSDictionary *(BOOL enabled) { return TLinkScriptTaskResult(weakSession, 58, enabled ? @"1" : @"0"); };
     device[@"runtimeInfo"] = ^NSDictionary *{
         TLinkScriptSession *strongSession = weakSession;
         if (!strongSession) return @{};
@@ -4268,7 +5008,13 @@ static NSData *TLinkHandleHelloStatus(void)
         @"tesseractInitAttempts": sTLinkLastTesseractInitAttempts ?: @"",
         @"tesseractInitAtMs": @(sTLinkLastTesseractInitAtMs),
         @"script": @(YES),
-        @"scriptMode": @"javascriptcore_mvp",
+        @"scriptMode": @"javascriptcore_rootfull_compat_facade",
+        @"scriptCompatFacade": @(YES),
+        @"scriptResponseShape": @"ok_code_payload_error_fields",
+        @"scriptColorFrameAPI": @(YES),
+        @"scriptImageAPI": @(YES),
+        @"scriptOCRAPI": @(YES),
+        @"scriptAppAPI": @(YES),
         @"scriptPlaySettings": @(YES),
         @"scriptHardwareKey": @(YES),
         @"scriptTapMacro": @(YES),
@@ -6146,7 +6892,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_mvp";
+        NSString *cap = @"runtime=trollstore phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl unsupportedTasks=none keyboard=limited_on_trollstore hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd keepAwake=app_foreground_idle_timer dialog=limited_nonblocking_foreground_overlay connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade";
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);

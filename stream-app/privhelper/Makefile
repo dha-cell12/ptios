@@ -1,7 +1,9 @@
 # privhelper - narrow root helper for TrollStore-only admin tasks.
 #
-# MVP scope: kill stale streamd processes that keep tcp/6000 bound across app
-# upgrades. Broader app-data/keychain work stays for later phases.
+# Scope: kill stale streamd processes that keep tcp/6000 bound across app
+# upgrades, open/kill apps, open URLs, ensure streamd, and clear safe app data
+# containers. Keychain work stays deferred because arbitrary target keychain
+# groups require separate entitlement/access-group handling.
 
 TARGET = iphone:clang:latest:14.0
 ARCHS = arm64 arm64e

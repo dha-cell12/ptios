@@ -236,16 +236,23 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     if (demo) {
         source =
             @"console.log('TLinkauto TrollStore demo started');\n"
-             "device.toast('Hello from TLinkauto JS');\n"
+             "function logResult(name, value) { console.log(name + '=' + JSON.stringify(value)); return value; }\n"
+             "device.toast('Rootfull compat facade smoke');\n"
              "var info = device.runtimeInfo();\n"
              "console.log('session=' + info.sessionId + ' entry=' + info.entryPath);\n"
              "console.log('run=' + info.currentRun + '/' + info.totalRuns + ' speed=' + info.playSettings.speed);\n"
-             "console.log('sleep=' + JSON.stringify(device.sleep(0.2)));\n"
-             "var screen = device.taskResult(25, '1');\n"
-             "console.log('screen=' + screen.payload);\n"
-             "var languages = device.ocrLanguages();\n"
-             "console.log('ocrLanguages=' + languages.payload);\n"
-             "device.writeJSON('storage/last-run.json', { at: Date.now(), screen: screen.payload, languages: languages.payload });\n"
+             "logResult('sleep', device.sleep(0.2));\n"
+             "var screen = logResult('screen', device.getScreenSize ? device.getScreenSize() : device.taskResult(25, '1'));\n"
+             "var color = logResult('pickColor', device.pickColor(10, 10));\n"
+             "var frame = logResult('captureFrame', device.captureFrame({ bgra: 1, ttlMs: 2000 }));\n"
+             "if (frame.ok) {\n"
+             "  logResult('framePickColors', device.framePickColors(frame.id, [[10, 10], [20, 20]], { maxAgeMs: 2000 }));\n"
+             "  if (color.ok) logResult('frameIsColors', device.frameIsColors(frame.id, [[10, 10, color.red, color.green, color.blue]], { tolerance: 0, maxAgeMs: 2000 }));\n"
+             "  logResult('releaseFrame', device.releaseFrame(frame.id));\n"
+             "}\n"
+             "var shot = logResult('screenshot', device.screenshot());\n"
+             "var languages = logResult('ocrLanguages', device.ocrLanguages());\n"
+             "device.writeJSON('storage/last-run.json', { at: Date.now(), screen: screen, color: color, screenshot: shot, languages: languages });\n"
              "console.log('TLinkauto TrollStore demo finished');\n";
     } else {
         source =
