@@ -133,6 +133,96 @@ static int TLinkKillStreamd(pid_t exceptPid)
     return failed == 0 ? 0 : 10;
 }
 
+static BOOL TLinkHelperProcessIsSpringBoard(struct kinfo_proc *proc, NSString **outPath, BOOL *outExactPath)
+{
+    if (!proc) return NO;
+    BOOL nameMatches = proc->kp_proc.p_comm && strcmp(proc->kp_proc.p_comm, "SpringBoard") == 0;
+    char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {0};
+    int got = proc_pidpath(proc->kp_proc.p_pid, pathbuf, sizeof(pathbuf));
+    NSString *path = got > 0 ? ([NSString stringWithUTF8String:pathbuf] ?: @"") : @"";
+    BOOL exactPath = [path hasSuffix:@"/SpringBoard.app/SpringBoard"];
+    if (outPath) *outPath = path;
+    if (outExactPath) *outExactPath = exactPath;
+    return exactPath || (nameMatches && path.length == 0);
+}
+
+static int TLinkRespring(void)
+{
+    if (geteuid() != 0) {
+        TLinkHelperLog([NSString stringWithFormat:@"respring: refused non-root uid=%d euid=%d", getuid(), geteuid()]);
+        return 70;
+    }
+
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
+    size_t len = 0;
+    if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0 || len == 0) {
+        TLinkHelperLog([NSString stringWithFormat:@"respring: sysctl sizing failed len=%zu errno=%d", len, errno]);
+        return 71;
+    }
+    struct kinfo_proc *procs = (struct kinfo_proc *)calloc(1, len);
+    if (!procs) {
+        TLinkHelperLog(@"respring: alloc failed");
+        return 72;
+    }
+    if (sysctl(mib, 4, procs, &len, NULL, 0) != 0) {
+        TLinkHelperLog([NSString stringWithFormat:@"respring: sysctl list failed errno=%d", errno]);
+        free(procs);
+        return 73;
+    }
+
+    pid_t exactPid = -1;
+    pid_t fallbackPid = -1;
+    NSString *exactPath = @"";
+    NSString *fallbackPath = @"";
+    int count = (int)(len / sizeof(struct kinfo_proc));
+    for (int i = 0; i < count; i++) {
+        pid_t pid = procs[i].kp_proc.p_pid;
+        if (pid <= 1 || pid == getpid()) continue;
+        NSString *path = nil;
+        BOOL pathMatches = NO;
+        if (!TLinkHelperProcessIsSpringBoard(&procs[i], &path, &pathMatches)) continue;
+        if (pathMatches) {
+            exactPid = pid;
+            exactPath = path ?: @"";
+            break;
+        }
+        if (fallbackPid <= 0) {
+            fallbackPid = pid;
+            fallbackPath = path ?: @"";
+        }
+    }
+    free(procs);
+
+    pid_t targetPid = exactPid > 0 ? exactPid : fallbackPid;
+    NSString *targetPath = exactPid > 0 ? exactPath : fallbackPath;
+    if (targetPid <= 0) {
+        TLinkHelperLog(@"respring: SpringBoard process not found");
+        return 74;
+    }
+
+    errno = 0;
+    int termRc = kill(targetPid, SIGTERM);
+    int termErrno = errno;
+    TLinkHelperLog([NSString stringWithFormat:@"respring: SIGTERM pid=%d path=%@ rc=%d errno=%d uid=%d euid=%d",
+                    targetPid, targetPath.length > 0 ? targetPath : @"name_only", termRc, termErrno, getuid(), geteuid()]);
+    if (termRc != 0 && termErrno != ESRCH) return 75;
+
+    for (int i = 0; i < 10; i++) {
+        usleep(100000);
+        if (kill(targetPid, 0) != 0 && errno == ESRCH) {
+            TLinkHelperLog([NSString stringWithFormat:@"respring: SpringBoard pid=%d exited after SIGTERM", targetPid]);
+            return 0;
+        }
+    }
+
+    errno = 0;
+    int killRc = kill(targetPid, SIGKILL);
+    int killErrno = errno;
+    TLinkHelperLog([NSString stringWithFormat:@"respring: SIGKILL pid=%d rc=%d errno=%d", targetPid, killRc, killErrno]);
+    if (killRc != 0 && killErrno != ESRCH) return 76;
+    return 0;
+}
+
 static void TLinkHelperLoadLaunchServices(void)
 {
     dlopen("/System/Library/PrivateFrameworks/MobileCoreServices.framework/MobileCoreServices", RTLD_LAZY | RTLD_GLOBAL);
@@ -739,7 +829,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=6 scope=ensure-streamd,ensure-clipboardd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data");
+            TLinkHelperLog(@"privhelper version=7 scope=ensure-streamd,ensure-clipboardd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring");
             return 0;
         }
 
@@ -783,7 +873,11 @@ int main(int argc, char *argv[])
             return TLinkClearBundleData(bundleId);
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id");
+        if (argc >= 2 && strcmp(argv[1], "--respring") == 0) {
+            return TLinkRespring();
+        }
+
+        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
         return 64;
     }
 }

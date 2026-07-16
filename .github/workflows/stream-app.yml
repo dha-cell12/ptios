@@ -139,14 +139,17 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=14' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=15' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
           grep -q -- '--ensure-streamd' stream-app/privhelper/main.mm
-          grep -q 'privhelper version=6' stream-app/privhelper/main.mm
+          grep -q 'privhelper version=7' stream-app/privhelper/main.mm
+          grep -q -- '--respring' stream-app/privhelper/main.mm
+          grep -q 'TLinkRespring' stream-app/privhelper/main.mm
+          grep -q 'SpringBoard.app/SpringBoard' stream-app/privhelper/main.mm
           grep -q 'TLinkEnsureClipboardd' stream-app/privhelper/main.mm
           grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
           grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
@@ -166,8 +169,10 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'serviceVersion=14' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @14' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=15"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @15' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkHandleRespring' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 74' stream-app/streamd/POCSocketServer.mm
           grep -q '../../shared/TLinkJSFileHandle.mm' stream-app/streamd/Makefile
           grep -q 'TLinkJSFileHandleCreateJSObject' shared/TLinkJSFileHandle.mm
           grep -Fq 'device[@"openFile"]' tlinkauto-jsd/TLinkJSHelperServer.mm
@@ -395,6 +400,8 @@ jobs:
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/config.plist' stream-app/app/SettingsViewController.mm
           grep -q 'Export Diagnostics' stream-app/app/SettingsViewController.mm
           grep -q 'diagnostics-' stream-app/app/SettingsViewController.mm
+          grep -q 'Respring Device' stream-app/app/SettingsViewController.mm
+          grep -q 'confirmRespring' stream-app/app/SettingsViewController.mm
           grep -q 'createDemoScript' stream-app/app/ScriptsViewController.mm
           grep -q 'info.playSettings.speed' stream-app/app/ScriptsViewController.mm
           grep -q 'showAddMenu' stream-app/app/ScriptsViewController.mm
