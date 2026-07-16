@@ -5,6 +5,7 @@
     UITextView *_textView;
     NSTimer *_timer;
     BOOL _refreshInFlight;
+    BOOL _clearInFlight;
 }
 
 - (void)viewDidLoad
@@ -30,9 +31,14 @@
         [_textView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
     ]];
 
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
-                                                                                           target:self
-                                                                                           action:@selector(refresh)];
+    UIBarButtonItem *refresh = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
+                                                                             target:self
+                                                                             action:@selector(refresh)];
+    UIBarButtonItem *clear = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemTrash
+                                                                           target:self
+                                                                           action:@selector(confirmClearLog)];
+    clear.accessibilityLabel = @"Clear Log";
+    self.navigationItem.rightBarButtonItems = @[refresh, clear];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -51,13 +57,50 @@
 
 - (void)refresh
 {
-    if (_refreshInFlight) return;
+    if (_refreshInFlight || _clearInFlight) return;
     _refreshInFlight = YES;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *response = [TLinkSocketClient requestTask:60 args:@[] timeout:4.0];
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_refreshInFlight = NO;
             [self renderStatusResponse:response];
+        });
+    });
+}
+
+- (void)confirmClearLog
+{
+    if (_clearInFlight) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear Log"
+                                                                   message:@"Clear all log lines for the current script session?"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Clear"
+                                              style:UIAlertActionStyleDestructive
+                                            handler:^(__unused UIAlertAction *action) {
+        [self clearLog];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)clearLog
+{
+    if (_clearInFlight) return;
+    _clearInFlight = YES;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *response = [TLinkSocketClient requestTask:73 args:@[] timeout:4.0];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_clearInFlight = NO;
+            if ([response hasPrefix:@"0"]) {
+                self->_textView.text = @"<script log cleared>\n";
+                [self refresh];
+            } else {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Clear Log"
+                                                                               message:response ?: @"No response from streamd"
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            }
         });
     });
 }

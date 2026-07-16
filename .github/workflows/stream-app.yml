@@ -139,7 +139,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=13' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=14' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -166,8 +166,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'serviceVersion=13' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @13' stream-app/streamd/POCSocketServer.mm
+          grep -q 'serviceVersion=14' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @14' stream-app/streamd/POCSocketServer.mm
           grep -q '../../shared/TLinkJSFileHandle.mm' stream-app/streamd/Makefile
           grep -q 'TLinkJSFileHandleCreateJSObject' shared/TLinkJSFileHandle.mm
           grep -Fq 'device[@"openFile"]' tlinkauto-jsd/TLinkJSHelperServer.mm
@@ -404,6 +404,8 @@ jobs:
           grep -q 'showStatus' stream-app/app/ScriptsViewController.mm
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/ScriptsViewController.mm
           grep -q 'renameEntry' stream-app/app/ScriptsViewController.mm
+          grep -q 'folderActionsButtonTapped' stream-app/app/ScriptsViewController.mm
+          grep -q 'Rename Folder' stream-app/app/ScriptsViewController.mm
           grep -q 'duplicateEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'uniqueCopyPathForEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'playButtonTapped' stream-app/app/ScriptsViewController.mm
@@ -416,6 +418,10 @@ jobs:
           grep -q 'showScriptLogs' stream-app/app/ScriptsViewController.mm
           grep -q 'log_tail' stream-app/app/ScriptLogViewController.mm
           grep -q 'play_settings' stream-app/app/ScriptLogViewController.mm
+          grep -q 'confirmClearLog' stream-app/app/ScriptLogViewController.mm
+          grep -q 'requestTask:73' stream-app/app/ScriptLogViewController.mm
+          grep -q 'TLinkHandleClearScriptLog' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 73' stream-app/streamd/POCSocketServer.mm
           grep -q 'SCImageViewerViewController' stream-app/app/ImageViewerViewController.mm
           grep -q 'isImageFilePath' stream-app/app/ScriptsViewController.mm
           grep -q 'confirmDeleteEntryAtIndexPath' stream-app/app/ScriptsViewController.mm

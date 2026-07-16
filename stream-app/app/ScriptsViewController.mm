@@ -743,6 +743,54 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     return stack;
 }
 
+- (UIButton *)folderActionsButtonForRow:(NSInteger)row
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.frame = CGRectMake(0.0, 0.0, 44.0, 44.0);
+    [button setImage:[UIImage systemImageNamed:@"ellipsis.circle"] forState:UIControlStateNormal];
+    button.accessibilityLabel = @"Folder Actions";
+    button.tag = row;
+    [button addTarget:self action:@selector(folderActionsButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (void)folderActionsButtonTapped:(UIButton *)button
+{
+    NSInteger row = button.tag;
+    if (row < 0 || (NSUInteger)row >= _entries.count) return;
+    SCScriptEntry *entry = _entries[(NSUInteger)row];
+    if (!entry.directory || entry.scriptBundle) return;
+
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:entry.name ?: @"Folder"
+                                                                   message:nil
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Rename Folder"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        [self renameEntry:entry completion:nil];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Duplicate"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        [self duplicateEntry:entry completion:nil];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Delete Folder"
+                                              style:UIAlertActionStyleDestructive
+                                            handler:^(__unused UIAlertAction *action) {
+        NSUInteger currentIndex = [self->_entries indexOfObjectIdenticalTo:entry];
+        if (currentIndex == NSNotFound) return;
+        [self confirmDeleteEntryAtIndexPath:[NSIndexPath indexPathForRow:(NSInteger)currentIndex inSection:0]
+                                 completion:nil];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    UIPopoverPresentationController *popover = sheet.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = button;
+        popover.sourceRect = button.bounds;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     static NSString *cellID = @"ScriptCell";
@@ -767,8 +815,11 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
     }
     BOOL canRun = entry.scriptBundle || [self isPlayableFileEntry:entry];
-    cell.accessoryView = canRun ? [self scriptAccessoryViewForRow:indexPath.row] : nil;
-    cell.accessoryType = canRun ? UITableViewCellAccessoryNone : (entry.directory ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone);
+    BOOL plainFolder = entry.directory && !entry.scriptBundle;
+    cell.accessoryView = canRun
+        ? [self scriptAccessoryViewForRow:indexPath.row]
+        : (plainFolder ? [self folderActionsButtonForRow:indexPath.row] : nil);
+    cell.accessoryType = UITableViewCellAccessoryNone;
     return cell;
 }
 
