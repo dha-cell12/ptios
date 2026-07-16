@@ -232,6 +232,11 @@ jobs:
           grep -q 'taskType == 76' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/H264Stream.mm
+          grep -q 'TLinkResolveSHA256' shared/TLinkLicenseVerifier.mm
+          ! grep -q 'LIBRARIES = commonCrypto' stream-app/streamd/Makefile
+          ! grep -q 'LIBRARIES = commonCrypto' stream-app/app/Makefile
+          ! grep -q 'LIBRARIES = commonCrypto' stream-app/privhelper/Makefile
+          ! grep -q 'LIBRARIES = commonCrypto' stream-app/clipboardd/Makefile
           grep -q 'TLINK_LICENSE_FORCE_ENFORCEMENT' stream-app/app/Makefile
           grep -q 'TLINK_LICENSE_FORCE_ENFORCEMENT' stream-app/streamd/Makefile
           grep -q 'TLINK_LICENSE_FORCE_ENFORCEMENT' stream-app/privhelper/Makefile

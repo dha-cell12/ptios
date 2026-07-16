@@ -15,7 +15,6 @@ StreamControl_FILES = main.mm AppDelegate.mm BackgroundServiceScheduler.mm Strea
 StreamControl_RESOURCE_FILES = Info.plist LicenseConfig.plist
 StreamControl_RESOURCE_DIRS = CompatibilityExamples
 StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics QuartzCore Vision ImageIO Photos UserNotifications BackgroundTasks Security
-StreamControl_LIBRARIES = commonCrypto
 StreamControl_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 StreamControl_CCFLAGS = -std=c++14
 ifeq ($(TLINK_LICENSE_FORCE_ENFORCEMENT),1)

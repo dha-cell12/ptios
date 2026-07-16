@@ -1,7 +1,8 @@
 #import "TLinkLicenseVerifier.h"
-#import <CommonCrypto/CommonDigest.h>
 #import <Security/Security.h>
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -95,11 +96,36 @@ static NSString *TLinkBase64URLEncode(NSData *data)
     return value;
 }
 
+typedef unsigned char *(*TLinkCCSHA256Fn)(const void *data, uint32_t length, unsigned char *digest);
+
+static TLinkCCSHA256Fn TLinkResolveSHA256(void)
+{
+    static TLinkCCSHA256Fn function = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        function = (TLinkCCSHA256Fn)dlsym(RTLD_DEFAULT, "CC_SHA256");
+        if (function) return;
+        const char *paths[] = {
+            "/usr/lib/system/libcommonCrypto.dylib",
+            "/usr/lib/libcommonCrypto.dylib",
+        };
+        for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+            void *handle = dlopen(paths[i], RTLD_LAZY | RTLD_LOCAL);
+            if (!handle) continue;
+            function = (TLinkCCSHA256Fn)dlsym(handle, "CC_SHA256");
+            if (function) break;
+        }
+    });
+    return function;
+}
+
 static NSString *TLinkSHA256Base64URL(NSData *data)
 {
-    if (data.length == 0) return @"";
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
-    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    if (data.length == 0 || data.length > UINT32_MAX) return nil;
+    TLinkCCSHA256Fn sha256 = TLinkResolveSHA256();
+    if (!sha256) return nil;
+    unsigned char digest[32] = {0};
+    if (!sha256(data.bytes, (uint32_t)data.length, digest)) return nil;
     return TLinkBase64URLEncode([NSData dataWithBytes:digest length:sizeof(digest)]);
 }
 
@@ -304,6 +330,9 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     NSData *devicePublicKey = [NSData dataWithContentsOfFile:kTLinkLicenseDevicePublicKey];
     NSString *expectedDeviceHash = [payload[@"device_key_hash"] isKindOfClass:[NSString class]] ? payload[@"device_key_hash"] : @"";
     NSString *actualDeviceHash = TLinkSHA256Base64URL(devicePublicKey);
+    if (devicePublicKey.length > 0 && actualDeviceHash.length == 0) {
+        return TLinkLicenseFailure(config, @"invalid", @"license_sha256_runtime_unavailable");
+    }
     if (devicePublicKey.length == 0 || ![actualDeviceHash isEqualToString:expectedDeviceHash]) {
         return TLinkLicenseFailure(config, @"device_mismatch", @"license_device_key_mismatch");
     }

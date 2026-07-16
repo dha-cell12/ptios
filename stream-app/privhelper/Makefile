@@ -14,7 +14,6 @@ TOOL_NAME = privhelper
 
 privhelper_FILES = main.mm ../../shared/TLinkLicenseVerifier.mm
 privhelper_FRAMEWORKS = Foundation Security
-privhelper_LIBRARIES = commonCrypto
 privhelper_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 privhelper_CCFLAGS = -std=c++14
 ifeq ($(TLINK_LICENSE_FORCE_ENFORCEMENT),1)
