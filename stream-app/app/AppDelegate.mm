@@ -1,4 +1,5 @@
 #import "AppDelegate.h"
+#import "BackgroundServiceScheduler.h"
 #import <QuartzCore/QuartzCore.h>
 #import <Vision/Vision.h>
 #import <ImageIO/ImageIO.h>
@@ -34,6 +35,7 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 @property(nonatomic, assign) NSInteger lastVisualFeedbackPid;
 @property(nonatomic, assign) NSInteger visualFeedbackBurstPollsRemaining;
 @property(nonatomic, strong) SCStreamSupervisor *serviceSupervisor;
+@property(nonatomic, strong) SCBackgroundServiceScheduler *backgroundServiceScheduler;
 @property(nonatomic, assign) BOOL ocrServerStarted;
 @property(nonatomic, assign) BOOL clipboardServerStarted;
 @end
@@ -43,6 +45,10 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
     (void)launchOptions;
+
+    self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
+    self.backgroundServiceScheduler = [[SCBackgroundServiceScheduler alloc] initWithSupervisor:self.serviceSupervisor];
+    [self.backgroundServiceScheduler registerTasks];
 
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
 
@@ -78,8 +84,8 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
                                              selector:@selector(requestVisualFeedbackBurstPoll:)
                                                  name:@"TLinkVisualFeedbackNeedsPoll"
                                                object:nil];
-    self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
     [self ensureStreamServiceForReason:@"launch" background:NO];
+    [self.backgroundServiceScheduler scheduleRecoveryTasksForReason:@"app_launch"];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
@@ -107,6 +113,7 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 {
     (void)application;
     [self ensureStreamServiceForReason:@"background" background:YES];
+    [self.backgroundServiceScheduler scheduleRecoveryTasksForReason:@"app_background"];
 }
 
 - (void)ensureStreamServiceForReason:(NSString *)reason background:(BOOL)background

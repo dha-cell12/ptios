@@ -39,7 +39,7 @@ extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 // ---------------------------------------------------------------------------
 
 static const NSTimeInterval kSCRespawnThrottle = 3.0;
-static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=12";
+static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=13";
 
 @implementation SCStreamSupervisor {
     dispatch_queue_t _queue;
@@ -102,13 +102,31 @@ static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=12";
 
 - (void)ensureService
 {
+    [self ensureServiceWithCompletion:nil];
+}
+
+- (void)ensureServiceWithCompletion:(void (^)(BOOL running, NSString *detail))completion
+{
     dispatch_async(_queue, ^{
         self->_autoRespawn = YES;
-        if ([self ensureServiceLockedWithReplace:NO reason:@"ensure"]) {
-            return;
+        BOOL running = [self ensureServiceLockedWithReplace:NO reason:@"ensure"];
+        if (!running) {
+            [self emitLog:@"supervisor: helper ensure failed; falling back to direct app spawn"];
+            [self spawnLocked];
+            for (int i = 0; i < 8 && !running; i++) {
+                usleep(250000);
+                running = [self probeTaskServerAndUpdateLocked:@"direct-spawn"];
+            }
         }
-        [self emitLog:@"supervisor: helper ensure failed; falling back to direct app spawn"];
-        [self spawnLocked];
+        if (completion) {
+            NSString *detail = [NSString stringWithFormat:@"streamd_probe_%@ pid=%d service_marker=%@",
+                                running ? @"ok" : @"failed",
+                                self->_pid,
+                                kSCRequiredStreamdServiceMarker];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(running, detail);
+            });
+        }
     });
 }
 

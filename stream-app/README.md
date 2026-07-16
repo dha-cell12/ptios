@@ -5,7 +5,7 @@ Khung chuẩn hợp nhất **click + stream** cho Tlinkauto trên TrollStore (iO
 ## Kiến trúc
 
 ```
-[App TrollStore: StreamControl]  ← UI (mở 1 lần sau reboot)
+[App TrollStore: StreamControl]  ← UI (mở 1 lần sau cài đặt; background recovery best-effort sau reboot)
    └─ StreamSupervisor: spawn + watchdog (KHÔNG root)
         └─ [streamd]  ← daemon hợp nhất
              ├─ click/    HID injection (task 10, cổng 6000)

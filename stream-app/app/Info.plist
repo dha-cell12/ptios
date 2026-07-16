@@ -43,6 +43,16 @@
 	<string>TLinkauto saves and clears screenshots in its own photo album when requested.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>TLinkauto saves screenshots to its own photo album when requested.</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.tlinkauto.streamcontrol.refresh</string>
+		<string>com.tlinkauto.streamcontrol.processing</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
 
 	<!-- ================================================================ -->
 	<!-- TrollStore root helper. Paths are relative to this Info.plist.    -->

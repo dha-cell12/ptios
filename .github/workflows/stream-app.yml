@@ -76,6 +76,8 @@ jobs:
           test -f stream-app/app/ImageViewerViewController.mm
           test -f stream-app/app/PlaySettingsViewController.mm
           test -f stream-app/app/SettingsViewController.mm
+          test -f stream-app/app/BackgroundServiceScheduler.h
+          test -f stream-app/app/BackgroundServiceScheduler.mm
           test -f 'stream-app/app/CompatibilityExamples/01 Runtime Storage.js'
           test -f 'stream-app/app/CompatibilityExamples/02 Clipboard Keyboard.js'
           test -f 'stream-app/app/CompatibilityExamples/03 Color Frame.js'
@@ -87,6 +89,7 @@ jobs:
           grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
           grep -q 'Vision OCR remains deferred' docs/trollstore-runtime-status.md
+          grep -q 'refresh_registered' docs/trollstore-runtime-status.md
           grep -q 'privhelper' stream-app/Makefile
           grep -q 'clipboardd' stream-app/Makefile
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
@@ -101,6 +104,16 @@ jobs:
           grep -q 'tabs.selectedIndex = 0' stream-app/app/AppDelegate.mm
           grep -q 'beginBackgroundTaskWithName' stream-app/app/AppDelegate.mm
           grep -q 'ensureStreamServiceForReason' stream-app/app/AppDelegate.mm
+          grep -q 'SCBackgroundServiceScheduler' stream-app/app/AppDelegate.mm
+          grep -q 'BackgroundServiceScheduler.mm' stream-app/app/Makefile
+          grep -q 'BackgroundTasks' stream-app/app/Makefile
+          grep -q 'BGTaskSchedulerPermittedIdentifiers' stream-app/app/Info.plist
+          grep -q 'com.tlinkauto.streamcontrol.refresh' stream-app/app/Info.plist
+          grep -q 'com.tlinkauto.streamcontrol.processing' stream-app/app/Info.plist
+          grep -q 'best_effort_bgtaskscheduler_after_first_launch' stream-app/app/BackgroundServiceScheduler.mm
+          grep -q 'background_service_scheduler.plist' stream-app/app/SettingsViewController.mm
+          grep -q 'background_service' stream-app/streamd/POCSocketServer.mm
+          grep -q 'ensureServiceWithCompletion' stream-app/app/StreamSupervisor.mm
           grep -q 'idleTimerDisabled' stream-app/app/AppDelegate.mm
           grep -q 'serverLastEventId' stream-app/app/AppDelegate.mm
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
@@ -126,7 +139,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=12' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=13' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -153,8 +166,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'serviceVersion=12' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @12' stream-app/streamd/POCSocketServer.mm
+          grep -q 'serviceVersion=13' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @13' stream-app/streamd/POCSocketServer.mm
           grep -q '../../shared/TLinkJSFileHandle.mm' stream-app/streamd/Makefile
           grep -q 'TLinkJSFileHandleCreateJSObject' shared/TLinkJSFileHandle.mm
           grep -Fq 'device[@"openFile"]' tlinkauto-jsd/TLinkJSHelperServer.mm

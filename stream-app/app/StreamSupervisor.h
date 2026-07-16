@@ -35,6 +35,10 @@
 // Explicit service-mode ensure used by app lifecycle hooks.
 - (void)ensureService;
 
+// Ensure service and report only after tcp/6000 has been probed. The callback
+// is delivered on the main queue and is suitable for BGTask completion.
+- (void)ensureServiceWithCompletion:(void (^)(BOOL running, NSString *detail))completion;
+
 // Terminate streamd and disable respawn for this stop.
 - (void)stop;
 

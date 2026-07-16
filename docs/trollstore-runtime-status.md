@@ -12,7 +12,8 @@ TrollStore runtime.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
 - Script runtime: task `19/20` JavaScriptCore with a rootfull compatibility facade for common `device.*` APIs, `runTask`/task bridge, normalized storage responses, shared rootfull/TrollStore `device.openFile` handles, keyboard wrappers, color/frame/image/OCR wrappers, and app/process wrappers.
-- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=12`; the app replaces a responding process when its version is stale or its executable belongs to an older app bundle, then starts the bundled binary through `privhelper`.
+- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=13`; the app replaces a responding process when its version is stale or its executable belongs to an older app bundle, then starts the bundled binary through `privhelper`.
+- Background recovery: after StreamControl has been opened once, it registers and submits `BGAppRefreshTask` plus `BGProcessingTask` requests. When iOS grants execution, the handler reschedules itself, calls the same supervisor/privhelper path, and completes only after tcp/6000 passes the service-version probe. This is `best_effort_bgtaskscheduler_after_first_launch`, not guaranteed boot startup. Scheduling/firing/completion diagnostics are stored in `/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist` and included by Settings > Export Diagnostics.
 - Script regression suite: the root `Scripts` tab auto-seeds a `Compatibility Tests` folder from packaged examples on first launch; `Scripts > + > Compatibility Suite` can install another copy manually. The seven `.tl` bundles exercise each compatibility API group independently, including shared file handles.
 - Keyboard/text: task `24` uses `clipboardd` v11 on port `6012` with private background Pasteboard entitlements. Every write is read-back verified before `streamd` trusts daemon reads. Subtask `1` inserts text using background clipboard plus HID `Command+V`; subtask `5` pastes the existing clipboard; subtasks `3/4` use HID arrows and Backspace. Devices that ignore the Pasteboard entitlements fall back to the foreground app bridge on port `6013`. Show/hide keyboard remains `limited_on_trollstore` because it needs the rootfull SpringBoard keyboard observer.
 - Background UI bridge: `clipboardd` v11 receives toast/alert/dialog fallback events from `streamd`. Device validation proved that a UIDaemon `UIWindow` can exist in memory without being compositor-hosted above the active app, so that path is no longer reported as successful. Background toast/alert/dialog now use `CFUserNotificationDisplayAlert`. Background toast is visible but fixed at the system center; the rootfull position argument is preserved only for foreground UIKit toast and is reported as limited in background responses.
@@ -28,8 +29,30 @@ TrollStore runtime.
 - Vision OCR remains deferred for the `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract is the stable OCR path.
 - Activator/Siri equivalents remain `limited_on_trollstore`.
 - Full SpringBoard overlay behavior is replaced by foreground app overlays plus background CFUserNotification system notices/alerts. The dialog result is not bridged back to the original synchronous task, and the touch indicator remains foreground-only.
+- True immediate startup at boot remains unavailable on TrollStore. Background task execution is controlled by iOS, may be delayed, requires the app to have been opened once, and does not replace a platformized LaunchDaemon. Force-quitting StreamControl can prevent iOS background relaunch until the app is opened again.
 
 ## Quick Manual Checks
+
+Background recovery registration (open StreamControl once after installing the
+new build, then decode task `60` and inspect `background_service`):
+
+```powershell
+$raw = Invoke-TLinkTask -HostIP $iphoneIP -Task "60"
+$b64 = ($raw -replace '^0;;', '').Trim()
+$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) | ConvertFrom-Json
+$json.service_version
+$json.capabilities.backgroundAutoStartMode
+$json.background_service | Format-List
+```
+
+Expected immediately after first launch: service version `13`, both
+`refresh_registered` and `processing_registered` are true, and both submit
+results are true. A later `last_fired_at_ms` plus `last_result=success` proves
+that iOS actually launched a handler; submit success alone does not prove a
+post-reboot launch. Do not force-quit StreamControl before this test. Reboot,
+unlock once, then probe port 6000 periodically because iOS does not promise an
+exact execution time. The same state is visible at Settings > Background
+Service Status and Settings > Export Diagnostics.
 
 ```powershell
 Invoke-TLinkTask -HostIP $iphoneIP -Task "97"

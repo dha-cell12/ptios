@@ -21,7 +21,7 @@ UI quản lý đầy đủ (sẽ được nâng cấp thành giao diện TLinkau
 - Giữ phong cách light mode, assets (play-icon, script-icon, gearshape...), Localizable.
 - Web server (GCDWebServer + http/index.html) được cân nhắc giữ cho remote listing.
 Spawn/watchdog streamd giống phần đã có ở stream-app/app/StreamSupervisor.*.
-Sau reboot người dùng mở app một lần để khởi động lại service.
+Sau cài đặt người dùng mở app một lần để đăng ký service và background recovery. Sau reboot, `BGTaskScheduler` có thể đánh thức app để phục hồi `streamd` qua supervisor/privhelper, nhưng đây là best-effort và không bảo đảm thời điểm như LaunchDaemon.
 
 streamd
 Daemon non-root trong bundle app.
@@ -140,7 +140,7 @@ Phase 6: UI/UX hoàn thiện + UI Parity
   - Image viewer cho kết quả match.
 - Giữ web server component nếu khả thi.
 - Test toàn bộ flow: mở app → thấy script list → play → thấy toast/indicator → xem log → config settings.
-- Đảm bảo sau reboot chỉ cần mở app 1 lần là có đầy đủ UI + service.
+- Đảm bảo sau cài đặt chỉ cần mở app 1 lần để đăng ký background recovery; sau reboot iOS có thể phục hồi service bằng BGTaskScheduler, còn mở app thủ công vẫn là fallback chắc chắn.
 
 Ghi chú kỹ thuật bổ sung cho toàn bộ project:
 - Đổi tên nhất quán: POCSocketServer → TLinkTaskServer, POC* → TLink* (tránh confusion).
@@ -176,6 +176,7 @@ Known unresolved issues / deferred investigation:
 - Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v11 keeps direct background Pasteboard access, handles best-effort keep-awake requests, and sends background toast/alert/dialog through CFUserNotification. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
 - Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.
+- StreamControl now registers `BGAppRefreshTask` and `BGProcessingTask` as a best-effort recovery path after first launch. Each handler reschedules itself and completes only after the supervisor verifies task port 6000. Diagnostics live at `/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist`. Immediate boot startup remains unresolved because iOS controls background launch timing and TrollStore cannot install a normal platformized LaunchDaemon.
 - Keep-awake through the UIKit UIDaemon is best-effort. A guaranteed global display/power assertion remains deferred until a proven private IOKit/SpringBoard path is available.
 - Vision OCR is currently deferred on TrollStore. Headless streamd Vision OCR previously crashed the worker during `vision_perform_requests` with signal 11; app-side Vision bridge avoided the streamd crash but failed on the test device with `Could not create buffer with format '420f' (-6662)`, even after RGB/accurate retry attempts.
 - Current stable OCR path is task 91 using true static Tesseract libraries plus `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
