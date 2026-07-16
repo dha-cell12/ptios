@@ -45,6 +45,14 @@ function normalizeLicenseKey(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
 
+function database(env) {
+  const binding = env.DB || env.tlinkauto_license;
+  if (!binding || typeof binding.prepare !== "function") {
+    throw new Error("d1_binding_missing expected=DB legacy=tlinkauto_license");
+  }
+  return binding;
+}
+
 function trimInteger(bytes) {
   let start = 0;
   while (start < bytes.length - 1 && bytes[start] === 0) start++;
@@ -179,7 +187,7 @@ async function readJson(request) {
 
 async function loadLicense(env, normalizedKey) {
   const keyHash = await sha256Base64Url(encoder.encode(normalizedKey));
-  return env.DB.prepare("SELECT * FROM licenses WHERE key_hash = ?").bind(keyHash).first();
+  return database(env).prepare("SELECT * FROM licenses WHERE key_hash = ?").bind(keyHash).first();
 }
 
 function licenseUsable(license, now) {
@@ -217,7 +225,7 @@ async function handleChallenge(request, env) {
   const id = crypto.randomUUID();
   const challenge = randomToken(32);
   const keyHash = await deviceKeyHash(publicJwk);
-  await env.DB.prepare(
+  await database(env).prepare(
     "INSERT INTO activation_challenges (id, license_id, device_key_hash, challenge, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).bind(id, license.id, keyHash, challenge, now + 300, now).run();
   return jsonResponse({ ok: true, challenge_id: id, challenge, expires_at: now + 300 });
@@ -232,7 +240,7 @@ async function handleActivate(request, env) {
   const now = Math.floor(Date.now() / 1000);
   if (!licenseUsable(license, now)) return jsonResponse({ ok: false, error: "invalid_license" }, 403);
 
-  const challengeRow = await env.DB.prepare(
+  const challengeRow = await database(env).prepare(
     "SELECT * FROM activation_challenges WHERE id = ? AND license_id = ?",
   ).bind(body.challenge_id || "", license.id).first();
   if (!challengeRow || challengeRow.expires_at < now || challengeRow.device_key_hash !== deviceHash) {
@@ -260,25 +268,25 @@ async function handleActivate(request, env) {
   );
   if (!proofValid) return jsonResponse({ ok: false, error: "invalid_device_signature" }, 403);
 
-  await env.DB.prepare("DELETE FROM activation_challenges WHERE id = ?").bind(challengeRow.id).run();
-  let device = await env.DB.prepare(
+  await database(env).prepare("DELETE FROM activation_challenges WHERE id = ?").bind(challengeRow.id).run();
+  let device = await database(env).prepare(
     "SELECT * FROM devices WHERE license_id = ? AND device_key_hash = ?",
   ).bind(license.id, deviceHash).first();
   if (!device) {
-    const countRow = await env.DB.prepare(
+    const countRow = await database(env).prepare(
       "SELECT COUNT(*) AS count FROM devices WHERE license_id = ? AND status = 'active'",
     ).bind(license.id).first();
     if (Number(countRow?.count || 0) >= Number(license.max_devices || 1)) {
       return jsonResponse({ ok: false, error: "device_limit_reached" }, 409);
     }
     const deviceId = crypto.randomUUID();
-    await env.DB.prepare(
+    await database(env).prepare(
       "INSERT INTO devices (id, license_id, device_key_hash, public_jwk, status, created_at, last_seen_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
     ).bind(deviceId, license.id, deviceHash, JSON.stringify(publicJwk), now, now).run();
-    device = await env.DB.prepare("SELECT * FROM devices WHERE id = ?").bind(deviceId).first();
+    device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(deviceId).first();
   } else {
     if (device.status !== "active") return jsonResponse({ ok: false, error: "device_revoked" }, 403);
-    await env.DB.prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?").bind(now, device.id).run();
+    await database(env).prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?").bind(now, device.id).run();
   }
 
   const lease = await issueLease(env, license, device);
@@ -294,8 +302,8 @@ async function handleRefresh(request, env) {
     return jsonResponse({ ok: false, error: error.message || "invalid_lease" }, 403);
   }
   const now = Math.floor(Date.now() / 1000);
-  const license = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(payload.license_id || "").first();
-  const device = await env.DB.prepare("SELECT * FROM devices WHERE id = ?").bind(payload.device_id || "").first();
+  const license = await database(env).prepare("SELECT * FROM licenses WHERE id = ?").bind(payload.license_id || "").first();
+  const device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(payload.device_id || "").first();
   if (!licenseUsable(license, now)) return jsonResponse({ ok: false, error: "license_revoked_or_expired" }, 403);
   if (!device || device.status !== "active" || device.device_key_hash !== payload.device_key_hash) {
     return jsonResponse({ ok: false, error: "device_revoked" }, 403);
@@ -321,7 +329,7 @@ async function handleRefresh(request, env) {
     encoder.encode(body.lease.payload),
   );
   if (!proofValid) return jsonResponse({ ok: false, error: "invalid_device_signature" }, 403);
-  await env.DB.prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?").bind(now, device.id).run();
+  await database(env).prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?").bind(now, device.id).run();
   return jsonResponse({ ok: true, lease: await issueLease(env, license, device) });
 }
 
@@ -341,7 +349,7 @@ async function handleAdminCreateLicense(request, env) {
   const features = Array.isArray(body.features)
     ? body.features
     : ["automation", "stream", "script", "admin", "shell"];
-  await env.DB.prepare(
+  await database(env).prepare(
     "INSERT INTO licenses (id, key_hash, status, max_devices, features_json, expires_at, created_at, updated_at) VALUES (?, ?, 'active', ?, ?, ?, ?, ?)",
   ).bind(
     id,
@@ -362,7 +370,7 @@ async function handleAdminRevoke(request, env) {
   const license = await loadLicense(env, key);
   if (!license) return jsonResponse({ ok: false, error: "not_found" }, 404);
   const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare("UPDATE licenses SET status = 'revoked', updated_at = ? WHERE id = ?").bind(now, license.id).run();
+  await database(env).prepare("UPDATE licenses SET status = 'revoked', updated_at = ? WHERE id = ?").bind(now, license.id).run();
   return jsonResponse({ ok: true, id: license.id, status: "revoked" });
 }
 
@@ -373,7 +381,7 @@ async function handleAdminResetDevices(request, env) {
   const license = await loadLicense(env, key);
   if (!license) return jsonResponse({ ok: false, error: "not_found" }, 404);
   const now = Math.floor(Date.now() / 1000);
-  const result = await env.DB.prepare(
+  const result = await database(env).prepare(
     "UPDATE devices SET status = 'revoked', last_seen_at = ? WHERE license_id = ? AND status = 'active'",
   ).bind(now, license.id).run();
   return jsonResponse({

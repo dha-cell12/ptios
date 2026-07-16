@@ -16,6 +16,11 @@ Copy the returned database id into `wrangler.jsonc`, then initialize D1:
 npm run db:init:remote
 ```
 
+Keep the D1 binding name as `DB`. The Worker also accepts the legacy
+`tlinkauto_license` binding for recovery, but new deployments and CI validate
+`DB` so an authenticated admin request cannot fail only when it first reaches
+the database.
+
 Generate a P-256 signing key:
 
 ```bash

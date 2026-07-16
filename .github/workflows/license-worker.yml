@@ -43,6 +43,8 @@ jobs:
           set -euo pipefail
           node --check src/index.js
           node --check scripts/generate-keys.mjs
+          grep -q '"binding": "DB"' wrangler.jsonc
+          grep -q 'legacy=tlinkauto_license' src/index.js
           sed -i 's/REPLACE_WITH_D1_DATABASE_ID/00000000-0000-0000-0000-000000000000/' wrangler.jsonc
           npx wrangler deploy --dry-run --outdir .wrangler-dry-run
 

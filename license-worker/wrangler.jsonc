@@ -11,7 +11,7 @@
 	},
 	"d1_databases": [
 		{
-			"binding": "tlinkauto_license",
+			"binding": "DB",
 			"database_name": "tlinkauto-license",
 			"database_id": "5e220c10-db58-485e-b628-e2572eedc01c",
 			"remote": true
