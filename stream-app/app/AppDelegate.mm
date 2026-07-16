@@ -15,6 +15,7 @@
 #import "SettingsViewController.h"
 #import "StreamSupervisor.h"
 #import "TLinkSocketClient.h"
+#import "../../shared/TLinkLicenseVerifier.h"
 
 // ---------------------------------------------------------------------------
 // SCAppDelegate
@@ -424,6 +425,13 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 
 - (NSString *)performAppSideOCRRequestLine:(NSString *)line
 {
+    NSString *licenseError = nil;
+    if (!TLinkLicenseFeatureAllowed(@"automation", &licenseError)) {
+        NSDictionary *status = TLinkLicenseStatusDictionary();
+        return [NSString stringWithFormat:@"-1;;license_required component=app_ocr feature=automation state=%@ error=%@\r\n",
+                status[@"state"] ?: @"invalid",
+                licenseError ?: status[@"error"] ?: @"license_required"];
+    }
     NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@";;"];
     if (parts.count < 7 || ![parts[0] isEqualToString:@"1"]) return @"-1;;app_ocr_bad_request\r\n";
     NSString *imagePath = parts[1];
@@ -555,6 +563,13 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 
 - (NSString *)performAppSideClipboardRequestLine:(NSString *)line
 {
+    NSString *licenseError = nil;
+    if (!TLinkLicenseFeatureAllowed(@"automation", &licenseError)) {
+        NSDictionary *status = TLinkLicenseStatusDictionary();
+        return [NSString stringWithFormat:@"-1;;license_required component=app_clipboard feature=automation state=%@ error=%@\r\n",
+                status[@"state"] ?: @"invalid",
+                licenseError ?: status[@"error"] ?: @"license_required"];
+    }
     NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@";;"];
     if (parts.count < 2 || ![parts[0] isEqualToString:@"1"]) return @"-1;;app_clipboard_bad_request\r\n";
     NSData *bodyData = [[NSData alloc] initWithBase64EncodedString:parts[1] options:0];

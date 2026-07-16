@@ -1,0 +1,69 @@
+# TLinkauto License Worker
+
+Cloudflare Worker MVP for issuing signed, device-bound license leases.
+
+## Setup
+
+```bash
+cd license-worker
+npm install
+npx wrangler d1 create tlinkauto-license
+```
+
+Copy the returned database id into `wrangler.jsonc`, then initialize D1:
+
+```bash
+npm run db:init:remote
+```
+
+Generate a P-256 signing key:
+
+```bash
+npm run keys
+```
+
+Set the printed private JWK and an admin token as Worker secrets:
+
+```bash
+npx wrangler secret put LICENSE_SIGNING_PRIVATE_JWK
+npx wrangler secret put ADMIN_TOKEN
+```
+
+Copy the printed public `x` and `y` values into
+`stream-app/app/LicenseConfig.plist`, set `LicenseEndpoint`, and deploy:
+
+```bash
+npm run deploy
+```
+
+Create a test license:
+
+```bash
+curl -X POST "https://YOUR-WORKER/v1/admin/licenses" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"license_key":"TLINK-TEST-0001","max_devices":1,"features":["automation","stream","script","admin","shell"]}'
+```
+
+Keep `LicenseEnforcementEnabled` false during initial device validation. After
+activation, task `75` should report a valid signed lease. Enable enforcement
+only after activation, refresh, expiry, and recovery tests pass.
+
+Lease refresh requires a fresh signature from the device private key. Copying
+only `lease.json` and `device_public_key.bin` to another device cannot refresh
+or pass the local private-key possession check.
+
+If an erase/restore creates a new device key and the license has reached its
+device limit, reset the old device registrations with the admin endpoint:
+
+```bash
+curl -X POST "https://YOUR-WORKER/v1/admin/reset-devices" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"license_key":"TLINK-TEST-0001"}'
+```
+
+The GitHub workflow `license-worker.yml` validates every change. Its manual
+deploy job expects the `tlinkauto-license` environment secrets
+`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
+`LICENSE_SIGNING_PRIVATE_JWK`, and `TLINK_LICENSE_ADMIN_TOKEN`.

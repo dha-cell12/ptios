@@ -173,7 +173,7 @@ text/base64, seek/tell/flush/close, are bundle-relative, and are automatically
 closed at the end of every script evaluation.
 
 Known unresolved issues / deferred investigation:
-- Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v11 keeps direct background Pasteboard access, handles best-effort keep-awake requests, and sends background toast/alert/dialog through CFUserNotification. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
+- Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v12 keeps direct background Pasteboard access, handles best-effort keep-awake requests, sends background toast/alert/dialog through CFUserNotification, and applies the same signed-license gate as streamd. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
 - Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.
 - StreamControl now registers `BGAppRefreshTask` and `BGProcessingTask` as a best-effort recovery path after first launch. Each handler reschedules itself and completes only after the supervisor verifies task port 6000. Diagnostics live at `/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist`. Immediate boot startup remains unresolved because iOS controls background launch timing and TrollStore cannot install a normal platformized LaunchDaemon.
@@ -186,6 +186,26 @@ Known unresolved issues / deferred investigation:
 - Task 91 now reports Tesseract init source so tests can distinguish normal path init from memory fallback: response suffix `tesseract_init_source=path:...` or `tesseract_init_source=memory:...`; task 60 also exposes `tesseractInitSource`, `tesseractInitAttempts`, and `tesseractInitAtMs`.
 - Revisit Vision later with a dedicated sample app/device matrix, pixel buffer format investigation, and possibly a pure CGImage/VNImageRequestHandler path that avoids the failing `420f` conversion.
 - Clear app data now has a TrollStore extension task: `72<bundle.id>`. It runs through privhelper, refuses protected bundles, and only clears safe app data containers under `/var/mobile/Containers/Data/Application/`. Keychain clearing remains deferred.
+
+## License MVP
+
+- Added a Cloudflare Worker + D1 license service under `license-worker/`.
+- StreamControl now has a License screen that creates a Secure Enclave P-256
+  device key (with a `ThisDeviceOnly` Keychain fallback), activates a license,
+  refreshes its signed lease, and exposes local status.
+- The signed lease is verified independently by the app, `streamd`, H264
+  accept path, and `privhelper`. Local verification checks the server
+  signature, dates, features, device public-key hash, and proof that the
+  matching private key still exists on this device.
+- Task `75` returns license diagnostics and task `76` invalidates the verifier
+  cache before checking again. Task `60/97` also report license mode/state.
+- Enforcement is observe-only by default. Release builds can set
+  `TLINK_LICENSE_ENFORCEMENT=true`; the GitHub build then also compiles forced
+  enforcement into all three native components.
+- Worker lease refresh requires a device signature. Admin reset of registered
+  devices is available for erase/restore or device replacement.
+- Certificate pinning and rootfull runtime enforcement remain deferred
+  hardening work; see `docs/license-cloudflare-worker.md`.
 - Screenshot task 29 now supports action 1 file capture plus action 2 save-to-album and action 3 clear-album using the `TLinkauto` Photos album. Socket tasks must not trigger Photos permission UI; StreamControl Settings has `Photo Access` for foreground authorization. Clear album removes assets from the `TLinkauto` album only, not from the whole photo library, to avoid iOS delete-confirmation popups.
 
 Nói gọn: nên biến stream-app thành “TLinkauto TrollStore runtime” chính thức, rồi kéo từng module từ pccontrol sang theo thứ tự: touch/capture trước, image/OCR tiếp, script runtime sau, cuối cùng mới đến admin/process/connectivity.

@@ -2,6 +2,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import "../../shared/TLinkLicenseVerifier.h"
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -268,7 +269,7 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
         return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;toast;;requested_position=%ld;;effective_position=center;;limited_on_trollstore\r\n",
                 (long)requestedPosition];
     }
-    TLinkScheduleCFUserNotification(payload, @"v11_background_visual");
+    TLinkScheduleCFUserNotification(payload, @"v12_background_visual");
     return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;%@\r\n", kind];
 }
 
@@ -325,7 +326,7 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=11;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=12;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), (long)state, (long)systemState,
                 sTLinkClipboardWriteVerified ? 1 : 0,
                 (long)sTLinkToastLastPosition,
@@ -369,6 +370,16 @@ static NSString *TLinkClipboardHandleLine(NSString *line)
     NSData *data = [[NSData alloc] initWithBase64EncodedString:parts[1] options:0];
     NSString *body = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
     if (!body) return @"-1;;clipboardd_bad_body_base64\r\n";
+    int subtask = [[[body componentsSeparatedByString:@";;"] firstObject] intValue];
+    if (subtask != 9) {
+        NSString *licenseError = nil;
+        if (!TLinkLicenseFeatureAllowed(@"automation", &licenseError)) {
+            NSDictionary *status = TLinkLicenseStatusDictionary();
+            return [NSString stringWithFormat:@"-1;;license_required component=clipboardd feature=automation state=%@ error=%@\r\n",
+                    status[@"state"] ?: @"invalid",
+                    licenseError ?: status[@"error"] ?: @"license_required"];
+        }
+    }
 
     __block NSString *response = nil;
     void (^work)(void) = ^{

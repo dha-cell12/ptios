@@ -1,0 +1,94 @@
+name: Validate or Deploy License Worker
+
+on:
+  push:
+    paths:
+      - 'license-worker/**'
+      - '.github/workflows/license-worker.yml'
+  pull_request:
+    paths:
+      - 'license-worker/**'
+      - '.github/workflows/license-worker.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy to Cloudflare after validation
+        required: true
+        type: boolean
+        default: false
+      apply_schema:
+        description: Apply the idempotent D1 schema before deploy
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: license-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Validate Worker sources
+        run: |
+          set -euo pipefail
+          node --check src/index.js
+          node --check scripts/generate-keys.mjs
+          sed -i 's/REPLACE_WITH_D1_DATABASE_ID/00000000-0000-0000-0000-000000000000/' wrangler.jsonc
+          npx wrangler deploy --dry-run --outdir .wrangler-dry-run
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: tlinkauto-license
+    defaults:
+      run:
+        working-directory: license-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      LICENSE_SIGNING_PRIVATE_JWK: ${{ secrets.LICENSE_SIGNING_PRIVATE_JWK }}
+      ADMIN_TOKEN: ${{ secrets.TLINK_LICENSE_ADMIN_TOKEN }}
+      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Validate deployment secrets
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$LICENSE_SIGNING_PRIVATE_JWK"
+          test -n "$ADMIN_TOKEN"
+          ! grep -q 'REPLACE_WITH_D1_DATABASE_ID' wrangler.jsonc
+      - name: Apply D1 schema
+        if: inputs.apply_schema
+        run: npx wrangler d1 execute tlinkauto-license --remote --file schema.sql
+      - name: Deploy Worker code
+        run: npx wrangler deploy
+      - name: Update Worker secrets
+        run: |
+          set -euo pipefail
+          printf '%s' "$LICENSE_SIGNING_PRIVATE_JWK" | npx wrangler secret put LICENSE_SIGNING_PRIVATE_JWK
+          printf '%s' "$ADMIN_TOKEN" | npx wrangler secret put ADMIN_TOKEN
+      - name: Smoke test public endpoints
+        if: env.TLINK_LICENSE_ENDPOINT != ''
+        run: |
+          set -euo pipefail
+          BASE="${TLINK_LICENSE_ENDPOINT%/}"
+          curl -fsS "$BASE/v1/health"
+          curl -fsS "$BASE/v1/public-key"

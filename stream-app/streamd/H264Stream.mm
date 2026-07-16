@@ -1,6 +1,7 @@
 // H264Stream.xm
 #include "H264Stream.h"
 #include "StreamCaptureSource.h"
+#import "../../shared/TLinkLicenseVerifier.h"
 
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -867,6 +868,16 @@ void startH264StreamServer(void) {
             while (1) {
                 int c = accept(s, NULL, NULL);
                 if (c < 0) { ZXH264Log("accept failed port=%d errno=%d", profile->port, errno); continue; }
+
+                NSString *licenseError = nil;
+                if (!TLinkLicenseFeatureAllowed(@"stream", &licenseError)) {
+                    ZXH264Log("client rejected by license port=%d error=%s",
+                              profile->port,
+                              [(licenseError ?: @"license_required") UTF8String]);
+                    shutdown(c, SHUT_RDWR);
+                    close(c);
+                    continue;
+                }
 
                 int exp = -1;
                 if (!atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {

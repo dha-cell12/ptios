@@ -13,7 +13,7 @@
 	<string>StreamCtl.com.tlinkauto.streamd</string>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>StreamCtl.com.tlinkauto.streamd</string>
+		<string>StreamCtl.com.tlinkauto.streamcontrol</string>
 	</array>
 	<key>com.apple.private.security.no-container</key>
 	<true/>

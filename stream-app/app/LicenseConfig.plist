@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LicenseEndpoint</key>
+	<string>https://REPLACE_WITH_WORKER_DOMAIN</string>
+	<key>LicenseKeyID</key>
+	<string>tlinkauto-test-2026-01</string>
+	<key>LicensePublicKeyX</key>
+	<string>REPLACE_WITH_PUBLIC_KEY_X</string>
+	<key>LicensePublicKeyY</key>
+	<string>REPLACE_WITH_PUBLIC_KEY_Y</string>
+	<key>LicenseEnforcementEnabled</key>
+	<false/>
+</dict>
+</plist>

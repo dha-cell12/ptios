@@ -5,12 +5,14 @@ on:
     paths:
       - 'stream-app/**'
       - 'shared/**'
+      - 'license-worker/**'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
     paths:
       - 'stream-app/**'
       - 'shared/**'
+      - 'license-worker/**'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
@@ -26,10 +28,39 @@ jobs:
       APP_NAME: StreamControl
       APP_BUNDLE: StreamControl.app
       TIPA_PATH: stream-app/packages/StreamControl.tipa
+      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT }}
+      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID }}
+      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X }}
+      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y }}
+      TLINK_LICENSE_ENFORCEMENT: ${{ vars.TLINK_LICENSE_ENFORCEMENT }}
+      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ vars.TLINK_LICENSE_ENFORCEMENT == 'true' && '1' || '0' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure public license verifier
+        run: |
+          set -euo pipefail
+          PLIST="stream-app/app/LicenseConfig.plist"
+          if [ -n "${TLINK_LICENSE_ENDPOINT:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicenseEndpoint $TLINK_LICENSE_ENDPOINT" "$PLIST"
+          fi
+          if [ -n "${TLINK_LICENSE_KEY_ID:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicenseKeyID $TLINK_LICENSE_KEY_ID" "$PLIST"
+          fi
+          if [ -n "${TLINK_LICENSE_PUBLIC_KEY_X:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyX $TLINK_LICENSE_PUBLIC_KEY_X" "$PLIST"
+          fi
+          if [ -n "${TLINK_LICENSE_PUBLIC_KEY_Y:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyY $TLINK_LICENSE_PUBLIC_KEY_Y" "$PLIST"
+          fi
+          if [ "${TLINK_LICENSE_ENFORCEMENT:-false}" = "true" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled true" "$PLIST"
+          else
+            /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled false" "$PLIST"
+          fi
+          plutil -lint "$PLIST"
 
       - name: Install dependencies
         run: |
@@ -69,6 +100,16 @@ jobs:
           test -f stream-app/clipboardd/entitlements.plist
           test -f stream-app/privhelper/Makefile
           test -f stream-app/privhelper/main.mm
+          test -f shared/TLinkLicenseVerifier.h
+          test -f shared/TLinkLicenseVerifier.mm
+          test -f stream-app/app/LicenseManager.mm
+          test -f stream-app/app/LicenseViewController.mm
+          test -f stream-app/app/LicenseConfig.plist
+          test -f license-worker/src/index.js
+          test -f license-worker/schema.sql
+          test -f license-worker/wrangler.jsonc
+          node --check license-worker/src/index.js
+          node --check license-worker/scripts/generate-keys.mjs
           test -f stream-app/app/TLinkSocketClient.mm
           test -f stream-app/app/ScriptsViewController.mm
           test -f stream-app/app/ScriptEditorViewController.mm
@@ -86,7 +127,9 @@ jobs:
           test -f 'stream-app/app/CompatibilityExamples/06 App Process Shell.js'
           test -f 'stream-app/app/CompatibilityExamples/07 File Handle.js'
           test -f docs/trollstore-runtime-status.md
+          test -f docs/license-cloudflare-worker.md
           grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
+          grep -q 'TLinkauto Cloudflare License MVP' docs/license-cloudflare-worker.md
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
           grep -q 'Vision OCR remains deferred' docs/trollstore-runtime-status.md
           grep -q 'refresh_registered' docs/trollstore-runtime-status.md
@@ -119,10 +162,13 @@ jobs:
           grep -q 'com.tlinkauto.streamcontrol.processing' stream-app/app/Info.plist
           grep -q 'best_effort_bgtaskscheduler_after_first_launch' stream-app/app/BackgroundServiceScheduler.mm
           grep -q 'background_service_scheduler.plist' stream-app/app/SettingsViewController.mm
+          grep -q 'task75_license' stream-app/app/SettingsViewController.mm
           grep -q 'background_service' stream-app/streamd/POCSocketServer.mm
           grep -q 'ensureServiceWithCompletion' stream-app/app/StreamSupervisor.mm
           grep -q 'idleTimerDisabled' stream-app/app/AppDelegate.mm
           grep -q 'serverLastEventId' stream-app/app/AppDelegate.mm
+          grep -q 'component=app_clipboard' stream-app/app/AppDelegate.mm
+          grep -q 'component=app_ocr' stream-app/app/AppDelegate.mm
           grep -q 'ScriptsViewController.mm' stream-app/app/Makefile
           grep -q 'ScriptEditorViewController.mm' stream-app/app/Makefile
           grep -q 'ScriptLogViewController.mm' stream-app/app/Makefile
@@ -146,14 +192,16 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=15' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=16' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
           grep -q -- '--ensure-streamd' stream-app/privhelper/main.mm
-          grep -q 'privhelper version=7' stream-app/privhelper/main.mm
+          grep -q 'privhelper version=8' stream-app/privhelper/main.mm
+          grep -q 'TLinkHelperRequireLicense' stream-app/privhelper/main.mm
+          grep -q '../../shared/TLinkLicenseVerifier.mm' stream-app/privhelper/Makefile
           grep -q -- '--respring' stream-app/privhelper/main.mm
           grep -q 'TLinkRespring' stream-app/privhelper/main.mm
           grep -q 'SpringBoard.app/SpringBoard' stream-app/privhelper/main.mm
@@ -161,7 +209,9 @@ jobs:
           grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
           grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
           grep -q 'kTCCServicePasteboard' stream-app/clipboardd/entitlements.plist
-          grep -q 'version=11' stream-app/clipboardd/main.mm
+          grep -q 'version=12' stream-app/clipboardd/main.mm
+          grep -q '../../shared/TLinkLicenseVerifier.mm' stream-app/clipboardd/Makefile
+          grep -q 'TLinkLicenseFeatureAllowed' stream-app/clipboardd/main.mm
           grep -q 'kCFUserNotificationNoDefaultButtonFlag' stream-app/clipboardd/main.mm
           grep -q 'toast_overlay_visible' stream-app/clipboardd/main.mm
           grep -q 'toast_effective_position=center' stream-app/clipboardd/main.mm
@@ -176,8 +226,17 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=15"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @15' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=16"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @16' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 75' stream-app/streamd/POCSocketServer.mm
+          grep -q 'taskType == 76' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/H264Stream.mm
+          grep -q 'TLINK_LICENSE_FORCE_ENFORCEMENT' stream-app/app/Makefile
+          grep -q 'TLINK_LICENSE_FORCE_ENFORCEMENT' stream-app/streamd/Makefile
+          grep -q 'TLINK_LICENSE_FORCE_ENFORCEMENT' stream-app/privhelper/Makefile
+          grep -q 'TLINK_LICENSE_FORCE_ENFORCEMENT' stream-app/clipboardd/Makefile
+          grep -q 'StreamCtl.com.tlinkauto.streamcontrol' stream-app/streamd/entitlements.plist
           grep -q 'TLinkHandleRespring' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 74' stream-app/streamd/POCSocketServer.mm
           grep -q '../../shared/TLinkJSFileHandle.mm' stream-app/streamd/Makefile
@@ -191,8 +250,8 @@ jobs:
           grep -q 'resolvedOpenFilePath' pccontrol/TLinkautoJSRuntime.mm
           grep -q '\[deviceBridge closeOpenFiles\]' pccontrol/jsruntime/TLinkJSRuntimeCore.mm
           grep -q 'backgroundToastFixedCenter' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=11"' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=11"' stream-app/privhelper/main.mm
+          grep -q 'containsString:@"version=12"' stream-app/streamd/POCSocketServer.mm
+          grep -q 'containsString:@"version=12"' stream-app/privhelper/main.mm
           grep -q 'app_foreground_heartbeat' stream-app/app/AppDelegate.mm
           grep -q 'Notification Access' stream-app/app/SettingsViewController.mm
           grep -q 'clipboardUIDaemon' stream-app/streamd/POCSocketServer.mm
@@ -462,6 +521,7 @@ jobs:
           grep 'Payload/StreamControl.app/streamd' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/clipboardd' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/privhelper' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/LicenseConfig.plist' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/01 Runtime Storage.js' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/06 App Process Shell.js' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/07 File Handle.js' stream-app/packages/StreamControl.tipa.contents.txt
@@ -475,6 +535,7 @@ jobs:
           test -x "$APP/streamd"
           test -x "$APP/clipboardd"
           test -x "$APP/privhelper"
+          test -f "$APP/LicenseConfig.plist"
           test -f "$APP/CompatibilityExamples/01 Runtime Storage.js"
           test -f "$APP/CompatibilityExamples/06 App Process Shell.js"
           test -f "$APP/CompatibilityExamples/07 File Handle.js"

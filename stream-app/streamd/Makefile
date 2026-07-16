@@ -10,11 +10,15 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = streamd
 
-streamd_FILES = main.mm TouchInjector.mm POCSocketServer.mm HIDInjectCore.mm WireProtocolParser.mm CaptureCore.mm StreamCaptureProbe.mm StreamCaptureSource.mm H264Stream.mm ../../shared/TLinkJSFileHandle.mm
+streamd_FILES = main.mm TouchInjector.mm POCSocketServer.mm HIDInjectCore.mm WireProtocolParser.mm CaptureCore.mm StreamCaptureProbe.mm StreamCaptureSource.mm H264Stream.mm ../../shared/TLinkJSFileHandle.mm ../../shared/TLinkLicenseVerifier.mm
 streamd_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics QuartzCore IOSurface Security VideoToolbox CoreVideo CoreMedia Vision ImageIO JavaScriptCore Accelerate Photos
 streamd_PRIVATE_FRAMEWORKS = IOKit
+streamd_LIBRARIES = commonCrypto
 streamd_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -Iheaders
 streamd_CCFLAGS = -std=c++14
+ifeq ($(TLINK_LICENSE_FORCE_ENFORCEMENT),1)
+streamd_CFLAGS += -DTLINK_LICENSE_FORCE_ENFORCEMENT=1
+endif
 TESSERACT_ROOT = $(THEOS_PROJECT_DIR)/../../third_party/TesseractOCR/TesseractOCR
 streamd_CFLAGS += -I$(TESSERACT_ROOT)/xcframework/Tesseract.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/Leptonica.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/JPEG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/PNG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/TIFF.xcframework/ios-arm64/Headers
 streamd_CCFLAGS += -I$(TESSERACT_ROOT)/xcframework/Tesseract.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/Leptonica.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/JPEG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/PNG.xcframework/ios-arm64/Headers -I$(TESSERACT_ROOT)/xcframework/TIFF.xcframework/ios-arm64/Headers

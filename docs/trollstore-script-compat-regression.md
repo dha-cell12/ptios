@@ -77,7 +77,7 @@ where available:
 Keyboard backend smoke:
 
 ```powershell
-# Open StreamControl.app once after install so privhelper installs clipboardd v11
+# Open StreamControl.app once after install so privhelper installs clipboardd v12
 # on 6012. Port 6013 is clipboard fallback only.
 Invoke-TLinkTask -HostIP $iphoneIP -Task "247;;hello from tlinkauto"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "246"
@@ -105,7 +105,7 @@ File-handle parity smoke:
 arbitrary absolute paths. Writable modes cannot modify `.js`, `manifest.json`,
 or `info.plist`. Handles are closed automatically when an evaluation ends.
 
-Task `249` should contain `clipboard_backend_ready`, `version=11` in its decoded
+Task `249` should contain `clipboard_backend_ready`, `version=12` in its decoded
 diagnostic, and `daemon_direct_write=1` after a successful task `247`. Task
 `246` should then return `0;;hello from tlinkauto`. When another app is active,
 StreamControl should not appear. A short app switch means the daemon entitlement
@@ -124,7 +124,7 @@ was ignored and the foreground fallback ran.
   SpringBoard keyboard observer and returns `limited_on_trollstore`.
 - VPN control and arbitrary keychain clearing remain unsupported on TrollStore.
 - Foreground overlays use UIKit and toast preserves position `0/1/2`.
-  Background toast/alert/dialog use the clipboardd v11 CFUserNotification system
+  Background toast/alert/dialog use the clipboardd v12 CFUserNotification system
   alert and toast position is fixed at center. Dialog responses are not bridged
   back to the original synchronous task, and a global touch indicator still
   requires SpringBoard injection.

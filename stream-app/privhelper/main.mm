@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "../../shared/TLinkLicenseVerifier.h"
 
 #include <errno.h>
 #include <dlfcn.h>
@@ -57,6 +58,19 @@ static void TLinkHelperLog(NSString *line)
     }
     printf("%s", [entry UTF8String]);
     fflush(stdout);
+}
+
+static int TLinkHelperRequireLicense(NSString *feature, NSString *command)
+{
+    NSString *licenseError = nil;
+    if (TLinkLicenseFeatureAllowed(feature, &licenseError)) return 0;
+    NSDictionary *status = TLinkLicenseStatusDictionary();
+    TLinkHelperLog([NSString stringWithFormat:@"license denied command=%@ feature=%@ state=%@ error=%@",
+                    command ?: @"unknown",
+                    feature ?: @"automation",
+                    status[@"state"] ?: @"invalid",
+                    licenseError ?: status[@"error"] ?: @"license_required"]);
+    return 90;
 }
 
 static BOOL TLinkProcessIsStreamd(struct kinfo_proc *proc)
@@ -420,7 +434,7 @@ static void TLinkHelperKillClipboardd(void)
 
 static BOOL TLinkClipboarddProbeIsCurrent(NSString *probe)
 {
-    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=11"];
+    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=12"];
 }
 
 static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
@@ -829,7 +843,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=7 scope=ensure-streamd,ensure-clipboardd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring");
+            TLinkHelperLog(@"privhelper version=8 scope=ensure-streamd,ensure-clipboardd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
             return 0;
         }
 
@@ -854,26 +868,36 @@ int main(int argc, char *argv[])
         }
 
         if (argc >= 3 && strcmp(argv[1], "--open-bundle") == 0) {
+            int licenseExit = TLinkHelperRequireLicense(@"automation", @"open-bundle");
+            if (licenseExit != 0) return licenseExit;
             NSString *bundleId = [NSString stringWithUTF8String:argv[2]] ?: @"";
             return TLinkOpenBundle(bundleId);
         }
 
         if (argc >= 3 && strcmp(argv[1], "--kill-bundle") == 0) {
+            int licenseExit = TLinkHelperRequireLicense(@"admin", @"kill-bundle");
+            if (licenseExit != 0) return licenseExit;
             NSString *bundleId = [NSString stringWithUTF8String:argv[2]] ?: @"";
             return TLinkKillBundle(bundleId);
         }
 
         if (argc >= 3 && strcmp(argv[1], "--open-url") == 0) {
+            int licenseExit = TLinkHelperRequireLicense(@"automation", @"open-url");
+            if (licenseExit != 0) return licenseExit;
             NSString *rawURL = [NSString stringWithUTF8String:argv[2]] ?: @"";
             return TLinkOpenURL(rawURL);
         }
 
         if (argc >= 3 && strcmp(argv[1], "--clear-data") == 0) {
+            int licenseExit = TLinkHelperRequireLicense(@"admin", @"clear-data");
+            if (licenseExit != 0) return licenseExit;
             NSString *bundleId = [NSString stringWithUTF8String:argv[2]] ?: @"";
             return TLinkClearBundleData(bundleId);
         }
 
         if (argc >= 2 && strcmp(argv[1], "--respring") == 0) {
+            int licenseExit = TLinkHelperRequireLicense(@"admin", @"respring");
+            if (licenseExit != 0) return licenseExit;
             return TLinkRespring();
         }
 

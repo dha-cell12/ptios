@@ -12,14 +12,15 @@ TrollStore runtime.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
 - Script runtime: task `19/20` JavaScriptCore with a rootfull compatibility facade for common `device.*` APIs, `runTask`/task bridge, normalized storage responses, shared rootfull/TrollStore `device.openFile` handles, keyboard wrappers, color/frame/image/OCR wrappers, and app/process wrappers.
-- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=15`; the app replaces a responding process when its version is stale or its executable belongs to an older app bundle, then starts the bundled binary through `privhelper`.
+- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=16`; the app replaces a responding process when its version is stale or its executable belongs to an older app bundle, then starts the bundled binary through `privhelper`.
+- License MVP: Settings > License activates a Cloudflare Worker lease using a Secure Enclave P-256 device key with a `ThisDeviceOnly` Keychain fallback. Task `75` returns signed-lease status and task `76` forces a fresh check. `streamd`, H264 accepts, and sensitive `privhelper` commands enforce feature access when the release is built with license enforcement enabled. Initial test builds remain in observe mode.
 - Respring: Settings exposes a destructive-confirmation Respring Device action backed by task `74confirm` and `privhelper --respring`. The helper requires effective UID 0, validates the SpringBoard process name/path, sends SIGTERM, and only falls back to SIGKILL if the validated original PID remains alive.
 - Main navigation now has only Scripts and Settings tabs. The old Service tab was removed; Settings exposes Restart streamd and Respring Device directly, keeps Runtime Settings on the main page, and moves the previous diagnostics/compatibility matrix behind a DEBUG row.
 - Script UI management: normal folders expose a visible ellipsis menu with Rename Folder, Duplicate, and Delete Folder. The Logs screen includes a confirmed Clear Log action backed by task `73`; it clears the current session log buffer while allowing a running script to append new lines afterward.
 - Background recovery: after StreamControl has been opened once, it registers and submits `BGAppRefreshTask` plus `BGProcessingTask` requests. When iOS grants execution, the handler reschedules itself, calls the same supervisor/privhelper path, and completes only after tcp/6000 passes the service-version probe. This is `best_effort_bgtaskscheduler_after_first_launch`, not guaranteed boot startup. Scheduling/firing/completion diagnostics are stored in `/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist` and included by Settings > Export Diagnostics.
 - Script regression suite: the root `Scripts` tab auto-seeds a `Compatibility Tests` folder from packaged examples on first launch; `Scripts > + > Compatibility Suite` can install another copy manually. The seven `.tl` bundles exercise each compatibility API group independently, including shared file handles.
-- Keyboard/text: task `24` uses `clipboardd` v11 on port `6012` with private background Pasteboard entitlements. Every write is read-back verified before `streamd` trusts daemon reads. Subtask `1` inserts text using background clipboard plus HID `Command+V`; subtask `5` pastes the existing clipboard; subtasks `3/4` use HID arrows and Backspace. Devices that ignore the Pasteboard entitlements fall back to the foreground app bridge on port `6013`. Show/hide keyboard remains `limited_on_trollstore` because it needs the rootfull SpringBoard keyboard observer.
-- Background UI bridge: `clipboardd` v11 receives toast/alert/dialog fallback events from `streamd`. Device validation proved that a UIDaemon `UIWindow` can exist in memory without being compositor-hosted above the active app, so that path is no longer reported as successful. Background toast/alert/dialog now use `CFUserNotificationDisplayAlert`. Background toast is visible but fixed at the system center; the rootfull position argument is preserved only for foreground UIKit toast and is reported as limited in background responses.
+- Keyboard/text: task `24` uses `clipboardd` v12 on port `6012` with private background Pasteboard entitlements and the same signed-license gate as `streamd`. Every write is read-back verified before `streamd` trusts daemon reads. Subtask `1` inserts text using background clipboard plus HID `Command+V`; subtask `5` pastes the existing clipboard; subtasks `3/4` use HID arrows and Backspace. Devices that ignore the Pasteboard entitlements fall back to the foreground app bridge on port `6013`. Show/hide keyboard remains `limited_on_trollstore` because it needs the rootfull SpringBoard keyboard observer.
+- Background UI bridge: `clipboardd` v12 receives toast/alert/dialog fallback events from `streamd`. Device validation proved that a UIDaemon `UIWindow` can exist in memory without being compositor-hosted above the active app, so that path is no longer reported as successful. Background toast/alert/dialog now use `CFUserNotificationDisplayAlert`. Background toast is visible but fixed at the system center; the rootfull position argument is preserved only for foreground UIKit toast and is reported as limited in background responses.
 - Keep awake: task `40` updates both the foreground app idle timer and the persistent UIKit daemon. The daemon path is best-effort because TrollStore does not provide a public global power assertion equivalent to SpringBoard injection.
 - App/process: `11`, `31-35`, `50-54` via streamd plus privhelper where needed.
 - Admin extension: task `72` clears safe app data containers through privhelper. It refuses protected bundles and unsafe paths.
@@ -48,7 +49,7 @@ $json.capabilities.backgroundAutoStartMode
 $json.background_service | Format-List
 ```
 
-Expected immediately after first launch: service version `13`, both
+Expected immediately after first launch: service version `16`, both
 `refresh_registered` and `processing_registered` are true, and both submit
 results are true. A later `last_fired_at_ms` plus `last_result=success` proves
 that iOS actually launched a handler; submit success alone does not prove a
@@ -60,6 +61,7 @@ Service Status and Settings > Export Diagnostics.
 ```powershell
 Invoke-TLinkTask -HostIP $iphoneIP -Task "97"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "60"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "75"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "91check_langs"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 ```
@@ -67,14 +69,14 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 Background visual fallback (put StreamControl in the background first):
 
 ```powershell
-Invoke-TLinkTask -HostIP $iphoneIP -Task "220;;Background toast v11;;3;;2;;16"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "220;;Background toast v12;;3;;2;;16"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "12TLinkauto;;Background alert test;;3"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "401"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 ```
 
 The toast and alert should appear without bringing StreamControl to the
-foreground. Task `249` should report `version=11`,
+foreground. Task `249` should report `version=12`,
 `background_visual_mode=cfusernotification_toast_alert_fixed_center`, the
 requested toast position, and `toast_effective_position=center`. A background
 position other than center remains `limited_on_trollstore`; arbitrary global

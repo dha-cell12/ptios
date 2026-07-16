@@ -1,4 +1,6 @@
 #import "SettingsViewController.h"
+#import "LicenseManager.h"
+#import "LicenseViewController.h"
 #import "TLinkSocketClient.h"
 #import <Photos/Photos.h>
 #import <UserNotifications/UserNotifications.h>
@@ -39,11 +41,11 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
         _sections = @[
             @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status"],
             runtimeSettings,
-            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v11", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
+            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v12", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
     } else {
         _sections = @[
-            @[@"Restart streamd", @"Respring Device", @"DEBUG"],
+            @[@"License", @"Restart streamd", @"Respring Device", @"DEBUG"],
             runtimeSettings,
         ];
     }
@@ -186,9 +188,11 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
         NSDictionary *backgroundScheduler = [NSDictionary dictionaryWithContentsOfFile:kTLinkBackgroundSchedulerDiagnosticsPath] ?: @{};
         [report appendFormat:@"background_scheduler_path: %@\nbackground_scheduler: %@\n\n",
          kTLinkBackgroundSchedulerDiagnosticsPath, backgroundScheduler];
+        NSDictionary *licenseStatus = [[SCLicenseManager sharedManager] localStatus] ?: @{};
+        [report appendFormat:@"license_status: %@\n\n", licenseStatus];
 
-        NSArray<NSString *> *lines = @[@"97\n", @"60\n", @"98\n"];
-        NSArray<NSString *> *labels = @[@"task97_capability", @"task60_status", @"task98_capture_probe"];
+        NSArray<NSString *> *lines = @[@"97\n", @"60\n", @"75\n", @"98\n"];
+        NSArray<NSString *> *labels = @[@"task97_capability", @"task60_status", @"task75_license", @"task98_capture_probe"];
         for (NSUInteger i = 0; i < lines.count; i++) {
             NSString *response = [TLinkSocketClient sendLineAndRead:lines[i] timeout:8.0];
             [report appendFormat:@"[%@]\n%@\n\n", labels[i], response ?: @"<nil>"];
@@ -371,7 +375,12 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
     cell.accessoryView = nil;
     if (indexPath.section == 0) {
         if (!_debugMode) {
-            if ([title isEqualToString:@"Restart streamd"]) {
+            if ([title isEqualToString:@"License"]) {
+                NSDictionary *status = [[SCLicenseManager sharedManager] localStatus];
+                cell.detailTextLabel.text = status[@"state"] ?: @"unknown";
+                cell.imageView.image = [UIImage systemImageNamed:@"key.fill"];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            } else if ([title isEqualToString:@"Restart streamd"]) {
                 cell.detailTextLabel.text = @"Replace and restart the task service";
                 cell.imageView.image = [UIImage systemImageNamed:@"arrow.clockwise"];
                 cell.accessoryType = UITableViewCellAccessoryNone;
@@ -418,7 +427,10 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
 
     NSString *title = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
     if (!_debugMode) {
-        if ([title isEqualToString:@"Restart streamd"]) {
+        if ([title isEqualToString:@"License"]) {
+            SCLicenseViewController *license = [[SCLicenseViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+            [self.navigationController pushViewController:license animated:YES];
+        } else if ([title isEqualToString:@"Restart streamd"]) {
             [self restartStreamd];
         } else if ([title isEqualToString:@"Respring Device"]) {
             [self confirmRespring];

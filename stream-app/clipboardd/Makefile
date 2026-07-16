@@ -7,10 +7,14 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = clipboardd
 
-clipboardd_FILES = main.mm
-clipboardd_FRAMEWORKS = Foundation UIKit CoreFoundation UserNotifications
+clipboardd_FILES = main.mm ../../shared/TLinkLicenseVerifier.mm
+clipboardd_FRAMEWORKS = Foundation UIKit CoreFoundation UserNotifications Security
+clipboardd_LIBRARIES = commonCrypto
 clipboardd_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 clipboardd_CCFLAGS = -std=c++14
+ifeq ($(TLINK_LICENSE_FORCE_ENFORCEMENT),1)
+clipboardd_CFLAGS += -DTLINK_LICENSE_FORCE_ENFORCEMENT=1
+endif
 clipboardd_CODESIGN_FLAGS = -Sentitlements.plist
 clipboardd_INSTALL_PATH = /usr/bin
 
