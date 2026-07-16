@@ -11,7 +11,7 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = StreamControl
 
-StreamControl_FILES = main.mm AppDelegate.mm BackgroundServiceScheduler.mm ViewController.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm ScriptEditorViewController.mm ScriptLogViewController.mm ImageViewerViewController.mm PlaySettingsViewController.mm SettingsViewController.mm
+StreamControl_FILES = main.mm AppDelegate.mm BackgroundServiceScheduler.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm ScriptEditorViewController.mm ScriptLogViewController.mm ImageViewerViewController.mm PlaySettingsViewController.mm SettingsViewController.mm
 StreamControl_RESOURCE_FILES = Info.plist
 StreamControl_RESOURCE_DIRS = CompatibilityExamples
 StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics QuartzCore Vision ImageIO Photos UserNotifications BackgroundTasks

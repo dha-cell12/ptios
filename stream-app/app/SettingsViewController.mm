@@ -12,23 +12,46 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
     NSArray<NSArray<NSString *> *> *_sections;
     UITextView *_resultView;
     NSMutableDictionary *_config;
+    BOOL _debugMode;
+}
+
+- (instancetype)initWithStyle:(UITableViewStyle)style
+{
+    return [self initWithStyle:style debugMode:NO];
+}
+
+- (instancetype)initWithStyle:(UITableViewStyle)style debugMode:(BOOL)debugMode
+{
+    self = [super initWithStyle:style];
+    if (self) {
+        _debugMode = debugMode;
+    }
+    return self;
 }
 
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    self.title = @"Settings";
+    self.title = _debugMode ? @"DEBUG" : @"Settings";
     [self loadConfig];
-    _sections = @[
-        @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Respring Device"],
-        @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"],
-        @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v11", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
-    ];
+    NSArray<NSString *> *runtimeSettings = @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"];
+    if (_debugMode) {
+        _sections = @[
+            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status"],
+            runtimeSettings,
+            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v11", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
+        ];
+    } else {
+        _sections = @[
+            @[@"Restart streamd", @"Respring Device", @"DEBUG"],
+            runtimeSettings,
+        ];
+    }
 
-    _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 180)];
+    _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, _debugMode ? 180.0 : 120.0)];
     _resultView.editable = NO;
     _resultView.font = [UIFont fontWithName:@"Menlo" size:11.0] ?: [UIFont systemFontOfSize:11.0];
-    _resultView.text = @"Diagnostics will appear here.";
+    _resultView.text = _debugMode ? @"Diagnostics will appear here." : @"Service status will appear here.";
     self.tableView.tableFooterView = _resultView;
 }
 
@@ -218,6 +241,22 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
     [self presentViewController:alert animated:YES completion:nil];
 }
 
+- (void)restartStreamd
+{
+    _resultView.text = @"Restarting streamd...";
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"TLinkRestartStreamService"
+                                                        object:self];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *response = [TLinkSocketClient requestTask:97 args:@[] timeout:4.0];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_resultView.text = response.length > 0
+                ? [NSString stringWithFormat:@"Restart streamd:\n%@", response]
+                : @"Restart requested, but tcp/6000 did not respond yet.";
+        });
+    });
+}
+
 - (void)requestPhotoAccess
 {
     _resultView.text = @"Requesting Photos access...";
@@ -310,6 +349,9 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
+    if (!_debugMode) {
+        return section == 0 ? @"Service" : @"Runtime Settings";
+    }
     if (section == 0) return @"Diagnostics";
     if (section == 1) return @"Runtime Settings";
     return @"TrollStore Compatibility";
@@ -324,10 +366,29 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
     }
     NSString *title = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
     cell.textLabel.text = title;
+    cell.textLabel.textColor = [UIColor labelColor];
+    cell.imageView.image = nil;
     cell.accessoryView = nil;
     if (indexPath.section == 0) {
-        cell.detailTextLabel.text = @"Tap to run";
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        if (!_debugMode) {
+            if ([title isEqualToString:@"Restart streamd"]) {
+                cell.detailTextLabel.text = @"Replace and restart the task service";
+                cell.imageView.image = [UIImage systemImageNamed:@"arrow.clockwise"];
+                cell.accessoryType = UITableViewCellAccessoryNone;
+            } else if ([title isEqualToString:@"Respring Device"]) {
+                cell.detailTextLabel.text = @"Restart SpringBoard";
+                cell.textLabel.textColor = [UIColor systemRedColor];
+                cell.imageView.image = [UIImage systemImageNamed:@"power"];
+                cell.accessoryType = UITableViewCellAccessoryNone;
+            } else {
+                cell.detailTextLabel.text = @"Open diagnostics and compatibility tools";
+                cell.imageView.image = [UIImage systemImageNamed:@"ladybug"];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            }
+        } else {
+            cell.detailTextLabel.text = @"Tap to run";
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        }
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     } else if (indexPath.section == 1) {
         cell.detailTextLabel.text = [self runtimeSettingDetailAtRow:indexPath.row];
@@ -356,6 +417,19 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
     if (indexPath.section != 0) return;
 
     NSString *title = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
+    if (!_debugMode) {
+        if ([title isEqualToString:@"Restart streamd"]) {
+            [self restartStreamd];
+        } else if ([title isEqualToString:@"Respring Device"]) {
+            [self confirmRespring];
+        } else if ([title isEqualToString:@"DEBUG"]) {
+            SCSettingsViewController *debug = [[SCSettingsViewController alloc] initWithStyle:UITableViewStyleInsetGrouped
+                                                                                     debugMode:YES];
+            [self.navigationController pushViewController:debug animated:YES];
+        }
+        return;
+    }
+
     if ([title isEqualToString:@"Photo Access"]) {
         [self requestPhotoAccess];
         return;

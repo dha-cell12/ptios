@@ -15,14 +15,13 @@
 #import "SettingsViewController.h"
 #import "StreamSupervisor.h"
 #import "TLinkSocketClient.h"
-#import "ViewController.h"
 
 // ---------------------------------------------------------------------------
 // SCAppDelegate
 //
 // Stands up the window + navigation controller and forces light mode to match
 // the Tlinkauto app's visual style. The supervisor is created/owned by the
-// root view controller so its lifecycle is tied to the UI.
+// app delegate so the service lifecycle is independent from any visible tab.
 // ---------------------------------------------------------------------------
 
 static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/TLinkauto/runtime/app_foreground_heartbeat";
@@ -53,25 +52,20 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
 
     SCScriptsViewController *scripts = [[SCScriptsViewController alloc] initWithScriptsPath:@"/var/mobile/Library/TLinkauto/scripts"];
-    SCViewController *service = [[SCViewController alloc] init];
     SCSettingsViewController *settings = [[SCSettingsViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
 
     UINavigationController *scriptsNav = [[UINavigationController alloc] initWithRootViewController:scripts];
-    UINavigationController *serviceNav = [[UINavigationController alloc] initWithRootViewController:service];
     UINavigationController *settingsNav = [[UINavigationController alloc] initWithRootViewController:settings];
 
     scriptsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Scripts"
                                                           image:[UIImage systemImageNamed:@"list.dash"]
                                                             tag:0];
-    serviceNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Service"
-                                                          image:[UIImage systemImageNamed:@"dot.radiowaves.left.and.right"]
-                                                            tag:1];
     settingsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Settings"
                                                            image:[UIImage systemImageNamed:@"gearshape"]
-                                                             tag:2];
+                                                             tag:1];
 
     UITabBarController *tabs = [[UITabBarController alloc] init];
-    tabs.viewControllers = @[scriptsNav, serviceNav, settingsNav];
+    tabs.viewControllers = @[scriptsNav, settingsNav];
     tabs.selectedIndex = 0;
 
     if (@available(iOS 13.0, *)) {
@@ -84,6 +78,10 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
                                              selector:@selector(requestVisualFeedbackBurstPoll:)
                                                  name:@"TLinkVisualFeedbackNeedsPoll"
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(requestStreamServiceRestart:)
+                                                 name:@"TLinkRestartStreamService"
+                                               object:nil];
     [self ensureStreamServiceForReason:@"launch" background:NO];
     [self.backgroundServiceScheduler scheduleRecoveryTasksForReason:@"app_launch"];
     [self startAppSideOCRServer];
@@ -91,6 +89,13 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
     [self startVisualFeedbackMonitor];
 
     return YES;
+}
+
+- (void)requestStreamServiceRestart:(NSNotification *)notification
+{
+    (void)notification;
+    NSLog(@"[StreamControl] restart streamd requested from Settings");
+    [self.serviceSupervisor restart];
 }
 
 - (void)applicationDidBecomeActive:(UIApplication *)application

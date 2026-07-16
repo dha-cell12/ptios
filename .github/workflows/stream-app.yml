@@ -102,6 +102,13 @@ jobs:
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/AppDelegate.mm
           grep -q 'applicationDidEnterBackground' stream-app/app/AppDelegate.mm
           grep -q 'tabs.selectedIndex = 0' stream-app/app/AppDelegate.mm
+          grep -Fq 'tabs.viewControllers = @[scriptsNav, settingsNav]' stream-app/app/AppDelegate.mm
+          if grep -Eq '(^|[[:space:]])ViewController\.mm([[:space:]]|$)' stream-app/app/Makefile; then
+            echo "Legacy service tab controller must not be compiled."
+            exit 1
+          fi
+          grep -q 'TLinkRestartStreamService' stream-app/app/AppDelegate.mm
+          grep -q 'requestStreamServiceRestart' stream-app/app/AppDelegate.mm
           grep -q 'beginBackgroundTaskWithName' stream-app/app/AppDelegate.mm
           grep -q 'ensureStreamServiceForReason' stream-app/app/AppDelegate.mm
           grep -q 'SCBackgroundServiceScheduler' stream-app/app/AppDelegate.mm
@@ -402,6 +409,9 @@ jobs:
           grep -q 'diagnostics-' stream-app/app/SettingsViewController.mm
           grep -q 'Respring Device' stream-app/app/SettingsViewController.mm
           grep -q 'confirmRespring' stream-app/app/SettingsViewController.mm
+          grep -q 'Restart streamd' stream-app/app/SettingsViewController.mm
+          grep -q 'debugMode:YES' stream-app/app/SettingsViewController.mm
+          grep -q 'TLinkRestartStreamService' stream-app/app/SettingsViewController.mm
           grep -q 'createDemoScript' stream-app/app/ScriptsViewController.mm
           grep -q 'info.playSettings.speed' stream-app/app/ScriptsViewController.mm
           grep -q 'showAddMenu' stream-app/app/ScriptsViewController.mm
