@@ -28,11 +28,11 @@ jobs:
       APP_NAME: StreamControl
       APP_BUNDLE: StreamControl.app
       TIPA_PATH: stream-app/packages/StreamControl.tipa
-      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT }}
-      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID }}
-      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X }}
-      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y }}
-      TLINK_LICENSE_ENFORCEMENT: ${{ vars.TLINK_LICENSE_ENFORCEMENT }}
+      TLINK_LICENSE_ENDPOINT: https://tlinkauto-license.tlinkauto.workers.dev
+      TLINK_LICENSE_KEY_ID: tlinkauto-test-2026-01
+      TLINK_LICENSE_PUBLIC_KEY_X: fUrcjnIX_Ej5jvv9oGqY9kmoY0PbZmXPg5lzUnTeo38
+      TLINK_LICENSE_PUBLIC_KEY_Y: bVsC_64-AH4cT5aObcm0NnOzY_nY5cYC2EgVhXFSNhE
+      TLINK_LICENSE_ENFORCEMENT: false
       TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ vars.TLINK_LICENSE_ENFORCEMENT == 'true' && '1' || '0' }}
 
     steps:
