@@ -61,7 +61,7 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
 {
     if (self.refreshRegistered || self.processingRegistered) return;
 
-    __weak typeof(self) weakSelf = self;
+    __weak SCBackgroundServiceScheduler *weakSelf = self;
     BOOL refreshRegistered = [[BGTaskScheduler sharedScheduler]
         registerForTaskWithIdentifier:kTLinkBackgroundRefreshIdentifier
                            usingQueue:nil
@@ -154,7 +154,7 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
     }];
 
     NSMutableDictionary *completionState = [@{@"finished": @NO} mutableCopy];
-    __weak typeof(self) weakSelf = self;
+    __weak SCBackgroundServiceScheduler *weakSelf = self;
     void (^finish)(BOOL, NSString *) = ^(BOOL success, NSString *detail) {
         @synchronized (completionState) {
             if ([completionState[@"finished"] boolValue]) return;
