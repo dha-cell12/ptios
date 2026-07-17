@@ -13,6 +13,7 @@
 #include <unistd.h>
 #import "ScriptsViewController.h"
 #import "SettingsViewController.h"
+#import "LicenseLifecycleCoordinator.h"
 #import "StreamSupervisor.h"
 #import "TLinkSocketClient.h"
 #import "../../shared/TLinkLicenseVerifier.h"
@@ -36,6 +37,7 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 @property(nonatomic, assign) NSInteger visualFeedbackBurstPollsRemaining;
 @property(nonatomic, strong) SCStreamSupervisor *serviceSupervisor;
 @property(nonatomic, strong) SCBackgroundServiceScheduler *backgroundServiceScheduler;
+@property(nonatomic, strong) SCLicenseLifecycleCoordinator *licenseLifecycleCoordinator;
 @property(nonatomic, assign) BOOL ocrServerStarted;
 @property(nonatomic, assign) BOOL clipboardServerStarted;
 @end
@@ -47,7 +49,10 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
     (void)launchOptions;
 
     self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
-    self.backgroundServiceScheduler = [[SCBackgroundServiceScheduler alloc] initWithSupervisor:self.serviceSupervisor];
+    self.licenseLifecycleCoordinator = [SCLicenseLifecycleCoordinator sharedCoordinator];
+    self.backgroundServiceScheduler = [[SCBackgroundServiceScheduler alloc]
+        initWithSupervisor:self.serviceSupervisor
+        licenseCoordinator:self.licenseLifecycleCoordinator];
     [self.backgroundServiceScheduler registerTasks];
 
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
@@ -83,7 +88,12 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
                                              selector:@selector(requestStreamServiceRestart:)
                                                  name:@"TLinkRestartStreamService"
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(licenseLifecycleDidChange:)
+                                                 name:SCLicenseLifecycleDidChangeNotification
+                                               object:nil];
     [self ensureStreamServiceForReason:@"launch" background:NO];
+    [self.licenseLifecycleCoordinator handleApplicationLaunch];
     [self.backgroundServiceScheduler scheduleRecoveryTasksForReason:@"app_launch"];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
@@ -103,9 +113,20 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 {
     (void)application;
     [self ensureStreamServiceForReason:@"active" background:NO];
+    [self.licenseLifecycleCoordinator handleApplicationDidBecomeActive];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
     [self startVisualFeedbackMonitor];
+}
+
+- (void)licenseLifecycleDidChange:(NSNotification *)notification
+{
+    NSString *reason = [notification.userInfo[@"reason"] isKindOfClass:[NSString class]]
+        ? notification.userInfo[@"reason"]
+        : @"";
+    if (reason.length == 0) return;
+    NSLog(@"[StreamControl][License] state changed reason=%@; ensuring streamd without restart", reason);
+    [self ensureStreamServiceForReason:[@"license_" stringByAppendingString:reason] background:NO];
 }
 
 - (void)applicationWillResignActive:(UIApplication *)application

@@ -12,8 +12,9 @@ TrollStore runtime.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
 - Script runtime: task `19/20` JavaScriptCore with a rootfull compatibility facade for common `device.*` APIs, `runTask`/task bridge, normalized storage responses, shared rootfull/TrollStore `device.openFile` handles, keyboard wrappers, color/frame/image/OCR wrappers, and app/process wrappers.
-- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=17`; the app replaces a responding process when its version is stale, its executable path is no longer resolvable, or it belongs to an older app bundle, then starts the bundled binary through `privhelper`. OCR workers, license config, and helper commands also resolve the currently installed bundle so a TrollStore reinstall does not leave them pointing at a removed container.
+- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=18`; the app replaces a responding process when its version is stale, its executable path is no longer resolvable, or it belongs to an older app bundle, then starts the bundled binary through `privhelper`. OCR workers, license config, and helper commands also resolve the currently installed bundle so a TrollStore reinstall does not leave them pointing at a removed container.
 - License MVP: Settings > License activates a Cloudflare Worker lease using a Secure Enclave P-256 device key with a `ThisDeviceOnly` Keychain fallback. Task `75` returns signed-lease status and task `76` forces a fresh check. `streamd`, H264 accepts, and sensitive `privhelper` commands enforce feature access when the release is built with license enforcement enabled. Initial test builds remain in observe mode.
+- License lifecycle: `LicenseLifecycleCoordinator` refreshes a valid lease inside its final six hours and refreshes `offline_grace` immediately on foreground/BGTask triggers. Requests are single-flight with persisted exponential backoff and jitter at `/var/mobile/Library/TLinkauto/runtime/license_lifecycle.plist`. Activation, refresh, deactivate, and local removal invalidate app/streamd state through task `76` plus a Darwin signal; they do not restart `streamd`. Settings > License exposes server-side device deactivation separately from local recovery removal.
 - Respring: Settings exposes a destructive-confirmation Respring Device action backed by task `74confirm` and `privhelper --respring`. The helper requires effective UID 0, validates the SpringBoard process name/path, sends SIGTERM, and only falls back to SIGKILL if the validated original PID remains alive.
 - Update recovery: task `60` reports `launch_executable_path`, `capabilities.installedBundlePath`, `capabilities.resolvedStreamdPath`, and `capabilities.resolvedPrivhelperPath`. These paths should all belong to the currently installed `StreamControl.app`; opening the app replaces a daemon launched from an older TrollStore container.
 - Color compatibility: frame and non-frame point tables accept both rootfull `x,,y,,r,,g,,b` entries and facade `x,y,r,g,b` entries.
@@ -52,7 +53,7 @@ $json.capabilities.backgroundAutoStartMode
 $json.background_service | Format-List
 ```
 
-Expected immediately after first launch: service version `16`, both
+Expected immediately after first launch: service version `18`, both
 `refresh_registered` and `processing_registered` are true, and both submit
 results are true. A later `last_fired_at_ms` plus `last_result=success` proves
 that iOS actually launched a handler; submit success alone does not prove a
@@ -60,6 +61,25 @@ post-reboot launch. Do not force-quit StreamControl before this test. Reboot,
 unlock once, then probe port 6000 periodically because iOS does not promise an
 exact execution time. The same state is visible at Settings > Background
 Service Status and Settings > Export Diagnostics.
+
+License lifecycle check (activate from Settings > License, without pressing
+Restart streamd):
+
+```powershell
+$raw = Invoke-TLinkTask -HostIP $iphoneIP -Task "60"
+$b64 = ($raw -replace '^0;;', '').Trim()
+$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) | ConvertFrom-Json
+$json.service_version
+$json.license | Format-List
+$json.license_lifecycle | Format-List
+Invoke-TLinkTask -HostIP $iphoneIP -Task "75"
+```
+
+Expected: service version `18`, activation becomes effective without a manual
+restart, `last_change_reason=activation`, and `streamd_invalidate_response`
+starts with `0;;`. Use a test Worker with a short `LEASE_SECONDS` value to
+exercise the six-hour refresh window and backoff. `Deactivate This Device`
+must change task `75` to `not_activated` and release the Worker device slot.
 
 ```powershell
 Invoke-TLinkTask -HostIP $iphoneIP -Task "97"

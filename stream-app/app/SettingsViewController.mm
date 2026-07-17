@@ -1,5 +1,6 @@
 #import "SettingsViewController.h"
 #import "LicenseManager.h"
+#import "LicenseLifecycleCoordinator.h"
 #import "LicenseViewController.h"
 #import "TLinkSocketClient.h"
 #import <Photos/Photos.h>
@@ -55,6 +56,12 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
     _resultView.font = [UIFont fontWithName:@"Menlo" size:11.0] ?: [UIFont systemFontOfSize:11.0];
     _resultView.text = _debugMode ? @"Diagnostics will appear here." : @"Service status will appear here.";
     self.tableView.tableFooterView = _resultView;
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [self.tableView reloadData];
 }
 
 - (void)loadConfig
@@ -190,6 +197,8 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
          kTLinkBackgroundSchedulerDiagnosticsPath, backgroundScheduler];
         NSDictionary *licenseStatus = [[SCLicenseManager sharedManager] localStatus] ?: @{};
         [report appendFormat:@"license_status: %@\n\n", licenseStatus];
+        NSDictionary *licenseLifecycle = [[SCLicenseLifecycleCoordinator sharedCoordinator] diagnostics] ?: @{};
+        [report appendFormat:@"license_lifecycle: %@\n\n", licenseLifecycle];
 
         NSArray<NSString *> *lines = @[@"97\n", @"60\n", @"75\n", @"98\n"];
         NSArray<NSString *> *labels = @[@"task97_capability", @"task60_status", @"task75_license", @"task98_capture_probe"];

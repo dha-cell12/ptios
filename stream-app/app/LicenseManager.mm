@@ -46,6 +46,15 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
     return value;
 }
 
+- (NSString *)diagnosticMessageForError:(NSError *)error fallback:(NSString *)fallback
+{
+    if (!error) return fallback ?: @"license_error";
+    return [NSString stringWithFormat:@"domain=%@ code=%ld message=%@",
+            error.domain ?: @"unknown",
+            (long)error.code,
+            error.localizedDescription ?: fallback ?: @"license_error"];
+}
+
 - (NSData *)deviceKeyTagData
 {
     return [TLinkLicenseDeviceKeyTag() dataUsingEncoding:NSUTF8StringEncoding];
@@ -283,7 +292,8 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
         completion:^(NSDictionary *challengeResponse, NSError *challengeError) {
         if (challengeError) {
             CFRelease(privateKey);
-            if (completion) completion(NO, challengeError.localizedDescription);
+            if (completion) completion(NO, [self diagnosticMessageForError:challengeError
+                                                                   fallback:@"license_challenge_failed"]);
             return;
         }
         NSString *challenge = [challengeResponse[@"challenge"] isKindOfClass:[NSString class]] ? challengeResponse[@"challenge"] : @"";
@@ -311,7 +321,8 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
                   }
             completion:^(NSDictionary *activateResponse, NSError *activateError) {
             if (activateError) {
-                if (completion) completion(NO, activateError.localizedDescription);
+                if (completion) completion(NO, [self diagnosticMessageForError:activateError
+                                                                       fallback:@"license_activation_failed"]);
                 return;
             }
             NSError *saveError = nil;
@@ -364,12 +375,67 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
               }
         completion:^(NSDictionary *response, NSError *networkError) {
         if (networkError) {
-            if (completion) completion(NO, networkError.localizedDescription);
+            if (completion) completion(NO, [self diagnosticMessageForError:networkError
+                                                                   fallback:@"license_refresh_failed"]);
             return;
         }
         NSError *saveError = nil;
         BOOL saved = [self saveLease:response[@"lease"] error:&saveError];
         if (completion) completion(saved, saved ? @"license_refreshed" : (saveError.localizedDescription ?: @"license_refresh_save_failed"));
+    }];
+}
+
+- (void)deactivateLeaseWithCompletion:(void (^)(BOOL success, NSString *message))completion
+{
+    NSData *data = [NSData dataWithContentsOfFile:TLinkLicenseLeasePath()];
+    NSDictionary *lease = data.length > 0
+        ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]
+        : nil;
+    if (![lease isKindOfClass:[NSDictionary class]]) {
+        if (completion) completion(NO, @"license_lease_missing");
+        return;
+    }
+    NSString *payload = [lease[@"payload"] isKindOfClass:[NSString class]] ? lease[@"payload"] : @"";
+    SecKeyRef privateKey = [self copyExistingDevicePrivateKey];
+    if (!privateKey || payload.length == 0) {
+        if (privateKey) CFRelease(privateKey);
+        if (completion) completion(NO, @"license_device_private_key_or_payload_missing");
+        return;
+    }
+    CFErrorRef signError = NULL;
+    NSData *deviceSignature = CFBridgingRelease(SecKeyCreateSignature(
+        privateKey,
+        kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+        (__bridge CFDataRef)[payload dataUsingEncoding:NSUTF8StringEncoding],
+        &signError));
+    CFRelease(privateKey);
+    if (!deviceSignature) {
+        NSString *message = signError
+            ? [(__bridge NSError *)signError localizedDescription]
+            : @"license_deactivate_sign_failed";
+        if (signError) CFRelease(signError);
+        if (completion) completion(NO, message);
+        return;
+    }
+    if (signError) CFRelease(signError);
+
+    [self postPath:@"/v1/deactivate"
+              body:@{
+                  @"lease": lease,
+                  @"device_signature": [self base64URLEncode:deviceSignature],
+              }
+        completion:^(NSDictionary *response, NSError *networkError) {
+        (void)response;
+        if (networkError) {
+            if (completion) completion(NO, [self diagnosticMessageForError:networkError
+                                                                   fallback:@"license_deactivate_failed"]);
+            return;
+        }
+        NSError *removeError = nil;
+        BOOL removed = [self removeLocalLease:&removeError];
+        if (completion) completion(removed,
+                                   removed ? @"license_device_deactivated"
+                                           : (removeError.localizedDescription ?: @"license_local_lease_remove_failed"));
     }];
 }
 

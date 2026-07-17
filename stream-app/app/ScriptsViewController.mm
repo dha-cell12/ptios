@@ -4,6 +4,7 @@
 #import "ScriptEditorViewController.h"
 #import "ScriptLogViewController.h"
 #import "TLinkSocketClient.h"
+#import "../../shared/TLinkLicenseVerifier.h"
 
 static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scripts";
 
@@ -1041,6 +1042,15 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)playScript:(SCScriptEntry *)entry
 {
+    NSString *licenseError = nil;
+    if (!TLinkLicenseFeatureAllowed(@"script", &licenseError)) {
+        NSDictionary *status = TLinkLicenseStatusDictionary();
+        NSString *message = [NSString stringWithFormat:@"Script license denied.\nstate=%@\nerror=%@",
+                             status[@"state"] ?: @"invalid",
+                             licenseError ?: status[@"error"] ?: @"license_required"];
+        [self showMessageWithTitle:@"License Required" message:message];
+        return;
+    }
     [self showStatus:[NSString stringWithFormat:@"Starting %@...", entry.name ?: entry.path.lastPathComponent]];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"TLinkVisualFeedbackNeedsPoll" object:nil];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{

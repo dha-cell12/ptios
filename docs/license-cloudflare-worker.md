@@ -18,6 +18,12 @@ targets are documented separately in
   feature list, public-key hash, and local private-key possession.
 - Refresh requests are also signed by the device key. Copying the lease and
   public-key file to another device is insufficient.
+- The app refreshes automatically when a valid lease has at most six hours
+  remaining or enters offline grace. Foreground and BGTask triggers share one
+  in-flight request and persisted exponential backoff.
+- `Deactivate This Device` signs `/v1/deactivate`, revokes that registration,
+  releases its slot, and only then removes the local lease. `Remove Local
+  Lease` is a recovery action and does not release a server slot.
 
 This raises the cost of casual copying and server emulation. It cannot make a
 client binary impossible to patch, so enforcement is deliberately repeated in

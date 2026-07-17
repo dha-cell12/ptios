@@ -1,4 +1,5 @@
 #import "BackgroundServiceScheduler.h"
+#import "LicenseLifecycleCoordinator.h"
 #import "StreamSupervisor.h"
 #import <BackgroundTasks/BackgroundTasks.h>
 
@@ -11,6 +12,7 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
 
 @interface SCBackgroundServiceScheduler ()
 @property(nonatomic, strong) SCStreamSupervisor *supervisor;
+@property(nonatomic, strong) SCLicenseLifecycleCoordinator *licenseCoordinator;
 @property(nonatomic, assign) BOOL refreshRegistered;
 @property(nonatomic, assign) BOOL processingRegistered;
 - (void)scheduleRefreshForReason:(NSString *)reason;
@@ -21,10 +23,12 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
 @implementation SCBackgroundServiceScheduler
 
 - (instancetype)initWithSupervisor:(SCStreamSupervisor *)supervisor
+                 licenseCoordinator:(SCLicenseLifecycleCoordinator *)licenseCoordinator
 {
     self = [super init];
     if (self) {
         _supervisor = supervisor;
+        _licenseCoordinator = licenseCoordinator;
     }
     return self;
 }
@@ -172,17 +176,31 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
     };
 
     task.expirationHandler = ^{
-        finish(NO, @"ios_expired_task_before_streamd_probe_completed");
+        finish(NO, @"ios_expired_task_before_license_refresh_and_streamd_probe_completed");
     };
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTLinkTaskTimeout * NSEC_PER_SEC)),
                    dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        finish(NO, @"streamd_ensure_timeout_22s");
+        finish(NO, @"license_refresh_or_streamd_ensure_timeout_22s");
     });
 
-    [self.supervisor ensureServiceWithCompletion:^(BOOL running, NSString *detail) {
-        finish(running, detail ?: @"streamd_ensure_completed_without_detail");
-    }];
+    void (^ensureService)(BOOL, NSString *) = ^(BOOL licenseSuccess, NSString *licenseDetail) {
+        [weakSelf.supervisor ensureServiceWithCompletion:^(BOOL running, NSString *detail) {
+            NSString *combined = [NSString stringWithFormat:@"license=%@ streamd=%@",
+                                  licenseDetail ?: @"unknown",
+                                  detail ?: @"streamd_ensure_completed_without_detail"];
+            [weakSelf updateDiagnostics:@{
+                @"last_license_result": licenseSuccess ? @"success_or_skipped" : @"failed",
+                @"last_license_detail": licenseDetail ?: @"",
+            }];
+            finish(licenseSuccess && running, combined);
+        }];
+    };
+    if (self.licenseCoordinator) {
+        [self.licenseCoordinator performBackgroundRefreshWithCompletion:ensureService];
+    } else {
+        ensureService(YES, @"license_coordinator_unavailable_skipped");
+    }
 }
 
 @end

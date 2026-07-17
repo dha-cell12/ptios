@@ -103,6 +103,8 @@ jobs:
           test -f shared/TLinkLicenseVerifier.h
           test -f shared/TLinkLicenseVerifier.mm
           test -f stream-app/app/LicenseManager.mm
+          test -f stream-app/app/LicenseLifecycleCoordinator.h
+          test -f stream-app/app/LicenseLifecycleCoordinator.mm
           test -f stream-app/app/LicenseViewController.mm
           test -f stream-app/app/LicenseConfig.plist
           test -f license-worker/src/index.js
@@ -159,12 +161,26 @@ jobs:
           grep -q 'ensureStreamServiceForReason' stream-app/app/AppDelegate.mm
           grep -q 'SCBackgroundServiceScheduler' stream-app/app/AppDelegate.mm
           grep -q 'BackgroundServiceScheduler.mm' stream-app/app/Makefile
+          grep -q 'LicenseLifecycleCoordinator.mm' stream-app/app/Makefile
           grep -q 'BackgroundTasks' stream-app/app/Makefile
           grep -q 'BGTaskSchedulerPermittedIdentifiers' stream-app/app/Info.plist
           grep -q 'com.tlinkauto.streamcontrol.refresh' stream-app/app/Info.plist
           grep -q 'com.tlinkauto.streamcontrol.processing' stream-app/app/Info.plist
           grep -q 'best_effort_bgtaskscheduler_after_first_launch' stream-app/app/BackgroundServiceScheduler.mm
+          grep -q 'performBackgroundRefreshWithCompletion' stream-app/app/BackgroundServiceScheduler.mm
+          grep -q 'performBackgroundRefreshWithCompletion' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'foreground_bg_single_flight_backoff_v1' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'next_attempt_at_ms' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'requestTask:76' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'com.tlinkauto.license.changed' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'handleApplicationDidBecomeActive' stream-app/app/AppDelegate.mm
+          grep -q 'licenseCoordinator:self.licenseLifecycleCoordinator' stream-app/app/AppDelegate.mm
+          grep -q '/v1/deactivate' stream-app/app/LicenseManager.mm
+          grep -q 'Deactivate This Device' stream-app/app/LicenseViewController.mm
+          grep -q 'Remove Local Lease (Recovery)' stream-app/app/LicenseViewController.mm
+          grep -q 'TLinkLicenseFeatureAllowed(@"script"' stream-app/app/ScriptsViewController.mm
           grep -q 'background_service_scheduler.plist' stream-app/app/SettingsViewController.mm
+          grep -q 'license_lifecycle' stream-app/streamd/POCSocketServer.mm
           grep -q 'task75_license' stream-app/app/SettingsViewController.mm
           grep -q 'background_service' stream-app/streamd/POCSocketServer.mm
           grep -q 'ensureServiceWithCompletion' stream-app/app/StreamSupervisor.mm
@@ -195,7 +211,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=17' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=18' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -229,8 +245,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=17"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @17' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=18"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @18' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"streamd")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"privhelper")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkInstalledApplicationBundlePath' shared/TLinkLicenseVerifier.mm

@@ -7,9 +7,13 @@
   `docs/license-task-policy.md` va `scripts/check-license-task-policy.mjs`.
 - Phase 1: **da trien khai**. Worker co validation, challenge one-time,
   deactivate/reactivate, reset coherent, admin update, stable JSON errors va
-  test lifecycle doc lap. Con device smoke test tren Worker da deploy truoc khi
-  chuyen sang Phase 2.
-- Phase 2-6: chua trien khai trong dot nay.
+  test lifecycle doc lap. Con device smoke test tren Worker da deploy truoc
+  release gate.
+- Phase 2: **da trien khai**. App co `LicenseLifecycleCoordinator`, foreground
+  va BGTask refresh policy, single-flight, backoff+jitter, diagnostics,
+  deactivate UI, script preflight gate va task `76` sync khong restart daemon.
+  Con device validation cho auto-refresh/offline/backoff truoc Phase 3.
+- Phase 3-6: chua trien khai trong dot nay.
 
 ## 1. Muc tieu
 
