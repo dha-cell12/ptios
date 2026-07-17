@@ -352,4 +352,21 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
     return removed;
 }
 
+- (BOOL)repairDevicePublicKey:(NSError **)error
+{
+    @synchronized (self) {
+        if (self.requestInFlight) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"TLinkLicense"
+                                             code:409
+                                         userInfo:@{NSLocalizedDescriptionKey: @"license_request_in_progress"}];
+            }
+            return NO;
+        }
+    }
+    BOOL repaired = [self.manager repairDevicePublicKey:error];
+    if (repaired) [self publishLicenseChange:@"repair_device_public_key"];
+    return repaired;
+}
+
 @end

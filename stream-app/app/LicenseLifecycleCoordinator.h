@@ -18,5 +18,6 @@ typedef void (^SCLicenseLifecycleCompletion)(BOOL success, NSString *message);
 - (void)refreshManuallyWithCompletion:(SCLicenseLifecycleCompletion)completion;
 - (void)deactivateWithCompletion:(SCLicenseLifecycleCompletion)completion;
 - (BOOL)removeLocalLease:(NSError **)error;
+- (BOOL)repairDevicePublicKey:(NSError **)error;
 
 @end

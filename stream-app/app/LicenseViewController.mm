@@ -60,9 +60,9 @@
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    if (section == 0) return 11;
+    if (section == 0) return 14;
     if (section == 1) return 1;
-    return 4;
+    return 5;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
@@ -124,7 +124,8 @@
     if (indexPath.section == 0) {
         NSArray *labels = @[@"State", @"License", @"Features", @"Expires", @"Offline Until",
                             @"Last Attempt", @"Last Success", @"Next Attempt", @"Enforcement",
-                            @"Device Key", @"Device Proof"];
+                            @"Device Key", @"Device Proof", @"Private Key", @"Public Key",
+                            @"Recovery"];
         cell.textLabel.text = labels[(NSUInteger)indexPath.row];
         switch (indexPath.row) {
             case 0: cell.detailTextLabel.text = _status[@"state"] ?: @"unknown"; break;
@@ -142,6 +143,9 @@
             case 8: cell.detailTextLabel.text = [_status[@"enforcement_enabled"] boolValue] ? @"On" : @"Observe"; break;
             case 9: cell.detailTextLabel.text = _status[@"device_key_mode"] ?: @"none"; break;
             case 10: cell.detailTextLabel.text = [_status[@"device_key_proof"] boolValue] ? @"Verified" : @"Unavailable"; break;
+            case 11: cell.detailTextLabel.text = [_status[@"device_private_key_present"] boolValue] ? @"Present" : @"Missing"; break;
+            case 12: cell.detailTextLabel.text = [_status[@"device_public_key_present"] boolValue] ? @"Present" : @"Missing"; break;
+            case 13: cell.detailTextLabel.text = _status[@"recovery_action"] ?: @"none"; break;
             default: break;
         }
         return cell;
@@ -152,14 +156,16 @@
         return cell;
     }
 
-    NSArray *actions = @[@"Activate", @"Refresh Lease", @"Deactivate This Device", @"Remove Local Lease (Recovery)"];
+    NSArray *actions = @[@"Activate", @"Refresh Lease", @"Deactivate This Device",
+                         @"Repair Device Binding", @"Remove Local Lease (Recovery)"];
     cell.textLabel.text = actions[(NSUInteger)indexPath.row];
     cell.textLabel.textAlignment = NSTextAlignmentCenter;
     BOOL needsLease = indexPath.row == 1 || indexPath.row == 2;
-    BOOL enabled = !_requestInFlight && (!needsLease || [_status[@"licensed"] boolValue]);
+    BOOL repairAvailable = indexPath.row != 3 || [_status[@"device_private_key_present"] boolValue];
+    BOOL enabled = !_requestInFlight && repairAvailable && (!needsLease || [_status[@"licensed"] boolValue]);
     cell.selectionStyle = enabled ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
     if (!enabled) cell.textLabel.textColor = [UIColor tertiaryLabelColor];
-    if (enabled && (indexPath.row == 2 || indexPath.row == 3)) cell.textLabel.textColor = [UIColor systemRedColor];
+    if (enabled && (indexPath.row == 2 || indexPath.row == 4)) cell.textLabel.textColor = [UIColor systemRedColor];
     return cell;
 }
 
@@ -169,6 +175,11 @@
     if (section != 0) return nil;
     NSString *error = [_lifecycle[@"last_error"] isKindOfClass:[NSString class]] ? _lifecycle[@"last_error"] : @"";
     NSString *decision = [_lifecycle[@"last_decision"] isKindOfClass:[NSString class]] ? _lifecycle[@"last_decision"] : @"";
+    NSDictionary *recovery = [_status[@"recovery"] isKindOfClass:[NSDictionary class]] ? _status[@"recovery"] : @{};
+    if (recovery.count > 0) {
+        return [NSString stringWithFormat:@"Recovery: %@. Reactivate the license after reviewing the quarantined lease.",
+                recovery[@"reason"] ?: @"license_data_quarantined"];
+    }
     if (error.length > 0) return [NSString stringWithFormat:@"Last refresh error: %@", error];
     return decision.length > 0 ? [NSString stringWithFormat:@"Lifecycle: %@", decision] : nil;
 }
@@ -232,6 +243,11 @@
             }];
         }]];
         [self presentViewController:alert animated:YES completion:nil];
+    } else if (indexPath.row == 3) {
+        NSError *error = nil;
+        BOOL ok = [coordinator repairDevicePublicKey:&error];
+        [self reloadStatus];
+        [self showResult:ok ? @"device_public_key_repaired" : error.localizedDescription success:ok];
     } else {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Remove Local Lease"
                                                                        message:@"Recovery only. This does not release the device slot on the license server."

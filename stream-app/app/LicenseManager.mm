@@ -3,6 +3,7 @@
 #import <Security/Security.h>
 
 static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TLinkauto/license/device_key_mode";
+static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Library/TLinkauto/license/recovery.plist";
 
 @implementation SCLicenseManager
 
@@ -23,6 +24,25 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
                                                encoding:NSUTF8StringEncoding
                                                   error:nil];
     status[@"device_key_mode"] = [mode stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"none";
+    SecKeyRef privateKey = [self copyExistingDevicePrivateKey];
+    BOOL privateKeyPresent = privateKey != nil;
+    if (privateKey) CFRelease(privateKey);
+    BOOL publicKeyPresent = [[NSFileManager defaultManager] fileExistsAtPath:TLinkLicenseDevicePublicKeyPath()];
+    BOOL leasePresent = [[NSFileManager defaultManager] fileExistsAtPath:TLinkLicenseLeasePath()];
+    status[@"device_private_key_present"] = @(privateKeyPresent);
+    status[@"device_public_key_present"] = @(publicKeyPresent);
+    status[@"lease_present"] = @(leasePresent);
+    BOOL deviceMismatch = [status[@"state"] isEqualToString:@"device_mismatch"];
+    if (privateKeyPresent && (!publicKeyPresent || deviceMismatch)) {
+        status[@"recovery_action"] = @"repair_device_public_key";
+    } else if (leasePresent && !privateKeyPresent) {
+        status[@"recovery_action"] = @"deactivate_old_device_or_admin_reset";
+    } else if ([status[@"recovery"] isKindOfClass:[NSDictionary class]] &&
+               [status[@"recovery"] count] > 0) {
+        status[@"recovery_action"] = @"reactivate_after_quarantine";
+    } else {
+        status[@"recovery_action"] = @"none";
+    }
     return status;
 }
 
@@ -49,6 +69,19 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
 - (NSString *)diagnosticMessageForError:(NSError *)error fallback:(NSString *)fallback
 {
     if (!error) return fallback ?: @"license_error";
+    NSString *serverMessage = error.localizedDescription ?: @"";
+    if ([serverMessage isEqualToString:@"device_limit_reached"]) {
+        NSDictionary *server = [error.userInfo[@"server_response"] isKindOfClass:[NSDictionary class]]
+            ? error.userInfo[@"server_response"]
+            : @{};
+        return [NSString stringWithFormat:@"device_limit_reached active=%@ max=%@ deactivate_the_old_device_or_request_an_admin_device_reset",
+                server[@"active_devices"] ?: @"?",
+                server[@"max_devices"] ?: @"?"];
+    }
+    if ([serverMessage isEqualToString:@"device_not_active"] ||
+        [serverMessage isEqualToString:@"device_revoked"]) {
+        return @"device_not_active reactivate_this_device_or_request_an_admin_reset";
+    }
     return [NSString stringWithFormat:@"domain=%@ code=%ld message=%@",
             error.domain ?: @"unknown",
             (long)error.code,
@@ -173,7 +206,13 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
                               withIntermediateDirectories:YES
                                                attributes:nil
                                                     error:nil];
-    [point writeToFile:TLinkLicenseDevicePublicKeyPath() atomically:YES];
+    NSError *writeError = nil;
+    if (![point writeToFile:TLinkLicenseDevicePublicKeyPath() options:NSDataWritingAtomic error:&writeError]) {
+        if (error) *error = writeError ?: [NSError errorWithDomain:@"TLinkLicense"
+                                                              code:12
+                                                          userInfo:@{NSLocalizedDescriptionKey: @"device_public_key_write_failed"}];
+        return nil;
+    }
     NSData *x = [point subdataWithRange:NSMakeRange(1, 32)];
     NSData *y = [point subdataWithRange:NSMakeRange(33, 32)];
     return @{
@@ -237,7 +276,10 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
             NSString *message = [object[@"error"] isKindOfClass:[NSString class]] ? object[@"error"] : @"license_server_error";
             NSError *serverError = [NSError errorWithDomain:@"TLinkLicense"
                                                        code:statusCode
-                                                   userInfo:@{NSLocalizedDescriptionKey: message}];
+                                                   userInfo:@{
+                                                       NSLocalizedDescriptionKey: message,
+                                                       @"server_response": [object isKindOfClass:[NSDictionary class]] ? object : @{},
+                                                   }];
             if (completion) completion(object, serverError);
             return;
         }
@@ -259,7 +301,10 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
                                                attributes:nil
                                                     error:nil];
     BOOL saved = [data writeToFile:TLinkLicenseLeasePath() options:NSDataWritingAtomic error:error];
-    if (saved) TLinkLicenseAdvanceGeneration();
+    if (saved) {
+        [[NSFileManager defaultManager] removeItemAtPath:kTLinkLicenseRecoveryDiagnosticsPath error:nil];
+        TLinkLicenseAdvanceGeneration();
+    }
     return saved;
 }
 
@@ -445,6 +490,38 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
     BOOL removed = [[NSFileManager defaultManager] removeItemAtPath:TLinkLicenseLeasePath() error:error];
     if (removed) TLinkLicenseAdvanceGeneration();
     return removed;
+}
+
+- (BOOL)repairDevicePublicKey:(NSError **)error
+{
+    SecKeyRef privateKey = [self copyExistingDevicePrivateKey];
+    if (!privateKey) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"TLinkLicense"
+                                         code:40
+                                     userInfo:@{NSLocalizedDescriptionKey: @"device_private_key_missing_deactivate_or_admin_reset_required"}];
+        }
+        return NO;
+    }
+    NSData *before = [NSData dataWithContentsOfFile:TLinkLicenseDevicePublicKeyPath()];
+    NSError *publicError = nil;
+    NSDictionary *jwk = [self devicePublicJWKForPrivateKey:privateKey error:&publicError];
+    CFRelease(privateKey);
+    if (![jwk isKindOfClass:[NSDictionary class]]) {
+        if (error) *error = publicError;
+        return NO;
+    }
+    NSData *after = [NSData dataWithContentsOfFile:TLinkLicenseDevicePublicKeyPath()];
+    if (after.length != 65) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"TLinkLicense"
+                                         code:41
+                                     userInfo:@{NSLocalizedDescriptionKey: @"device_public_key_repair_verification_failed"}];
+        }
+        return NO;
+    }
+    if (![before isEqualToData:after]) TLinkLicenseAdvanceGeneration();
+    return YES;
 }
 
 @end

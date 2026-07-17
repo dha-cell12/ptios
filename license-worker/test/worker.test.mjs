@@ -382,6 +382,9 @@ test("device limit, deactivate and same-key reactivation have coherent slots", a
   const secondActivation = (await activate(env, second)).activation;
   assert.equal(secondActivation.response.status, 409);
   assert.equal(secondActivation.json.error, "device_limit_reached");
+  assert.equal(secondActivation.json.recovery, "deactivate_old_device_or_admin_reset");
+  assert.equal(secondActivation.json.active_devices, 1);
+  assert.equal(secondActivation.json.max_devices, 1);
 
   const deactivated = await authenticatedCall(env, "/v1/deactivate", firstActivation.json.lease, first.pair.privateKey);
   assert.equal(deactivated.response.status, 200);

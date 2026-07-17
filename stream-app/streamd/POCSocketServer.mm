@@ -5676,6 +5676,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"h264LicenseRecheckSeconds": @5,
         @"scriptLicenseHeartbeatSeconds": @1,
         @"licenseGeneration": licenseStatus[@"license_generation"] ?: @0,
+        @"licenseRecovery": @(YES),
+        @"licenseCorruptLeaseQuarantine": @(YES),
+        @"licenseDevicePublicKeyRepair": @(YES),
+        @"licenseClockSkewToleranceSeconds": licenseStatus[@"clock_skew_tolerance_seconds"] ?: @60,
         @"licenseEnforcement": licenseStatus[@"enforcement_enabled"] ?: @NO,
         @"licenseEffectiveAccess": licenseStatus[@"effective_access"] ?: @NO,
         @"licenseMode": [licenseStatus[@"enforcement_enabled"] boolValue]
@@ -5747,7 +5751,7 @@ static NSData *TLinkHandleHelloStatus(void)
     NSDictionary *payload = @{
         @"runtime": @"trollstore",
         @"service": @"streamd",
-        @"service_version": @20,
+        @"service_version": @21,
         @"license_contract_version": @1,
         @"license_generation": licenseStatus[@"license_generation"] ?: @0,
         @"license_last_checked_at_ms": licenseStatus[@"last_checked_at_ms"] ?: @0,
@@ -7856,7 +7860,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     if (taskType == 97) {
         NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastFixedCenter,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,backgroundPositionedToastOverlay,trueBootAutoStart unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_positioned_overlay_background_cfusernotification_fixed_center toast=foreground_positioned_background_fixed_center_limited_on_trollstore dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
         NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
-        cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=20"];
+        cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=21"];
         cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,90"];
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
@@ -7873,6 +7877,11 @@ static NSData *TLinkHandleTaskLine(const char *line)
             [licenseStatus[@"enforcement_enabled"] boolValue] ? @"signed_lease_p256_enforced" : @"signed_lease_p256_observe",
             licenseStatus[@"state"] ?: @"unknown",
             [licenseStatus[@"effective_access"] boolValue] ? @"allowed" : @"denied"];
+        NSDictionary *licenseRecovery = [licenseStatus[@"recovery"] isKindOfClass:[NSDictionary class]]
+            ? licenseStatus[@"recovery"]
+            : @{};
+        cap = [cap stringByAppendingFormat:@" licenseRecovery=%@ licenseDeviceRepair=public_key_from_keychain serviceRecovery=replace_old_daemon_v21",
+            licenseRecovery.count > 0 ? (licenseRecovery[@"state"] ?: @"required") : @"ready"];
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);

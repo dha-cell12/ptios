@@ -29,8 +29,8 @@ function jsonResponse(value, status = 200) {
   });
 }
 
-function errorResponse(code, status) {
-  return jsonResponse({ ok: false, error: code }, status);
+function errorResponse(code, status, details = {}) {
+  return jsonResponse({ ok: false, error: code, ...details }, status);
 }
 
 function base64UrlEncode(input) {
@@ -417,8 +417,14 @@ async function handleActivate(request, env) {
     "SELECT * FROM devices WHERE license_id = ? AND device_key_hash = ?",
   ).bind(license.id, deviceHash).first();
   if (!device) {
-    if (await activeDeviceCount(env, license.id) >= Number(license.max_devices || 1)) {
-      return errorResponse("device_limit_reached", 409);
+    const activeDevices = await activeDeviceCount(env, license.id);
+    const maxDevices = Number(license.max_devices || 1);
+    if (activeDevices >= maxDevices) {
+      return errorResponse("device_limit_reached", 409, {
+        recovery: "deactivate_old_device_or_admin_reset",
+        active_devices: activeDevices,
+        max_devices: maxDevices,
+      });
     }
     const deviceId = crypto.randomUUID();
     await database(env).prepare(
@@ -429,8 +435,14 @@ async function handleActivate(request, env) {
     await database(env).prepare("UPDATE devices SET last_seen_at = ?, public_jwk = ? WHERE id = ?")
       .bind(now, JSON.stringify(publicJwk), device.id).run();
   } else {
-    if (await activeDeviceCount(env, license.id) >= Number(license.max_devices || 1)) {
-      return errorResponse("device_limit_reached", 409);
+    const activeDevices = await activeDeviceCount(env, license.id);
+    const maxDevices = Number(license.max_devices || 1);
+    if (activeDevices >= maxDevices) {
+      return errorResponse("device_limit_reached", 409, {
+        recovery: "deactivate_old_device_or_admin_reset",
+        active_devices: activeDevices,
+        max_devices: maxDevices,
+      });
     }
     await database(env).prepare("UPDATE devices SET status = 'active', public_jwk = ?, last_seen_at = ? WHERE id = ?")
       .bind(JSON.stringify(publicJwk), now, device.id).run();

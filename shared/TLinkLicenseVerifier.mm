@@ -21,6 +21,9 @@ static NSString *const kTLinkLicenseDevicePublicKey = @"/var/mobile/Library/TLin
 static NSString *const kTLinkLicenseDeviceKeyTag = @"com.tlinkauto.streamcontrol.license-device-key.v1";
 static NSString *const kTLinkLicenseGeneration = @"/var/mobile/Library/TLinkauto/license/generation";
 static NSString *const kTLinkLicenseGenerationLock = @"/var/mobile/Library/TLinkauto/license/generation.lock";
+static NSString *const kTLinkLicenseQuarantineDirectory = @"/var/mobile/Library/TLinkauto/license/quarantine";
+static NSString *const kTLinkLicenseRecoveryDiagnostics = @"/var/mobile/Library/TLinkauto/license/recovery.plist";
+static const NSTimeInterval kTLinkLicenseClockSkewToleranceSeconds = 60.0;
 static const char *kTLinkLicenseDarwinNotification = "com.tlinkauto.license.changed";
 static NSDictionary *sTLinkLicenseFeatureStatus = nil;
 static NSTimeInterval sTLinkLicenseFeatureStatusAt = 0;
@@ -97,10 +100,11 @@ uint64_t TLinkLicenseAdvanceGeneration(void)
                                                attributes:nil
                                                     error:nil];
     int lockFD = open([kTLinkLicenseGenerationLock fileSystemRepresentation], O_CREAT | O_RDWR, 0666);
-    if (lockFD >= 0) {
-        chmod([kTLinkLicenseGenerationLock fileSystemRepresentation], 0666);
-        flock(lockFD, LOCK_EX);
+    if (lockFD < 0) {
+        return TLinkLicenseGeneration();
     }
+    chmod([kTLinkLicenseGenerationLock fileSystemRepresentation], 0666);
+    flock(lockFD, LOCK_EX);
 
     uint64_t current = TLinkLicenseGeneration();
     uint64_t next = current == UINT64_MAX ? 1 : current + 1;
@@ -110,10 +114,8 @@ uint64_t TLinkLicenseAdvanceGeneration(void)
             encoding:NSUTF8StringEncoding
                error:nil];
 
-    if (lockFD >= 0) {
-        flock(lockFD, LOCK_UN);
-        close(lockFD);
-    }
+    flock(lockFD, LOCK_UN);
+    close(lockFD);
     TLinkLicenseInvalidateCache();
     notify_post(kTLinkLicenseDarwinNotification);
     return written ? next : current;
@@ -455,6 +457,7 @@ static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, 
     NSString *endpoint = [config[@"LicenseEndpoint"] isKindOfClass:[NSString class]] ? config[@"LicenseEndpoint"] : @"";
     NSString *x = [config[@"LicensePublicKeyX"] isKindOfClass:[NSString class]] ? config[@"LicensePublicKeyX"] : @"";
     NSString *y = [config[@"LicensePublicKeyY"] isKindOfClass:[NSString class]] ? config[@"LicensePublicKeyY"] : @"";
+    NSDictionary *recovery = [NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseRecoveryDiagnostics];
     return @{
         @"configured": @(TLinkLicenseConfigValueUsable(endpoint) &&
                           TLinkLicenseConfigValueUsable(x) &&
@@ -469,10 +472,70 @@ static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, 
         @"device_public_key_path": kTLinkLicenseDevicePublicKey,
         @"device_key_proof": @NO,
         @"features": @[],
+        @"clock_skew_tolerance_seconds": @(kTLinkLicenseClockSkewToleranceSeconds),
+        @"recovery": [recovery isKindOfClass:[NSDictionary class]] ? recovery : @{},
         @"license_generation": @(TLinkLicenseGeneration()),
         @"last_checked_at_ms": @((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0)),
         @"source": @"shared_verifier_disk",
     };
+}
+
+static NSString *TLinkQuarantineCorruptLease(NSString *reason)
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:kTLinkLicenseQuarantineDirectory
+  withIntermediateDirectories:YES
+                   attributes:nil
+                        error:nil];
+
+    int lockFD = open([kTLinkLicenseGenerationLock fileSystemRepresentation], O_CREAT | O_RDWR, 0666);
+    if (lockFD < 0) {
+        NSDictionary *lockFailure = @{
+            @"state": @"quarantine_lock_failed",
+            @"reason": reason ?: @"license_corrupt",
+            @"errno": @(errno),
+            @"source": @"shared_verifier",
+        };
+        [lockFailure writeToFile:kTLinkLicenseRecoveryDiagnostics atomically:YES];
+        return @"";
+    }
+    chmod([kTLinkLicenseGenerationLock fileSystemRepresentation], 0666);
+    flock(lockFD, LOCK_EX);
+
+    uint64_t nowMs = (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
+    NSString *destination = [kTLinkLicenseQuarantineDirectory stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"lease-%llu-%d.json.invalid",
+         (unsigned long long)nowMs,
+         (int)getpid()]];
+    BOOL moved = [fm fileExistsAtPath:kTLinkLicenseLease] &&
+        [fm moveItemAtPath:kTLinkLicenseLease toPath:destination error:nil];
+    NSDictionary *diagnostics = @{
+        @"state": moved ? @"quarantined" : @"quarantine_not_needed_or_failed",
+        @"reason": reason ?: @"license_corrupt",
+        @"quarantined_at_ms": @(nowMs),
+        @"quarantine_path": moved ? destination : @"",
+        @"source": @"shared_verifier",
+    };
+    NSDictionary *existingDiagnostics = [NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseRecoveryDiagnostics];
+    if (moved || ![existingDiagnostics isKindOfClass:[NSDictionary class]]) {
+        [diagnostics writeToFile:kTLinkLicenseRecoveryDiagnostics atomically:YES];
+        chmod([kTLinkLicenseRecoveryDiagnostics fileSystemRepresentation], 0666);
+    }
+
+    if (moved) {
+        uint64_t current = TLinkLicenseGeneration();
+        uint64_t next = current == UINT64_MAX ? 1 : current + 1;
+        [[NSString stringWithFormat:@"%llu\n", (unsigned long long)next]
+            writeToFile:kTLinkLicenseGeneration
+              atomically:YES
+                encoding:NSUTF8StringEncoding
+                   error:nil];
+    }
+
+    flock(lockFD, LOCK_UN);
+    close(lockFD);
+    if (moved) notify_post(kTLinkLicenseDarwinNotification);
+    return moved ? destination : @"";
 }
 
 NSDictionary *TLinkLicenseStatusDictionary(void)
@@ -491,6 +554,7 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     if (leaseData.length == 0) return TLinkLicenseFailure(config, @"not_activated", @"license_lease_missing");
     NSDictionary *lease = [NSJSONSerialization JSONObjectWithData:leaseData options:0 error:nil];
     if (![lease isKindOfClass:[NSDictionary class]]) {
+        TLinkQuarantineCorruptLease(@"license_lease_json_invalid");
         return TLinkLicenseFailure(config, @"invalid", @"license_lease_json_invalid");
     }
     NSString *payloadString = [lease[@"payload"] isKindOfClass:[NSString class]] ? lease[@"payload"] : @"";
@@ -506,6 +570,7 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     NSData *payloadData = TLinkBase64URLDecode(payloadString);
     NSData *signatureData = TLinkBase64URLDecode(signatureString);
     if (payloadData.length == 0 || signatureData.length == 0) {
+        TLinkQuarantineCorruptLease(@"license_lease_fields_invalid");
         return TLinkLicenseFailure(config, @"invalid", @"license_lease_fields_invalid");
     }
 
@@ -521,11 +586,13 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     NSString *verifyDescription = verifyError ? [(__bridge NSError *)verifyError localizedDescription] : @"";
     if (verifyError) CFRelease(verifyError);
     if (!signatureValid) {
+        TLinkQuarantineCorruptLease(@"license_signature_invalid");
         return TLinkLicenseFailure(config, @"invalid", verifyDescription.length > 0 ? verifyDescription : @"license_signature_invalid");
     }
 
     NSDictionary *payload = [NSJSONSerialization JSONObjectWithData:payloadData options:0 error:nil];
     if (![payload isKindOfClass:[NSDictionary class]]) {
+        TLinkQuarantineCorruptLease(@"license_payload_json_invalid");
         return TLinkLicenseFailure(config, @"invalid", @"license_payload_json_invalid");
     }
     NSString *product = [payload[@"product"] isKindOfClass:[NSString class]] ? payload[@"product"] : @"";
@@ -558,7 +625,7 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     NSTimeInterval notBefore = [payload[@"not_before"] doubleValue];
     NSTimeInterval expiresAt = [payload[@"expires_at"] doubleValue];
     NSTimeInterval offlineUntil = [payload[@"offline_until"] doubleValue];
-    if (notBefore > 0 && now + 60.0 < notBefore) {
+    if (notBefore > 0 && now + kTLinkLicenseClockSkewToleranceSeconds < notBefore) {
         return TLinkLicenseFailure(config, @"not_yet_valid", @"license_not_before_in_future");
     }
     if (offlineUntil <= 0 || now > offlineUntil) {
@@ -587,6 +654,8 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         @"expires_at": payload[@"expires_at"] ?: @0,
         @"offline_until": payload[@"offline_until"] ?: @0,
         @"features": features,
+        @"clock_skew_tolerance_seconds": @(kTLinkLicenseClockSkewToleranceSeconds),
+        @"recovery": @{},
         @"key_id": lease[@"key_id"] ?: @"",
         @"device_key_hash": expectedDeviceHash,
         @"license_generation": @(TLinkLicenseGeneration()),

@@ -22,7 +22,12 @@
   script recheck moi 1 giay, dong file handle va dung voi
   `license_revoked_during_execution`; scheduler/autolaunch gate lai tai launcher.
   Con device revoke/expiry soak test truoc release gate.
-- Phase 5-6: chua trien khai trong dot nay.
+- Phase 5: **da trien khai**. Shared verifier quarantine lease hong duoi file
+  lock va phat generation signal; app co device-key diagnostics, public-key
+  repair tu private key hien huu, device-limit recovery guidance; clock skew
+  tolerance duoc cong bo; service v21 thay daemon cu sau update. Con fresh
+  install/reinstall/reboot/device-reset matrix tren thiet bi truoc release gate.
+- Phase 6: chua trien khai trong dot nay.
 
 ## 1. Muc tieu
 

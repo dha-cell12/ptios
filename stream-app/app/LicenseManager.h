@@ -9,5 +9,6 @@
 - (void)refreshLeaseWithCompletion:(void (^)(BOOL success, NSString *message))completion;
 - (void)deactivateLeaseWithCompletion:(void (^)(BOOL success, NSString *message))completion;
 - (BOOL)removeLocalLease:(NSError **)error;
+- (BOOL)repairDevicePublicKey:(NSError **)error;
 
 @end

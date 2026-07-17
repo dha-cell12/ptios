@@ -111,10 +111,12 @@ jobs:
           test -f license-worker/test/worker.test.mjs
           test -f license-worker/schema.sql
           test -f license-worker/wrangler.jsonc
+          test -f scripts/check-license-recovery.mjs
           node --check license-worker/src/index.js
           node --check license-worker/scripts/generate-keys.mjs
           node --test license-worker/test/worker.test.mjs
           node scripts/check-license-task-policy.mjs
+          node scripts/check-license-recovery.mjs
           test -f stream-app/app/TLinkSocketClient.mm
           test -f stream-app/app/ScriptsViewController.mm
           test -f stream-app/app/ScriptEditorViewController.mm
@@ -134,8 +136,10 @@ jobs:
           test -f 'stream-app/app/CompatibilityExamples/08 License Heartbeat.js'
           test -f docs/trollstore-runtime-status.md
           test -f docs/license-cloudflare-worker.md
+          test -f docs/license-phase5-device-test.md
           grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
           grep -q 'TLinkauto Cloudflare License MVP' docs/license-cloudflare-worker.md
+          grep -q 'License Phase 5 Device Test' docs/license-phase5-device-test.md
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
           grep -q 'Vision OCR remains deferred' docs/trollstore-runtime-status.md
           grep -q 'refresh_registered' docs/trollstore-runtime-status.md
@@ -212,7 +216,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=20' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=21' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -246,8 +250,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=20"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @20' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=21"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @21' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"streamd")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"privhelper")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkInstalledApplicationBundlePath' shared/TLinkLicenseVerifier.mm
