@@ -608,7 +608,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     BOOL isDir = NO;
     if ([fm fileExistsAtPath:suitePath isDirectory:&isDir] && isDir) {
         NSString *firstScript = [suitePath stringByAppendingPathComponent:@"01 Runtime Storage.tl"];
-        NSString *lastScript = [suitePath stringByAppendingPathComponent:@"07 File Handle.tl"];
+        NSString *lastScript = [suitePath stringByAppendingPathComponent:@"08 License Heartbeat.tl"];
         if ([fm fileExistsAtPath:firstScript] && [fm fileExistsAtPath:lastScript]) return;
     }
 

@@ -15,6 +15,7 @@ list hoac component gate khong con khop nhau.
 | `stream` | H264 accept/stream loop tren `7001-7006`, khong co line task rieng |
 
 Task `10` la legacy fire-and-forget nen co gate rieng trong `POCHandleLine`.
+Moi lan bi deny se tang `license_enforcement.task10_drop_count` trong task `60`.
 Danh sach chinh xac theo tung ID nam trong `license-task-policy.json`, khong nen
 suy dien tu cac range rut gon trong bang nay.
 
@@ -27,7 +28,9 @@ va ping. Them task exempt moi la thay doi contract va phai review rieng.
 ## Component
 
 - `clipboardd`, app OCR bridge va app clipboard bridge can `automation`.
-- H264 can `stream`.
+- H264 can `stream` luc accept va recheck active client moi 5 giay.
+- Script launcher va scheduler can `script`; session dang chay recheck moi 1
+  giay, dong file handle va dung voi `license_revoked_during_execution`.
 - Privhelper open app/URL can `automation`.
 - Privhelper kill app, clear data va respring can `admin`.
 - Shell task can `shell` va van bi local setting `shell.enabled` gate them.

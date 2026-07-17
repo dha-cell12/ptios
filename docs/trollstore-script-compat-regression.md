@@ -48,7 +48,8 @@ Packaged example scripts:
 
 - On first launch after install, the root `Scripts` tab seeds a
   `Compatibility Tests` folder automatically when it is missing. The folder
-  contains seven editable `.tl` bundles covering runtime/storage, file handles, background
+  contains eight editable `.tl` bundles covering runtime/storage, file handles,
+  license heartbeat, background
   clipboard, color/frame, screenshot/image, Tesseract OCR, and
   app/process/shell.
 - In `Scripts`, tap `+` then `Compatibility Suite` only when you want to
@@ -104,6 +105,18 @@ File-handle parity smoke:
 `device.openFile` is bundle-relative and deliberately does not expose
 arbitrary absolute paths. Writable modes cannot modify `.js`, `manifest.json`,
 or `info.plist`. Handles are closed automatically when an evaluation ends.
+
+License heartbeat smoke:
+
+1. Open `Scripts > Compatibility Tests > 08 License Heartbeat.tl` and tap Play.
+2. While it logs one heartbeat per second, revoke/deactivate the lease or
+   remove it from `Settings > License`.
+3. Within about one second, task `60` script status should report
+   `state=license_revoked`, `license_revoked=true`, and
+   `last_error=license_revoked_during_execution`.
+4. The script log must contain `license_revoked_during_execution`; its open
+   file handle is closed by the runtime. Reactivation permits a new run without
+   restarting `streamd`.
 
 Task `249` should contain `clipboard_backend_ready`, `version=12` in its decoded
 diagnostic, and `daemon_direct_write=1` after a successful task `247`. Task

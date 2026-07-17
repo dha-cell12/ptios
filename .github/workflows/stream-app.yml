@@ -131,6 +131,7 @@ jobs:
           test -f 'stream-app/app/CompatibilityExamples/05 OCR.js'
           test -f 'stream-app/app/CompatibilityExamples/06 App Process Shell.js'
           test -f 'stream-app/app/CompatibilityExamples/07 File Handle.js'
+          test -f 'stream-app/app/CompatibilityExamples/08 License Heartbeat.js'
           test -f docs/trollstore-runtime-status.md
           test -f docs/license-cloudflare-worker.md
           grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
@@ -211,7 +212,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=19' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=20' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -245,8 +246,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=19"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @19' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=20"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @20' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"streamd")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"privhelper")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkInstalledApplicationBundlePath' shared/TLinkLicenseVerifier.mm
@@ -269,6 +270,13 @@ jobs:
           grep -Fq 'args:@[@"reload"]' stream-app/app/LicenseLifecycleCoordinator.mm
           grep -q 'generation_action' stream-app/streamd/POCSocketServer.mm
           grep -q 'licenseGenerationSync' stream-app/streamd/POCSocketServer.mm
+          grep -q 'kTLinkLicenseTaskPolicy\[\]' stream-app/streamd/POCSocketServer.mm
+          grep -q 'sTLinkLicenseDropCount++' stream-app/streamd/POCSocketServer.mm
+          grep -q 'license_revoked_during_execution' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkStartScriptLicenseHeartbeat' stream-app/streamd/POCSocketServer.mm
+          grep -q 'component=script_runtime feature=script' stream-app/streamd/POCSocketServer.mm
+          grep -q 'active client closed by license' stream-app/streamd/H264Stream.mm
+          grep -q 'nextLicenseCheck = now + 5.0' stream-app/streamd/H264Stream.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/H264Stream.mm
           grep -q 'TLinkResolveSHA256' shared/TLinkLicenseVerifier.mm
@@ -571,6 +579,7 @@ jobs:
           grep 'Payload/StreamControl.app/CompatibilityExamples/01 Runtime Storage.js' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/06 App Process Shell.js' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/07 File Handle.js' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/CompatibilityExamples/08 License Heartbeat.js' stream-app/packages/StreamControl.tipa.contents.txt
 
           APP="stream-app/app/.theos/_/Applications/StreamControl.app"
           if [ ! -d "$APP" ]; then
@@ -585,6 +594,7 @@ jobs:
           test -f "$APP/CompatibilityExamples/01 Runtime Storage.js"
           test -f "$APP/CompatibilityExamples/06 App Process Shell.js"
           test -f "$APP/CompatibilityExamples/07 File Handle.js"
+          test -f "$APP/CompatibilityExamples/08 License Heartbeat.js"
 
           echo "--- StreamControl entitlements ---"
           ldid -e "$APP/StreamControl" || true

@@ -617,6 +617,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         int desiredBitrate = profile->averageBitrate;
         int currentEncFps = profile->targetFPS;
         double streamSeconds = 0.0;
+        CFAbsoluteTime nextLicenseCheck = CFAbsoluteTimeGetCurrent() + 5.0;
 
         bool running = true;
 
@@ -645,6 +646,19 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
         while (running) {
             @autoreleasepool {
+                CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+                if (now >= nextLicenseCheck) {
+                    nextLicenseCheck = now + 5.0;
+                    NSString *licenseError = nil;
+                    if (!TLinkLicenseFeatureAllowed(@"stream", &licenseError)) {
+                        ZXH264Log("active client closed by license port=%d error=%s",
+                                  profile->port,
+                                  [(licenseError ?: @"license_revoked_during_execution") UTF8String]);
+                        running = false;
+                        break;
+                    }
+                }
+
                 // Thermal-aware FPS throttle (checked periodically).
                 if ((frame % 20) == 0) {
                     desiredFPS = zx_maxFpsForThermalState(profile->targetFPS);

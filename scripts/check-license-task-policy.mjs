@@ -31,17 +31,16 @@ const actualExempt = [...exemptSource.matchAll(/taskType\s*==\s*(\d+)/g)].map((m
 assert.deepEqual(sorted(actualExempt), sorted(policy.exempt_tasks), "exempt task inventory differs from backend");
 
 const featureSource = section(server, "static NSString *TLinkLicenseFeatureForTask", "static NSData *TLinkLicenseDeniedResponse");
+const policyTableSource = section(server, "static const TLinkLicenseTaskPolicyEntry kTLinkLicenseTaskPolicy[]", "static NSString *TLinkLicenseFeatureForTask");
 const actualFeatureByTask = new Map();
-const featureBlocks = featureSource.matchAll(/((?:\s*case\s+\d+\s*:\s*)+)return\s+@\"([^\"]+)\";/g);
-for (const block of featureBlocks) {
-  const feature = block[2];
+for (const match of policyTableSource.matchAll(/\{\s*(\d+)\s*,\s*\"([^\"]+)\"\s*\}/g)) {
+  const task = Number(match[1]);
+  const feature = match[2];
   assert.ok(policy.features.includes(feature), `unknown backend feature: ${feature}`);
-  for (const match of block[1].matchAll(/case\s+(\d+)\s*:/g)) {
-    const task = Number(match[1]);
-    assert.ok(!actualFeatureByTask.has(task), `duplicate backend task policy: ${task}`);
-    actualFeatureByTask.set(task, feature);
-  }
+  assert.ok(!actualFeatureByTask.has(task), `duplicate backend task policy: ${task}`);
+  actualFeatureByTask.set(task, feature);
 }
+assert.ok(featureSource.includes("kTLinkLicenseTaskPolicy"), "task lookup no longer uses the explicit policy table");
 
 const expectedFeatureByTask = new Map();
 for (const [feature, tasks] of Object.entries(policy.task_features)) {
@@ -55,6 +54,17 @@ assert.deepEqual(
   [...actualFeatureByTask.entries()].sort((a, b) => a[0] - b[0]),
   [...expectedFeatureByTask.entries()].sort((a, b) => a[0] - b[0]),
   "task-feature inventory differs from TLinkLicenseFeatureForTask",
+);
+
+for (const task of [31, 72, 74]) {
+  assert.equal(actualFeatureByTask.get(task), "admin", `admin task ${task} escaped the admin feature`);
+}
+for (const task of [13, 71]) {
+  assert.equal(actualFeatureByTask.get(task), "shell", `shell task ${task} escaped the shell feature`);
+}
+assert.ok(
+  !policy.task_features.automation.some((task) => [13, 31, 71, 72, 74].includes(Number(task))),
+  "automation feature must not grant shell or admin tasks",
 );
 
 const dispatchSource = section(server, "static NSData *TLinkHandleTaskLine", "// Handle one complete line");
@@ -83,5 +93,8 @@ for (const component of policy.components) {
   const source = await readFile(resolve(root, component.source), "utf8");
   assert.ok(source.includes(component.evidence), `component policy evidence missing: ${component.component}`);
 }
+
+assert.ok(server.includes("sTLinkLicenseDropCount++"), "legacy task 10 lacks deny diagnostics");
+assert.ok(server.includes("TLinkStartScriptLicenseHeartbeat"), "script runtime lacks license heartbeat");
 
 console.log(`license task policy OK: ${covered.size} tasks, ${policy.components.length} component gates, contract v${policy.license_contract_version}`);

@@ -17,7 +17,12 @@
   verifier lang nghe Darwin notification va so generation theo tung request,
   task `76` ho tro advance/reload, task `60/75/97` co generation diagnostics.
   Con device validation da process truoc Phase 4.
-- Phase 4-6: chua trien khai trong dot nay.
+- Phase 4: **da trien khai**. Task-feature mapping dung explicit C policy table
+  va CI doi chieu inventory; task `10` co drop counter; H264 recheck moi 5 giay;
+  script recheck moi 1 giay, dong file handle va dung voi
+  `license_revoked_during_execution`; scheduler/autolaunch gate lai tai launcher.
+  Con device revoke/expiry soak test truoc release gate.
+- Phase 5-6: chua trien khai trong dot nay.
 
 ## 1. Muc tieu
 

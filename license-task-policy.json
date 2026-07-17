@@ -20,6 +20,30 @@
       "evidence": "TLinkLicenseFeatureAllowed(@\"stream\""
     },
     {
+      "component": "h264_active_session",
+      "feature": "stream",
+      "source": "stream-app/streamd/H264Stream.mm",
+      "evidence": "active client closed by license"
+    },
+    {
+      "component": "script_runtime_start",
+      "feature": "script",
+      "source": "stream-app/streamd/POCSocketServer.mm",
+      "evidence": "component=script_runtime feature=script"
+    },
+    {
+      "component": "script_runtime_heartbeat",
+      "feature": "script",
+      "source": "stream-app/streamd/POCSocketServer.mm",
+      "evidence": "license_revoked_during_execution"
+    },
+    {
+      "component": "scheduler_script_start",
+      "feature": "script",
+      "source": "stream-app/streamd/POCSocketServer.mm",
+      "evidence": "TLinkHandlePlayScript(script)"
+    },
+    {
       "component": "clipboardd",
       "feature": "automation",
       "source": "stream-app/clipboardd/main.mm",

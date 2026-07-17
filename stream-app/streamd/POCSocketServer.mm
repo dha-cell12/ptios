@@ -211,6 +211,9 @@ static uint64_t sTLinkLastAutoLaunchRunMs = 0;
 static NSInteger sTLinkLastAutoLaunchEnabledCount = 0;
 static NSInteger sTLinkLastAutoLaunchStartedCount = 0;
 static NSString *sTLinkLastAutoLaunchResult = @"";
+static uint64_t sTLinkLicenseDropCount = 0;
+static uint64_t sTLinkLicenseLastDropAtMs = 0;
+static NSString *sTLinkLicenseLastDropError = @"";
 static BOOL sTLinkRecordingActive = NO;
 static NSString *sTLinkRecordingBundlePath = @"";
 static NSString *sTLinkRecordingRawPath = @"";
@@ -533,6 +536,9 @@ static NSDictionary *TLinkTapMacroStatusDictionary(void)
 @property(nonatomic, assign) double intervalSeconds;
 @property(nonatomic, assign) double speed;
 @property(nonatomic, assign) BOOL stopRequested;
+@property(nonatomic, assign) BOOL licenseRevoked;
+@property(nonatomic, assign) uint64_t lastLicenseCheckAtMs;
+@property(nonatomic, copy) NSString *licenseRevocationError;
 @property(nonatomic, strong) NSMutableArray<NSString *> *logs;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *fileHandles;
 @property(nonatomic, assign) NSUInteger nextFileHandleId;
@@ -773,11 +779,56 @@ static void TLinkScriptCloseOpenFiles(TLinkScriptSession *session)
     for (TLinkJSFileHandle *handle in openHandles) [handle close];
 }
 
+static BOOL TLinkScriptIsActive(TLinkScriptSession *session);
+
+static void TLinkScriptMarkLicenseRevoked(TLinkScriptSession *session, NSString *detail)
+{
+    if (!session) return;
+    BOOL firstRevocation = NO;
+    @synchronized (session) {
+        if (!session.licenseRevoked) {
+            firstRevocation = YES;
+            session.licenseRevoked = YES;
+            session.stopRequested = YES;
+            session.state = @"stopping";
+            session.licenseRevocationError = detail ?: @"license_required";
+            session.lastError = @"license_revoked_during_execution";
+        }
+    }
+    if (!firstRevocation) return;
+    TLinkScriptCloseOpenFiles(session);
+    TLinkScriptAppendLog(session, [NSString stringWithFormat:@"license_revoked_during_execution %@",
+                                   detail ?: @"license_required"]);
+}
+
+static void TLinkStartScriptLicenseHeartbeat(TLinkScriptSession *session)
+{
+    if (!session || !TLinkScriptIsActive(session) || TLinkScriptStopRequested(session)) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        if (!TLinkScriptIsActive(session) || TLinkScriptStopRequested(session)) return;
+        NSString *licenseError = nil;
+        BOOL allowed = TLinkLicenseFeatureAllowed(@"script", &licenseError);
+        @synchronized (session) {
+            session.lastLicenseCheckAtMs = TLinkNowMs();
+        }
+        if (!allowed) {
+            TLinkScriptMarkLicenseRevoked(session, licenseError);
+            return;
+        }
+        TLinkStartScriptLicenseHeartbeat(session);
+    });
+}
+
 static void TLinkScriptMarkTerminal(TLinkScriptSession *session, NSString *state, NSString *error)
 {
     if (!session) return;
     TLinkScriptCloseOpenFiles(session);
     @synchronized (session) {
+        if (session.licenseRevoked) {
+            state = @"license_revoked";
+            error = @"license_revoked_during_execution";
+        }
         session.state = state ?: @"finished";
         session.endedAtMs = TLinkNowMs();
         session.lastError = error ?: @"";
@@ -1981,6 +2032,9 @@ static NSDictionary *TLinkScriptStatusDictionary(void)
                 @"speed": @(session.speed),
             },
             @"last_error": session.lastError.length > 0 ? session.lastError : (sTLinkLastScriptError ?: @""),
+            @"license_revoked": @(session.licenseRevoked),
+            @"license_revocation_error": session.licenseRevocationError ?: @"",
+            @"last_license_check_at_ms": @(session.lastLicenseCheckAtMs),
             @"last_error_ts": @(sTLinkLastScriptErrorTs),
             @"log_tail": tail,
         };
@@ -2062,6 +2116,14 @@ static void TLinkRunScriptSession(TLinkScriptSession *session)
 
 static NSData *TLinkHandlePlayScript(NSString *body)
 {
+    NSString *licenseError = nil;
+    if (!TLinkLicenseFeatureAllowed(@"script", &licenseError)) {
+        NSDictionary *status = TLinkLicenseStatusDictionary();
+        return TLinkError([NSString stringWithFormat:@"license_required component=script_runtime feature=script state=%@ error=%@",
+                           status[@"state"] ?: @"invalid",
+                           licenseError ?: status[@"error"] ?: @"license_required"]);
+    }
+
     NSString *bundlePath = nil;
     NSString *entryPath = nil;
     NSString *error = nil;
@@ -2095,6 +2157,9 @@ static NSData *TLinkHandlePlayScript(NSString *body)
     session.intervalSeconds = intervalSeconds;
     session.speed = speed;
     session.stopRequested = NO;
+    session.licenseRevoked = NO;
+    session.lastLicenseCheckAtMs = TLinkNowMs();
+    session.licenseRevocationError = @"";
     session.logs = [NSMutableArray array];
     session.fileHandles = [NSMutableDictionary dictionary];
     session.nextFileHandleId = 1;
@@ -2105,6 +2170,7 @@ static NSData *TLinkHandlePlayScript(NSString *body)
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         TLinkRunScriptSession(session);
     });
+    TLinkStartScriptLicenseHeartbeat(session);
 
     return TLinkSuccess([NSString stringWithFormat:@"script_started;;%@;;%@;;repeat=%ld;;interval=%.3f", session.sessionId, entryPath, (long)repeatTimes, intervalSeconds]);
 }
@@ -5605,6 +5671,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"licenseDeviceBound": @(YES),
         @"licenseDeviceKeyProof": licenseStatus[@"device_key_proof"] ?: @NO,
         @"licenseGenerationSync": @(YES),
+        @"licensePolicyMode": @"explicit_table_fail_closed",
+        @"licenseRuntimeRecheck": @(YES),
+        @"h264LicenseRecheckSeconds": @5,
+        @"scriptLicenseHeartbeatSeconds": @1,
         @"licenseGeneration": licenseStatus[@"license_generation"] ?: @0,
         @"licenseEnforcement": licenseStatus[@"enforcement_enabled"] ?: @NO,
         @"licenseEffectiveAccess": licenseStatus[@"effective_access"] ?: @NO,
@@ -5662,13 +5732,22 @@ static NSData *TLinkHandleHelloStatus(void)
         (void)TLinkResolvePidForBundleId(sTLinkLastFrontmostBundleId);
     }
     uint64_t nowMs = TLinkNowMs();
+    NSDictionary *licenseEnforcement = nil;
+    @synchronized (TLinkVisualFeedbackLock()) {
+        licenseEnforcement = @{
+            @"task10_drop_count": @(sTLinkLicenseDropCount),
+            @"last_drop_at_ms": @(sTLinkLicenseLastDropAtMs),
+            @"last_drop_error": sTLinkLicenseLastDropError ?: @"",
+            @"policy_mode": @"explicit_table_fail_closed",
+        };
+    }
     uint64_t frontmostAgeMs = (sTLinkLastFrontmostAtMs > 0 && nowMs >= sTLinkLastFrontmostAtMs)
         ? nowMs - sTLinkLastFrontmostAtMs
         : 0;
     NSDictionary *payload = @{
         @"runtime": @"trollstore",
         @"service": @"streamd",
-        @"service_version": @19,
+        @"service_version": @20,
         @"license_contract_version": @1,
         @"license_generation": licenseStatus[@"license_generation"] ?: @0,
         @"license_last_checked_at_ms": licenseStatus[@"last_checked_at_ms"] ?: @0,
@@ -5685,6 +5764,7 @@ static NSData *TLinkHandleHelloStatus(void)
         },
         @"script": TLinkScriptStatusDictionary(),
         @"license": licenseStatus,
+        @"license_enforcement": licenseEnforcement,
         @"license_lifecycle": licenseLifecycle,
         @"background_service": backgroundService,
         @"recording": TLinkRecordingStatusDictionary(),
@@ -7383,85 +7463,46 @@ static BOOL TLinkLicenseTaskIsExempt(int taskType)
            taskType == 99;
 }
 
+typedef struct {
+    int taskType;
+    const char *feature;
+} TLinkLicenseTaskPolicyEntry;
+
+static const TLinkLicenseTaskPolicyEntry kTLinkLicenseTaskPolicy[] = {
+    {11, "automation"}, {12, "automation"}, {13, "shell"},
+    {14, "automation"}, {15, "automation"}, {16, "automation"},
+    {17, "automation"}, {18, "automation"}, {19, "script"},
+    {20, "script"}, {21, "automation"}, {22, "automation"},
+    {23, "automation"}, {24, "automation"}, {25, "automation"},
+    {26, "automation"}, {27, "automation"}, {28, "automation"},
+    {29, "automation"}, {30, "automation"}, {31, "admin"},
+    {32, "automation"}, {33, "automation"}, {34, "automation"},
+    {35, "automation"}, {36, "script"}, {37, "script"},
+    {38, "script"}, {39, "script"}, {40, "automation"},
+    {41, "script"}, {42, "automation"}, {43, "automation"},
+    {44, "automation"}, {45, "automation"}, {46, "automation"},
+    {47, "automation"}, {48, "automation"}, {49, "automation"},
+    {50, "automation"}, {51, "automation"}, {52, "automation"},
+    {53, "automation"}, {54, "automation"}, {55, "automation"},
+    {56, "automation"}, {57, "automation"}, {58, "automation"},
+    {59, "automation"}, {61, "automation"}, {62, "automation"},
+    {63, "automation"}, {64, "automation"}, {65, "automation"},
+    {66, "automation"}, {67, "automation"}, {68, "automation"},
+    {69, "automation"}, {70, "automation"}, {71, "shell"},
+    {72, "admin"}, {73, "script"}, {74, "admin"},
+    {90, "automation"}, {91, "automation"}, {98, "automation"},
+};
+
 static NSString *TLinkLicenseFeatureForTask(int taskType)
 {
-    switch (taskType) {
-        case 13:
-        case 71:
-            return @"shell";
-
-        case 19:
-        case 20:
-        case 36:
-        case 37:
-        case 38:
-        case 39:
-        case 41:
-        case 73:
-            return @"script";
-
-        case 31:
-        case 72:
-        case 74:
-            return @"admin";
-
-        case 11:
-        case 12:
-        case 14:
-        case 15:
-        case 16:
-        case 17:
-        case 18:
-        case 21:
-        case 22:
-        case 23:
-        case 24:
-        case 25:
-        case 26:
-        case 27:
-        case 28:
-        case 29:
-        case 30:
-        case 32:
-        case 33:
-        case 34:
-        case 35:
-        case 40:
-        case 42:
-        case 43:
-        case 44:
-        case 45:
-        case 46:
-        case 47:
-        case 48:
-        case 49:
-        case 50:
-        case 51:
-        case 52:
-        case 53:
-        case 54:
-        case 55:
-        case 56:
-        case 57:
-        case 58:
-        case 59:
-        case 61:
-        case 62:
-        case 63:
-        case 64:
-        case 65:
-        case 66:
-        case 67:
-        case 68:
-        case 69:
-        case 70:
-        case 90:
-        case 91:
-        case 98:
-            return @"automation";
-        default:
-            return nil;
+    const size_t count = sizeof(kTLinkLicenseTaskPolicy) / sizeof(kTLinkLicenseTaskPolicy[0]);
+    for (size_t index = 0; index < count; index++) {
+        const TLinkLicenseTaskPolicyEntry *entry = &kTLinkLicenseTaskPolicy[index];
+        if (entry->taskType == taskType) {
+            return [NSString stringWithUTF8String:entry->feature];
+        }
     }
+    return nil;
 }
 
 static NSData *TLinkLicenseDeniedResponse(int taskType, NSString *feature, NSString *detail)
@@ -7815,15 +7856,19 @@ static NSData *TLinkHandleTaskLine(const char *line)
     if (taskType == 97) {
         NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastFixedCenter,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,backgroundPositionedToastOverlay,trueBootAutoStart unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_positioned_overlay_background_cfusernotification_fixed_center toast=foreground_positioned_background_fixed_center_limited_on_trollstore dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
         NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
-        cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=19"];
+        cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=20"];
         cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,90"];
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
-        cap = [cap stringByAppendingString:@" licenseContractVersion=1 licensePolicy=explicit_fail_closed"];
+        cap = [cap stringByAppendingString:@" licenseContractVersion=1 licensePolicyVersion=1"];
         cap = [cap stringByAppendingString:@" licenseLifecycle=foreground_bg_single_flight_backoff_v1"];
         cap = [cap stringByAppendingFormat:@" licenseGeneration=%llu licenseGenerationSync=darwin_plus_request_check",
             (unsigned long long)TLinkLicenseGeneration()];
+        @synchronized (TLinkVisualFeedbackLock()) {
+            cap = [cap stringByAppendingFormat:@" licensePolicy=explicit_table_fail_closed licenseRuntimeRecheck=h264_5s_script_1s task10LicenseDropCount=%llu",
+                (unsigned long long)sTLinkLicenseDropCount];
+        }
         cap = [cap stringByAppendingFormat:@" license=%@ licenseState=%@ licenseAccess=%@",
             [licenseStatus[@"enforcement_enabled"] boolValue] ? @"signed_lease_p256_enforced" : @"signed_lease_p256_observe",
             licenseStatus[@"state"] ?: @"unknown",
@@ -7866,6 +7911,11 @@ static NSData *POCHandleLine(const char *line)
     if (taskType == 10) {
         NSString *licenseError = nil;
         if (!TLinkLicenseFeatureAllowed(@"automation", &licenseError)) {
+            @synchronized (TLinkVisualFeedbackLock()) {
+                sTLinkLicenseDropCount++;
+                sTLinkLicenseLastDropAtMs = TLinkNowMs();
+                sTLinkLicenseLastDropError = licenseError ?: @"license_required";
+            }
             POCLogf("socket: task10 dropped by license enforcement error=%s",
                     [(licenseError ?: @"license_required") UTF8String]);
             return nil;
