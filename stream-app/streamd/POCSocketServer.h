@@ -18,6 +18,7 @@ extern "C" {
 // Start the TLinkauto-compatible task server on its own background thread with
 // a CFRunLoop. Safe to call once; subsequent calls are ignored.
 void TLinkStartTaskServer(void);
+void TLinkSetLaunchExecutablePath(const char *path);
 
 // Backward-compatible name kept while the source file is still being migrated
 // from the original PoC naming.

@@ -39,7 +39,7 @@ extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 // ---------------------------------------------------------------------------
 
 static const NSTimeInterval kSCRespawnThrottle = 3.0;
-static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=16";
+static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=17";
 
 @implementation SCStreamSupervisor {
     dispatch_queue_t _queue;
@@ -222,6 +222,19 @@ static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=16";
     return (pid_t)[json[@"pid"] intValue];
 }
 
+- (NSString *)streamdLaunchPathFromHelloStatusLocked
+{
+    NSString *response = [self sendLocalTaskLineLocked:@"60\n" timeout:2];
+    if (![response hasPrefix:@"0;;"]) return @"";
+    NSString *payload = [[response substringFromIndex:3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:payload options:0];
+    if (jsonData.length == 0) return @"";
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+    NSString *path = nil;
+    if ([json isKindOfClass:[NSDictionary class]]) path = json[@"launch_executable_path"];
+    return [path isKindOfClass:[NSString class]] ? path : @"";
+}
+
 - (BOOL)probeTaskServerAndUpdateLocked:(NSString *)reason
 {
     NSString *status = [self sendLocalTaskLineLocked:@"97\n" timeout:2];
@@ -246,6 +259,15 @@ static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=16";
             NSString *expectedPath = [[[self streamdPath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
             NSString *actualPath = [[runningPath stringByStandardizingPath] stringByResolvingSymlinksInPath];
             pathMatches = expectedPath.length > 0 && [actualPath isEqualToString:expectedPath];
+        } else {
+            // proc_pidpath can fail across the app/root process boundary. The
+            // daemon records argv[0] at startup so we can still distinguish a
+            // live binary from one in a removed TrollStore container.
+            runningPath = [self streamdLaunchPathFromHelloStatusLocked];
+            NSString *expectedPath = [[[self streamdPath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
+            NSString *actualPath = [[runningPath stringByStandardizingPath] stringByResolvingSymlinksInPath];
+            pathMatches = expectedPath.length > 0 && actualPath.length > 0 && [actualPath isEqualToString:expectedPath];
+            if (runningPath.length == 0) runningPath = @"unresolvable";
         }
     }
     if (!versionMatches || !pathMatches) {

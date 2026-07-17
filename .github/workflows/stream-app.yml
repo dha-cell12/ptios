@@ -192,7 +192,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=16' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=17' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -226,8 +226,15 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=16"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @16' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=17"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @17' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkBundledExecutablePath(@"streamd")' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkBundledExecutablePath(@"privhelper")' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkInstalledApplicationBundlePath' shared/TLinkLicenseVerifier.mm
+          grep -q 'runningPath = @"unresolvable"' stream-app/app/StreamSupervisor.mm
+          grep -q 'streamdLaunchPathFromHelloStatusLocked' stream-app/app/StreamSupervisor.mm
+          grep -q 'launch_executable_path' stream-app/streamd/POCSocketServer.mm
+          grep -q 'historically emitted `,`' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 75' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 76' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/POCSocketServer.mm
@@ -370,6 +377,8 @@ jobs:
           grep -q 'shell_task_set' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_disabled_by_settings' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkShellRunMiniCommand' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkShellRunMiniFileCommand' stream-app/streamd/POCSocketServer.mm
+          grep -Fq '[tokens[0] isEqualToString:@"cp"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_unavailable_no_sh' stream-app/streamd/POCSocketServer.mm
           grep -q 'shellTaskGated' stream-app/streamd/POCSocketServer.mm
           grep -q 'clearDataPrivhelper' stream-app/streamd/POCSocketServer.mm

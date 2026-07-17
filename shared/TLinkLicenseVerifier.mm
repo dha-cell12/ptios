@@ -2,6 +2,8 @@
 #import <Security/Security.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,12 +60,138 @@ static NSString *TLinkExecutableDirectory(void)
     return result;
 }
 
+static BOOL TLinkBundlePathMatchesApplication(NSString *path)
+{
+    if (path.length == 0) return NO;
+    NSString *plistPath = [path stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+    return [info[@"CFBundleIdentifier"] isEqualToString:@"com.tlinkauto.streamcontrol"];
+}
+
+static NSString *TLinkBundlePathFromObject(id value)
+{
+    if ([value isKindOfClass:[NSURL class]]) return [(NSURL *)value path];
+    if ([value isKindOfClass:[NSString class]]) return value;
+    return nil;
+}
+
+static NSString *TLinkBundlePathFromLaunchServices(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        const char *frameworks[] = {
+            "/System/Library/Frameworks/CoreServices.framework/CoreServices",
+            "/System/Library/PrivateFrameworks/MobileCoreServices.framework/MobileCoreServices",
+        };
+        for (size_t i = 0; i < sizeof(frameworks) / sizeof(frameworks[0]); i++) {
+            dlopen(frameworks[i], RTLD_LAZY | RTLD_GLOBAL);
+        }
+    });
+
+    Class proxyClass = NSClassFromString(@"LSApplicationProxy");
+    SEL proxySelector = NSSelectorFromString(@"applicationProxyForIdentifier:");
+    if (!proxyClass || ![proxyClass respondsToSelector:proxySelector]) return nil;
+
+    id proxy = nil;
+    @try {
+        proxy = ((id (*)(id, SEL, id))objc_msgSend)(proxyClass,
+                                                    proxySelector,
+                                                    @"com.tlinkauto.streamcontrol");
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+    if (!proxy) return nil;
+
+    NSArray<NSString *> *selectorNames = @[@"bundleURL", @"bundlePath", @"path", @"resourcesDirectoryURL"];
+    for (NSString *selectorName in selectorNames) {
+        SEL selector = NSSelectorFromString(selectorName);
+        if (![proxy respondsToSelector:selector]) continue;
+        @try {
+            id value = ((id (*)(id, SEL))objc_msgSend)(proxy, selector);
+            NSString *path = TLinkBundlePathFromObject(value);
+            if (TLinkBundlePathMatchesApplication(path)) return [path stringByStandardizingPath];
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return nil;
+}
+
+static NSString *TLinkBundlePathByScanningContainers(void)
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray<NSString *> *directCandidates = @[
+        @"/Applications/StreamControl.app",
+        @"/var/containers/Bundle/Application/StreamControl.app",
+        @"/private/var/containers/Bundle/Application/StreamControl.app",
+    ];
+    for (NSString *candidate in directCandidates) {
+        if (TLinkBundlePathMatchesApplication(candidate)) return [candidate stringByStandardizingPath];
+    }
+
+    NSArray<NSString *> *roots = @[
+        @"/var/containers/Bundle/Application",
+        @"/private/var/containers/Bundle/Application",
+    ];
+    for (NSString *root in roots) {
+        NSArray<NSString *> *containers = [fm contentsOfDirectoryAtPath:root error:nil];
+        for (NSString *container in containers) {
+            NSString *containerPath = [root stringByAppendingPathComponent:container];
+            NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:containerPath error:nil];
+            for (NSString *entry in entries) {
+                if (![[[entry pathExtension] lowercaseString] isEqualToString:@"app"]) continue;
+                NSString *candidate = [containerPath stringByAppendingPathComponent:entry];
+                if (TLinkBundlePathMatchesApplication(candidate)) return [candidate stringByStandardizingPath];
+            }
+        }
+    }
+    return nil;
+}
+
+NSString *TLinkInstalledApplicationBundlePath(void)
+{
+    static NSString *cachedPath = nil;
+    @synchronized ([NSProcessInfo processInfo]) {
+        if (TLinkBundlePathMatchesApplication(cachedPath)) return cachedPath;
+        cachedPath = nil;
+    }
+
+    NSString *mainBundlePath = [[NSBundle mainBundle] bundlePath];
+    NSString *resolvedPath = nil;
+    if (TLinkBundlePathMatchesApplication(mainBundlePath)) resolvedPath = [mainBundlePath stringByStandardizingPath];
+
+    if (resolvedPath.length == 0) {
+        NSString *executableDirectory = TLinkExecutableDirectory();
+        if (TLinkBundlePathMatchesApplication(executableDirectory)) resolvedPath = [executableDirectory stringByStandardizingPath];
+    }
+
+    if (resolvedPath.length == 0) resolvedPath = TLinkBundlePathFromLaunchServices();
+    if (resolvedPath.length == 0) resolvedPath = TLinkBundlePathByScanningContainers();
+
+    @synchronized ([NSProcessInfo processInfo]) {
+        cachedPath = [resolvedPath copy];
+    }
+    return resolvedPath;
+}
+
+NSString *TLinkBundledExecutablePath(NSString *name)
+{
+    if (name.length == 0 || ![[name lastPathComponent] isEqualToString:name]) return nil;
+    NSString *bundlePath = TLinkInstalledApplicationBundlePath();
+    NSString *path = [bundlePath stringByAppendingPathComponent:name];
+    return [[NSFileManager defaultManager] isExecutableFileAtPath:path] ? path : nil;
+}
+
 NSDictionary *TLinkLicenseConfiguration(void)
 {
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
     NSString *executableDirectory = TLinkExecutableDirectory();
     if (executableDirectory.length > 0) {
         [candidates addObject:[executableDirectory stringByAppendingPathComponent:@"LicenseConfig.plist"]];
+    }
+    NSString *installedBundlePath = TLinkInstalledApplicationBundlePath();
+    if (installedBundlePath.length > 0) {
+        NSString *installedConfig = [installedBundlePath stringByAppendingPathComponent:@"LicenseConfig.plist"];
+        if (![candidates containsObject:installedConfig]) [candidates addObject:installedConfig];
     }
     NSString *bundlePath = [[NSBundle mainBundle] pathForResource:@"LicenseConfig" ofType:@"plist"];
     if (bundlePath.length > 0 && ![candidates containsObject:bundlePath]) {

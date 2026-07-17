@@ -65,6 +65,22 @@ extern char **environ;
 // ---------------------------------------------------------------------------
 
 static BOOL sServerStarted = NO;
+static NSString *sTLinkLaunchExecutablePath = @"";
+
+void TLinkSetLaunchExecutablePath(const char *path)
+{
+    if (!path || path[0] == '\0') {
+        sTLinkLaunchExecutablePath = @"";
+        return;
+    }
+    char resolved[PATH_MAX + 1] = {0};
+    const char *finalPath = realpath(path, resolved) ? resolved : path;
+    NSString *value = [NSString stringWithUTF8String:finalPath] ?: @"";
+    if (![value hasPrefix:@"/"]) {
+        value = [[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:value];
+    }
+    sTLinkLaunchExecutablePath = [value stringByStandardizingPath] ?: @"";
+}
 
 static dispatch_queue_t POCSocketQueue(void)
 {
@@ -2364,7 +2380,10 @@ static BOOL TLinkParsePointTable(NSString *table, NSMutableArray<NSValue *> *poi
     NSArray<NSString *> *items = [table componentsSeparatedByString:@"|"];
     for (NSString *item in items) {
         if (item.length == 0) continue;
-        NSArray<NSString *> *parts = [item componentsSeparatedByString:@",,"];
+        // Rootfull task payloads use `,,` while the JS compatibility facade
+        // historically emitted `,`. Accept both wire representations.
+        NSString *separator = [item containsString:@",,"] ? @",," : @",";
+        NSArray<NSString *> *parts = [item componentsSeparatedByString:separator];
         if (parts.count != 5) {
             if (error) *error = @"invalid_point_table_format";
             return NO;
@@ -4590,6 +4609,11 @@ static NSString *TLinkCurrentStreamdExecutablePath(void)
         return bundleExecutable;
     }
 
+    // TrollStore can replace the application container while the previous
+    // daemon is still alive. Resolve the currently installed app bundle.
+    NSString *installedExecutable = TLinkBundledExecutablePath(@"streamd");
+    if (installedExecutable.length > 0) return installedExecutable;
+
     return nil;
 }
 
@@ -5140,6 +5164,9 @@ static NSString *TLinkExecutableDirectory(void)
 
 static NSString *TLinkPrivhelperPath(void)
 {
+    NSString *installedPath = TLinkBundledExecutablePath(@"privhelper");
+    if (installedPath.length > 0) return installedPath;
+
     NSString *dir = TLinkExecutableDirectory();
     if (dir.length == 0) return nil;
     NSString *path = [dir stringByAppendingPathComponent:@"privhelper"];
@@ -5611,6 +5638,9 @@ static NSData *TLinkHandleHelloStatus(void)
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
         @"privhelperMode": @"open_kill_restart_ensure_streamd_clipboardd_foreground_broker_respring",
+        @"installedBundlePath": TLinkInstalledApplicationBundlePath() ?: @"",
+        @"resolvedStreamdPath": TLinkBundledExecutablePath(@"streamd") ?: @"",
+        @"resolvedPrivhelperPath": TLinkPrivhelperPath() ?: @"",
         @"serviceMode": @"helper_ensure_streamd_best_effort",
         @"backgroundAutoStart": @(YES),
         @"backgroundAutoStartMode": @"best_effort_bgtaskscheduler_after_first_launch",
@@ -5627,7 +5657,8 @@ static NSData *TLinkHandleHelloStatus(void)
     NSDictionary *payload = @{
         @"runtime": @"trollstore",
         @"service": @"streamd",
-        @"service_version": @16,
+        @"service_version": @17,
+        @"launch_executable_path": sTLinkLaunchExecutablePath ?: @"",
         @"phase": @"image-color-frame-ocr-app-script-lite",
         @"pid": @((int)getpid()),
         @"tlinkauto": @{@"port": @6000, @"protocols": @[@"v0-line", @"legacy-task"]},
@@ -5815,6 +5846,116 @@ static NSString *TLinkShellTrimCommand(NSString *command)
     return [command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"";
 }
 
+static NSArray<NSString *> *TLinkShellTokenize(NSString *command)
+{
+    NSMutableArray<NSString *> *tokens = [NSMutableArray array];
+    NSMutableString *current = [NSMutableString string];
+    unichar quote = 0;
+    BOOL escaped = NO;
+    for (NSUInteger i = 0; i < command.length; i++) {
+        unichar ch = [command characterAtIndex:i];
+        if (escaped) {
+            [current appendFormat:@"%C", ch];
+            escaped = NO;
+            continue;
+        }
+        if (ch == '\\' && quote != '\'') {
+            escaped = YES;
+            continue;
+        }
+        if (quote != 0) {
+            if (ch == quote) quote = 0;
+            else [current appendFormat:@"%C", ch];
+            continue;
+        }
+        if (ch == '\'' || ch == '"') {
+            quote = ch;
+            continue;
+        }
+        if ([[NSCharacterSet whitespaceAndNewlineCharacterSet] characterIsMember:ch]) {
+            if (current.length > 0) {
+                [tokens addObject:[current copy]];
+                [current setString:@""];
+            }
+            continue;
+        }
+        if (ch == '>') {
+            if (current.length > 0) {
+                [tokens addObject:[current copy]];
+                [current setString:@""];
+            }
+            if (i + 1 < command.length && [command characterAtIndex:i + 1] == '>') {
+                [tokens addObject:@">>"];
+                i++;
+            } else {
+                [tokens addObject:@">"];
+            }
+            continue;
+        }
+        [current appendFormat:@"%C", ch];
+    }
+    if (escaped) [current appendString:@"\\"];
+    if (current.length > 0) [tokens addObject:[current copy]];
+    return quote == 0 ? tokens : nil;
+}
+
+static BOOL TLinkShellRunMiniFileCommand(NSArray<NSString *> *tokens, NSString **outText, int *outExitCode)
+{
+    if (tokens.count == 3 && [tokens[0] isEqualToString:@"cp"]) {
+        NSString *source = tokens[1];
+        NSString *target = tokens[2];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        BOOL isDirectory = NO;
+        if (![fm fileExistsAtPath:source isDirectory:&isDirectory] || isDirectory) {
+            if (outText) *outText = [NSString stringWithFormat:@"cp: source unavailable: %@\n", source];
+            if (outExitCode) *outExitCode = 1;
+            return YES;
+        }
+        NSError *error = nil;
+        if ([fm fileExistsAtPath:target]) [fm removeItemAtPath:target error:&error];
+        BOOL copied = error == nil && [fm copyItemAtPath:source toPath:target error:&error];
+        if (outText) *outText = copied ? @"" : [NSString stringWithFormat:@"cp: %@\n", error.localizedDescription ?: @"copy failed"];
+        if (outExitCode) *outExitCode = copied ? 0 : 1;
+        return YES;
+    }
+
+    if (tokens.count >= 4 && [tokens[0] isEqualToString:@"printf"]) {
+        NSUInteger redirectIndex = [tokens indexOfObject:@">"];
+        BOOL append = NO;
+        if (redirectIndex == NSNotFound) {
+            redirectIndex = [tokens indexOfObject:@">>"];
+            append = redirectIndex != NSNotFound;
+        }
+        if (redirectIndex == NSNotFound || redirectIndex < 2 || redirectIndex + 2 != tokens.count) return NO;
+        NSString *text = [[tokens subarrayWithRange:NSMakeRange(1, redirectIndex - 1)] componentsJoinedByString:@" "];
+        NSString *target = tokens[redirectIndex + 1];
+        NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+        BOOL written = NO;
+        NSError *error = nil;
+        if (append) {
+            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:target];
+            if (!handle) {
+                [[NSFileManager defaultManager] createFileAtPath:target contents:nil attributes:nil];
+                handle = [NSFileHandle fileHandleForWritingAtPath:target];
+            }
+            @try {
+                [handle seekToEndOfFile];
+                [handle writeData:data];
+                [handle closeFile];
+                written = handle != nil;
+            } @catch (NSException *exception) {
+                error = [NSError errorWithDomain:@"TLinkMiniShell" code:1 userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: @"append failed"}];
+            }
+        } else {
+            written = [data writeToFile:target options:NSDataWritingAtomic error:&error];
+        }
+        if (outText) *outText = written ? @"" : [NSString stringWithFormat:@"printf: %@\n", error.localizedDescription ?: @"write failed"];
+        if (outExitCode) *outExitCode = written ? 0 : 1;
+        return YES;
+    }
+    return NO;
+}
+
 static BOOL TLinkShellRunMiniCommand(NSString *command, NSString **outText, int *outExitCode)
 {
     NSString *trimmed = TLinkShellTrimCommand(command);
@@ -5891,6 +6032,8 @@ static BOOL TLinkShellRunMiniCommand(NSString *command, NSString **outText, int 
         if (outExitCode) *outExitCode = 1;
         return YES;
     }
+    NSArray<NSString *> *tokens = TLinkShellTokenize(trimmed);
+    if (tokens && TLinkShellRunMiniFileCommand(tokens, outText, outExitCode)) return YES;
     return NO;
 }
 
@@ -7565,7 +7708,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     if (taskType == 97) {
         NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastFixedCenter,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,backgroundPositionedToastOverlay,trueBootAutoStart unsupportedTasks=none keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_positioned_overlay_background_cfusernotification_fixed_center toast=foreground_positioned_background_fixed_center_limited_on_trollstore dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
         NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
-        cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=16"];
+        cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=17"];
         cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,90"];
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
