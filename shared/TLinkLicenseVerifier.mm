@@ -455,6 +455,14 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     if (![product isEqualToString:@"tlinkauto"] || [payload[@"version"] integerValue] != 1) {
         return TLinkLicenseFailure(config, @"invalid", @"license_payload_product_or_version_mismatch");
     }
+    id contractValue = payload[@"license_contract_version"];
+    NSInteger contractVersion = 1;
+    if (contractValue && contractValue != [NSNull null]) {
+        contractVersion = [contractValue integerValue];
+    }
+    if (contractVersion != 1) {
+        return TLinkLicenseFailure(config, @"invalid", @"license_contract_version_unsupported");
+    }
     NSData *devicePublicKey = [NSData dataWithContentsOfFile:kTLinkLicenseDevicePublicKey];
     NSString *expectedDeviceHash = [payload[@"device_key_hash"] isKindOfClass:[NSString class]] ? payload[@"device_key_hash"] : @"";
     NSString *actualDeviceHash = TLinkSHA256Base64URL(devicePublicKey);
@@ -494,6 +502,7 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         @"lease_path": kTLinkLicenseLease,
         @"device_public_key_path": kTLinkLicenseDevicePublicKey,
         @"device_key_proof": @YES,
+        @"license_contract_version": @(contractVersion),
         @"license_id": payload[@"license_id"] ?: @"",
         @"device_id": payload[@"device_id"] ?: @"",
         @"token_id": payload[@"token_id"] ?: @"",

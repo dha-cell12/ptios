@@ -72,3 +72,44 @@ The GitHub workflow `license-worker.yml` validates every change. Its manual
 deploy job expects the `tlinkauto-license` environment secrets
 `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
 `LICENSE_SIGNING_PRIVATE_JWK`, and `TLINK_LICENSE_ADMIN_TOKEN`.
+
+## Lifecycle v1
+
+Every issued lease includes `license_contract_version: 1`. Lifecycle endpoints
+return JSON as `{ "ok": true, ... }` on success and
+`{ "ok": false, "error": "<stable_code>" }` on failure.
+
+- `POST /v1/challenge`: create a five-minute, one-time activation challenge.
+- `POST /v1/activate`: consume the challenge and issue a device-bound lease.
+- `POST /v1/refresh`: require the signed lease plus a fresh device signature.
+- `POST /v1/deactivate`: require the same proof and release this device slot.
+- `POST /v1/admin/update`: update `status`, `max_devices`, `expires_at`, or
+  `features` without editing D1 manually.
+- `POST /v1/admin/revoke`: revoke the license.
+- `POST /v1/admin/reset-devices`: revoke active devices and clear challenges;
+  the same proven device key may activate again afterward.
+
+Example deactivate body:
+
+```json
+{
+  "lease": { "version": 1, "key_id": "...", "payload": "...", "signature": "..." },
+  "device_signature": "DER_ECDSA_SIGNATURE_BASE64URL"
+}
+```
+
+Example admin update:
+
+```bash
+curl -X POST "https://YOUR-WORKER/v1/admin/update" \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"license_key":"TLINK-TEST-0001","max_devices":2,"features":["automation","stream","script"]}'
+```
+
+Run the isolated lifecycle suite and task-policy check before deployment:
+
+```bash
+npm test
+node ../scripts/check-license-task-policy.mjs
+```

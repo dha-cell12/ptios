@@ -106,10 +106,13 @@ jobs:
           test -f stream-app/app/LicenseViewController.mm
           test -f stream-app/app/LicenseConfig.plist
           test -f license-worker/src/index.js
+          test -f license-worker/test/worker.test.mjs
           test -f license-worker/schema.sql
           test -f license-worker/wrangler.jsonc
           node --check license-worker/src/index.js
           node --check license-worker/scripts/generate-keys.mjs
+          node --test license-worker/test/worker.test.mjs
+          node scripts/check-license-task-policy.mjs
           test -f stream-app/app/TLinkSocketClient.mm
           test -f stream-app/app/ScriptsViewController.mm
           test -f stream-app/app/ScriptEditorViewController.mm
@@ -237,6 +240,9 @@ jobs:
           grep -q 'historically emitted `,`' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 75' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 76' stream-app/streamd/POCSocketServer.mm
+          grep -q 'licenseContractVersion=1' stream-app/streamd/POCSocketServer.mm
+          grep -q 'license_policy_missing task=' stream-app/streamd/POCSocketServer.mm
+          grep -q 'license_contract_version_unsupported' shared/TLinkLicenseVerifier.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/H264Stream.mm
           grep -q 'TLinkResolveSHA256' shared/TLinkLicenseVerifier.mm

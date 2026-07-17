@@ -1,5 +1,9 @@
 # TLinkauto Cloudflare License MVP
 
+Security architecture, threat model, hardening backlog, and OLLVM protection
+targets are documented separately in
+[`license-security-design.md`](license-security-design.md).
+
 ## Architecture
 
 - `StreamControl.app` creates a P-256 device key. Secure Enclave is preferred;

@@ -4,10 +4,24 @@ on:
   push:
     paths:
       - 'license-worker/**'
+      - 'license-task-policy.json'
+      - 'scripts/check-license-task-policy.mjs'
+      - 'stream-app/streamd/POCSocketServer.mm'
+      - 'stream-app/streamd/H264Stream.mm'
+      - 'stream-app/clipboardd/main.mm'
+      - 'stream-app/app/AppDelegate.mm'
+      - 'stream-app/privhelper/main.mm'
       - '.github/workflows/license-worker.yml'
   pull_request:
     paths:
       - 'license-worker/**'
+      - 'license-task-policy.json'
+      - 'scripts/check-license-task-policy.mjs'
+      - 'stream-app/streamd/POCSocketServer.mm'
+      - 'stream-app/streamd/H264Stream.mm'
+      - 'stream-app/clipboardd/main.mm'
+      - 'stream-app/app/AppDelegate.mm'
+      - 'stream-app/privhelper/main.mm'
       - '.github/workflows/license-worker.yml'
   workflow_dispatch:
     inputs:
@@ -41,11 +55,17 @@ jobs:
       - name: Validate Worker sources
         run: |
           set -euo pipefail
-          node --check src/index.js
-          node --check scripts/generate-keys.mjs
+          npm run check
+          npm test
+          node ../scripts/check-license-task-policy.mjs
           grep -q '"binding": "DB"' wrangler.jsonc
           grep -q 'legacy=tlinkauto_license' src/index.js
+          grep -q 'license_contract_version' src/index.js
+          grep -q '/v1/deactivate' src/index.js
+          grep -q '/v1/admin/update' src/index.js
           sed -i 's/REPLACE_WITH_D1_DATABASE_ID/00000000-0000-0000-0000-000000000000/' wrangler.jsonc
+          npx wrangler d1 execute tlinkauto-license --local --file schema.sql
+          npx wrangler d1 execute tlinkauto-license --local --file schema.sql
           npx wrangler deploy --dry-run --outdir .wrangler-dry-run
 
   deploy:

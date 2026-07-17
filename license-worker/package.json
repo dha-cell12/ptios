@@ -8,7 +8,8 @@
     "db:init:local": "wrangler d1 execute tlinkauto-license --local --file=./schema.sql",
     "db:init:remote": "wrangler d1 execute tlinkauto-license --remote --file=./schema.sql",
     "keys": "node ./scripts/generate-keys.mjs",
-    "check": "node --check ./src/index.js && node --check ./scripts/generate-keys.mjs"
+    "check": "node --check ./src/index.js && node --check ./scripts/generate-keys.mjs",
+    "test": "node --test ./test/worker.test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.24.3"

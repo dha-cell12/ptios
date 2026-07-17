@@ -5658,6 +5658,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"runtime": @"trollstore",
         @"service": @"streamd",
         @"service_version": @17,
+        @"license_contract_version": @1,
         @"launch_executable_path": sTLinkLaunchExecutablePath ?: @"",
         @"phase": @"image-color-frame-ocr-app-script-lite",
         @"pid": @((int)getpid()),
@@ -7369,16 +7370,83 @@ static BOOL TLinkLicenseTaskIsExempt(int taskType)
 
 static NSString *TLinkLicenseFeatureForTask(int taskType)
 {
-    if (taskType == 13 || taskType == 71) return @"shell";
-    if (taskType == 19 ||
-        taskType == 20 ||
-        (taskType >= 36 && taskType <= 39) ||
-        taskType == 41 ||
-        taskType == 73) {
-        return @"script";
+    switch (taskType) {
+        case 13:
+        case 71:
+            return @"shell";
+
+        case 19:
+        case 20:
+        case 36:
+        case 37:
+        case 38:
+        case 39:
+        case 41:
+        case 73:
+            return @"script";
+
+        case 31:
+        case 72:
+        case 74:
+            return @"admin";
+
+        case 11:
+        case 12:
+        case 14:
+        case 15:
+        case 16:
+        case 17:
+        case 18:
+        case 21:
+        case 22:
+        case 23:
+        case 24:
+        case 25:
+        case 26:
+        case 27:
+        case 28:
+        case 29:
+        case 30:
+        case 32:
+        case 33:
+        case 34:
+        case 35:
+        case 40:
+        case 42:
+        case 43:
+        case 44:
+        case 45:
+        case 46:
+        case 47:
+        case 48:
+        case 49:
+        case 50:
+        case 51:
+        case 52:
+        case 53:
+        case 54:
+        case 55:
+        case 56:
+        case 57:
+        case 58:
+        case 59:
+        case 61:
+        case 62:
+        case 63:
+        case 64:
+        case 65:
+        case 66:
+        case 67:
+        case 68:
+        case 69:
+        case 70:
+        case 90:
+        case 91:
+        case 98:
+            return @"automation";
+        default:
+            return nil;
     }
-    if (taskType == 31 || taskType == 72 || taskType == 74) return @"admin";
-    return @"automation";
 }
 
 static NSData *TLinkLicenseDeniedResponse(int taskType, NSString *feature, NSString *detail)
@@ -7399,6 +7467,7 @@ static NSData *TLinkHandleLicenseStatus(BOOL invalidate)
 {
     if (invalidate) TLinkLicenseInvalidateCache();
     NSMutableDictionary *status = [TLinkLicenseStatusDictionary() mutableCopy];
+    status[@"license_contract_version"] = @1;
     status[@"checked_at_ms"] = @((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0));
     status[@"cache_invalidated"] = @(invalidate);
     NSData *json = [NSJSONSerialization dataWithJSONObject:status options:0 error:nil];
@@ -7415,6 +7484,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (!TLinkLicenseTaskIsExempt(taskType)) {
         NSString *feature = TLinkLicenseFeatureForTask(taskType);
+        if (feature.length == 0) {
+            POCLogf("task-server: license policy missing task=%d", taskType);
+            return TLinkError([NSString stringWithFormat:@"license_policy_missing task=%d", taskType]);
+        }
         NSString *licenseError = nil;
         if (!TLinkLicenseFeatureAllowed(feature, &licenseError)) {
             POCLogf("task-server: license denied task=%d feature=%s error=%s",
@@ -7713,6 +7786,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
+        cap = [cap stringByAppendingString:@" licenseContractVersion=1 licensePolicy=explicit_fail_closed"];
         cap = [cap stringByAppendingFormat:@" license=%@ licenseState=%@ licenseAccess=%@",
             [licenseStatus[@"enforcement_enabled"] boolValue] ? @"signed_lease_p256_enforced" : @"signed_lease_p256_observe",
             licenseStatus[@"state"] ?: @"unknown",
