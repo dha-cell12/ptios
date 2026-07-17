@@ -1,9 +1,13 @@
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 
 FOUNDATION_EXPORT NSString *TLinkLicenseDirectoryPath(void);
 FOUNDATION_EXPORT NSString *TLinkLicenseLeasePath(void);
 FOUNDATION_EXPORT NSString *TLinkLicenseDevicePublicKeyPath(void);
 FOUNDATION_EXPORT NSString *TLinkLicenseDeviceKeyTag(void);
+FOUNDATION_EXPORT NSString *TLinkLicenseGenerationPath(void);
+FOUNDATION_EXPORT uint64_t TLinkLicenseGeneration(void);
+FOUNDATION_EXPORT uint64_t TLinkLicenseAdvanceGeneration(void);
 FOUNDATION_EXPORT NSString *TLinkInstalledApplicationBundlePath(void);
 FOUNDATION_EXPORT NSString *TLinkBundledExecutablePath(NSString *name);
 FOUNDATION_EXPORT NSDictionary *TLinkLicenseConfiguration(void);

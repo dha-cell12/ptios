@@ -259,7 +259,7 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
                                                attributes:nil
                                                     error:nil];
     BOOL saved = [data writeToFile:TLinkLicenseLeasePath() options:NSDataWritingAtomic error:error];
-    if (saved) TLinkLicenseInvalidateCache();
+    if (saved) TLinkLicenseAdvanceGeneration();
     return saved;
 }
 
@@ -443,7 +443,7 @@ static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TL
 {
     if (![[NSFileManager defaultManager] fileExistsAtPath:TLinkLicenseLeasePath()]) return YES;
     BOOL removed = [[NSFileManager defaultManager] removeItemAtPath:TLinkLicenseLeasePath() error:error];
-    if (removed) TLinkLicenseInvalidateCache();
+    if (removed) TLinkLicenseAdvanceGeneration();
     return removed;
 }
 

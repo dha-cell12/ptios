@@ -2,14 +2,12 @@
 #import "LicenseManager.h"
 #import "TLinkSocketClient.h"
 #import "../../shared/TLinkLicenseVerifier.h"
-#include <notify.h>
 #include <math.h>
 #include <stdlib.h>
 
 NSString *const SCLicenseLifecycleDidChangeNotification = @"SCLicenseLifecycleDidChangeNotification";
 
 static NSString *const kTLinkLicenseLifecycleDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/license_lifecycle.plist";
-static NSString *const kTLinkLicenseDarwinNotification = @"com.tlinkauto.license.changed";
 static const NSTimeInterval kTLinkLicenseRefreshWindow = 6.0 * 60.0 * 60.0;
 static const NSTimeInterval kTLinkLicenseBackoffBase = 60.0;
 static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
@@ -149,10 +147,11 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
 - (void)publishLicenseChange:(NSString *)reason
 {
     TLinkLicenseInvalidateCache();
-    notify_post([kTLinkLicenseDarwinNotification UTF8String]);
+    uint64_t generation = TLinkLicenseGeneration();
     [self updateDiagnostics:@{
         @"last_change_at_ms": @([self nowMilliseconds]),
         @"last_change_reason": reason ?: @"unknown",
+        @"license_generation": @(generation),
     }];
     dispatch_async(dispatch_get_main_queue(), ^{
         [[NSNotificationCenter defaultCenter] postNotificationName:SCLicenseLifecycleDidChangeNotification
@@ -160,7 +159,7 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
                                                           userInfo:@{@"reason": reason ?: @"unknown"}];
     });
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSString *response = [TLinkSocketClient requestTask:76 args:@[] timeout:2.0];
+        NSString *response = [TLinkSocketClient requestTask:76 args:@[@"reload"] timeout:2.0];
         [self updateDiagnostics:@{
             @"streamd_invalidate_at_ms": @([self nowMilliseconds]),
             @"streamd_invalidate_response": response ?: @"no_response",
@@ -168,7 +167,7 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
         if (![response hasPrefix:@"0;;"]) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                            dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                NSString *retry = [TLinkSocketClient requestTask:76 args:@[] timeout:2.0];
+                NSString *retry = [TLinkSocketClient requestTask:76 args:@[@"reload"] timeout:2.0];
                 [self updateDiagnostics:@{
                     @"streamd_invalidate_retry_at_ms": @([self nowMilliseconds]),
                     @"streamd_invalidate_retry_response": retry ?: @"no_response",

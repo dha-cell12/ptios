@@ -12,8 +12,12 @@
 - Phase 2: **da trien khai**. App co `LicenseLifecycleCoordinator`, foreground
   va BGTask refresh policy, single-flight, backoff+jitter, diagnostics,
   deactivate UI, script preflight gate va task `76` sync khong restart daemon.
-  Con device validation cho auto-refresh/offline/backoff truoc Phase 3.
-- Phase 3-6: chua trien khai trong dot nay.
+  Con device validation cho auto-refresh/offline/backoff truoc release gate.
+- Phase 3: **da trien khai**. Lease save/remove tang atomic generation, shared
+  verifier lang nghe Darwin notification va so generation theo tung request,
+  task `76` ho tro advance/reload, task `60/75/97` co generation diagnostics.
+  Con device validation da process truoc Phase 4.
+- Phase 4-6: chua trien khai trong dot nay.
 
 ## 1. Muc tieu
 

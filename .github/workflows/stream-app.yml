@@ -211,7 +211,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=18' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=19' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -245,8 +245,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=18"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @18' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=19"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @19' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"streamd")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"privhelper")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkInstalledApplicationBundlePath' shared/TLinkLicenseVerifier.mm
@@ -259,6 +259,16 @@ jobs:
           grep -q 'licenseContractVersion=1' stream-app/streamd/POCSocketServer.mm
           grep -q 'license_policy_missing task=' stream-app/streamd/POCSocketServer.mm
           grep -q 'license_contract_version_unsupported' shared/TLinkLicenseVerifier.mm
+          grep -q 'TLinkLicenseGenerationPath' shared/TLinkLicenseVerifier.h
+          grep -q 'TLinkLicenseAdvanceGeneration' shared/TLinkLicenseVerifier.mm
+          grep -q 'generation.lock' shared/TLinkLicenseVerifier.mm
+          grep -q 'flock(lockFD, LOCK_EX)' shared/TLinkLicenseVerifier.mm
+          grep -q 'notify_register_dispatch' shared/TLinkLicenseVerifier.mm
+          grep -q 'sTLinkLicenseFeatureGeneration != generation' shared/TLinkLicenseVerifier.mm
+          grep -q 'TLinkLicenseAdvanceGeneration' stream-app/app/LicenseManager.mm
+          grep -Fq 'args:@[@"reload"]' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'generation_action' stream-app/streamd/POCSocketServer.mm
+          grep -q 'licenseGenerationSync' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/H264Stream.mm
           grep -q 'TLinkResolveSHA256' shared/TLinkLicenseVerifier.mm

@@ -24,6 +24,10 @@ targets are documented separately in
 - `Deactivate This Device` signs `/v1/deactivate`, revokes that registration,
   releases its slot, and only then removes the local lease. `Remove Local
   Lease` is a recovery action and does not release a server slot.
+- Lease changes advance a locked generation file and publish a Darwin
+  notification. Every TrollStore process additionally compares that generation
+  during feature checks, so notification loss does not leave stale access until
+  a restart.
 
 This raises the cost of casual copying and server emulation. It cannot make a
 client binary impossible to patch, so enforcement is deliberately repeated in

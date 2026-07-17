@@ -1,19 +1,29 @@
 #import "TLinkLicenseVerifier.h"
 #import <Security/Security.h>
+#include <fcntl.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#include <notify.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static NSString *const kTLinkLicenseDirectory = @"/var/mobile/Library/TLinkauto/license";
 static NSString *const kTLinkLicenseLease = @"/var/mobile/Library/TLinkauto/license/lease.json";
 static NSString *const kTLinkLicenseDevicePublicKey = @"/var/mobile/Library/TLinkauto/license/device_public_key.bin";
 static NSString *const kTLinkLicenseDeviceKeyTag = @"com.tlinkauto.streamcontrol.license-device-key.v1";
+static NSString *const kTLinkLicenseGeneration = @"/var/mobile/Library/TLinkauto/license/generation";
+static NSString *const kTLinkLicenseGenerationLock = @"/var/mobile/Library/TLinkauto/license/generation.lock";
+static const char *kTLinkLicenseDarwinNotification = "com.tlinkauto.license.changed";
 static NSDictionary *sTLinkLicenseFeatureStatus = nil;
 static NSTimeInterval sTLinkLicenseFeatureStatusAt = 0;
+static uint64_t sTLinkLicenseFeatureGeneration = 0;
+static int sTLinkLicenseNotificationToken = 0;
 
 static dispatch_queue_t TLinkLicenseCacheQueue(void)
 {
@@ -21,6 +31,12 @@ static dispatch_queue_t TLinkLicenseCacheQueue(void)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         queue = dispatch_queue_create("com.tlinkauto.license-verifier-cache", DISPATCH_QUEUE_SERIAL);
+        notify_register_dispatch(kTLinkLicenseDarwinNotification,
+                                 &sTLinkLicenseNotificationToken,
+                                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+                                 ^(__unused int token) {
+            TLinkLicenseInvalidateCache();
+        });
     });
     return queue;
 }
@@ -43,6 +59,49 @@ NSString *TLinkLicenseDevicePublicKeyPath(void)
 NSString *TLinkLicenseDeviceKeyTag(void)
 {
     return kTLinkLicenseDeviceKeyTag;
+}
+
+NSString *TLinkLicenseGenerationPath(void)
+{
+    return kTLinkLicenseGeneration;
+}
+
+uint64_t TLinkLicenseGeneration(void)
+{
+    NSString *value = [NSString stringWithContentsOfFile:kTLinkLicenseGeneration
+                                                encoding:NSUTF8StringEncoding
+                                                   error:nil];
+    unsigned long long generation = [value unsignedLongLongValue];
+    return generation > 0 ? (uint64_t)generation : 0;
+}
+
+uint64_t TLinkLicenseAdvanceGeneration(void)
+{
+    [[NSFileManager defaultManager] createDirectoryAtPath:kTLinkLicenseDirectory
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    int lockFD = open([kTLinkLicenseGenerationLock fileSystemRepresentation], O_CREAT | O_RDWR, 0666);
+    if (lockFD >= 0) {
+        chmod([kTLinkLicenseGenerationLock fileSystemRepresentation], 0666);
+        flock(lockFD, LOCK_EX);
+    }
+
+    uint64_t current = TLinkLicenseGeneration();
+    uint64_t next = current == UINT64_MAX ? 1 : current + 1;
+    BOOL written = [[NSString stringWithFormat:@"%llu\n", (unsigned long long)next]
+        writeToFile:kTLinkLicenseGeneration
+          atomically:YES
+            encoding:NSUTF8StringEncoding
+               error:nil];
+
+    if (lockFD >= 0) {
+        flock(lockFD, LOCK_UN);
+        close(lockFD);
+    }
+    TLinkLicenseInvalidateCache();
+    notify_post(kTLinkLicenseDarwinNotification);
+    return written ? next : current;
 }
 
 static NSString *TLinkExecutableDirectory(void)
@@ -395,6 +454,9 @@ static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, 
         @"device_public_key_path": kTLinkLicenseDevicePublicKey,
         @"device_key_proof": @NO,
         @"features": @[],
+        @"license_generation": @(TLinkLicenseGeneration()),
+        @"last_checked_at_ms": @((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0)),
+        @"source": @"shared_verifier_disk",
     };
 }
 
@@ -512,17 +574,24 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         @"features": features,
         @"key_id": lease[@"key_id"] ?: @"",
         @"device_key_hash": expectedDeviceHash,
+        @"license_generation": @(TLinkLicenseGeneration()),
+        @"last_checked_at_ms": @((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0)),
+        @"source": @"shared_verifier_disk",
     };
 }
 
 BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error)
 {
     __block NSDictionary *status = nil;
+    uint64_t generation = TLinkLicenseGeneration();
     dispatch_sync(TLinkLicenseCacheQueue(), ^{
         NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-        if (!sTLinkLicenseFeatureStatus || now - sTLinkLicenseFeatureStatusAt >= 5.0) {
+        if (!sTLinkLicenseFeatureStatus ||
+            sTLinkLicenseFeatureGeneration != generation ||
+            now - sTLinkLicenseFeatureStatusAt >= 5.0) {
             sTLinkLicenseFeatureStatus = TLinkLicenseStatusDictionary();
             sTLinkLicenseFeatureStatusAt = now;
+            sTLinkLicenseFeatureGeneration = generation;
         }
         status = sTLinkLicenseFeatureStatus;
     });
@@ -546,5 +615,6 @@ void TLinkLicenseInvalidateCache(void)
     dispatch_sync(TLinkLicenseCacheQueue(), ^{
         sTLinkLicenseFeatureStatus = nil;
         sTLinkLicenseFeatureStatusAt = 0;
+        sTLinkLicenseFeatureGeneration = 0;
     });
 }
