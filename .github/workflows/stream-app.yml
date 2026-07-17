@@ -172,7 +172,7 @@ jobs:
           grep -q 'foreground_bg_single_flight_backoff_v1' stream-app/app/LicenseLifecycleCoordinator.mm
           grep -q 'next_attempt_at_ms' stream-app/app/LicenseLifecycleCoordinator.mm
           grep -q 'requestTask:76' stream-app/app/LicenseLifecycleCoordinator.mm
-          grep -q 'com.tlinkauto.license.changed' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'com.tlinkauto.license.changed' shared/TLinkLicenseVerifier.mm
           grep -q 'handleApplicationDidBecomeActive' stream-app/app/AppDelegate.mm
           grep -q 'licenseCoordinator:self.licenseLifecycleCoordinator' stream-app/app/AppDelegate.mm
           grep -q '/v1/deactivate' stream-app/app/LicenseManager.mm
