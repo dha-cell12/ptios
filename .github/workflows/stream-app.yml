@@ -6,6 +6,9 @@ on:
       - 'stream-app/**'
       - 'shared/**'
       - 'license-worker/**'
+      - 'license-task-policy.json'
+      - 'scripts/**'
+      - 'docs/license-*.md'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
@@ -13,6 +16,9 @@ on:
       - 'stream-app/**'
       - 'shared/**'
       - 'license-worker/**'
+      - 'license-task-policy.json'
+      - 'scripts/**'
+      - 'docs/license-*.md'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
@@ -23,21 +29,47 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        license_mode: [observe, enforced]
     env:
       THEOS: ${{ github.workspace }}/theos
       APP_NAME: StreamControl
       APP_BUNDLE: StreamControl.app
       TIPA_PATH: stream-app/packages/StreamControl.tipa
-      TLINK_LICENSE_ENDPOINT: https://tlinkauto-license.tlinkauto.workers.dev
-      TLINK_LICENSE_KEY_ID: tlinkauto-test-2026-01
-      TLINK_LICENSE_PUBLIC_KEY_X: fUrcjnIX_Ej5jvv9oGqY9kmoY0PbZmXPg5lzUnTeo38
-      TLINK_LICENSE_PUBLIC_KEY_Y: bVsC_64-AH4cT5aObcm0NnOzY_nY5cYC2EgVhXFSNhE
-      TLINK_LICENSE_ENFORCEMENT: true
-      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ vars.TLINK_LICENSE_ENFORCEMENT == 'true' && '1' || '0' }}
+      TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
+      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
+      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID != '' && vars.TLINK_LICENSE_KEY_ID || 'tlinkauto-test-2026-01' }}
+      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'fUrcjnIX_Ej5jvv9oGqY9kmoY0PbZmXPg5lzUnTeo38' }}
+      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'bVsC_64-AH4cT5aObcm0NnOzY_nY5cYC2EgVhXFSNhE' }}
+      TLINK_LICENSE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && 'true' || 'false' }}
+      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate public license build inputs
+        run: |
+          set -euo pipefail
+          case "$TLINK_LICENSE_MODE" in
+            observe|enforced) ;;
+            *) echo "Unknown license mode: $TLINK_LICENSE_MODE"; exit 1 ;;
+          esac
+          case "$TLINK_LICENSE_ENDPOINT" in
+            https://*) ;;
+            *) echo "License endpoint must use HTTPS"; exit 1 ;;
+          esac
+          ! printf '%s' "$TLINK_LICENSE_ENDPOINT" | grep -Eqi 'REPLACE_|localhost|127\.0\.0\.1'
+          ! printf '%s' "$TLINK_LICENSE_KEY_ID" | grep -Eqi 'REPLACE_'
+          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_X" | grep -Eq '^[A-Za-z0-9_-]{43}$'
+          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_Y" | grep -Eq '^[A-Za-z0-9_-]{43}$'
+          if [ "$TLINK_LICENSE_ENFORCEMENT" = "true" ]; then
+            test "$TLINK_LICENSE_FORCE_ENFORCEMENT" = "1"
+          else
+            test "$TLINK_LICENSE_FORCE_ENFORCEMENT" = "0"
+          fi
 
       - name: Configure public license verifier
         run: |
@@ -112,11 +144,18 @@ jobs:
           test -f license-worker/schema.sql
           test -f license-worker/wrangler.jsonc
           test -f scripts/check-license-recovery.mjs
+          test -f scripts/validate-license-artifact.mjs
+          test -f scripts/check-license-release-readiness.mjs
+          test -f scripts/Test-TLinkLicensePhase6.ps1
+          test -f scripts/Start-TLinkLicenseSoak.ps1
+          test -f docs/license-phase6-release-gate.md
           node --check license-worker/src/index.js
           node --check license-worker/scripts/generate-keys.mjs
           node --test license-worker/test/worker.test.mjs
           node scripts/check-license-task-policy.mjs
           node scripts/check-license-recovery.mjs
+          node --check scripts/validate-license-artifact.mjs
+          node scripts/check-license-release-readiness.mjs
           test -f stream-app/app/TLinkSocketClient.mm
           test -f stream-app/app/ScriptsViewController.mm
           test -f stream-app/app/ScriptEditorViewController.mm
@@ -140,6 +179,8 @@ jobs:
           grep -q 'TLinkauto TrollStore Runtime Status' docs/trollstore-runtime-status.md
           grep -q 'TLinkauto Cloudflare License MVP' docs/license-cloudflare-worker.md
           grep -q 'License Phase 5 Device Test' docs/license-phase5-device-test.md
+          grep -q 'License Phase 6 Release Gate' docs/license-phase6-release-gate.md
+          grep -q 'ROOTFULL BLOCKED' docs/license-phase6-release-gate.md
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
           grep -q 'Vision OCR remains deferred' docs/trollstore-runtime-status.md
           grep -q 'refresh_registered' docs/trollstore-runtime-status.md
@@ -216,7 +257,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=21' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=22' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -250,8 +291,11 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=21"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @21' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=22"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @22' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkLicenseBuildMode' shared/TLinkLicenseVerifier.h
+          grep -q 'enforced_compile_time_v1' shared/TLinkLicenseVerifier.mm
+          grep -q 'observe_compile_time_v1' shared/TLinkLicenseVerifier.mm
           grep -q 'TLinkBundledExecutablePath(@"streamd")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkBundledExecutablePath(@"privhelper")' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkInstalledApplicationBundlePath' shared/TLinkLicenseVerifier.mm
@@ -611,11 +655,22 @@ jobs:
           echo "--- bundle files ---"
           find "$APP" -maxdepth 2 -type f | sort
 
+          node scripts/validate-license-artifact.mjs \
+            --app "$APP" \
+            --tipa "$TIPA_PATH" \
+            --mode "$TLINK_LICENSE_MODE" \
+            --endpoint "$TLINK_LICENSE_ENDPOINT" \
+            --keyId "$TLINK_LICENSE_KEY_ID" \
+            --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
+            --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y" \
+            --output "stream-app/packages/license-build-$TLINK_LICENSE_MODE.json"
+
       - name: Upload TrollStore package
         uses: actions/upload-artifact@v4
         with:
-          name: StreamControl-tipa
+          name: StreamControl-tipa-${{ matrix.license_mode }}
           path: |
             stream-app/packages/StreamControl.tipa
             stream-app/packages/StreamControl.tipa.contents.txt
+            stream-app/packages/license-build-${{ matrix.license_mode }}.json
           if-no-files-found: error

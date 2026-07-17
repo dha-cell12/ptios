@@ -25,9 +25,12 @@
 - Phase 5: **da trien khai**. Shared verifier quarantine lease hong duoi file
   lock va phat generation signal; app co device-key diagnostics, public-key
   repair tu private key hien huu, device-limit recovery guidance; clock skew
-  tolerance duoc cong bo; service v21 thay daemon cu sau update. Con fresh
+  tolerance duoc cong bo; service replacement thay daemon cu sau update. Con fresh
   install/reinstall/reboot/device-reset matrix tren thiet bi truoc release gate.
-- Phase 6: chua trien khai trong dot nay.
+- Phase 6: **da trien khai phan code/CI**. Workflow build rieng observe va
+  enforced, artifact validator kiem compile marker/config/service v22 va secret
+  marker, kem PowerShell regression va JSONL soak logger. Release gate van cho
+  bang chung thiet bi 24 gio/72 gio; rootfull tiep tuc bi khoa den khi dat gate.
 
 ## 1. Muc tieu
 

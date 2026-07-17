@@ -40,8 +40,8 @@ assert.ok(manager.includes("deactivate_the_old_device_or_request_an_admin_device
 assert.ok(coordinator.includes("publishLicenseChange:@\"repair_device_public_key\""), "repair does not publish a global license change");
 assert.ok(view.includes("Repair Device Binding"), "License UI has no device binding repair action");
 
-assert.ok(supervisor.includes("serviceVersion=21"), "app does not require the Phase 5 streamd version");
-assert.ok(server.includes('withString:@"serviceVersion=21"'), "task 97 does not expose the Phase 5 service version");
-assert.ok(server.includes('@"service_version": @21'), "task 60 does not expose the Phase 5 service version");
+assert.ok(supervisor.includes("serviceVersion=22"), "app does not require the current streamd version");
+assert.ok(server.includes('withString:@"serviceVersion=22"'), "task 97 does not expose the current service version");
+assert.ok(server.includes('@"service_version": @22'), "task 60 does not expose the current service version");
 
-console.log("license recovery policy OK: quarantine, key repair, lifecycle guidance, service v21");
+console.log("license recovery policy OK: quarantine, key repair, lifecycle guidance, service v22");

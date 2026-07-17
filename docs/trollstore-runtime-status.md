@@ -12,12 +12,13 @@ TrollStore runtime.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
 - Script runtime: task `19/20` JavaScriptCore with a rootfull compatibility facade for common `device.*` APIs, `runTask`/task bridge, normalized storage responses, shared rootfull/TrollStore `device.openFile` handles, keyboard wrappers, color/frame/image/OCR wrappers, and app/process wrappers.
-- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=21`; the app replaces a responding process when its version is stale, its executable path is no longer resolvable, or it belongs to an older app bundle, then starts the bundled binary through `privhelper`. OCR workers, license config, and helper commands also resolve the currently installed bundle so a TrollStore reinstall does not leave them pointing at removed container.
+- Service bootstrap: opening StreamControl always ensures `streamd` is running. Task `97` exposes `serviceVersion=22`; the app replaces a responding process when its version is stale, its executable path is no longer resolvable, or it belongs to an older app bundle, then starts the bundled binary through `privhelper`. OCR workers, license config, and helper commands also resolve the currently installed bundle so a TrollStore reinstall does not leave them pointing at removed container.
 - License MVP: Settings > License activates a Cloudflare Worker lease using a Secure Enclave P-256 device key with a `ThisDeviceOnly` Keychain fallback. Task `75` returns signed-lease status and task `76` forces a fresh check. `streamd`, H264 accepts, and sensitive `privhelper` commands enforce feature access when the release is built with license enforcement enabled. Initial test builds remain in observe mode.
 - License lifecycle: `LicenseLifecycleCoordinator` refreshes a valid lease inside its final six hours and refreshes `offline_grace` immediately on foreground/BGTask triggers. Requests are single-flight with persisted exponential backoff and jitter at `/var/mobile/Library/TLinkauto/runtime/license_lifecycle.plist`. Activation, refresh, deactivate, and local removal invalidate app/streamd state through task `76` plus a Darwin signal; they do not restart `streamd`. Settings > License exposes server-side device deactivation separately from local recovery removal.
 - License coherence: every successful lease save/remove atomically advances `/var/mobile/Library/TLinkauto/license/generation` under a cross-process file lock and posts `com.tlinkauto.license.changed`. The shared verifier used by app, `streamd`, H264, clipboardd and privhelper invalidates on that signal and also compares generation on every feature request. Task `76` advances generation when called without a body; `76reload` reloads without incrementing. Task `60/75/97` expose generation/source diagnostics.
 - License runtime enforcement: task mapping is an explicit fail-closed C policy table checked against `license-task-policy.json`. Legacy task `10` remains fire-and-forget and increments `license_enforcement.task10_drop_count` when denied. Active H264 clients recheck `stream` every 5 seconds. Script sessions recheck `script` every second; revoke/expiry sets `stopRequested`, closes open script files and records `license_revoked_during_execution`. Timer and startup autolaunch paths call the same gated script launcher.
 - License recovery: malformed or signature-corrupt `lease.json` is moved to `/var/mobile/Library/TLinkauto/license/quarantine/` under the generation lock and recorded in `recovery.plist`; runtime remains fail-closed. Settings > License reports private/public key presence and can rebuild a missing or damaged `device_public_key.bin` from the existing Keychain/Secure Enclave private key without allocating a new server slot. Device-limit errors include active/max counts and direct the user to deactivate the old device or request an admin reset. Task `60/75/97` expose recovery state and the 60-second not-before clock tolerance; large clock rollback hardening remains deferred.
+- License release validation: CI builds separate observe/enforced TIPAs, embeds `observe_compile_time_v1` or `enforced_compile_time_v1` in every process, validates the packaged public config and service v22, scans for signing/admin secret markers, and publishes a SHA-256 manifest. Device regression and 24/72-hour soak evidence remain mandatory before release.
 - Respring: Settings exposes a destructive-confirmation Respring Device action backed by task `74confirm` and `privhelper --respring`. The helper requires effective UID 0, validates the SpringBoard process name/path, sends SIGTERM, and only falls back to SIGKILL if the validated original PID remains alive.
 - Update recovery: task `60` reports `launch_executable_path`, `capabilities.installedBundlePath`, `capabilities.resolvedStreamdPath`, and `capabilities.resolvedPrivhelperPath`. These paths should all belong to the currently installed `StreamControl.app`; opening the app replaces a daemon launched from an older TrollStore container.
 - Color compatibility: frame and non-frame point tables accept both rootfull `x,,y,,r,,g,,b` entries and facade `x,y,r,g,b` entries.
@@ -56,7 +57,7 @@ $json.capabilities.backgroundAutoStartMode
 $json.background_service | Format-List
 ```
 
-Expected immediately after first launch: service version `19`, both
+Expected immediately after first launch: service version `22`, both
 `refresh_registered` and `processing_registered` are true, and both submit
 results are true. A later `last_fired_at_ms` plus `last_result=success` proves
 that iOS actually launched a handler; submit success alone does not prove a
@@ -78,7 +79,7 @@ $json.license_lifecycle | Format-List
 Invoke-TLinkTask -HostIP $iphoneIP -Task "75"
 ```
 
-Expected: service version `19`, activation becomes effective without a manual
+Expected: service version `22`, activation becomes effective without a manual
 restart, `last_change_reason=activation`, and `streamd_invalidate_response`
 starts with `0;;`. Use a test Worker with a short `LEASE_SECONDS` value to
 exercise the six-hour refresh window and backoff. `Deactivate This Device`

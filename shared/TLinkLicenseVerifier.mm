@@ -347,6 +347,15 @@ static BOOL TLinkLicenseConfiguredEnforcement(NSDictionary *config)
 #endif
 }
 
+NSString *TLinkLicenseBuildMode(void)
+{
+#if defined(TLINK_LICENSE_FORCE_ENFORCEMENT) && TLINK_LICENSE_FORCE_ENFORCEMENT
+    return @"enforced_compile_time_v1";
+#else
+    return @"observe_compile_time_v1";
+#endif
+}
+
 BOOL TLinkLicenseEnforcementEnabled(void)
 {
     return TLinkLicenseConfiguredEnforcement(TLinkLicenseConfiguration());
@@ -463,6 +472,7 @@ static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, 
                           TLinkLicenseConfigValueUsable(x) &&
                           TLinkLicenseConfigValueUsable(y)),
         @"enforcement_enabled": @(enforcement),
+        @"build_mode": TLinkLicenseBuildMode(),
         @"effective_access": @(!enforcement),
         @"licensed": @NO,
         @"state": state ?: @"invalid",
@@ -638,6 +648,7 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     return @{
         @"configured": @YES,
         @"enforcement_enabled": @(enforcement),
+        @"build_mode": TLinkLicenseBuildMode(),
         @"effective_access": @YES,
         @"licensed": @YES,
         @"state": state,

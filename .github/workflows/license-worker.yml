@@ -6,6 +6,18 @@ on:
       - 'license-worker/**'
       - 'license-task-policy.json'
       - 'scripts/check-license-task-policy.mjs'
+      - 'scripts/check-license-recovery.mjs'
+      - 'scripts/check-license-release-readiness.mjs'
+      - 'scripts/validate-license-artifact.mjs'
+      - 'scripts/Test-TLinkLicensePhase6.ps1'
+      - 'scripts/Start-TLinkLicenseSoak.ps1'
+      - 'shared/TLinkLicenseVerifier.h'
+      - 'shared/TLinkLicenseVerifier.mm'
+      - 'stream-app/app/LicenseManager.mm'
+      - 'stream-app/app/LicenseLifecycleCoordinator.mm'
+      - 'stream-app/app/LicenseViewController.mm'
+      - 'stream-app/app/StreamSupervisor.mm'
+      - 'docs/license-phase6-release-gate.md'
       - 'stream-app/streamd/POCSocketServer.mm'
       - 'stream-app/streamd/H264Stream.mm'
       - 'stream-app/clipboardd/main.mm'
@@ -17,6 +29,18 @@ on:
       - 'license-worker/**'
       - 'license-task-policy.json'
       - 'scripts/check-license-task-policy.mjs'
+      - 'scripts/check-license-recovery.mjs'
+      - 'scripts/check-license-release-readiness.mjs'
+      - 'scripts/validate-license-artifact.mjs'
+      - 'scripts/Test-TLinkLicensePhase6.ps1'
+      - 'scripts/Start-TLinkLicenseSoak.ps1'
+      - 'shared/TLinkLicenseVerifier.h'
+      - 'shared/TLinkLicenseVerifier.mm'
+      - 'stream-app/app/LicenseManager.mm'
+      - 'stream-app/app/LicenseLifecycleCoordinator.mm'
+      - 'stream-app/app/LicenseViewController.mm'
+      - 'stream-app/app/StreamSupervisor.mm'
+      - 'docs/license-phase6-release-gate.md'
       - 'stream-app/streamd/POCSocketServer.mm'
       - 'stream-app/streamd/H264Stream.mm'
       - 'stream-app/clipboardd/main.mm'
@@ -58,6 +82,8 @@ jobs:
           npm run check
           npm test
           node ../scripts/check-license-task-policy.mjs
+          node ../scripts/check-license-recovery.mjs
+          node ../scripts/check-license-release-readiness.mjs
           grep -q '"binding": "DB"' wrangler.jsonc
           grep -q 'legacy=tlinkauto_license' src/index.js
           grep -q 'license_contract_version' src/index.js
