@@ -1,5 +1,7 @@
 #import "TLinkLicenseVerifier.h"
 #import <Security/Security.h>
+#include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
@@ -71,8 +73,21 @@ uint64_t TLinkLicenseGeneration(void)
     NSString *value = [NSString stringWithContentsOfFile:kTLinkLicenseGeneration
                                                 encoding:NSUTF8StringEncoding
                                                    error:nil];
-    unsigned long long generation = [value unsignedLongLongValue];
-    return generation > 0 ? (uint64_t)generation : 0;
+    const char *text = [value UTF8String];
+    if (!text || !text[0]) {
+        return 0;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long long generation = strtoull(text, &end, 10);
+    if (errno == ERANGE || end == text) {
+        return 0;
+    }
+    while (*end && isspace((unsigned char)*end)) {
+        end++;
+    }
+    return *end == '\0' && generation > 0 ? (uint64_t)generation : 0;
 }
 
 uint64_t TLinkLicenseAdvanceGeneration(void)
