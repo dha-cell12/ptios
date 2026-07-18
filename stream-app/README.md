@@ -49,6 +49,16 @@ make            # build cả app (.tipa) lẫn streamd
 `streamd` được đóng gói vào bundle app (`StreamControl.app/streamd`) để app
 spawn bằng đường dẫn tương đối.
 
+## Remote Bridge MVP
+
+Service v23 keeps the LAN ports above and can also make an outbound WSS
+connection to `bridge-rs-new`. Configure `Settings -> Remote Bridge` with the
+public `wss://` hostname and the bridge `TLINK_REMOTE_TOKEN`. Control and H264
+use separate WebSockets; task dispatch still uses the same port-6000 parser.
+
+Full setup and 5G validation are documented in
+`bridge-rs-new/docs/remote-ios-mvp.md`.
+
 ## Entitlements
 
 `streamd/entitlements.plist` HỢP NHẤT hai nhóm đã chứng minh riêng rẽ:

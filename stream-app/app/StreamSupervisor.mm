@@ -39,7 +39,7 @@ extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 // ---------------------------------------------------------------------------
 
 static const NSTimeInterval kSCRespawnThrottle = 3.0;
-static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=22";
+static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=23";
 
 @implementation SCStreamSupervisor {
     dispatch_queue_t _queue;

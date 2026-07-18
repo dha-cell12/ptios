@@ -24,6 +24,7 @@ pub struct UnifiedDevice {
 
 pub struct DeviceRegistry {
     ios_devices: RwLock<HashMap<String, IosDevice>>,
+    remote_ios_devices: RwLock<HashMap<String, IosDevice>>,
     android_devices: RwLock<HashMap<String, UnifiedDevice>>,
     events: broadcast::Sender<DeviceEvent>,
     active_ios_controls: AtomicUsize,
@@ -34,6 +35,7 @@ impl DeviceRegistry {
         let (events, _) = broadcast::channel(128);
         Arc::new(Self {
             ios_devices: RwLock::new(HashMap::new()),
+            remote_ios_devices: RwLock::new(HashMap::new()),
             android_devices: RwLock::new(HashMap::new()),
             events,
             active_ios_controls: AtomicUsize::new(0),
@@ -93,16 +95,47 @@ impl DeviceRegistry {
     }
 
     pub async fn get_ios_device(&self, id: &str) -> Option<IosDevice> {
+        if let Some(device) = self.remote_ios_devices.read().await.get(id).cloned() {
+            return Some(device);
+        }
         let ios_devices = self.ios_devices.read().await;
         ios_devices.get(id).cloned()
     }
 
+    pub async fn upsert_remote_ios_device(&self, device: IosDevice) {
+        let id = device.id.clone();
+        self.remote_ios_devices.write().await.insert(id, device.clone());
+        let _ = self.events.send(DeviceEvent::IosOnline(device));
+    }
+
+    pub async fn remove_remote_ios_device(&self, id: &str) {
+        if self.remote_ios_devices.write().await.remove(id).is_some() {
+            let _ = self.events.send(DeviceEvent::IosOffline { id: id.to_string() });
+        }
+    }
+
     pub async fn list_unified_devices(&self) -> Vec<UnifiedDevice> {
         let ios_devices = self.ios_devices.read().await;
+        let remote_ios_devices = self.remote_ios_devices.read().await;
         let android_devices = self.android_devices.read().await;
-        let mut devices = Vec::with_capacity(ios_devices.len());
+        let mut devices = Vec::with_capacity(ios_devices.len() + remote_ios_devices.len());
 
-        for device in ios_devices.values() {
+        for device in ios_devices.values().chain(remote_ios_devices.values()) {
+            let capabilities = if device.transport == "remote_wss" {
+                vec![
+                    "stream_rtc_auto".to_string(),
+                    "tlinkauto".to_string(),
+                    "remote_wss".to_string(),
+                ]
+            } else {
+                vec![
+                    "stream_mpegts_ws".to_string(),
+                    "stream_h264_ws".to_string(),
+                    "stream_h264_worker_ws".to_string(),
+                    "stream_rtc_auto".to_string(),
+                    "tlinkauto".to_string(),
+                ]
+            };
             devices.push(UnifiedDevice {
                 id: device.id.clone(),
                 platform: "ios".to_string(),
@@ -110,17 +143,12 @@ impl DeviceRegistry {
                 display_name: device.display_name.clone(),
                 meta: json!({
                     "ip": device.ip,
+                    "transport": device.transport,
                     "device": device.status.device,
                     "tlinkauto": device.status.tlinkauto,
                     "script": device.status.script,
                 }),
-                capabilities: vec![
-                    "stream_mpegts_ws".to_string(),
-                    "stream_h264_ws".to_string(),
-                    "stream_h264_worker_ws".to_string(),
-                    "stream_rtc_auto".to_string(),
-                    "tlinkauto".to_string(),
-                ],
+                capabilities,
             });
         }
 

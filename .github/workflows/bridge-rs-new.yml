@@ -1,0 +1,58 @@
+name: Build Remote iOS Bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, newjs]
+    paths:
+      - bridge-rs-new/**
+      - .github/workflows/bridge-rs-new.yml
+  pull_request:
+    branches: [main, newjs]
+    paths:
+      - bridge-rs-new/**
+      - .github/workflows/bridge-rs-new.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: bridge-rs-new
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            bridge-rs-new/target
+          key: remote-ios-bridge-windows-${{ hashFiles('bridge-rs-new/Cargo.lock') }}
+          restore-keys: |
+            remote-ios-bridge-windows-
+
+      - name: Test remote protocol
+        run: cargo test --target x86_64-pc-windows-msvc remote_frame_tests
+
+      - name: Build release
+        run: cargo build --locked --target x86_64-pc-windows-msvc --release
+
+      - name: Upload Windows bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: tango-bridge-remote-ios-windows-x64
+          path: bridge-rs-new/target/x86_64-pc-windows-msvc/release/tango_bridge.exe
+          if-no-files-found: error

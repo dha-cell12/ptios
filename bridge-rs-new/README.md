@@ -4,6 +4,14 @@ Tango Bridge is a system-tray application that can start ADB and forward connect
 
 An ADB executable for each platform is included.
 
+It also supports an opt-in outbound iOS transport for TLinkauto TrollStore:
+
+```text
+iPhone (Wi-Fi or 5G) -> WSS -> Tango Bridge -> WebRTC/TURN -> Webtango
+```
+
+See [Remote iOS MVP](docs/remote-ios-mvp.md) for configuration and tests.
+
 ## Build
 
 ### Prerequisites

@@ -17,6 +17,8 @@ export function IosStreamModal() {
 
   const [profile, setProfile] = useState<IosStreamProfile>('fast');
   const [latencyText, setLatencyText] = useState('Waiting for metrics...');
+  const remoteOnly = device?.capabilities?.includes('remote_wss') === true;
+  const effectiveProfile: IosStreamProfile = remoteOnly ? 'rtc' : profile;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -43,14 +45,14 @@ export function IosStreamModal() {
       latencyOverlay: latencyOverlayRef.current!,
     });
 
-    streamService.current.start(serial, wsBase, httpBase, profile);
+    streamService.current.start(serial, wsBase, httpBase, effectiveProfile);
     controlService.current.start(serial, wsBase);
 
     return () => {
       streamService.current.unmount();
       controlService.current.stop();
     };
-  }, [serial, profile, bridgeUrl, device]);
+  }, [serial, effectiveProfile, bridgeUrl, device]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -86,7 +88,8 @@ export function IosStreamModal() {
             {(['fast', 'rtc', 'worker', 'eco'] as IosStreamProfile[]).map((p) => (
               <button
                 key={p}
-                className={`ios-mode-btn ${profile === p ? 'active' : ''}`}
+                className={`ios-mode-btn ${effectiveProfile === p ? 'active' : ''}`}
+                disabled={remoteOnly && p !== 'rtc'}
                 onClick={() => setProfile(p)}
               >
                 {p.charAt(0).toUpperCase() + p.slice(1)}

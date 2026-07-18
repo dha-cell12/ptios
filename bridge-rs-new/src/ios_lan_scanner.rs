@@ -81,6 +81,7 @@ async fn probe_device(
         id: format!("ios:{}", ip_string),
         display_name,
         ip: ip_string,
+        transport: "lan".to_string(),
         status: payload,
     })
 }

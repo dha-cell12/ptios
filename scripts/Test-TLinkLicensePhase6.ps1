@@ -21,10 +21,11 @@ function Invoke-TLinkTask {
     try {
         $client.Connect($HostIP, $Port)
         $stream = $client.GetStream()
-        $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 1024, $true)
+        $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        $writer = [System.IO.StreamWriter]::new($stream, $utf8NoBom, 1024, $true)
         $writer.NewLine = "`r`n"
         $writer.AutoFlush = $true
-        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 1024, $true)
+        $reader = [System.IO.StreamReader]::new($stream, $utf8NoBom, $false, 1024, $true)
         $writer.WriteLine($Task)
         $line = $reader.ReadLine()
         if ($null -eq $line) { throw "Port $Port closed without a response for task $Task" }
@@ -63,18 +64,23 @@ function Assert-FeatureProbe {
     $denied = $response -like "-1;;license_required*feature=$Feature*"
     if ($ShouldAllow -and $denied) { throw "$Feature was unexpectedly denied: $response" }
     if (-not $ShouldAllow -and -not $denied) { throw "$Feature was unexpectedly allowed: $response" }
-    [pscustomobject]@{ feature = $Feature; allowed = -not $denied; response = $response }
+    [pscustomobject]@{
+        feature = $Feature
+        allowed = -not $denied
+        operation_success = $response.StartsWith("0;;")
+        response = $response
+    }
 }
 
 Write-Host "Checking TLinkauto license diagnostics at ${HostIP}:$Port"
 $helloRaw = Invoke-TLinkTask -Task "97"
-if ($helloRaw -notlike "0;;*serviceVersion=22*") { throw "Task 97 does not report serviceVersion=22: $helloRaw" }
+if ($helloRaw -notlike "0;;*serviceVersion=23*") { throw "Task 97 does not report serviceVersion=23: $helloRaw" }
 $expectedMarker = if ($ExpectedMode -eq "enforced") { "enforced_compile_time_v1" } else { "observe_compile_time_v1" }
 if ($helloRaw -notlike "*licenseBuildMode=$expectedMarker*") { throw "Task 97 does not report $expectedMarker" }
 
 $hello = ConvertFrom-TLinkBase64Response (Invoke-TLinkTask -Task "60")
 $status = ConvertFrom-TLinkBase64Response (Invoke-TLinkTask -Task "75")
-Assert-Equal $hello.service_version 22 "service_version"
+Assert-Equal $hello.service_version 23 "service_version"
 Assert-Equal $hello.license_contract_version 1 "hello license_contract_version"
 Assert-Equal $status.license_contract_version 1 "status license_contract_version"
 Assert-Equal $status.build_mode $expectedMarker "build_mode"
@@ -91,10 +97,10 @@ if ($RunSafeFeatureProbes) {
     $licensed = [bool]$status.licensed
     $features = @($status.features)
     foreach ($probe in @(
-        @{ Feature = "automation"; Task = "25" },
+        @{ Feature = "automation"; Task = "251" },
         @{ Feature = "script"; Task = "20" },
         @{ Feature = "admin"; Task = "31" },
-        @{ Feature = "shell"; Task = "13" }
+        @{ Feature = "shell"; Task = "13echo tlink-license-phase6" }
     )) {
         $shouldAllow = $ExpectedMode -eq "observe" -or ($licensed -and ($features -contains "all" -or $features -contains $probe.Feature))
         $probeResults += Assert-FeatureProbe -Feature $probe.Feature -Task $probe.Task -ShouldAllow $shouldAllow
@@ -115,4 +121,3 @@ $summary = [ordered]@{
     probes = $probeResults
 }
 $summary | ConvertTo-Json -Depth 8
-

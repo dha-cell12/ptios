@@ -1,10 +1,12 @@
 import { buildIosStreamUrls } from './IosBridgeApi';
+import { deriveBridgeBases } from '../bridgeBase';
+import { IosStreamService } from './IosStreamService';
 import type { UnifiedDevice } from '../deviceRegistry';
 
 type GridStream = {
-  worker: Worker;
   canvas: HTMLCanvasElement;
   deviceId: string;
+  stop: () => void;
 };
 
 // Manages per-device offscreen-canvas worker streams in the Screen View grid.
@@ -29,9 +31,43 @@ export class IosGridStreams {
 
   start(device: UnifiedDevice, canvas: HTMLCanvasElement, bridgeWsUrl: string) {
     if (this.suspended.has(device.id)) return;
-    if (!('transferControlToOffscreen' in canvas) || !('Worker' in window)) return;
-
     this.stop(device.id);
+
+    if (device.capabilities?.includes('remote_wss')) {
+      const parent = canvas.parentElement;
+      if (!parent) return;
+      const video = document.createElement('video');
+      const workerCanvas = document.createElement('canvas');
+      const latency = document.createElement('div');
+      video.autoplay = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.style.width = '100%';
+      video.style.height = '100%';
+      video.style.objectFit = 'fill';
+      workerCanvas.style.display = 'none';
+      latency.style.display = 'none';
+      canvas.style.display = 'none';
+      parent.append(video, workerCanvas, latency);
+
+      const service = new IosStreamService();
+      service.mount({ canvas, workerCanvas, video, latencyOverlay: latency });
+      const { wsBase, httpBase } = deriveBridgeBases(bridgeWsUrl);
+      this.streams.set(device.id, {
+        canvas,
+        deviceId: device.id,
+        stop: () => {
+          service.unmount();
+          video.remove();
+          workerCanvas.remove();
+          latency.remove();
+        },
+      });
+      void service.start(device.id, wsBase, httpBase, 'rtc');
+      return;
+    }
+
+    if (!('transferControlToOffscreen' in canvas) || !('Worker' in window)) return;
 
     const urls = buildIosStreamUrls(bridgeWsUrl, device.id);
     try {
@@ -50,7 +86,14 @@ export class IosGridStreams {
         { type: 'start', url: urls.h264Worker, canvas: offscreen },
         [offscreen]
       );
-      this.streams.set(device.id, { worker, canvas, deviceId: device.id });
+      this.streams.set(device.id, {
+        canvas,
+        deviceId: device.id,
+        stop: () => {
+          try { worker.postMessage({ type: 'stop' }); } catch {}
+          try { worker.terminate(); } catch {}
+        },
+      });
     } catch (e) {
       console.error('[ios-grid] failed to spawn worker', device.id, e);
     }
@@ -59,8 +102,7 @@ export class IosGridStreams {
   stop(deviceId: string) {
     const stream = this.streams.get(deviceId);
     if (!stream) return;
-    try { stream.worker.postMessage({ type: 'stop' }); } catch {}
-    try { stream.worker.terminate(); } catch {}
+    stream.stop();
     this.streams.delete(deviceId);
   }
 

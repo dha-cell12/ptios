@@ -27,11 +27,13 @@ assert.ok(!workflow.includes("TLINK_LICENSE_ADMIN_TOKEN:"), "build workflow must
 assert.ok(workerWorkflow.includes("check-license-recovery.mjs"), "Worker validation omits recovery checks");
 assert.ok(workerWorkflow.includes("check-license-release-readiness.mjs"), "Worker validation omits release-readiness checks");
 assert.ok(verifier.includes("enforced_compile_time_v1") && verifier.includes("observe_compile_time_v1"), "compile markers are missing");
-assert.ok(server.includes("serviceVersion=22") && server.includes('@"service_version": @22'), "service v22 is not synchronized");
+assert.ok(server.includes("serviceVersion=23") && server.includes('@"service_version": @23'), "service v23 is not synchronized");
 assert.ok(validator.includes("secret_scan") && validator.includes("forbidden"), "artifact secret scan is missing");
 assert.ok(regression.includes('Invoke-TLinkTask -Task "76reload"'), "device regression does not test cache reload");
 assert.ok(regression.includes("RunSafeFeatureProbes"), "device regression lacks feature probes");
+assert.ok(regression.includes("UTF8Encoding]::new($false)"), "device regression may prefix tasks with a UTF-8 BOM");
 assert.ok(soak.includes("MaxConsecutiveFailures") && soak.includes("jsonl"), "soak evidence/failure threshold is missing");
+assert.ok(soak.includes("UTF8Encoding]::new($false)"), "soak probe may prefix tasks with a UTF-8 BOM");
 assert.ok(docs.includes("24-hour") && docs.includes("72-hour"), "release gate lacks required soak windows");
 assert.ok(docs.includes("ROOTFULL BLOCKED"), "rootfull blocking rule is not explicit");
 

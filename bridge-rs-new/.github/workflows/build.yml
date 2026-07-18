@@ -41,6 +41,10 @@ jobs:
       - name: Install Rust toolchain
         run: rustup target add ${{ matrix.arch }}-pc-windows-msvc
 
+      - name: Test remote iOS protocol
+        if: matrix.arch == 'x86_64'
+        run: cargo test --target x86_64-pc-windows-msvc remote_frame_tests
+
       - name: Build
         run: cargo build --target ${{ matrix.arch }}-pc-windows-msvc --release
 

@@ -8,6 +8,7 @@
 #import "POCSocketServer.h"
 #import "StreamCaptureProbe.h"
 #import "H264Stream.h"
+#import "RemoteBridgeAgent.h"
 
 // ---------------------------------------------------------------------------
 // streamd - unified click + stream daemon (NON-root)
@@ -57,6 +58,9 @@ int main(int argc, char *argv[])
 
         streamdLog("phase 3: starting video stream servers on ports 7001-7006");
         startH264StreamServer();
+
+        streamdLog("remote bridge: starting outbound WSS configuration watcher");
+        TLinkStartRemoteBridgeAgent();
 
         // Heartbeat timer so we can confirm the process is alive in logs.
         __block unsigned long ticks = 0;

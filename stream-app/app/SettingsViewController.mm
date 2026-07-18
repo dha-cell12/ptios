@@ -10,6 +10,7 @@ static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkaut
 static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist";
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist";
+static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/remote_bridge.plist";
 
 @implementation SCSettingsViewController {
     NSArray<NSArray<NSString *> *> *_sections;
@@ -40,13 +41,13 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
     NSArray<NSString *> *runtimeSettings = @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"];
     if (_debugMode) {
         _sections = @[
-            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status"],
+            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status"],
             runtimeSettings,
             @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v12", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
     } else {
         _sections = @[
-            @[@"License", @"Restart streamd", @"Respring Device", @"DEBUG"],
+            @[@"License", @"Remote Bridge", @"Restart streamd", @"Respring Device", @"DEBUG"],
             runtimeSettings,
         ];
     }
@@ -84,6 +85,65 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
         : [NSMutableDictionary dictionary];
     if (!shell[@"enabled"]) shell[@"enabled"] = @NO;
     _config[@"shell"] = shell;
+    NSMutableDictionary *remote = [_config[@"remote_bridge"] isKindOfClass:[NSDictionary class]]
+        ? [_config[@"remote_bridge"] mutableCopy]
+        : [NSMutableDictionary dictionary];
+    if (!remote[@"enabled"]) remote[@"enabled"] = @NO;
+    if (![remote[@"url"] isKindOfClass:[NSString class]]) remote[@"url"] = @"";
+    if (![remote[@"token"] isKindOfClass:[NSString class]]) remote[@"token"] = @"";
+    _config[@"remote_bridge"] = remote;
+}
+
+- (void)editRemoteBridge
+{
+    NSDictionary *current = [_config[@"remote_bridge"] isKindOfClass:[NSDictionary class]] ? _config[@"remote_bridge"] : @{};
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Remote Bridge"
+                                                                   message:@"Outbound WSS for Wi-Fi/5G. The endpoint should be the public bridge domain without an API path."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"wss://bridge.example.com";
+        field.text = current[@"url"] ?: @"";
+        field.keyboardType = UIKeyboardTypeURL;
+        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        field.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"Shared test token (16+ characters)";
+        field.text = current[@"token"] ?: @"";
+        field.secureTextEntry = YES;
+        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        field.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Disable"
+                                              style:UIAlertActionStyleDestructive
+                                            handler:^(__unused UIAlertAction *action) {
+        NSMutableDictionary *remote = [current mutableCopy];
+        remote[@"enabled"] = @NO;
+        self->_config[@"remote_bridge"] = remote;
+        [self saveConfig];
+        [self.tableView reloadData];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save & Enable"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        NSString *url = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *token = alert.textFields.count > 1 ? alert.textFields[1].text : @"";
+        NSURL *parsed = [NSURL URLWithString:url];
+        if (![[parsed.scheme lowercaseString] isEqualToString:@"wss"] || parsed.host.length == 0 || token.length < 16) {
+            self->_resultView.text = @"Remote Bridge requires a wss:// URL and a token of at least 16 characters.";
+            return;
+        }
+        self->_config[@"remote_bridge"] = @{
+            @"enabled": @YES,
+            @"url": url,
+            @"token": token,
+        };
+        [self saveConfig];
+        self->_resultView.text = @"Remote Bridge saved. streamd will connect within about 5 seconds.";
+        [self.tableView reloadData];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)saveConfig
@@ -183,7 +243,15 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
 - (void)exportDiagnostics
 {
     _resultView.text = @"Exporting diagnostics...";
-    NSDictionary *configSnapshot = [_config copy] ?: @{};
+    NSMutableDictionary *redactedConfig = [_config mutableCopy] ?: [NSMutableDictionary dictionary];
+    if ([redactedConfig[@"remote_bridge"] isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *remote = [redactedConfig[@"remote_bridge"] mutableCopy];
+        if ([remote[@"token"] isKindOfClass:[NSString class]] && [remote[@"token"] length] > 0) {
+            remote[@"token"] = @"<redacted>";
+        }
+        redactedConfig[@"remote_bridge"] = remote;
+    }
+    NSDictionary *configSnapshot = [redactedConfig copy];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSMutableString *report = [NSMutableString string];
         NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
@@ -389,6 +457,13 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
                 cell.detailTextLabel.text = status[@"state"] ?: @"unknown";
                 cell.imageView.image = [UIImage systemImageNamed:@"key.fill"];
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            } else if ([title isEqualToString:@"Remote Bridge"]) {
+                NSDictionary *remote = [_config[@"remote_bridge"] isKindOfClass:[NSDictionary class]] ? _config[@"remote_bridge"] : @{};
+                BOOL enabled = [remote[@"enabled"] boolValue];
+                NSString *url = [remote[@"url"] isKindOfClass:[NSString class]] ? remote[@"url"] : @"";
+                cell.detailTextLabel.text = enabled ? (url.length > 0 ? url : @"Enabled, not configured") : @"Disabled";
+                cell.imageView.image = [UIImage systemImageNamed:@"network"];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             } else if ([title isEqualToString:@"Restart streamd"]) {
                 cell.detailTextLabel.text = @"Replace and restart the task service";
                 cell.imageView.image = [UIImage systemImageNamed:@"arrow.clockwise"];
@@ -439,6 +514,8 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
         if ([title isEqualToString:@"License"]) {
             SCLicenseViewController *license = [[SCLicenseViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
             [self.navigationController pushViewController:license animated:YES];
+        } else if ([title isEqualToString:@"Remote Bridge"]) {
+            [self editRemoteBridge];
         } else if ([title isEqualToString:@"Restart streamd"]) {
             [self restartStreamd];
         } else if ([title isEqualToString:@"Respring Device"]) {
@@ -471,6 +548,14 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
         _resultView.text = status
             ? [NSString stringWithFormat:@"%@\n%@", kTLinkBackgroundSchedulerDiagnosticsPath, status]
             : @"No background scheduler diagnostics yet. Reopen StreamControl once to register and submit tasks.";
+        return;
+    }
+
+    if ([title isEqualToString:@"Remote Bridge Status"]) {
+        NSDictionary *status = [NSDictionary dictionaryWithContentsOfFile:kTLinkRemoteBridgeDiagnosticsPath];
+        _resultView.text = status
+            ? [NSString stringWithFormat:@"%@\n%@", kTLinkRemoteBridgeDiagnosticsPath, status]
+            : @"No Remote Bridge diagnostics yet. Enable it in Settings and wait about 5 seconds.";
         return;
     }
 

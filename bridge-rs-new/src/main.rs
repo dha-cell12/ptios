@@ -23,6 +23,7 @@ use axum::{
 use bytes::Bytes as MediaBytes;
 use futures_util::{SinkExt, StreamExt};
 use http::{header, HeaderValue, Method, StatusCode};
+use http::HeaderMap;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -43,11 +44,13 @@ mod adb;
 mod ios_lan_scanner;
 mod ios_provider;
 mod registry;
+mod remote_ios;
 mod workspace;
 
 use ios_lan_scanner::IosLanScanner;
-use ios_provider::IosProvider;
+use ios_provider::{HelloStatusPayload, IosDevice, IosDeviceInfo, IosProvider, ScriptStatus, TLinkauto};
 use registry::DeviceRegistry;
+use remote_ios::{RemoteControlHello, RemoteControlInbound, RemoteIosHub, RemoteIosSession};
 use workspace::{FileQuery, Workspace, WriteFileRequest};
 
 use webrtc::{
@@ -134,6 +137,7 @@ struct AppState {
     rtc_sessions: Arc<Mutex<HashMap<String, CancellationToken>>>,
     tlinkauto_hubs: Arc<Mutex<HashMap<String, Arc<TLinkautoControlHub>>>>,
     rtc_ice: Arc<RtcIceService>,
+    remote_ios: Arc<RemoteIosHub>,
     workspace: Arc<Workspace>,
 }
 
@@ -179,6 +183,25 @@ struct IosRtcOfferResponse {
     sdp: RTCSessionDescription,
     profile: String,
     port: u16,
+}
+
+#[derive(Clone)]
+enum IosRtcSource {
+    Lan { ip: String },
+    Remote { session: Arc<RemoteIosSession> },
+}
+
+#[derive(Deserialize)]
+struct RemoteVideoQuery {
+    device_id: String,
+    stream_id: String,
+}
+
+#[derive(Serialize)]
+struct RemoteDeviceStatus {
+    enabled: bool,
+    connected_devices: usize,
+    protocol: &'static str,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -529,8 +552,25 @@ async fn ios_rtc_offer_handler(
         .await
         .ok_or_else(|| (StatusCode::NOT_FOUND, "device not found").into_response())?;
 
-    let (profile, port) = select_ios_rtc_profile(&device.ip, request.profile.as_deref());
-    println!("[ios-rtc] selected profile={profile} port={port} ip={}", device.ip);
+    let (profile, port) = if device.transport == "remote_wss" {
+        ("wan".to_string(), 7006)
+    } else {
+        select_ios_rtc_profile(&device.ip, request.profile.as_deref())
+    };
+    println!(
+        "[ios-rtc] selected profile={profile} port={port} transport={} ip={}",
+        device.transport, device.ip
+    );
+    let source = if device.transport == "remote_wss" {
+        let session = state
+            .remote_ios
+            .get(&id)
+            .await
+            .ok_or_else(|| with_cors_headers((StatusCode::BAD_GATEWAY, "remote device session unavailable").into_response()))?;
+        IosRtcSource::Remote { session }
+    } else {
+        IosRtcSource::Lan { ip: device.ip.clone() }
+    };
 
     let rtc_cancel = CancellationToken::new();
     if let Some(previous) = state
@@ -550,7 +590,17 @@ async fn ios_rtc_offer_handler(
         ice_config.ice_transport_policy
     );
 
-    let answer = match create_ios_rtc_answer(device.ip, request.sdp, rtc_cancel, port, profile.clone(), ice_config).await {
+    let answer = match create_ios_rtc_answer(
+        source,
+        Arc::clone(&state.remote_ios),
+        request.sdp,
+        rtc_cancel,
+        port,
+        profile.clone(),
+        ice_config,
+    )
+    .await
+    {
         Ok(answer) => answer,
         Err(e) => {
             if let Some(cancel) = state.rtc_sessions.lock().await.remove(&id) {
@@ -569,6 +619,175 @@ async fn rtc_config_handler(
 ) -> Json<RtcIceConfigResponse> {
     let force_relay = parse_force_relay(query.force_relay.as_deref());
     Json(state.rtc_ice.config(force_relay).await)
+}
+
+fn remote_authorized(headers: &HeaderMap, hub: &RemoteIosHub) -> bool {
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    hub.authorize(authorization)
+}
+
+async fn remote_ios_control_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Result<Response, Response> {
+    if !state.remote_ios.enabled() {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "remote iOS is disabled").into_response());
+    }
+    if !remote_authorized(&headers, &state.remote_ios) {
+        return Err((StatusCode::UNAUTHORIZED, "remote device unauthorized").into_response());
+    }
+    Ok(ws.on_upgrade(move |socket| handle_remote_ios_control(socket, state)))
+}
+
+async fn remote_ios_status_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<RemoteDeviceStatus>, Response> {
+    if !remote_authorized(&headers, &state.remote_ios) {
+        return Err((StatusCode::UNAUTHORIZED, "remote device unauthorized").into_response());
+    }
+    Ok(Json(RemoteDeviceStatus {
+        enabled: state.remote_ios.enabled(),
+        connected_devices: state.remote_ios.connected_count().await,
+        protocol: "tlink-remote-wss-v1",
+    }))
+}
+
+async fn handle_remote_ios_control(mut socket: WebSocket, state: AppState) {
+    let first = match tokio::time::timeout(Duration::from_secs(8), socket.recv()).await {
+        Ok(Some(Ok(Message::Text(text)))) => text,
+        _ => {
+            let _ = socket.close().await;
+            return;
+        }
+    };
+    let hello = match serde_json::from_str::<RemoteControlHello>(first.as_str()) {
+        Ok(hello) if hello.message_type == "hello" && !hello.device_id.is_empty() => hello,
+        _ => {
+            let _ = socket.close().await;
+            return;
+        }
+    };
+    let normalized_device_id: String = hello
+        .device_id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        .take(128)
+        .collect();
+    if normalized_device_id.is_empty() {
+        let _ = socket.close().await;
+        return;
+    }
+    let registry_id = format!("ios-remote:{normalized_device_id}");
+    let display_name = if hello.display_name.is_empty() {
+        normalized_device_id.clone()
+    } else {
+        hello.display_name.chars().take(128).collect()
+    };
+
+    let (mut ws_writer, mut ws_reader) = socket.split();
+    let (outgoing_tx, mut outgoing_rx) = channel::<Message>(128);
+    let session = RemoteIosSession::new(normalized_device_id.clone(), outgoing_tx);
+    state.remote_ios.insert(registry_id.clone(), Arc::clone(&session)).await;
+    state
+        .registry
+        .upsert_remote_ios_device(IosDevice {
+            id: registry_id.clone(),
+            display_name,
+            ip: String::new(),
+            transport: "remote_wss".to_string(),
+            status: HelloStatusPayload {
+                tlinkauto: TLinkauto {
+                    port: 6000,
+                    protocols: vec!["v0-line".to_string(), "remote-wss-v1".to_string()],
+                },
+                device: IosDeviceInfo {
+                    system_name: hello.system_name,
+                    model: hello.model,
+                    name: normalized_device_id.clone(),
+                    system_version: hello.system_version,
+                },
+                script: ScriptStatus::default(),
+            },
+        })
+        .await;
+    println!(
+        "[remote-ios] online id={} service_version={}",
+        registry_id, hello.service_version
+    );
+
+    let writer = tokio::spawn(async move {
+        while let Some(message) = outgoing_rx.recv().await {
+            if ws_writer.send(message).await.is_err() {
+                break;
+            }
+        }
+        let _ = ws_writer.close().await;
+    });
+
+    while let Some(message) = ws_reader.next().await {
+        let text = match message {
+            Ok(Message::Text(text)) => text,
+            Ok(Message::Close(_)) | Err(_) => break,
+            _ => continue,
+        };
+        let Ok(inbound) = serde_json::from_str::<RemoteControlInbound>(text.as_str()) else {
+            continue;
+        };
+        if inbound.message_type == "task_result" && inbound.request_id > 0 {
+            session
+                .resolve_response(inbound.request_id, &inbound.payload_b64)
+                .await;
+        }
+    }
+
+    writer.abort();
+    if state
+        .remote_ios
+        .remove_if_current(&registry_id, &session)
+        .await
+    {
+        state.registry.remove_remote_ios_device(&registry_id).await;
+        println!("[remote-ios] offline id={registry_id}");
+    }
+}
+
+async fn remote_ios_video_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<RemoteVideoQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, Response> {
+    if !remote_authorized(&headers, &state.remote_ios) {
+        return Err((StatusCode::UNAUTHORIZED, "remote video unauthorized").into_response());
+    }
+    let sender = state
+        .remote_ios
+        .take_video_sender(&query.device_id, &query.stream_id)
+        .await
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "remote video slot not found").into_response())?;
+    Ok(ws.on_upgrade(move |socket| handle_remote_ios_video(socket, sender)))
+}
+
+async fn handle_remote_ios_video(
+    mut socket: WebSocket,
+    sender: tokio::sync::mpsc::Sender<Vec<u8>>,
+) {
+    while let Some(message) = socket.recv().await {
+        match message {
+            Ok(Message::Binary(bytes)) => {
+                if sender.send(bytes.to_vec()).await.is_err() {
+                    break;
+                }
+            }
+            Ok(Message::Close(_)) | Err(_) => break,
+            _ => {}
+        }
+    }
+    let _ = socket.close().await;
 }
 
 async fn ios_rtc_close_handler(
@@ -605,7 +824,8 @@ fn is_lan_candidate_ip(ip: &str) -> bool {
 }
 
 async fn create_ios_rtc_answer(
-    ip: String,
+    source: IosRtcSource,
+    remote_ios: Arc<RemoteIosHub>,
     offer: RTCSessionDescription,
     rtc_cancel: CancellationToken,
     port: u16,
@@ -698,7 +918,8 @@ async fn create_ios_rtc_answer(
         .ok_or_else(|| "missing local description".to_string())?;
 
     tokio::spawn(stream_ios_h264_to_rtc(
-        ip,
+        source,
+        remote_ios,
         Arc::clone(&peer_connection),
         video_track,
         rtc_cancel,
@@ -710,6 +931,33 @@ async fn create_ios_rtc_answer(
 }
 
 async fn stream_ios_h264_to_rtc(
+    source: IosRtcSource,
+    remote_ios: Arc<RemoteIosHub>,
+    peer_connection: Arc<webrtc::peer_connection::RTCPeerConnection>,
+    video_track: Arc<TrackLocalStaticSample>,
+    cancel: CancellationToken,
+    port: u16,
+    profile: String,
+) {
+    match source {
+        IosRtcSource::Lan { ip } => {
+            stream_ios_h264_to_rtc_lan(ip, peer_connection, video_track, cancel, port, profile).await;
+        }
+        IosRtcSource::Remote { session } => {
+            stream_ios_h264_to_rtc_remote(
+                session,
+                remote_ios,
+                peer_connection,
+                video_track,
+                cancel,
+                profile,
+            )
+            .await;
+        }
+    }
+}
+
+async fn stream_ios_h264_to_rtc_lan(
     ip: String,
     peer_connection: Arc<webrtc::peer_connection::RTCPeerConnection>,
     video_track: Arc<TrackLocalStaticSample>,
@@ -772,6 +1020,75 @@ async fn stream_ios_h264_to_rtc(
     }
 
     println!("[ios-rtc] close tcp {port} profile={profile}");
+    let _ = peer_connection.close().await;
+}
+
+async fn stream_ios_h264_to_rtc_remote(
+    session: Arc<RemoteIosSession>,
+    remote_ios: Arc<RemoteIosHub>,
+    peer_connection: Arc<webrtc::peer_connection::RTCPeerConnection>,
+    video_track: Arc<TrackLocalStaticSample>,
+    cancel: CancellationToken,
+    profile: String,
+) {
+    let (stream_id, mut receiver) = match remote_ios.open_video(&session, &profile).await {
+        Ok(value) => value,
+        Err(_) => {
+            println!("[ios-rtc] remote video start failed device={}", session.device_id);
+            let _ = peer_connection.close().await;
+            return;
+        }
+    };
+    println!(
+        "[ios-rtc] remote video requested device={} stream={} profile={}",
+        session.device_id, stream_id, profile
+    );
+    let mut last_frame_at: Option<Instant> = None;
+    let mut sample_duration_us = rtc_initial_sample_duration_us(&profile);
+
+    loop {
+        let packet = tokio::select! {
+            _ = cancel.cancelled() => break,
+            packet = receiver.recv() => packet,
+        };
+        let Some(packet) = packet else { break; };
+        let frame = match parse_zxh_frame_packet(packet) {
+            Ok(frame) => frame,
+            Err(error) => {
+                println!("[ios-rtc] remote frame rejected stream={stream_id} error={error}");
+                break;
+            }
+        };
+        if frame.payload.is_empty() {
+            continue;
+        }
+
+        let now = Instant::now();
+        if let Some(last) = last_frame_at {
+            let observed_us = now.duration_since(last).as_micros() as f64;
+            let bounded_us = observed_us.clamp(30_000.0, 80_000.0);
+            sample_duration_us = (sample_duration_us * 0.80) + (bounded_us * 0.20);
+        }
+        last_frame_at = Some(now);
+        if video_track
+            .write_sample(&Sample {
+                data: MediaBytes::from(frame.payload),
+                duration: Duration::from_micros(sample_duration_us.round() as u64),
+                ..Default::default()
+            })
+            .await
+            .is_err()
+        {
+            break;
+        }
+    }
+
+    session.stop_video(&stream_id).await;
+    remote_ios.cancel_video_slot(&stream_id).await;
+    println!(
+        "[ios-rtc] remote video closed device={} stream={}",
+        session.device_id, stream_id
+    );
     let _ = peer_connection.close().await;
 }
 
@@ -841,17 +1158,125 @@ async fn ios_tlinkauto_handler(
 
     let registry = Arc::clone(&state.registry);
     let hubs = Arc::clone(&state.tlinkauto_hubs);
+    let remote_ios = Arc::clone(&state.remote_ios);
     Ok(ws.on_upgrade(move |socket| async move {
         registry.begin_ios_control();
-        println!("[ios-tlinkauto] control opened {id}");
-        let hub = {
-            let mut guard = hubs.lock().await;
-            Arc::clone(guard.entry(device.ip.clone()).or_insert_with(|| TLinkautoControlHub::new(device.ip.clone())))
-        };
-        handle_ios_tlinkauto(socket, hub).await;
+        println!("[ios-tlinkauto] control opened {id} transport={}", device.transport);
+        if device.transport == "remote_wss" {
+            if let Some(session) = remote_ios.get(&id).await {
+                handle_ios_tlinkauto_remote(socket, session).await;
+            }
+        } else {
+            let hub = {
+                let mut guard = hubs.lock().await;
+                Arc::clone(guard.entry(device.ip.clone()).or_insert_with(|| TLinkautoControlHub::new(device.ip.clone())))
+            };
+            handle_ios_tlinkauto(socket, hub).await;
+        }
         println!("[ios-tlinkauto] control closed {id}");
         registry.end_ios_control();
     }))
+}
+
+fn parse_zxh_frame_packet(packet: Vec<u8>) -> Result<ZxhFrame, &'static str> {
+    if packet.len() < 20 || &packet[..3] != b"ZXH" {
+        return Err("bad_zxh_magic");
+    }
+    let (header_len, timestamp_offset, payload_len_offset) = match packet[3] {
+        b'1' => (20usize, 8usize, 16usize),
+        b'2' => (52usize, 16usize, 48usize),
+        _ => return Err("bad_zxh_version"),
+    };
+    if packet.len() < header_len {
+        return Err("short_zxh_header");
+    }
+    let timestamp_us = u64::from_be_bytes(
+        packet[timestamp_offset..timestamp_offset + 8]
+            .try_into()
+            .map_err(|_| "bad_zxh_timestamp")?,
+    );
+    let payload_len = u32::from_be_bytes(
+        packet[payload_len_offset..payload_len_offset + 4]
+            .try_into()
+            .map_err(|_| "bad_zxh_length")?,
+    ) as usize;
+    if payload_len == 0 || payload_len > 4 * 1024 * 1024 {
+        return Err("bad_zxh_payload_length");
+    }
+    if packet.len() != header_len + payload_len {
+        return Err("zxh_packet_size_mismatch");
+    }
+    Ok(ZxhFrame {
+        timestamp_us,
+        payload: packet[header_len..].to_vec(),
+    })
+}
+
+#[cfg(test)]
+mod remote_frame_tests {
+    use super::parse_zxh_frame_packet;
+
+    #[test]
+    fn parses_complete_zxh2_packet() {
+        let payload = vec![0, 0, 0, 1, 0x65, 1, 2, 3];
+        let mut packet = vec![0u8; 52];
+        packet[..4].copy_from_slice(b"ZXH2");
+        packet[4] = 1;
+        packet[16..24].copy_from_slice(&123_456u64.to_be_bytes());
+        packet[48..52].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+        packet.extend_from_slice(&payload);
+
+        let frame = parse_zxh_frame_packet(packet).expect("valid ZXH2 packet");
+        assert_eq!(frame.timestamp_us, 123_456);
+        assert_eq!(frame.payload, payload);
+    }
+
+    #[test]
+    fn rejects_truncated_and_oversized_packets() {
+        let mut truncated = vec![0u8; 52];
+        truncated[..4].copy_from_slice(b"ZXH2");
+        truncated[48..52].copy_from_slice(&8u32.to_be_bytes());
+        assert!(matches!(
+            parse_zxh_frame_packet(truncated),
+            Err("zxh_packet_size_mismatch")
+        ));
+
+        let mut oversized = vec![0u8; 52];
+        oversized[..4].copy_from_slice(b"ZXH2");
+        oversized[48..52].copy_from_slice(&(4 * 1024 * 1024u32 + 1).to_be_bytes());
+        assert!(matches!(
+            parse_zxh_frame_packet(oversized),
+            Err("bad_zxh_payload_length")
+        ));
+    }
+}
+
+async fn handle_ios_tlinkauto_remote(mut ws: WebSocket, session: Arc<RemoteIosSession>) {
+    while let Some(message) = ws.recv().await {
+        let bytes = match message {
+            Ok(Message::Binary(buf)) => buf.to_vec(),
+            Ok(Message::Text(text)) => text.as_bytes().to_vec(),
+            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(_) => continue,
+        };
+
+        if is_ios_tlinkauto_touch_command(&bytes) {
+            if session.send_touch(bytes).await.is_err() {
+                break;
+            }
+            continue;
+        }
+
+        match session.send_request(bytes).await {
+            Ok(response) => {
+                if ws.send(Message::binary(response)).await.is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let _ = ws.close().await;
 }
 
 async fn tlinkauto_connect(ip: &str) -> Result<TcpStream, ()> {
@@ -1167,6 +1592,9 @@ async fn main() {
         .route("/ios/{id}/rtc/offer", post(ios_rtc_offer_handler))
         .route("/ios/{id}/rtc/close", post(ios_rtc_close_handler))
         .route("/ios/{id}/tlinkauto", get(ios_tlinkauto_handler))
+        .route("/remote/device/control", get(remote_ios_control_handler))
+        .route("/remote/device/video", get(remote_ios_video_handler))
+        .route("/remote/device/status", get(remote_ios_status_handler))
         .nest(
             "/bridge",
             Router::new()
@@ -1199,6 +1627,7 @@ async fn main() {
         rtc_sessions: Arc::new(Mutex::new(HashMap::new())),
         tlinkauto_hubs: Arc::new(Mutex::new(HashMap::new())),
         rtc_ice: Arc::new(RtcIceService::from_env()),
+        remote_ios: RemoteIosHub::from_env(),
         workspace: Arc::new(Workspace::new().expect("workspace init failed")),
     });
 

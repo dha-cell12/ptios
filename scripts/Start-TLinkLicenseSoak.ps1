@@ -29,10 +29,11 @@ function Invoke-TLinkTask {
     try {
         $client.Connect($HostIP, $Port)
         $stream = $client.GetStream()
-        $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 1024, $true)
+        $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        $writer = [System.IO.StreamWriter]::new($stream, $utf8NoBom, 1024, $true)
         $writer.NewLine = "`r`n"
         $writer.AutoFlush = $true
-        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 1024, $true)
+        $reader = [System.IO.StreamReader]::new($stream, $utf8NoBom, $false, 1024, $true)
         $writer.WriteLine($Task)
         $line = $reader.ReadLine()
         if ($null -eq $line) { throw "connection closed without a response" }
@@ -73,10 +74,10 @@ while ([DateTimeOffset]::UtcNow -lt $deadline) {
         $helloRaw = Invoke-TLinkTask -Task "97"
         $hello = ConvertFrom-TLinkStatus (Invoke-TLinkTask -Task "60")
         $status = ConvertFrom-TLinkStatus (Invoke-TLinkTask -Task "75")
-        if ($hello.service_version -ne 22) { throw "service_version=$($hello.service_version)" }
+        if ($hello.service_version -ne 23) { throw "service_version=$($hello.service_version)" }
         if ($status.build_mode -ne $expectedMarker) { throw "build_mode=$($status.build_mode)" }
         if ($ExpectedState -and $status.state -ne $ExpectedState) { throw "state=$($status.state)" }
-        if ($helloRaw -notlike "0;;*serviceVersion=22*") { throw "task97_service_marker_missing" }
+        if ($helloRaw -notlike "0;;*serviceVersion=23*") { throw "task97_service_marker_missing" }
         $consecutiveFailures = 0
         Write-Sample @{
             schema_version = 1

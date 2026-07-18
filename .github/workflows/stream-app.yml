@@ -257,7 +257,7 @@ jobs:
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
-          grep -q 'serviceVersion=22' stream-app/app/StreamSupervisor.mm
+          grep -q 'serviceVersion=23' stream-app/app/StreamSupervisor.mm
           grep -q 'replacement required' stream-app/app/StreamSupervisor.mm
           grep -q 'runPrivhelperEnsureStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q -- '- (void)restart' stream-app/app/StreamSupervisor.mm
@@ -291,8 +291,8 @@ jobs:
           grep -q 'TLinkDispatchBackgroundVisualFallback' stream-app/streamd/POCSocketServer.mm
           grep -Fq 'device[@"openFile"]' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptFileHandleAPI' stream-app/streamd/POCSocketServer.mm
-          grep -q 'withString:@"serviceVersion=22"' stream-app/streamd/POCSocketServer.mm
-          grep -q '"service_version": @22' stream-app/streamd/POCSocketServer.mm
+          grep -q 'withString:@"serviceVersion=23"' stream-app/streamd/POCSocketServer.mm
+          grep -q '"service_version": @23' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseBuildMode' shared/TLinkLicenseVerifier.h
           grep -q 'enforced_compile_time_v1' shared/TLinkLicenseVerifier.mm
           grep -q 'observe_compile_time_v1' shared/TLinkLicenseVerifier.mm
@@ -327,6 +327,12 @@ jobs:
           grep -q 'nextLicenseCheck = now + 5.0' stream-app/streamd/H264Stream.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/streamd/H264Stream.mm
+          grep -q 'RemoteBridgeAgent.mm' stream-app/streamd/Makefile
+          grep -q 'TLinkStartRemoteBridgeAgent' stream-app/streamd/main.mm
+          grep -q 'TLinkDispatchTaskLineData' stream-app/streamd/POCSocketServer.mm
+          grep -q 'remoteBridgeWSS' stream-app/streamd/POCSocketServer.mm
+          grep -q 'remote_bridge.plist' stream-app/app/SettingsViewController.mm
+          grep -q '<redacted>' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkResolveSHA256' shared/TLinkLicenseVerifier.mm
           ! grep -q 'LIBRARIES = commonCrypto' stream-app/streamd/Makefile
           ! grep -q 'LIBRARIES = commonCrypto' stream-app/app/Makefile

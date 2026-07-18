@@ -101,8 +101,8 @@ for (const name of executables) {
 
 const appBinary = (await readFile(join(app, "StreamControl"))).toString("latin1");
 const streamdBinary = (await readFile(join(app, "streamd"))).toString("latin1");
-assert.ok(appBinary.includes("serviceVersion=22"), "StreamControl does not require service v22");
-assert.ok(streamdBinary.includes("serviceVersion=22"), "streamd does not expose service v22");
+assert.ok(appBinary.includes("serviceVersion=23"), "StreamControl does not require service v23");
+assert.ok(streamdBinary.includes("serviceVersion=23"), "streamd does not expose service v23");
 
 const forbidden = [
   "LICENSE_SIGNING_PRIVATE_JWK",
@@ -124,7 +124,7 @@ const manifest = {
   license_contract_version: 1,
   license_mode: mode,
   compile_marker: expectedMarker,
-  service_version: 22,
+  service_version: 23,
   config: {
     endpoint: expected.LicenseEndpoint,
     key_id: expected.LicenseKeyID,
@@ -141,4 +141,4 @@ const manifest = {
 };
 
 await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-console.log(`license artifact OK: ${mode}, service v22, manifest ${output}`);
+console.log(`license artifact OK: ${mode}, service v23, manifest ${output}`);

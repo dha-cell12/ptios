@@ -7,14 +7,14 @@ and decode task `60/75` Base64 JSON with the existing PowerShell helper.
 
 1. Install the TIPA without activating a license and open StreamControl once.
 2. Task `97`, `75`, `76`, and `99` must respond. Task `97` must report
-   `serviceVersion=22`, `licenseState=not_activated`, and denied access.
+   `serviceVersion=23`, `licenseState=not_activated`, and denied access.
 3. A core request such as task `25` must return `license_required`, not execute.
 4. Activate in `Settings > License`; the same task must work without Restart
    streamd.
 
 ## App Update
 
-1. Start with a valid lease and an older `serviceVersion=21` build.
+1. Start with a valid lease and an older `serviceVersion=22` build.
 2. Install the v22 TIPA over it and open StreamControl.
 3. Task `97` must change to v22. Task `60` must resolve the current installed
    bundle path while retaining the same license/device identity.

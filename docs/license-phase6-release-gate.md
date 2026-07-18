@@ -14,7 +14,7 @@ The StreamControl workflow builds two independent artifacts:
 
 Each artifact includes a `license-build-<mode>.json` evidence file. Before
 upload, CI checks the bundled `LicenseConfig.plist`, endpoint, key id, P-256
-public key coordinates, compile-time mode in all four executables, service v22,
+public key coordinates, compile-time mode in all four executables, service v23,
 and scans the app for private signing/admin secret markers. The manifest records
 SHA-256 hashes for the TIPA, config, app, streamd, clipboardd, and privhelper.
 
@@ -34,10 +34,16 @@ Install the enforced artifact and open StreamControl once. Run:
   -RunSafeFeatureProbes
 ```
 
-The script checks service v22, contract v1, the enforced compile marker, task
+The script checks service v23, contract v1, the enforced compile marker, task
 `60/75`, task `76reload`, generation stability, and safe policy probes for
 automation, script, admin, and shell. It does not respring, clear data, tap the
 screen, expose a license key, or call Worker admin endpoints.
+
+For each probe, `allowed` means the request passed the license feature gate;
+`operation_success` separately reports whether the safe backend command itself
+returned `0;;`. The admin probe intentionally omits a bundle id, so it can prove
+the gate without killing an application and normally has
+`operation_success=false`.
 
 Repeat the regression for these states and retain the console JSON:
 
@@ -102,4 +108,3 @@ All items below must be true:
 **ROOTFULL BLOCKED:** do not begin the rootfull license implementation until
 all device evidence above has been reviewed and the enforced TrollStore release
 candidate is accepted.
-

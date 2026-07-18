@@ -53,6 +53,7 @@ pub struct IosDevice {
     pub id: String,
     pub display_name: String,
     pub ip: String,
+    pub transport: String,
     pub status: HelloStatusPayload,
 }
 

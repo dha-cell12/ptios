@@ -20,6 +20,11 @@ extern "C" {
 void TLinkStartTaskServer(void);
 void TLinkSetLaunchExecutablePath(const char *path);
 
+// Dispatches one legacy task line in-process. Remote transports use this to
+// share the exact same parser, license gates and response format as tcp/6000.
+// Returns nil for legacy fire-and-forget task 10.
+NSData *TLinkDispatchTaskLineData(NSData *lineData);
+
 // Backward-compatible name kept while the source file is still being migrated
 // from the original PoC naming.
 void POCStartSocketServer(void);
