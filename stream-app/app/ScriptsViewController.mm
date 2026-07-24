@@ -80,11 +80,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     self.tableView.separatorInset = UIEdgeInsetsMake(0, 72.0, 0, 16.0);
     self.tableView.sectionHeaderHeight = 10.0;
     self.tableView.sectionFooterHeight = 10.0;
-    BOOL rootScripts = [[self scriptsPath] isEqualToString:kTLinkScriptsPath];
-    self.navigationItem.largeTitleDisplayMode = rootScripts
-        ? UINavigationItemLargeTitleDisplayModeAlways
-        : UINavigationItemLargeTitleDisplayModeNever;
-    if (rootScripts) self.navigationController.navigationBar.prefersLargeTitles = YES;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    self.navigationController.navigationBar.prefersLargeTitles = NO;
 
     UIBarButtonItem *refresh = [self navigationButtonWithSystemImage:@"arrow.clockwise"
                                                            tintColor:[UIColor systemBlueColor]
@@ -161,7 +158,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.tintColor = tintColor;
-    button.titleLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
+    button.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    button.titleLabel.adjustsFontForContentSizeCategory = YES;
     [button setTitle:title forState:UIControlStateNormal];
     UIImageSymbolConfiguration *configuration =
         [UIImageSymbolConfiguration configurationWithPointSize:18.0 weight:UIImageSymbolWeightMedium];
@@ -244,7 +242,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
     _statusTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _statusTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    _statusTitleLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
+    _statusTitleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    _statusTitleLabel.adjustsFontForContentSizeCategory = YES;
     _statusTitleLabel.textColor = [UIColor labelColor];
     _statusTitleLabel.numberOfLines = 1;
     [surface addSubview:_statusTitleLabel];
@@ -252,7 +251,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     _statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _statusLabel.textColor = [UIColor secondaryLabelColor];
-    _statusLabel.font = [UIFont systemFontOfSize:12.0];
+    _statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    _statusLabel.adjustsFontForContentSizeCategory = YES;
     _statusLabel.numberOfLines = 2;
     _statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     [surface addSubview:_statusLabel];
@@ -953,18 +953,21 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (UIButton *)playButtonForRow:(NSInteger)row
 {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.frame = CGRectMake(0.0, 0.0, 44.0, 44.0);
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    button.frame = CGRectMake(0.0, 0.0, 42.0, 42.0);
     button.backgroundColor = [UIColor systemGreenColor];
     button.tintColor = [UIColor whiteColor];
-    button.layer.cornerRadius = 12.0;
+    button.layer.cornerRadius = 10.0;
     button.layer.shadowColor = [UIColor blackColor].CGColor;
-    button.layer.shadowOpacity = 0.12;
-    button.layer.shadowRadius = 4.0;
-    button.layer.shadowOffset = CGSizeMake(0, 2.0);
+    button.layer.shadowOpacity = 0.08;
+    button.layer.shadowRadius = 3.0;
+    button.layer.shadowOffset = CGSizeMake(0, 1.0);
     UIImageSymbolConfiguration *configuration =
-        [UIImageSymbolConfiguration configurationWithPointSize:18.0 weight:UIImageSymbolWeightBold];
+        [UIImageSymbolConfiguration configurationWithPointSize:14.0 weight:UIImageSymbolWeightSemibold];
     [button setImage:[[UIImage systemImageNamed:@"play.fill"] imageByApplyingSymbolConfiguration:configuration]
             forState:UIControlStateNormal];
+    [button.widthAnchor constraintEqualToConstant:42.0].active = YES;
+    [button.heightAnchor constraintEqualToConstant:42.0].active = YES;
     button.accessibilityLabel = @"Run Script";
     button.tag = row;
     [button addTarget:self action:@selector(playButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -974,13 +977,19 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (UIButton *)settingsButtonForRow:(NSInteger)row
 {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.frame = CGRectMake(0.0, 0.0, 42.0, 44.0);
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    button.frame = CGRectMake(0.0, 0.0, 42.0, 42.0);
     button.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    button.layer.cornerRadius = 12.0;
+    button.layer.cornerRadius = 10.0;
     button.layer.borderWidth = 0.5;
     button.layer.borderColor = [UIColor separatorColor].CGColor;
-    [button setImage:[UIImage systemImageNamed:@"gearshape.fill"] forState:UIControlStateNormal];
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:17.0 weight:UIImageSymbolWeightRegular];
+    [button setImage:[[UIImage systemImageNamed:@"gearshape"] imageByApplyingSymbolConfiguration:configuration]
+            forState:UIControlStateNormal];
     button.tintColor = [UIColor systemGrayColor];
+    [button.widthAnchor constraintEqualToConstant:42.0].active = YES;
+    [button.heightAnchor constraintEqualToConstant:42.0].active = YES;
     button.accessibilityLabel = @"Play Settings";
     button.tag = row;
     [button addTarget:self action:@selector(settingsButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -1074,9 +1083,11 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
     }
     cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    cell.textLabel.font = [UIFont systemFontOfSize:17.0 weight:UIFontWeightSemibold];
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
     cell.textLabel.textColor = [UIColor labelColor];
-    cell.detailTextLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
     cell.detailTextLabel.numberOfLines = 1;
     cell.imageView.tintColor = [UIColor systemBlueColor];

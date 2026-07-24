@@ -603,6 +603,9 @@ jobs:
           grep -q 'buildActionHeader' stream-app/app/ScriptsViewController.mm
           grep -q 'buildStatusFooter' stream-app/app/ScriptsViewController.mm
           grep -q 'navigationButtonWithSystemImage' stream-app/app/ScriptsViewController.mm
+          grep -q 'UINavigationItemLargeTitleDisplayModeNever' stream-app/app/ScriptsViewController.mm
+          grep -q 'preferredFontForTextStyle:UIFontTextStyleBody' stream-app/app/ScriptsViewController.mm
+          grep -q 'constraintEqualToConstant:42.0' stream-app/app/ScriptsViewController.mm
           grep -q 'SCScriptEditorViewController' stream-app/app/ScriptEditorViewController.mm
           grep -q 'Replace All' stream-app/app/ScriptEditorViewController.mm
           grep -q 'Go To Line' stream-app/app/ScriptEditorViewController.mm
