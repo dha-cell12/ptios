@@ -317,6 +317,15 @@ async function issueLease(env, license, device) {
   const now = Math.floor(Date.now() / 1000);
   const leaseSeconds = Math.max(300, Number(env.LEASE_SECONDS || 86400));
   const graceSeconds = Math.max(leaseSeconds, Number(env.OFFLINE_GRACE_SECONDS || 259200));
+  const licenseExpiresAt = Math.max(0, Number(license.expires_at || 0));
+  const requestedLeaseExpiresAt = now + leaseSeconds;
+  const requestedOfflineUntil = now + graceSeconds;
+  const leaseExpiresAt = licenseExpiresAt > 0
+    ? Math.min(requestedLeaseExpiresAt, licenseExpiresAt)
+    : requestedLeaseExpiresAt;
+  const offlineUntil = licenseExpiresAt > 0
+    ? Math.min(requestedOfflineUntil, licenseExpiresAt)
+    : requestedOfflineUntil;
   return signPayload(env, {
     version: 1,
     license_contract_version: LICENSE_CONTRACT_VERSION,
@@ -327,8 +336,12 @@ async function issueLease(env, license, device) {
     device_key_hash: device.device_key_hash,
     issued_at: now,
     not_before: now - 30,
-    expires_at: now + leaseSeconds,
-    offline_until: now + graceSeconds,
+    expires_at: leaseExpiresAt,
+    offline_until: offlineUntil,
+    license_expires_at: licenseExpiresAt,
+    lease_policy_seconds: leaseSeconds,
+    offline_grace_policy_seconds: graceSeconds,
+    renewal_mode: "server_refresh_until_license_expiry",
     features: featuresFromLicense(license),
   });
 }

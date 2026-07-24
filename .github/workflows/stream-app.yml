@@ -224,6 +224,10 @@ jobs:
           grep -q '/v1/deactivate' stream-app/app/LicenseManager.mm
           grep -q 'Deactivate This Device' stream-app/app/LicenseViewController.mm
           grep -q 'Remove Local Lease (Recovery)' stream-app/app/LicenseViewController.mm
+          grep -q 'View Refresh History' stream-app/app/LicenseViewController.mm
+          grep -q 'Lease Valid Until' stream-app/app/LicenseViewController.mm
+          grep -q 'last_lease_before_expires_at' stream-app/app/LicenseLifecycleCoordinator.mm
+          grep -q 'license_expires_at' shared/TLinkLicenseVerifier.mm
           grep -q 'TLinkLicenseFeatureAllowed(@"script"' stream-app/app/ScriptsViewController.mm
           grep -q 'background_service_scheduler.plist' stream-app/app/SettingsViewController.mm
           grep -q 'license_lifecycle' stream-app/streamd/POCSocketServer.mm
@@ -597,6 +601,9 @@ jobs:
           grep -q 'showPlaySettingsForEntry' stream-app/app/ScriptsViewController.mm
           grep -q 'play.circle.fill' stream-app/app/ScriptsViewController.mm
           grep -q 'SCScriptEditorViewController' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'Replace All' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'Go To Line' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'editorKeyboardToolbar' stream-app/app/ScriptEditorViewController.mm
           grep -q 'SCPlaySettingsViewController' stream-app/app/PlaySettingsViewController.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/app/PlaySettingsViewController.mm
           grep -q 'showScriptLogs' stream-app/app/ScriptsViewController.mm

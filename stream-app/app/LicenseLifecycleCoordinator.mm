@@ -11,6 +11,7 @@ static NSString *const kTLinkLicenseLifecycleDiagnosticsPath = @"/var/mobile/Lib
 static const NSTimeInterval kTLinkLicenseRefreshWindow = 6.0 * 60.0 * 60.0;
 static const NSTimeInterval kTLinkLicenseBackoffBase = 60.0;
 static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
+static const NSUInteger kTLinkLicenseRefreshHistoryLimit = 20;
 
 @interface SCLicenseLifecycleCoordinator ()
 @property(nonatomic, strong) SCLicenseManager *manager;
@@ -79,6 +80,22 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
         state[@"updated_at_ms"] = @([self nowMilliseconds]);
         [state writeToFile:kTLinkLicenseLifecycleDiagnosticsPath atomically:YES];
     }
+}
+
+- (void)appendRefreshHistoryEvent:(NSDictionary *)event
+{
+    if (event.count == 0) return;
+    NSDictionary *current = [self diagnostics];
+    NSArray *stored = [current[@"refresh_history"] isKindOfClass:[NSArray class]]
+        ? current[@"refresh_history"]
+        : @[];
+    NSMutableArray *history = [stored mutableCopy];
+    [history addObject:event];
+    if (history.count > kTLinkLicenseRefreshHistoryLimit) {
+        NSRange overflow = NSMakeRange(0, history.count - kTLinkLicenseRefreshHistoryLimit);
+        [history removeObjectsInRange:overflow];
+    }
+    [self updateDiagnostics:@{@"refresh_history": history}];
 }
 
 - (void)deliverCompletion:(SCLicenseLifecycleCompletion)completion success:(BOOL)success message:(NSString *)message
@@ -233,6 +250,11 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
 - (void)refreshForTrigger:(NSString *)trigger force:(BOOL)force completion:(SCLicenseLifecycleCompletion)completion
 {
     NSDictionary *status = [self.manager localStatus];
+    NSNumber *leaseBefore = status[@"lease_expires_at"];
+    if (!leaseBefore) leaseBefore = status[@"expires_at"];
+    if (!leaseBefore) leaseBefore = @0;
+    NSNumber *licenseExpires = status[@"license_expires_at"];
+    if (!licenseExpires) licenseExpires = @0;
     NSString *decision = nil;
     if (!force && ![self automaticRefreshNeededForStatus:status reason:&decision]) {
         [self updateDiagnostics:@{
@@ -260,16 +282,46 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
     }];
     [self.manager refreshLeaseWithCompletion:^(BOOL success, NSString *message) {
         if (success) {
+            NSDictionary *updatedStatus = [self.manager localStatus];
+            NSNumber *leaseAfter = updatedStatus[@"lease_expires_at"];
+            if (!leaseAfter) leaseAfter = updatedStatus[@"expires_at"];
+            if (!leaseAfter) leaseAfter = @0;
+            NSNumber *updatedLicenseExpires = updatedStatus[@"license_expires_at"];
+            if (!updatedLicenseExpires) updatedLicenseExpires = licenseExpires;
+            NSTimeInterval extendedSeconds = [leaseAfter doubleValue] - [leaseBefore doubleValue];
             [self updateDiagnostics:@{
                 @"last_success_at_ms": @([self nowMilliseconds]),
                 @"last_result": @"success",
                 @"last_error": @"",
                 @"consecutive_failures": @0,
                 @"next_attempt_at_ms": @0,
+                @"last_lease_before_expires_at": leaseBefore,
+                @"last_lease_after_expires_at": leaseAfter,
+                @"last_license_expires_at": updatedLicenseExpires,
+                @"last_refresh_extended_seconds": @(extendedSeconds),
+            }];
+            [self appendRefreshHistoryEvent:@{
+                @"at_ms": @([self nowMilliseconds]),
+                @"trigger": trigger ?: @"unknown",
+                @"result": @"success",
+                @"lease_before_expires_at": leaseBefore,
+                @"lease_after_expires_at": leaseAfter,
+                @"license_expires_at": updatedLicenseExpires,
+                @"extended_seconds": @(extendedSeconds),
             }];
             [self publishLicenseChange:@"refresh"];
         } else {
             [self recordRefreshFailure:message trigger:trigger];
+            [self appendRefreshHistoryEvent:@{
+                @"at_ms": @([self nowMilliseconds]),
+                @"trigger": trigger ?: @"unknown",
+                @"result": @"failed",
+                @"lease_before_expires_at": leaseBefore,
+                @"lease_after_expires_at": leaseBefore,
+                @"license_expires_at": licenseExpires,
+                @"extended_seconds": @0,
+                @"error": message ?: @"license_refresh_failed",
+            }];
         }
         [self finishOperation:@"refresh" success:success message:message completion:nil];
     }];
@@ -279,7 +331,8 @@ static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
 {
     [self updateDiagnostics:@{
         @"last_launch_at_ms": @([self nowMilliseconds]),
-        @"lifecycle_policy": @"refresh_valid_under_6h_or_offline_grace",
+        @"lifecycle_policy": @"refresh_valid_under_6h_or_offline_grace_never_past_license_expiry",
+        @"refresh_window_seconds": @(kTLinkLicenseRefreshWindow),
     }];
     [self refreshForTrigger:@"app_launch" force:NO completion:nil];
 }

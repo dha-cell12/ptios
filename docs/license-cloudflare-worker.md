@@ -21,6 +21,12 @@ targets are documented separately in
 - The app refreshes automatically when a valid lease has at most six hours
   remaining or enters offline grace. Foreground and BGTask triggers share one
   in-flight request and persisted exponential backoff.
+- A license and a lease have separate dates. `license_expires_at` is the fixed
+  entitlement deadline configured by an administrator. `expires_at` is the
+  short signed lease deadline and moves forward after a successful refresh.
+  `offline_until` is the maximum offline grace deadline. The Worker clamps both
+  lease deadlines to `license_expires_at`, so refreshing cannot extend access
+  past the actual license expiration.
 - `Deactivate This Device` signs `/v1/deactivate`, revokes that registration,
   releases its slot, and only then removes the local lease. `Remove Local
   Lease` is a recovery action and does not release a server slot.
@@ -108,6 +114,18 @@ Expected for an activated device:
 - `licensed=true`
 - `device_key_proof=true`
 - `effective_access=true`
+
+The License screen exposes these dates separately:
+
+- `License Expires`: fixed server deadline, or `Perpetual` when the license has
+  no deadline.
+- `Lease Valid Until`: renewable signed credential deadline.
+- `Offline Until`: last deadline accepted without a successful server refresh.
+- `Refresh History`: the latest 20 attempts, trigger, result, old/new lease
+  deadline, and extension in seconds.
+
+Older leases do not contain `license_expires_at`. The app labels those as a
+legacy lease; use `Refresh Lease` once after deploying the updated Worker.
 
 Task `60` includes the same object under `license`. Task `97` includes the
 short `license`, `licenseState`, and `licenseAccess` fields.

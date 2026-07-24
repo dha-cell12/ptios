@@ -490,6 +490,36 @@ static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, 
     };
 }
 
+static NSDictionary *TLinkLicenseFailureWithPayload(NSDictionary *config,
+                                                     NSString *state,
+                                                     NSString *error,
+                                                     NSDictionary *payload,
+                                                     NSDictionary *lease,
+                                                     NSInteger contractVersion)
+{
+    NSMutableDictionary *status = [TLinkLicenseFailure(config, state, error) mutableCopy];
+    NSTimeInterval licenseExpiresAt = [payload[@"license_expires_at"] doubleValue];
+    [status addEntriesFromDictionary:@{
+        @"license_contract_version": @(contractVersion),
+        @"license_id": payload[@"license_id"] ?: @"",
+        @"device_id": payload[@"device_id"] ?: @"",
+        @"token_id": payload[@"token_id"] ?: @"",
+        @"issued_at": payload[@"issued_at"] ?: @0,
+        @"expires_at": payload[@"expires_at"] ?: @0,
+        @"lease_expires_at": payload[@"expires_at"] ?: @0,
+        @"offline_until": payload[@"offline_until"] ?: @0,
+        @"license_expires_at": payload[@"license_expires_at"] ?: @0,
+        @"lease_policy_seconds": payload[@"lease_policy_seconds"] ?: @0,
+        @"offline_grace_policy_seconds": payload[@"offline_grace_policy_seconds"] ?: @0,
+        @"renewal_mode": payload[@"renewal_mode"] ?: @"legacy_lease",
+        @"license_expiration_mode": licenseExpiresAt > 0 ? @"fixed" : @"perpetual",
+        @"features": [payload[@"features"] isKindOfClass:[NSArray class]] ? payload[@"features"] : @[],
+        @"key_id": lease[@"key_id"] ?: @"",
+        @"device_key_hash": payload[@"device_key_hash"] ?: @"",
+    }];
+    return status;
+}
+
 static NSString *TLinkQuarantineCorruptLease(NSString *reason)
 {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -621,25 +651,36 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     NSString *expectedDeviceHash = [payload[@"device_key_hash"] isKindOfClass:[NSString class]] ? payload[@"device_key_hash"] : @"";
     NSString *actualDeviceHash = TLinkSHA256Base64URL(devicePublicKey);
     if (devicePublicKey.length > 0 && actualDeviceHash.length == 0) {
-        return TLinkLicenseFailure(config, @"invalid", @"license_sha256_runtime_unavailable");
+        return TLinkLicenseFailureWithPayload(config, @"invalid", @"license_sha256_runtime_unavailable",
+                                              payload, lease, contractVersion);
     }
     if (devicePublicKey.length == 0 || ![actualDeviceHash isEqualToString:expectedDeviceHash]) {
-        return TLinkLicenseFailure(config, @"device_mismatch", @"license_device_key_mismatch");
+        return TLinkLicenseFailureWithPayload(config, @"device_mismatch", @"license_device_key_mismatch",
+                                              payload, lease, contractVersion);
     }
     NSString *deviceProofError = nil;
     if (!TLinkVerifyDeviceKeyPossession(devicePublicKey, &deviceProofError)) {
-        return TLinkLicenseFailure(config, @"device_mismatch", deviceProofError ?: @"license_device_proof_failed");
+        return TLinkLicenseFailureWithPayload(config, @"device_mismatch",
+                                              deviceProofError ?: @"license_device_proof_failed",
+                                              payload, lease, contractVersion);
     }
 
     NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
     NSTimeInterval notBefore = [payload[@"not_before"] doubleValue];
     NSTimeInterval expiresAt = [payload[@"expires_at"] doubleValue];
     NSTimeInterval offlineUntil = [payload[@"offline_until"] doubleValue];
+    NSTimeInterval licenseExpiresAt = [payload[@"license_expires_at"] doubleValue];
     if (notBefore > 0 && now + kTLinkLicenseClockSkewToleranceSeconds < notBefore) {
-        return TLinkLicenseFailure(config, @"not_yet_valid", @"license_not_before_in_future");
+        return TLinkLicenseFailureWithPayload(config, @"not_yet_valid", @"license_not_before_in_future",
+                                              payload, lease, contractVersion);
+    }
+    if (licenseExpiresAt > 0 && now > licenseExpiresAt) {
+        return TLinkLicenseFailureWithPayload(config, @"expired", @"license_expiration_reached",
+                                              payload, lease, contractVersion);
     }
     if (offlineUntil <= 0 || now > offlineUntil) {
-        return TLinkLicenseFailure(config, @"expired", @"license_offline_grace_expired");
+        return TLinkLicenseFailureWithPayload(config, @"expired", @"license_offline_grace_expired",
+                                              payload, lease, contractVersion);
     }
 
     NSArray *features = [payload[@"features"] isKindOfClass:[NSArray class]] ? payload[@"features"] : @[];
@@ -663,7 +704,13 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         @"token_id": payload[@"token_id"] ?: @"",
         @"issued_at": payload[@"issued_at"] ?: @0,
         @"expires_at": payload[@"expires_at"] ?: @0,
+        @"lease_expires_at": payload[@"expires_at"] ?: @0,
         @"offline_until": payload[@"offline_until"] ?: @0,
+        @"license_expires_at": payload[@"license_expires_at"] ?: @0,
+        @"lease_policy_seconds": payload[@"lease_policy_seconds"] ?: @0,
+        @"offline_grace_policy_seconds": payload[@"offline_grace_policy_seconds"] ?: @0,
+        @"renewal_mode": payload[@"renewal_mode"] ?: @"legacy_lease",
+        @"license_expiration_mode": licenseExpiresAt > 0 ? @"fixed" : @"perpetual",
         @"features": features,
         @"clock_skew_tolerance_seconds": @(kTLinkLicenseClockSkewToleranceSeconds),
         @"recovery": @{},

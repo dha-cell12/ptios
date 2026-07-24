@@ -303,10 +303,31 @@ test("create, activate and refresh issue a device-bound contract v1 lease", asyn
   const payload = decodeLease(activation.json.lease);
   assert.equal(payload.license_contract_version, 1);
   assert.deepEqual(payload.features, ["automation", "stream", "script", "admin", "shell"]);
+  assert.equal(payload.license_expires_at, 0);
+  assert.equal(payload.lease_policy_seconds, 300);
+  assert.equal(payload.offline_grace_policy_seconds, 600);
+  assert.equal(payload.renewal_mode, "server_refresh_until_license_expiry");
+  assert.equal(payload.expires_at - payload.issued_at, 300);
+  assert.equal(payload.offline_until - payload.issued_at, 600);
 
   const refresh = await authenticatedCall(env, "/v1/refresh", activation.json.lease, device.pair.privateKey);
   assert.equal(refresh.response.status, 200);
   assert.equal(decodeLease(refresh.json.lease).device_id, payload.device_id);
+});
+
+test("lease and offline grace never extend past the fixed license expiry", async () => {
+  const env = await createEnvironment();
+  const expiresAt = Math.floor(Date.now() / 1000) + 120;
+  assert.equal((await createLicense(env, { expires_at: expiresAt })).response.status, 200);
+  const device = await createDevice();
+  const { activation } = await activate(env, device);
+  assert.equal(activation.response.status, 200);
+
+  const payload = decodeLease(activation.json.lease);
+  assert.equal(payload.license_expires_at, expiresAt);
+  assert.equal(payload.expires_at, expiresAt);
+  assert.equal(payload.offline_until, expiresAt);
+  assert.equal(payload.renewal_mode, "server_refresh_until_license_expiry");
 });
 
 test("activation challenge rejects bad proof, expiry and reuse", async () => {

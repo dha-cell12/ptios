@@ -87,6 +87,8 @@ jobs:
           grep -q '"binding": "DB"' wrangler.jsonc
           grep -q 'legacy=tlinkauto_license' src/index.js
           grep -q 'license_contract_version' src/index.js
+          grep -q 'license_expires_at' src/index.js
+          grep -q 'server_refresh_until_license_expiry' src/index.js
           grep -q '/v1/deactivate' src/index.js
           grep -q '/v1/admin/update' src/index.js
           sed -i 's/REPLACE_WITH_D1_DATABASE_ID/00000000-0000-0000-0000-000000000000/' wrangler.jsonc
