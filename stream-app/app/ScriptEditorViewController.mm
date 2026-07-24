@@ -13,6 +13,8 @@
     UIBarButtonItem *_saveButton;
     UIBarButtonItem *_toolsButton;
     CGFloat _fontSize;
+    CGFloat _keyboardInset;
+    NSUInteger _cachedTotalLines;
     BOOL _dirty;
     BOOL _restoreInteractivePopGesture;
 }
@@ -38,6 +40,19 @@
     [self buildStatusBar];
     [self activateEditorConstraints];
     [self loadFile];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(keyboardFrameDidChange:)
+                                                 name:UIKeyboardWillChangeFrameNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(keyboardWillHide:)
+                                                 name:UIKeyboardWillHideNotification
+                                               object:nil];
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -47,6 +62,20 @@
         _restoreInteractivePopGesture = self.navigationController.interactivePopGestureRecognizer.enabled;
         self.navigationController.interactivePopGestureRecognizer.enabled = NO;
     }
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    [self scrollCaretToVisibleAnimated:NO];
+}
+
+- (void)viewDidLayoutSubviews
+{
+    [super viewDidLayoutSubviews];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self scrollCaretToVisibleAnimated:NO];
+    });
 }
 
 - (void)viewWillDisappear:(BOOL)animated
@@ -227,6 +256,7 @@
                 error.localizedDescription ?: @"read failed"];
     }
     _textView.text = text ?: @"";
+    _cachedTotalLines = [self lineCountInString:_textView.text upToIndex:_textView.text.length];
     [self setDirty:NO];
     [self updateCursorStatus];
 }
@@ -316,7 +346,63 @@
     _findBarHeight.constant = 0.0;
     [UIView animateWithDuration:0.2 animations:^{
         [self.view layoutIfNeeded];
+    } completion:^(__unused BOOL finished) {
+        [self scrollCaretToVisibleAnimated:NO];
     }];
+}
+
+- (void)applyKeyboardInset:(CGFloat)inset
+                  duration:(NSTimeInterval)duration
+                     curve:(UIViewAnimationCurve)curve
+{
+    _keyboardInset = MAX(0.0, inset);
+    UIViewAnimationOptions options = (UIViewAnimationOptions)((NSUInteger)curve << 16);
+    [UIView animateWithDuration:duration
+                          delay:0
+                        options:options | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+        UIEdgeInsets contentInset = self->_textView.contentInset;
+        contentInset.bottom = self->_keyboardInset;
+        self->_textView.contentInset = contentInset;
+        UIEdgeInsets indicatorInset = self->_textView.scrollIndicatorInsets;
+        indicatorInset.bottom = self->_keyboardInset;
+        self->_textView.scrollIndicatorInsets = indicatorInset;
+    } completion:^(__unused BOOL finished) {
+        [self scrollCaretToVisibleAnimated:NO];
+    }];
+}
+
+- (void)keyboardFrameDidChange:(NSNotification *)notification
+{
+    NSDictionary *info = notification.userInfo;
+    CGRect screenFrame = [info[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGRect frame = [self.view convertRect:screenFrame fromView:nil];
+    CGRect intersection = CGRectIntersection(self.view.bounds, frame);
+    CGFloat overlap = CGRectIsNull(intersection) ? 0.0 : CGRectGetHeight(intersection);
+    CGFloat safeBottom = self.view.safeAreaInsets.bottom;
+    CGFloat inset = MAX(0.0, overlap - safeBottom) + (overlap > 0.0 ? 12.0 : 0.0);
+    NSTimeInterval duration = [info[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    UIViewAnimationCurve curve = (UIViewAnimationCurve)[info[UIKeyboardAnimationCurveUserInfoKey] integerValue];
+    [self applyKeyboardInset:inset duration:duration curve:curve];
+}
+
+- (void)keyboardWillHide:(NSNotification *)notification
+{
+    NSDictionary *info = notification.userInfo;
+    NSTimeInterval duration = [info[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    UIViewAnimationCurve curve = (UIViewAnimationCurve)[info[UIKeyboardAnimationCurveUserInfoKey] integerValue];
+    [self applyKeyboardInset:0.0 duration:duration curve:curve];
+}
+
+- (void)scrollCaretToVisibleAnimated:(BOOL)animated
+{
+    if (!_textView || !_textView.selectedTextRange) return;
+    [_textView.layoutManager ensureLayoutForTextContainer:_textView.textContainer];
+    UITextPosition *caretPosition = _textView.selectedTextRange.end;
+    CGRect caretRect = [_textView caretRectForPosition:caretPosition];
+    if (CGRectIsNull(caretRect) || CGRectIsInfinite(caretRect)) return;
+    caretRect = CGRectInset(caretRect, -12.0, -10.0);
+    [_textView scrollRectToVisible:caretRect animated:animated];
 }
 
 - (BOOL)findForward:(BOOL)forward
@@ -353,6 +439,7 @@
     _textView.selectedRange = range;
     [_textView scrollRangeToVisible:range];
     [self updateCursorStatus];
+    [self scrollCaretToVisibleAnimated:YES];
     return YES;
 }
 
@@ -409,6 +496,7 @@
                                                                  range:NSMakeRange(0, before.length)];
         if (![after isEqualToString:before]) {
             self->_textView.text = after;
+            self->_cachedTotalLines = [self lineCountInString:after upToIndex:after.length];
             [self setDirty:YES];
             [self updateCursorStatus];
         }
@@ -452,6 +540,7 @@
         [self->_textView scrollRangeToVisible:self->_textView.selectedRange];
         [self->_textView becomeFirstResponder];
         [self updateCursorStatus];
+        [self scrollCaretToVisibleAnimated:YES];
     }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
@@ -507,6 +596,7 @@
     adjusted = MAX(0, MIN((NSInteger)_textView.text.length, adjusted));
     _textView.selectedRange = NSMakeRange((NSUInteger)adjusted, 0);
     [_textView becomeFirstResponder];
+    [self scrollCaretToVisibleAnimated:NO];
 }
 
 - (void)insertBraces
@@ -566,11 +656,15 @@
 {
     NSString *text = _textView.text ?: @"";
     NSUInteger location = MIN(_textView.selectedRange.location, text.length);
-    NSString *prefix = [text substringToIndex:location];
-    NSArray *lines = [prefix componentsSeparatedByString:@"\n"];
-    NSUInteger line = MAX((NSUInteger)1, lines.count);
-    NSUInteger column = [lines.lastObject length] + 1;
-    NSUInteger totalLines = MAX((NSUInteger)1, [[text componentsSeparatedByString:@"\n"] count]);
+    NSUInteger line = [self lineCountInString:text upToIndex:location];
+    NSRange previousNewline = location > 0
+        ? [text rangeOfString:@"\n"
+                      options:NSBackwardsSearch
+                        range:NSMakeRange(0, location)]
+        : NSMakeRange(NSNotFound, 0);
+    NSUInteger lineStart = previousNewline.location == NSNotFound ? 0 : NSMaxRange(previousNewline);
+    NSUInteger column = location - lineStart + 1;
+    NSUInteger totalLines = MAX((NSUInteger)1, _cachedTotalLines);
     _statusLabel.text = [NSString stringWithFormat:@"Ln %lu, Col %lu  |  %lu lines  |  %.0f pt   ",
                          (unsigned long)line,
                          (unsigned long)column,
@@ -578,17 +672,40 @@
                          _fontSize];
 }
 
+- (NSUInteger)lineCountInString:(NSString *)text upToIndex:(NSUInteger)limit
+{
+    NSUInteger boundedLimit = MIN(limit, text.length);
+    NSUInteger count = 1;
+    NSUInteger location = 0;
+    while (location < boundedLimit) {
+        NSRange range = [text rangeOfString:@"\n"
+                                   options:0
+                                     range:NSMakeRange(location, boundedLimit - location)];
+        if (range.location == NSNotFound) break;
+        count++;
+        location = NSMaxRange(range);
+    }
+    return count;
+}
+
 - (void)textViewDidChange:(UITextView *)textView
 {
     (void)textView;
+    _cachedTotalLines = [self lineCountInString:_textView.text upToIndex:_textView.text.length];
     [self setDirty:YES];
     [self updateCursorStatus];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self scrollCaretToVisibleAnimated:NO];
+    });
 }
 
 - (void)textViewDidChangeSelection:(UITextView *)textView
 {
     (void)textView;
     [self updateCursorStatus];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self scrollCaretToVisibleAnimated:NO];
+    });
 }
 
 - (NSArray<UIKeyCommand *> *)keyCommands

@@ -5,6 +5,7 @@
 #import "ScriptLogViewController.h"
 #import "TLinkSocketClient.h"
 #import "../../shared/TLinkLicenseVerifier.h"
+#include <math.h>
 
 static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scripts";
 
@@ -18,10 +19,38 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 @implementation SCScriptEntry
 @end
 
+@interface SCScriptTableViewCell : UITableViewCell
+@end
+
+@implementation SCScriptTableViewCell
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    CGFloat height = CGRectGetHeight(self.contentView.bounds);
+    CGFloat iconSize = 44.0;
+    CGFloat iconY = floor((height - iconSize) * 0.5);
+    self.imageView.frame = CGRectMake(14.0, iconY, iconSize, iconSize);
+    self.imageView.contentMode = UIViewContentModeCenter;
+
+    CGFloat labelX = 72.0;
+    CGFloat labelWidth = MAX(40.0, CGRectGetWidth(self.contentView.bounds) - labelX - 12.0);
+    self.textLabel.frame = CGRectMake(labelX, 17.0, labelWidth, 25.0);
+    self.detailTextLabel.frame = CGRectMake(labelX, 44.0, labelWidth, 20.0);
+}
+
+@end
+
 @implementation SCScriptsViewController {
     NSMutableArray<SCScriptEntry *> *_entries;
     UILabel *_emptyLabel;
     UILabel *_statusLabel;
+    UILabel *_statusTitleLabel;
+    UIProgressView *_statusProgressView;
+    UIView *_actionHeaderView;
+    UIView *_statusFooterView;
+    UIButton *_editActionButton;
+    UIBarButtonItem *_addButtonItem;
     NSString *_scriptsPath;
     BOOL _attemptedCompatibilitySeed;
 }
@@ -45,23 +74,29 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     [super viewDidLoad];
     if (self.title.length == 0) self.title = @"Scripts";
     _entries = [NSMutableArray array];
-    self.tableView.backgroundColor = [UIColor systemBackgroundColor];
-    self.tableView.rowHeight = 56.0;
-    UIBarButtonItem *refresh = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
-                                                                             target:self
-                                                                             action:@selector(reloadScripts)];
-    UIBarButtonItem *add = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
-                                                                         target:self
-                                                                         action:@selector(showAddMenu)];
-    self.navigationItem.rightBarButtonItems = @[refresh, add];
-    UIBarButtonItem *stop = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemStop
-                                                                          target:self
-                                                                          action:@selector(stopScript)];
-    UIBarButtonItem *logs = [[UIBarButtonItem alloc] initWithTitle:@"Logs"
-                                                             style:UIBarButtonItemStylePlain
-                                                            target:self
-                                                            action:@selector(showScriptLogs)];
-    self.navigationItem.leftBarButtonItems = @[self.editButtonItem, stop, logs];
+    self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.rowHeight = 82.0;
+    self.tableView.estimatedRowHeight = 82.0;
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 72.0, 0, 16.0);
+    self.tableView.sectionHeaderHeight = 10.0;
+    self.tableView.sectionFooterHeight = 10.0;
+    BOOL rootScripts = [[self scriptsPath] isEqualToString:kTLinkScriptsPath];
+    self.navigationItem.largeTitleDisplayMode = rootScripts
+        ? UINavigationItemLargeTitleDisplayModeAlways
+        : UINavigationItemLargeTitleDisplayModeNever;
+    if (rootScripts) self.navigationController.navigationBar.prefersLargeTitles = YES;
+
+    UIBarButtonItem *refresh = [self navigationButtonWithSystemImage:@"arrow.clockwise"
+                                                           tintColor:[UIColor systemBlueColor]
+                                                     backgroundColor:[UIColor secondarySystemBackgroundColor]
+                                                              action:@selector(reloadScripts)
+                                                  accessibilityLabel:@"Refresh Scripts"];
+    _addButtonItem = [self navigationButtonWithSystemImage:@"plus"
+                                                 tintColor:[UIColor whiteColor]
+                                           backgroundColor:[UIColor systemBlueColor]
+                                                    action:@selector(showAddMenu)
+                                        accessibilityLabel:@"Add Script or Folder"];
+    self.navigationItem.rightBarButtonItems = @[refresh, _addButtonItem];
 
     _emptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _emptyLabel.text = @"No scripts found";
@@ -70,16 +105,198 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     _emptyLabel.font = [UIFont systemFontOfSize:15.0];
     self.tableView.backgroundView = _emptyLabel;
 
-    _statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 52.0)];
-    _statusLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    _statusLabel.textAlignment = NSTextAlignmentCenter;
-    _statusLabel.textColor = [UIColor secondaryLabelColor];
-    _statusLabel.font = [UIFont systemFontOfSize:13.0];
-    _statusLabel.numberOfLines = 2;
-    _statusLabel.text = @"";
-    self.tableView.tableFooterView = _statusLabel;
+    [self buildActionHeader];
+    [self buildStatusFooter];
     [self seedCompatibilitySuiteIfNeeded];
     [self reloadScripts];
+}
+
+- (void)viewDidLayoutSubviews
+{
+    [super viewDidLayoutSubviews];
+    CGFloat width = CGRectGetWidth(self.tableView.bounds);
+    if (_actionHeaderView && fabs(CGRectGetWidth(_actionHeaderView.frame) - width) > 0.5) {
+        CGRect frame = _actionHeaderView.frame;
+        frame.size.width = width;
+        _actionHeaderView.frame = frame;
+        self.tableView.tableHeaderView = _actionHeaderView;
+    }
+    if (_statusFooterView && self.tableView.tableFooterView == _statusFooterView &&
+        fabs(CGRectGetWidth(_statusFooterView.frame) - width) > 0.5) {
+        CGRect frame = _statusFooterView.frame;
+        frame.size.width = width;
+        _statusFooterView.frame = frame;
+        self.tableView.tableFooterView = _statusFooterView;
+    }
+}
+
+- (UIBarButtonItem *)navigationButtonWithSystemImage:(NSString *)imageName
+                                           tintColor:(UIColor *)tintColor
+                                     backgroundColor:(UIColor *)backgroundColor
+                                              action:(SEL)action
+                                  accessibilityLabel:(NSString *)accessibilityLabel
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.frame = CGRectMake(0, 0, 44.0, 44.0);
+    button.backgroundColor = backgroundColor;
+    button.tintColor = tintColor;
+    button.layer.cornerRadius = 12.0;
+    button.layer.shadowColor = [UIColor blackColor].CGColor;
+    button.layer.shadowOpacity = 0.08;
+    button.layer.shadowRadius = 5.0;
+    button.layer.shadowOffset = CGSizeMake(0, 2.0);
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:20.0 weight:UIImageSymbolWeightMedium];
+    [button setImage:[[UIImage systemImageNamed:imageName] imageByApplyingSymbolConfiguration:configuration]
+            forState:UIControlStateNormal];
+    button.accessibilityLabel = accessibilityLabel;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return [[UIBarButtonItem alloc] initWithCustomView:button];
+}
+
+- (UIButton *)actionButtonWithTitle:(NSString *)title
+                         systemImage:(NSString *)imageName
+                           tintColor:(UIColor *)tintColor
+                              action:(SEL)action
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.tintColor = tintColor;
+    button.titleLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
+    [button setTitle:title forState:UIControlStateNormal];
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:18.0 weight:UIImageSymbolWeightMedium];
+    [button setImage:[[UIImage systemImageNamed:imageName] imageByApplyingSymbolConfiguration:configuration]
+            forState:UIControlStateNormal];
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
+    button.imageEdgeInsets = UIEdgeInsetsMake(0, -5.0, 0, 5.0);
+    button.titleEdgeInsets = UIEdgeInsetsMake(0, 5.0, 0, -5.0);
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (void)buildActionHeader
+{
+    CGFloat width = CGRectGetWidth(self.tableView.bounds);
+    _actionHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 92.0)];
+    _actionHeaderView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+
+    UIView *surface = [[UIView alloc] initWithFrame:CGRectZero];
+    surface.translatesAutoresizingMaskIntoConstraints = NO;
+    surface.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    surface.layer.cornerRadius = 8.0;
+    surface.layer.shadowColor = [UIColor blackColor].CGColor;
+    surface.layer.shadowOpacity = 0.05;
+    surface.layer.shadowRadius = 8.0;
+    surface.layer.shadowOffset = CGSizeMake(0, 3.0);
+    [_actionHeaderView addSubview:surface];
+
+    _editActionButton = [self actionButtonWithTitle:@"Edit"
+                                        systemImage:@"pencil"
+                                          tintColor:[UIColor systemBlueColor]
+                                             action:@selector(toggleScriptEditing)];
+    UIButton *stop = [self actionButtonWithTitle:@"Stop"
+                                     systemImage:@"stop.fill"
+                                       tintColor:[UIColor systemRedColor]
+                                          action:@selector(stopScript)];
+    UIButton *logs = [self actionButtonWithTitle:@"Logs"
+                                     systemImage:@"doc.text"
+                                       tintColor:[UIColor systemBlueColor]
+                                          action:@selector(showScriptLogs)];
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[_editActionButton, stop, logs]];
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    stack.axis = UILayoutConstraintAxisHorizontal;
+    stack.distribution = UIStackViewDistributionFillEqually;
+    stack.alignment = UIStackViewAlignmentFill;
+    [surface addSubview:stack];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [surface.topAnchor constraintEqualToAnchor:_actionHeaderView.topAnchor constant:8.0],
+        [surface.leadingAnchor constraintEqualToAnchor:_actionHeaderView.leadingAnchor constant:16.0],
+        [surface.trailingAnchor constraintEqualToAnchor:_actionHeaderView.trailingAnchor constant:-16.0],
+        [surface.bottomAnchor constraintEqualToAnchor:_actionHeaderView.bottomAnchor constant:-8.0],
+        [stack.topAnchor constraintEqualToAnchor:surface.topAnchor],
+        [stack.leadingAnchor constraintEqualToAnchor:surface.leadingAnchor],
+        [stack.trailingAnchor constraintEqualToAnchor:surface.trailingAnchor],
+        [stack.bottomAnchor constraintEqualToAnchor:surface.bottomAnchor],
+    ]];
+    self.tableView.tableHeaderView = _actionHeaderView;
+}
+
+- (void)buildStatusFooter
+{
+    CGFloat width = CGRectGetWidth(self.tableView.bounds);
+    _statusFooterView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 132.0)];
+    _statusFooterView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+
+    UIView *surface = [[UIView alloc] initWithFrame:CGRectZero];
+    surface.translatesAutoresizingMaskIntoConstraints = NO;
+    surface.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    surface.layer.cornerRadius = 8.0;
+    [_statusFooterView addSubview:surface];
+
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"sparkles"]];
+    icon.translatesAutoresizingMaskIntoConstraints = NO;
+    icon.contentMode = UIViewContentModeCenter;
+    icon.tintColor = [UIColor systemBlueColor];
+    icon.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.08];
+    icon.layer.cornerRadius = 8.0;
+    [surface addSubview:icon];
+
+    _statusTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _statusTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _statusTitleLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightSemibold];
+    _statusTitleLabel.textColor = [UIColor labelColor];
+    _statusTitleLabel.numberOfLines = 1;
+    [surface addSubview:_statusTitleLabel];
+
+    _statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _statusLabel.textColor = [UIColor secondaryLabelColor];
+    _statusLabel.font = [UIFont systemFontOfSize:12.0];
+    _statusLabel.numberOfLines = 2;
+    _statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    [surface addSubview:_statusLabel];
+
+    _statusProgressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    _statusProgressView.translatesAutoresizingMaskIntoConstraints = NO;
+    _statusProgressView.progressTintColor = [UIColor systemBlueColor];
+    _statusProgressView.trackTintColor = [UIColor tertiarySystemFillColor];
+    _statusProgressView.layer.cornerRadius = 2.0;
+    _statusProgressView.clipsToBounds = YES;
+    [surface addSubview:_statusProgressView];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [surface.topAnchor constraintEqualToAnchor:_statusFooterView.topAnchor constant:8.0],
+        [surface.leadingAnchor constraintEqualToAnchor:_statusFooterView.leadingAnchor constant:16.0],
+        [surface.trailingAnchor constraintEqualToAnchor:_statusFooterView.trailingAnchor constant:-16.0],
+        [surface.bottomAnchor constraintEqualToAnchor:_statusFooterView.bottomAnchor constant:-8.0],
+        [icon.leadingAnchor constraintEqualToAnchor:surface.leadingAnchor constant:14.0],
+        [icon.topAnchor constraintEqualToAnchor:surface.topAnchor constant:14.0],
+        [icon.widthAnchor constraintEqualToConstant:44.0],
+        [icon.heightAnchor constraintEqualToConstant:44.0],
+        [_statusTitleLabel.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:12.0],
+        [_statusTitleLabel.trailingAnchor constraintEqualToAnchor:surface.trailingAnchor constant:-14.0],
+        [_statusTitleLabel.topAnchor constraintEqualToAnchor:icon.topAnchor constant:1.0],
+        [_statusLabel.leadingAnchor constraintEqualToAnchor:_statusTitleLabel.leadingAnchor],
+        [_statusLabel.trailingAnchor constraintEqualToAnchor:_statusTitleLabel.trailingAnchor],
+        [_statusLabel.topAnchor constraintEqualToAnchor:_statusTitleLabel.bottomAnchor constant:3.0],
+        [_statusProgressView.leadingAnchor constraintEqualToAnchor:surface.leadingAnchor constant:14.0],
+        [_statusProgressView.trailingAnchor constraintEqualToAnchor:surface.trailingAnchor constant:-14.0],
+        [_statusProgressView.bottomAnchor constraintEqualToAnchor:surface.bottomAnchor constant:-15.0],
+    ]];
+}
+
+- (void)toggleScriptEditing
+{
+    [self setEditing:!self.isEditing animated:YES];
+}
+
+- (void)setEditing:(BOOL)editing animated:(BOOL)animated
+{
+    [super setEditing:editing animated:animated];
+    [_editActionButton setTitle:editing ? @"Done" : @"Edit" forState:UIControlStateNormal];
+    [_editActionButton setImage:[UIImage systemImageNamed:editing ? @"checkmark" : @"pencil"]
+                       forState:UIControlStateNormal];
 }
 
 - (NSString *)uniqueScriptPathWithBaseName:(NSString *)baseName
@@ -117,8 +334,28 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)showStatus:(NSString *)status
 {
-    _statusLabel.text = status ?: @"";
-    self.tableView.tableFooterView = _statusLabel;
+    NSString *value = [status isKindOfClass:[NSString class]] ? status : @"";
+    if (value.length == 0) {
+        _statusTitleLabel.text = @"";
+        _statusLabel.text = @"";
+        self.tableView.tableFooterView = nil;
+        return;
+    }
+
+    NSArray<NSString *> *lines = [value componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    NSString *firstLine = lines.count > 0 ? lines.firstObject : value;
+    NSString *detail = lines.count > 1
+        ? [[lines subarrayWithRange:NSMakeRange(1, lines.count - 1)] componentsJoinedByString:@" "]
+        : @"";
+    BOOL starting = [firstLine hasPrefix:@"Starting"];
+    BOOL running = [firstLine hasPrefix:@"Running"];
+    BOOL failed = [firstLine hasPrefix:@"Failed"];
+    _statusTitleLabel.text = firstLine.length > 0 ? firstLine : @"Script Status";
+    _statusLabel.text = detail.length > 0 ? detail : (running ? @"Script runtime is active" : value);
+    _statusProgressView.progressTintColor = failed ? [UIColor systemRedColor] : [UIColor systemBlueColor];
+    float progress = failed ? 1.0f : (running ? 0.42f : (starting ? 0.16f : 0.28f));
+    [_statusProgressView setProgress:progress animated:YES];
+    self.tableView.tableFooterView = _statusFooterView;
 }
 
 - (BOOL)ensureScriptsPathWritableWithError:(NSString **)error
@@ -645,10 +882,15 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)stopScript
 {
+    [self showStatus:@"Stopping script...\nWaiting for streamd"];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSString *response = [TLinkSocketClient requestTask:20 args:@[] timeout:4.0];
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self showMessageWithTitle:@"Stop Script" message:response ?: @"<nil>"];
+            BOOL ok = [response hasPrefix:@"0;;"] || [response isEqualToString:@"0"];
+            [self showStatus:[NSString stringWithFormat:@"%@\n%@",
+                              ok ? @"Script stopped" : @"Failed to stop script",
+                              response ?: @"<nil>"]];
+            if (!ok) [self showMessageWithTitle:@"Stop Script" message:response ?: @"<nil>"];
         });
     });
 }
@@ -712,8 +954,17 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.frame = CGRectMake(0.0, 0.0, 44.0, 44.0);
-    [button setImage:[UIImage systemImageNamed:@"play.circle.fill"] forState:UIControlStateNormal];
-    button.tintColor = [UIColor systemGreenColor];
+    button.backgroundColor = [UIColor systemGreenColor];
+    button.tintColor = [UIColor whiteColor];
+    button.layer.cornerRadius = 12.0;
+    button.layer.shadowColor = [UIColor blackColor].CGColor;
+    button.layer.shadowOpacity = 0.12;
+    button.layer.shadowRadius = 4.0;
+    button.layer.shadowOffset = CGSizeMake(0, 2.0);
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:18.0 weight:UIImageSymbolWeightBold];
+    [button setImage:[[UIImage systemImageNamed:@"play.fill"] imageByApplyingSymbolConfiguration:configuration]
+            forState:UIControlStateNormal];
     button.accessibilityLabel = @"Run Script";
     button.tag = row;
     [button addTarget:self action:@selector(playButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -723,8 +974,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (UIButton *)settingsButtonForRow:(NSInteger)row
 {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.frame = CGRectMake(0.0, 0.0, 36.0, 44.0);
-    [button setImage:[UIImage systemImageNamed:@"gearshape"] forState:UIControlStateNormal];
+    button.frame = CGRectMake(0.0, 0.0, 42.0, 44.0);
+    button.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    button.layer.cornerRadius = 12.0;
+    button.layer.borderWidth = 0.5;
+    button.layer.borderColor = [UIColor separatorColor].CGColor;
+    [button setImage:[UIImage systemImageNamed:@"gearshape.fill"] forState:UIControlStateNormal];
     button.tintColor = [UIColor systemGrayColor];
     button.accessibilityLabel = @"Play Settings";
     button.tag = row;
@@ -734,11 +989,11 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (UIView *)scriptAccessoryViewForRow:(NSInteger)row
 {
-    UIStackView *stack = [[UIStackView alloc] initWithFrame:CGRectMake(0.0, 0.0, 84.0, 44.0)];
+    UIStackView *stack = [[UIStackView alloc] initWithFrame:CGRectMake(0.0, 0.0, 96.0, 44.0)];
     stack.axis = UILayoutConstraintAxisHorizontal;
     stack.alignment = UIStackViewAlignmentCenter;
     stack.distribution = UIStackViewDistributionEqualSpacing;
-    stack.spacing = 4.0;
+    stack.spacing = 8.0;
     [stack addArrangedSubview:[self settingsButtonForRow:row]];
     [stack addArrangedSubview:[self playButtonForRow:row]];
     return stack;
@@ -749,6 +1004,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.frame = CGRectMake(0.0, 0.0, 44.0, 44.0);
     [button setImage:[UIImage systemImageNamed:@"ellipsis.circle"] forState:UIControlStateNormal];
+    button.tintColor = [UIColor systemBlueColor];
     button.accessibilityLabel = @"Folder Actions";
     button.tag = row;
     [button addTarget:self action:@selector(folderActionsButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -797,7 +1053,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     static NSString *cellID = @"ScriptCell";
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellID];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellID];
+        cell = [[SCScriptTableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellID];
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
 
@@ -808,13 +1064,27 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     } else {
         cell.detailTextLabel.text = entry.path.lastPathComponent;
     }
-    if (entry.directory) {
+    if (entry.scriptBundle) {
+        cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
+    } else if (entry.directory) {
         cell.imageView.image = [UIImage systemImageNamed:@"folder"];
     } else if ([self isImageFilePath:entry.path]) {
         cell.imageView.image = [UIImage systemImageNamed:@"photo"];
     } else {
         cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
     }
+    cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    cell.textLabel.font = [UIFont systemFontOfSize:17.0 weight:UIFontWeightSemibold];
+    cell.textLabel.textColor = [UIColor labelColor];
+    cell.detailTextLabel.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
+    cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    cell.detailTextLabel.numberOfLines = 1;
+    cell.imageView.tintColor = [UIColor systemBlueColor];
+    cell.imageView.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.08];
+    cell.imageView.layer.cornerRadius = 8.0;
+    cell.imageView.clipsToBounds = YES;
+    cell.imageView.preferredSymbolConfiguration =
+        [UIImageSymbolConfiguration configurationWithPointSize:21.0 weight:UIImageSymbolWeightRegular];
     BOOL canRun = entry.scriptBundle || [self isPlayableFileEntry:entry];
     BOOL plainFolder = entry.directory && !entry.scriptBundle;
     cell.accessoryView = canRun

@@ -599,11 +599,16 @@ jobs:
           grep -q 'playButtonTapped' stream-app/app/ScriptsViewController.mm
           grep -q 'settingsButtonTapped' stream-app/app/ScriptsViewController.mm
           grep -q 'showPlaySettingsForEntry' stream-app/app/ScriptsViewController.mm
-          grep -q 'play.circle.fill' stream-app/app/ScriptsViewController.mm
+          grep -q 'play.fill' stream-app/app/ScriptsViewController.mm
+          grep -q 'buildActionHeader' stream-app/app/ScriptsViewController.mm
+          grep -q 'buildStatusFooter' stream-app/app/ScriptsViewController.mm
+          grep -q 'navigationButtonWithSystemImage' stream-app/app/ScriptsViewController.mm
           grep -q 'SCScriptEditorViewController' stream-app/app/ScriptEditorViewController.mm
           grep -q 'Replace All' stream-app/app/ScriptEditorViewController.mm
           grep -q 'Go To Line' stream-app/app/ScriptEditorViewController.mm
           grep -q 'editorKeyboardToolbar' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'scrollCaretToVisibleAnimated' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'UIKeyboardWillChangeFrameNotification' stream-app/app/ScriptEditorViewController.mm
           grep -q 'SCPlaySettingsViewController' stream-app/app/PlaySettingsViewController.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/app/PlaySettingsViewController.mm
           grep -q 'showScriptLogs' stream-app/app/ScriptsViewController.mm
