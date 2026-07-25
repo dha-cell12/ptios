@@ -91,6 +91,12 @@ jobs:
           grep -q 'server_refresh_until_license_expiry' src/index.js
           grep -q '/v1/deactivate' src/index.js
           grep -q '/v1/admin/update' src/index.js
+          test -f src/dashboard.js
+          grep -q 'renderAdminDashboard' src/index.js
+          grep -q '/v1/admin/license' src/index.js
+          grep -q '/v1/admin/revoke-device' src/index.js
+          grep -q 'TLinkauto Licenses' src/dashboard.js
+          ! grep -q 'localStorage\.' src/dashboard.js
           sed -i 's/REPLACE_WITH_D1_DATABASE_ID/00000000-0000-0000-0000-000000000000/' wrangler.jsonc
           npx wrangler d1 execute tlinkauto-license --local --file schema.sql
           npx wrangler d1 execute tlinkauto-license --local --file schema.sql
@@ -142,3 +148,4 @@ jobs:
           BASE="${TLINK_LICENSE_ENDPOINT%/}"
           curl -fsS "$BASE/v1/health"
           curl -fsS "$BASE/v1/public-key"
+          curl -fsS "$BASE/admin" | grep -q 'TLinkauto Licenses'

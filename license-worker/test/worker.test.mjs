@@ -42,7 +42,68 @@ class FakeStatement {
         ).length,
       };
     }
+    if (this.sql === "select count(*) as count from devices where license_id = ?") {
+      return {
+        count: [...this.database.devices.values()].filter((row) => row.license_id === a).length,
+      };
+    }
+    if (this.sql === "select count(*) as count from devices where status = 'active'") {
+      return {
+        count: [...this.database.devices.values()].filter((row) => row.status === "active").length,
+      };
+    }
+    if (this.sql.startsWith("select count(*) as total, sum(case when status = 'active'")) {
+      const licenses = [...this.database.licenses.values()];
+      return {
+        total: licenses.length,
+        active: licenses.filter(
+          (row) => row.status === "active" && (row.expires_at === 0 || row.expires_at > a),
+        ).length,
+        revoked: licenses.filter((row) => row.status === "revoked").length,
+        expired: licenses.filter(
+          (row) => row.status === "active" && row.expires_at > 0 && row.expires_at <= b,
+        ).length,
+      };
+    }
     throw new Error(`fake_d1_unhandled_first: ${this.sql}`);
+  }
+
+  async all() {
+    const [a, b] = this.values;
+    if (this.sql === "select id, status, max_devices, features_json, expires_at, created_at, updated_at, (select count(*) from devices where license_id = licenses.id and status = 'active') as active_devices, (select count(*) from devices where license_id = licenses.id) as total_devices from licenses order by updated_at desc limit ? offset ?") {
+      const results = [...this.database.licenses.values()]
+        .sort((left, right) => right.updated_at - left.updated_at)
+        .slice(b, b + a)
+        .map(({ id, status, max_devices, features_json, expires_at, created_at, updated_at }) => {
+          const devices = [...this.database.devices.values()].filter((row) => row.license_id === id);
+          return {
+            id,
+            status,
+            max_devices,
+            features_json,
+            expires_at,
+            created_at,
+            updated_at,
+            active_devices: devices.filter((row) => row.status === "active").length,
+            total_devices: devices.length,
+          };
+        });
+      return { success: true, results };
+    }
+    if (this.sql === "select id, device_key_hash, status, created_at, last_seen_at from devices where license_id = ? order by last_seen_at desc") {
+      const results = [...this.database.devices.values()]
+        .filter((row) => row.license_id === a)
+        .sort((left, right) => right.last_seen_at - left.last_seen_at)
+        .map(({ id, device_key_hash, status, created_at, last_seen_at }) => ({
+          id,
+          device_key_hash,
+          status,
+          created_at,
+          last_seen_at,
+        }));
+      return { success: true, results };
+    }
+    throw new Error(`fake_d1_unhandled_all: ${this.sql}`);
   }
 
   async run() {
@@ -466,4 +527,60 @@ test("reset, feature update, expiry and revoke are reflected by refresh", async 
   assert.equal(revokedRefresh.json.error, "license_revoked_or_expired");
 
   assert.ok(original.json.lease);
+});
+
+test("admin dashboard and ID-based management expose no recoverable license key", async () => {
+  const env = await createEnvironment();
+  const dashboard = await worker.fetch(new Request("https://license.test/admin"), env);
+  const dashboardHtml = await dashboard.text();
+  assert.equal(dashboard.status, 200);
+  assert.match(dashboard.headers.get("content-type"), /^text\/html/);
+  assert.match(dashboard.headers.get("content-security-policy"), /script-src 'nonce-/);
+  assert.match(dashboardHtml, /TLinkauto Licenses/);
+  assert.match(dashboardHtml, /ADMIN_TOKEN/);
+  assert.doesNotMatch(dashboardHtml, /phase-test-admin/);
+
+  const unauthorized = await call(env, "/v1/admin/licenses");
+  assert.equal(unauthorized.response.status, 401);
+
+  const created = await createLicense(env);
+  assert.equal(created.response.status, 200);
+  const licenseId = created.json.id;
+  const device = await createDevice();
+  const activated = (await activate(env, device)).activation;
+  assert.equal(activated.response.status, 200);
+  const deviceId = decodeLease(activated.json.lease).device_id;
+
+  const list = await call(env, "/v1/admin/licenses?limit=50&offset=0", undefined, true);
+  assert.equal(list.response.status, 200);
+  assert.equal(list.json.total, 1);
+  assert.equal(list.json.summary.active, 1);
+  assert.equal(list.json.summary.active_devices, 1);
+  assert.equal(list.json.licenses[0].id, licenseId);
+  assert.equal(list.json.licenses[0].active_devices, 1);
+  assert.equal(Object.hasOwn(list.json.licenses[0], "key_hash"), false);
+  assert.equal(Object.hasOwn(list.json.licenses[0], "license_key"), false);
+
+  const detail = await call(env, `/v1/admin/license?id=${licenseId}`, undefined, true);
+  assert.equal(detail.response.status, 200);
+  assert.equal(detail.json.devices[0].id, deviceId);
+
+  const updated = await call(env, "/v1/admin/update", {
+    license_id: licenseId,
+    max_devices: 3,
+    features: ["automation", "script"],
+  }, true);
+  assert.equal(updated.response.status, 200);
+  assert.equal(updated.json.max_devices, 3);
+
+  const revokedDevice = await call(env, "/v1/admin/revoke-device", {
+    license_id: licenseId,
+    device_id: deviceId,
+  }, true);
+  assert.equal(revokedDevice.response.status, 200);
+  assert.equal(revokedDevice.json.status, "revoked");
+
+  const after = await call(env, `/v1/admin/license?id=${licenseId}`, undefined, true);
+  assert.equal(after.json.license.active_devices, 0);
+  assert.equal(after.json.devices[0].status, "revoked");
 });

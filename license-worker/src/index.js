@@ -1,3 +1,5 @@
+import { renderAdminDashboard } from "./dashboard.js";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -25,6 +27,20 @@ function jsonResponse(value, status = 200) {
       "access-control-allow-origin": "*",
       "access-control-allow-headers": "authorization, content-type",
       "access-control-allow-methods": "GET, POST, OPTIONS",
+    },
+  });
+}
+
+function htmlResponse(html, nonce) {
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy": `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
     },
   });
 }
@@ -80,6 +96,13 @@ function validatedIdentifier(value) {
   if (value === undefined || value === null || value === "") return crypto.randomUUID();
   if (typeof value !== "string" || value.length > 64 || !/^[A-Za-z0-9_-]+$/.test(value)) {
     throw new RequestError(400, "invalid_license_id");
+  }
+  return value;
+}
+
+function validatedExistingIdentifier(value, name = "identifier") {
+  if (typeof value !== "string" || value.length === 0 || value.length > 64 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new RequestError(400, `invalid_${name}`);
   }
   return value;
 }
@@ -536,10 +559,105 @@ async function handleAdminCreateLicense(request, env) {
 }
 
 async function licenseForAdminBody(body, env) {
-  const key = validatedLicenseKey(body.license_key);
-  const license = await loadLicense(env, key);
+  let key = "";
+  let license = null;
+  if (body.license_id !== undefined) {
+    const id = validatedExistingIdentifier(body.license_id, "license_id");
+    license = await database(env).prepare("SELECT * FROM licenses WHERE id = ?").bind(id).first();
+  } else {
+    key = validatedLicenseKey(body.license_key);
+    license = await loadLicense(env, key);
+  }
   if (!license) throw new RequestError(404, "not_found");
   return { key, license };
+}
+
+function adminLicenseRecord(license, activeDevices, totalDevices) {
+  return {
+    id: license.id,
+    status: license.status,
+    max_devices: Number(license.max_devices || 1),
+    features: featuresFromLicense(license),
+    expires_at: Number(license.expires_at || 0),
+    created_at: Number(license.created_at || 0),
+    updated_at: Number(license.updated_at || 0),
+    active_devices: Number(activeDevices || 0),
+    total_devices: Number(totalDevices || 0),
+  };
+}
+
+async function handleAdminListLicenses(request, env) {
+  if (!requireAdmin(request, env)) return errorResponse("unauthorized", 401);
+  const url = new URL(request.url);
+  const limit = validatedInteger(url.searchParams.get("limit"), "limit", 1, 100, 50);
+  const offset = validatedInteger(url.searchParams.get("offset"), "offset", 0, 1000000, 0);
+  const result = await database(env).prepare(
+    "SELECT id, status, max_devices, features_json, expires_at, created_at, updated_at, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id AND status = 'active') AS active_devices, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id) AS total_devices FROM licenses ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+  ).bind(limit + 1, offset).all();
+  const rows = Array.isArray(result.results) ? result.results : [];
+  const visible = rows.slice(0, limit);
+  const licenses = visible.map((license) => (
+    adminLicenseRecord(license, license.active_devices, license.total_devices)
+  ));
+  const now = Math.floor(Date.now() / 1000);
+  const summaryRow = await database(env).prepare(
+    "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' AND (expires_at = 0 OR expires_at > ?) THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status = 'revoked' THEN 1 ELSE 0 END) AS revoked, SUM(CASE WHEN status = 'active' AND expires_at > 0 AND expires_at <= ? THEN 1 ELSE 0 END) AS expired FROM licenses",
+  ).bind(now, now).first();
+  const activeDevicesRow = await database(env).prepare(
+    "SELECT COUNT(*) AS count FROM devices WHERE status = 'active'",
+  ).first();
+  const summary = {
+    total: Number(summaryRow?.total || 0),
+    active: Number(summaryRow?.active || 0),
+    revoked: Number(summaryRow?.revoked || 0),
+    expired: Number(summaryRow?.expired || 0),
+    active_devices: Number(activeDevicesRow?.count || 0),
+  };
+  return jsonResponse({
+    ok: true,
+    licenses,
+    total: summary.total,
+    summary,
+    offset,
+    next_offset: rows.length > limit ? offset + limit : null,
+  });
+}
+
+async function handleAdminLicenseDetail(request, env) {
+  if (!requireAdmin(request, env)) return errorResponse("unauthorized", 401);
+  const url = new URL(request.url);
+  const id = validatedExistingIdentifier(url.searchParams.get("id"), "license_id");
+  const license = await database(env).prepare("SELECT * FROM licenses WHERE id = ?").bind(id).first();
+  if (!license) throw new RequestError(404, "not_found");
+  const devicesResult = await database(env).prepare(
+    "SELECT id, device_key_hash, status, created_at, last_seen_at FROM devices WHERE license_id = ? ORDER BY last_seen_at DESC",
+  ).bind(id).all();
+  const devices = (Array.isArray(devicesResult.results) ? devicesResult.results : []).map((device) => ({
+    id: device.id,
+    device_key_hash: device.device_key_hash,
+    status: device.status,
+    created_at: Number(device.created_at || 0),
+    last_seen_at: Number(device.last_seen_at || 0),
+  }));
+  const activeDevices = devices.filter((device) => device.status === "active").length;
+  return jsonResponse({
+    ok: true,
+    license: adminLicenseRecord(license, activeDevices, devices.length),
+    devices,
+  });
+}
+
+async function handleAdminRevokeDevice(request, env) {
+  if (!requireAdmin(request, env)) return errorResponse("unauthorized", 401);
+  const body = await readJson(request);
+  const licenseId = validatedExistingIdentifier(body.license_id, "license_id");
+  const deviceId = validatedExistingIdentifier(body.device_id, "device_id");
+  const device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(deviceId).first();
+  if (!device || device.license_id !== licenseId) throw new RequestError(404, "not_found");
+  const now = Math.floor(Date.now() / 1000);
+  await database(env).prepare("UPDATE devices SET status = 'revoked', last_seen_at = ? WHERE id = ?")
+    .bind(now, device.id).run();
+  return jsonResponse({ ok: true, license_id: licenseId, device_id: device.id, status: "revoked" });
 }
 
 async function handleAdminUpdate(request, env) {
@@ -608,14 +726,21 @@ const worker = {
           public_key: publicJwk,
         });
       }
+      if (request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/")) {
+        const nonce = randomToken(18);
+        return htmlResponse(renderAdminDashboard(nonce), nonce);
+      }
       if (request.method === "POST" && url.pathname === "/v1/challenge") return await handleChallenge(request, env);
       if (request.method === "POST" && url.pathname === "/v1/activate") return await handleActivate(request, env);
       if (request.method === "POST" && url.pathname === "/v1/refresh") return await handleRefresh(request, env);
       if (request.method === "POST" && url.pathname === "/v1/deactivate") return await handleDeactivate(request, env);
       if (request.method === "POST" && url.pathname === "/v1/admin/licenses") return await handleAdminCreateLicense(request, env);
+      if (request.method === "GET" && url.pathname === "/v1/admin/licenses") return await handleAdminListLicenses(request, env);
+      if (request.method === "GET" && url.pathname === "/v1/admin/license") return await handleAdminLicenseDetail(request, env);
       if (request.method === "POST" && url.pathname === "/v1/admin/update") return await handleAdminUpdate(request, env);
       if (request.method === "POST" && url.pathname === "/v1/admin/revoke") return await handleAdminRevoke(request, env);
       if (request.method === "POST" && url.pathname === "/v1/admin/reset-devices") return await handleAdminResetDevices(request, env);
+      if (request.method === "POST" && url.pathname === "/v1/admin/revoke-device") return await handleAdminRevokeDevice(request, env);
       return errorResponse("not_found", 404);
     } catch (error) {
       if (error instanceof RequestError) return errorResponse(error.code, error.status);

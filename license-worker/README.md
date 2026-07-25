@@ -34,6 +34,28 @@ npx wrangler secret put LICENSE_SIGNING_PRIVATE_JWK
 npx wrangler secret put ADMIN_TOKEN
 ```
 
+After deployment, open the administration dashboard at:
+
+```text
+https://YOUR-WORKER/admin
+```
+
+Enter the same `ADMIN_TOKEN` secret when prompted. The dashboard keeps the
+token in page memory only; it does not write it to cookies, `localStorage`, or
+`sessionStorage`. Use the **Lock** action before leaving a shared browser.
+Always access the dashboard over HTTPS.
+
+The dashboard can:
+
+- list and filter licenses with active, revoked, and expired totals;
+- create a license and show its clear key once;
+- edit the fixed license expiration, feature set, status, and device limit;
+- inspect device bindings and revoke one binding;
+- reset all active device slots or revoke the complete license.
+
+The clear license key cannot be recovered from D1. Only its SHA-256 hash is
+stored, so record the key when the create dialog returns it.
+
 Copy the printed public `x` and `y` values into
 `stream-app/app/LicenseConfig.plist`, set `LicenseEndpoint`, and deploy:
 
@@ -83,11 +105,16 @@ return JSON as `{ "ok": true, ... }` on success and
 - `POST /v1/activate`: consume the challenge and issue a device-bound lease.
 - `POST /v1/refresh`: require the signed lease plus a fresh device signature.
 - `POST /v1/deactivate`: require the same proof and release this device slot.
+- `GET /v1/admin/licenses`: list licenses and aggregate status/device totals.
+- `GET /v1/admin/license?id=...`: inspect one license and its device bindings.
 - `POST /v1/admin/update`: update `status`, `max_devices`, `expires_at`, or
-  `features` without editing D1 manually.
+  `features` without editing D1 manually. Admin mutations accept either
+  `license_id` or the clear `license_key`.
 - `POST /v1/admin/revoke`: revoke the license.
 - `POST /v1/admin/reset-devices`: revoke active devices and clear challenges;
   the same proven device key may activate again afterward.
+- `POST /v1/admin/revoke-device`: revoke one device binding by `license_id`
+  and `device_id`.
 
 Example deactivate body:
 

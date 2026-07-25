@@ -134,16 +134,16 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
                                   accessibilityLabel:(NSString *)accessibilityLabel
 {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.frame = CGRectMake(0, 0, 44.0, 44.0);
+    button.frame = CGRectMake(0, 0, 40.0, 40.0);
     button.backgroundColor = backgroundColor;
     button.tintColor = tintColor;
-    button.layer.cornerRadius = 12.0;
+    button.layer.cornerRadius = 10.0;
     button.layer.shadowColor = [UIColor blackColor].CGColor;
     button.layer.shadowOpacity = 0.08;
     button.layer.shadowRadius = 5.0;
     button.layer.shadowOffset = CGSizeMake(0, 2.0);
     UIImageSymbolConfiguration *configuration =
-        [UIImageSymbolConfiguration configurationWithPointSize:20.0 weight:UIImageSymbolWeightMedium];
+        [UIImageSymbolConfiguration configurationWithPointSize:18.0 weight:UIImageSymbolWeightMedium];
     [button setImage:[[UIImage systemImageNamed:imageName] imageByApplyingSymbolConfiguration:configuration]
             forState:UIControlStateNormal];
     button.accessibilityLabel = accessibilityLabel;
