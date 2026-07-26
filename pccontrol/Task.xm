@@ -1152,10 +1152,11 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
             NSMutableDictionary *licenseStatus =
                 [TLinkLicenseStatusDictionary() mutableCopy];
-            licenseStatus[@"phase"] = @1;
+            licenseStatus[@"phase"] = @2;
             licenseStatus[@"runtime"] = @"rootfull";
             licenseStatus[@"runtime_gate_active"] = @0;
-            licenseStatus[@"enforcement_scope"] = @"observe_verifier_no_runtime_gate";
+            licenseStatus[@"activation_lifecycle_active"] = @1;
+            licenseStatus[@"enforcement_scope"] = @"activation_lifecycle_observe_no_runtime_gate";
             licenseStatus[@"rootfull_build_mode"] = licenseBuildMode;
             licenseStatus[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
 

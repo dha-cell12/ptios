@@ -21,6 +21,7 @@
 #import <objc/runtime.h>
 #import "Config.h"
 #import "ConfigManager.h"
+#import "../../../stream-app/app/LicenseViewController.h"
 
 #define SETTING_CELL_SWITCH 0
 #define SETTING_CELL_ENTRY 1
@@ -39,7 +40,7 @@
     [super viewDidLoad];
     // Do any additional setup after loading the view.
     
-    sections = @[NSLocalizedString(@"remoteManagement", nil), NSLocalizedString(@"control", nil), NSLocalizedString(@"script", nil)]; // , @"HELP"
+    sections = @[@"License", NSLocalizedString(@"remoteManagement", nil), NSLocalizedString(@"control", nil), NSLocalizedString(@"script", nil)]; // , @"HELP"
     configManager = [[ConfigManager alloc] initWithPath:SPRINGBOARD_CONFIG_PATH];
     BOOL doubleClickPopup = YES;
     if ([configManager getValueFromKey:@"double_click_volume_show_popup"])
@@ -56,6 +57,9 @@
     // [@{"type": ?, @"title": ?, @"content": ?, ... more depends on the cell type}]
     //
     cellsForEachSection = @[
+        @[
+            @{@"type": @(SETTING_CELL_ENTRY), @"title": @"License", @"secondary_title": @"Activation and device binding", @"row_click_handler": NSStringFromSelector(@selector(handleLicenseWithEntryCellInstance:))}
+        ],
         @[
             @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"webServer", nil), @"switch_click_handler": NSStringFromSelector(@selector(handleWebServerWithSwitchCellInstance:)), @"switch_init_status": @(NO)}
         ],
@@ -78,6 +82,14 @@
     
     _tableView.backgroundColor = [UIColor colorWithRed:243/255.0f green:242/255.0f blue:248/255.0f alpha:1.0f];
     _tableView.tableFooterView = [[UIView alloc] init];
+}
+
+- (void)handleLicenseWithEntryCellInstance:(TableViewCellWithEntry *)cell
+{
+    (void)cell;
+    SCLicenseViewController *controller =
+        [[SCLicenseViewController alloc] initWithStyle:UITableViewStyleGrouped];
+    [self.navigationController pushViewController:controller animated:YES];
 }
 
 - (void)handleSwitchAppBeforePlaying:(UISwitch*)s {

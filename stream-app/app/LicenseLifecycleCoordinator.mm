@@ -1,6 +1,13 @@
 #import "LicenseLifecycleCoordinator.h"
 #import "LicenseManager.h"
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME)
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <string.h>
+#else
 #import "TLinkSocketClient.h"
+#endif
 #import "../../shared/TLinkLicenseVerifier.h"
 #include <math.h>
 #include <stdlib.h>
@@ -12,6 +19,53 @@ static const NSTimeInterval kTLinkLicenseRefreshWindow = 6.0 * 60.0 * 60.0;
 static const NSTimeInterval kTLinkLicenseBackoffBase = 60.0;
 static const NSTimeInterval kTLinkLicenseBackoffMaximum = 6.0 * 60.0 * 60.0;
 static const NSUInteger kTLinkLicenseRefreshHistoryLimit = 20;
+
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME)
+static NSString *SCLicenseRootfullReloadRequest(void)
+{
+    int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+    if (descriptor < 0) return @"socket_create_failed";
+
+    struct timeval timeout = {2, 0};
+    setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(6000);
+    inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+    if (connect(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(descriptor);
+        return @"streamd_connect_failed";
+    }
+
+    const char request[] = "76reload\r\n";
+    ssize_t written = send(descriptor, request, sizeof(request) - 1, 0);
+    if (written != (ssize_t)(sizeof(request) - 1)) {
+        close(descriptor);
+        return @"streamd_send_failed";
+    }
+
+    char response[8192];
+    memset(response, 0, sizeof(response));
+    ssize_t received = recv(descriptor, response, sizeof(response) - 1, 0);
+    close(descriptor);
+    if (received <= 0) return @"streamd_no_response";
+    response[received] = '\0';
+    NSString *value = [NSString stringWithUTF8String:response] ?: @"streamd_invalid_response";
+    return [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+#endif
+
+static NSString *SCLicenseRequestDaemonReload(void)
+{
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME)
+    return SCLicenseRootfullReloadRequest();
+#else
+    return [TLinkSocketClient requestTask:76 args:@[@"reload"] timeout:2.0];
+#endif
+}
 
 @interface SCLicenseLifecycleCoordinator ()
 @property(nonatomic, strong) SCLicenseManager *manager;
@@ -176,7 +230,7 @@ static const NSUInteger kTLinkLicenseRefreshHistoryLimit = 20;
                                                           userInfo:@{@"reason": reason ?: @"unknown"}];
     });
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSString *response = [TLinkSocketClient requestTask:76 args:@[@"reload"] timeout:2.0];
+        NSString *response = SCLicenseRequestDaemonReload();
         [self updateDiagnostics:@{
             @"streamd_invalidate_at_ms": @([self nowMilliseconds]),
             @"streamd_invalidate_response": response ?: @"no_response",
@@ -184,7 +238,7 @@ static const NSUInteger kTLinkLicenseRefreshHistoryLimit = 20;
         if (![response hasPrefix:@"0;;"]) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                            dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                NSString *retry = [TLinkSocketClient requestTask:76 args:@[@"reload"] timeout:2.0];
+                NSString *retry = SCLicenseRequestDaemonReload();
                 [self updateDiagnostics:@{
                     @"streamd_invalidate_retry_at_ms": @([self nowMilliseconds]),
                     @"streamd_invalidate_retry_response": retry ?: @"no_response",

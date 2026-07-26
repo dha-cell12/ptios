@@ -2,15 +2,25 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 1,
+  "phase": 2,
   "license_contract_version": 1,
-  "integration_mode": "shared_verifier_observe_no_runtime_gate",
+  "integration_mode": "activation_lifecycle_observe_no_runtime_gate",
   "configuration_bundle": "Applications/TLinkauto.app/LicenseConfig.plist",
   "application_bundle_identifiers": [
     "com.tlinkauto.tlinkauto",
     "com.tlinkauto.streamcontrol"
   ],
   "verifier_components": [
+    {
+      "component": "application_lifecycle",
+      "binary": "Applications/TLinkauto.app/TLinkauto",
+      "source": "stream-app/app/LicenseLifecycleCoordinator.mm"
+    },
+    {
+      "component": "application_license_ui",
+      "binary": "Applications/TLinkauto.app/TLinkauto",
+      "source": "stream-app/app/LicenseViewController.mm"
+    },
     {
       "component": "task_daemon",
       "binary": "usr/bin/tlinkautod",
@@ -28,11 +38,21 @@
     }
   ],
   "diagnostic_tasks": {
-    "60": "springboard_base64_json_with_shared_verifier_status",
-    "75": "daemon_base64_json_with_shared_verifier_status",
+    "60": "springboard_base64_json_with_phase2_lifecycle_status",
+    "75": "daemon_base64_json_with_phase2_lifecycle_status",
     "76": "daemon_cache_reload_or_generation_advance",
-    "97": "daemon_capability_and_verifier_summary"
+    "97": "daemon_capability_verifier_and_activation_lifecycle_summary"
   },
   "runtime_gate_active": false,
-  "activation_ui_phase": 2
+  "activation_ui_phase": 2,
+  "activation_ui_active": true,
+  "automatic_refresh": {
+    "launch": true,
+    "foreground": true,
+    "refresh_window_seconds": 21600,
+    "single_flight": true,
+    "backoff_with_jitter": true
+  },
+  "daemon_cache_sync_task": 76,
+  "next_runtime_gate_phase": 3
 }

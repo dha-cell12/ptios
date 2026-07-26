@@ -20,9 +20,10 @@ security boundary tuyet doi tren thiet bi ma nguoi tan cong co quyen root,
 co the attach debugger, hook ham, hoac patch binary.
 
 Pham vi enforcement day du hien tai la `stream-app` TrollStore. Rootfull Phase
-1 da link shared verifier vao `tlinkautod` va `pccontrol` de quan sat signed
-lease, nhung dispatcher, H264, JS helper va app goc chua duoc gate. Day van la
-mot khoang trong phai xu ly truoc khi license duoc coi la bao ve ca hai runtime.
+1 da link shared verifier; Phase 2 da them activation lifecycle/UI va dong bo
+generation voi daemon. Dispatcher, H264 va JS helper van chua duoc gate. Day
+van la mot khoang trong phai xu ly truoc khi license duoc coi la bao ve ca hai
+runtime.
 
 ## 2. Thanh phan
 

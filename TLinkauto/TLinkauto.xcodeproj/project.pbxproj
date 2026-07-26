@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A20000000000000000000001 /* LicenseManager.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* LicenseManager.mm */; };
+		A20000000000000000000002 /* LicenseLifecycleCoordinator.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* LicenseLifecycleCoordinator.mm */; };
+		A20000000000000000000003 /* LicenseViewController.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* LicenseViewController.mm */; };
+		A20000000000000000000004 /* TLinkLicenseVerifier.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* TLinkLicenseVerifier.mm */; };
+		A20000000000000000000005 /* TLinkRootfullLicenseBuild.mm in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001A /* TLinkRootfullLicenseBuild.mm */; };
+		A20000000000000000000006 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001B /* Security.framework */; };
+		A20000000000000000000007 /* LicenseConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001C /* LicenseConfig.plist */; };
 		961098F5259E1DE500919CA1 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 961098F7259E1DE500919CA1 /* Localizable.strings */; };
 		9619F9CF25831EE4001D7EA9 /* Socket.m in Sources */ = {isa = PBXBuildFile; fileRef = 9619F9CE25831EE4001D7EA9 /* Socket.m */; };
 		961B79AA25C1ACC20083DC41 /* PlaySettingsNavigationController.m in Sources */ = {isa = PBXBuildFile; fileRef = 961B79A925C1ACC20083DC41 /* PlaySettingsNavigationController.m */; };
@@ -133,6 +140,18 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A20000000000000000000011 /* LicenseManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = LicenseManager.h; path = ../stream-app/app/LicenseManager.h; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000012 /* LicenseManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = LicenseManager.mm; path = ../stream-app/app/LicenseManager.mm; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000013 /* LicenseLifecycleCoordinator.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = LicenseLifecycleCoordinator.h; path = ../stream-app/app/LicenseLifecycleCoordinator.h; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000014 /* LicenseLifecycleCoordinator.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = LicenseLifecycleCoordinator.mm; path = ../stream-app/app/LicenseLifecycleCoordinator.mm; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000015 /* LicenseViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = LicenseViewController.h; path = ../stream-app/app/LicenseViewController.h; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000016 /* LicenseViewController.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = LicenseViewController.mm; path = ../stream-app/app/LicenseViewController.mm; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000017 /* TLinkLicenseVerifier.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = TLinkLicenseVerifier.h; path = ../shared/TLinkLicenseVerifier.h; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000018 /* TLinkLicenseVerifier.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TLinkLicenseVerifier.mm; path = ../shared/TLinkLicenseVerifier.mm; sourceTree = SOURCE_ROOT; };
+		A20000000000000000000019 /* TLinkRootfullLicenseBuild.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = TLinkRootfullLicenseBuild.h; path = ../shared/TLinkRootfullLicenseBuild.h; sourceTree = SOURCE_ROOT; };
+		A2000000000000000000001A /* TLinkRootfullLicenseBuild.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TLinkRootfullLicenseBuild.mm; path = ../shared/TLinkRootfullLicenseBuild.mm; sourceTree = SOURCE_ROOT; };
+		A2000000000000000000001B /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		A2000000000000000000001C /* LicenseConfig.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = LicenseConfig.plist; sourceTree = "<group>"; };
 		961098E8259E199700919CA1 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Main.strings"; sourceTree = "<group>"; };
 		961098EC259E199700919CA1 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/LaunchScreen.strings"; sourceTree = "<group>"; };
 		961098F6259E1DE500919CA1 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -316,6 +335,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000006 /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -344,6 +364,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A20000000000000000000020 /* LicensePhase2 */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000011 /* LicenseManager.h */,
+				A20000000000000000000012 /* LicenseManager.mm */,
+				A20000000000000000000013 /* LicenseLifecycleCoordinator.h */,
+				A20000000000000000000014 /* LicenseLifecycleCoordinator.mm */,
+				A20000000000000000000015 /* LicenseViewController.h */,
+				A20000000000000000000016 /* LicenseViewController.mm */,
+				A20000000000000000000017 /* TLinkLicenseVerifier.h */,
+				A20000000000000000000018 /* TLinkLicenseVerifier.mm */,
+				A20000000000000000000019 /* TLinkRootfullLicenseBuild.h */,
+				A2000000000000000000001A /* TLinkRootfullLicenseBuild.mm */,
+			);
+			name = LicensePhase2;
+			sourceTree = "<group>";
+		};
 		961B797225C0908A0083DC41 /* libactivator */ = {
 			isa = PBXGroup;
 			children = (
@@ -529,6 +566,8 @@
 		96D7E5A02581F99900B39A81 /* TLinkauto */ = {
 			isa = PBXGroup;
 			children = (
+				A20000000000000000000020 /* LicensePhase2 */,
+				A2000000000000000000001C /* LicenseConfig.plist */,
 				96D7E5AD2581F99B00B39A81 /* Assets.xcassets */,
 				961B79A725C1AC190083DC41 /* ScriptPlaySettings */,
 				961B797225C0908A0083DC41 /* libactivator */,
@@ -590,6 +629,7 @@
 		96E18E2925CF04B3003635F1 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				A2000000000000000000001B /* Security.framework */,
 				96E18E2A25CF04B3003635F1 /* Intents.framework */,
 				96E18E3625CF04B3003635F1 /* IntentsUI.framework */,
 			);
@@ -799,6 +839,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000007 /* LicenseConfig.plist in Resources */,
 				966598CF25BD4E3000F18DEB /* TableViewCellWithSingleButton.xib in Resources */,
 				96D3EE3B25C1C009002B0000 /* ScriptPlaySettingsActivatorViewController.xib in Resources */,
 				9684FFF425B873EC00549FC8 /* TableViewCellWithEntry.xib in Resources */,
@@ -847,6 +888,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A20000000000000000000001 /* LicenseManager.mm in Sources */,
+				A20000000000000000000002 /* LicenseLifecycleCoordinator.mm in Sources */,
+				A20000000000000000000003 /* LicenseViewController.mm in Sources */,
+				A20000000000000000000004 /* TLinkLicenseVerifier.mm in Sources */,
+				A20000000000000000000005 /* TLinkRootfullLicenseBuild.mm in Sources */,
 				964DF11025B9D87E006061B4 /* GCDWebServerStreamedResponse.m in Sources */,
 				9666347E25C41C000028A5A3 /* ActivatorConfigurationViewController.m in Sources */,
 				966598CE25BD4E3000F18DEB /* TableViewCellWithSingleButton.m in Sources */,

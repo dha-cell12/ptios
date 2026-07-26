@@ -578,7 +578,7 @@ static NSData *zx_dataFromCString(const char *cstr)
     return [NSData dataWithBytes:cstr length:strlen(cstr)];
 }
 
-static NSData *zx_rootfullPhase1DiagnosticResponse(int taskType, const char *buffer)
+static NSData *zx_rootfullPhase2DiagnosticResponse(int taskType, const char *buffer)
 {
     if (taskType == 75 || taskType == 76) {
         uint64_t generationBefore = TLinkLicenseGeneration();
@@ -600,10 +600,11 @@ static NSData *zx_rootfullPhase1DiagnosticResponse(int taskType, const char *buf
 
         NSMutableDictionary *status = [TLinkLicenseStatusDictionary() mutableCopy];
         status[@"license_contract_version"] = @1;
-        status[@"rootfull_license_phase"] = @1;
+        status[@"rootfull_license_phase"] = @2;
         status[@"runtime"] = @"rootfull";
         status[@"runtime_gate_active"] = @0;
-        status[@"enforcement_scope"] = @"observe_verifier_no_runtime_gate";
+        status[@"activation_lifecycle_active"] = @1;
+        status[@"enforcement_scope"] = @"activation_lifecycle_observe_no_runtime_gate";
         status[@"rootfull_build_mode"] =
             [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
         status[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
@@ -611,7 +612,7 @@ static NSData *zx_rootfullPhase1DiagnosticResponse(int taskType, const char *buf
         status[@"generation_before"] = @(generationBefore);
         status[@"license_generation"] = @(TLinkLicenseGeneration());
         status[@"generation_action"] = action;
-        status[@"source"] = @"tlinkautod_rootfull_shared_verifier";
+        status[@"source"] = @"tlinkautod_rootfull_phase2_shared_verifier";
         NSData *json = [NSJSONSerialization dataWithJSONObject:status options:0 error:nil];
         if (json.length == 0) {
             return zx_dataFromCString("-1;;license_status_json_failed\r\n");
@@ -624,7 +625,7 @@ static NSData *zx_rootfullPhase1DiagnosticResponse(int taskType, const char *buf
         case 97: {
             NSDictionary *status = TLinkLicenseStatusDictionary();
             return zx_dataFromCString([[NSString stringWithFormat:
-                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=1 verifier=shared_signed_lease_observe runtimeGate=0 licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006\r\n",
+                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=2 verifier=shared_signed_lease activationUI=1 lifecycle=foreground_single_flight_backoff runtimeGate=0 licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006\r\n",
                 status[@"state"] ?: @"invalid",
                 [status[@"configured"] boolValue] ? 1 : 0,
                 (unsigned long long)TLinkLicenseGeneration(),
@@ -656,9 +657,9 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         // Still route through IPC below.
     }
 
-    NSData *phase1Diagnostic = zx_rootfullPhase1DiagnosticResponse(taskType, buffer);
-    if (phase1Diagnostic) {
-        return phase1Diagnostic;
+    NSData *phase2Diagnostic = zx_rootfullPhase2DiagnosticResponse(taskType, buffer);
+    if (phase2Diagnostic) {
+        return phase2Diagnostic;
     }
 
     if (taskType == 96) {

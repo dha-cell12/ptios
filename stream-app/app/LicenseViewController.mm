@@ -12,6 +12,44 @@ typedef NS_ENUM(NSInteger, SCLicenseSection) {
     SCLicenseSectionCount,
 };
 
+static UIColor *SCLicenseLabelColor(void)
+{
+    if (@available(iOS 13.0, *)) return [UIColor labelColor];
+    return [UIColor blackColor];
+}
+
+static UIColor *SCLicenseSecondaryLabelColor(void)
+{
+    if (@available(iOS 13.0, *)) return [UIColor secondaryLabelColor];
+    return [UIColor darkGrayColor];
+}
+
+static UIColor *SCLicenseDisabledLabelColor(void)
+{
+    if (@available(iOS 13.0, *)) return [UIColor tertiaryLabelColor];
+    return [UIColor lightGrayColor];
+}
+
+static UIColor *SCLicenseBackgroundColor(void)
+{
+    if (@available(iOS 13.0, *)) return [UIColor systemBackgroundColor];
+    return [UIColor whiteColor];
+}
+
+static UIColor *SCLicenseDestructiveColor(void)
+{
+    if (@available(iOS 13.0, *)) return [UIColor systemRedColor];
+    return [UIColor redColor];
+}
+
+static UIFont *SCLicenseMonospacedFont(void)
+{
+    if (@available(iOS 13.0, *)) {
+        return [UIFont monospacedSystemFontOfSize:12.0 weight:UIFontWeightRegular];
+    }
+    return [UIFont fontWithName:@"Menlo-Regular" size:12.0] ?: [UIFont systemFontOfSize:12.0];
+}
+
 @implementation SCLicenseViewController {
     NSDictionary *_status;
     NSDictionary *_lifecycle;
@@ -171,8 +209,8 @@ typedef NS_ENUM(NSInteger, SCLicenseSection) {
     cell.accessoryView = nil;
     cell.accessoryType = UITableViewCellAccessoryNone;
     cell.textLabel.textAlignment = NSTextAlignmentNatural;
-    cell.textLabel.textColor = [UIColor labelColor];
-    cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    cell.textLabel.textColor = SCLicenseLabelColor();
+    cell.detailTextLabel.textColor = SCLicenseSecondaryLabelColor();
     cell.detailTextLabel.adjustsFontSizeToFitWidth = YES;
     cell.detailTextLabel.minimumScaleFactor = 0.62;
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -268,9 +306,9 @@ typedef NS_ENUM(NSInteger, SCLicenseSection) {
     BOOL repairAvailable = indexPath.row != 4 || [_status[@"device_private_key_present"] boolValue];
     BOOL enabled = !_requestInFlight && repairAvailable && (!needsLease || [_status[@"licensed"] boolValue]);
     cell.selectionStyle = enabled ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
-    if (!enabled) cell.textLabel.textColor = [UIColor tertiaryLabelColor];
+    if (!enabled) cell.textLabel.textColor = SCLicenseDisabledLabelColor();
     if (enabled && (indexPath.row == 3 || indexPath.row == 5)) {
-        cell.textLabel.textColor = [UIColor systemRedColor];
+        cell.textLabel.textColor = SCLicenseDestructiveColor();
     }
     return cell;
 }
@@ -343,12 +381,12 @@ typedef NS_ENUM(NSInteger, SCLicenseSection) {
 
     UIViewController *controller = [[UIViewController alloc] initWithNibName:nil bundle:nil];
     controller.title = @"Refresh History";
-    controller.view.backgroundColor = [UIColor systemBackgroundColor];
+    controller.view.backgroundColor = SCLicenseBackgroundColor();
     UITextView *textView = [[UITextView alloc] initWithFrame:CGRectZero];
     textView.translatesAutoresizingMaskIntoConstraints = NO;
     textView.editable = NO;
     textView.selectable = YES;
-    textView.font = [UIFont monospacedSystemFontOfSize:12.0 weight:UIFontWeightRegular];
+    textView.font = SCLicenseMonospacedFont();
     textView.text = [lines componentsJoinedByString:@"\n\n"];
     textView.textContainerInset = UIEdgeInsetsMake(16, 14, 16, 14);
     [controller.view addSubview:textView];

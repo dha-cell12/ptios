@@ -17,12 +17,15 @@ const deviceProbe = await read("scripts/Test-TLinkRootfullLicensePhase1.ps1");
 
 assert.equal(integration.product, "tlinkauto-rootfull");
 assert.equal(integration.runtime, "rootfull");
-assert.equal(integration.phase, 1);
+assert.ok(integration.phase >= 1);
 assert.equal(integration.license_contract_version, 1);
-assert.equal(integration.integration_mode, "shared_verifier_observe_no_runtime_gate");
+assert.ok([
+  "shared_verifier_observe_no_runtime_gate",
+  "activation_lifecycle_observe_no_runtime_gate"
+].includes(integration.integration_mode));
 assert.equal(integration.runtime_gate_active, false);
 assert.equal(integration.activation_ui_phase, 2);
-assert.equal(integration.verifier_components.length, 3);
+assert.ok(integration.verifier_components.length >= 3);
 
 assert.match(verifier, /com\.tlinkauto\.tlinkauto/);
 assert.match(verifier, /com\.tlinkauto\.streamcontrol/);
@@ -40,19 +43,19 @@ assert.match(socket, /TLinkLicenseStatusDictionary/);
 assert.match(socket, /TLinkLicenseAdvanceGeneration/);
 assert.match(socket, /TLinkLicenseInvalidateCache/);
 assert.match(socket, /rootfull_license_phase/);
-assert.match(socket, /observe_verifier_no_runtime_gate/);
-assert.match(socket, /license_phase=1/);
+assert.match(socket, /(?:observe_verifier|activation_lifecycle_observe)_no_runtime_gate/);
+assert.match(socket, /license_phase=[12]/);
 assert.match(socket, /runtimeGate=0/);
 assert.doesNotMatch(socket, /TLinkLicenseFeatureAllowed\s*\(/);
 
 assert.match(task, /TLinkLicenseStatusDictionary/);
-assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@1/);
+assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[12]/);
 assert.match(task, /licenseStatus\[@"runtime_gate_active"\]\s*=\s*@0/);
-assert.match(task, /observe_verifier_no_runtime_gate/);
+assert.match(task, /(?:observe_verifier|activation_lifecycle_observe)_no_runtime_gate/);
 assert.doesNotMatch(task, /TLinkLicenseFeatureAllowed\s*\(/);
 
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>1<\/integer>/);
-assert.match(buildPlist, /shared_verifier_observe_no_runtime_gate/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[12]<\/integer>/);
+assert.match(buildPlist, /(?:shared_verifier|activation_lifecycle)_observe_no_runtime_gate/);
 for (const key of [
   "LicenseEndpoint",
   "LicenseKeyID",
@@ -64,7 +67,7 @@ for (const key of [
 }
 
 assert.match(workflow, /check-rootfull-license-phase1\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase1-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[12]-artifact\.mjs/);
 assert.match(workflow, /TLinkauto\/TLinkauto\/LicenseConfig\.plist/);
 assert.match(workflow, /TLINK_LICENSE_ENDPOINT/);
 assert.match(workflow, /TLINK_LICENSE_PUBLIC_KEY_X/);

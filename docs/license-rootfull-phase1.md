@@ -1,5 +1,9 @@
 # License Rootfull - Phase 1
 
+> Historical milestone. Build hien tai da chuyen sang
+> `docs/license-rootfull-phase2.md`; Phase 1 checker van duoc giu de bao ve cac
+> invariant verifier nen tang.
+
 ## Trang thai
 
 Phase 1 tich hop shared verifier vao runtime rootfull o che do quan sat.
@@ -63,9 +67,11 @@ node scripts/check-rootfull-license-phase1.mjs
 node --check scripts/validate-rootfull-license-phase1-artifact.mjs
 ```
 
-Inventory Phase 1 nam tai `license-rootfull-integration.json`.
+Phase 1 invariant duoc giu trong `check-rootfull-license-phase1.mjs`. Manifest
+`license-rootfull-integration.json` luon mo ta phase hien tai, bay gio la
+Phase 2.
 
-Sau khi cai goi rootfull len thiet bi, chay device probe:
+Device probe sau chi danh cho artifact Phase 1 lich su:
 
 ```powershell
 .\scripts\Test-TLinkRootfullLicensePhase1.ps1 `
@@ -76,3 +82,5 @@ Sau khi cai goi rootfull len thiet bi, chay device probe:
 
 Probe kiem tra task `97`, giai ma task `75`, xac nhan runtime gate van tat,
 sau do kiem tra ca generation advance va cache reload cua task `76`.
+
+Voi build hien tai, dung `Test-TLinkRootfullLicensePhase2.ps1`.

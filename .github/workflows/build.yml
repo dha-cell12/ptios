@@ -30,6 +30,7 @@ jobs:
         run: |
           node scripts/check-rootfull-license-phase0.mjs
           node scripts/check-rootfull-license-phase1.mjs
+          node scripts/check-rootfull-license-phase2.mjs
 
       - name: Validate public license build inputs
         run: |
@@ -91,7 +92,7 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             SYMROOT="$PWD/build" \
-            GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) TLINK_LICENSE_FORCE_ENFORCEMENT=${TLINK_LICENSE_FORCE_ENFORCEMENT}" \
+            GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) TLINK_LICENSE_FORCE_ENFORCEMENT=${TLINK_LICENSE_FORCE_ENFORCEMENT} TLINK_LICENSE_ROOTFULL_RUNTIME=1" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -134,7 +135,7 @@ jobs:
           export PATH="${DPKG_BIN}:$PATH"
           make package FINALPACKAGE=1 TLINK_LICENSE_MODE="${TLINK_LICENSE_MODE}"
 
-      - name: Validate rootfull phase 1 artifact
+      - name: Validate rootfull phase 2 artifact
         run: |
           set -euo pipefail
           export PATH="${DPKG_BIN}:$PATH"
@@ -144,14 +145,14 @@ jobs:
           rm -rf "$ROOTFS"
           mkdir -p "$ROOTFS"
           dpkg-deb -x "$DEB_PATH" "$ROOTFS"
-          node scripts/validate-rootfull-license-phase1-artifact.mjs \
+          node scripts/validate-rootfull-license-phase2-artifact.mjs \
             --rootfs "$ROOTFS" \
             --mode "$TLINK_LICENSE_MODE" \
             --endpoint "$TLINK_LICENSE_ENDPOINT" \
             --keyId "$TLINK_LICENSE_KEY_ID" \
             --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
             --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y" \
-            --output "rootfull-license-phase1-${TLINK_LICENSE_MODE}.json"
+            --output "rootfull-license-phase2-${TLINK_LICENSE_MODE}.json"
 
       - name: Upload deb package
         uses: actions/upload-artifact@v4
@@ -159,4 +160,4 @@ jobs:
           name: TLinkauto-rootfull-deb-${{ matrix.license_mode }}
           path: |
             packages/*.deb
-            rootfull-license-phase1-${{ matrix.license_mode }}.json
+            rootfull-license-phase2-${{ matrix.license_mode }}.json

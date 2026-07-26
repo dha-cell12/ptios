@@ -36,8 +36,11 @@
   runtime gate va khong thay doi release gate cua TrollStore.
 - Rootfull Phase 1: **da tich hop shared verifier observe** tai
   `docs/license-rootfull-phase1.md`. Signed lease/config/generation da co trong
-  `tlinkautod` va `pccontrol`, nhung `runtime_gate_active=0`; activation UI va
-  enforcement parity van chua hoan thanh.
+  `tlinkautod` va `pccontrol`.
+- Rootfull Phase 2: **da trien khai code/CI** tai
+  `docs/license-rootfull-phase2.md`. App rootfull co activation, refresh,
+  deactivate, device recovery, single-flight/backoff va task `76` cache sync.
+  `runtime_gate_active=0`; enforcement task-server bat dau o Phase 3.
 
 ## 1. Muc tieu
 

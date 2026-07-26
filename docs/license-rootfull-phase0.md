@@ -71,15 +71,15 @@ node scripts/check-rootfull-license-phase0.mjs
 ```
 
 Artifact validator Phase 0 chi giu de kiem tra fixture/goi lich su. Build hien
-tai phai dung validator Phase 1:
+tai phai dung validator Phase 2:
 
 ```sh
-node scripts/validate-rootfull-license-phase1-artifact.mjs \
+node scripts/validate-rootfull-license-phase2-artifact.mjs \
   --rootfs build/rootfull-rootfs \
   --mode observe \
   --endpoint https://license.example.com \
   --keyId example-key-id \
   --publicKeyX <base64url-p256-x> \
   --publicKeyY <base64url-p256-y> \
-  --output rootfull-license-phase1-observe.json
+  --output rootfull-license-phase2-observe.json
 ```

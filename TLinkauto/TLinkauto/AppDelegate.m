@@ -6,6 +6,7 @@
 //
 
 #import "AppDelegate.h"
+#import "../../stream-app/app/LicenseLifecycleCoordinator.h"
 
 @interface AppDelegate ()
 {
@@ -30,9 +31,15 @@
         }
     }
     
+    [[SCLicenseLifecycleCoordinator sharedCoordinator] handleApplicationLaunch];
     return YES;
 }
 
+- (void)applicationDidBecomeActive:(UIApplication *)application
+{
+    (void)application;
+    [[SCLicenseLifecycleCoordinator sharedCoordinator] handleApplicationDidBecomeActive];
+}
 
 #pragma mark - UISceneSession lifecycle
 
