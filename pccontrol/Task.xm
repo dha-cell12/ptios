@@ -1172,8 +1172,8 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"phase": @0,
                     @"state": @"not_integrated",
                     @"build_mode": licenseBuildMode,
-                    @"marker_only": @YES,
-                    @"effective_access": @YES,
+                    @"marker_only": @(YES),
+                    @"effective_access": @(YES),
                 },
             };
 
