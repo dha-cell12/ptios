@@ -31,6 +31,9 @@
   enforced, artifact validator kiem compile marker/config/service v23 va secret
   marker, kem PowerShell regression va JSONL soak logger. Release gate van cho
   bang chung thiet bi 24 gio/72 gio; rootfull tiep tuc bi khoa den khi dat gate.
+- Rootfull Phase 0: **da trien khai nen tang** tai
+  `docs/license-rootfull-phase0.md`. Day la inventory/dual-build marker, chua co
+  runtime gate va khong thay doi release gate cua TrollStore.
 
 ## 1. Muc tieu
 

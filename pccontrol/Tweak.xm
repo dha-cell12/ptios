@@ -44,14 +44,6 @@
 #include "IPCMessagePort.h"
 
 
-#define DEBUG_MODE
-
-#ifdef DEBUG_MODE
-#define CHECKER true
-#else
-#define CHECKER !isExpired
-#endif
-
 #define IPHONE7P_HEIGHT 1920
 #define IPHONE7P_WIDTH 1080
 
@@ -309,43 +301,7 @@ Boolean init()
                 NSLog(@"### com.tlinkauto.springboard: cleared stale IPC marker.");
             }
         }
-        Boolean isExpired = false;
-
-        int requestCount = 0;
-        NSString *stringURL = @"http://47.114.83.227/internal/version_control/dylib/pccontrol/0.0.7-dnqNZp1d/valid";
-        NSURL  *url = [NSURL URLWithString:stringURL];
-
-        NSURLRequest *request = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData timeoutInterval:7.0];
-
-        // Send the request and wait for a response
-        NSHTTPURLResponse   *response;
-        NSError             *error = nil;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        NSData *data = [NSURLConnection sendSynchronousRequest:request 
-                                            returningResponse:&response 
-                                                        error:&error];
-#pragma clang diagnostic pop
-
-        // check for an error
-        if (error != nil) {
-            NSLog(@"com.tlinkauto.springboard: Error check tweak expiring status. Error info: %@", error);
-        }
-        else if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
-            NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
-            if (httpResponse.statusCode == 404) {
-                NSLog(@"com.tlinkauto.springboard: status code: %ld", (long)httpResponse.statusCode);
-                isExpired = true;
-            }     
-        }
-
-        if (isExpired) //
-        {
-            NSLog(@"### com.tlinkauto.springboard: expired");
-            showAlertBox(@"Version Outdated", @"ZJXTouchSimulation: This version of ZJXSimulateTouch library is too old and I highly recommend you to update it on Cydia.", 999);
-        }
-
-
+        NSLog(@"### com.tlinkauto.springboard: legacy plaintext version check removed (rootfull license phase 0).");
     });
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSLog(@"### com.tlinkauto.springboard: init UI services");

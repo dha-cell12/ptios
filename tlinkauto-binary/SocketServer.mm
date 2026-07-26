@@ -2,8 +2,10 @@
 
 #include "SocketServer.h"
 #include "IPCConstants.h"
+#include "../shared/TLinkRootfullLicenseBuild.h"
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 #include <dispatch/dispatch.h>
 #include <stdarg.h>
 #include <sys/stat.h>
@@ -575,6 +577,27 @@ static NSData *zx_dataFromCString(const char *cstr)
     return [NSData dataWithBytes:cstr length:strlen(cstr)];
 }
 
+static NSData *zx_rootfullPhase0DiagnosticResponse(int taskType)
+{
+    const char *mode = TLinkRootfullLicenseBuildMode();
+    switch (taskType) {
+        case 75:
+            return zx_dataFromCString([[NSString stringWithFormat:
+                @"0;;runtime=rootfull license_contract_version=1 license_phase=0 state=not_integrated build_mode=%s marker_only=1 effective_access=1\r\n",
+                mode] UTF8String]);
+        case 76:
+            return zx_dataFromCString("0;;license_reload_noop_phase0 generation=0\r\n");
+        case 97:
+            return zx_dataFromCString([[NSString stringWithFormat:
+                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=0 build_mode=%s marker_only=1 ports=6000,7001,7002,7003,7004,7005,7006\r\n",
+                mode] UTF8String]);
+        case 99:
+            return zx_dataFromCString("0;;tlinkauto_alive\r\n");
+        default:
+            return nil;
+    }
+}
+
 static NSData *zx_handleLegacyRequestBytes(const char *buffer)
 {
     if (!buffer) {
@@ -591,6 +614,19 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
     if (taskType == 10) {
         (void)shouldRouteToSpringBoard(taskType);
         // Still route through IPC below.
+    }
+
+    NSData *phase0Diagnostic = zx_rootfullPhase0DiagnosticResponse(taskType);
+    if (phase0Diagnostic) {
+        return phase0Diagnostic;
+    }
+
+    if (taskType == 96) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)),
+                       dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            exit(0);
+        });
+        return zx_dataFromCString("0;;tlinkautod_exiting\r\n");
     }
 
 #ifdef ZX_DAEMON

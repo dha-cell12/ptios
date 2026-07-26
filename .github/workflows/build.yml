@@ -9,11 +9,20 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        license_mode: [observe, enforced]
     env:
       THEOS: ${{ github.workspace }}/theos
+      TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
+      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate rootfull license phase 0 contract
+        run: node scripts/check-rootfull-license-phase0.mjs
 
       - name: Install build dependencies
         run: |
@@ -52,6 +61,7 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             SYMROOT="$PWD/build" \
+            GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) TLINK_LICENSE_FORCE_ENFORCEMENT=${TLINK_LICENSE_FORCE_ENFORCEMENT}" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -74,6 +84,11 @@ jobs:
           find layout/Applications/TLinkauto.app -name _CodeSignature -type d -prune -exec rm -rf {} +
           find layout/Applications/TLinkauto.app -name embedded.mobileprovision -type f -delete
 
+          cp RootfullLicenseBuild.plist layout/Applications/TLinkauto.app/RootfullLicenseBuild.plist
+          /usr/libexec/PlistBuddy \
+            -c "Set :RootfullLicenseMode ${TLINK_LICENSE_MODE}" \
+            layout/Applications/TLinkauto.app/RootfullLicenseBuild.plist
+
           chmod +x layout/Applications/TLinkauto.app/TLinkauto
           if [ -f layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext ]; then
             chmod +x layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
@@ -86,10 +101,27 @@ jobs:
       - name: Build package
         run: |
           export PATH="${DPKG_BIN}:$PATH"
-          make package FINALPACKAGE=1
+          make package FINALPACKAGE=1 TLINK_LICENSE_MODE="${TLINK_LICENSE_MODE}"
+
+      - name: Validate rootfull phase 0 artifact
+        run: |
+          set -euo pipefail
+          export PATH="${DPKG_BIN}:$PATH"
+          DEB_PATH="$(find packages -type f -name '*.deb' -print -quit)"
+          test -n "$DEB_PATH"
+          ROOTFS="$RUNNER_TEMP/rootfull-${TLINK_LICENSE_MODE}"
+          rm -rf "$ROOTFS"
+          mkdir -p "$ROOTFS"
+          dpkg-deb -x "$DEB_PATH" "$ROOTFS"
+          node scripts/validate-rootfull-license-phase0-artifact.mjs \
+            --rootfs "$ROOTFS" \
+            --mode "$TLINK_LICENSE_MODE" \
+            --output "rootfull-license-phase0-${TLINK_LICENSE_MODE}.json"
 
       - name: Upload deb package
         uses: actions/upload-artifact@v4
         with:
-          name: TLinkauto-deb
-          path: packages/*.deb
+          name: TLinkauto-rootfull-deb-${{ matrix.license_mode }}
+          path: |
+            packages/*.deb
+            rootfull-license-phase0-${{ matrix.license_mode }}.json

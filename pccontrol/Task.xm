@@ -1,5 +1,6 @@
 #include "Task.h"
 #import "TLinkDiagnostic.h"
+#include "../shared/TLinkRootfullLicenseBuild.h"
 #import <Foundation/Foundation.h>
 #ifndef YES
 #define YES true
@@ -1146,11 +1147,14 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 playing = [scriptPlayer isPlaying];
                 bundlePath = [scriptPlayer getCurrentBundlePath] ?: @"";
             }
+            NSString *licenseBuildMode =
+                [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
 
             NSDictionary *payload = @{
                 @"tlinkauto": @{
                     @"protocols": @[@"v0", @"v1"],
                     @"port": @6000,
+                    @"license_contract_version": @1,
                 },
                 @"device": @{
                     @"name": name,
@@ -1163,6 +1167,13 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"bundle_path": bundlePath,
                     @"last_error": getLastScriptError() ?: @"",
                     @"last_error_ts": @(getLastScriptErrorTs()),
+                },
+                @"license": @{
+                    @"phase": @0,
+                    @"state": @"not_integrated",
+                    @"build_mode": licenseBuildMode,
+                    @"marker_only": @YES,
+                    @"effective_access": @YES,
                 },
             };
 

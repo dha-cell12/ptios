@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "product": "tlinkauto-rootfull",
+  "runtime": "rootfull",
+  "phase": 0,
+  "license_contract_version": 1,
+  "enforcement_behavior": "marker_only_no_runtime_gate",
+  "features": [
+    "automation",
+    "stream",
+    "script",
+    "admin",
+    "shell"
+  ],
+  "states": [
+    "not_configured",
+    "not_activated",
+    "valid",
+    "offline_grace",
+    "not_yet_valid",
+    "expired",
+    "device_mismatch",
+    "invalid"
+  ],
+  "deny_response": "-1;;license_required component/task feature state error",
+  "exempt_tasks": [
+    60,
+    75,
+    76,
+    96,
+    97,
+    99
+  ],
+  "special_tasks": {
+    "10": "automation"
+  },
+  "task_features": {
+    "automation": [
+      11,
+      12,
+      14,
+      15,
+      16,
+      17,
+      18,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      32,
+      33,
+      34,
+      35,
+      40,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      90,
+      91
+    ],
+    "stream": [],
+    "script": [
+      19,
+      20,
+      36,
+      37,
+      38,
+      39,
+      41
+    ],
+    "admin": [
+      31,
+      72
+    ],
+    "shell": [
+      13,
+      71
+    ]
+  },
+  "known_transport_gaps": {
+    "declared_and_routed_not_dispatched": [
+      16,
+      17
+    ],
+    "declared_not_routed_not_dispatched": [
+      72
+    ],
+    "implemented_not_routed_from_port_6000": [
+      13,
+      18,
+      71
+    ]
+  },
+  "components": [
+    {
+      "component": "task_server",
+      "feature": "automation",
+      "source": "tlinkauto-binary/SocketServer.mm",
+      "gate_status": "planned_phase_3"
+    },
+    {
+      "component": "springboard_dispatch",
+      "feature": "automation",
+      "source": "pccontrol/Task.xm",
+      "gate_status": "planned_phase_3"
+    },
+    {
+      "component": "h264",
+      "feature": "stream",
+      "source": "pccontrol/H264Stream.xm",
+      "gate_status": "planned_phase_4"
+    },
+    {
+      "component": "script_runtime",
+      "feature": "script",
+      "source": "pccontrol/ScriptPlayer.xm",
+      "gate_status": "planned_phase_4"
+    },
+    {
+      "component": "script_helper",
+      "feature": "script",
+      "source": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+      "gate_status": "planned_phase_4"
+    },
+    {
+      "component": "app_ui",
+      "feature": "automation",
+      "source": "TLinkauto/TLinkauto",
+      "gate_status": "planned_phase_5"
+    }
+  ]
+}

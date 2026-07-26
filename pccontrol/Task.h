@@ -85,10 +85,15 @@
 #define TASK_RUN_SHELL_V2 71
 #define TASK_CLEAR_APP_DATA 72
 
+// License/service diagnostics. These remain license-exempt by contract.
+#define TASK_LICENSE_STATUS 75
+#define TASK_LICENSE_RELOAD 76
 
 #define TASK_UPDATE_CACHE 90
 #define TASK_OCR_TESSERACT_REGION 91
 
+#define TASK_SERVICE_RESTART 96
+#define TASK_CAPABILITY_REPORT 97
 #define TASK_TEST 99
 
 #import "TLinkTaskContext.h"

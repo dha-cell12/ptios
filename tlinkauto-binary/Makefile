@@ -3,17 +3,18 @@
 include $(THEOS)/makefiles/common.mk
 
 TLINKAUTO_FILE_LOG ?= 0
+TLINK_LICENSE_FORCE_ENFORCEMENT ?= 0
 
 TOOL_NAME = tlinkautod tlinkautob
 tlinkautod_ARCH = arm64e arm64
 tlinkautob_ARCH = arm64e arm64
 
-tlinkautod_FILES = main.mm SocketServer.mm ../pccontrol/TemplateMatch.xm ../pccontrol/TextRecognization/VKOcrManager.xm
-tlinkautob_FILES = main.mm SocketServer.mm
+tlinkautod_FILES = main.mm SocketServer.mm ../pccontrol/TemplateMatch.xm ../pccontrol/TextRecognization/VKOcrManager.xm ../shared/TLinkRootfullLicenseBuild.mm
+tlinkautob_FILES = main.mm SocketServer.mm ../shared/TLinkRootfullLicenseBuild.mm
 tlinkautod_FRAMEWORKS = CoreFoundation UIKit CoreGraphics CoreImage Vision ImageIO AVFoundation CoreMedia CoreVideo
 tlinkautob_FRAMEWORKS = CoreFoundation UIKit CoreGraphics
-tlinkautod_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DZX_DAEMON=1 -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG)
-tlinkautob_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG)
+tlinkautod_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DZX_DAEMON=1 -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT)
+tlinkautob_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT)
 
 tlinkautod_CCFLAGS = -std=c++11 -DZX_DAEMON=1
 tlinkautod_CFLAGS += -F$(THEOS_PROJECT_DIR)/frameworks -DZX_DAEMON=1
