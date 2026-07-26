@@ -71,9 +71,11 @@ Test feature hep, vi du lease khong co `admin` va `shell`:
   -ExpectedDeniedFeatures admin,shell
 ```
 
-## Deferred den Phase 4
+## Da duoc hoan thanh trong Phase 4
 
 - Gate H264 port `7001-7006` va recheck active stream.
 - Script/helper heartbeat de dung session dang chay khi revoke/expire.
 - Scheduler/autolaunch launcher recheck.
 - Gate helper va cac component privileged ngoai task dispatch.
+
+Chi tiet va huong dan test nam tai `docs/license-rootfull-phase4.md`.

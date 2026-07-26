@@ -18,7 +18,8 @@ assert.ok(policy.phase >= 0);
 assert.equal(policy.license_contract_version, 1);
 assert.ok([
   "marker_only_no_runtime_gate",
-  "task_server_and_springboard_feature_gate"
+  "task_server_and_springboard_feature_gate",
+  "task_and_long_running_component_gate"
 ].includes(policy.enforcement_behavior));
 assert.deepEqual(policy.features, ["automation", "stream", "script", "admin", "shell"]);
 assert.deepEqual(policy.exempt_tasks, [60, 75, 76, 96, 97, 99]);

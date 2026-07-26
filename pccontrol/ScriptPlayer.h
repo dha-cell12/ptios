@@ -18,6 +18,7 @@
 - (int)play:(NSError**)error;
 - (BOOL)isPlaying;
 - (NSString*)getCurrentBundlePath;
+- (NSDictionary *)licenseRuntimeDiagnostics;
 
 @end
 

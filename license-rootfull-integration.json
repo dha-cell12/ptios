@@ -2,9 +2,9 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 3,
+  "phase": 4,
   "license_contract_version": 1,
-  "integration_mode": "task_server_and_springboard_feature_gate",
+  "integration_mode": "task_and_long_running_component_gate",
   "configuration_bundle": "Applications/TLinkauto.app/LicenseConfig.plist",
   "application_bundle_identifiers": [
     "com.tlinkauto.tlinkauto",
@@ -35,11 +35,26 @@
       "component": "springboard_dispatch",
       "binary": "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
       "source": "pccontrol/Task.xm"
+    },
+    {
+      "component": "h264_stream",
+      "binary": "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
+      "source": "pccontrol/H264Stream.xm"
+    },
+    {
+      "component": "script_runtime",
+      "binary": "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
+      "source": "pccontrol/ScriptPlayer.xm"
+    },
+    {
+      "component": "script_helper",
+      "binary": "usr/libexec/tlinkauto-jsd",
+      "source": "tlinkauto-jsd/TLinkJSHelperServer.mm"
     }
   ],
   "diagnostic_tasks": {
-    "60": "springboard_base64_json_with_phase2_lifecycle_status",
-    "75": "daemon_base64_json_with_phase2_lifecycle_status",
+    "60": "springboard_base64_json_with_phase4_component_status",
+    "75": "daemon_base64_json_with_phase4_component_status",
     "76": "daemon_cache_reload_or_generation_advance",
     "97": "daemon_capability_verifier_and_activation_lifecycle_summary"
   },
@@ -62,5 +77,28 @@
     "missing_policy": "fail_closed",
     "task10_deny": "silent_drop_with_counter"
   },
-  "next_runtime_gate_phase": 4
+  "long_running_components": {
+    "h264": {
+      "feature": "stream",
+      "accept_gate": true,
+      "heartbeat_seconds": 5,
+      "revocation_action": "shutdown_client_socket"
+    },
+    "script_runtime": {
+      "feature": "script",
+      "heartbeat_seconds": 1,
+      "revocation_action": "cancel_runtime_close_file_handles"
+    },
+    "scheduler": {
+      "feature": "script",
+      "launch_time_recheck": true
+    },
+    "script_helper": {
+      "feature": "script",
+      "start_gate": true,
+      "heartbeat_seconds": 1,
+      "revocation_action": "cancel_javascript_wake_waiters_close_file_handles"
+    }
+  },
+  "next_runtime_gate_phase": 5
 }

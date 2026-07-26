@@ -17,15 +17,21 @@ const workflow = await read(".github/workflows/build.yml");
 const deviceProbe = await read("scripts/Test-TLinkRootfullLicensePhase3.ps1");
 const playCell = await read("TLinkauto/TLinkauto/ScriptListTableCell.m");
 
-assert.equal(integration.phase, 3);
-assert.equal(integration.integration_mode, "task_server_and_springboard_feature_gate");
+assert.ok(integration.phase >= 3);
+assert.ok([
+  "task_server_and_springboard_feature_gate",
+  "task_and_long_running_component_gate"
+].includes(integration.integration_mode));
 assert.equal(integration.runtime_gate_active, true);
 assert.equal(integration.task_policy.daemon_gate, true);
 assert.equal(integration.task_policy.springboard_gate, true);
 assert.equal(integration.task_policy.missing_policy, "fail_closed");
 assert.equal(integration.task_policy.task10_deny, "silent_drop_with_counter");
-assert.equal(policy.phase, 3);
-assert.equal(policy.enforcement_behavior, "task_server_and_springboard_feature_gate");
+assert.ok(policy.phase >= 3);
+assert.ok([
+  "task_server_and_springboard_feature_gate",
+  "task_and_long_running_component_gate"
+].includes(policy.enforcement_behavior));
 
 const expected = new Map();
 for (const [feature, tasks] of Object.entries(policy.task_features)) {
@@ -69,19 +75,22 @@ assert.match(policyHeader, /TLinkRootfullLicenseTaskAllowed/);
 assert.match(socket, /TLinkRootfullLicenseTaskAllowed\(taskType/);
 assert.match(socket, /TLinkRootfullLicenseComponentAllowed\(@"automation",\s*@"home_command"/);
 assert.match(socket, /sTLinkRootfullLicenseTask10DropCount\.fetch_add/);
-assert.match(socket, /zx_rootfullPhase3DiagnosticResponse/);
-assert.match(socket, /rootfull_license_phase"\]\s*=\s*@3/);
+assert.match(socket, /zx_rootfullPhase[34]DiagnosticResponse/);
+assert.match(socket, /rootfull_license_phase"\]\s*=\s*@[34]/);
 assert.match(socket, /runtime_gate_active"\]\s*=\s*@1/);
-assert.match(socket, /task_server_and_springboard_feature_gate/);
+assert.match(socket, /task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
+const daemonGateIndex = socket.indexOf("BOOL licenseAllowed = homeCommand");
+const daemonDiagnosticIndex = socket.indexOf("NSData *phase4Diagnostic");
 assert.ok(
-  socket.indexOf("TLinkRootfullLicenseTaskAllowed(taskType") <
-    socket.indexOf("zx_rootfullPhase3DiagnosticResponse(taskType"),
+  daemonGateIndex >= 0 &&
+    daemonDiagnosticIndex >= 0 &&
+    daemonGateIndex < daemonDiagnosticIndex,
   "daemon gate must run before dispatch"
 );
 
 assert.match(task, /TLinkRootfullLicenseTaskAllowed\(taskType/);
 assert.match(task, /sTLinkSpringBoardLicenseTask10DropCount\.fetch_add/);
-assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@3/);
+assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[34]/);
 assert.match(task, /licenseStatus\[@"runtime_gate_active"\]\s*=\s*@1/);
 assert.ok(
   task.indexOf("TLinkRootfullLicenseTaskAllowed(taskType") <
@@ -92,10 +101,10 @@ assert.ok(
 for (const makefile of [daemonMakefile, tweakMakefile]) {
   assert.match(makefile, /TLinkRootfullLicensePolicy\.mm/);
 }
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>3<\/integer>/);
-assert.match(buildPlist, /task_server_and_springboard_feature_gate/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[34]<\/integer>/);
+assert.match(buildPlist, /task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
 assert.match(workflow, /check-rootfull-license-phase3\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase3-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[34]-artifact\.mjs/);
 assert.match(deviceProbe, /ExpectedAccess/);
 assert.match(deviceProbe, /license_required task=/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "76reload"/);

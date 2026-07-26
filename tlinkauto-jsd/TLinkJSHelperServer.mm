@@ -1,6 +1,7 @@
 #import "TLinkJSHelperServer.h"
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #import "../shared/TLinkJSFileHandle.h"
+#import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
 #include <sys/socket.h>
@@ -17,7 +18,7 @@
 
 static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkauto/run/js-helper.sock";
 static NSString * const kTLinkJSHelperPidPath = @"/var/mobile/Library/TLinkauto/run/js-helper.pid";
-static NSString * const kTLinkJSHelperVersion = @"1.1.0";
+static NSString * const kTLinkJSHelperVersion = @"1.2.0";
 static const unsigned long long kTLinkJSHelperMaxBundleFileBytes = 512 * 1024;
 static const unsigned long long kTLinkJSHelperMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkJSHelperMaxConsoleLogBytes = 512 * 1024;
@@ -68,6 +69,10 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 @property(nonatomic, strong) NSMutableDictionary *nativeResponses;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *activeFileHandles;
 @property(nonatomic, assign) NSUInteger nextFileHandleId;
+@property(nonatomic, strong) dispatch_source_t licenseHeartbeat;
+@property(nonatomic, copy) NSString *licenseHeartbeatSessionId;
+@property(nonatomic, assign) NSUInteger licenseHeartbeatCheckCount;
+@property(nonatomic, assign) NSUInteger licenseRevocationCount;
 @end
 
 @implementation TLinkJSHelperServer
@@ -95,6 +100,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 
 - (void)dealloc
 {
+    if (self.licenseHeartbeat) dispatch_source_cancel(self.licenseHeartbeat);
     for (TLinkJSFileHandle *handle in self.activeFileHandles.allValues) [handle close];
     delete _cancelState;
 }
@@ -158,6 +164,10 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         @"lastError": self.lastError ?: @"",
         @"consoleLogPath": self.lastConsoleLogPath ?: @"",
         @"consoleLatestLogPath": self.lastConsoleLatestLogPath ?: @"",
+        @"licenseHeartbeatActive": @(self.licenseHeartbeat != nil),
+        @"licenseHeartbeatIntervalMs": @1000,
+        @"licenseHeartbeatCheckCount": @(self.licenseHeartbeatCheckCount),
+        @"licenseRevocationCount": @(self.licenseRevocationCount),
     } mutableCopy];
     [self.rpcCondition lock];
     if (self.pendingNativeRequest) {
@@ -165,6 +175,92 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     }
     [self.rpcCondition unlock];
     return payload;
+}
+
+- (void)stopLicenseHeartbeatForSessionId:(NSString *)sessionId
+{
+    @synchronized (self) {
+        if (sessionId.length > 0 &&
+            self.licenseHeartbeatSessionId.length > 0 &&
+            ![sessionId isEqualToString:self.licenseHeartbeatSessionId]) {
+            return;
+        }
+        if (self.licenseHeartbeat) {
+            dispatch_source_cancel(self.licenseHeartbeat);
+            self.licenseHeartbeat = nil;
+        }
+        self.licenseHeartbeatSessionId = nil;
+    }
+}
+
+- (void)startLicenseHeartbeatForSessionId:(NSString *)sessionId
+{
+    if (sessionId.length == 0) return;
+    [self stopLicenseHeartbeatForSessionId:nil];
+
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
+                                                     0,
+                                                     0,
+                                                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    if (!timer) return;
+    dispatch_source_set_timer(timer,
+                              dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
+                              NSEC_PER_SEC,
+                              100 * NSEC_PER_MSEC);
+    __weak TLinkJSHelperServer *weakSelf = self;
+    dispatch_source_set_event_handler(timer, ^{
+        TLinkJSHelperServer *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        @synchronized (strongSelf) {
+            if (![strongSelf.licenseHeartbeatSessionId isEqualToString:sessionId]) return;
+            strongSelf.licenseHeartbeatCheckCount++;
+        }
+
+        NSString *denial = nil;
+        if (TLinkRootfullLicenseComponentAllowed(@"script",
+                                                 @"script_helper",
+                                                 &denial)) {
+            return;
+        }
+
+        @synchronized (strongSelf) {
+            if (![strongSelf.licenseHeartbeatSessionId isEqualToString:sessionId]) return;
+            strongSelf.licenseRevocationCount++;
+            strongSelf.lastError = [NSString stringWithFormat:
+                @"license_revoked_during_execution %@",
+                denial ?: @"license_required"];
+            strongSelf.activeExitReason = @"license_revoked_during_execution";
+            strongSelf.activeState = kTLinkJSHelperStateStopping;
+            strongSelf->_cancelState->stopped.store(true, std::memory_order_release);
+        }
+        NSLog(@"tlinkauto-jsd: license_revoked_during_execution session=%@ denial=%@",
+              sessionId,
+              denial ?: @"license_required");
+        [strongSelf.sleepCondition lock];
+        [strongSelf.sleepCondition broadcast];
+        [strongSelf.sleepCondition unlock];
+        [strongSelf.rpcCondition lock];
+        [strongSelf.rpcCondition broadcast];
+        [strongSelf.rpcCondition unlock];
+        [strongSelf stopLicenseHeartbeatForSessionId:sessionId];
+    });
+
+    @synchronized (self) {
+        self.licenseHeartbeat = timer;
+        self.licenseHeartbeatSessionId = sessionId;
+    }
+    dispatch_resume(timer);
+}
+
+- (NSString *)licenseDenialForComponent:(NSString *)component
+{
+    NSString *denial = nil;
+    if (TLinkRootfullLicenseComponentAllowed(@"script",
+                                             component ?: @"script_helper",
+                                             &denial)) {
+        return nil;
+    }
+    return denial ?: @"-1;;license_required component=script_helper feature=script";
 }
 
 - (NSDictionary *)executeNativeRPCMethod:(NSString *)method arguments:(NSArray *)arguments sessionId:(NSString *)sessionId
@@ -473,6 +569,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 - (void)finishSessionId:(NSString *)sessionId state:(NSString *)state reason:(NSString *)reason errorText:(NSString *)errorText logPath:(NSString *)logPath latestPath:(NSString *)latestPath
 {
     if (sessionId && self.activeSessionId && ![sessionId isEqualToString:self.activeSessionId]) return;
+    [self stopLicenseHeartbeatForSessionId:sessionId];
     [self closeActiveFileHandles];
     self.activeState = state ?: kTLinkJSHelperStateFailed;
     self.activeExitReason = reason ?: @"unknown";
@@ -527,6 +624,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         }
 
         self.activeState = kTLinkJSHelperStateRunning;
+        [self startLicenseHeartbeatForSessionId:sessionId];
         NSLog(@"tlinkauto-jsd: evaluating session=%@", sessionId);
         JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
         JSContext *ctx = [[JSContext alloc] initWithVirtualMachine:vm];
@@ -703,6 +801,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         } @finally {
             self.evalDurationMs = [[NSDate date] timeIntervalSinceDate:evalStartedAt] * 1000.0;
             if (_clearExecutionTimeLimit) _clearExecutionTimeLimit(group);
+            [self stopLicenseHeartbeatForSessionId:sessionId];
             [self closeActiveFileHandles];
         }
         if (_cancelState->stopped.load(std::memory_order_acquire)) {
@@ -744,6 +843,13 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)runScriptDirectAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest
 {
+    NSString *licenseDenial = [self licenseDenialForComponent:@"script_helper_direct"];
+    if (licenseDenial) {
+        self.activeState = kTLinkJSHelperStateFailed;
+        self.activeExitReason = @"license_required";
+        self.lastError = licenseDenial;
+        return [self statusPayload];
+    }
     NSString *sessionId = [[NSUUID UUID] UUIDString];
     NSString *runId = [[NSUUID UUID] UUIDString];
     self.activeSessionId = sessionId;
@@ -777,6 +883,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSString *bundlePath = [payload[@"bundlePath"] isKindOfClass:[NSString class]] ? payload[@"bundlePath"] : @"";
     NSDictionary *manifest = [payload[@"manifest"] isKindOfClass:[NSDictionary class]] ? payload[@"manifest"] : @{};
     if (![scriptPath length] || ![bundlePath length]) return [self errorEnvelopeForRequest:request message:@"scriptPath and bundlePath are required"];
+    NSString *licenseDenial = [self licenseDenialForComponent:@"script_helper_start"];
+    if (licenseDenial) return [self errorEnvelopeForRequest:request message:licenseDenial];
     NSString *sessionId = [[NSUUID UUID] UUIDString];
     NSString *runId = [[NSUUID UUID] UUIDString];
     self.activeSessionId = sessionId;

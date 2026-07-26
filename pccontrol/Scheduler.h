@@ -3,6 +3,8 @@
 
 #import <Foundation/Foundation.h>
 
+BOOL TLinkSchedulerScriptLaunchAllowed(NSString *source);
+NSDictionary *TLinkSchedulerLicenseDiagnostics(void);
 NSString* setAutoLaunchFromRawData(UInt8 *eventData, NSError **error);
 NSString* listAutoLaunch(NSError **error);
 NSString* setTimerFromRawData(UInt8 *eventData, NSError **error);

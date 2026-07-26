@@ -1,6 +1,7 @@
 // H264Stream.xm
 #include "H264Stream.h"
 #include "Screen.h"
+#import "../shared/TLinkRootfullLicensePolicy.h"
 
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -152,6 +153,20 @@ static const uint16_t kTSProgramNumber = 1;
 
 // only one viewer
 static _Atomic int gActiveClientFd = -1;
+static _Atomic uint64_t gLicenseDeniedAcceptCount = 0;
+static _Atomic uint64_t gLicenseRevokedClientCount = 0;
+
+uint64_t TLinkH264LicenseDeniedAcceptCount(void) {
+    return atomic_load(&gLicenseDeniedAcceptCount);
+}
+
+uint64_t TLinkH264LicenseRevokedClientCount(void) {
+    return atomic_load(&gLicenseRevokedClientCount);
+}
+
+int TLinkH264LicenseHeartbeatActive(void) {
+    return atomic_load(&gActiveClientFd) >= 0 ? 1 : 0;
+}
 
 #pragma mark - Utils
 
@@ -604,6 +619,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         int desiredBitrate = profile->averageBitrate;
         int currentEncFps = profile->targetFPS;
         double streamSeconds = 0.0;
+        CFAbsoluteTime nextLicenseCheck = 0;
 
         bool running = true;
 
@@ -632,6 +648,22 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
         while (running) {
             @autoreleasepool {
+                CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+                if (now >= nextLicenseCheck) {
+                    NSString *licenseDenial = nil;
+                    if (!TLinkRootfullLicenseComponentAllowed(@"stream",
+                                                              @"h264_session",
+                                                              &licenseDenial)) {
+                        atomic_fetch_add(&gLicenseRevokedClientCount, 1);
+                        NSLog(@"com.tlinkauto.h264: active client closed by license port=%d denial=%@",
+                              profile->port,
+                              licenseDenial ?: @"license_required");
+                        running = false;
+                        break;
+                    }
+                    nextLicenseCheck = now + 5.0;
+                }
+
                 // Thermal-aware FPS throttle (checked periodically).
                 if ((frame % 20) == 0) {
                     desiredFPS = zx_maxFpsForThermalState(profile->targetFPS);
@@ -852,6 +884,19 @@ void startH264StreamServer(void) {
             while (1) {
                 int c = accept(s, NULL, NULL);
                 if (c < 0) continue;
+
+                NSString *licenseDenial = nil;
+                if (!TLinkRootfullLicenseComponentAllowed(@"stream",
+                                                          @"h264_accept",
+                                                          &licenseDenial)) {
+                    atomic_fetch_add(&gLicenseDeniedAcceptCount, 1);
+                    NSLog(@"com.tlinkauto.h264: client rejected by license port=%d denial=%@",
+                          profile->port,
+                          licenseDenial ?: @"license_required");
+                    shutdown(c, SHUT_RDWR);
+                    close(c);
+                    continue;
+                }
 
                 int exp = -1;
                 if (!atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {

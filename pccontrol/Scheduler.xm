@@ -1,11 +1,45 @@
 #include "Scheduler.h"
 #include "Common.h"
 #include "Play.h"
+#include "RuntimeUtils.h"
+#import "../shared/TLinkRootfullLicensePolicy.h"
 
 #import <UIKit/UIKit.h>
+#include <stdatomic.h>
 
 static NSString *const kAutoLaunchFileName = @"autolaunch.plist";
 static NSMutableDictionary<NSString*, NSTimer*> *timerRegistry = nil;
+static _Atomic uint64_t sTLinkSchedulerLicenseCheckCount = 0;
+static _Atomic uint64_t sTLinkSchedulerLicenseDeniedCount = 0;
+
+BOOL TLinkSchedulerScriptLaunchAllowed(NSString *source)
+{
+    atomic_fetch_add(&sTLinkSchedulerLicenseCheckCount, 1);
+    NSString *denial = nil;
+    if (TLinkRootfullLicenseComponentAllowed(@"script",
+                                             source ?: @"scheduler",
+                                             &denial)) {
+        return YES;
+    }
+
+    atomic_fetch_add(&sTLinkSchedulerLicenseDeniedCount, 1);
+    NSString *message = [NSString stringWithFormat:
+        @"scheduler launch blocked by license source=%@ %@",
+        source ?: @"scheduler",
+        denial ?: @"license_required"];
+    setLastScriptError(message);
+    NSLog(@"com.tlinkauto.scheduler: %@", message);
+    return NO;
+}
+
+NSDictionary *TLinkSchedulerLicenseDiagnostics(void)
+{
+    return @{
+        @"heartbeat": @"launch_time_recheck",
+        @"check_count": @(atomic_load(&sTLinkSchedulerLicenseCheckCount)),
+        @"denied_count": @(atomic_load(&sTLinkSchedulerLicenseDeniedCount)),
+    };
+}
 
 @interface ZXTimerTarget : NSObject
 + (void)timerFired:(NSTimer *)timer;
@@ -89,9 +123,12 @@ static void timerFired(NSTimer *timer)
     NSDictionary *info = timer.userInfo;
     NSString *script = info[@"script"];
     NSError *err = nil;
-    if (script)
+    if (script && TLinkSchedulerScriptLaunchAllowed(@"scheduler_timer"))
     {
         playScript((UInt8*)[script UTF8String], &err);
+        if (err) {
+            setLastScriptError(err.localizedDescription ?: @"scheduler script launch failed");
+        }
     }
 
     if (![info[@"repeat"] boolValue])

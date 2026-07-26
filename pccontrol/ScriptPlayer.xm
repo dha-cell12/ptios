@@ -10,6 +10,7 @@
 #include "RuntimeUtils.h"
 #import "TLinkautoJSRuntime.h"
 #import "TLinkTaskContext.h"
+#import "../shared/TLinkRootfullLicensePolicy.h"
 #include <os/lock.h>
 
 static BOOL isPlaying = false;
@@ -40,6 +41,11 @@ typedef NS_ENUM(NSInteger, TLinkScriptState) {
     TLinkScriptSession *_currentSession;
     TLinkautoJSRuntime *_currentRuntime;
     dispatch_queue_t _jsSerialQueue;
+    dispatch_source_t _licenseHeartbeat;
+    uint64_t _licenseHeartbeatGeneration;
+    uint64_t _licenseHeartbeatCheckCount;
+    uint64_t _licenseRevocationCount;
+    BOOL _licenseRevokedCurrentRun;
 }
 
 static BOOL tlinkautoJavaScriptRuntimeEnabled(void) {
@@ -69,6 +75,102 @@ static NSString *tlinkautoStringValue(id value) {
 - (BOOL)isPlaying { return isPlaying; }
 
 - (NSString*)getCurrentBundlePath { return scriptBundlePath ?: @""; }
+
+- (NSDictionary *)licenseRuntimeDiagnostics {
+    os_unfair_lock_lock(&_playerLock);
+    NSDictionary *diagnostics = @{
+        @"heartbeat_active": @(_licenseHeartbeat != nil),
+        @"heartbeat_interval_ms": @1000,
+        @"generation": @(_licenseHeartbeatGeneration),
+        @"check_count": @(_licenseHeartbeatCheckCount),
+        @"revocation_count": @(_licenseRevocationCount),
+        @"revoked_current_run": @(_licenseRevokedCurrentRun),
+    };
+    os_unfair_lock_unlock(&_playerLock);
+    return diagnostics;
+}
+
+- (void)stopLicenseHeartbeatForGeneration:(uint64_t)generation {
+    dispatch_source_t timer = nil;
+    os_unfair_lock_lock(&_playerLock);
+    if (generation == 0 || _licenseHeartbeatGeneration == generation) {
+        timer = _licenseHeartbeat;
+        _licenseHeartbeat = nil;
+        _licenseHeartbeatGeneration = 0;
+    }
+    os_unfair_lock_unlock(&_playerLock);
+    if (timer) dispatch_source_cancel(timer);
+}
+
+- (void)handleLicenseHeartbeatForGeneration:(uint64_t)generation {
+    os_unfair_lock_lock(&_playerLock);
+    BOOL current = generation != 0 &&
+                   _licenseHeartbeatGeneration == generation &&
+                   _licenseHeartbeat != nil &&
+                   isPlaying;
+    if (current) _licenseHeartbeatCheckCount++;
+    os_unfair_lock_unlock(&_playerLock);
+    if (!current) return;
+
+    NSString *denial = nil;
+    if (TLinkRootfullLicenseComponentAllowed(@"script",
+                                             @"script_runtime",
+                                             &denial)) {
+        return;
+    }
+
+    TLinkautoJSRuntime *runtime = nil;
+    os_unfair_lock_lock(&_playerLock);
+    if (_licenseHeartbeatGeneration != generation || !isPlaying) {
+        os_unfair_lock_unlock(&_playerLock);
+        return;
+    }
+    _licenseRevocationCount++;
+    _licenseRevokedCurrentRun = YES;
+    repeatTime = 0;
+    scriptPlayForceStop = true;
+    if (_currentSession) [_currentSession.cancellationToken cancel];
+    runtime = _currentRuntime;
+    if (currentScriptType == 3) _state = TLinkScriptStateStopping;
+    os_unfair_lock_unlock(&_playerLock);
+
+    NSString *message = [NSString stringWithFormat:
+        @"license_revoked_during_execution %@",
+        denial ?: @"license_required"];
+    setLastScriptError(message);
+    JS_DIAG("LICENSE_REVOKED", "%s", [message UTF8String]);
+    NSLog(@"com.tlinkauto.script: %@", message);
+    [self stopLicenseHeartbeatForGeneration:generation];
+    if (runtime) [runtime requestStop];
+}
+
+- (void)startLicenseHeartbeatForGeneration:(uint64_t)generation {
+    if (generation == 0) return;
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
+                                                     0,
+                                                     0,
+                                                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    if (!timer) return;
+    dispatch_source_set_timer(timer,
+                              dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
+                              NSEC_PER_SEC,
+                              100 * NSEC_PER_MSEC);
+    __weak ScriptPlayer *weakSelf = self;
+    dispatch_source_set_event_handler(timer, ^{
+        ScriptPlayer *strongSelf = weakSelf;
+        if (strongSelf) [strongSelf handleLicenseHeartbeatForGeneration:generation];
+    });
+
+    dispatch_source_t previous = nil;
+    os_unfair_lock_lock(&_playerLock);
+    previous = _licenseHeartbeat;
+    _licenseHeartbeat = timer;
+    _licenseHeartbeatGeneration = generation;
+    _licenseRevokedCurrentRun = NO;
+    os_unfair_lock_unlock(&_playerLock);
+    if (previous) dispatch_source_cancel(previous);
+    dispatch_resume(timer);
+}
 
 - (void)setPath:(NSString*)path {
     if (isPlaying) return;
@@ -163,9 +265,13 @@ static NSString *tlinkautoStringValue(id value) {
 
     if ([fileExtension isEqualToString:@"raw"]) {
         currentScriptType = 1;
+        uint64_t generation = mach_absolute_time();
+        isPlaying = true;
+        [self startLicenseHeartbeatForGeneration:generation];
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             NSError *err = nil;
             [self playFromRawFile:entryFilePath foregroundApp:foregroundApp err:&err];
+            [self stopLicenseHeartbeatForGeneration:generation];
         }); 
         return 0;
     } else if ([runtime isEqualToString:@"javascriptcore"] || [fileExtension isEqualToString:@"js"]) {
@@ -199,6 +305,7 @@ static NSString *tlinkautoStringValue(id value) {
         _currentSession = session;
         isPlaying = true;
         os_unfair_lock_unlock(&_playerLock);
+        [self startLicenseHeartbeatForGeneration:session.generation];
 
         dispatch_async(_jsSerialQueue, ^{
             [self executeJSIteration:session filePath:entryFilePath foregroundApp:foregroundApp];
@@ -261,6 +368,7 @@ static NSString *tlinkautoStringValue(id value) {
             processTask((UInt8*)buffer, NULL);
         }
     }
+    fclose(file);
     [self playHasStopped];
 }
 
@@ -318,6 +426,7 @@ static NSString *tlinkautoStringValue(id value) {
 }
 
 - (void)finishSessionIfCurrent:(TLinkScriptSession *)session outcome:(BOOL)ok {
+    [self stopLicenseHeartbeatForGeneration:session.generation];
     os_unfair_lock_lock(&_playerLock);
     if (_currentSession == session) {
         _currentSession = nil;
@@ -369,6 +478,7 @@ static NSString *tlinkautoStringValue(id value) {
 }
 
 - (void)clear {
+    [self stopLicenseHeartbeatForGeneration:0];
     repeatTime = 0;
     interval = 0.0f;
     speed = 1.0f;

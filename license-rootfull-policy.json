@@ -2,9 +2,9 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 3,
+  "phase": 4,
   "license_contract_version": 1,
-  "enforcement_behavior": "task_server_and_springboard_feature_gate",
+  "enforcement_behavior": "task_and_long_running_component_gate",
   "features": [
     "automation",
     "stream",
@@ -139,19 +139,25 @@
       "component": "h264",
       "feature": "stream",
       "source": "pccontrol/H264Stream.xm",
-      "gate_status": "planned_phase_4"
+      "gate_status": "active_phase_4_accept_and_heartbeat"
     },
     {
       "component": "script_runtime",
       "feature": "script",
       "source": "pccontrol/ScriptPlayer.xm",
-      "gate_status": "planned_phase_4"
+      "gate_status": "active_phase_4_heartbeat"
     },
     {
       "component": "script_helper",
       "feature": "script",
       "source": "tlinkauto-jsd/TLinkJSHelperServer.mm",
-      "gate_status": "planned_phase_4"
+      "gate_status": "active_phase_4_start_and_heartbeat"
+    },
+    {
+      "component": "scheduler",
+      "feature": "script",
+      "source": "pccontrol/Scheduler.xm",
+      "gate_status": "active_phase_4_launch_time_recheck"
     },
     {
       "component": "app_ui",

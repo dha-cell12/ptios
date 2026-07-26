@@ -37,6 +37,7 @@
 #include "UpdateCache.h"
 #include "TesseractOCRTask.h"
 #include "Screen.h"
+#include "H264Stream.h"
 #include "NSTask.h"
 #include <signal.h>
 #include <os/lock.h>
@@ -1166,12 +1167,22 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
             NSMutableDictionary *licenseStatus =
                 [TLinkLicenseStatusDictionary() mutableCopy];
-            licenseStatus[@"phase"] = @3;
+            licenseStatus[@"phase"] = @4;
             licenseStatus[@"runtime"] = @"rootfull";
             licenseStatus[@"runtime_gate_active"] = @1;
             licenseStatus[@"activation_lifecycle_active"] = @1;
-            licenseStatus[@"enforcement_scope"] = @"task_server_and_springboard_feature_gate";
+            licenseStatus[@"enforcement_scope"] = @"task_and_long_running_component_gate";
             licenseStatus[@"task_policy"] = @"rootfull_explicit_v1";
+            licenseStatus[@"h264_gate_active"] = @1;
+            licenseStatus[@"h264_heartbeat_interval_ms"] = @5000;
+            licenseStatus[@"h264_client_active"] = @(TLinkH264LicenseHeartbeatActive());
+            licenseStatus[@"h264_denied_accept_count"] =
+                @(TLinkH264LicenseDeniedAcceptCount());
+            licenseStatus[@"h264_revoked_client_count"] =
+                @(TLinkH264LicenseRevokedClientCount());
+            licenseStatus[@"script_heartbeat_active"] = @1;
+            licenseStatus[@"scheduler_launch_gate_active"] = @1;
+            licenseStatus[@"helper_runtime_gate_active"] = @1;
             licenseStatus[@"task10_license_drop_count"] =
                 @(sTLinkSpringBoardLicenseTask10DropCount.load(std::memory_order_relaxed));
             licenseStatus[@"rootfull_build_mode"] = licenseBuildMode;
@@ -1194,6 +1205,10 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"bundle_path": bundlePath,
                     @"last_error": getLastScriptError() ?: @"",
                     @"last_error_ts": @(getLastScriptErrorTs()),
+                    @"license_runtime": scriptPlayer
+                        ? [scriptPlayer licenseRuntimeDiagnostics]
+                        : @{},
+                    @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
                 @"license": licenseStatus,
             };
