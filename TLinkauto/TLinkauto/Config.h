@@ -12,6 +12,7 @@
 #define RUNTIME_OUTPUT_PATH @"/var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/output"
 
 #define SPRINGBOARD_CONFIG_PATH @"/var/mobile/Library/TLinkauto/config/tweak/config.plist"
+#define RUNTIME_CONFIG_PATH @"/var/mobile/Library/TLinkauto/config.json"
 
 #define SCRIPT_PLAY_CONFIG_PATH @"/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist"
 #define ACTIVATOR_CONFIG_PATH @"/var/mobile/Library/TLinkauto/config/tweak/activator.plist"

@@ -107,7 +107,7 @@ static NSDictionary *TLinkautoJSHelperConfigSnapshot(void)
     }
     NSDictionary *dict = (NSDictionary *)obj;
     snapshot[@"configValid"] = @YES;
-    id enabled = dict[@"javascript_helper_runtime_enabled"];
+    id enabled = dict[@"javascript_helper_runtime_enabled"] ?: dict[@"enable_js_helper_execution"];
     id runtimeDefault = dict[@"javascript_helper_runtime_default"];
     id allowAdmin = dict[@"javascript_helper_allow_admin_rpc"];
     snapshot[@"enabled"] = @([enabled respondsToSelector:@selector(boolValue)] && [enabled boolValue]);

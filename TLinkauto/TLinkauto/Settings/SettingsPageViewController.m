@@ -53,6 +53,21 @@
     {
         switchAppBeforeRunScript = [[configManager getValueFromKey:@"switch_app_before_run_script"] boolValue];
     }
+
+    BOOL jsHelperExecutionEnabled = NO;
+    NSData *runtimeConfigData = [NSData dataWithContentsOfFile:RUNTIME_CONFIG_PATH];
+    if (runtimeConfigData.length > 0) {
+        NSDictionary *runtimeConfig = [NSJSONSerialization JSONObjectWithData:runtimeConfigData
+                                                                       options:0
+                                                                         error:nil];
+        if ([runtimeConfig isKindOfClass:[NSDictionary class]]) {
+            id helperEnabled = runtimeConfig[@"javascript_helper_runtime_enabled"]
+                ?: runtimeConfig[@"enable_js_helper_execution"];
+            if ([helperEnabled respondsToSelector:@selector(boolValue)]) {
+                jsHelperExecutionEnabled = [helperEnabled boolValue];
+            }
+        }
+    }
     
     // [@{"type": ?, @"title": ?, @"content": ?, ... more depends on the cell type}]
     //
@@ -70,7 +85,8 @@
             @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"doubleClickShowPopup", nil), @"switch_click_handler": NSStringFromSelector(@selector(handlePopupWindowDoubleClick:)), @"switch_init_status": @(doubleClickPopup)}
         ],
         @[
-            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"switchAppBeforePlaying", nil), @"switch_click_handler": NSStringFromSelector(@selector(handleSwitchAppBeforePlaying:)), @"switch_init_status": @(switchAppBeforeRunScript)}
+            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"switchAppBeforePlaying", nil), @"switch_click_handler": NSStringFromSelector(@selector(handleSwitchAppBeforePlaying:)), @"switch_init_status": @(switchAppBeforeRunScript)},
+            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"enableJSHelperExecution", nil), @"switch_click_handler": NSStringFromSelector(@selector(handleJSHelperExecution:)), @"switch_init_status": @(jsHelperExecutionEnabled)}
         ]
     ];
      
@@ -92,6 +108,18 @@
     [self.navigationController pushViewController:controller animated:YES];
 }
 
+- (void)notifySpringBoardConfigurationChanged:(NSString *)task
+{
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        Socket *socket = [[Socket alloc] init];
+        if ([socket connect:@"127.0.0.1" byPort:6000] == 0) {
+            [socket send:[task stringByAppendingString:@"\r\n"]];
+            [socket recv:1024];
+        }
+        [socket close];
+    });
+}
+
 - (void)handleSwitchAppBeforePlaying:(UISwitch*)s {
     if ([s isOn])
     {
@@ -104,11 +132,44 @@
         [configManager save];
     }
     
-    Socket *socket = [[Socket alloc] init];
-    [socket connect:@"127.0.0.1" byPort:6000];
-    [socket send:@"902"];
-    [socket recv:1024];
-    [socket close];
+    [self notifySpringBoardConfigurationChanged:@"902"];
+}
+
+- (void)handleJSHelperExecution:(UISwitch *)sender
+{
+    NSMutableDictionary *runtimeConfig = [NSMutableDictionary dictionary];
+    NSData *existingData = [NSData dataWithContentsOfFile:RUNTIME_CONFIG_PATH];
+    if (existingData.length > 0) {
+        id existing = [NSJSONSerialization JSONObjectWithData:existingData options:0 error:nil];
+        if ([existing isKindOfClass:[NSDictionary class]]) {
+            [runtimeConfig addEntriesFromDictionary:(NSDictionary *)existing];
+        }
+    }
+
+    runtimeConfig[@"javascript_helper_runtime_enabled"] = @([sender isOn]);
+    [runtimeConfig removeObjectForKey:@"enable_js_helper_execution"];
+    if (!runtimeConfig[@"javascript_helper_runtime_default"]) {
+        runtimeConfig[@"javascript_helper_runtime_default"] = @NO;
+    }
+    if (!runtimeConfig[@"javascript_helper_allow_admin_rpc"]) {
+        runtimeConfig[@"javascript_helper_allow_admin_rpc"] = @NO;
+    }
+
+    NSError *jsonError = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:runtimeConfig
+                                                   options:NSJSONWritingPrettyPrinted
+                                                     error:&jsonError];
+    BOOL saved = data && [data writeToFile:RUNTIME_CONFIG_PATH
+                                   options:NSDataWritingAtomic
+                                     error:&jsonError];
+    if (!saved) {
+        [sender setOn:![sender isOn] animated:YES];
+        [Util showAlertBoxWithOneOption:self
+                                  title:@"Error"
+                                message:[NSString stringWithFormat:@"Cannot save JavaScript helper setting: %@",
+                                         jsonError.localizedDescription ?: @"unknown error"]
+                           buttonString:@"OK"];
+    }
 }
 
 - (void)handlePopupWindowDoubleClick:(UISwitch*)s {
@@ -122,11 +183,7 @@
         [configManager updateKey:@"double_click_volume_show_popup" forValue:@(false)];
         [configManager save];
     }
-    Socket *socket = [[Socket alloc] init];
-    [socket connect:@"127.0.0.1" byPort:6000];
-    [socket send:@"901"];
-    [socket recv:1024];
-    [socket close];
+    [self notifySpringBoardConfigurationChanged:@"901"];
 }
 
 - (void)handleConfigActivatorEventsWithEntryCellInstance:(TableViewCellWithEntry*)cell {
@@ -286,6 +343,15 @@
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
     return 60;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
+{
+    (void)tableView;
+    if (section == 3) {
+        return NSLocalizedString(@"scriptRuntimeSettingsHint", nil);
+    }
+    return nil;
 }
 /*
 #pragma mark - Navigation

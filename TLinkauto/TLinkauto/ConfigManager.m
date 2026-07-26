@@ -42,6 +42,13 @@
 
 
 - (void)save {
+    NSString *directory = [configPath stringByDeletingLastPathComponent];
+    if (directory.length > 0) {
+        [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                                 withIntermediateDirectories:YES
+                                                  attributes:nil
+                                                       error:nil];
+    }
     [config writeToFile:configPath atomically:YES];
 }
 

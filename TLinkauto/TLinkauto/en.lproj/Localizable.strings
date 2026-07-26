@@ -58,6 +58,9 @@
 "anErrorHappened" = "An error happened. Please try again later.";
 
 "switchAppBeforePlaying" = "Switch App Before Playing";
+"switchAppBeforePlayingHint" = "Turn this off while testing from TLinkauto to keep the app visible. Turn it on when the script must return to its configured FrontApp.";
+"enableJSHelperExecution" = "Enable JS Helper Execution";
+"scriptRuntimeSettingsHint" = "Enable JS Helper Execution for scripts whose manifest requests runtimeLocation: helper. Changes apply to the next run without a respring.";
 
 "script" = "SCRIPT";
 

@@ -16,6 +16,14 @@ const task = await read("pccontrol/Task.xm");
 const workflow = await read(".github/workflows/build.yml");
 const buildPlist = await read("RootfullLicenseBuild.plist");
 const deviceProbe = await read("scripts/Test-TLinkRootfullLicensePhase2.ps1");
+const testLicenseCreator = await read("scripts/New-TLinkRootfullTestLicense.ps1");
+const phase2Docs = await read("docs/license-rootfull-phase2.md");
+const appSocket = await read("TLinkauto/TLinkauto/Socket.m");
+const playCell = await read("TLinkauto/TLinkauto/ScriptListTableCell.m");
+const settingsController = await read("TLinkauto/TLinkauto/Settings/SettingsPageViewController.m");
+const configManager = await read("TLinkauto/TLinkauto/ConfigManager.m");
+const appConfig = await read("TLinkauto/TLinkauto/Config.h");
+const jsRuntime = await read("pccontrol/TLinkautoJSRuntime.mm");
 
 assert.equal(integration.product, "tlinkauto-rootfull");
 assert.equal(integration.phase, 2);
@@ -106,6 +114,26 @@ assert.match(deviceProbe, /Invoke-TLinkTask -Task "75"/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "60"/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "76reload"/);
 assert.match(deviceProbe, /Phase 2 unexpectedly enabled the runtime gate/);
+
+assert.match(testLicenseCreator, /NewGuid\(\)/);
+assert.match(testLicenseCreator, /\/v1\/admin\/licenses/);
+assert.match(testLicenseCreator, /SecureStringToBSTR/);
+assert.match(testLicenseCreator, /TLINK-ROOTFULL-TEST-/);
+assert.match(phase2Docs, /New-TLinkRootfullTestLicense\.ps1/);
+assert.match(phase2Docs, /Switch App Before Playing/);
+
+assert.match(appSocket, /SO_RCVTIMEO/);
+assert.match(appSocket, /SO_SNDTIMEO/);
+assert.match(playCell, /19%@\\r\\n/);
+assert.doesNotMatch(playCell, /springBoardSocket recv/);
+assert.match(settingsController, /notifySpringBoardConfigurationChanged/);
+assert.match(settingsController, /enableJSHelperExecution/);
+assert.match(settingsController, /handleJSHelperExecution/);
+assert.match(settingsController, /javascript_helper_runtime_enabled/);
+assert.match(settingsController, /scriptRuntimeSettingsHint/);
+assert.match(configManager, /withIntermediateDirectories:YES/);
+assert.match(appConfig, /RUNTIME_CONFIG_PATH/);
+assert.match(jsRuntime, /enable_js_helper_execution/);
 
 for (const token of [
   "LICENSE_SIGNING_PRIVATE_JWK",

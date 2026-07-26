@@ -58,6 +58,9 @@
 "anErrorHappened" = "发生了一个错误，请稍后重试";
 
 "switchAppBeforePlaying" = "运行脚本前切换App";
+"switchAppBeforePlayingHint" = "在 TLinkauto 内测试脚本时关闭此项可保留当前界面；脚本需要返回已配置的 FrontApp 时再开启。";
+"enableJSHelperExecution" = "启用 JS Helper 执行";
+"scriptRuntimeSettingsHint" = "manifest 请求 runtimeLocation: helper 的脚本需要启用 JS Helper；更改会在下次运行时生效，无需 respring。";
 
 "script" = "脚本";
 "doubleClickShowPopup" = "双击下音量键打开控制面板";

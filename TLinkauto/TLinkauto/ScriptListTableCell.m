@@ -43,21 +43,15 @@
             return;
         }
         
-        NSString *payload = [NSString stringWithFormat:@"19%@", path];
+        // Task 19 is fire-and-forget in tlinkautod. Waiting for recv here can
+        // leave the Play button disabled forever because no reply is required.
+        NSString *payload = [NSString stringWithFormat:@"19%@\r\n", path];
         [springBoardSocket send:payload];
-        
-        NSString *result = [springBoardSocket recv:1024];
-        
         [springBoardSocket close];
+        APP_DIAG("SCRIPT-PLAY", "queued path=%s", [path UTF8String]);
         
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_playButton.enabled = YES;
-            if (result.length > 0 && [result characterAtIndex:0] != '0') {
-                UIViewController *parent = weakParent;
-                if (parent) {
-                    [Util showAlertBoxWithOneOption:parent title:@"Error" message:[NSString stringWithFormat:@"Cannot play script. Error: %@", result] buttonString:@"OK"];
-                }
-            }
         });
     });
 }

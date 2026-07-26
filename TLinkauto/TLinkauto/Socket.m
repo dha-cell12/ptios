@@ -7,11 +7,22 @@
 
 #import "Socket.h"
 #import "TLinkAppDiagnostic.h"
+#include <errno.h>
+#include <sys/time.h>
 
 
 @implementation Socket
 {
     int socketHandle;
+}
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self) {
+        socketHandle = -1;
+    }
+    return self;
 }
 
 /**
@@ -30,6 +41,19 @@
         return -1;
         
     }
+
+    // UI callers must never wait forever when the daemon is unavailable or
+    // when a legacy task intentionally does not return a response.
+    struct timeval timeout;
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#ifdef SO_NOSIGPIPE
+    int noSigPipe = 1;
+    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+#endif
+
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(port);
 
@@ -38,6 +62,7 @@
     {
         NSLog(@"### com.tlinkauto.tlinkautob: Invalid address. Address not supported");
         APP_DIAG("SOCKET-ERROR", "inet_pton() failed for %s", [ip UTF8String]);
+        close(sock);
         return -1;
     }
 
@@ -45,6 +70,7 @@
     {
         NSLog(@"### com.tlinkauto.tlinkautob: \nConnection Failed \n");
         APP_DIAG("SOCKET-ERROR", "connect() failed errno=%d", errno);
+        close(sock);
         return -1;
     }
     socketHandle = sock;
@@ -52,40 +78,71 @@
 }
 
 -(BOOL) isConnected {
-    return socketHandle != 0;
+    return socketHandle >= 0;
 }
 
 -(void) send: (NSString*)msg
 {
+    if (![self isConnected] || !msg) {
+        return;
+    }
+
     const char *buffer = [msg UTF8String];
     size_t len = strlen(buffer);
-    ssize_t sent = send(socketHandle , buffer, len , 0);
-    if (sent < 0) {
-        APP_DIAG("SOCKET-ERROR", "send() failed errno=%d", errno);
+    size_t offset = 0;
+    while (offset < len) {
+        ssize_t sent = send(socketHandle, buffer + offset, len - offset, 0);
+        if (sent > 0) {
+            offset += (size_t)sent;
+            continue;
+        }
+        if (sent < 0 && errno == EINTR) {
+            continue;
+        }
+        APP_DIAG("SOCKET-ERROR", "send() failed errno=%d sent=%zu total=%zu",
+                 errno, offset, len);
+        break;
     }
 }
 
 -(void) sendChar: (char*)msg
 {
-    send(socketHandle , msg, strlen(msg) , 0);
+    if (msg) {
+        [self send:[NSString stringWithUTF8String:msg]];
+    }
 }
 
 -(NSString*) recv:(int)length
 {
-    char buffer[length];
-    memset(buffer, 0, sizeof(buffer));
-    ssize_t received = recv(socketHandle, buffer, length, 0);
+    if (![self isConnected] || length <= 0) {
+        return @"";
+    }
+
+    char *buffer = (char *)calloc((size_t)length + 1, 1);
+    if (!buffer) {
+        APP_DIAG("SOCKET-ERROR", "recv() allocation failed length=%d", length);
+        return @"";
+    }
+
+    ssize_t received = recv(socketHandle, buffer, (size_t)length, 0);
     if (received < 0) {
         APP_DIAG("SOCKET-ERROR", "recv() failed errno=%d", errno);
+        free(buffer);
+        return @"";
     }
-    return [NSString stringWithUTF8String:buffer];
+
+    NSString *result = [[NSString alloc] initWithBytes:buffer
+                                                length:(NSUInteger)received
+                                              encoding:NSUTF8StringEncoding];
+    free(buffer);
+    return result ?: @"";
 }
 
 -(void)close {
-    if (!socketHandle)
+    if (socketHandle < 0)
         return;
     close(socketHandle);
-    socketHandle = 0;
+    socketHandle = -1;
 }
 
 -(void)dealloc {
