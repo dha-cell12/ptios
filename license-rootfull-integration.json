@@ -2,9 +2,9 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 2,
+  "phase": 3,
   "license_contract_version": 1,
-  "integration_mode": "activation_lifecycle_observe_no_runtime_gate",
+  "integration_mode": "task_server_and_springboard_feature_gate",
   "configuration_bundle": "Applications/TLinkauto.app/LicenseConfig.plist",
   "application_bundle_identifiers": [
     "com.tlinkauto.tlinkauto",
@@ -43,7 +43,7 @@
     "76": "daemon_cache_reload_or_generation_advance",
     "97": "daemon_capability_verifier_and_activation_lifecycle_summary"
   },
-  "runtime_gate_active": false,
+  "runtime_gate_active": true,
   "activation_ui_phase": 2,
   "activation_ui_active": true,
   "automatic_refresh": {
@@ -54,5 +54,13 @@
     "backoff_with_jitter": true
   },
   "daemon_cache_sync_task": 76,
-  "next_runtime_gate_phase": 3
+  "task_policy": {
+    "source": "shared/TLinkRootfullLicensePolicy.mm",
+    "inventory": "license-rootfull-policy.json",
+    "daemon_gate": true,
+    "springboard_gate": true,
+    "missing_policy": "fail_closed",
+    "task10_deny": "silent_drop_with_counter"
+  },
+  "next_runtime_gate_phase": 4
 }

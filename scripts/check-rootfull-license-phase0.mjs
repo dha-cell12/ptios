@@ -14,9 +14,12 @@ const workflow = await read(".github/workflows/build.yml");
 
 assert.equal(policy.product, "tlinkauto-rootfull");
 assert.equal(policy.runtime, "rootfull");
-assert.equal(policy.phase, 0);
+assert.ok(policy.phase >= 0);
 assert.equal(policy.license_contract_version, 1);
-assert.equal(policy.enforcement_behavior, "marker_only_no_runtime_gate");
+assert.ok([
+  "marker_only_no_runtime_gate",
+  "task_server_and_springboard_feature_gate"
+].includes(policy.enforcement_behavior));
 assert.deepEqual(policy.features, ["automation", "stream", "script", "admin", "shell"]);
 assert.deepEqual(policy.exempt_tasks, [60, 75, 76, 96, 97, 99]);
 

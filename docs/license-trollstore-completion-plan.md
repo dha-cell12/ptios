@@ -40,7 +40,12 @@
 - Rootfull Phase 2: **da trien khai code/CI** tai
   `docs/license-rootfull-phase2.md`. App rootfull co activation, refresh,
   deactivate, device recovery, single-flight/backoff va task `76` cache sync.
-  `runtime_gate_active=0`; enforcement task-server bat dau o Phase 3.
+  Day la moc lifecycle lich su.
+- Rootfull Phase 3: **da trien khai code/CI** tai
+  `docs/license-rootfull-phase3.md`. `tlinkautod` va `pccontrol` gate task theo
+  bang feature explicit; observe/enforced dung chung code path, task thieu
+  policy fail closed va task `10` co deny counter. H264, long-running script
+  heartbeat va helper component gate tiep tuc o Phase 4.
 
 ## 1. Muc tieu
 

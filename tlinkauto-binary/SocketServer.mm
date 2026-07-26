@@ -4,6 +4,7 @@
 #include "IPCConstants.h"
 #include "../shared/TLinkRootfullLicenseBuild.h"
 #include "../shared/TLinkLicenseVerifier.h"
+#include "../shared/TLinkRootfullLicensePolicy.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <netinet/tcp.h>
+#include <atomic>
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -53,6 +55,7 @@ static const UInt8 kZXTPVersion = 1;
 static const UInt32 kZXTPMaxBodySize = 1024 * 1024;
 static const NSUInteger kZXLegacyMaxBufferSize = 64 * 1024;
 static const size_t kZXTPHeaderSize = 10;
+static std::atomic<uint64_t> sTLinkRootfullLicenseTask10DropCount(0);
 
 static NSData *zx_handleLegacyRequestBytes(const char *buffer);
 static void zx_processClientBuffer(ZXClientContext *ctx);
@@ -578,7 +581,7 @@ static NSData *zx_dataFromCString(const char *cstr)
     return [NSData dataWithBytes:cstr length:strlen(cstr)];
 }
 
-static NSData *zx_rootfullPhase2DiagnosticResponse(int taskType, const char *buffer)
+static NSData *zx_rootfullPhase3DiagnosticResponse(int taskType, const char *buffer)
 {
     if (taskType == 75 || taskType == 76) {
         uint64_t generationBefore = TLinkLicenseGeneration();
@@ -600,11 +603,14 @@ static NSData *zx_rootfullPhase2DiagnosticResponse(int taskType, const char *buf
 
         NSMutableDictionary *status = [TLinkLicenseStatusDictionary() mutableCopy];
         status[@"license_contract_version"] = @1;
-        status[@"rootfull_license_phase"] = @2;
+        status[@"rootfull_license_phase"] = @3;
         status[@"runtime"] = @"rootfull";
-        status[@"runtime_gate_active"] = @0;
+        status[@"runtime_gate_active"] = @1;
         status[@"activation_lifecycle_active"] = @1;
-        status[@"enforcement_scope"] = @"activation_lifecycle_observe_no_runtime_gate";
+        status[@"enforcement_scope"] = @"task_server_and_springboard_feature_gate";
+        status[@"task_policy"] = @"rootfull_explicit_v1";
+        status[@"task10_license_drop_count"] =
+            @(sTLinkRootfullLicenseTask10DropCount.load(std::memory_order_relaxed));
         status[@"rootfull_build_mode"] =
             [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
         status[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
@@ -612,7 +618,7 @@ static NSData *zx_rootfullPhase2DiagnosticResponse(int taskType, const char *buf
         status[@"generation_before"] = @(generationBefore);
         status[@"license_generation"] = @(TLinkLicenseGeneration());
         status[@"generation_action"] = action;
-        status[@"source"] = @"tlinkautod_rootfull_phase2_shared_verifier";
+        status[@"source"] = @"tlinkautod_rootfull_phase3_task_gate";
         NSData *json = [NSJSONSerialization dataWithJSONObject:status options:0 error:nil];
         if (json.length == 0) {
             return zx_dataFromCString("-1;;license_status_json_failed\r\n");
@@ -625,7 +631,8 @@ static NSData *zx_rootfullPhase2DiagnosticResponse(int taskType, const char *buf
         case 97: {
             NSDictionary *status = TLinkLicenseStatusDictionary();
             return zx_dataFromCString([[NSString stringWithFormat:
-                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=2 verifier=shared_signed_lease activationUI=1 lifecycle=foreground_single_flight_backoff runtimeGate=0 licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006\r\n",
+                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=3 verifier=shared_signed_lease activationUI=1 lifecycle=foreground_single_flight_backoff runtimeGate=1 gateScope=task_server_and_springboard taskPolicy=rootfull_explicit_v1 task10LicenseDropCount=%llu licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006\r\n",
+                (unsigned long long)sTLinkRootfullLicenseTask10DropCount.load(std::memory_order_relaxed),
                 status[@"state"] ?: @"invalid",
                 [status[@"configured"] boolValue] ? 1 : 0,
                 (unsigned long long)TLinkLicenseGeneration(),
@@ -649,17 +656,26 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         zx_logf("received task payload: %s", buffer);
     }
 
-    // Legacy touch task 10 is fire-and-forget. ACK touch task 61 waits for SpringBoard.
-    // Also, many clients (including Python) don't read any response for touches.
-    // Returning no response prevents socket backpressure from building up.
-    if (taskType == 10) {
-        (void)shouldRouteToSpringBoard(taskType);
-        // Still route through IPC below.
+    NSString *licenseDenial = nil;
+    BOOL homeCommand = strcmp(buffer, kTLinkautoIPCCommandHome) == 0;
+    BOOL licenseAllowed = homeCommand
+        ? TLinkRootfullLicenseComponentAllowed(@"automation", @"home_command", &licenseDenial)
+        : TLinkRootfullLicenseTaskAllowed(taskType, &licenseDenial);
+    if (!licenseAllowed) {
+        if (taskType == 10) {
+            sTLinkRootfullLicenseTask10DropCount.fetch_add(1, std::memory_order_relaxed);
+            zx_logf("task 10 dropped by rootfull license gate");
+            return nil;
+        }
+        zx_logf("task %d denied by rootfull license gate: %s",
+                taskType,
+                [licenseDenial UTF8String] ?: "license_required");
+        return zx_dataFromCString([licenseDenial UTF8String]);
     }
 
-    NSData *phase2Diagnostic = zx_rootfullPhase2DiagnosticResponse(taskType, buffer);
-    if (phase2Diagnostic) {
-        return phase2Diagnostic;
+    NSData *phase3Diagnostic = zx_rootfullPhase3DiagnosticResponse(taskType, buffer);
+    if (phase3Diagnostic) {
+        return phase3Diagnostic;
     }
 
     if (taskType == 96) {

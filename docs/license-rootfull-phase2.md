@@ -1,5 +1,9 @@
 # License Rootfull - Phase 2
 
+> Historical milestone. Build hien tai da chuyen sang
+> `docs/license-rootfull-phase3.md`; script test Phase 2 chi dung cho artifact
+> Phase 2 cu.
+
 Phase 2 dua signed-license lifecycle vao app rootfull ma chua bat runtime
 enforcement. Muc tieu la xac minh activation, renewal va device binding on dinh
 tren rootfull truoc khi task gate duoc bat o Phase 3.

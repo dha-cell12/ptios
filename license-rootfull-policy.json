@@ -2,9 +2,9 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 0,
+  "phase": 3,
   "license_contract_version": 1,
-  "enforcement_behavior": "marker_only_no_runtime_gate",
+  "enforcement_behavior": "task_server_and_springboard_feature_gate",
   "features": [
     "automation",
     "stream",
@@ -127,13 +127,13 @@
       "component": "task_server",
       "feature": "automation",
       "source": "tlinkauto-binary/SocketServer.mm",
-      "gate_status": "planned_phase_3"
+      "gate_status": "active_phase_3"
     },
     {
       "component": "springboard_dispatch",
       "feature": "automation",
       "source": "pccontrol/Task.xm",
-      "gate_status": "planned_phase_3"
+      "gate_status": "active_phase_3"
     },
     {
       "component": "h264",

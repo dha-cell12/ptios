@@ -2,6 +2,7 @@
 #import "TLinkDiagnostic.h"
 #include "../shared/TLinkRootfullLicenseBuild.h"
 #include "../shared/TLinkLicenseVerifier.h"
+#include "../shared/TLinkRootfullLicensePolicy.h"
 #import <Foundation/Foundation.h>
 #ifndef YES
 #define YES true
@@ -39,9 +40,11 @@
 #include "NSTask.h"
 #include <signal.h>
 #include <os/lock.h>
+#include <atomic>
 
 extern CFRunLoopRef recordRunLoop;
 extern ScriptPlayer *scriptPlayer;
+static std::atomic<uint64_t> sTLinkSpringBoardLicenseTask10DropCount(0);
 
 /*
 get task type
@@ -478,6 +481,17 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
     //NSLog(@"### com.tlinkauto.springboard: task type: %d. Data: %s", getTaskType(buff), buff);
     UInt8 *eventData = buff + 0x2;
     int taskType = getTaskType(buff);
+
+    NSString *licenseDenial = nil;
+    if (!TLinkRootfullLicenseTaskAllowed(taskType, &licenseDenial)) {
+        if (taskType == TASK_PERFORM_TOUCH) {
+            sTLinkSpringBoardLicenseTask10DropCount.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        notifyClient((UInt8 *)[(licenseDenial ?: @"-1;;license_required\r\n") UTF8String],
+                     writeStreamRef);
+        return;
+    }
 
     //for touching
     if (taskType == TASK_PERFORM_TOUCH)
@@ -1152,11 +1166,14 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
             NSMutableDictionary *licenseStatus =
                 [TLinkLicenseStatusDictionary() mutableCopy];
-            licenseStatus[@"phase"] = @2;
+            licenseStatus[@"phase"] = @3;
             licenseStatus[@"runtime"] = @"rootfull";
-            licenseStatus[@"runtime_gate_active"] = @0;
+            licenseStatus[@"runtime_gate_active"] = @1;
             licenseStatus[@"activation_lifecycle_active"] = @1;
-            licenseStatus[@"enforcement_scope"] = @"activation_lifecycle_observe_no_runtime_gate";
+            licenseStatus[@"enforcement_scope"] = @"task_server_and_springboard_feature_gate";
+            licenseStatus[@"task_policy"] = @"rootfull_explicit_v1";
+            licenseStatus[@"task10_license_drop_count"] =
+                @(sTLinkSpringBoardLicenseTask10DropCount.load(std::memory_order_relaxed));
             licenseStatus[@"rootfull_build_mode"] = licenseBuildMode;
             licenseStatus[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
 

@@ -9,6 +9,7 @@
 #import "Socket.h"
 #import "Util.h"
 #import "TLinkAppDiagnostic.h"
+#import "../../shared/TLinkLicenseVerifier.h"
 
 @implementation ScriptListTableCell
 {
@@ -21,6 +22,18 @@
 }
 
 - (IBAction)playButtonClick:(id)sender {
+    NSString *licenseError = nil;
+    if (!TLinkLicenseFeatureAllowed(@"script", &licenseError)) {
+        UIViewController *parent = _parentViewController;
+        if (parent) {
+            [Util showAlertBoxWithOneOption:parent
+                                      title:@"License Required"
+                                    message:licenseError ?: @"The script feature is not enabled by this license."
+                               buttonString:@"OK"];
+        }
+        return;
+    }
+
     // Capture values needed by the block
     NSString *path = [filePath copy];
     __weak UIViewController *weakParent = _parentViewController;

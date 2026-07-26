@@ -26,14 +26,17 @@ const appConfig = await read("TLinkauto/TLinkauto/Config.h");
 const jsRuntime = await read("pccontrol/TLinkautoJSRuntime.mm");
 
 assert.equal(integration.product, "tlinkauto-rootfull");
-assert.equal(integration.phase, 2);
+assert.ok(integration.phase >= 2);
 assert.equal(integration.license_contract_version, 1);
-assert.equal(integration.integration_mode, "activation_lifecycle_observe_no_runtime_gate");
-assert.equal(integration.runtime_gate_active, false);
+assert.ok([
+  "activation_lifecycle_observe_no_runtime_gate",
+  "task_server_and_springboard_feature_gate"
+].includes(integration.integration_mode));
+assert.equal(integration.runtime_gate_active, integration.phase >= 3);
 assert.equal(integration.activation_ui_phase, 2);
 assert.equal(integration.activation_ui_active, true);
 assert.equal(integration.daemon_cache_sync_task, 76);
-assert.equal(integration.next_runtime_gate_phase, 3);
+assert.ok(integration.next_runtime_gate_phase >= 3);
 assert.equal(integration.automatic_refresh.single_flight, true);
 assert.equal(integration.automatic_refresh.backoff_with_jitter, true);
 assert.ok(integration.verifier_components.some(({ component }) => component === "application_lifecycle"));
@@ -92,22 +95,24 @@ for (const source of [
   assert.ok(project.includes(source), `Xcode project lacks ${source}`);
 }
 
-assert.match(socket, /zx_rootfullPhase2DiagnosticResponse/);
-assert.match(socket, /rootfull_license_phase"\]\s*=\s*@2/);
+assert.match(socket, /zx_rootfullPhase[23]DiagnosticResponse/);
+assert.match(socket, /rootfull_license_phase"\]\s*=\s*@[23]/);
 assert.match(socket, /activation_lifecycle_active"\]\s*=\s*@1/);
-assert.match(socket, /license_phase=2/);
-assert.match(socket, /runtimeGate=0/);
-assert.doesNotMatch(socket, /TLinkLicenseFeatureAllowed\s*\(/);
+assert.match(socket, /license_phase=[23]/);
+assert.match(socket, /runtimeGate=[01]/);
+if (integration.phase < 3) assert.doesNotMatch(socket, /TLinkRootfullLicenseTaskAllowed\s*\(/);
+else assert.match(socket, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 
-assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@2/);
+assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[23]/);
 assert.match(task, /licenseStatus\[@"activation_lifecycle_active"\]\s*=\s*@1/);
-assert.match(task, /licenseStatus\[@"runtime_gate_active"\]\s*=\s*@0/);
-assert.doesNotMatch(task, /TLinkLicenseFeatureAllowed\s*\(/);
+assert.match(task, /licenseStatus\[@"runtime_gate_active"\]\s*=\s*@[01]/);
+if (integration.phase < 3) assert.doesNotMatch(task, /TLinkRootfullLicenseTaskAllowed\s*\(/);
+else assert.match(task, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>2<\/integer>/);
-assert.match(buildPlist, /activation_lifecycle_observe_no_runtime_gate/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[23]<\/integer>/);
+assert.match(buildPlist, /activation_lifecycle_observe_no_runtime_gate|task_server_and_springboard_feature_gate/);
 assert.match(workflow, /check-rootfull-license-phase2\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase2-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[23]-artifact\.mjs/);
 assert.match(workflow, /TLINK_LICENSE_ROOTFULL_RUNTIME=1/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "97"/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "75"/);
@@ -152,5 +157,5 @@ for (const token of [
 
 console.log(
   "rootfull license phase 2 OK: activation UI, signed lifecycle, automatic refresh, " +
-  "daemon generation sync, runtime gate disabled"
+  `daemon generation sync, current runtime gate ${integration.runtime_gate_active ? "active" : "disabled"}`
 );

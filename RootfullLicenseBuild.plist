@@ -5,10 +5,10 @@
 	<key>LicenseContractVersion</key>
 	<integer>1</integer>
 	<key>RootfullLicensePhase</key>
-	<integer>2</integer>
+	<integer>3</integer>
 	<key>RootfullLicenseMode</key>
 	<string>observe</string>
 	<key>EnforcementBehavior</key>
-	<string>activation_lifecycle_observe_no_runtime_gate</string>
+	<string>task_server_and_springboard_feature_gate</string>
 </dict>
 </plist>
