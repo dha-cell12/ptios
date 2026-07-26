@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "product": "tlinkauto-rootfull",
+  "runtime": "rootfull",
+  "phase": 1,
+  "license_contract_version": 1,
+  "integration_mode": "shared_verifier_observe_no_runtime_gate",
+  "configuration_bundle": "Applications/TLinkauto.app/LicenseConfig.plist",
+  "application_bundle_identifiers": [
+    "com.tlinkauto.tlinkauto",
+    "com.tlinkauto.streamcontrol"
+  ],
+  "verifier_components": [
+    {
+      "component": "task_daemon",
+      "binary": "usr/bin/tlinkautod",
+      "source": "tlinkauto-binary/SocketServer.mm"
+    },
+    {
+      "component": "task_client",
+      "binary": "usr/bin/tlinkautob",
+      "source": "tlinkauto-binary/SocketServer.mm"
+    },
+    {
+      "component": "springboard_dispatch",
+      "binary": "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
+      "source": "pccontrol/Task.xm"
+    }
+  ],
+  "diagnostic_tasks": {
+    "60": "springboard_base64_json_with_shared_verifier_status",
+    "75": "daemon_base64_json_with_shared_verifier_status",
+    "76": "daemon_cache_reload_or_generation_advance",
+    "97": "daemon_capability_and_verifier_summary"
+  },
+  "runtime_gate_active": false,
+  "activation_ui_phase": 2
+}

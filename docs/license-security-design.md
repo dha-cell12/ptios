@@ -19,10 +19,10 @@ Co che nay tang chi phi sao chep va crack thong thuong. No khong tao ra mot
 security boundary tuyet doi tren thiet bi ma nguoi tan cong co quyen root,
 co the attach debugger, hook ham, hoac patch binary.
 
-Pham vi enforcement day du hien tai la `stream-app` TrollStore. Backend
-rootfull cu (`pccontrol`, `tlinkauto-jsd` va app goc) chua duoc gate day du boi
-shared verifier; day la mot khoang trong phai xu ly truoc khi mot license duoc
-coi la bao ve dong thoi ca hai runtime.
+Pham vi enforcement day du hien tai la `stream-app` TrollStore. Rootfull Phase
+1 da link shared verifier vao `tlinkautod` va `pccontrol` de quan sat signed
+lease, nhung dispatcher, H264, JS helper va app goc chua duoc gate. Day van la
+mot khoang trong phai xu ly truoc khi license duoc coi la bao ve ca hai runtime.
 
 ## 2. Thanh phan
 

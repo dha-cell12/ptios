@@ -1,5 +1,8 @@
 # License Rootfull - Phase 0
 
+> Phase 0 da hoan thanh va duoc tiep noi boi
+> `docs/license-rootfull-phase1.md`. Noi dung duoi day la baseline lich su.
+
 ## Muc tieu
 
 Phase 0 dong bang contract va chuoi build truoc khi dua shared verifier vao
@@ -49,7 +52,8 @@ ho tro day du.
 
 Checker HTTP plaintext cu trong `pccontrol/Tweak.xm` da bi loai bo. Private
 signing JWK va admin token khong duoc phep xuat hien trong source/artifact.
-Public key Worker se chi duoc them khi shared verifier duoc tich hop.
+Public key Worker duoc them tu Phase 1; private signing key va admin token van
+khong duoc dua vao artifact.
 
 Phase 0 khong giai quyet:
 
@@ -66,11 +70,16 @@ Static contract:
 node scripts/check-rootfull-license-phase0.mjs
 ```
 
-Artifact:
+Artifact validator Phase 0 chi giu de kiem tra fixture/goi lich su. Build hien
+tai phai dung validator Phase 1:
 
 ```sh
-node scripts/validate-rootfull-license-phase0-artifact.mjs \
+node scripts/validate-rootfull-license-phase1-artifact.mjs \
   --rootfs build/rootfull-rootfs \
   --mode observe \
-  --output rootfull-license-phase0-observe.json
+  --endpoint https://license.example.com \
+  --keyId example-key-id \
+  --publicKeyX <base64url-p256-x> \
+  --publicKeyY <base64url-p256-y> \
+  --output rootfull-license-phase1-observe.json
 ```

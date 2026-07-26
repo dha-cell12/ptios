@@ -17,12 +17,42 @@ jobs:
       THEOS: ${{ github.workspace }}/theos
       TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
       TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
+      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
+      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID != '' && vars.TLINK_LICENSE_KEY_ID || 'tlinkauto-test-2026-01' }}
+      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'fUrcjnIX_Ej5jvv9oGqY9kmoY0PbZmXPg5lzUnTeo38' }}
+      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'bVsC_64-AH4cT5aObcm0NnOzY_nY5cYC2EgVhXFSNhE' }}
+      TLINK_LICENSE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && 'true' || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate rootfull license phase 0 contract
-        run: node scripts/check-rootfull-license-phase0.mjs
+      - name: Validate rootfull license contracts
+        run: |
+          node scripts/check-rootfull-license-phase0.mjs
+          node scripts/check-rootfull-license-phase1.mjs
+
+      - name: Validate public license build inputs
+        run: |
+          set -euo pipefail
+          case "$TLINK_LICENSE_ENDPOINT" in
+            https://*) ;;
+            *) echo "License endpoint must use HTTPS"; exit 1 ;;
+          esac
+          ! printf '%s' "$TLINK_LICENSE_ENDPOINT" | grep -Eqi 'REPLACE_|localhost|127\.0\.0\.1'
+          ! printf '%s' "$TLINK_LICENSE_KEY_ID" | grep -Eqi 'REPLACE_'
+          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_X" | grep -Eq '^[A-Za-z0-9_-]{43}$'
+          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_Y" | grep -Eq '^[A-Za-z0-9_-]{43}$'
+
+      - name: Configure rootfull public license verifier
+        run: |
+          set -euo pipefail
+          PLIST="TLinkauto/TLinkauto/LicenseConfig.plist"
+          /usr/libexec/PlistBuddy -c "Set :LicenseEndpoint $TLINK_LICENSE_ENDPOINT" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :LicenseKeyID $TLINK_LICENSE_KEY_ID" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyX $TLINK_LICENSE_PUBLIC_KEY_X" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyY $TLINK_LICENSE_PUBLIC_KEY_Y" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled $TLINK_LICENSE_ENFORCEMENT" "$PLIST"
+          plutil -lint "$PLIST"
 
       - name: Install build dependencies
         run: |
@@ -85,6 +115,7 @@ jobs:
           find layout/Applications/TLinkauto.app -name embedded.mobileprovision -type f -delete
 
           cp RootfullLicenseBuild.plist layout/Applications/TLinkauto.app/RootfullLicenseBuild.plist
+          cp TLinkauto/TLinkauto/LicenseConfig.plist layout/Applications/TLinkauto.app/LicenseConfig.plist
           /usr/libexec/PlistBuddy \
             -c "Set :RootfullLicenseMode ${TLINK_LICENSE_MODE}" \
             layout/Applications/TLinkauto.app/RootfullLicenseBuild.plist
@@ -103,7 +134,7 @@ jobs:
           export PATH="${DPKG_BIN}:$PATH"
           make package FINALPACKAGE=1 TLINK_LICENSE_MODE="${TLINK_LICENSE_MODE}"
 
-      - name: Validate rootfull phase 0 artifact
+      - name: Validate rootfull phase 1 artifact
         run: |
           set -euo pipefail
           export PATH="${DPKG_BIN}:$PATH"
@@ -113,10 +144,14 @@ jobs:
           rm -rf "$ROOTFS"
           mkdir -p "$ROOTFS"
           dpkg-deb -x "$DEB_PATH" "$ROOTFS"
-          node scripts/validate-rootfull-license-phase0-artifact.mjs \
+          node scripts/validate-rootfull-license-phase1-artifact.mjs \
             --rootfs "$ROOTFS" \
             --mode "$TLINK_LICENSE_MODE" \
-            --output "rootfull-license-phase0-${TLINK_LICENSE_MODE}.json"
+            --endpoint "$TLINK_LICENSE_ENDPOINT" \
+            --keyId "$TLINK_LICENSE_KEY_ID" \
+            --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
+            --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y" \
+            --output "rootfull-license-phase1-${TLINK_LICENSE_MODE}.json"
 
       - name: Upload deb package
         uses: actions/upload-artifact@v4
@@ -124,4 +159,4 @@ jobs:
           name: TLinkauto-rootfull-deb-${{ matrix.license_mode }}
           path: |
             packages/*.deb
-            rootfull-license-phase0-${{ matrix.license_mode }}.json
+            rootfull-license-phase1-${{ matrix.license_mode }}.json

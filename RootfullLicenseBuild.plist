@@ -5,10 +5,10 @@
 	<key>LicenseContractVersion</key>
 	<integer>1</integer>
 	<key>RootfullLicensePhase</key>
-	<integer>0</integer>
+	<integer>1</integer>
 	<key>RootfullLicenseMode</key>
 	<string>observe</string>
 	<key>EnforcementBehavior</key>
-	<string>marker_only_no_runtime_gate</string>
+	<string>shared_verifier_observe_no_runtime_gate</string>
 </dict>
 </plist>

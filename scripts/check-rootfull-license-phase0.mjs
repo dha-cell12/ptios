@@ -51,10 +51,7 @@ for (const id of policy.exempt_tasks.filter((value) => value !== 60)) {
   );
 }
 assert.match(socketSource, /license_contract_version=1/);
-assert.match(socketSource, /license_phase=0/);
-assert.match(socketSource, /marker_only=1/);
 assert.match(taskSource, /@"license_contract_version":\s*@1/);
-assert.match(taskSource, /@"state":\s*@"not_integrated"/);
 assert.match(taskSource, /TLinkRootfullLicenseBuildMode/);
 
 assert.doesNotMatch(tweakSource, /47\.114\.83\.227|internal\/version_control|NSURLConnection/);
@@ -63,8 +60,6 @@ assert.doesNotMatch(tweakSource, /\bisExpired\b|\bCHECKER\b/);
 assert.match(rootMakefile, /TLINK_LICENSE_MODE \?= observe/);
 assert.match(rootMakefile, /TLINK_LICENSE_FORCE_ENFORCEMENT := 1/);
 assert.match(workflow, /license_mode:\s*\[observe,\s*enforced\]/);
-assert.match(workflow, /check-rootfull-license-phase0\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase0-artifact\.mjs/);
 
 const makefiles = [
   await read("tlinkauto-binary/Makefile"),

@@ -3,6 +3,7 @@
 #include "SocketServer.h"
 #include "IPCConstants.h"
 #include "../shared/TLinkRootfullLicenseBuild.h"
+#include "../shared/TLinkLicenseVerifier.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -577,20 +578,59 @@ static NSData *zx_dataFromCString(const char *cstr)
     return [NSData dataWithBytes:cstr length:strlen(cstr)];
 }
 
-static NSData *zx_rootfullPhase0DiagnosticResponse(int taskType)
+static NSData *zx_rootfullPhase1DiagnosticResponse(int taskType, const char *buffer)
 {
-    const char *mode = TLinkRootfullLicenseBuildMode();
+    if (taskType == 75 || taskType == 76) {
+        uint64_t generationBefore = TLinkLicenseGeneration();
+        NSString *action = @"status";
+        if (taskType == 76) {
+            NSString *rawBody = buffer && strlen(buffer) > 2
+                ? [NSString stringWithUTF8String:buffer + 2]
+                : @"";
+            NSString *mode = [[rawBody ?: @"" stringByTrimmingCharactersInSet:
+                [NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+            if ([mode isEqualToString:@"reload"]) {
+                TLinkLicenseInvalidateCache();
+                action = @"reload";
+            } else {
+                TLinkLicenseAdvanceGeneration();
+                action = @"advance";
+            }
+        }
+
+        NSMutableDictionary *status = [TLinkLicenseStatusDictionary() mutableCopy];
+        status[@"license_contract_version"] = @1;
+        status[@"rootfull_license_phase"] = @1;
+        status[@"runtime"] = @"rootfull";
+        status[@"runtime_gate_active"] = @0;
+        status[@"enforcement_scope"] = @"observe_verifier_no_runtime_gate";
+        status[@"rootfull_build_mode"] =
+            [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
+        status[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
+        status[@"cache_invalidated"] = @(taskType == 76);
+        status[@"generation_before"] = @(generationBefore);
+        status[@"license_generation"] = @(TLinkLicenseGeneration());
+        status[@"generation_action"] = action;
+        status[@"source"] = @"tlinkautod_rootfull_shared_verifier";
+        NSData *json = [NSJSONSerialization dataWithJSONObject:status options:0 error:nil];
+        if (json.length == 0) {
+            return zx_dataFromCString("-1;;license_status_json_failed\r\n");
+        }
+        NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+        return zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String]);
+    }
+
     switch (taskType) {
-        case 75:
+        case 97: {
+            NSDictionary *status = TLinkLicenseStatusDictionary();
             return zx_dataFromCString([[NSString stringWithFormat:
-                @"0;;runtime=rootfull license_contract_version=1 license_phase=0 state=not_integrated build_mode=%s marker_only=1 effective_access=1\r\n",
-                mode] UTF8String]);
-        case 76:
-            return zx_dataFromCString("0;;license_reload_noop_phase0 generation=0\r\n");
-        case 97:
-            return zx_dataFromCString([[NSString stringWithFormat:
-                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=0 build_mode=%s marker_only=1 ports=6000,7001,7002,7003,7004,7005,7006\r\n",
-                mode] UTF8String]);
+                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=1 verifier=shared_signed_lease_observe runtimeGate=0 licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006\r\n",
+                status[@"state"] ?: @"invalid",
+                [status[@"configured"] boolValue] ? 1 : 0,
+                (unsigned long long)TLinkLicenseGeneration(),
+                TLinkRootfullLicenseBuildMode(),
+                TLinkLicenseBuildMode()] UTF8String]);
+        }
         case 99:
             return zx_dataFromCString("0;;tlinkauto_alive\r\n");
         default:
@@ -616,9 +656,9 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         // Still route through IPC below.
     }
 
-    NSData *phase0Diagnostic = zx_rootfullPhase0DiagnosticResponse(taskType);
-    if (phase0Diagnostic) {
-        return phase0Diagnostic;
+    NSData *phase1Diagnostic = zx_rootfullPhase1DiagnosticResponse(taskType, buffer);
+    if (phase1Diagnostic) {
+        return phase1Diagnostic;
     }
 
     if (taskType == 96) {

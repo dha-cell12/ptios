@@ -136,12 +136,24 @@ static NSString *TLinkExecutableDirectory(void)
     return result;
 }
 
+static NSArray<NSString *> *TLinkApplicationBundleIdentifiers(void)
+{
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    return @[@"com.tlinkauto.tlinkauto", @"com.tlinkauto.streamcontrol"];
+#else
+    return @[@"com.tlinkauto.streamcontrol", @"com.tlinkauto.tlinkauto"];
+#endif
+}
+
 static BOOL TLinkBundlePathMatchesApplication(NSString *path)
 {
     if (path.length == 0) return NO;
     NSString *plistPath = [path stringByAppendingPathComponent:@"Info.plist"];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:plistPath];
-    return [info[@"CFBundleIdentifier"] isEqualToString:@"com.tlinkauto.streamcontrol"];
+    NSString *bundleIdentifier = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]]
+        ? info[@"CFBundleIdentifier"]
+        : @"";
+    return [TLinkApplicationBundleIdentifiers() containsObject:bundleIdentifier];
 }
 
 static NSString *TLinkBundlePathFromObject(id value)
@@ -168,25 +180,27 @@ static NSString *TLinkBundlePathFromLaunchServices(void)
     SEL proxySelector = NSSelectorFromString(@"applicationProxyForIdentifier:");
     if (!proxyClass || ![proxyClass respondsToSelector:proxySelector]) return nil;
 
-    id proxy = nil;
-    @try {
-        proxy = ((id (*)(id, SEL, id))objc_msgSend)(proxyClass,
-                                                    proxySelector,
-                                                    @"com.tlinkauto.streamcontrol");
-    } @catch (__unused NSException *exception) {
-        return nil;
-    }
-    if (!proxy) return nil;
-
     NSArray<NSString *> *selectorNames = @[@"bundleURL", @"bundlePath", @"path", @"resourcesDirectoryURL"];
-    for (NSString *selectorName in selectorNames) {
-        SEL selector = NSSelectorFromString(selectorName);
-        if (![proxy respondsToSelector:selector]) continue;
+    for (NSString *bundleIdentifier in TLinkApplicationBundleIdentifiers()) {
+        id proxy = nil;
         @try {
-            id value = ((id (*)(id, SEL))objc_msgSend)(proxy, selector);
-            NSString *path = TLinkBundlePathFromObject(value);
-            if (TLinkBundlePathMatchesApplication(path)) return [path stringByStandardizingPath];
+            proxy = ((id (*)(id, SEL, id))objc_msgSend)(proxyClass,
+                                                        proxySelector,
+                                                        bundleIdentifier);
         } @catch (__unused NSException *exception) {
+            proxy = nil;
+        }
+        if (!proxy) continue;
+
+        for (NSString *selectorName in selectorNames) {
+            SEL selector = NSSelectorFromString(selectorName);
+            if (![proxy respondsToSelector:selector]) continue;
+            @try {
+                id value = ((id (*)(id, SEL))objc_msgSend)(proxy, selector);
+                NSString *path = TLinkBundlePathFromObject(value);
+                if (TLinkBundlePathMatchesApplication(path)) return [path stringByStandardizingPath];
+            } @catch (__unused NSException *exception) {
+            }
         }
     }
     return nil;
@@ -195,11 +209,23 @@ static NSString *TLinkBundlePathFromLaunchServices(void)
 static NSString *TLinkBundlePathByScanningContainers(void)
 {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray<NSString *> *directCandidates = @[
+    NSArray<NSString *> *trollStoreCandidates = @[
         @"/Applications/StreamControl.app",
         @"/var/containers/Bundle/Application/StreamControl.app",
         @"/private/var/containers/Bundle/Application/StreamControl.app",
     ];
+    NSArray<NSString *> *rootfullCandidates = @[
+        @"/Applications/TLinkauto.app",
+        @"/var/containers/Bundle/Application/TLinkauto.app",
+        @"/private/var/containers/Bundle/Application/TLinkauto.app",
+    ];
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    NSArray<NSString *> *directCandidates =
+        [rootfullCandidates arrayByAddingObjectsFromArray:trollStoreCandidates];
+#else
+    NSArray<NSString *> *directCandidates =
+        [trollStoreCandidates arrayByAddingObjectsFromArray:rootfullCandidates];
+#endif
     for (NSString *candidate in directCandidates) {
         if (TLinkBundlePathMatchesApplication(candidate)) return [candidate stringByStandardizingPath];
     }

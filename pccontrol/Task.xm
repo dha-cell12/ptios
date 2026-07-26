@@ -1,6 +1,7 @@
 #include "Task.h"
 #import "TLinkDiagnostic.h"
 #include "../shared/TLinkRootfullLicenseBuild.h"
+#include "../shared/TLinkLicenseVerifier.h"
 #import <Foundation/Foundation.h>
 #ifndef YES
 #define YES true
@@ -1149,6 +1150,14 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
             }
             NSString *licenseBuildMode =
                 [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
+            NSMutableDictionary *licenseStatus =
+                [TLinkLicenseStatusDictionary() mutableCopy];
+            licenseStatus[@"phase"] = @1;
+            licenseStatus[@"runtime"] = @"rootfull";
+            licenseStatus[@"runtime_gate_active"] = @0;
+            licenseStatus[@"enforcement_scope"] = @"observe_verifier_no_runtime_gate";
+            licenseStatus[@"rootfull_build_mode"] = licenseBuildMode;
+            licenseStatus[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
 
             NSDictionary *payload = @{
                 @"tlinkauto": @{
@@ -1168,13 +1177,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"last_error": getLastScriptError() ?: @"",
                     @"last_error_ts": @(getLastScriptErrorTs()),
                 },
-                @"license": @{
-                    @"phase": @0,
-                    @"state": @"not_integrated",
-                    @"build_mode": licenseBuildMode,
-                    @"marker_only": @1,
-                    @"effective_access": @1,
-                },
+                @"license": licenseStatus,
             };
 
             NSError *jsonErr = nil;

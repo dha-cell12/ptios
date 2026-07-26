@@ -34,6 +34,10 @@
 - Rootfull Phase 0: **da trien khai nen tang** tai
   `docs/license-rootfull-phase0.md`. Day la inventory/dual-build marker, chua co
   runtime gate va khong thay doi release gate cua TrollStore.
+- Rootfull Phase 1: **da tich hop shared verifier observe** tai
+  `docs/license-rootfull-phase1.md`. Signed lease/config/generation da co trong
+  `tlinkautod` va `pccontrol`, nhung `runtime_gate_active=0`; activation UI va
+  enforcement parity van chua hoan thanh.
 
 ## 1. Muc tieu
 
