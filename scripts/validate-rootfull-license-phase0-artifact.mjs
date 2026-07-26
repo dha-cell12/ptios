@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
@@ -51,11 +52,21 @@ for (const relative of binaries) {
   hashes[relative] = createHash("sha256").update(bytes).digest("hex");
 }
 
-const appManifest = await readFile(
-  join(rootfs, "Applications/TLinkauto.app/RootfullLicenseBuild.plist"),
-  "utf8"
+const appManifestPath = join(rootfs, "Applications/TLinkauto.app/RootfullLicenseBuild.plist");
+let appManifest;
+try {
+  appManifest = execFileSync(
+    "/usr/bin/plutil",
+    ["-convert", "xml1", "-o", "-", appManifestPath],
+    { encoding: "utf8" }
+  );
+} catch {
+  appManifest = await readFile(appManifestPath, "utf8");
+}
+assert.match(
+  appManifest,
+  new RegExp(`<key>RootfullLicenseMode<\\/key>\\s*<string>${mode}<\\/string>`)
 );
-assert.match(appManifest, new RegExp(`<string>${mode}</string>`));
 assert.match(appManifest, /<key>RootfullLicensePhase<\/key>\s*<integer>0<\/integer>/);
 assert.match(appManifest, /<key>LicenseContractVersion<\/key>\s*<integer>1<\/integer>/);
 
