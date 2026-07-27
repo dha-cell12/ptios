@@ -15,6 +15,7 @@
 #import "ScriptManagement/MoreOptionsPopOverTableViewController.h"
 #import "Socket.h"
 #import "Util.h"
+#import "../../stream-app/app/LicenseLifecycleCoordinator.h"
 
 @interface ScriptListViewController ()
 
@@ -50,6 +51,18 @@
 }
 
 - (IBAction)addButtonClick:(id)sender {
+    NSString *licenseError = nil;
+    if (![[SCLicenseLifecycleCoordinator sharedCoordinator]
+            cachedFeatureAllowed:@"script"
+                          reason:&licenseError]) {
+        [Util showAlertBoxWithOneOption:self
+                                  title:@"License Required"
+                                message:[licenseError isEqualToString:@"license_status_loading"]
+                                    ? @"License status is loading. Please try again."
+                                    : (licenseError ?: @"The script feature is not enabled by this license.")
+                           buttonString:@"OK"];
+        return;
+    }
     AdderPopOverViewController *contentVC = [[AdderPopOverViewController alloc] initWithNibName:@"AdderPopOverViewController" bundle:nil];
     contentVC.modalPresentationStyle = UIModalPresentationPopover;
     [contentVC setFolder:currentFolder];
@@ -155,8 +168,30 @@
     {
         self.navigationItem.leftBarButtonItems = nil;
     }
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(licenseSnapshotDidChange:)
+                                                 name:SCLicenseLifecycleDidChangeNotification
+                                               object:nil];
+    [[SCLicenseLifecycleCoordinator sharedCoordinator]
+        refreshLicenseUISnapshotAsyncForReason:@"scripts_view_loaded"];
 }
 
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [self._scriptListTableView reloadData];
+}
+
+- (void)licenseSnapshotDidChange:(NSNotification *)notification
+{
+    (void)notification;
+    [self._scriptListTableView reloadData];
+}
 
 - (IBAction)moreButtonClicked:(id)sender {
     CGPoint buttonPosition = [sender convertPoint:CGPointZero toView:self._scriptListTableView];

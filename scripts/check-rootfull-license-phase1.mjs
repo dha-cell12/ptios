@@ -46,19 +46,19 @@ assert.match(socket, /TLinkLicenseAdvanceGeneration/);
 assert.match(socket, /TLinkLicenseInvalidateCache/);
 assert.match(socket, /rootfull_license_phase/);
 assert.match(socket, /(?:observe_verifier|activation_lifecycle_observe)_no_runtime_gate|task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
-assert.match(socket, /license_phase=[1234]/);
+assert.match(socket, /license_phase=[12345]/);
 assert.match(socket, /runtimeGate=[01]/);
 if (integration.phase < 3) assert.doesNotMatch(socket, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 else assert.match(socket, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 
 assert.match(task, /TLinkLicenseStatusDictionary/);
-assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[1234]/);
+assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[12345]/);
 assert.match(task, /licenseStatus\[@"runtime_gate_active"\]\s*=\s*@[01]/);
 assert.match(task, /(?:observe_verifier|activation_lifecycle_observe)_no_runtime_gate|task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
 if (integration.phase < 3) assert.doesNotMatch(task, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 else assert.match(task, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[1234]<\/integer>/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[12345]<\/integer>/);
 assert.match(buildPlist, /(?:shared_verifier|activation_lifecycle)_observe_no_runtime_gate|task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
 for (const key of [
   "LicenseEndpoint",
@@ -71,7 +71,7 @@ for (const key of [
 }
 
 assert.match(workflow, /check-rootfull-license-phase1\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase[1234]-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[12345]-artifact\.mjs/);
 assert.match(workflow, /TLinkauto\/TLinkauto\/LicenseConfig\.plist/);
 assert.match(workflow, /TLINK_LICENSE_ENDPOINT/);
 assert.match(workflow, /TLINK_LICENSE_PUBLIC_KEY_X/);

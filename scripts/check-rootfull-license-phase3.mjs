@@ -75,12 +75,12 @@ assert.match(policyHeader, /TLinkRootfullLicenseTaskAllowed/);
 assert.match(socket, /TLinkRootfullLicenseTaskAllowed\(taskType/);
 assert.match(socket, /TLinkRootfullLicenseComponentAllowed\(@"automation",\s*@"home_command"/);
 assert.match(socket, /sTLinkRootfullLicenseTask10DropCount\.fetch_add/);
-assert.match(socket, /zx_rootfullPhase[34]DiagnosticResponse/);
-assert.match(socket, /rootfull_license_phase"\]\s*=\s*@[34]/);
+assert.match(socket, /zx_rootfullPhase[345]DiagnosticResponse/);
+assert.match(socket, /rootfull_license_phase"\]\s*=\s*@[345]/);
 assert.match(socket, /runtime_gate_active"\]\s*=\s*@1/);
 assert.match(socket, /task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
 const daemonGateIndex = socket.indexOf("BOOL licenseAllowed = homeCommand");
-const daemonDiagnosticIndex = socket.indexOf("NSData *phase4Diagnostic");
+const daemonDiagnosticIndex = socket.search(/NSData \*phase[45]Diagnostic/);
 assert.ok(
   daemonGateIndex >= 0 &&
     daemonDiagnosticIndex >= 0 &&
@@ -90,7 +90,7 @@ assert.ok(
 
 assert.match(task, /TLinkRootfullLicenseTaskAllowed\(taskType/);
 assert.match(task, /sTLinkSpringBoardLicenseTask10DropCount\.fetch_add/);
-assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[34]/);
+assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[345]/);
 assert.match(task, /licenseStatus\[@"runtime_gate_active"\]\s*=\s*@1/);
 assert.ok(
   task.indexOf("TLinkRootfullLicenseTaskAllowed(taskType") <
@@ -101,15 +101,18 @@ assert.ok(
 for (const makefile of [daemonMakefile, tweakMakefile]) {
   assert.match(makefile, /TLinkRootfullLicensePolicy\.mm/);
 }
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[34]<\/integer>/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[345]<\/integer>/);
 assert.match(buildPlist, /task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
 assert.match(workflow, /check-rootfull-license-phase3\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase[34]-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[345]-artifact\.mjs/);
 assert.match(deviceProbe, /ExpectedAccess/);
 assert.match(deviceProbe, /license_required task=/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "76reload"/);
 assert.match(deviceProbe, /license_policy_missing task=74/);
-assert.match(playCell, /TLinkLicenseFeatureAllowed\(@"script"/);
+assert.match(
+  playCell,
+  /TLinkLicenseFeatureAllowed\(@"script"|cachedFeatureAllowed:@"script"/
+);
 assert.match(playCell, /License Required/);
 
 console.log(

@@ -22,6 +22,7 @@
 #import "Config.h"
 #import "ConfigManager.h"
 #import "../../../stream-app/app/LicenseViewController.h"
+#import "../../../stream-app/app/LicenseLifecycleCoordinator.h"
 
 #define SETTING_CELL_SWITCH 0
 #define SETTING_CELL_ENTRY 1
@@ -76,17 +77,17 @@
             @{@"type": @(SETTING_CELL_ENTRY), @"title": @"License", @"secondary_title": @"Activation and device binding", @"row_click_handler": NSStringFromSelector(@selector(handleLicenseWithEntryCellInstance:))}
         ],
         @[
-            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"webServer", nil), @"switch_click_handler": NSStringFromSelector(@selector(handleWebServerWithSwitchCellInstance:)), @"switch_init_status": @(NO)}
+            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"webServer", nil), @"feature": @"stream", @"switch_click_handler": NSStringFromSelector(@selector(handleWebServerWithSwitchCellInstance:)), @"switch_init_status": @(NO)}
         ],
         @[
-            @{@"type": @(SETTING_CELL_ENTRY), @"title": @"Activator", @"secondary_title": @"", @"row_click_handler": NSStringFromSelector(@selector(handleActivatorWithEntryCellInstance:))},
-            @{@"type": @(SETTING_CELL_ENTRY), @"title": NSLocalizedString(@"configActivatorEvents", nil), @"secondary_title": @"", @"row_click_handler": NSStringFromSelector(@selector(handleConfigActivatorEventsWithEntryCellInstance:))},
-            @{@"type": @(SETTING_CELL_ENTRY), @"title": NSLocalizedString(@"touchIndicator", nil), @"secondary_title": @"", @"row_click_handler": NSStringFromSelector(@selector(handleTouchIndicatorWithEntryCellInstance:))},
-            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"doubleClickShowPopup", nil), @"switch_click_handler": NSStringFromSelector(@selector(handlePopupWindowDoubleClick:)), @"switch_init_status": @(doubleClickPopup)}
+            @{@"type": @(SETTING_CELL_ENTRY), @"title": @"Activator", @"feature": @"automation", @"secondary_title": @"", @"row_click_handler": NSStringFromSelector(@selector(handleActivatorWithEntryCellInstance:))},
+            @{@"type": @(SETTING_CELL_ENTRY), @"title": NSLocalizedString(@"configActivatorEvents", nil), @"feature": @"automation", @"secondary_title": @"", @"row_click_handler": NSStringFromSelector(@selector(handleConfigActivatorEventsWithEntryCellInstance:))},
+            @{@"type": @(SETTING_CELL_ENTRY), @"title": NSLocalizedString(@"touchIndicator", nil), @"feature": @"automation", @"secondary_title": @"", @"row_click_handler": NSStringFromSelector(@selector(handleTouchIndicatorWithEntryCellInstance:))},
+            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"doubleClickShowPopup", nil), @"feature": @"automation", @"switch_click_handler": NSStringFromSelector(@selector(handlePopupWindowDoubleClick:)), @"switch_init_status": @(doubleClickPopup)}
         ],
         @[
-            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"switchAppBeforePlaying", nil), @"switch_click_handler": NSStringFromSelector(@selector(handleSwitchAppBeforePlaying:)), @"switch_init_status": @(switchAppBeforeRunScript)},
-            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"enableJSHelperExecution", nil), @"switch_click_handler": NSStringFromSelector(@selector(handleJSHelperExecution:)), @"switch_init_status": @(jsHelperExecutionEnabled)}
+            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"switchAppBeforePlaying", nil), @"feature": @"script", @"switch_click_handler": NSStringFromSelector(@selector(handleSwitchAppBeforePlaying:)), @"switch_init_status": @(switchAppBeforeRunScript)},
+            @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"enableJSHelperExecution", nil), @"feature": @"script", @"switch_click_handler": NSStringFromSelector(@selector(handleJSHelperExecution:)), @"switch_init_status": @(jsHelperExecutionEnabled)}
         ]
     ];
      
@@ -98,6 +99,34 @@
     
     _tableView.backgroundColor = [UIColor colorWithRed:243/255.0f green:242/255.0f blue:248/255.0f alpha:1.0f];
     _tableView.tableFooterView = [[UIView alloc] init];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(licenseSnapshotDidChange:)
+                                                 name:SCLicenseLifecycleDidChangeNotification
+                                               object:nil];
+    [[SCLicenseLifecycleCoordinator sharedCoordinator]
+        refreshLicenseUISnapshotAsyncForReason:@"settings_view_loaded"];
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)licenseSnapshotDidChange:(NSNotification *)notification
+{
+    (void)notification;
+    [self.tableView reloadData];
+}
+
+- (BOOL)licenseAllowsCellInfo:(NSDictionary *)cellInfo reason:(NSString **)reason
+{
+    NSString *feature = [cellInfo[@"feature"] isKindOfClass:[NSString class]]
+        ? cellInfo[@"feature"]
+        : nil;
+    if (feature.length == 0) return YES;
+    return [[SCLicenseLifecycleCoordinator sharedCoordinator]
+        cachedFeatureAllowed:feature
+                      reason:reason];
 }
 
 - (void)handleLicenseWithEntryCellInstance:(TableViewCellWithEntry *)cell
@@ -276,8 +305,13 @@
         }
         
         cell.title.text = cellInfo[@"title"];
+        [cell.switchBtn removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
         [cell.switchBtn addTarget:self action:NSSelectorFromString(cellInfo[@"switch_click_handler"]) forControlEvents:UIControlEventValueChanged];
         [cell.switchBtn setOn:[cellInfo[@"switch_init_status"] boolValue]];
+        NSString *licenseReason = nil;
+        BOOL allowed = [self licenseAllowsCellInfo:cellInfo reason:&licenseReason];
+        cell.switchBtn.enabled = allowed;
+        cell.contentView.alpha = allowed ? 1.0 : 0.45;
         
         result = cell;
     }
@@ -295,8 +329,20 @@
         }
         
         cell.title.text = cellInfo[@"title"];
-        cell.subTitle.text = cellInfo[@"secondary_title"];
+        NSString *licenseReason = nil;
+        BOOL allowed = [self licenseAllowsCellInfo:cellInfo reason:&licenseReason];
+        if (indexPath.section == 0 && indexPath.row == 0) {
+            NSDictionary *status = [[SCLicenseLifecycleCoordinator sharedCoordinator]
+                cachedLicenseStatus];
+            NSString *state = status[@"state"] ?: @"loading";
+            cell.subTitle.text = [NSString stringWithFormat:@"State: %@", state];
+        } else {
+            cell.subTitle.text = allowed
+                ? cellInfo[@"secondary_title"]
+                : [NSString stringWithFormat:@"Requires %@ license", cellInfo[@"feature"] ?: @"feature"];
+        }
         cell.clickHandler = cellInfo[@"row_click_handler"];
+        cell.contentView.alpha = allowed ? 1.0 : 0.55;
         
         result = cell;
     }
@@ -308,6 +354,17 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath{
     [tableView deselectRowAtIndexPath:indexPath animated:NO];
     UITableViewCell *cell = [_tableView cellForRowAtIndexPath:indexPath];
+    NSDictionary *cellInfo = cellsForEachSection[indexPath.section][indexPath.row];
+    NSString *licenseReason = nil;
+    if (![self licenseAllowsCellInfo:cellInfo reason:&licenseReason]) {
+        [Util showAlertBoxWithOneOption:self
+                                  title:@"License Required"
+                                message:[licenseReason isEqualToString:@"license_status_loading"]
+                                    ? @"License status is loading. Please try again."
+                                    : (licenseReason ?: @"This feature is not enabled by the current license.")
+                           buttonString:@"OK"];
+        return;
+    }
     if ([cell isKindOfClass:[TableViewCellWithEntry class]])
     {
         TableViewCellWithEntry *entry = (TableViewCellWithEntry*)cell;

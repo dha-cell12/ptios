@@ -1,12 +1,14 @@
 #import "LicenseViewController.h"
 #import "LicenseLifecycleCoordinator.h"
 #import "LicenseManager.h"
+#import "../../shared/TLinkLicenseVerifier.h"
 #include <math.h>
 
 typedef NS_ENUM(NSInteger, SCLicenseSection) {
     SCLicenseSectionAccess = 0,
     SCLicenseSectionLease,
     SCLicenseSectionDevice,
+    SCLicenseSectionPerformance,
     SCLicenseSectionActivation,
     SCLicenseSectionActions,
     SCLicenseSectionCount,
@@ -53,8 +55,10 @@ static UIFont *SCLicenseMonospacedFont(void)
 @implementation SCLicenseViewController {
     NSDictionary *_status;
     NSDictionary *_lifecycle;
+    NSDictionary *_performance;
     UITextField *_licenseField;
     BOOL _requestInFlight;
+    BOOL _statusLoadInFlight;
 }
 
 - (void)viewDidLoad
@@ -87,11 +91,29 @@ static UIFont *SCLicenseMonospacedFont(void)
 
 - (void)reloadStatus
 {
-    _status = [[SCLicenseManager sharedManager] localStatus];
     SCLicenseLifecycleCoordinator *coordinator = [SCLicenseLifecycleCoordinator sharedCoordinator];
-    _lifecycle = [coordinator diagnostics];
+    NSDictionary *snapshot = [coordinator cachedLicenseStatus];
+    if ([snapshot[@"snapshot_ready"] boolValue]) _status = snapshot;
+    if (!_status) _status = @{@"state": @"loading", @"features": @[]};
+    _performance = TLinkLicensePerformanceDictionary();
     _requestInFlight = [coordinator isRequestInFlight];
     [self.tableView reloadData];
+
+    if (_statusLoadInFlight) return;
+    _statusLoadInFlight = YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSDictionary *fullStatus = [[SCLicenseManager sharedManager] localStatus];
+        NSDictionary *lifecycle = [coordinator diagnostics];
+        NSDictionary *performance = TLinkLicensePerformanceDictionary();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_statusLoadInFlight = NO;
+            self->_status = fullStatus ?: self->_status;
+            self->_lifecycle = lifecycle ?: @{};
+            self->_performance = performance ?: @{};
+            self->_requestInFlight = [coordinator isRequestInFlight];
+            [self.tableView reloadData];
+        });
+    });
 }
 
 - (void)lifecycleDidChange:(NSNotification *)notification
@@ -112,6 +134,7 @@ static UIFont *SCLicenseMonospacedFont(void)
     if (section == SCLicenseSectionAccess) return 7;
     if (section == SCLicenseSectionLease) return 10;
     if (section == SCLicenseSectionDevice) return 8;
+    if (section == SCLicenseSectionPerformance) return 6;
     if (section == SCLicenseSectionActivation) return 1;
     return 6;
 }
@@ -122,6 +145,7 @@ static UIFont *SCLicenseMonospacedFont(void)
     if (section == SCLicenseSectionAccess) return @"Access";
     if (section == SCLicenseSectionLease) return @"Lease And Renewal";
     if (section == SCLicenseSectionDevice) return @"Device Binding";
+    if (section == SCLicenseSectionPerformance) return @"Performance";
     if (section == SCLicenseSectionActivation) return @"Activation";
     return @"Actions";
 }
@@ -291,6 +315,41 @@ static UIFont *SCLicenseMonospacedFont(void)
         return cell;
     }
 
+    if (indexPath.section == SCLicenseSectionPerformance) {
+        NSArray *labels = @[@"UI Access Path", @"Snapshot Refresh", @"Feature Checks",
+                            @"Verifier Cache", @"Check Avg / Max", @"Verify Avg / Max"];
+        cell.textLabel.text = labels[(NSUInteger)indexPath.row];
+        switch (indexPath.row) {
+            case 0:
+                cell.detailTextLabel.text = @"Memory snapshot";
+                break;
+            case 1:
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%.2f / %.2f ms",
+                    [_lifecycle[@"ui_snapshot_last_refresh_ms"] doubleValue],
+                    [_lifecycle[@"ui_snapshot_max_refresh_ms"] doubleValue]];
+                break;
+            case 2:
+                cell.detailTextLabel.text = [_performance[@"feature_check_count"] stringValue] ?: @"0";
+                break;
+            case 3:
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ hit / %@ miss",
+                    _performance[@"cache_hit_count"] ?: @0,
+                    _performance[@"cache_miss_count"] ?: @0];
+                break;
+            case 4:
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%.1f / %.1f us",
+                    [_performance[@"feature_check_average_us"] doubleValue],
+                    [_performance[@"feature_check_max_us"] doubleValue]];
+                break;
+            default:
+                cell.detailTextLabel.text = [NSString stringWithFormat:@"%.2f / %.2f ms",
+                    [_performance[@"status_refresh_average_ms"] doubleValue],
+                    [_performance[@"status_refresh_max_ms"] doubleValue]];
+                break;
+        }
+        return cell;
+    }
+
     if (indexPath.section == SCLicenseSectionActivation) {
         cell.textLabel.text = @"Key";
         cell.accessoryView = _licenseField;
@@ -328,6 +387,9 @@ static UIFont *SCLicenseMonospacedFont(void)
         NSString *error = [_lifecycle[@"last_error"] isKindOfClass:[NSString class]] ? _lifecycle[@"last_error"] : @"";
         if (error.length > 0) return [NSString stringWithFormat:@"Last refresh error: %@", error];
         return @"The signed lease is short-lived and its date moves after a successful refresh. Automatic refresh starts inside the final 6 hours and can never extend beyond License Expires.";
+    }
+    if (section == SCLicenseSectionPerformance) {
+        return @"Normal UI checks read an immutable memory snapshot. Signature verification and disk reads run during background snapshot refresh or backend cache misses.";
     }
     if (section == SCLicenseSectionDevice) {
         return @"Tap License ID, Device ID, or Lease Token to copy it.";

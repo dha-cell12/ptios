@@ -14,6 +14,8 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <atomic>
+#include <mach/mach_time.h>
 
 static NSString *const kTLinkLicenseDirectory = @"/var/mobile/Library/TLinkauto/license";
 static NSString *const kTLinkLicenseLease = @"/var/mobile/Library/TLinkauto/license/lease.json";
@@ -28,7 +30,38 @@ static const char *kTLinkLicenseDarwinNotification = "com.tlinkauto.license.chan
 static NSDictionary *sTLinkLicenseFeatureStatus = nil;
 static NSTimeInterval sTLinkLicenseFeatureStatusAt = 0;
 static uint64_t sTLinkLicenseFeatureGeneration = 0;
+static NSTimeInterval sTLinkLicenseGenerationCheckedAt = 0;
 static int sTLinkLicenseNotificationToken = 0;
+static const NSTimeInterval kTLinkLicenseGenerationPollInterval = 0.25;
+static std::atomic<uint64_t> sTLinkLicenseFeatureCheckCount(0);
+static std::atomic<uint64_t> sTLinkLicenseFeatureCacheHitCount(0);
+static std::atomic<uint64_t> sTLinkLicenseFeatureCacheMissCount(0);
+static std::atomic<uint64_t> sTLinkLicenseGenerationPollCount(0);
+static std::atomic<uint64_t> sTLinkLicenseFeatureCheckTotalNs(0);
+static std::atomic<uint64_t> sTLinkLicenseFeatureCheckMaxNs(0);
+static std::atomic<uint64_t> sTLinkLicenseStatusRefreshTotalNs(0);
+static std::atomic<uint64_t> sTLinkLicenseStatusRefreshMaxNs(0);
+
+static uint64_t TLinkLicenseElapsedNanoseconds(uint64_t startedAt)
+{
+    static mach_timebase_info_data_t timebase;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        mach_timebase_info(&timebase);
+    });
+    uint64_t elapsed = mach_absolute_time() - startedAt;
+    return timebase.denom > 0
+        ? (elapsed * (uint64_t)timebase.numer) / (uint64_t)timebase.denom
+        : elapsed;
+}
+
+static void TLinkLicenseUpdateMaximum(std::atomic<uint64_t> &maximum, uint64_t value)
+{
+    uint64_t current = maximum.load(std::memory_order_relaxed);
+    while (value > current &&
+           !maximum.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
+    }
+}
 
 static dispatch_queue_t TLinkLicenseCacheQueue(void)
 {
@@ -750,19 +783,43 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
 
 BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error)
 {
+    uint64_t checkStartedAt = mach_absolute_time();
     __block NSDictionary *status = nil;
-    uint64_t generation = TLinkLicenseGeneration();
+    __block BOOL cacheMiss = NO;
+    __block uint64_t refreshNs = 0;
     dispatch_sync(TLinkLicenseCacheQueue(), ^{
         NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+        uint64_t generation = sTLinkLicenseFeatureGeneration;
+        if (!sTLinkLicenseFeatureStatus ||
+            now - sTLinkLicenseGenerationCheckedAt >= kTLinkLicenseGenerationPollInterval) {
+            generation = TLinkLicenseGeneration();
+            sTLinkLicenseGenerationPollCount.fetch_add(1, std::memory_order_relaxed);
+            sTLinkLicenseGenerationCheckedAt = now;
+        }
         if (!sTLinkLicenseFeatureStatus ||
             sTLinkLicenseFeatureGeneration != generation ||
             now - sTLinkLicenseFeatureStatusAt >= 5.0) {
+            uint64_t refreshStartedAt = mach_absolute_time();
             sTLinkLicenseFeatureStatus = TLinkLicenseStatusDictionary();
+            refreshNs = TLinkLicenseElapsedNanoseconds(refreshStartedAt);
+            cacheMiss = YES;
             sTLinkLicenseFeatureStatusAt = now;
             sTLinkLicenseFeatureGeneration = generation;
         }
         status = sTLinkLicenseFeatureStatus;
     });
+    uint64_t elapsedNs = TLinkLicenseElapsedNanoseconds(checkStartedAt);
+    sTLinkLicenseFeatureCheckCount.fetch_add(1, std::memory_order_relaxed);
+    sTLinkLicenseFeatureCheckTotalNs.fetch_add(elapsedNs, std::memory_order_relaxed);
+    TLinkLicenseUpdateMaximum(sTLinkLicenseFeatureCheckMaxNs, elapsedNs);
+    if (cacheMiss) {
+        sTLinkLicenseFeatureCacheMissCount.fetch_add(1, std::memory_order_relaxed);
+        sTLinkLicenseStatusRefreshTotalNs.fetch_add(refreshNs, std::memory_order_relaxed);
+        TLinkLicenseUpdateMaximum(sTLinkLicenseStatusRefreshMaxNs, refreshNs);
+    } else {
+        sTLinkLicenseFeatureCacheHitCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
     if (![status[@"enforcement_enabled"] boolValue]) return YES;
     if (![status[@"licensed"] boolValue]) {
         if (error) *error = status[@"error"] ?: @"license_required";
@@ -778,11 +835,33 @@ BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error)
     return NO;
 }
 
+NSDictionary *TLinkLicensePerformanceDictionary(void)
+{
+    uint64_t checks = sTLinkLicenseFeatureCheckCount.load(std::memory_order_relaxed);
+    uint64_t misses = sTLinkLicenseFeatureCacheMissCount.load(std::memory_order_relaxed);
+    uint64_t totalNs = sTLinkLicenseFeatureCheckTotalNs.load(std::memory_order_relaxed);
+    uint64_t refreshTotalNs = sTLinkLicenseStatusRefreshTotalNs.load(std::memory_order_relaxed);
+    return @{
+        @"feature_check_count": @(checks),
+        @"cache_hit_count": @(sTLinkLicenseFeatureCacheHitCount.load(std::memory_order_relaxed)),
+        @"cache_miss_count": @(misses),
+        @"cache_ttl_ms": @5000,
+        @"generation_poll_interval_ms": @250,
+        @"generation_poll_count": @(sTLinkLicenseGenerationPollCount.load(std::memory_order_relaxed)),
+        @"feature_check_average_us": @(checks > 0 ? ((double)totalNs / (double)checks) / 1000.0 : 0),
+        @"feature_check_max_us": @((double)sTLinkLicenseFeatureCheckMaxNs.load(std::memory_order_relaxed) / 1000.0),
+        @"status_refresh_average_ms": @(misses > 0 ? ((double)refreshTotalNs / (double)misses) / 1000000.0 : 0),
+        @"status_refresh_max_ms": @((double)sTLinkLicenseStatusRefreshMaxNs.load(std::memory_order_relaxed) / 1000000.0),
+        @"measurement": @"mach_absolute_time",
+    };
+}
+
 void TLinkLicenseInvalidateCache(void)
 {
     dispatch_sync(TLinkLicenseCacheQueue(), ^{
         sTLinkLicenseFeatureStatus = nil;
         sTLinkLicenseFeatureStatusAt = 0;
         sTLinkLicenseFeatureGeneration = 0;
+        sTLinkLicenseGenerationCheckedAt = 0;
     });
 }

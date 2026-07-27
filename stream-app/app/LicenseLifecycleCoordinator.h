@@ -11,6 +11,9 @@ typedef void (^SCLicenseLifecycleCompletion)(BOOL success, NSString *message);
 
 + (instancetype)sharedCoordinator;
 - (NSDictionary *)diagnostics;
+- (NSDictionary *)cachedLicenseStatus;
+- (BOOL)cachedFeatureAllowed:(NSString *)feature reason:(NSString **)reason;
+- (void)refreshLicenseUISnapshotAsyncForReason:(NSString *)reason;
 - (void)handleApplicationLaunch;
 - (void)handleApplicationDidBecomeActive;
 - (void)performBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion;

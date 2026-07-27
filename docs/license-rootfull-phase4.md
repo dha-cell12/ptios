@@ -86,5 +86,6 @@ Neu chi sua file lease bang shell, goi task `76reload` de cac process bo cache.
 
 ## Phase 5
 
-Phase 5 se xu ly visibility/UX theo feature trong app. Backend Phase 4 van la
-authority va khong phu thuoc UI.
+Phase 5 da them visibility/UX theo feature, memory snapshot va latency metrics.
+Backend Phase 4 van la authority va khong phu thuoc UI. Xem
+`docs/license-rootfull-phase5.md`.

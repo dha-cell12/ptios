@@ -2,7 +2,7 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 4,
+  "phase": 5,
   "license_contract_version": 1,
   "integration_mode": "task_and_long_running_component_gate",
   "configuration_bundle": "Applications/TLinkauto.app/LicenseConfig.plist",
@@ -53,8 +53,8 @@
     }
   ],
   "diagnostic_tasks": {
-    "60": "springboard_base64_json_with_phase4_component_status",
-    "75": "daemon_base64_json_with_phase4_component_status",
+    "60": "springboard_base64_json_with_phase5_ui_and_performance_status",
+    "75": "daemon_base64_json_with_phase5_ui_and_performance_status",
     "76": "daemon_cache_reload_or_generation_advance",
     "97": "daemon_capability_verifier_and_activation_lifecycle_summary"
   },
@@ -100,5 +100,34 @@
       "revocation_action": "cancel_javascript_wake_waiters_close_file_handles"
     }
   },
-  "next_runtime_gate_phase": 5
+  "ui_feature_policy": {
+    "source": "stream-app/app/LicenseLifecycleCoordinator.mm",
+    "snapshot": "immutable_memory_snapshot",
+    "refresh_threads": "background_serial_queue",
+    "refresh_triggers": [
+      "launch",
+      "foreground",
+      "license_generation_change",
+      "scripts_view_load",
+      "settings_view_load"
+    ],
+    "backend_authority": true,
+    "main_thread_signature_verification": false,
+    "feature_visibility": {
+      "scripts_play_and_add": "script",
+      "settings_stream": "stream",
+      "settings_control": "automation",
+      "settings_script": "script"
+    }
+  },
+  "performance_diagnostics": {
+    "feature_check_count": true,
+    "cache_hit_miss": true,
+    "generation_poll_interval_ms": 250,
+    "generation_poll_count": true,
+    "feature_check_average_and_max_us": true,
+    "status_refresh_average_and_max_ms": true,
+    "ui_snapshot_refresh_average_and_max_ms": true
+  },
+  "next_runtime_gate_phase": 6
 }

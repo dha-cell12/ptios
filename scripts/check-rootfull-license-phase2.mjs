@@ -96,24 +96,24 @@ for (const source of [
   assert.ok(project.includes(source), `Xcode project lacks ${source}`);
 }
 
-assert.match(socket, /zx_rootfullPhase[234]DiagnosticResponse/);
-assert.match(socket, /rootfull_license_phase"\]\s*=\s*@[234]/);
+assert.match(socket, /zx_rootfullPhase[2345]DiagnosticResponse/);
+assert.match(socket, /rootfull_license_phase"\]\s*=\s*@[2345]/);
 assert.match(socket, /activation_lifecycle_active"\]\s*=\s*@1/);
-assert.match(socket, /license_phase=[234]/);
+assert.match(socket, /license_phase=[2345]/);
 assert.match(socket, /runtimeGate=[01]/);
 if (integration.phase < 3) assert.doesNotMatch(socket, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 else assert.match(socket, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 
-assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[234]/);
+assert.match(task, /licenseStatus\[@"phase"\]\s*=\s*@[2345]/);
 assert.match(task, /licenseStatus\[@"activation_lifecycle_active"\]\s*=\s*@1/);
 assert.match(task, /licenseStatus\[@"runtime_gate_active"\]\s*=\s*@[01]/);
 if (integration.phase < 3) assert.doesNotMatch(task, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 else assert.match(task, /TLinkRootfullLicenseTaskAllowed\s*\(/);
 
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[234]<\/integer>/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[2345]<\/integer>/);
 assert.match(buildPlist, /activation_lifecycle_observe_no_runtime_gate|task_server_and_springboard_feature_gate|task_and_long_running_component_gate/);
 assert.match(workflow, /check-rootfull-license-phase2\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase[234]-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[2345]-artifact\.mjs/);
 assert.match(workflow, /TLINK_LICENSE_ROOTFULL_RUNTIME=1/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "97"/);
 assert.match(deviceProbe, /Invoke-TLinkTask -Task "75"/);

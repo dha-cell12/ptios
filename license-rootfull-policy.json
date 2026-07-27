@@ -2,7 +2,7 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 4,
+  "phase": 5,
   "license_contract_version": 1,
   "enforcement_behavior": "task_and_long_running_component_gate",
   "features": [
@@ -163,7 +163,7 @@
       "component": "app_ui",
       "feature": "automation",
       "source": "TLinkauto/TLinkauto",
-      "gate_status": "planned_phase_5"
+      "gate_status": "active_phase_5_feature_aware_memory_snapshot"
     }
   ]
 }

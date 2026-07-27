@@ -16,3 +16,4 @@ FOUNDATION_EXPORT BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **
 FOUNDATION_EXPORT BOOL TLinkLicenseEnforcementEnabled(void);
 FOUNDATION_EXPORT NSString *TLinkLicenseBuildMode(void);
 FOUNDATION_EXPORT void TLinkLicenseInvalidateCache(void);
+FOUNDATION_EXPORT NSDictionary *TLinkLicensePerformanceDictionary(void);

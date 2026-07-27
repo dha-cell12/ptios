@@ -9,7 +9,7 @@
 #import "Socket.h"
 #import "Util.h"
 #import "TLinkAppDiagnostic.h"
-#import "../../shared/TLinkLicenseVerifier.h"
+#import "../../stream-app/app/LicenseLifecycleCoordinator.h"
 
 @implementation ScriptListTableCell
 {
@@ -23,12 +23,16 @@
 
 - (IBAction)playButtonClick:(id)sender {
     NSString *licenseError = nil;
-    if (!TLinkLicenseFeatureAllowed(@"script", &licenseError)) {
+    if (![[SCLicenseLifecycleCoordinator sharedCoordinator]
+            cachedFeatureAllowed:@"script"
+                          reason:&licenseError]) {
         UIViewController *parent = _parentViewController;
         if (parent) {
             [Util showAlertBoxWithOneOption:parent
                                       title:@"License Required"
-                                    message:licenseError ?: @"The script feature is not enabled by this license."
+                                    message:[licenseError isEqualToString:@"license_status_loading"]
+                                        ? @"License status is loading. Please try again."
+                                        : (licenseError ?: @"The script feature is not enabled by this license.")
                                buttonString:@"OK"];
         }
         return;
@@ -87,6 +91,19 @@
     [_playButton setHidden:NO];
 }
 
+- (void)applyScriptLicenseState
+{
+    NSString *reason = nil;
+    BOOL allowed = [[SCLicenseLifecycleCoordinator sharedCoordinator]
+        cachedFeatureAllowed:@"script"
+                      reason:&reason];
+    _playButton.alpha = allowed ? 1.0 : 0.42;
+    _playButton.accessibilityLabel = allowed ? @"Play script" : @"Play script, license required";
+    _playButton.accessibilityHint = allowed
+        ? @"Runs this script"
+        : (reason ?: @"The script feature is unavailable");
+}
+
 - (void) setPropertyWithPath:(NSString*)path{
     filePath = path;
     
@@ -98,6 +115,7 @@
     {
         // Now the image will have been loaded and decoded and is ready to rock for the main thread
         [[self imageView] setImage:[UIImage imageNamed:@"script-icon"]];
+        [self applyScriptLicenseState];
         
         return;
     }

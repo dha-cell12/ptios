@@ -72,6 +72,14 @@ static NSString *SCLicenseRequestDaemonReload(void)
 @property(nonatomic, assign, getter=isRequestInFlight) BOOL requestInFlight;
 @property(nonatomic, copy) NSString *operationKind;
 @property(nonatomic, strong) NSMutableArray *pendingRefreshCompletions;
+@property(nonatomic, strong) dispatch_queue_t uiSnapshotQueue;
+@property(nonatomic, copy) NSDictionary *uiLicenseSnapshot;
+@property(nonatomic, assign) BOOL uiSnapshotRefreshInFlight;
+@property(nonatomic, assign) BOOL uiSnapshotRefreshPending;
+@property(nonatomic, copy) NSString *uiSnapshotPendingReason;
+@property(nonatomic, assign) uint64_t uiSnapshotRefreshCount;
+@property(nonatomic, assign) double uiSnapshotLastRefreshMs;
+@property(nonatomic, assign) double uiSnapshotMaxRefreshMs;
 @end
 
 @implementation SCLicenseLifecycleCoordinator
@@ -92,6 +100,17 @@ static NSString *SCLicenseRequestDaemonReload(void)
     if (self) {
         _manager = [SCLicenseManager sharedManager];
         _pendingRefreshCompletions = [NSMutableArray array];
+        _uiSnapshotQueue = dispatch_queue_create("com.tlinkauto.license-ui-snapshot",
+                                                  DISPATCH_QUEUE_SERIAL);
+        _uiLicenseSnapshot = @{
+            @"snapshot_ready": @NO,
+            @"state": @"loading",
+            @"licensed": @NO,
+            @"effective_access": @NO,
+            @"enforcement_enabled": @YES,
+            @"features": @[],
+            @"source": @"ui_snapshot_initial",
+        };
     }
     return self;
 }
@@ -113,9 +132,106 @@ static NSString *SCLicenseRequestDaemonReload(void)
     @synchronized (self) {
         state[@"request_in_flight"] = @(self.requestInFlight);
         state[@"operation"] = self.operationKind ?: @"none";
+        state[@"ui_snapshot_ready"] = @(self.uiLicenseSnapshot != nil &&
+                                        [self.uiLicenseSnapshot[@"snapshot_ready"] boolValue]);
+        state[@"ui_snapshot_refresh_in_flight"] = @(self.uiSnapshotRefreshInFlight);
+        state[@"ui_snapshot_refresh_count"] = @(self.uiSnapshotRefreshCount);
+        state[@"ui_snapshot_last_refresh_ms"] = @(self.uiSnapshotLastRefreshMs);
+        state[@"ui_snapshot_max_refresh_ms"] = @(self.uiSnapshotMaxRefreshMs);
+        state[@"ui_snapshot_generation"] = self.uiLicenseSnapshot[@"license_generation"] ?: @0;
     }
+    state[@"verifier_performance"] = TLinkLicensePerformanceDictionary();
     state[@"path"] = kTLinkLicenseLifecycleDiagnosticsPath;
     return state;
+}
+
+- (NSDictionary *)cachedLicenseStatus
+{
+    @synchronized (self) {
+        return [self.uiLicenseSnapshot copy] ?: @{};
+    }
+}
+
+- (BOOL)cachedFeatureAllowed:(NSString *)feature reason:(NSString **)reason
+{
+    NSDictionary *status = [self cachedLicenseStatus];
+    if (![status[@"snapshot_ready"] boolValue]) {
+        if (reason) *reason = @"license_status_loading";
+        return NO;
+    }
+    if (![status[@"enforcement_enabled"] boolValue]) return YES;
+    if (![status[@"licensed"] boolValue]) {
+        if (reason) *reason = status[@"error"] ?: @"license_required";
+        return NO;
+    }
+    NSArray *features = [status[@"features"] isKindOfClass:[NSArray class]]
+        ? status[@"features"]
+        : @[];
+    if (feature.length == 0 ||
+        [features containsObject:@"all"] ||
+        [features containsObject:feature]) {
+        return YES;
+    }
+    if (reason) {
+        *reason = [NSString stringWithFormat:@"license_feature_not_enabled feature=%@",
+                   feature ?: @"unknown"];
+    }
+    return NO;
+}
+
+- (void)refreshLicenseUISnapshotAsyncForReason:(NSString *)reason
+{
+    @synchronized (self) {
+        if (self.uiSnapshotRefreshInFlight) {
+            self.uiSnapshotRefreshPending = YES;
+            self.uiSnapshotPendingReason = reason ?: @"coalesced_change";
+            return;
+        }
+        self.uiSnapshotRefreshInFlight = YES;
+    }
+    dispatch_async(self.uiSnapshotQueue, ^{
+        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
+        NSMutableDictionary *snapshot = [TLinkLicenseStatusDictionary() mutableCopy];
+        if (!snapshot) snapshot = [NSMutableDictionary dictionary];
+        double elapsedMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000.0;
+        snapshot[@"snapshot_ready"] = @YES;
+        snapshot[@"snapshot_reason"] = reason ?: @"unspecified";
+        snapshot[@"snapshot_created_at_ms"] = @([self nowMilliseconds]);
+        snapshot[@"snapshot_refresh_ms"] = @(elapsedMs);
+        snapshot[@"source"] = @"rootfull_ui_memory_snapshot";
+
+        __block NSString *pendingReason = nil;
+        @synchronized (self) {
+            self.uiLicenseSnapshot = [snapshot copy];
+            self.uiSnapshotRefreshCount++;
+            self.uiSnapshotLastRefreshMs = elapsedMs;
+            self.uiSnapshotMaxRefreshMs = MAX(self.uiSnapshotMaxRefreshMs, elapsedMs);
+            self.uiSnapshotRefreshInFlight = NO;
+            if (self.uiSnapshotRefreshPending) {
+                pendingReason = self.uiSnapshotPendingReason ?: @"coalesced_change";
+                self.uiSnapshotRefreshPending = NO;
+                self.uiSnapshotPendingReason = nil;
+            }
+        }
+        [self updateDiagnostics:@{
+            @"ui_snapshot_policy": @"background_generation_driven_v1",
+            @"ui_snapshot_refresh_count": @(self.uiSnapshotRefreshCount),
+            @"ui_snapshot_last_refresh_ms": @(elapsedMs),
+            @"ui_snapshot_max_refresh_ms": @(self.uiSnapshotMaxRefreshMs),
+            @"ui_snapshot_generation": snapshot[@"license_generation"] ?: @0,
+            @"ui_snapshot_reason": reason ?: @"unspecified",
+            @"verifier_performance": TLinkLicensePerformanceDictionary(),
+        }];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:SCLicenseLifecycleDidChangeNotification
+                              object:self
+                            userInfo:@{@"reason": @"ui_snapshot_updated"}];
+        });
+        if (pendingReason.length > 0) {
+            [self refreshLicenseUISnapshotAsyncForReason:pendingReason];
+        }
+    });
 }
 
 - (void)updateDiagnostics:(NSDictionary *)values
@@ -218,6 +334,7 @@ static NSString *SCLicenseRequestDaemonReload(void)
 - (void)publishLicenseChange:(NSString *)reason
 {
     TLinkLicenseInvalidateCache();
+    [self refreshLicenseUISnapshotAsyncForReason:reason ?: @"license_change"];
     uint64_t generation = TLinkLicenseGeneration();
     [self updateDiagnostics:@{
         @"last_change_at_ms": @([self nowMilliseconds]),
@@ -383,18 +500,24 @@ static NSString *SCLicenseRequestDaemonReload(void)
 
 - (void)handleApplicationLaunch
 {
-    [self updateDiagnostics:@{
-        @"last_launch_at_ms": @([self nowMilliseconds]),
-        @"lifecycle_policy": @"refresh_valid_under_6h_or_offline_grace_never_past_license_expiry",
-        @"refresh_window_seconds": @(kTLinkLicenseRefreshWindow),
-    }];
-    [self refreshForTrigger:@"app_launch" force:NO completion:nil];
+    [self refreshLicenseUISnapshotAsyncForReason:@"app_launch"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        [self updateDiagnostics:@{
+            @"last_launch_at_ms": @([self nowMilliseconds]),
+            @"lifecycle_policy": @"refresh_valid_under_6h_or_offline_grace_never_past_license_expiry",
+            @"refresh_window_seconds": @(kTLinkLicenseRefreshWindow),
+        }];
+        [self refreshForTrigger:@"app_launch" force:NO completion:nil];
+    });
 }
 
 - (void)handleApplicationDidBecomeActive
 {
-    [self updateDiagnostics:@{@"last_foreground_at_ms": @([self nowMilliseconds])}];
-    [self refreshForTrigger:@"app_foreground" force:NO completion:nil];
+    [self refreshLicenseUISnapshotAsyncForReason:@"app_foreground"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        [self updateDiagnostics:@{@"last_foreground_at_ms": @([self nowMilliseconds])}];
+        [self refreshForTrigger:@"app_foreground" force:NO completion:nil];
+    });
 }
 
 - (void)performBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion
