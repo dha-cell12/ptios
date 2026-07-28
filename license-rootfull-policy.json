@@ -2,7 +2,7 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 5,
+  "phase": 6,
   "license_contract_version": 1,
   "enforcement_behavior": "task_and_long_running_component_gate",
   "features": [
@@ -164,6 +164,18 @@
       "feature": "automation",
       "source": "TLinkauto/TLinkauto",
       "gate_status": "active_phase_5_feature_aware_memory_snapshot"
+    },
+    {
+      "component": "release_integrity",
+      "feature": "all",
+      "source": "shared/TLinkLicenseVerifier.mm",
+      "gate_status": "active_phase_6_enforced_fail_closed"
+    },
+    {
+      "component": "anti_rollback",
+      "feature": "all",
+      "source": "shared/TLinkLicenseVerifier.mm",
+      "gate_status": "active_phase_6_signed_device_checkpoint"
     }
   ]
 }

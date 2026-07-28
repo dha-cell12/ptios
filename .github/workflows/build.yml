@@ -34,6 +34,7 @@ jobs:
           node scripts/check-rootfull-license-phase3.mjs
           node scripts/check-rootfull-license-phase4.mjs
           node scripts/check-rootfull-license-phase5.mjs
+          node scripts/check-rootfull-license-phase6.mjs
 
       - name: Validate public license build inputs
         run: |
@@ -138,7 +139,7 @@ jobs:
           export PATH="${DPKG_BIN}:$PATH"
           make package FINALPACKAGE=1 TLINK_LICENSE_MODE="${TLINK_LICENSE_MODE}"
 
-      - name: Validate rootfull phase 5 artifact
+      - name: Validate rootfull phase 6 artifact
         run: |
           set -euo pipefail
           export PATH="${DPKG_BIN}:$PATH"
@@ -148,14 +149,14 @@ jobs:
           rm -rf "$ROOTFS"
           mkdir -p "$ROOTFS"
           dpkg-deb -x "$DEB_PATH" "$ROOTFS"
-          node scripts/validate-rootfull-license-phase5-artifact.mjs \
+          node scripts/validate-rootfull-license-phase6-artifact.mjs \
             --rootfs "$ROOTFS" \
             --mode "$TLINK_LICENSE_MODE" \
             --endpoint "$TLINK_LICENSE_ENDPOINT" \
             --keyId "$TLINK_LICENSE_KEY_ID" \
             --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
             --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y" \
-            --output "rootfull-license-phase5-${TLINK_LICENSE_MODE}.json"
+            --output "rootfull-license-phase6-${TLINK_LICENSE_MODE}.json"
 
       - name: Upload deb package
         uses: actions/upload-artifact@v4
@@ -163,4 +164,4 @@ jobs:
           name: TLinkauto-rootfull-deb-${{ matrix.license_mode }}
           path: |
             packages/*.deb
-            rootfull-license-phase5-${{ matrix.license_mode }}.json
+            rootfull-license-phase6-${{ matrix.license_mode }}.json

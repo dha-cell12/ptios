@@ -20,11 +20,11 @@ const buildPlist = await read("RootfullLicenseBuild.plist");
 const workflow = await read(".github/workflows/build.yml");
 const deviceProbe = await read("scripts/Test-TLinkRootfullLicensePhase5.ps1");
 
-assert.equal(integration.phase, 5);
+assert.ok(integration.phase >= 5);
 assert.equal(integration.integration_mode, "task_and_long_running_component_gate");
 assert.equal(integration.runtime_gate_active, true);
-assert.equal(integration.next_runtime_gate_phase, 6);
-assert.equal(policy.phase, 5);
+assert.ok(integration.next_runtime_gate_phase >= 6);
+assert.ok(policy.phase >= 5);
 assert.equal(
   policy.components.find(({ component }) => component === "app_ui")?.gate_status,
   "active_phase_5_feature_aware_memory_snapshot"
@@ -76,16 +76,16 @@ assert.match(licenseView, /Memory snapshot/);
 assert.match(licenseView, /QOS_CLASS_UTILITY/);
 
 for (const source of [socket, task]) {
-  assert.match(source, /(?:rootfull_license_phase"\]|licenseStatus\[@"phase"\])\s*=\s*@5/);
+  assert.match(source, /(?:rootfull_license_phase"\]|licenseStatus\[@"phase"\])\s*=\s*@[56]/);
   assert.match(source, /ui_feature_snapshot_active/);
   assert.match(source, /verifier_performance/);
   assert.match(source, /TLinkLicensePerformanceDictionary/);
 }
-assert.match(socket, /license_phase=5/);
+assert.match(socket, /license_phase=[56]/);
 assert.match(socket, /uiFeatureSnapshot=1/);
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>5<\/integer>/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[56]<\/integer>/);
 assert.match(workflow, /check-rootfull-license-phase5\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase5-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[56]-artifact\.mjs/);
 assert.match(deviceProbe, /ExpectedPhase\s*=\s*5/);
 assert.match(deviceProbe, /feature_check_average_us/);
 

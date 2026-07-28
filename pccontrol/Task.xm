@@ -1167,7 +1167,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
             NSMutableDictionary *licenseStatus =
                 [TLinkLicenseStatusDictionary() mutableCopy];
-            licenseStatus[@"phase"] = @5;
+            licenseStatus[@"phase"] = @6;
             licenseStatus[@"runtime"] = @"rootfull";
             licenseStatus[@"runtime_gate_active"] = @1;
             licenseStatus[@"activation_lifecycle_active"] = @1;
@@ -1184,6 +1184,8 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
             licenseStatus[@"scheduler_launch_gate_active"] = @1;
             licenseStatus[@"helper_runtime_gate_active"] = @1;
             licenseStatus[@"ui_feature_snapshot_active"] = @1;
+            licenseStatus[@"release_integrity_active"] = @1;
+            licenseStatus[@"anti_rollback_active"] = @1;
             licenseStatus[@"verifier_performance"] = TLinkLicensePerformanceDictionary();
             licenseStatus[@"task10_license_drop_count"] =
                 @(sTLinkSpringBoardLicenseTask10DropCount.load(std::memory_order_relaxed));

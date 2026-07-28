@@ -5,10 +5,14 @@
 	<key>LicenseContractVersion</key>
 	<integer>1</integer>
 	<key>RootfullLicensePhase</key>
-	<integer>5</integer>
+	<integer>6</integer>
 	<key>RootfullLicenseMode</key>
 	<string>observe</string>
 	<key>EnforcementBehavior</key>
 	<string>task_and_long_running_component_gate</string>
+	<key>ReleaseIntegrityVersion</key>
+	<integer>1</integer>
+	<key>AntiRollbackPolicy</key>
+	<string>signed_device_checkpoint_v1</string>
 </dict>
 </plist>

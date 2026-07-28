@@ -581,7 +581,7 @@ static NSData *zx_dataFromCString(const char *cstr)
     return [NSData dataWithBytes:cstr length:strlen(cstr)];
 }
 
-static NSData *zx_rootfullPhase5DiagnosticResponse(int taskType, const char *buffer)
+static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buffer)
 {
     if (taskType == 75 || taskType == 76) {
         uint64_t generationBefore = TLinkLicenseGeneration();
@@ -603,7 +603,7 @@ static NSData *zx_rootfullPhase5DiagnosticResponse(int taskType, const char *buf
 
         NSMutableDictionary *status = [TLinkLicenseStatusDictionary() mutableCopy];
         status[@"license_contract_version"] = @1;
-        status[@"rootfull_license_phase"] = @5;
+        status[@"rootfull_license_phase"] = @6;
         status[@"runtime"] = @"rootfull";
         status[@"runtime_gate_active"] = @1;
         status[@"activation_lifecycle_active"] = @1;
@@ -616,6 +616,8 @@ static NSData *zx_rootfullPhase5DiagnosticResponse(int taskType, const char *buf
         status[@"scheduler_launch_gate_active"] = @1;
         status[@"helper_runtime_gate_active"] = @1;
         status[@"ui_feature_snapshot_active"] = @1;
+        status[@"release_integrity_active"] = @1;
+        status[@"anti_rollback_active"] = @1;
         status[@"verifier_performance"] = TLinkLicensePerformanceDictionary();
         status[@"task10_license_drop_count"] =
             @(sTLinkRootfullLicenseTask10DropCount.load(std::memory_order_relaxed));
@@ -626,7 +628,7 @@ static NSData *zx_rootfullPhase5DiagnosticResponse(int taskType, const char *buf
         status[@"generation_before"] = @(generationBefore);
         status[@"license_generation"] = @(TLinkLicenseGeneration());
         status[@"generation_action"] = action;
-        status[@"source"] = @"tlinkautod_rootfull_phase5_feature_ui";
+        status[@"source"] = @"tlinkautod_rootfull_phase6_release_hardened";
         NSData *json = [NSJSONSerialization dataWithJSONObject:status options:0 error:nil];
         if (json.length == 0) {
             return zx_dataFromCString("-1;;license_status_json_failed\r\n");
@@ -639,7 +641,7 @@ static NSData *zx_rootfullPhase5DiagnosticResponse(int taskType, const char *buf
         case 97: {
             NSDictionary *status = TLinkLicenseStatusDictionary();
             return zx_dataFromCString([[NSString stringWithFormat:
-                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=5 verifier=shared_signed_lease activationUI=1 lifecycle=foreground_single_flight_backoff runtimeGate=1 gateScope=task_and_long_running_component taskPolicy=rootfull_explicit_v1 h264Gate=1 h264HeartbeatMs=5000 scriptHeartbeat=1 scriptHeartbeatMs=1000 schedulerGate=1 helperGate=1 uiFeatureSnapshot=1 verifierMetrics=1 task10LicenseDropCount=%llu licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006\r\n",
+                @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=6 verifier=shared_signed_lease activationUI=1 lifecycle=foreground_single_flight_backoff runtimeGate=1 gateScope=task_and_long_running_component taskPolicy=rootfull_explicit_v1 h264Gate=1 h264HeartbeatMs=5000 scriptHeartbeat=1 scriptHeartbeatMs=1000 schedulerGate=1 helperGate=1 uiFeatureSnapshot=1 verifierMetrics=1 releaseIntegrity=1 antiRollback=1 task10LicenseDropCount=%llu licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006\r\n",
                 (unsigned long long)sTLinkRootfullLicenseTask10DropCount.load(std::memory_order_relaxed),
                 status[@"state"] ?: @"invalid",
                 [status[@"configured"] boolValue] ? 1 : 0,
@@ -681,9 +683,9 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         return zx_dataFromCString([licenseDenial UTF8String]);
     }
 
-    NSData *phase5Diagnostic = zx_rootfullPhase5DiagnosticResponse(taskType, buffer);
-    if (phase5Diagnostic) {
-        return phase5Diagnostic;
+    NSData *phase6Diagnostic = zx_rootfullPhase6DiagnosticResponse(taskType, buffer);
+    if (phase6Diagnostic) {
+        return phase6Diagnostic;
     }
 
     if (taskType == 96) {

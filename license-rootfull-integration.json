@@ -2,7 +2,7 @@
   "schema_version": 1,
   "product": "tlinkauto-rootfull",
   "runtime": "rootfull",
-  "phase": 5,
+  "phase": 6,
   "license_contract_version": 1,
   "integration_mode": "task_and_long_running_component_gate",
   "configuration_bundle": "Applications/TLinkauto.app/LicenseConfig.plist",
@@ -53,8 +53,8 @@
     }
   ],
   "diagnostic_tasks": {
-    "60": "springboard_base64_json_with_phase5_ui_and_performance_status",
-    "75": "daemon_base64_json_with_phase5_ui_and_performance_status",
+    "60": "springboard_base64_json_with_phase6_release_integrity_status",
+    "75": "daemon_base64_json_with_phase6_release_integrity_status",
     "76": "daemon_cache_reload_or_generation_advance",
     "97": "daemon_capability_verifier_and_activation_lifecycle_summary"
   },
@@ -129,5 +129,35 @@
     "status_refresh_average_and_max_ms": true,
     "ui_snapshot_refresh_average_and_max_ms": true
   },
-  "next_runtime_gate_phase": 6
+  "release_hardening": {
+    "package_runtime_coherence": {
+      "active": true,
+      "enforced_build_failure_mode": "fail_closed",
+      "metadata": "Applications/TLinkauto.app/RootfullLicenseBuild.plist",
+      "checks": [
+        "phase",
+        "contract",
+        "compile_mode",
+        "config_enforcement",
+        "enforcement_behavior",
+        "anti_rollback_policy"
+      ]
+    },
+    "anti_rollback": {
+      "active": true,
+      "policy": "signed_device_checkpoint_v1",
+      "checkpoint": "/var/mobile/Library/TLinkauto/license/trust_checkpoint.plist",
+      "device_signature": "ECDSA_P256",
+      "lease_issued_at_floor": true,
+      "wall_clock_and_uptime_check": true,
+      "clock_rollback_tolerance_seconds": 300,
+      "known_limit": "checkpoint_deletion_by_root_resets_local_floor"
+    },
+    "release_evidence": {
+      "dual_mode_artifacts": true,
+      "device_regression": true,
+      "jsonl_soak": true
+    }
+  },
+  "next_runtime_gate_phase": 7
 }

@@ -131,7 +131,7 @@ static UIFont *SCLicenseMonospacedFont(void)
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
     (void)tableView;
-    if (section == SCLicenseSectionAccess) return 7;
+    if (section == SCLicenseSectionAccess) return 9;
     if (section == SCLicenseSectionLease) return 10;
     if (section == SCLicenseSectionDevice) return 8;
     if (section == SCLicenseSectionPerformance) return 6;
@@ -241,7 +241,8 @@ static UIFont *SCLicenseMonospacedFont(void)
 
     if (indexPath.section == SCLicenseSectionAccess) {
         NSArray *labels = @[@"State", @"Effective Access", @"License Expires", @"Renewal",
-                            @"Features", @"Enforcement", @"Contract"];
+                            @"Features", @"Enforcement", @"Contract",
+                            @"Release Integrity", @"Anti-Rollback"];
         cell.textLabel.text = labels[(NSUInteger)indexPath.row];
         switch (indexPath.row) {
             case 0: cell.detailTextLabel.text = _status[@"state"] ?: @"unknown"; break;
@@ -257,6 +258,22 @@ static UIFont *SCLicenseMonospacedFont(void)
             case 6: cell.detailTextLabel.text = [NSString stringWithFormat:@"v%@ | %@",
                                                  _status[@"license_contract_version"] ?: @1,
                                                  _status[@"build_mode"] ?: @"unknown"]; break;
+            case 7: {
+                NSDictionary *integrity =
+                    [_status[@"release_integrity"] isKindOfClass:[NSDictionary class]]
+                        ? _status[@"release_integrity"]
+                        : @{};
+                cell.detailTextLabel.text = integrity[@"state"] ?: @"unknown";
+                break;
+            }
+            case 8: {
+                NSDictionary *antiRollback =
+                    [_status[@"anti_rollback"] isKindOfClass:[NSDictionary class]]
+                        ? _status[@"anti_rollback"]
+                        : @{};
+                cell.detailTextLabel.text = antiRollback[@"state"] ?: @"unknown";
+                break;
+            }
             default: break;
         }
         return cell;

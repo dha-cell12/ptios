@@ -1,4 +1,7 @@
 #import "TLinkLicenseVerifier.h"
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+#import "TLinkRootfullLicenseBuild.h"
+#endif
 #import <Security/Security.h>
 #include <ctype.h>
 #include <errno.h>
@@ -25,7 +28,10 @@ static NSString *const kTLinkLicenseGeneration = @"/var/mobile/Library/TLinkauto
 static NSString *const kTLinkLicenseGenerationLock = @"/var/mobile/Library/TLinkauto/license/generation.lock";
 static NSString *const kTLinkLicenseQuarantineDirectory = @"/var/mobile/Library/TLinkauto/license/quarantine";
 static NSString *const kTLinkLicenseRecoveryDiagnostics = @"/var/mobile/Library/TLinkauto/license/recovery.plist";
+static NSString *const kTLinkLicenseTrustCheckpoint = @"/var/mobile/Library/TLinkauto/license/trust_checkpoint.plist";
+static NSString *const kTLinkLicenseTrustCheckpointLock = @"/var/mobile/Library/TLinkauto/license/trust_checkpoint.lock";
 static const NSTimeInterval kTLinkLicenseClockSkewToleranceSeconds = 60.0;
+static const NSTimeInterval kTLinkLicenseClockRollbackToleranceSeconds = 300.0;
 static const char *kTLinkLicenseDarwinNotification = "com.tlinkauto.license.changed";
 static NSDictionary *sTLinkLicenseFeatureStatus = nil;
 static NSTimeInterval sTLinkLicenseFeatureStatusAt = 0;
@@ -102,6 +108,11 @@ NSString *TLinkLicenseDeviceKeyTag(void)
 NSString *TLinkLicenseGenerationPath(void)
 {
     return kTLinkLicenseGeneration;
+}
+
+NSString *TLinkLicenseTrustCheckpointPath(void)
+{
+    return kTLinkLicenseTrustCheckpoint;
 }
 
 uint64_t TLinkLicenseGeneration(void)
@@ -462,22 +473,28 @@ static SecKeyRef TLinkCreateDevicePublicKey(NSData *point) CF_RETURNS_RETAINED
     return key;
 }
 
-static BOOL TLinkVerifyDeviceKeyPossession(NSData *publicPoint, NSString **error)
+static SecKeyRef TLinkCopyDevicePrivateKey(void) CF_RETURNS_RETAINED
 {
     NSDictionary *query = @{
         (__bridge id)kSecClass: (__bridge id)kSecClassKey,
-        (__bridge id)kSecAttrApplicationTag: [kTLinkLicenseDeviceKeyTag dataUsingEncoding:NSUTF8StringEncoding],
+        (__bridge id)kSecAttrApplicationTag:
+            [kTLinkLicenseDeviceKeyTag dataUsingEncoding:NSUTF8StringEncoding],
         (__bridge id)kSecAttrKeyType: (__bridge id)kSecAttrKeyTypeECSECPrimeRandom,
         (__bridge id)kSecAttrKeyClass: (__bridge id)kSecAttrKeyClassPrivate,
         (__bridge id)kSecReturnRef: @YES,
     };
     CFTypeRef result = NULL;
-    OSStatus copyStatus = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-    if (copyStatus != errSecSuccess || !result) {
-        if (error) *error = [NSString stringWithFormat:@"license_device_private_key_unavailable status=%d", (int)copyStatus];
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    return status == errSecSuccess ? (SecKeyRef)result : NULL;
+}
+
+static BOOL TLinkVerifyDeviceKeyPossession(NSData *publicPoint, NSString **error)
+{
+    SecKeyRef privateKey = TLinkCopyDevicePrivateKey();
+    if (!privateKey) {
+        if (error) *error = @"license_device_private_key_unavailable";
         return NO;
     }
-    SecKeyRef privateKey = (SecKeyRef)result;
     SecKeyRef publicKey = TLinkCreateDevicePublicKey(publicPoint);
     if (!publicKey) {
         CFRelease(privateKey);
@@ -519,6 +536,361 @@ static BOOL TLinkVerifyDeviceKeyPossession(NSData *publicPoint, NSString **error
     return YES;
 }
 
+static NSDictionary *TLinkRootfullReleaseIntegrityDictionary(NSDictionary *config)
+{
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    NSString *bundlePath = TLinkInstalledApplicationBundlePath() ?: @"";
+    NSString *metadataPath = [bundlePath stringByAppendingPathComponent:
+        @"RootfullLicenseBuild.plist"];
+    NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
+    BOOL compileEnforced = TLinkRootfullLicenseBuildIsEnforced() != 0;
+    NSString *expectedMode = compileEnforced ? @"enforced" : @"observe";
+    NSString *rootfullBuildMode =
+        [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
+    NSString *verifierBuildMode = TLinkLicenseBuildMode() ?: @"";
+    NSString *expectedRootfullBuildMode = compileEnforced
+        ? @"rootfull_enforced_compile_time_v1"
+        : @"rootfull_observe_compile_time_v1";
+    NSString *expectedVerifierBuildMode = compileEnforced
+        ? @"enforced_compile_time_v1"
+        : @"observe_compile_time_v1";
+    BOOL metadataPresent = [metadata isKindOfClass:[NSDictionary class]];
+    BOOL phaseMatches = [metadata[@"RootfullLicensePhase"] integerValue] == 6;
+    BOOL contractMatches = [metadata[@"LicenseContractVersion"] integerValue] == 1;
+    BOOL modeMatches = [metadata[@"RootfullLicenseMode"] isEqualToString:expectedMode];
+    BOOL behaviorMatches =
+        [metadata[@"EnforcementBehavior"] isEqualToString:
+            @"task_and_long_running_component_gate"];
+    BOOL integrityVersionMatches =
+        [metadata[@"ReleaseIntegrityVersion"] integerValue] == 1;
+    BOOL antiRollbackMatches =
+        [metadata[@"AntiRollbackPolicy"] isEqualToString:
+            @"signed_device_checkpoint_v1"];
+    BOOL markerMatches =
+        [rootfullBuildMode isEqualToString:expectedRootfullBuildMode] &&
+        [verifierBuildMode isEqualToString:expectedVerifierBuildMode];
+    BOOL configMatches =
+        [config[@"LicenseEnforcementEnabled"] boolValue] == compileEnforced;
+    BOOL valid = metadataPresent && phaseMatches && contractMatches && modeMatches &&
+        behaviorMatches && integrityVersionMatches && antiRollbackMatches &&
+        markerMatches && configMatches;
+    return @{
+        @"active": @YES,
+        @"valid": @(valid),
+        @"state": valid ? @"coherent" : @"release_integrity_failed",
+        @"metadata_path": metadataPath ?: @"",
+        @"metadata_present": @(metadataPresent),
+        @"phase_matches": @(phaseMatches),
+        @"contract_matches": @(contractMatches),
+        @"mode_matches": @(modeMatches),
+        @"behavior_matches": @(behaviorMatches),
+        @"integrity_version_matches": @(integrityVersionMatches),
+        @"anti_rollback_policy_matches": @(antiRollbackMatches),
+        @"compile_marker_matches": @(markerMatches),
+        @"config_enforcement_matches": @(configMatches),
+        @"expected_mode": expectedMode,
+        @"rootfull_build_mode": rootfullBuildMode,
+        @"verifier_build_mode": verifierBuildMode,
+        @"policy": @"rootfull_release_integrity_v1",
+    };
+#else
+    (void)config;
+    return @{
+        @"active": @NO,
+        @"valid": @YES,
+        @"state": @"not_applicable",
+        @"policy": @"rootfull_release_integrity_v1",
+    };
+#endif
+}
+
+static NSDictionary *TLinkTrustCheckpointResult(BOOL valid,
+                                                NSString *state,
+                                                NSString *error,
+                                                NSDictionary *payload)
+{
+    return @{
+        @"active": @YES,
+        @"valid": @(valid),
+        @"state": state ?: (valid ? @"valid" : @"invalid"),
+        @"error": error ?: @"",
+        @"path": kTLinkLicenseTrustCheckpoint,
+        @"policy": @"signed_device_checkpoint_v1",
+        @"signature": @"device_p256",
+        @"clock_rollback_tolerance_seconds":
+            @(kTLinkLicenseClockRollbackToleranceSeconds),
+        @"max_issued_at": payload[@"max_issued_at"] ?: @0,
+        @"last_wall_time": payload[@"last_wall_time"] ?: @0,
+        @"system_uptime": payload[@"system_uptime"] ?: @0,
+    };
+}
+
+static NSDictionary *TLinkTrustCheckpointNotEvaluated(void)
+{
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    return TLinkTrustCheckpointResult(YES, @"not_evaluated", @"", @{});
+#else
+    return @{
+        @"active": @NO,
+        @"valid": @YES,
+        @"state": @"not_applicable",
+        @"error": @"",
+        @"policy": @"signed_device_checkpoint_v1",
+    };
+#endif
+}
+
+static NSData *TLinkTrustCheckpointPayloadData(NSDictionary *payload)
+{
+    if (![NSJSONSerialization isValidJSONObject:payload]) return nil;
+    return [NSJSONSerialization dataWithJSONObject:payload
+                                           options:NSJSONWritingSortedKeys
+                                             error:nil];
+}
+
+static NSDictionary *TLinkReadVerifiedTrustCheckpoint(NSData *devicePublicKey,
+                                                       NSString **error)
+{
+    NSDictionary *envelope =
+        [NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseTrustCheckpoint];
+    if (![envelope isKindOfClass:[NSDictionary class]]) return nil;
+    if ([envelope[@"version"] integerValue] != 1) {
+        if (error) *error = @"license_trust_checkpoint_version_invalid";
+        return @{};
+    }
+    NSData *payloadData = TLinkBase64URLDecode(envelope[@"payload"]);
+    NSData *signatureData = TLinkBase64URLDecode(envelope[@"signature"]);
+    if (payloadData.length == 0 || signatureData.length == 0) {
+        if (error) *error = @"license_trust_checkpoint_fields_invalid";
+        return @{};
+    }
+    SecKeyRef publicKey = TLinkCreateDevicePublicKey(devicePublicKey);
+    if (!publicKey) {
+        if (error) *error = @"license_trust_checkpoint_public_key_invalid";
+        return @{};
+    }
+    CFErrorRef verifyError = NULL;
+    BOOL verified = SecKeyVerifySignature(publicKey,
+                                          kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+                                          (__bridge CFDataRef)payloadData,
+                                          (__bridge CFDataRef)signatureData,
+                                          &verifyError);
+    CFRelease(publicKey);
+    if (verifyError) CFRelease(verifyError);
+    if (!verified) {
+        if (error) *error = @"license_trust_checkpoint_signature_invalid";
+        return @{};
+    }
+    NSDictionary *payload =
+        [NSJSONSerialization JSONObjectWithData:payloadData options:0 error:nil];
+    if (![payload isKindOfClass:[NSDictionary class]] ||
+        [payload[@"version"] integerValue] != 1) {
+        if (error) *error = @"license_trust_checkpoint_payload_invalid";
+        return @{};
+    }
+    return payload;
+}
+
+static BOOL TLinkWriteSignedTrustCheckpoint(NSDictionary *payload,
+                                            NSString **error)
+{
+    NSData *payloadData = TLinkTrustCheckpointPayloadData(payload);
+    if (payloadData.length == 0) {
+        if (error) *error = @"license_trust_checkpoint_encode_failed";
+        return NO;
+    }
+    SecKeyRef privateKey = TLinkCopyDevicePrivateKey();
+    if (!privateKey) {
+        if (error) *error = @"license_trust_checkpoint_private_key_unavailable";
+        return NO;
+    }
+    CFErrorRef signError = NULL;
+    CFDataRef signature = SecKeyCreateSignature(
+        privateKey,
+        kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+        (__bridge CFDataRef)payloadData,
+        &signError);
+    CFRelease(privateKey);
+    if (!signature) {
+        if (signError) CFRelease(signError);
+        if (error) *error = @"license_trust_checkpoint_sign_failed";
+        return NO;
+    }
+    if (signError) CFRelease(signError);
+    NSDictionary *envelope = @{
+        @"version": @1,
+        @"payload": TLinkBase64URLEncode(payloadData),
+        @"signature": TLinkBase64URLEncode((__bridge NSData *)signature),
+        @"policy": @"signed_device_checkpoint_v1",
+    };
+    CFRelease(signature);
+    BOOL written = [envelope writeToFile:kTLinkLicenseTrustCheckpoint atomically:YES];
+    if (written) chmod([kTLinkLicenseTrustCheckpoint fileSystemRepresentation], 0666);
+    if (!written && error) *error = @"license_trust_checkpoint_write_failed";
+    return written;
+}
+
+static NSDictionary *TLinkValidateAndAdvanceTrustCheckpoint(NSDictionary *leasePayload,
+                                                             NSData *devicePublicKey,
+                                                             NSTimeInterval now,
+                                                             NSString **error)
+{
+    [[NSFileManager defaultManager] createDirectoryAtPath:kTLinkLicenseDirectory
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    int lockFD = open([kTLinkLicenseTrustCheckpointLock fileSystemRepresentation],
+                      O_CREAT | O_RDWR,
+                      0666);
+    if (lockFD < 0) {
+        NSString *message = @"license_trust_checkpoint_lock_open_failed";
+        if (error) *error = message;
+        return TLinkTrustCheckpointResult(NO, @"lock_failed", message, @{});
+    }
+    chmod([kTLinkLicenseTrustCheckpointLock fileSystemRepresentation], 0666);
+    if (flock(lockFD, LOCK_EX) != 0) {
+        close(lockFD);
+        NSString *message = @"license_trust_checkpoint_lock_failed";
+        if (error) *error = message;
+        return TLinkTrustCheckpointResult(NO, @"lock_failed", message, @{});
+    }
+
+    NSString *checkpointError = nil;
+    BOOL checkpointExists =
+        [[NSFileManager defaultManager] fileExistsAtPath:kTLinkLicenseTrustCheckpoint];
+    NSDictionary *checkpoint =
+        TLinkReadVerifiedTrustCheckpoint(devicePublicKey, &checkpointError);
+    if (checkpointExists && checkpoint.count == 0) {
+        flock(lockFD, LOCK_UN);
+        close(lockFD);
+        NSString *message =
+            checkpointError ?: @"license_trust_checkpoint_invalid";
+        if (error) *error = message;
+        return TLinkTrustCheckpointResult(NO,
+                                          @"signature_invalid",
+                                          message,
+                                          @{});
+    }
+
+    NSTimeInterval issuedAt = [leasePayload[@"issued_at"] doubleValue];
+    NSTimeInterval maximumIssuedAt = [checkpoint[@"max_issued_at"] doubleValue];
+    NSTimeInterval lastWallTime = [checkpoint[@"last_wall_time"] doubleValue];
+    NSTimeInterval previousUptime = [checkpoint[@"system_uptime"] doubleValue];
+    NSTimeInterval currentUptime = [[NSProcessInfo processInfo] systemUptime];
+    if (issuedAt <= 0 ||
+        issuedAt > now + kTLinkLicenseClockSkewToleranceSeconds) {
+        flock(lockFD, LOCK_UN);
+        close(lockFD);
+        NSString *message = @"license_issued_at_invalid";
+        if (error) *error = message;
+        return TLinkTrustCheckpointResult(NO,
+                                          @"issued_at_invalid",
+                                          message,
+                                          checkpoint ?: @{});
+    }
+    if (maximumIssuedAt > 0 &&
+        issuedAt + kTLinkLicenseClockSkewToleranceSeconds < maximumIssuedAt) {
+        flock(lockFD, LOCK_UN);
+        close(lockFD);
+        NSString *message = @"license_lease_rollback_detected";
+        if (error) *error = message;
+        return TLinkTrustCheckpointResult(NO, @"lease_rollback", message, checkpoint);
+    }
+    if (lastWallTime > 0 &&
+        now + kTLinkLicenseClockRollbackToleranceSeconds < lastWallTime) {
+        flock(lockFD, LOCK_UN);
+        close(lockFD);
+        NSString *message = @"license_clock_rollback_detected";
+        if (error) *error = message;
+        return TLinkTrustCheckpointResult(NO, @"clock_rollback", message, checkpoint);
+    }
+    BOOL sameBoot = previousUptime > 0 &&
+        currentUptime + 1.0 >= previousUptime;
+    if (sameBoot && currentUptime >= previousUptime) {
+        NSTimeInterval expectedWallTime =
+            lastWallTime + (currentUptime - previousUptime);
+        if (lastWallTime > 0 &&
+            now + kTLinkLicenseClockRollbackToleranceSeconds < expectedWallTime) {
+            flock(lockFD, LOCK_UN);
+            close(lockFD);
+            NSString *message =
+                @"license_clock_rollback_detected_monotonic";
+            if (error) *error = message;
+            return TLinkTrustCheckpointResult(NO,
+                                              @"clock_rollback",
+                                              message,
+                                              checkpoint);
+        }
+    }
+
+    BOOL shouldWrite = checkpoint.count == 0 ||
+        issuedAt > maximumIssuedAt ||
+        now - lastWallTime >= 60.0 ||
+        !sameBoot;
+    NSMutableDictionary *advanced = [NSMutableDictionary dictionaryWithDictionary:@{
+        @"version": @1,
+        @"max_issued_at": @(MAX(maximumIssuedAt, issuedAt)),
+        @"last_wall_time": @(MAX(lastWallTime, now)),
+        @"system_uptime": @(currentUptime),
+        @"license_id": leasePayload[@"license_id"] ?: @"",
+        @"device_id": leasePayload[@"device_id"] ?: @"",
+        @"token_id": leasePayload[@"token_id"] ?: @"",
+        @"updated_at_ms": @((uint64_t)(now * 1000.0)),
+    }];
+    if (shouldWrite &&
+        !TLinkWriteSignedTrustCheckpoint(advanced, &checkpointError)) {
+        flock(lockFD, LOCK_UN);
+        close(lockFD);
+        NSString *message =
+            checkpointError ?: @"license_trust_checkpoint_write_failed";
+        if (error) *error = message;
+        return TLinkTrustCheckpointResult(NO, @"write_failed", message, advanced);
+    }
+
+    flock(lockFD, LOCK_UN);
+    close(lockFD);
+    return TLinkTrustCheckpointResult(YES,
+                                      checkpoint.count == 0
+                                          ? @"created"
+                                          : (shouldWrite ? @"advanced" : @"valid"),
+                                      @"",
+                                      shouldWrite ? advanced : checkpoint);
+}
+
+BOOL TLinkLicenseResetTrustCheckpoint(NSString **error)
+{
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    [[NSFileManager defaultManager] createDirectoryAtPath:kTLinkLicenseDirectory
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    int lockFD = open([kTLinkLicenseTrustCheckpointLock fileSystemRepresentation],
+                      O_CREAT | O_RDWR,
+                      0666);
+    if (lockFD < 0) {
+        if (error) *error = @"license_trust_checkpoint_lock_open_failed";
+        return NO;
+    }
+    chmod([kTLinkLicenseTrustCheckpointLock fileSystemRepresentation], 0666);
+    if (flock(lockFD, LOCK_EX) != 0) {
+        close(lockFD);
+        if (error) *error = @"license_trust_checkpoint_lock_failed";
+        return NO;
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL exists = [fm fileExistsAtPath:kTLinkLicenseTrustCheckpoint];
+    BOOL removed = !exists ||
+        [fm removeItemAtPath:kTLinkLicenseTrustCheckpoint error:nil];
+    flock(lockFD, LOCK_UN);
+    close(lockFD);
+    if (!removed && error) *error = @"license_trust_checkpoint_reset_failed";
+    return removed;
+#else
+    (void)error;
+    return YES;
+#endif
+}
+
 static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, NSString *error)
 {
     BOOL enforcement = TLinkLicenseConfiguredEnforcement(config);
@@ -542,6 +914,8 @@ static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, 
         @"device_key_proof": @NO,
         @"features": @[],
         @"clock_skew_tolerance_seconds": @(kTLinkLicenseClockSkewToleranceSeconds),
+        @"release_integrity": TLinkRootfullReleaseIntegrityDictionary(config),
+        @"anti_rollback": TLinkTrustCheckpointNotEvaluated(),
         @"recovery": [recovery isKindOfClass:[NSDictionary class]] ? recovery : @{},
         @"license_generation": @(TLinkLicenseGeneration()),
         @"last_checked_at_ms": @((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0)),
@@ -640,6 +1014,8 @@ static NSString *TLinkQuarantineCorruptLease(NSString *reason)
 NSDictionary *TLinkLicenseStatusDictionary(void)
 {
     NSDictionary *config = TLinkLicenseConfiguration();
+    NSDictionary *releaseIntegrity =
+        TLinkRootfullReleaseIntegrityDictionary(config);
     NSString *endpoint = [config[@"LicenseEndpoint"] isKindOfClass:[NSString class]] ? config[@"LicenseEndpoint"] : @"";
     NSString *x = [config[@"LicensePublicKeyX"] isKindOfClass:[NSString class]] ? config[@"LicensePublicKeyX"] : @"";
     NSString *y = [config[@"LicensePublicKeyY"] isKindOfClass:[NSString class]] ? config[@"LicensePublicKeyY"] : @"";
@@ -648,6 +1024,14 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         !TLinkLicenseConfigValueUsable(y)) {
         return TLinkLicenseFailure(config, @"not_configured", @"license_config_missing_endpoint_or_public_key");
     }
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    if (TLinkLicenseConfiguredEnforcement(config) &&
+        ![releaseIntegrity[@"valid"] boolValue]) {
+        return TLinkLicenseFailure(config,
+                                   @"release_integrity_failed",
+                                   @"license_release_integrity_failed");
+    }
+#endif
 
     NSData *leaseData = [NSData dataWithContentsOfFile:kTLinkLicenseLease];
     if (leaseData.length == 0) return TLinkLicenseFailure(config, @"not_activated", @"license_lease_missing");
@@ -742,6 +1126,28 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
                                               payload, lease, contractVersion);
     }
 
+    NSDictionary *antiRollback = TLinkTrustCheckpointNotEvaluated();
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    NSString *antiRollbackError = nil;
+    antiRollback = TLinkValidateAndAdvanceTrustCheckpoint(payload,
+                                                          devicePublicKey,
+                                                          now,
+                                                          &antiRollbackError);
+    if (![antiRollback[@"valid"] boolValue]) {
+        NSMutableDictionary *failure =
+            [TLinkLicenseFailureWithPayload(
+                config,
+                @"anti_rollback_failed",
+                antiRollbackError ?: @"license_anti_rollback_failed",
+                payload,
+                lease,
+                contractVersion) mutableCopy];
+        failure[@"anti_rollback"] = antiRollback;
+        failure[@"release_integrity"] = releaseIntegrity;
+        return failure;
+    }
+#endif
+
     NSArray *features = [payload[@"features"] isKindOfClass:[NSArray class]] ? payload[@"features"] : @[];
     BOOL enforcement = TLinkLicenseConfiguredEnforcement(config);
     NSString *state = expiresAt > 0 && now > expiresAt ? @"offline_grace" : @"valid";
@@ -772,6 +1178,8 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         @"license_expiration_mode": licenseExpiresAt > 0 ? @"fixed" : @"perpetual",
         @"features": features,
         @"clock_skew_tolerance_seconds": @(kTLinkLicenseClockSkewToleranceSeconds),
+        @"release_integrity": releaseIntegrity,
+        @"anti_rollback": antiRollback,
         @"recovery": @{},
         @"key_id": lease[@"key_id"] ?: @"",
         @"device_key_hash": expectedDeviceHash,

@@ -296,12 +296,86 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
     }
     NSData *data = [NSJSONSerialization dataWithJSONObject:lease options:0 error:error];
     if (!data) return NO;
+    NSData *previousLeaseData = [NSData dataWithContentsOfFile:TLinkLicenseLeasePath()];
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+    NSDictionary *previousStatus = TLinkLicenseStatusDictionary();
+    NSDictionary *previousAntiRollback =
+        [previousStatus[@"anti_rollback"] isKindOfClass:[NSDictionary class]]
+            ? previousStatus[@"anti_rollback"]
+            : @{};
+    NSTimeInterval previousIssuedAtFloor =
+        [previousAntiRollback[@"max_issued_at"] doubleValue];
+    NSData *previousCheckpointData =
+        [NSData dataWithContentsOfFile:TLinkLicenseTrustCheckpointPath()];
+#endif
     [[NSFileManager defaultManager] createDirectoryAtPath:TLinkLicenseDirectoryPath()
                               withIntermediateDirectories:YES
                                                attributes:nil
                                                     error:nil];
     BOOL saved = [data writeToFile:TLinkLicenseLeasePath() options:NSDataWritingAtomic error:error];
     if (saved) {
+#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
+        NSString *checkpointError = nil;
+        if (!TLinkLicenseResetTrustCheckpoint(&checkpointError)) {
+            if (previousLeaseData.length > 0) {
+                [previousLeaseData writeToFile:TLinkLicenseLeasePath()
+                                       options:NSDataWritingAtomic
+                                         error:nil];
+            } else {
+                [[NSFileManager defaultManager]
+                    removeItemAtPath:TLinkLicenseLeasePath()
+                               error:nil];
+            }
+            if (error) {
+                *error = [NSError errorWithDomain:@"TLinkLicense"
+                                             code:31
+                                         userInfo:@{
+                                             NSLocalizedDescriptionKey:
+                                                 checkpointError ?: @"license_trust_checkpoint_reset_failed"
+                                         }];
+            }
+            return NO;
+        }
+        TLinkLicenseInvalidateCache();
+        NSDictionary *candidateStatus = TLinkLicenseStatusDictionary();
+        NSTimeInterval candidateIssuedAt =
+            [candidateStatus[@"issued_at"] doubleValue];
+        BOOL candidateRolledBack = previousIssuedAtFloor > 0 &&
+            candidateIssuedAt + 60.0 < previousIssuedAtFloor;
+        if (![candidateStatus[@"licensed"] boolValue] || candidateRolledBack) {
+            if (previousLeaseData.length > 0) {
+                [previousLeaseData writeToFile:TLinkLicenseLeasePath()
+                                       options:NSDataWritingAtomic
+                                         error:nil];
+            } else {
+                [[NSFileManager defaultManager]
+                    removeItemAtPath:TLinkLicenseLeasePath()
+                               error:nil];
+            }
+            if (previousCheckpointData.length > 0) {
+                [previousCheckpointData
+                    writeToFile:TLinkLicenseTrustCheckpointPath()
+                        options:NSDataWritingAtomic
+                          error:nil];
+            } else {
+                [[NSFileManager defaultManager]
+                    removeItemAtPath:TLinkLicenseTrustCheckpointPath()
+                               error:nil];
+            }
+            TLinkLicenseInvalidateCache();
+            if (error) {
+                *error = [NSError errorWithDomain:@"TLinkLicense"
+                                             code:32
+                                         userInfo:@{
+                                             NSLocalizedDescriptionKey:
+                                                 candidateRolledBack
+                                                     ? @"license_candidate_rollback_detected"
+                                                     : (candidateStatus[@"error"] ?: @"license_candidate_verify_failed")
+                                         }];
+            }
+            return NO;
+        }
+#endif
         [[NSFileManager defaultManager] removeItemAtPath:kTLinkLicenseRecoveryDiagnosticsPath error:nil];
         TLinkLicenseAdvanceGeneration();
     }

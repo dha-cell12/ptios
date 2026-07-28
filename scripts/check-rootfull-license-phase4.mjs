@@ -77,7 +77,7 @@ assert.match(helperMakefile, /Security/);
 
 for (const [name, source] of [["daemon", socket], ["SpringBoard", task]]) {
   assert.match(source, /task_and_long_running_component_gate/);
-  assert.match(source, /(?:rootfull_license_phase"\]|licenseStatus\[@"phase"\])\s*=\s*@[45]/);
+  assert.match(source, /(?:rootfull_license_phase"\]|licenseStatus\[@"phase"\])\s*=\s*@[456]/);
   assert.match(source, /h264_gate_active/);
   assert.match(source, /script_heartbeat_active/);
   assert.match(source, /scheduler_launch_gate_active/);
@@ -85,10 +85,10 @@ for (const [name, source] of [["daemon", socket], ["SpringBoard", task]]) {
   assert.ok(source.length > 0, `${name} diagnostics missing`);
 }
 
-assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[45]<\/integer>/);
+assert.match(buildPlist, /<key>RootfullLicensePhase<\/key>\s*<integer>[456]<\/integer>/);
 assert.match(buildPlist, /task_and_long_running_component_gate/);
 assert.match(workflow, /check-rootfull-license-phase4\.mjs/);
-assert.match(workflow, /validate-rootfull-license-phase[45]-artifact\.mjs/);
+assert.match(workflow, /validate-rootfull-license-phase[456]-artifact\.mjs/);
 assert.match(deviceProbe, /license_phase=4/);
 assert.match(deviceProbe, /h264_heartbeat_interval_ms/);
 assert.match(deviceProbe, /script_heartbeat_active/);

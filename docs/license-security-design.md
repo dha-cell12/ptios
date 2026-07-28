@@ -19,11 +19,11 @@ Co che nay tang chi phi sao chep va crack thong thuong. No khong tao ra mot
 security boundary tuyet doi tren thiet bi ma nguoi tan cong co quyen root,
 co the attach debugger, hook ham, hoac patch binary.
 
-Pham vi enforcement day du hien tai la `stream-app` TrollStore. Rootfull Phase
-1 da link shared verifier; Phase 2 da them activation lifecycle/UI va dong bo
-generation voi daemon. Dispatcher, H264 va JS helper van chua duoc gate. Day
-van la mot khoang trong phai xu ly truoc khi license duoc coi la bao ve ca hai
-runtime.
+Pham vi enforcement hien tai bao gom ca `stream-app` TrollStore va rootfull.
+Rootfull Phase 6 da gate task, SpringBoard dispatcher, H264, script/helper,
+scheduler va UI; dong thoi them release-integrity fail-closed va checkpoint
+anti-rollback duoc ky bang khoa thiet bi. OLLVM va xac thuc client cho port mang
+van la hardening rieng, khong phai enforcement parity con thieu.
 
 ## 2. Thanh phan
 
@@ -143,20 +143,18 @@ nhung van co the bi vo hieu hoa bang binary patch.
 
 ### P0 - Can xu ly truoc production
 
-#### 6.0 Rootfull chua co enforcement parity
+#### 6.0 Rootfull enforcement parity - da xu ly qua Phase 6
 
-Script API da duoc dong bo dan, nhung license gate chua duoc lap lai tai task
-server, JS helper va privileged execution cua rootfull. Neu phat hanh cung goi,
-nguoi dung co the chuyen sang backend khong gate.
+Rootfull da dung shared signed-lease verifier, explicit task policy, gate tai
+task server va SpringBoard, heartbeat cho H264/script/helper, feature-aware UI,
+release coherence va signed anti-rollback checkpoint.
 
-Xu ly:
+Kiem tra con bat buoc truoc release:
 
-- Link shared verifier vao daemon/app/helper rootfull.
-- Dung cung task-feature policy va response `license_required`.
-- Gate tai privileged implementation, khong chi tai app UI.
-- Them rootfull vao cung tamper/expiry/revoke regression matrix.
-- Chi ap dung OLLVM sau khi gate rootfull da dung; obfuscate mot check UI don le
-  khong mang lai gia tri bao mat.
+- Chay regression valid/missing/tampered/device mismatch/feature restricted.
+- Giu 24/72-hour soak evidence cua artifact enforced thuc te.
+- Xac nhan revoke dang chay dung H264/script trong heartbeat da cong bo.
+- Chi ap dung OLLVM sau khi baseline Phase 6 tren thiet bi da on dinh.
 
 #### 6.1 Lo signing key hoac admin token
 
@@ -324,7 +322,7 @@ enforcement; khong dua vao viec giu bi mat thuat toan.
 | `stream-app/app/StreamSupervisor.mm` | Version/path replacement | Ngan daemon cu bo qua policy moi |
 | `.github/workflows/stream-app.yml` | Ep `TLINK_LICENSE_FORCE_ENFORCEMENT` | Bao dam release khong build observe |
 
-### Rootfull - Can tich hop verifier truoc khi OLLVM
+### Rootfull - Da tich hop verifier, san sang cho OLLVM chon loc
 
 | File | Khu vuc can gate/harden |
 |---|---|

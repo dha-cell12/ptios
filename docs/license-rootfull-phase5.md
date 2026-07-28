@@ -108,4 +108,5 @@ signing material.
 - Average values include generation-marker reads and lock contention, but do not
   include network lease refresh.
 - Runtime instrumentation is diagnostic, not anti-tamper protection. Phase 6
-  should cover release hardening, rollout and tamper-response policy.
+  now covers release coherence, signed anti-rollback state and rollout evidence;
+  see `docs/license-rootfull-phase6.md`.
