@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <Vision/Vision.h>
+#import <CoreML/CoreML.h>
 #import <ImageIO/ImageIO.h>
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <Photos/Photos.h>
@@ -4191,6 +4192,48 @@ static VNRequestTextRecognitionLevel TLinkVisionOCRLevelFromValue(int value)
     return value == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
 }
 
+static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSString **error)
+{
+    if (!request) {
+        if (error) *error = @"vision_cpu_request_missing";
+        return NO;
+    }
+
+    if (@available(iOS 17.0, *)) {
+        NSError *deviceError = nil;
+        NSDictionary *supportedDevices = [request supportedComputeStageDevicesAndReturnError:&deviceError];
+        if (supportedDevices.count == 0) {
+            if (error) {
+                *error = [NSString stringWithFormat:@"vision_cpu_device_query_failed %@",
+                                                    deviceError.localizedDescription ?: @"no_compute_stages"];
+            }
+            return NO;
+        }
+
+        for (VNComputeStage stage in supportedDevices) {
+            NSArray *devices = supportedDevices[stage];
+            id<MLComputeDeviceProtocol> cpuDevice = nil;
+            for (id<MLComputeDeviceProtocol> device in devices) {
+                if ([device isKindOfClass:[MLCPUComputeDevice class]]) {
+                    cpuDevice = device;
+                    break;
+                }
+            }
+            if (!cpuDevice) {
+                if (error) {
+                    *error = [NSString stringWithFormat:@"vision_cpu_unavailable_for_stage %@", stage];
+                }
+                return NO;
+            }
+            [request setComputeDevice:cpuDevice forComputeStage:stage];
+        }
+        return YES;
+    }
+
+    request.usesCPUOnly = YES;
+    return YES;
+}
+
 static NSString *TLinkBase64String(NSString *value);
 
 static BOOL TLinkWriteAllToFd(int fd, const void *bytes, size_t length)
@@ -4537,7 +4580,14 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
     }
 
     if (parts.count < 8) {
-        return TLinkError(@"ocr format: 1;;x,,y,,w,,h;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path");
+        return TLinkError(@"ocr format: 1;;x,,y,,w,,h;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path[;;profile]");
+    }
+
+    NSString *profile = parts.count >= 9 && [parts[8] length] > 0
+        ? [parts[8] lowercaseString]
+        : @"app_cpu";
+    if (![profile isEqualToString:@"app_cpu"] && ![profile isEqualToString:@"worker_cpu"]) {
+        return TLinkError([NSString stringWithFormat:@"ocr_bad_profile %@ expected=app_cpu_or_worker_cpu", profile]);
     }
 
     TLinkSetOCRWorkerPhase("vision_parse_region");
@@ -4581,11 +4631,15 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
         return TLinkError(@"ocr_png_encode_failed");
     }
 
-    int bridgeLevelValue = [parts[4] intValue];
-    TLinkSetOCRWorkerPhase("vision_app_side_bridge");
-    return TLinkRunAppSideVisionOCR(visionImageData, region, bridgeLevelValue);
+    if ([profile isEqualToString:@"app_cpu"]) {
+        int bridgeLevelValue = [parts[4] intValue];
+        TLinkSetOCRWorkerPhase("vision_profile_app_cpu");
+        POCLogf("ocr: task27 profile=app_cpu route=app_6011 cpu_only=1");
+        return TLinkRunAppSideVisionOCR(visionImageData, region, bridgeLevelValue);
+    }
 
-    TLinkSetOCRWorkerPhase("vision_request_setup");
+    TLinkSetOCRWorkerPhase("vision_profile_worker_cpu");
+    POCLogf("ocr: task27 profile=worker_cpu route=isolated_worker cpu_only=1");
     int levelValue = [parts[4] intValue];
     VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
         // Results are read after performRequests returns.
@@ -4600,6 +4654,13 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
     NSArray<NSString *> *languages = TLinkSplitNonEmpty(parts[5], @",,");
     if (languages.count > 0) request.recognitionLanguages = languages;
     request.usesLanguageCorrection = [parts[6] intValue] != 0;
+
+    NSString *cpuError = nil;
+    TLinkSetOCRWorkerPhase("vision_cpu_configure");
+    if (!TLinkConfigureVisionRequestCPUOnly(request, &cpuError)) {
+        return TLinkError([NSString stringWithFormat:@"ocr_cpu_profile_failed profile=worker_cpu %@",
+                                                    cpuError ?: @"unknown"]);
+    }
 
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithData:visionImageData
                                                                          options:@{}];
@@ -5647,7 +5708,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrInputMode": @"png_data",
         @"ocrWorkerIsolation": @(YES),
         @"ocrWorkerBreadcrumbs": @(YES),
-        @"ocrVisionProfile": @"app_side_bridge_foreground",
+        @"ocrVisionState": @"experimental",
+        @"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in",
+        @"ocrVisionCPUOnly": @(YES),
+        @"ocrVisionFallback": @"none",
         @"ocrAppSideBridge": @(YES),
         @"ocrAppRGBBridge": @(YES),
         @"ocrAppAccurateRetry": @(YES),
@@ -7895,13 +7959,14 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingFormat:@" licenseRecovery=%@ licenseDeviceRepair=public_key_from_keychain serviceRecovery=replace_old_daemon_v21",
             licenseRecovery.count > 0 ? (licenseRecovery[@"state"] ?: @"required") : @"ready"];
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
-        // P0 OCR baseline fields are additive so legacy capability consumers keep
-        // seeing the existing tokens while newer clients can distinguish the
-        // stable Tesseract path from the deferred Vision implementation.
-        cap = [cap stringByAppendingString:@" visionOCRState=deferred"
-                                               @" visionOCRProfiles=app_bridge_experimental,worker_direct_disabled"
-                                               @" visionOCRRoute=isolated_worker_to_app_6011"
+        // P1 keeps the stable Tesseract default and exposes CPU-only Vision as
+        // an experimental canary without changing legacy task 27 responses.
+        cap = [cap stringByAppendingString:@" visionOCRState=experimental"
+                                               @" visionOCRProfiles=app_cpu_default,worker_cpu_opt_in"
+                                               @" visionOCRRoute=profile_selected_worker_or_app_6011"
                                                @" visionOCRFallback=none"
+                                               @" visionOCRCPUOnly=1"
+                                               @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"
                                                @" ocrEngineSelector=none"
                                                @" ocrProtocolVersion=legacy_v1"

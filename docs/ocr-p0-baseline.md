@@ -4,6 +4,9 @@ This document freezes the state before Vision OCR recovery work begins. P0
 does not enable CPU-only Vision, add an engine selector, change entitlements,
 or change OCR result formats.
 
+This is a historical baseline. The current experimental implementation is
+documented in `docs/ocr-p1-cpu-only.md`; P1 does not rewrite this evidence.
+
 ## Current Runtime Baseline
 
 ### Rootfull

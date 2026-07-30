@@ -151,12 +151,14 @@ jobs:
           test -f scripts/Collect-TLinkOCRBaseline.ps1
           test -f docs/license-phase6-release-gate.md
           test -f docs/ocr-p0-baseline.md
+          test -f docs/ocr-p1-cpu-only.md
           node --check license-worker/src/index.js
           node --check license-worker/scripts/generate-keys.mjs
           node --test license-worker/test/worker.test.mjs
           node scripts/check-license-task-policy.mjs
           node scripts/check-license-recovery.mjs
           node scripts/check-ocr-p0-baseline.mjs
+          node scripts/check-ocr-p1-cpu-only.mjs
           node --check scripts/validate-license-artifact.mjs
           node scripts/check-license-release-readiness.mjs
           test -f stream-app/app/TLinkSocketClient.mm
@@ -185,7 +187,7 @@ jobs:
           grep -q 'License Phase 6 Release Gate' docs/license-phase6-release-gate.md
           grep -q 'ROOTFULL BLOCKED' docs/license-phase6-release-gate.md
           grep -q 'task `72` clears safe app data containers' docs/trollstore-runtime-status.md
-          grep -q 'Vision OCR remains deferred' docs/trollstore-runtime-status.md
+          grep -q 'Vision OCR CPU-only remains experimental' docs/trollstore-runtime-status.md
           grep -q 'refresh_registered' docs/trollstore-runtime-status.md
           grep -q 'privhelper' stream-app/Makefile
           grep -q 'clipboardd' stream-app/Makefile
@@ -515,7 +517,7 @@ jobs:
           grep -q 'VNRequestTextRecognitionLevelAccurate' stream-app/app/AppDelegate.mm
           grep -q 'initWithCGImage:image' stream-app/app/AppDelegate.mm
           grep -q 'app_ocr_png_missing path=' stream-app/app/AppDelegate.mm
-          grep -q 'Vision ImageIO Photos' stream-app/app/Makefile
+          grep -q 'Vision CoreML ImageIO Photos' stream-app/app/Makefile
           grep -q 'ocrWorkerBreadcrumbs' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkOCRWorkerSignalHandler' stream-app/streamd/POCSocketServer.mm
           grep -q 'phase=' stream-app/streamd/POCSocketServer.mm

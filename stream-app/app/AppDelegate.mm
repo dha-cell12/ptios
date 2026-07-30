@@ -2,6 +2,7 @@
 #import "BackgroundServiceScheduler.h"
 #import <QuartzCore/QuartzCore.h>
 #import <Vision/Vision.h>
+#import <CoreML/CoreML.h>
 #import <ImageIO/ImageIO.h>
 #import <UserNotifications/UserNotifications.h>
 #include <arpa/inet.h>
@@ -28,6 +29,59 @@
 
 static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/TLinkauto/runtime/app_foreground_heartbeat";
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
+static NSString *const kTLinkVisionCPUErrorDomain = @"com.tlinkauto.vision.cpu";
+
+static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **outError)
+{
+    if (!request) {
+        if (outError) {
+            *outError = [NSError errorWithDomain:kTLinkVisionCPUErrorDomain
+                                            code:1
+                                        userInfo:@{NSLocalizedDescriptionKey: @"vision_cpu_request_missing"}];
+        }
+        return NO;
+    }
+
+    if (@available(iOS 17.0, *)) {
+        NSError *deviceError = nil;
+        NSDictionary *supportedDevices = [request supportedComputeStageDevicesAndReturnError:&deviceError];
+        if (supportedDevices.count == 0) {
+            if (outError) {
+                NSString *detail = deviceError.localizedDescription ?: @"no_compute_stages";
+                *outError = [NSError errorWithDomain:kTLinkVisionCPUErrorDomain
+                                                code:2
+                                            userInfo:@{NSLocalizedDescriptionKey:
+                                                           [NSString stringWithFormat:@"vision_cpu_device_query_failed %@", detail]}];
+            }
+            return NO;
+        }
+
+        for (VNComputeStage stage in supportedDevices) {
+            NSArray *devices = supportedDevices[stage];
+            id<MLComputeDeviceProtocol> cpuDevice = nil;
+            for (id<MLComputeDeviceProtocol> device in devices) {
+                if ([device isKindOfClass:[MLCPUComputeDevice class]]) {
+                    cpuDevice = device;
+                    break;
+                }
+            }
+            if (!cpuDevice) {
+                if (outError) {
+                    *outError = [NSError errorWithDomain:kTLinkVisionCPUErrorDomain
+                                                    code:3
+                                                userInfo:@{NSLocalizedDescriptionKey:
+                                                               [NSString stringWithFormat:@"vision_cpu_unavailable_for_stage %@", stage]}];
+                }
+                return NO;
+            }
+            [request setComputeDevice:cpuDevice forComputeStage:stage];
+        }
+        return YES;
+    }
+
+    request.usesCPUOnly = YES;
+    return YES;
+}
 
 @interface SCAppDelegate ()
 @property(nonatomic, strong) NSTimer *visualFeedbackTimer;
@@ -430,6 +484,13 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
     }];
     request.recognitionLevel = level;
     request.usesLanguageCorrection = NO;
+
+    NSError *cpuError = nil;
+    if (!TLinkConfigureVisionRequestCPUOnly(request, &cpuError)) {
+        if (outError) *outError = cpuError;
+        return NO;
+    }
+    NSLog(@"[StreamControl] Vision OCR profile=app_cpu CPU-only request configured");
 
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:image
                                                                         orientation:kCGImagePropertyOrientationUp

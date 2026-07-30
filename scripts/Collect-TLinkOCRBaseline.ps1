@@ -21,6 +21,8 @@ param(
     [string]$Notes = "",
     [string]$DeviceLogPath = "",
     [switch]$RunVision,
+    [ValidateSet("app_cpu", "worker_cpu")]
+    [string]$VisionProfile = "app_cpu",
     [switch]$SkipTesseract,
     [string]$OutputDirectory = ""
 )
@@ -124,6 +126,7 @@ $metadata = [ordered]@{
         height = $RegionHeight
     }
     vision_opt_in = [bool]$RunVision
+    vision_profile = $VisionProfile
     tesseract_enabled = -not [bool]$SkipTesseract
 }
 
@@ -159,13 +162,13 @@ if (-not $SkipTesseract) {
 
 if ($RunVision) {
     $rect = "$RegionX,,$RegionY,,$RegionWidth,,$RegionHeight"
-    $visionTask = "271;;$rect;;;;0.03125;;$RecognitionLevel;;$VisionLanguages;;0;;"
+    $visionTask = "271;;$rect;;;;0.03125;;$RecognitionLevel;;$VisionLanguages;;0;;;;$VisionProfile"
     $probes.task27_vision = Invoke-TLinkTask -Task $visionTask
 }
 else {
     $probes.task27_vision = [ordered]@{
         skipped = $true
-        reason = "Vision is deferred and can crash. Re-run with -RunVision on a disposable/test device."
+        reason = "Vision CPU-only is experimental. Re-run with -RunVision on a disposable/test device."
     }
 }
 $probes.task97_postflight = Invoke-TLinkTask -Task "97"
@@ -193,5 +196,5 @@ if ($null -ne $copiedLog) {
     Write-Host "Device log copied to $copiedLog"
 }
 if (-not $RunVision) {
-    Write-Host "Vision probe was skipped. Use -RunVision only on a test device when collecting the known failure."
+    Write-Host "Vision probe was skipped. Use -RunVision -VisionProfile app_cpu or worker_cpu only on a test device."
 }

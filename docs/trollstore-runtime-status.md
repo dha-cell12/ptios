@@ -38,7 +38,7 @@ TrollStore runtime.
 
 - Keychain clearing remains deferred because arbitrary target keychain access groups require separate entitlement handling.
 - VPN control remains query-only unless a profile/private entitlement path is added.
-- Vision OCR remains deferred for the `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract is the stable OCR path. The P0 baseline keeps task `27/91` byte-compatible and makes task `97` report `visionOCRState=deferred`, the current worker-to-app-6011 route, absence of fallback/selector, and Tesseract as the default engine. See `docs/ocr-p0-baseline.md`.
+- Vision OCR CPU-only remains experimental for the former `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract is still the stable/default OCR path. P1 keeps task `27/91` responses byte-compatible, defaults legacy task `27` requests to the `app_cpu` bridge, and exposes `worker_cpu` only as an explicit canary. Task `97` reports both profiles, CPU-only enforcement, no fallback/selector, and `visionOCRState=experimental`. See `docs/ocr-p1-cpu-only.md`.
 - Activator/Siri equivalents remain `limited_on_trollstore`.
 - Full SpringBoard overlay behavior is replaced by foreground app overlays plus background CFUserNotification system notices/alerts. The dialog result is not bridged back to the original synchronous task, and the touch indicator remains foreground-only.
 - True immediate startup at boot remains unavailable on TrollStore. Background task execution is controlled by iOS, may be delayed, requires the app to have been opened once, and does not replace a platformized LaunchDaemon. Force-quitting StreamControl can prevent iOS background relaunch until the app is opened again.

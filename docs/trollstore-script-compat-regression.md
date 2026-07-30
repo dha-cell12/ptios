@@ -126,7 +126,8 @@ was ignored and the foreground fallback ran.
 
 ## Known Limits
 
-- Vision OCR remains deferred; task `91` Tesseract is the stable OCR path.
+- Vision OCR CPU-only is an experimental `app_cpu`/`worker_cpu` canary; task
+  `91` Tesseract remains the stable/default OCR path.
 - OpenCV is not required for the MVP; image matching currently uses native RGBA.
 - Keyboard API names are exposed for rootfull script compatibility. The v3
   UIDaemon failed because it lacked the private background Pasteboard entitlement,

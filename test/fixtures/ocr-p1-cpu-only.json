@@ -1,0 +1,26 @@
+{
+  "phase": "P1",
+  "runtime": "trollstore",
+  "task": 27,
+  "profileFieldIndex": 8,
+  "defaultProfile": "app_cpu",
+  "allowedProfiles": [
+    "app_cpu",
+    "worker_cpu"
+  ],
+  "legacyRequest": "271;;0,,0,,640,,320;;;;0.03125;;0;;en-US;;0;;\r\n",
+  "appCPURequest": "271;;0,,0,,640,,320;;;;0.03125;;0;;en-US;;0;;;;app_cpu\r\n",
+  "workerCPURequest": "271;;0,,0,,640,,320;;;;0.03125;;0;;en-US;;0;;;;worker_cpu\r\n",
+  "requiredCapabilityFields": {
+    "visionOCRState": "experimental",
+    "visionOCRProfiles": "app_cpu_default,worker_cpu_opt_in",
+    "visionOCRRoute": "profile_selected_worker_or_app_6011",
+    "visionOCRFallback": "none",
+    "visionOCRCPUOnly": "1",
+    "visionOCRDefaultProfile": "app_cpu",
+    "ocrDefaultEngine": "tesseract",
+    "ocrEngineSelector": "none",
+    "ocrProtocolVersion": "legacy_v1",
+    "ocrLegacyTasks": "27,91"
+  }
+}

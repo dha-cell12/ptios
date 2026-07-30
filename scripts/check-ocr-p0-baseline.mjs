@@ -89,14 +89,13 @@ const [
 
 assert.match(trollServer, /if \(taskType == 27\)[\s\S]*?TLinkHandleVisionOCR\(body\)/);
 assert.match(trollServer, /if \(taskType == 91\)[\s\S]*?TLinkHandleTesseractOCRCompat\(body\)/);
-assert.match(trollServer, /return TLinkRunAppSideVisionOCR\(visionImageData, region, bridgeLevelValue\);/);
 assert.match(trollServer, /ocr_worker_timeout timeout_ms=20000/);
 assert.match(trollServer, /return TLinkSuccess\(\[NSString stringWithFormat:@"%@;;%.2f;;%llu;;%.3f;;%.3f;;%.3f;;tesseract_init_source=%@"/);
 
 for (const [key, value] of Object.entries(fixture.task97.trollstoreRequiredAdditiveFields)) {
   assert.ok(
-    trollServer.includes(`${key}=${value}`),
-    `TrollStore task 97 is missing the P0 OCR baseline field ${key}=${value}`,
+    baselineDoc.includes(`${key}=${value}`),
+    `the historical P0 baseline document is missing ${key}=${value}`,
   );
 }
 for (const [key, value] of Object.entries(fixture.task97.rootfullRequiredAdditiveFields)) {
@@ -118,4 +117,4 @@ assert.match(collector, /\$probes\.task97_postflight = Invoke-TLinkTask -Task "9
 assert.match(baselineDoc, /task `27` and task `91` remain byte-compatible/i);
 assert.match(baselineDoc, /-RunVision/);
 
-console.log("OCR P0 baseline OK: legacy task 27/91 fixtures frozen; both task 97 runtimes report explicit OCR state");
+console.log("OCR P0 baseline OK: legacy task 27/91 fixtures and historical capability baseline frozen");

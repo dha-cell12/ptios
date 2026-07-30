@@ -11,7 +11,7 @@ include $(THEOS)/makefiles/common.mk
 TOOL_NAME = streamd
 
 streamd_FILES = main.mm TouchInjector.mm POCSocketServer.mm RemoteBridgeAgent.mm HIDInjectCore.mm WireProtocolParser.mm CaptureCore.mm StreamCaptureProbe.mm StreamCaptureSource.mm H264Stream.mm ../../shared/TLinkJSFileHandle.mm ../../shared/TLinkLicenseVerifier.mm
-streamd_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics QuartzCore IOSurface Security VideoToolbox CoreVideo CoreMedia Vision ImageIO JavaScriptCore Accelerate Photos
+streamd_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics QuartzCore IOSurface Security VideoToolbox CoreVideo CoreMedia Vision CoreML ImageIO JavaScriptCore Accelerate Photos
 streamd_PRIVATE_FRAMEWORKS = IOKit
 streamd_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -Iheaders
 streamd_CCFLAGS = -std=c++14
