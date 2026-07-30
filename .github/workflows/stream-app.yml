@@ -357,7 +357,10 @@ jobs:
           grep -Fq 'device[@"openFile"]' tlinkauto-jsd/TLinkJSHelperServer.mm
           grep -q '../shared/TLinkJSFileHandle.mm' tlinkauto-jsd/Makefile
           grep -q 'fileHandleAPI' tlinkauto-jsd/TLinkJSHelperServer.mm
-          grep -q 'kTLinkJSHelperVersion = @"1.1.0"' tlinkauto-jsd/TLinkJSHelperServer.mm
+          grep -q 'kTLinkJSHelperVersion = @"1.2.0"' tlinkauto-jsd/TLinkJSHelperServer.mm || {
+            echo "Sanity check failed: workflow expects JS helper version 1.2.0."
+            exit 1
+          }
           grep -Fq 'openFile:(NSString *)path mode:(NSString *)mode' pccontrol/jsruntime/TLinkautoDeviceBridge.h
           grep -Fq '../shared/TLinkJSFileHandle.mm' pccontrol/Makefile
           grep -q 'resolvedOpenFilePath' pccontrol/TLinkautoJSRuntime.mm
