@@ -548,12 +548,16 @@ static NSDictionary *TLinkRootfullReleaseIntegrityDictionary(NSDictionary *confi
     NSString *rootfullBuildMode =
         [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
     NSString *verifierBuildMode = TLinkLicenseBuildMode() ?: @"";
-    NSString *expectedRootfullBuildMode = compileEnforced
-        ? @"rootfull_enforced_compile_time_v1"
-        : @"rootfull_observe_compile_time_v1";
-    NSString *expectedVerifierBuildMode = compileEnforced
-        ? @"enforced_compile_time_v1"
-        : @"observe_compile_time_v1";
+#if defined(TLINK_LICENSE_FORCE_ENFORCEMENT) && TLINK_LICENSE_FORCE_ENFORCEMENT
+    // Select the expected markers at preprocessing time. Keeping both marker
+    // literals in a runtime ternary makes an observe binary contain the
+    // enforced marker (and vice versa), defeating artifact mode validation.
+    NSString *expectedRootfullBuildMode = @"rootfull_enforced_compile_time_v1";
+    NSString *expectedVerifierBuildMode = @"enforced_compile_time_v1";
+#else
+    NSString *expectedRootfullBuildMode = @"rootfull_observe_compile_time_v1";
+    NSString *expectedVerifierBuildMode = @"observe_compile_time_v1";
+#endif
     BOOL metadataPresent = [metadata isKindOfClass:[NSDictionary class]];
     BOOL phaseMatches = [metadata[@"RootfullLicensePhase"] integerValue] == 6;
     BOOL contractMatches = [metadata[@"LicenseContractVersion"] integerValue] == 1;

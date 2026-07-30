@@ -50,6 +50,16 @@ assert.match(verifier, /TLinkRootfullLicenseBuildIsEnforced/);
 assert.match(verifier, /TLinkValidateAndAdvanceTrustCheckpoint/);
 assert.match(verifier, /TLinkLicenseResetTrustCheckpoint/);
 assert.match(verifier, /TLINK_LICENSE_ROOTFULL_RUNTIME/);
+assert.match(
+  verifier,
+  /#if defined\(TLINK_LICENSE_FORCE_ENFORCEMENT\) && TLINK_LICENSE_FORCE_ENFORCEMENT[\s\S]*expectedRootfullBuildMode = @"rootfull_enforced_compile_time_v1";[\s\S]*#else[\s\S]*expectedRootfullBuildMode = @"rootfull_observe_compile_time_v1";[\s\S]*#endif/,
+  "release-integrity marker expectations must be selected at compile time",
+);
+assert.doesNotMatch(
+  verifier,
+  /expectedRootfullBuildMode\s*=\s*compileEnforced\s*\?/,
+  "runtime marker selection embeds both mutually exclusive rootfull markers",
+);
 assert.match(licenseManager, /previousCheckpointData/);
 assert.match(licenseManager, /license_candidate_rollback_detected/);
 assert.match(licenseManager, /TLinkLicenseResetTrustCheckpoint/);
