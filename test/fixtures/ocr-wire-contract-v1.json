@@ -1,0 +1,68 @@
+{
+  "contractVersion": 1,
+  "lineEnding": "\r\n",
+  "delimiter": ";;",
+  "task27": {
+    "description": "Legacy Vision OCR observations. Every success payload item is text,,x,,y,,width,,height.",
+    "recognizeRequest": "271;;0,,0,,320,,160;;;;0.03125;;0;;en-US;;0;;\r\n",
+    "recognizeSuccess": "0;;Hello,,10,,20,,100,,30;;World,,120,,20,,90,,30\r\n",
+    "recognizeExpected": [
+      {
+        "text": "Hello",
+        "x": "10",
+        "y": "20",
+        "width": "100",
+        "height": "30"
+      },
+      {
+        "text": "World",
+        "x": "120",
+        "y": "20",
+        "width": "90",
+        "height": "30"
+      }
+    ],
+    "languagesRequest": "272;;0\r\n",
+    "languagesSuccess": "0;;en-US;;fr-FR;;de-DE\r\n",
+    "error": "-1;;Error happened while performing ocr. Error: fixture\r\n"
+  },
+  "task91": {
+    "description": "Legacy Tesseract OCR response: base64_text, confidence, frame_age_ms, ocr_ms, preprocess_ms, total_ms, init_source.",
+    "languagesRequest": "91check_langs\r\n",
+    "languagesSuccess": "0;;check_langs;;ZW5nLHZpZQ==\r\n",
+    "ocrRequest": "911;;0;;0;;320;;160;;eng;;1;;6;;;;2;;0;;pixel;;3000\r\n",
+    "ocrSuccess": "0;;SGVsbG8gV29ybGQ=;;95.50;;12;;40.250;;3.500;;45.125;;tesseract_init_source=path:/var/mobile/Library/TLinkauto/tessdata\r\n",
+    "ocrExpected": {
+      "text": "Hello World",
+      "confidence": 95.5,
+      "frameAgeMs": 12,
+      "ocrMs": 40.25,
+      "preprocessMs": 3.5,
+      "totalMs": 45.125,
+      "initSource": "tesseract_init_source=path:/var/mobile/Library/TLinkauto/tessdata"
+    },
+    "error": "-1;;tesseract_init_failed lang=eng fixture\r\n"
+  },
+  "task97": {
+    "trollstoreRequiredAdditiveFields": {
+      "visionOCRState": "deferred",
+      "visionOCRProfiles": "app_bridge_experimental,worker_direct_disabled",
+      "visionOCRRoute": "isolated_worker_to_app_6011",
+      "visionOCRFallback": "none",
+      "ocrDefaultEngine": "tesseract",
+      "ocrEngineSelector": "none",
+      "ocrProtocolVersion": "legacy_v1",
+      "ocrLegacyTasks": "27,91"
+    },
+    "rootfullRequiredAdditiveFields": {
+      "visionOCRState": "ready",
+      "visionOCRProfiles": "springboard_default",
+      "visionOCRRoute": "daemon_to_springboard",
+      "visionOCRFallback": "none",
+      "ocrDefaultEngine": "tesseract",
+      "ocrEngineSelector": "none",
+      "ocrProtocolVersion": "legacy_v1",
+      "ocrLegacyTasks": "27,91"
+    }
+  }
+}

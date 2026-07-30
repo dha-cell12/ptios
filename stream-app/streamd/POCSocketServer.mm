@@ -7895,6 +7895,17 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingFormat:@" licenseRecovery=%@ licenseDeviceRepair=public_key_from_keychain serviceRecovery=replace_old_daemon_v21",
             licenseRecovery.count > 0 ? (licenseRecovery[@"state"] ?: @"required") : @"ready"];
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
+        // P0 OCR baseline fields are additive so legacy capability consumers keep
+        // seeing the existing tokens while newer clients can distinguish the
+        // stable Tesseract path from the deferred Vision implementation.
+        cap = [cap stringByAppendingString:@" visionOCRState=deferred"
+                                               @" visionOCRProfiles=app_bridge_experimental,worker_direct_disabled"
+                                               @" visionOCRRoute=isolated_worker_to_app_6011"
+                                               @" visionOCRFallback=none"
+                                               @" ocrDefaultEngine=tesseract"
+                                               @" ocrEngineSelector=none"
+                                               @" ocrProtocolVersion=legacy_v1"
+                                               @" ocrLegacyTasks=27,91"];
         POCLogf("task-server: task97 capability report");
         return TLinkSuccess(cap);
     }

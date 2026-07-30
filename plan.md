@@ -189,6 +189,7 @@ Known unresolved issues / deferred investigation:
 - Current stable OCR path is task 91 using true static Tesseract libraries plus `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.
 - Task 91 now reports Tesseract init source so tests can distinguish normal path init from memory fallback: response suffix `tesseract_init_source=path:...` or `tesseract_init_source=memory:...`; task 60 also exposes `tesseractInitSource`, `tesseractInitAttempts`, and `tesseractInitAtMs`.
 - Revisit Vision later with a dedicated sample app/device matrix, pixel buffer format investigation, and possibly a pure CGImage/VNImageRequestHandler path that avoids the failing `420f` conversion.
+- Vision OCR recovery P0 is now frozen in `docs/ocr-p0-baseline.md`: legacy task `27/91` fixtures are enforced in CI, task `97` additively reports the deferred Vision route and Tesseract default, and `scripts/Collect-TLinkOCRBaseline.ps1` collects reproducible device evidence. P0 does not enable Vision CPU-only or change the OCR wire format.
 - Clear app data now has a TrollStore extension task: `72<bundle.id>`. It runs through privhelper, refuses protected bundles, and only clears safe app data containers under `/var/mobile/Containers/Data/Application/`. Keychain clearing remains deferred.
 
 ## License MVP

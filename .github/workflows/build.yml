@@ -35,6 +35,7 @@ jobs:
           node scripts/check-rootfull-license-phase4.mjs
           node scripts/check-rootfull-license-phase5.mjs
           node scripts/check-rootfull-license-phase6.mjs
+          node scripts/check-ocr-p0-baseline.mjs
 
       - name: Validate public license build inputs
         run: |
