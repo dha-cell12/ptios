@@ -5798,7 +5798,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"vpnBroker": @"not_implemented",
         @"vpnProfileScope": @"tlink_owned_only",
         @"vpnConfigurationTransport": @"local_ui_keychain_only",
-        @"vpnCredentialsOverTask59": @NO,
+        @"vpnCredentialsOverTask59": @(NO),
         @"frontmost": @(YES),
         @"clearData": @(YES),
         @"clearDataMode": @"privhelper_best_effort_data_container_only",

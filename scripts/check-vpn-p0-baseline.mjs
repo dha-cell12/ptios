@@ -103,7 +103,7 @@ const rootfullTask60Fields = {
   broker: '@"not_implemented"',
   profile_scope: '@"tlink_owned_only"',
   configuration_transport: '@"local_ui_keychain_only"',
-  credentials_over_task59: "@NO",
+  credentials_over_task59: "@(NO)",
 };
 for (const [key, value] of Object.entries(rootfullTask60Fields)) {
   assert.ok(
@@ -121,7 +121,7 @@ const trollTask60Fields = {
   vpnBroker: '@"not_implemented"',
   vpnProfileScope: '@"tlink_owned_only"',
   vpnConfigurationTransport: '@"local_ui_keychain_only"',
-  vpnCredentialsOverTask59: "@NO",
+  vpnCredentialsOverTask59: "@(NO)",
 };
 for (const [key, value] of Object.entries(trollTask60Fields)) {
   assert.ok(
