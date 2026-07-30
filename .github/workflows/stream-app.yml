@@ -430,7 +430,7 @@ jobs:
           grep -q 'taskType == 72' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 90' stream-app/streamd/POCSocketServer.mm
           grep -q 'taskType == 91' stream-app/streamd/POCSocketServer.mm
-          grep -q 'Vision ImageIO JavaScriptCore Accelerate Photos' stream-app/streamd/Makefile
+          grep -q 'Vision CoreML ImageIO JavaScriptCore Accelerate Photos' stream-app/streamd/Makefile
           grep -q '"tlinkauto"' stream-app/streamd/POCSocketServer.mm
           grep -q '"visionOCR"' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptJS' stream-app/streamd/POCSocketServer.mm
