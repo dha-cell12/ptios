@@ -103,7 +103,7 @@ const rootfullTask60Fields = {
   broker: '@"not_implemented"',
   profile_scope: '@"tlink_owned_only"',
   configuration_transport: '@"local_ui_keychain_only"',
-  credentials_over_task59: "@(NO)",
+  credentials_over_task59: "@0",
 };
 for (const [key, value] of Object.entries(rootfullTask60Fields)) {
   assert.ok(
