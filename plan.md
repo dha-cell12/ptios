@@ -173,6 +173,12 @@ text/base64, seek/tell/flush/close, are bundle-relative, and are automatically
 closed at the end of every script evaluation.
 
 Known unresolved issues / deferred investigation:
+- VPN P0 now freezes legacy task `59` as contract v1, reserves action `2` for
+  future base64-JSON diagnostics, and reports the current rootfull `stub` and
+  TrollStore `interface_probe` states through task `60/97`. No entitlement or
+  production backend is enabled in P0. Configuration stays in foreground UI,
+  secrets stay in Keychain, and credentials are forbidden on port `6000`;
+  see `docs/vpn-p0-baseline.md`.
 - Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v12 keeps direct background Pasteboard access, handles best-effort keep-awake requests, sends background toast/alert/dialog through CFUserNotification, and applies the same signed-license gate as streamd. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
 - Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.
@@ -191,6 +197,7 @@ Known unresolved issues / deferred investigation:
 - Revisit Vision later with a dedicated sample app/device matrix, pixel buffer format investigation, and possibly a pure CGImage/VNImageRequestHandler path that avoids the failing `420f` conversion.
 - Vision OCR recovery P0 is now frozen in `docs/ocr-p0-baseline.md`: legacy task `27/91` fixtures are enforced in CI, task `97` additively reports the deferred Vision route and Tesseract default, and `scripts/Collect-TLinkOCRBaseline.ps1` collects reproducible device evidence. P0 does not enable Vision CPU-only or change the OCR wire format.
 - Vision OCR recovery P1 implements a CPU-only TrollStore canary: legacy task `27` defaults to `app_cpu`, optional ninth-field profile `worker_cpu` enables the isolated direct path, iOS 14-16 uses `usesCPUOnly`, and iOS 17+ assigns an `MLCPUComputeDevice` to every Vision compute stage. Task `91` remains the stable/default engine, task `27` response bytes are unchanged, and device promotion evidence is still required; see `docs/ocr-p1-cpu-only.md`.
+- Vision OCR P1 device validation is deferred after the A9/iOS 15.8.8 matrix failed: `worker_cpu` crashed with signal 11 during `vision_perform_requests`, and a fresh-launch Fast `app_cpu` request remained blocked through the 20-second watchdog while port `6000` survived. Keep task `91` as the production/default OCR path and revisit the preserved CPU-only canary on stronger hardware using `docs/ocr-p1-device-findings.md`.
 - Clear app data now has a TrollStore extension task: `72<bundle.id>`. It runs through privhelper, refuses protected bundles, and only clears safe app data containers under `/var/mobile/Containers/Data/Application/`. Keychain clearing remains deferred.
 
 ## License MVP

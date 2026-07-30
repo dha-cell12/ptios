@@ -33,11 +33,18 @@ TrollStore runtime.
 - App/process: `11`, `31-35`, `50-54` via streamd plus privhelper where needed.
 - Admin extension: task `72` clears safe app data containers through privhelper. It refuses protected bundles and unsafe paths.
 - Shell: task `13/71` is gated by settings and disabled by default.
+- VPN P0 freezes the task `59` wire contract and exposes explicit task
+  `60/97` capability markers. The current TrollStore backend remains an
+  interface query heuristic; profile creation and connect/disconnect remain
+  unsupported until the TLink-owned broker path is implemented. VPN
+  configuration and credentials are local-UI/Keychain only and are forbidden
+  on port `6000`. See `docs/vpn-p0-baseline.md`.
 
 ## Deferred Or Limited
 
 - Keychain clearing remains deferred because arbitrary target keychain access groups require separate entitlement handling.
-- VPN control remains query-only unless a profile/private entitlement path is added.
+- VPN control remains query-only until the TLink-owned profile, entitlement,
+  and app-broker path defined after VPN P0 is proven on device.
 - Vision OCR CPU-only remains experimental for the former `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract is still the stable/default OCR path. P1 keeps task `27/91` responses byte-compatible, defaults legacy task `27` requests to the `app_cpu` bridge, and exposes `worker_cpu` only as an explicit canary. Task `97` reports both profiles, CPU-only enforcement, no fallback/selector, and `visionOCRState=experimental`. See `docs/ocr-p1-cpu-only.md`.
 - Activator/Siri equivalents remain `limited_on_trollstore`.
 - Full SpringBoard overlay behavior is replaced by foreground app overlays plus background CFUserNotification system notices/alerts. The dialog result is not bridged back to the original synchronous task, and the touch indicator remains foreground-only.

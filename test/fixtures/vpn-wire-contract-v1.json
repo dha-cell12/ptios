@@ -1,0 +1,69 @@
+{
+  "contractVersion": 1,
+  "lineEnding": "\r\n",
+  "delimiter": ";;",
+  "task": 59,
+  "profileScope": "tlink_owned_only",
+  "configurationTransport": "local_ui_keychain_only",
+  "credentialsOverTask59": false,
+  "requests": {
+    "query": "590\r\n",
+    "disconnect": "591;;0\r\n",
+    "connect": "591;;1\r\n",
+    "diagnosticsReserved": "592\r\n"
+  },
+  "targetResponses": {
+    "queryDisconnected": "0;;0\r\n",
+    "queryConnected": "0;;1\r\n",
+    "disconnectObserved": "0;;0\r\n",
+    "connectObserved": "0;;1\r\n",
+    "diagnosticsPrefix": "0;;",
+    "errorPrefix": "-1;;"
+  },
+  "p0RuntimeBaseline": {
+    "rootfull": {
+      "state": "unavailable",
+      "query": "unsupported",
+      "control": "unsupported",
+      "backend": "stub",
+      "broker": "not_implemented",
+      "validRequestError": "-1;;VPN control not implemented on this build.\r\n",
+      "missingSetValueError": "-1;;Missing value.\r\n"
+    },
+    "trollstore": {
+      "state": "query_only",
+      "query": "interface_probe",
+      "control": "unsupported",
+      "backend": "interface_probe",
+      "broker": "not_implemented",
+      "queryDisconnected": "0;;0\r\n",
+      "queryConnected": "0;;1\r\n",
+      "setError": "-1;;unsupported_on_trollstore task=59 vpn_control_requires_profile_or_private_entitlement query_only_supported\r\n",
+      "invalidActionError": "-1;;connectivity_action_must_be_0_query_or_1_set\r\n",
+      "missingSetValueError": "-1;;connectivity_set_requires_value\r\n"
+    }
+  },
+  "requiredCommonCapabilityFields": {
+    "vpnContractVersion": "1",
+    "vpnLegacyTask": "59",
+    "vpnProfileScope": "tlink_owned_only",
+    "vpnConfigurationTransport": "local_ui_keychain_only",
+    "vpnCredentialsOverTask59": "forbidden"
+  },
+  "requiredRuntimeCapabilityFields": {
+    "rootfull": {
+      "vpnState": "unavailable",
+      "vpnQuery": "unsupported",
+      "vpnControl": "unsupported",
+      "vpnBackend": "stub",
+      "vpnBroker": "not_implemented"
+    },
+    "trollstore": {
+      "vpnState": "query_only",
+      "vpnQuery": "interface_probe",
+      "vpnControl": "unsupported",
+      "vpnBackend": "interface_probe",
+      "vpnBroker": "not_implemented"
+    }
+  }
+}

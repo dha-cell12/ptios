@@ -5789,6 +5789,16 @@ static NSData *TLinkHandleHelloStatus(void)
         @"cellularData": @(YES),
         @"vpn": @(YES),
         @"vpnMode": @"query_only_interface_probe",
+        @"vpnContractVersion": @1,
+        @"vpnLegacyTask": @59,
+        @"vpnState": @"query_only",
+        @"vpnQuery": @"interface_probe",
+        @"vpnControl": @"unsupported",
+        @"vpnBackend": @"interface_probe",
+        @"vpnBroker": @"not_implemented",
+        @"vpnProfileScope": @"tlink_owned_only",
+        @"vpnConfigurationTransport": @"local_ui_keychain_only",
+        @"vpnCredentialsOverTask59": @NO,
         @"frontmost": @(YES),
         @"clearData": @(YES),
         @"clearDataMode": @"privhelper_best_effort_data_container_only",
@@ -7941,6 +7951,13 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
+        cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
+        cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];
+        cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];
+        cap = [cap stringByAppendingString:@" vpnCredentialsOverTask59=forbidden"];
+        cap = [cap stringByAppendingString:@" vpnState=query_only vpnQuery=interface_probe"];
+        cap = [cap stringByAppendingString:@" vpnControl=unsupported vpnBackend=interface_probe"];
+        cap = [cap stringByAppendingString:@" vpnBroker=not_implemented"];
         cap = [cap stringByAppendingString:@" licenseContractVersion=1 licensePolicyVersion=1"];
         cap = [cap stringByAppendingString:@" licenseLifecycle=foreground_bg_single_flight_backoff_v1"];
         cap = [cap stringByAppendingFormat:@" licenseGeneration=%llu licenseGenerationSync=darwin_plus_request_check",

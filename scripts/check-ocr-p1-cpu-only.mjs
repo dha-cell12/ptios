@@ -35,6 +35,7 @@ const [
   appMakefile,
   collector,
   p1Doc,
+  findingsDoc,
   buildWorkflow,
   trollstoreWorkflow,
 ] = await Promise.all([
@@ -44,6 +45,7 @@ const [
   read("stream-app/app/Makefile"),
   read("scripts/Collect-TLinkOCRBaseline.ps1"),
   read("docs/ocr-p1-cpu-only.md"),
+  read("docs/ocr-p1-device-findings.md"),
   read(".github/workflows/build.yml"),
   read(".github/workflows/stream-app.yml"),
 ]);
@@ -80,6 +82,10 @@ assert.match(collector, /\$visionTask = "271;;\$rect[\s\S]*;;;;\$VisionProfile"/
 assert.match(collector, /vision_profile = \$VisionProfile/);
 assert.match(p1Doc, /app_cpu/);
 assert.match(p1Doc, /worker_cpu/);
+assert.match(findingsDoc, /\*\*Deferred on 2026-07-31\.\*\*/);
+assert.match(findingsDoc, /signal=11 phase=vision_perform_requests/);
+assert.match(findingsDoc, /Fast pipeline remained blocked for at least twenty seconds/i);
+assert.match(findingsDoc, /all production automation should use task `91`/i);
 assert.match(buildWorkflow, /node scripts\/check-ocr-p1-cpu-only\.mjs/);
 assert.match(trollstoreWorkflow, /node scripts\/check-ocr-p1-cpu-only\.mjs/);
 

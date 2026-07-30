@@ -1214,6 +1214,18 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                         : @{},
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
+                @"vpn": @{
+                    @"vpn_contract_version": @1,
+                    @"legacy_task": @59,
+                    @"state": @"unavailable",
+                    @"query": @"unsupported",
+                    @"control": @"unsupported",
+                    @"backend": @"stub",
+                    @"broker": @"not_implemented",
+                    @"profile_scope": @"tlink_owned_only",
+                    @"configuration_transport": @"local_ui_keychain_only",
+                    @"credentials_over_task59": @NO,
+                },
                 @"license": licenseStatus,
             };
 

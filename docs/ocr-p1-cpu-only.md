@@ -4,6 +4,12 @@ P1 enables an explicit CPU-only Vision OCR canary in the TrollStore runtime.
 Task `91` Tesseract remains the default and stable OCR engine. P1 does not add
 automatic fallback and does not change task `27` response bytes.
 
+Device testing on an A9/iOS 15.8.8 device failed the promotion gate:
+`worker_cpu` crashed during `vision_perform_requests`, while a fresh-launch
+`app_cpu` Fast request remained blocked through the twenty-second worker
+watchdog. Further Vision work is deferred until newer hardware is available.
+See `docs/ocr-p1-device-findings.md` for the complete evidence and retest plan.
+
 ## Profiles
 
 Task `27` subtask `1` accepts one optional ninth body field:
