@@ -110,7 +110,8 @@ assert.ok(appBinary.includes("vpn_on_demand_enabled"), "StreamControl lacks VPN 
 assert.ok(appBinary.includes("Auto-Reconnect (On Demand)"), "StreamControl lacks VPN P4 local UI evidence");
 assert.ok(streamdBinary.includes("vpnPhase=5"), "streamd lacks VPN P5 capability evidence");
 assert.ok(streamdBinary.includes("vpnagent_6016_then_StreamControl_6015"), "streamd lacks VPN P5 routing evidence");
-assert.ok(vpnagentBinary.includes("vpnagent_ready version=1 phase=5"), "vpnagent lacks P5 readiness evidence");
+assert.ok(vpnagentBinary.includes("vpnagent_ready version=2 phase=5"), "vpnagent lacks P5 readiness evidence");
+assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

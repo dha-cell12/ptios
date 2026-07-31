@@ -9,7 +9,7 @@
     "port": 6016,
     "personaUid": 501,
     "personaGid": 501,
-    "version": 1,
+    "version": 2,
     "commands": ["ping", "query", "connect", "disconnect", "diagnostics"]
   },
   "routing": {

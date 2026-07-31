@@ -59,8 +59,11 @@ Assert-Equal $diagnostics.state "background_agent_candidate" "state"
 Assert-Equal $diagnostics.diagnostics_source "background_vpnagent" "diagnostics source"
 Assert-Equal ([bool]$diagnostics.broker_ready) $true "background agent readiness"
 Assert-Equal ([bool]$diagnostics.entitlements.allow_vpn) $true "allow-vpn entitlement"
+Assert-Equal $diagnostics.agent_version 2 "vpnagent version"
 Assert-Equal $diagnostics.process_uid 501 "vpnagent uid"
 Assert-Equal $diagnostics.process_euid 501 "vpnagent euid"
+Assert-Equal $diagnostics.process_gid 501 "vpnagent gid"
+Assert-Equal $diagnostics.process_egid 501 "vpnagent egid"
 
 $query = Invoke-TLinkVPNTask -Task "590"
 if ($query -notin @("0;;0", "0;;1")) { throw "VPN query failed: $query" }
@@ -81,7 +84,9 @@ if ($RunDisconnect) {
     state = $diagnostics.state
     diagnostics_source = $diagnostics.diagnostics_source
     broker_ready = $diagnostics.broker_ready
+    agent_version = $diagnostics.agent_version
     process_uid = $diagnostics.process_uid
+    process_gid = $diagnostics.process_gid
     connection_status = $diagnostics.manager_status.connection_status
     connect_test_run = [bool]$RunConnect
     disconnect_test_run = [bool]$RunDisconnect

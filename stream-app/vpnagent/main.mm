@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
+#include <grp.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -83,9 +84,11 @@ static NSString *TLinkVPNAgentDiagnosticsResponse(void)
         ? @"blocked_missing_entitlement_or_framework"
         : (managerAvailable ? @"background_manager_ready" : @"manager_api_failed");
     diagnostics[@"diagnostics_source"] = @"background_vpnagent";
-    diagnostics[@"agent_version"] = @1;
+    diagnostics[@"agent_version"] = @2;
     diagnostics[@"process_uid"] = @((int)getuid());
     diagnostics[@"process_euid"] = @((int)geteuid());
+    diagnostics[@"process_gid"] = @((int)getgid());
+    diagnostics[@"process_egid"] = @((int)getegid());
     diagnostics[@"on_demand_policy"] =
         @"local_ui_connect_all_networks_explicit_disconnect_disables";
     diagnostics[@"manager_status"] = @{
@@ -122,7 +125,9 @@ static NSString *TLinkVPNAgentResponse(NSString *command)
     NSString *clean = [command stringByTrimmingCharactersInSet:
         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([clean isEqualToString:@"ping"]) {
-        return @"0;;vpnagent_ready version=1 phase=5\r\n";
+        return [NSString stringWithFormat:
+            @"0;;vpnagent_ready version=2 phase=5 uid=%d euid=%d gid=%d egid=%d\r\n",
+            getuid(), geteuid(), getgid(), getegid()];
     }
     if ([clean isEqualToString:@"diagnostics"]) {
         return TLinkVPNAgentDiagnosticsResponse();
@@ -249,12 +254,34 @@ int main(int argc, char **argv)
     @autoreleasepool {
         signal(SIGPIPE, SIG_IGN);
         if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-            printf("vpnagent version=1 phase=5 port=6016 persona=mobile\n");
+            printf("vpnagent version=2 phase=5 port=6016 persona=mobile\n");
             return 0;
         }
         if (argc <= 1 || strcmp(argv[1], "--daemon") != 0) {
             fprintf(stderr, "usage: vpnagent --daemon|--version\n");
             return 64;
+        }
+
+        // TSRootBinaries or an older package can cause the executable to
+        // enter as root even when privhelper requested the mobile persona.
+        // Drop supplementary groups first and fail closed unless both the
+        // real and effective identities are mobile before touching NEVPNManager.
+        if (geteuid() == 0) {
+            if (setgroups(0, NULL) != 0 ||
+                setgid(501) != 0 ||
+                setuid(501) != 0) {
+                fprintf(stderr,
+                    "vpnagent privilege drop failed errno=%d uid=%d euid=%d\n",
+                    errno, getuid(), geteuid());
+                return 65;
+            }
+        }
+        if (getuid() != 501 || geteuid() != 501 ||
+            getgid() != 501 || getegid() != 501) {
+            fprintf(stderr,
+                "vpnagent refuses non-mobile identity uid=%d euid=%d gid=%d egid=%d\n",
+                getuid(), geteuid(), getgid(), getegid());
+            return 66;
         }
 
         dispatch_async(

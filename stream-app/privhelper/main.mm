@@ -503,8 +503,12 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkVPNAgentProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;vpnagent_ready"] &&
-           [probe containsString:@"version=1"] &&
-           [probe containsString:@"phase=5"];
+           [probe containsString:@"version=2"] &&
+           [probe containsString:@"phase=5"] &&
+           [probe containsString:@" uid=501 "] &&
+           [probe containsString:@" euid=501 "] &&
+           [probe containsString:@" gid=501 "] &&
+           [probe containsString:@" egid=501"];
 }
 
 static int TLinkEnsureVPNAgent(NSString *streamdPath, BOOL replaceExisting)

@@ -6,7 +6,9 @@ P5 removes the normal foreground requirement from TrollStore task 59 by
 introducing a dedicated `vpnagent` candidate on loopback port `6016`. The
 agent is embedded in `StreamControl.app`, signed with the app's `allow-vpn`
 entitlement and Keychain access group, and spawned by `privhelper` with the
-mobile persona (UID/GID 501).
+mobile persona (UID/GID 501). It is deliberately excluded from
+`TSRootBinaries`; agent v2 also drops root privileges itself and refuses to
+serve unless real/effective UID and GID are all 501.
 
 ```text
 task 59 -> streamd -> vpnagent:6016 -> NEVPNManager
