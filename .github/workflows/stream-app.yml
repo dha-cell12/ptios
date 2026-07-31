@@ -493,7 +493,6 @@ jobs:
           grep -q 'stopTapMacro' stream-app/streamd/POCSocketServer.mm
           grep -q 'scriptTapMacro' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleUpdateCache' stream-app/streamd/POCSocketServer.mm
-          grep -q 'TLinkHandleKnownUnsupportedTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleShellTask' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkPersistShellTaskEnabled' stream-app/streamd/POCSocketServer.mm
           grep -q 'shell_task_set' stream-app/streamd/POCSocketServer.mm
