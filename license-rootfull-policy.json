@@ -160,6 +160,12 @@
       "gate_status": "active_phase_4_launch_time_recheck"
     },
     {
+      "component": "license_authority",
+      "feature": "all",
+      "source": "license-authority/main.mm",
+      "gate_status": "active_signed_nonce_status_v1"
+    },
+    {
       "component": "vpn_broker",
       "feature": "automation",
       "source": "vpn-broker/main.mm",

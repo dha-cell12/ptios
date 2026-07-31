@@ -22,6 +22,11 @@
       "source": "stream-app/app/LicenseViewController.mm"
     },
     {
+      "component": "license_authority",
+      "binary": "usr/libexec/tlinkauto-licensed",
+      "source": "license-authority/main.mm"
+    },
+    {
       "component": "task_daemon",
       "binary": "usr/bin/tlinkautod",
       "source": "tlinkauto-binary/SocketServer.mm"
@@ -83,6 +88,12 @@
     "task10_deny": "silent_drop_with_counter"
   },
   "long_running_components": {
+    "license_authority": {
+      "feature": "all",
+      "transport": "unix_socket_signed_nonce_status_v1",
+      "socket": "/var/mobile/Library/TLinkauto/run/license-authority.sock",
+      "failure_mode": "fail_closed"
+    },
     "h264": {
       "feature": "stream",
       "accept_gate": true,

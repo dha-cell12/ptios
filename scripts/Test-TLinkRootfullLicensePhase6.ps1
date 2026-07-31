@@ -94,7 +94,7 @@ function Test-FeatureProbe {
 Write-Host "Checking rootfull Phase 6 release hardening at ${HostIP}:$Port"
 
 $hello = Invoke-TLinkTask -Task "97"
-if ($hello -notlike "0;;*runtime=rootfull*license_phase=$ExpectedPhase*releaseIntegrity=1*antiRollback=1*") {
+if ($hello -notlike "0;;*runtime=rootfull*license_phase=$ExpectedPhase*licenseAuthority=unix_signed_nonce_v1*releaseIntegrity=1*antiRollback=1*") {
     throw "Task 97 does not report the rootfull Phase 6 contract: $hello"
 }
 
@@ -112,8 +112,17 @@ Assert-Equal $daemon.verifier_build_mode $expectedVerifierMode "daemon verifier 
 Assert-Equal $springBoard.license.rootfull_build_mode $expectedRootfullMode "SpringBoard rootfull build mode"
 Assert-Equal $springBoard.license.verifier_build_mode $expectedVerifierMode "SpringBoard verifier build mode"
 Assert-Equal $daemon.state $springBoard.license.state "cross-process state"
+Assert-Equal $daemon.source "tlinkautod_rootfull_phase6_release_hardened" "daemon diagnostic source"
+Assert-Equal $daemon.authority_contract_version 1 "daemon authority contract"
+Assert-Equal $springBoard.license.authority_contract_version 1 "SpringBoard authority contract"
 if ($ExpectedState) {
     Assert-Equal $daemon.state $ExpectedState "license state"
+}
+if ($ExpectedState -in @("valid", "offline_grace")) {
+    Assert-Equal ([bool]$daemon.authority_proof) $true "daemon authority proof"
+    Assert-Equal ([bool]$springBoard.license.authority_proof) $true "SpringBoard authority proof"
+    Assert-Equal ([bool]$daemon.device_key_proof) $true "daemon device key proof"
+    Assert-Equal ([bool]$springBoard.license.device_key_proof) $true "SpringBoard device key proof"
 }
 
 Assert-Equal ([bool]$daemon.release_integrity_active) $true "daemon integrity flag"

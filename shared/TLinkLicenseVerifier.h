@@ -15,6 +15,12 @@ FOUNDATION_EXPORT NSString *TLinkBundledExecutablePath(NSString *name);
 FOUNDATION_EXPORT NSDictionary *TLinkLicenseConfiguration(void);
 FOUNDATION_EXPORT NSDictionary *TLinkLicenseStatusDictionary(void);
 FOUNDATION_EXPORT BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error);
+FOUNDATION_EXPORT NSData *TLinkLicenseCreateDeviceSignature(
+    NSData *message,
+    NSString **error);
+FOUNDATION_EXPORT BOOL TLinkLicenseDevicePublicKeyAnchored(
+    NSData *publicPoint,
+    NSString **error);
 FOUNDATION_EXPORT BOOL TLinkLicenseEnforcementEnabled(void);
 FOUNDATION_EXPORT NSString *TLinkLicenseBuildMode(void);
 FOUNDATION_EXPORT void TLinkLicenseInvalidateCache(void);

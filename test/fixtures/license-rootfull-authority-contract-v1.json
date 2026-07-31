@@ -1,0 +1,17 @@
+{
+  "contractVersion": 1,
+  "runtime": "rootfull",
+  "transport": "unix_socket",
+  "socketPath": "/var/mobile/Library/TLinkauto/run/license-authority.sock",
+  "authorityProcess": "tlinkauto-licensed",
+  "authorityUser": "mobile",
+  "requestCommand": "status",
+  "nonceBytes": 32,
+  "proofAlgorithm": "ECDSA_P256_SHA256",
+  "proofPolicy": "license_authority_signed_status_v1",
+  "proofLifetimeMs": 10000,
+  "maximumProofLifetimeMs": 15000,
+  "failureMode": "fail_closed",
+  "keychainAccessGroup": "com.tlinkauto.tlinkauto",
+  "vpnEntitlementAllowed": false
+}

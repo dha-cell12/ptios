@@ -1,4 +1,7 @@
 #import "TLinkLicenseVerifier.h"
+#if defined(TLINK_LICENSE_AUTHORITY_CLIENT) && TLINK_LICENSE_AUTHORITY_CLIENT
+#import "TLinkLicenseAuthorityClient.h"
+#endif
 #if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
 #import "TLinkRootfullLicenseBuild.h"
 #endif
@@ -457,6 +460,97 @@ static SecKeyRef TLinkCreateServerPublicKey(NSDictionary *config) CF_RETURNS_RET
     return key;
 }
 
+BOOL TLinkLicenseDevicePublicKeyAnchored(
+    NSData *publicPoint,
+    NSString **error)
+{
+    if (publicPoint.length != 65 ||
+        ((const uint8_t *)publicPoint.bytes)[0] != 0x04) {
+        if (error) *error = @"license_authority_public_key_invalid";
+        return NO;
+    }
+    NSDictionary *config = TLinkLicenseConfiguration();
+    NSData *leaseData = [NSData dataWithContentsOfFile:kTLinkLicenseLease];
+    NSDictionary *lease = leaseData.length > 0
+        ? [NSJSONSerialization JSONObjectWithData:leaseData
+                                          options:0
+                                            error:nil]
+        : nil;
+    if (![lease isKindOfClass:[NSDictionary class]] ||
+        [lease[@"version"] integerValue] != 1) {
+        if (error) *error = @"license_authority_lease_missing_or_invalid";
+        return NO;
+    }
+    NSString *configuredKeyID =
+        [config[@"LicenseKeyID"] isKindOfClass:[NSString class]]
+        ? config[@"LicenseKeyID"] : @"";
+    NSString *leaseKeyID =
+        [lease[@"key_id"] isKindOfClass:[NSString class]]
+        ? lease[@"key_id"] : @"";
+    if (configuredKeyID.length > 0 &&
+        ![configuredKeyID isEqualToString:leaseKeyID]) {
+        if (error) *error = @"license_authority_lease_key_id_mismatch";
+        return NO;
+    }
+    NSData *payloadData = TLinkBase64URLDecode(
+        [lease[@"payload"] isKindOfClass:[NSString class]]
+            ? lease[@"payload"] : @"");
+    NSData *signatureData = TLinkBase64URLDecode(
+        [lease[@"signature"] isKindOfClass:[NSString class]]
+            ? lease[@"signature"] : @"");
+    SecKeyRef serverKey = TLinkCreateServerPublicKey(config);
+    if (payloadData.length == 0 ||
+        signatureData.length == 0 ||
+        !serverKey) {
+        if (serverKey) CFRelease(serverKey);
+        if (error) *error = @"license_authority_lease_signature_inputs_invalid";
+        return NO;
+    }
+    CFErrorRef verifyError = NULL;
+    BOOL signatureValid = SecKeyVerifySignature(
+        serverKey,
+        kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+        (__bridge CFDataRef)payloadData,
+        (__bridge CFDataRef)signatureData,
+        &verifyError);
+    CFRelease(serverKey);
+    if (verifyError) CFRelease(verifyError);
+    if (!signatureValid) {
+        if (error) *error = @"license_authority_lease_signature_invalid";
+        return NO;
+    }
+    id payloadObject = [NSJSONSerialization
+        JSONObjectWithData:payloadData
+                   options:0
+                     error:nil];
+    NSDictionary *payload =
+        [payloadObject isKindOfClass:[NSDictionary class]]
+        ? payloadObject : nil;
+    if (!payload) {
+        if (error) *error = @"license_authority_lease_payload_invalid";
+        return NO;
+    }
+    NSInteger contractVersion =
+        payload[@"license_contract_version"] == nil
+        ? 1 : [payload[@"license_contract_version"] integerValue];
+    if (![payload[@"product"] isEqualToString:@"tlinkauto"] ||
+        [payload[@"version"] integerValue] != 1 ||
+        contractVersion != 1) {
+        if (error) *error = @"license_authority_lease_payload_invalid";
+        return NO;
+    }
+    NSString *expectedHash =
+        [payload[@"device_key_hash"] isKindOfClass:[NSString class]]
+        ? payload[@"device_key_hash"] : @"";
+    NSString *actualHash = TLinkSHA256Base64URL(publicPoint);
+    if (expectedHash.length == 0 ||
+        ![actualHash isEqualToString:expectedHash]) {
+        if (error) *error = @"license_authority_public_key_not_lease_anchored";
+        return NO;
+    }
+    return YES;
+}
+
 static SecKeyRef TLinkCreateDevicePublicKey(NSData *point) CF_RETURNS_RETAINED
 {
     if (point.length != 65 || ((const uint8_t *)point.bytes)[0] != 0x04) return nil;
@@ -486,6 +580,41 @@ static SecKeyRef TLinkCopyDevicePrivateKey(void) CF_RETURNS_RETAINED
     CFTypeRef result = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
     return status == errSecSuccess ? (SecKeyRef)result : NULL;
+}
+
+NSData *TLinkLicenseCreateDeviceSignature(
+    NSData *message,
+    NSString **error)
+{
+    if (message.length == 0) {
+        if (error) *error = @"license_device_signature_message_missing";
+        return nil;
+    }
+    SecKeyRef privateKey = TLinkCopyDevicePrivateKey();
+    if (!privateKey) {
+        if (error) *error = @"license_device_private_key_unavailable";
+        return nil;
+    }
+    CFErrorRef signError = NULL;
+    CFDataRef signature = SecKeyCreateSignature(
+        privateKey,
+        kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
+        (__bridge CFDataRef)message,
+        &signError);
+    CFRelease(privateKey);
+    if (!signature) {
+        NSString *messageText = signError
+            ? [(__bridge NSError *)signError localizedDescription]
+            : @"unknown";
+        if (signError) CFRelease(signError);
+        if (error) {
+            *error = [NSString stringWithFormat:
+                @"license_device_signature_failed %@", messageText];
+        }
+        return nil;
+    }
+    if (signError) CFRelease(signError);
+    return CFBridgingRelease(signature);
 }
 
 static BOOL TLinkVerifyDeviceKeyPossession(NSData *publicPoint, NSString **error)
@@ -1017,6 +1146,23 @@ static NSString *TLinkQuarantineCorruptLease(NSString *reason)
 
 NSDictionary *TLinkLicenseStatusDictionary(void)
 {
+#if defined(TLINK_LICENSE_AUTHORITY_CLIENT) && TLINK_LICENSE_AUTHORITY_CLIENT
+    NSString *authorityError = nil;
+    NSDictionary *authorityStatus =
+        TLinkLicenseAuthorityStatus(&authorityError);
+    if (authorityStatus) return authorityStatus;
+    NSMutableDictionary *failure = [
+        TLinkLicenseFailure(
+            TLinkLicenseConfiguration(),
+            @"invalid",
+            authorityError ?: @"license_authority_unavailable")
+        mutableCopy];
+    failure[@"source"] = @"rootfull_license_authority_client_v1";
+    failure[@"authority_contract_version"] =
+        @(TLINK_LICENSE_AUTHORITY_CONTRACT_VERSION);
+    failure[@"authority_proof"] = @0;
+    return failure;
+#else
     NSDictionary *config = TLinkLicenseConfiguration();
     NSDictionary *releaseIntegrity =
         TLinkRootfullReleaseIntegrityDictionary(config);
@@ -1191,6 +1337,7 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         @"last_checked_at_ms": @((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0)),
         @"source": @"shared_verifier_disk",
     };
+#endif
 }
 
 BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error)

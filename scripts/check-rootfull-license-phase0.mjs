@@ -69,6 +69,7 @@ const makefiles = [
   await read("tlinkauto-binary/Makefile"),
   await read("pccontrol/Makefile"),
   await read("tlinkauto-jsd/Makefile"),
+  await read("license-authority/Makefile"),
   await read("vpn-broker/Makefile"),
   await read("appdelegate/Makefile")
 ];

@@ -85,6 +85,7 @@ const binaries = [
   "usr/bin/tlinkautod",
   "usr/bin/tlinkautob",
   "usr/libexec/tlinkauto-jsd",
+  "usr/libexec/tlinkauto-licensed",
   "usr/libexec/tlinkauto-vpnd",
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
   "Library/MobileSubstrate/DynamicLibraries/appdelegate.dylib",
@@ -94,6 +95,7 @@ const verifierBinaries = new Set([
   "usr/bin/tlinkautod",
   "usr/bin/tlinkautob",
   "usr/libexec/tlinkauto-jsd",
+  "usr/libexec/tlinkauto-licensed",
   "usr/libexec/tlinkauto-vpnd",
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
 ]);
@@ -115,6 +117,11 @@ const evidence = {
   "usr/libexec/tlinkauto-jsd": [
     "script_helper_start",
     "license_revoked_during_execution",
+    "signed_device_checkpoint_v1",
+  ],
+  "usr/libexec/tlinkauto-licensed": [
+    "license_authority_signed_status_v1",
+    "rootfull_license_authority_signed_v1",
     "signed_device_checkpoint_v1",
   ],
   "usr/libexec/tlinkauto-vpnd": [
@@ -166,6 +173,33 @@ for (const relative of [
     entitlements.includes(allowVPNMarker) &&
       entitlements.includes("allow-vpn"),
     `${relative} is missing the signed allow-vpn entitlement`,
+  );
+}
+const authorityEntitlements = signedEntitlements(
+  join(rootfs, "usr/libexec/tlinkauto-licensed"),
+);
+assert.ok(
+  authorityEntitlements.includes("keychain-access-groups") &&
+    authorityEntitlements.includes("com.tlinkauto.tlinkauto"),
+  "license authority is missing the shared app Keychain access group",
+);
+assert.ok(
+  !authorityEntitlements.includes(allowVPNMarker) &&
+    !authorityEntitlements.includes("com.apple.developer.networking.networkextension"),
+  "license authority must not inherit VPN entitlements",
+);
+for (const relative of [
+  "usr/bin/tlinkautod",
+  "usr/bin/tlinkautob",
+  "usr/libexec/tlinkauto-jsd",
+  "usr/libexec/tlinkauto-vpnd",
+  "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
+]) {
+  const content = await readFile(join(rootfs, relative), "latin1");
+  assert.ok(
+    content.includes("license_authority_signature_invalid") &&
+      content.includes("rootfull_license_authority_client_v1"),
+    `${relative} is missing the signed license authority client`,
   );
 }
 const shortcutEntitlements = signedEntitlements(

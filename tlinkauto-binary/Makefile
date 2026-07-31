@@ -9,12 +9,12 @@ TOOL_NAME = tlinkautod tlinkautob
 tlinkautod_ARCH = arm64e arm64
 tlinkautob_ARCH = arm64e arm64
 
-tlinkautod_FILES = main.mm SocketServer.mm ../pccontrol/TemplateMatch.xm ../pccontrol/TextRecognization/VKOcrManager.xm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkRootfullLicensePolicy.mm
-tlinkautob_FILES = main.mm SocketServer.mm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkRootfullLicensePolicy.mm
+tlinkautod_FILES = main.mm SocketServer.mm ../pccontrol/TemplateMatch.xm ../pccontrol/TextRecognization/VKOcrManager.xm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkLicenseAuthorityClient.mm ../shared/TLinkRootfullLicensePolicy.mm
+tlinkautob_FILES = main.mm SocketServer.mm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkLicenseAuthorityClient.mm ../shared/TLinkRootfullLicensePolicy.mm
 tlinkautod_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics CoreImage Vision ImageIO AVFoundation CoreMedia CoreVideo Security
 tlinkautob_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics Security
-tlinkautod_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DZX_DAEMON=1 -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1
-tlinkautob_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1
+tlinkautod_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DZX_DAEMON=1 -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1 -DTLINK_LICENSE_AUTHORITY_CLIENT=1
+tlinkautob_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -O2 -s -DNDEBUG -DTLINKAUTO_FILE_LOG=$(TLINKAUTO_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1 -DTLINK_LICENSE_AUTHORITY_CLIENT=1
 
 tlinkautod_CCFLAGS = -std=c++11 -DZX_DAEMON=1
 tlinkautod_CFLAGS += -F$(THEOS_PROJECT_DIR)/frameworks -DZX_DAEMON=1
