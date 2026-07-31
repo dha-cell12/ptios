@@ -104,6 +104,7 @@ static NSString *TLinkVPNBrokerResponse(NSString *command)
         diagnostics[@"phase"] = @4;
         diagnostics[@"broker_ready"] = @1;
         diagnostics[@"broker_target"] = @"tlinkauto_vpnd";
+        diagnostics[@"diagnostics_source"] = @"rootfull_broker";
         diagnostics[@"entitlement_probe_scope"] = @"broker_process";
         diagnostics[@"on_demand_policy"] =
             @"local_ui_connect_all_networks_explicit_disconnect_disables";

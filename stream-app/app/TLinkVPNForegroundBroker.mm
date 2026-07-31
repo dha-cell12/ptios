@@ -97,6 +97,7 @@ static NSString *TLinkVPNForegroundDiagnosticsResponse(void)
                 ? @"foreground_manager_ready"
                 : @"manager_api_failed"));
     diagnostics[@"app_active"] = @(active);
+    diagnostics[@"diagnostics_source"] = @"foreground_app_broker";
     diagnostics[@"on_demand_policy"] =
         @"local_ui_connect_all_networks_explicit_disconnect_disables";
     diagnostics[@"manager_status"] = @{

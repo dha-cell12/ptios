@@ -574,6 +574,8 @@ jobs:
           grep -q 'NEOnDemandRuleConnect' shared/TLinkVPNManager.mm
           grep -q 'vpnPhase=4' stream-app/streamd/POCSocketServer.mm
           grep -q 'vpnOnDemand=local_ui_connect_all_networks' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkRunVPNForegroundBrokerWithTimeout' stream-app/streamd/POCSocketServer.mm
+          grep -q 'streamd_interface_fallback' stream-app/streamd/POCSocketServer.mm
           grep -q 'com.apple.developer.networking.vpn.api' stream-app/app/entitlements.plist
           ! grep -q 'com.apple.developer.networking.vpn.api' stream-app/streamd/entitlements.plist
           grep -q 'Wi-Fi Status' stream-app/app/SettingsViewController.mm

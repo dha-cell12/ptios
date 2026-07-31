@@ -87,6 +87,12 @@ assert.match(rootTask, /@"phase"\]\s*=\s*@4/);
 assert.match(trollServer, /@"app_side_control"/);
 assert.match(trollServer, /@"vpnPhase": @4/);
 assert.match(trollServer, /local_ui_connect_all_networks_explicit_disconnect_disables/);
+assert.match(trollServer, /TLinkRunVPNForegroundBrokerWithTimeout/);
+assert.match(trollServer, /@"diagnostics"[\s\S]*?&brokerError,[\s\S]*?5\)/);
+assert.match(trollServer, /@"streamd_interface_fallback"/);
+assert.match(trollServer, /@"foreground_heartbeat_fresh"/);
+assert.match(trollBroker, /@"foreground_app_broker"/);
+assert.match(rootBroker, /@"rootfull_broker"/);
 
 for (const [key, value] of Object.entries(
   fixture.runtimes.rootfull.requiredCapabilityFields,
@@ -103,6 +109,7 @@ assert.match(deviceTest, /ValidateSet\("rootfull", "trollstore"\)/);
 assert.match(deviceTest, /ExpectOnDemand/);
 assert.match(deviceTest, /RunDisconnect/);
 assert.match(deviceTest, /explicit disconnect disables on-demand/);
+assert.match(deviceTest, /used streamd fallback instead of foreground broker/);
 assert.match(rootWorkflow, /check-vpn-p4-on-demand\.mjs/);
 assert.match(trollWorkflow, /check-vpn-p4-on-demand\.mjs/);
 assert.match(p4Doc, /NEOnDemandRuleConnect/);

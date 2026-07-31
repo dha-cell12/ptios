@@ -82,7 +82,35 @@ Assert-Equal $diagnostics.on_demand_policy `
     "on-demand policy"
 
 if ($ExpectOnDemand) {
-    Assert-Equal ([bool]$diagnostics.manager_status.on_demand_enabled) $true "on-demand enabled"
+    $hasManagerStatus = $null -ne $diagnostics.manager_status
+    $isForegroundBroker =
+        $diagnostics.diagnostics_source -eq "foreground_app_broker" -or
+        ([string]::IsNullOrEmpty($diagnostics.diagnostics_source) -and
+         $hasManagerStatus -and [bool]$diagnostics.broker_ready)
+    if ($Runtime -eq "trollstore" -and -not $isForegroundBroker) {
+        $brokerError = if ($diagnostics.broker_last_error) {
+            $diagnostics.broker_last_error
+        }
+        else {
+            "unknown"
+        }
+        throw "Task 592 used streamd fallback instead of foreground broker; " +
+            "broker_last_error=$brokerError foreground_heartbeat_fresh=" +
+            "$($diagnostics.foreground_heartbeat_fresh). Keep StreamControl active " +
+            "and install a build containing the VPN P4 diagnostics retry fix."
+    }
+    if (-not $hasManagerStatus) {
+        throw "Task 592 did not return manager_status; diagnostics_source=" +
+            "$($diagnostics.diagnostics_source)"
+    }
+    if (-not [bool]$diagnostics.manager_status.on_demand_enabled) {
+        throw "Authoritative VPN manager reports on-demand disabled; " +
+            "diagnostics_source=$($diagnostics.diagnostics_source) " +
+            "connection_status=$($diagnostics.manager_status.connection_status) " +
+            "rule_count=$($diagnostics.manager_status.on_demand_rule_count) " +
+            "mode=$($diagnostics.manager_status.on_demand_mode). An immediate VPN " +
+            "connection alone does not prove that iOS persisted auto-reconnect."
+    }
     if ([int]$diagnostics.manager_status.on_demand_rule_count -lt 1) {
         throw "on-demand rule count must be at least 1"
     }

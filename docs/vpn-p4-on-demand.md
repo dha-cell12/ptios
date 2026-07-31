@@ -59,6 +59,13 @@ manager_status.on_demand_rule_count
 manager_status.on_demand_mode
 ```
 
+`diagnostics_source` identifies `rootfull_broker`,
+`foreground_app_broker`, or `streamd_interface_fallback`. TrollStore task
+`592` always makes one bounded five-second broker attempt before returning the
+fallback snapshot. A fallback snapshot does not claim that on-demand is off;
+it reports `broker_last_error` and `foreground_heartbeat_fresh` because only
+the app process can read authoritative `NEVPNManager` state.
+
 These are additive fields. Existing task `590`, `591;;0`, `591;;1`, and `592`
 request and response formats do not change.
 

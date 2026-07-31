@@ -29,6 +29,7 @@
     }
   },
   "diagnosticsFields": [
+    "diagnostics_source",
     "on_demand_policy",
     "manager_status.on_demand_enabled",
     "manager_status.on_demand_rule_count",

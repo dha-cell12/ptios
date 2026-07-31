@@ -7337,20 +7337,24 @@ static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
     diagnostics[@"profile_state"] = @"not_probed";
     diagnostics[@"on_demand_policy"] =
         @"local_ui_connect_all_networks_explicit_disconnect_disables";
+    diagnostics[@"diagnostics_source"] = @"streamd_interface_fallback";
+    diagnostics[@"foreground_heartbeat_fresh"] =
+        @(TLinkAppForegroundHeartbeatIsFresh());
     diagnostics[@"broker_last_error"] = brokerError ?: @"";
     return diagnostics;
 }
 
-static NSData *TLinkRunVPNForegroundBroker(
+static NSData *TLinkRunVPNForegroundBrokerWithTimeout(
     NSString *command,
-    NSString **failure)
+    NSString **failure,
+    int timeoutSeconds)
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         if (failure) *failure = @"vpn_app_broker_socket_failed";
         return nil;
     }
-    struct timeval timeout = {30, 0};
+    struct timeval timeout = {MAX(2, MIN(timeoutSeconds, 30)), 0};
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 #ifdef SO_NOSIGPIPE
@@ -7382,6 +7386,13 @@ static NSData *TLinkRunVPNForegroundBroker(
         return nil;
     }
     return response;
+}
+
+static NSData *TLinkRunVPNForegroundBroker(
+    NSString *command,
+    NSString **failure)
+{
+    return TLinkRunVPNForegroundBrokerWithTimeout(command, failure, 30);
 }
 
 static NSData *TLinkHandleConnectivity(NSString *body,
@@ -7532,9 +7543,10 @@ static NSData *TLinkHandleVPNConnectivity(NSString *body, int taskType)
             return TLinkError(@"vpn_diagnostics_takes_no_arguments");
         }
         NSString *brokerError = nil;
-        NSData *brokerResponse = TLinkAppForegroundHeartbeatIsFresh()
-            ? TLinkRunVPNForegroundBroker(@"diagnostics", &brokerError)
-            : nil;
+        NSData *brokerResponse = TLinkRunVPNForegroundBrokerWithTimeout(
+            @"diagnostics",
+            &brokerError,
+            5);
         if (!brokerResponse && !brokerError) {
             brokerError = @"vpn_foreground_app_required";
         }
