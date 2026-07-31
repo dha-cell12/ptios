@@ -39,23 +39,28 @@ function Assert-Equal {
     if ($Actual -ne $Expected) { throw "$Label expected '$Expected', got '$Actual'" }
 }
 
+function Get-TLinkVPNDiagnostics {
+    $raw = Invoke-TLinkVPNTask -Task "592"
+    if ($raw -notlike "0;;*") { throw "Task 592 failed: $raw" }
+    return [Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String(($raw -split ";;", 2)[1])
+    ) | ConvertFrom-Json
+}
+
 $capability = Invoke-TLinkVPNTask -Task "97"
 if ($capability -notlike "0;;*" -or
     $capability -notlike "*vpnPhase=5*" -or
-    $capability -notlike "*vpnState=background_agent_candidate*" -or
+    $capability -notlike "*vpnState=background_control*" -or
     $capability -notlike "*vpnBroker=vpnagent_6016_then_StreamControl_6015*") {
     throw "Task 97 does not report TrollStore VPN P5: $capability"
 }
 
-$raw = Invoke-TLinkVPNTask -Task "592"
-if ($raw -notlike "0;;*") { throw "Task 592 failed: $raw" }
-$diagnostics = [Text.Encoding]::UTF8.GetString(
-    [Convert]::FromBase64String(($raw -split ";;", 2)[1])
-) | ConvertFrom-Json
+$diagnostics = Get-TLinkVPNDiagnostics
+$initialConnectionStatus = $diagnostics.manager_status.connection_status
 
 Assert-Equal $diagnostics.phase 5 "diagnostics phase"
 Assert-Equal $diagnostics.runtime "trollstore" "runtime"
-Assert-Equal $diagnostics.state "background_agent_candidate" "state"
+Assert-Equal $diagnostics.state "background_control" "state"
 Assert-Equal $diagnostics.diagnostics_source "background_vpnagent" "diagnostics source"
 Assert-Equal ([bool]$diagnostics.broker_ready) $true "background agent readiness"
 Assert-Equal ([bool]$diagnostics.entitlements.allow_vpn) $true "allow-vpn entitlement"
@@ -77,6 +82,10 @@ if ($RunDisconnect) {
     Assert-Equal (Invoke-TLinkVPNTask -Task "590") "0;;0" "disconnected query"
 }
 
+if ($RunConnect -or $RunDisconnect) {
+    $diagnostics = Get-TLinkVPNDiagnostics
+}
+
 [pscustomobject]@{
     host = $HostIP
     runtime = $diagnostics.runtime
@@ -87,6 +96,7 @@ if ($RunDisconnect) {
     agent_version = $diagnostics.agent_version
     process_uid = $diagnostics.process_uid
     process_gid = $diagnostics.process_gid
+    initial_connection_status = $initialConnectionStatus
     connection_status = $diagnostics.manager_status.connection_status
     connect_test_run = [bool]$RunConnect
     disconnect_test_run = [bool]$RunDisconnect

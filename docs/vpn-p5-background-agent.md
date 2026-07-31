@@ -3,7 +3,7 @@
 ## Outcome
 
 P5 removes the normal foreground requirement from TrollStore task 59 by
-introducing a dedicated `vpnagent` candidate on loopback port `6016`. The
+introducing a dedicated `vpnagent` on loopback port `6016`. The
 agent is embedded in `StreamControl.app`, signed with the app's `allow-vpn`
 entitlement and Keychain access group, and spawned by `privhelper` with the
 mobile persona (UID/GID 501). It is deliberately excluded from
@@ -33,6 +33,12 @@ accepts them. The agent is licensed through the existing `automation` feature.
 It receives `allow-vpn`, but never receives a Packet Tunnel Provider
 entitlement.
 
+First-run bootstrap intentionally remains local and foreground: the user must
+enter the IKEv2 settings, tap **Save Profile**, and accept the one-time iOS VPN
+configuration prompt. After that profile and password reference exist, task
+59 can query/connect/disconnect through vpnagent while StreamControl remains
+backgrounded. Missing bootstrap returns `vpn_not_configured` by design.
+
 An explicit disconnect retains the P4 rule: disable on-demand before stopping
 the tunnel. Existing request and response shapes for `590`, `591;;0`,
 `591;;1`, and `592` remain unchanged.
@@ -42,13 +48,13 @@ the tunnel. Existing request and response shapes for `590`, `591;;0`,
 Task 97 reports:
 
 ```text
-vpnState=background_agent_candidate
+vpnState=background_control
 vpnQuery=agent_6016_app_6015_interface_fallback
 vpnControl=agent_6016_with_foreground_fallback
-vpnBackend=nevpnmanager_ikev2_background_agent_candidate
+vpnBackend=nevpnmanager_ikev2_background_agent
 vpnBroker=vpnagent_6016_then_StreamControl_6015
 vpnPhase=5
-vpnBackgroundAgent=experimental_mobile_process
+vpnBackgroundAgent=validated_mobile_process_v2
 ```
 
 Task 592 is authoritative only when
@@ -57,8 +63,10 @@ Task 592 is authoritative only when
 foreground-broker errors and must not be treated as proof that background
 control works.
 
-The state remains `background_agent_candidate` until a real device proves
-query/connect/disconnect after StreamControl has been sent to the background.
+The state is promoted to `background_control` from device evidence: agent v2
+reported `background_vpnagent`, `broker_ready=true`, UID/EUID/GID/EGID 501,
+and task `591;;1` plus the connected task `590` check succeeded while
+StreamControl remained backgrounded.
 
 ## Device validation
 
@@ -83,6 +91,7 @@ Test disconnect separately. This also disables P4 Auto-Reconnect by policy:
 ./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP -RunDisconnect
 ```
 
-Promotion requires `background_vpnagent`, UID/EUID 501, successful task 590
-and both transitions while StreamControl remains backgrounded, plus real
-egress IP/DNS verification through the live VPN.
+P5 was promoted after the background agent identity/readiness and live connect
+path passed. Release acceptance should continue to verify real egress IP/DNS
+through the VPN and run the explicit disconnect test when its on-demand reset
+side effect is acceptable.

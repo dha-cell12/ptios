@@ -109,6 +109,8 @@ assert.ok(streamdBinary.includes("vpn_foreground_app_required"), "streamd lacks 
 assert.ok(appBinary.includes("vpn_on_demand_enabled"), "StreamControl lacks VPN P4 on-demand manager evidence");
 assert.ok(appBinary.includes("Auto-Reconnect (On Demand)"), "StreamControl lacks VPN P4 local UI evidence");
 assert.ok(streamdBinary.includes("vpnPhase=5"), "streamd lacks VPN P5 capability evidence");
+assert.ok(streamdBinary.includes("vpnState=background_control"), "streamd lacks promoted VPN P5 state evidence");
+assert.ok(streamdBinary.includes("vpnBackgroundAgent=validated_mobile_process_v2"), "streamd lacks validated VPN agent evidence");
 assert.ok(streamdBinary.includes("vpnagent_6016_then_StreamControl_6015"), "streamd lacks VPN P5 routing evidence");
 assert.ok(vpnagentBinary.includes("vpnagent_ready version=2 phase=5"), "vpnagent lacks P5 readiness evidence");
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
@@ -170,6 +172,9 @@ const manifest = {
   compile_marker: expectedMarker,
   service_version: 23,
   vpn_phase: 5,
+  vpn_state: "background_control",
+  vpn_agent_version: 2,
+  vpn_profile_bootstrap: "local_ui_keychain_once",
   config: {
     endpoint: expected.LicenseEndpoint,
     key_id: expected.LicenseKeyID,

@@ -48,10 +48,10 @@ static NSDictionary *TLinkVPNAgentPreflight(void)
 {
     return TLinkVPNDiagnosticsSnapshot(
         @"trollstore",
-        @"background_agent_candidate",
+        @"background_control",
         @"agent_6016_app_6015_interface_fallback",
         @"agent_6016_with_foreground_fallback",
-        @"nevpnmanager_ikev2_background_agent_candidate",
+        @"nevpnmanager_ikev2_background_agent",
         @"vpnagent_6016_then_StreamControl_6015",
         nil);
 }

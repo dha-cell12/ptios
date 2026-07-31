@@ -26,6 +26,12 @@ assert.equal(fixture.phase, 5);
 assert.equal(fixture.contractVersion, 1);
 assert.equal(fixture.agent.port, 6016);
 assert.equal(fixture.agent.personaUid, 501);
+assert.equal(fixture.state, "background_control");
+assert.equal(fixture.promotionEvidence.backgroundDiagnostics, true);
+assert.equal(fixture.promotionEvidence.backgroundConnect, true);
+assert.equal(fixture.promotionEvidence.agentVersion, 2);
+assert.equal(fixture.promotionEvidence.mobileIdentity, true);
+assert.equal(fixture.promotionEvidence.firstRunLocalProfileBootstrapRequired, true);
 assert.equal(fixture.security.credentialsOverAgent, false);
 assert.equal(fixture.security.packetTunnelProvider, false);
 
@@ -77,12 +83,18 @@ for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
 assert.match(artifact, /"vpnagent"/);
 assert.match(artifact, /vpnagentEntitlements/);
 assert.match(artifact, /vpn_phase: 5/);
+assert.match(artifact, /vpn_state: "background_control"/);
+assert.match(artifact, /vpn_agent_version: 2/);
+assert.match(artifact, /vpn_profile_bootstrap: "local_ui_keychain_once"/);
 assert.match(device, /background_vpnagent/);
 assert.match(device, /agent_version 2/);
 assert.match(device, /process_uid/);
 assert.match(device, /vpnPhase=5/);
+assert.match(device, /initial_connection_status/);
 assert.match(doc, /foreground/i);
-assert.match(doc, /candidate/i);
+assert.match(doc, /background_control/);
+assert.match(doc, /Save Profile/);
+assert.match(doc, /vpn_not_configured/);
 assert.match(doc, /6016/);
 
-console.log("VPN P5 background agent OK: mobile vpnagent 6016 is primary with foreground fallback");
+console.log("VPN P5 background control OK: validated mobile vpnagent 6016 is primary with foreground fallback");

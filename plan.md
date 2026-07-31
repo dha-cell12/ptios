@@ -205,12 +205,14 @@ Known unresolved issues / deferred investigation:
   on-demand before stopping so the terminal disconnect remains deterministic.
   Task `59` stays contract v1 and never accepts credentials or on-demand
   configuration; see `docs/vpn-p4-on-demand.md`.
-- VPN P5 adds a TrollStore-only background `vpnagent` candidate on port 6016.
+- VPN P5 adds a TrollStore-only background `vpnagent` on port 6016.
   Privhelper spawns it as mobile UID/GID 501; streamd routes fixed task 59
   query/connect/disconnect/diagnostics commands to it first and retains the
   foreground app broker on 6015 as fallback. The agent shares the app identity,
   `allow-vpn` entitlement, and Keychain group but cannot receive credentials or
-  configuration. Promotion waits for live background-device evidence; see
+  configuration. Live device evidence promoted it to `background_control`:
+  agent v2 ran under mobile identity and background connect/query succeeded.
+  First-run Save Profile and the iOS approval prompt remain local bootstrap; see
   `docs/vpn-p5-background-agent.md`.
 - Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v12 keeps direct background Pasteboard access, handles best-effort keep-awake requests, sends background toast/alert/dialog through CFUserNotification, and applies the same signed-license gate as streamd. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
 - Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
