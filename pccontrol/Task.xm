@@ -1192,6 +1192,20 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 @(sTLinkSpringBoardLicenseTask10DropCount.load(std::memory_order_relaxed));
             licenseStatus[@"rootfull_build_mode"] = licenseBuildMode;
             licenseStatus[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
+            NSMutableDictionary *vpnStatus = [
+                TLinkVPNDiagnosticsSnapshot(
+                    @"rootfull",
+                    @"broker_managed",
+                    @"broker_localhost_6014",
+                    @"broker_localhost_6014",
+                    @"nevpnmanager_ikev2",
+                    @"tlinkauto_vpnd_6014",
+                    nil)
+                mutableCopy];
+            vpnStatus[@"phase"] = @2;
+            vpnStatus[@"broker_target"] = @"tlinkauto_vpnd";
+            vpnStatus[@"entitlement_probe_scope"] =
+                @"springboard_process_fallback_use_task592_for_broker";
 
             NSDictionary *payload = @{
                 @"tlinkauto": @{
@@ -1215,14 +1229,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                         : @{},
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
-                @"vpn": TLinkVPNDiagnosticsSnapshot(
-                    @"rootfull",
-                    @"unavailable",
-                    @"unsupported",
-                    @"unsupported",
-                    @"stub",
-                    @"not_implemented",
-                    nil),
+                @"vpn": vpnStatus,
                 @"license": licenseStatus,
             };
 

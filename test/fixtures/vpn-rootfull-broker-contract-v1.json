@@ -1,0 +1,57 @@
+{
+  "phase": 2,
+  "runtime": "rootfull",
+  "legacyTask": 59,
+  "brokerHost": "127.0.0.1",
+  "brokerPort": 6014,
+  "brokerExecutable": "/usr/libexec/tlinkauto-vpnd",
+  "profileIdentifier": "tlinkauto-managed-v1",
+  "profileType": "ikev2",
+  "transitionTimeoutSeconds": 20,
+  "requests": {
+    "query": "590\r\n",
+    "disconnect": "591;;0\r\n",
+    "connect": "591;;1\r\n",
+    "diagnostics": "592\r\n"
+  },
+  "brokerCommands": [
+    "query",
+    "connect",
+    "disconnect",
+    "diagnostics"
+  ],
+  "successResponses": {
+    "queryDisconnected": "0;;0\r\n",
+    "queryConnected": "0;;1\r\n",
+    "disconnect": "0;;0\r\n",
+    "connect": "0;;1\r\n",
+    "diagnosticsPrefix": "0;;"
+  },
+  "stableErrors": [
+    "vpn_broker_unavailable",
+    "vpn_not_configured",
+    "vpn_profile_disabled",
+    "vpn_start_failed",
+    "vpn_transition_timeout",
+    "vpn_license_denied"
+  ],
+  "requiredCapabilityFields": {
+    "vpnState": "broker_managed",
+    "vpnQuery": "broker_localhost_6014",
+    "vpnControl": "broker_localhost_6014",
+    "vpnBackend": "nevpnmanager_ikev2",
+    "vpnBroker": "tlinkauto_vpnd_6014",
+    "vpnPhase": "2",
+    "vpnDiagnostics": "task59_action2_base64_json_v1",
+    "vpnEntitlementProbe": "broker_process_via_592",
+    "vpnProfileIdentifier": "tlinkauto-managed-v1"
+  },
+  "security": {
+    "configurationTransport": "foreground_app_only",
+    "secretStorage": "keychain_after_first_unlock_this_device_only",
+    "credentialsOverTask59": false,
+    "brokerLicenseFeature": "automation",
+    "onDemandEnabled": false,
+    "foreignProfileMutation": false
+  }
+}

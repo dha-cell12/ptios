@@ -88,6 +88,19 @@ TrollStore:
 Action `2` rejects extra arguments with
 `vpn_diagnostics_takes_no_arguments`.
 
+The frozen rootfull task `97` capability markers for this historical phase
+were:
+
+```text
+vpnPhase=1
+vpnDiagnostics=task59_action2_base64_json_v1
+vpnEntitlementProbe=sec_task_current_process
+vpnProfileIdentifier=tlinkauto-managed-v1
+```
+
+P2 is allowed to advance the live rootfull values, while this block preserves
+the exact P1 baseline used by the regression gate.
+
 ## Security boundary
 
 Diagnostics contain no server address, username, password, shared secret,

@@ -19,6 +19,7 @@ chmod +x /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/de
 chmod +x /usr/bin/tlinkautod 2>/dev/null
 chmod +x /usr/bin/tlinkautob 2>/dev/null
 chmod +x /usr/libexec/tlinkauto-jsd 2>/dev/null
+chmod +x /usr/libexec/tlinkauto-vpnd 2>/dev/null
 if [ -f /var/mobile/Library/TLinkauto/force_ldid_resign ] && command -v ldid >/dev/null 2>&1; then
     rm -rf /Applications/TLinkauto.app/_CodeSignature 2>/dev/null
     rm -rf /Applications/TLinkauto.app/PlugIns/shortcutext.appex/_CodeSignature 2>/dev/null
@@ -26,7 +27,11 @@ if [ -f /var/mobile/Library/TLinkauto/force_ldid_resign ] && command -v ldid >/d
     rm -f /Applications/TLinkauto.app/PlugIns/shortcutext.appex/embedded.mobileprovision 2>/dev/null
     if [ -f /entitlements.plist ]; then
         ldid -S/entitlements.plist /Applications/TLinkauto.app/TLinkauto 2>/dev/null
-        ldid -S/entitlements.plist /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
+        if [ -f /shortcut-entitlements.plist ]; then
+            ldid -S/shortcut-entitlements.plist /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
+        else
+            ldid -S /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
+        fi
     else
         ldid -S /Applications/TLinkauto.app/TLinkauto 2>/dev/null
         ldid -S /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
@@ -41,12 +46,16 @@ chown root:wheel /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 chmod 644 /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 chown root:wheel /Library/LaunchDaemons/com.tlinkauto.js-helper.plist 2>/dev/null
 chmod 644 /Library/LaunchDaemons/com.tlinkauto.js-helper.plist 2>/dev/null
+chown root:wheel /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist 2>/dev/null
+chmod 644 /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist 2>/dev/null
 launchctl unload /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 launchctl unload /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist 2>/dev/null
 launchctl unload /Library/LaunchDaemons/com.tlinkauto.js-helper.plist 2>/dev/null
+launchctl unload /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist 2>/dev/null
 killall -9 zxtouchd 2>/dev/null
 killall -9 tlinkautod 2>/dev/null
 killall -9 tlinkauto-jsd 2>/dev/null
+killall -9 tlinkauto-vpnd 2>/dev/null
 rm -f /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 rm -f /usr/bin/zxtouchd /usr/bin/zxtouchb 2>/dev/null
 rm -f /var/mobile/Library/TLinkauto/run/js-helper.sock 2>/dev/null
@@ -57,4 +66,9 @@ if [ -x /usr/libexec/tlinkauto-jsd ] && [ -f /Library/LaunchDaemons/com.tlinkaut
     launchctl load -w /Library/LaunchDaemons/com.tlinkauto.js-helper.plist >/var/mobile/Library/TLinkauto/js-helper-launchctl.log 2>&1
 else
     echo "missing /usr/libexec/tlinkauto-jsd or helper plist" >/var/mobile/Library/TLinkauto/js-helper-launchctl.log
+fi
+if [ -x /usr/libexec/tlinkauto-vpnd ] && [ -f /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist ]; then
+    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist >/var/mobile/Library/TLinkauto/vpn-broker-launchctl.log 2>&1
+else
+    echo "missing /usr/libexec/tlinkauto-vpnd or broker plist" >/var/mobile/Library/TLinkauto/vpn-broker-launchctl.log
 fi

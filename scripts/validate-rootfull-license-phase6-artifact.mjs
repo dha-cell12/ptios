@@ -48,6 +48,12 @@ function plistXML(path) {
   }
 }
 
+function signedEntitlements(path) {
+  return execFileSync("ldid", ["-e", path], {
+    encoding: "utf8",
+  });
+}
+
 async function listFiles(path) {
   const output = [];
   for (const name of await readdir(path)) {
@@ -79,6 +85,7 @@ const binaries = [
   "usr/bin/tlinkautod",
   "usr/bin/tlinkautob",
   "usr/libexec/tlinkauto-jsd",
+  "usr/libexec/tlinkauto-vpnd",
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
   "Library/MobileSubstrate/DynamicLibraries/appdelegate.dylib",
 ];
@@ -87,6 +94,7 @@ const verifierBinaries = new Set([
   "usr/bin/tlinkautod",
   "usr/bin/tlinkautob",
   "usr/libexec/tlinkauto-jsd",
+  "usr/libexec/tlinkauto-vpnd",
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
 ]);
 const evidence = {
@@ -107,6 +115,11 @@ const evidence = {
   "usr/libexec/tlinkauto-jsd": [
     "script_helper_start",
     "license_revoked_during_execution",
+    "signed_device_checkpoint_v1",
+  ],
+  "usr/libexec/tlinkauto-vpnd": [
+    "vpn_license_denied",
+    "tlinkauto-managed-v1",
     "signed_device_checkpoint_v1",
   ],
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib": [
@@ -143,6 +156,28 @@ for (const relative of binaries) {
 }
 
 const app = join(rootfs, "Applications/TLinkauto.app");
+const allowVPNMarker = "com.apple.developer.networking.vpn.api";
+for (const relative of [
+  "Applications/TLinkauto.app/TLinkauto",
+  "usr/libexec/tlinkauto-vpnd",
+]) {
+  const entitlements = signedEntitlements(join(rootfs, relative));
+  assert.ok(
+    entitlements.includes(allowVPNMarker) &&
+      entitlements.includes("allow-vpn"),
+    `${relative} is missing the signed allow-vpn entitlement`,
+  );
+}
+const shortcutEntitlements = signedEntitlements(
+  join(rootfs,
+    "Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext"),
+);
+assert.ok(
+  !shortcutEntitlements.includes(allowVPNMarker) &&
+    !shortcutEntitlements.includes("com.apple.developer.networking.networkextension"),
+  "shortcut extension must not inherit VPN entitlements",
+);
+
 const buildPlistPath = join(app, "RootfullLicenseBuild.plist");
 const configPath = join(app, "LicenseConfig.plist");
 const buildXML = plistXML(buildPlistPath) || await readFile(buildPlistPath, "utf8");

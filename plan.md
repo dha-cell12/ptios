@@ -185,6 +185,13 @@ Known unresolved issues / deferred investigation:
   availability without saving, starting, or stopping a profile. Production
   VPN entitlements and action `1` remain disabled pending device evidence;
   see `docs/vpn-p1-diagnostics.md`.
+- VPN P2 now adds the rootfull TLink-owned IKEv2 path: the foreground app
+  creates the profile and stores its password as a ThisDeviceOnly Keychain
+  reference, while the mobile `tlinkauto-vpnd` LaunchDaemon performs
+  license-gated query/connect/disconnect over loopback port `6014`. Task
+  `591` waits for terminal `NEVPNStatus`, on-demand stays disabled, and the
+  broker refuses foreign profiles. Rootfull device validation with a real
+  IKEv2 endpoint remains required; see `docs/vpn-p2-rootfull-broker.md`.
 - Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v12 keeps direct background Pasteboard access, handles best-effort keep-awake requests, sends background toast/alert/dialog through CFUserNotification, and applies the same signed-license gate as streamd. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
 - Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tlinkauto.vpn-broker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/libexec/tlinkauto-vpnd</string>
+    </array>
+    <key>UserName</key>
+    <string>mobile</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardErrorPath</key>
+    <string>/var/mobile/Library/TLinkauto/vpn-broker.err.log</string>
+    <key>StandardOutPath</key>
+    <string>/var/mobile/Library/TLinkauto/vpn-broker.log</string>
+</dict>
+</plist>

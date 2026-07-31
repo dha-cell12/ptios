@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A30000000000000000000001 /* TLinkVPNManager.mm in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000011 /* TLinkVPNManager.mm */; };
+		A30000000000000000000002 /* TLinkVPNSettingsViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000013 /* TLinkVPNSettingsViewController.m */; };
+		A30000000000000000000003 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A30000000000000000000015 /* NetworkExtension.framework */; };
 		A20000000000000000000001 /* LicenseManager.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* LicenseManager.mm */; };
 		A20000000000000000000002 /* LicenseLifecycleCoordinator.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* LicenseLifecycleCoordinator.mm */; };
 		A20000000000000000000003 /* LicenseViewController.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* LicenseViewController.mm */; };
@@ -140,6 +143,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A30000000000000000000010 /* TLinkVPNManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = TLinkVPNManager.h; path = ../shared/TLinkVPNManager.h; sourceTree = SOURCE_ROOT; };
+		A30000000000000000000011 /* TLinkVPNManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TLinkVPNManager.mm; path = ../shared/TLinkVPNManager.mm; sourceTree = SOURCE_ROOT; };
+		A30000000000000000000012 /* TLinkVPNSettingsViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TLinkVPNSettingsViewController.h; sourceTree = "<group>"; };
+		A30000000000000000000013 /* TLinkVPNSettingsViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TLinkVPNSettingsViewController.m; sourceTree = "<group>"; };
+		A30000000000000000000015 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
 		A20000000000000000000011 /* LicenseManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = LicenseManager.h; path = ../stream-app/app/LicenseManager.h; sourceTree = SOURCE_ROOT; };
 		A20000000000000000000012 /* LicenseManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = LicenseManager.mm; path = ../stream-app/app/LicenseManager.mm; sourceTree = SOURCE_ROOT; };
 		A20000000000000000000013 /* LicenseLifecycleCoordinator.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = LicenseLifecycleCoordinator.h; path = ../stream-app/app/LicenseLifecycleCoordinator.h; sourceTree = SOURCE_ROOT; };
@@ -336,6 +344,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A20000000000000000000006 /* Security.framework in Frameworks */,
+				A30000000000000000000003 /* NetworkExtension.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -367,6 +376,8 @@
 		A20000000000000000000020 /* LicensePhase2 */ = {
 			isa = PBXGroup;
 			children = (
+				A30000000000000000000010 /* TLinkVPNManager.h */,
+				A30000000000000000000011 /* TLinkVPNManager.mm */,
 				A20000000000000000000011 /* LicenseManager.h */,
 				A20000000000000000000012 /* LicenseManager.mm */,
 				A20000000000000000000013 /* LicenseLifecycleCoordinator.h */,
@@ -530,6 +541,8 @@
 			isa = PBXGroup;
 			children = (
 				9666349625C428B30028A5A3 /* ActivatorConfiguration */,
+				A30000000000000000000012 /* TLinkVPNSettingsViewController.h */,
+				A30000000000000000000013 /* TLinkVPNSettingsViewController.m */,
 				9684FF7325B58A3700549FC8 /* SettingsPageViewController.h */,
 				9684FF7425B58A3700549FC8 /* SettingsPageViewController.m */,
 				9684FFB125B67DC000549FC8 /* TouchIndicatorConfigurationViewController.h */,
@@ -629,6 +642,7 @@
 		96E18E2925CF04B3003635F1 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				A30000000000000000000015 /* NetworkExtension.framework */,
 				A2000000000000000000001B /* Security.framework */,
 				96E18E2A25CF04B3003635F1 /* Intents.framework */,
 				96E18E3625CF04B3003635F1 /* IntentsUI.framework */,
@@ -888,6 +902,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A30000000000000000000001 /* TLinkVPNManager.mm in Sources */,
+				A30000000000000000000002 /* TLinkVPNSettingsViewController.m in Sources */,
 				A20000000000000000000001 /* LicenseManager.mm in Sources */,
 				A20000000000000000000002 /* LicenseLifecycleCoordinator.mm in Sources */,
 				A20000000000000000000003 /* LicenseViewController.mm in Sources */,

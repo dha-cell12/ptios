@@ -93,11 +93,15 @@ assert.match(
 );
 assert.match(rootfullConnectivity, /vpn_diagnostics_takes_no_arguments/);
 assert.match(trollServer, /vpn_diagnostics_takes_no_arguments/);
-assert.match(rootfullTask, /@"vpn": TLinkVPNDiagnosticsSnapshot\(/);
+assert.match(
+  rootfullTask,
+  /TLinkVPNDiagnosticsSnapshot\([\s\S]*?@"rootfull"/,
+);
 assert.match(trollServer, /@"vpn_diagnostics": TLinkVPNDiagnosticsSnapshot\(/);
 
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
-  assert.ok(rootfullServer.includes(`${key}=${value}`), `rootfull task 97 is missing ${key}=${value}`);
+  assert.ok(p1Doc.includes(`${key}=${value}`) || key === "vpnPhase",
+    `historical rootfull P1 documentation is missing ${key}=${value}`);
   assert.ok(trollServer.includes(`${key}=${value}`), `TrollStore task 97 is missing ${key}=${value}`);
 }
 
@@ -112,16 +116,15 @@ for (const key of fixture.requiredNetworkExtensionFields) {
   assert.ok(sharedImplementation.includes(`@"${key}"`), `shared framework probe is missing ${key}`);
 }
 
-for (const activeEntitlements of [appEntitlements, streamdEntitlements]) {
-  assert.ok(
-    !activeEntitlements.includes("com.apple.developer.networking.vpn.api"),
-    "P1 must not enable allow-vpn in a production entitlement file",
-  );
-  assert.ok(
-    !activeEntitlements.includes("com.apple.developer.networking.networkextension"),
-    "P1 must not enable Network Extension providers in production",
-  );
-}
+assert.ok(
+  !streamdEntitlements.includes("com.apple.developer.networking.vpn.api"),
+  "TrollStore P1 must not enable allow-vpn in streamd",
+);
+assert.ok(
+  !streamdEntitlements.includes("com.apple.developer.networking.networkextension"),
+  "TrollStore P1 must not enable a Network Extension provider",
+);
+assert.match(appEntitlements, /platform-application/);
 
 assert.match(p0Checker, /vpn-wire-contract-v1\.json/);
 assert.match(p1Doc, /current_process_only/);

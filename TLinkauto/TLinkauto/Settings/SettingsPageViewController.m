@@ -23,6 +23,7 @@
 #import "ConfigManager.h"
 #import "../../../stream-app/app/LicenseViewController.h"
 #import "../../../stream-app/app/LicenseLifecycleCoordinator.h"
+#import "TLinkVPNSettingsViewController.h"
 
 #define SETTING_CELL_SWITCH 0
 #define SETTING_CELL_ENTRY 1
@@ -41,7 +42,7 @@
     [super viewDidLoad];
     // Do any additional setup after loading the view.
     
-    sections = @[@"License", NSLocalizedString(@"remoteManagement", nil), NSLocalizedString(@"control", nil), NSLocalizedString(@"script", nil)]; // , @"HELP"
+    sections = @[@"License", @"VPN", NSLocalizedString(@"remoteManagement", nil), NSLocalizedString(@"control", nil), NSLocalizedString(@"script", nil)]; // , @"HELP"
     configManager = [[ConfigManager alloc] initWithPath:SPRINGBOARD_CONFIG_PATH];
     BOOL doubleClickPopup = YES;
     if ([configManager getValueFromKey:@"double_click_volume_show_popup"])
@@ -75,6 +76,9 @@
     cellsForEachSection = @[
         @[
             @{@"type": @(SETTING_CELL_ENTRY), @"title": @"License", @"secondary_title": @"Activation and device binding", @"row_click_handler": NSStringFromSelector(@selector(handleLicenseWithEntryCellInstance:))}
+        ],
+        @[
+            @{@"type": @(SETTING_CELL_ENTRY), @"title": @"Managed IKEv2 VPN", @"feature": @"automation", @"secondary_title": @"Configure the TLink-owned profile", @"row_click_handler": NSStringFromSelector(@selector(handleVPNWithEntryCellInstance:))}
         ],
         @[
             @{@"type": @(SETTING_CELL_SWITCH), @"title": NSLocalizedString(@"webServer", nil), @"feature": @"stream", @"switch_click_handler": NSStringFromSelector(@selector(handleWebServerWithSwitchCellInstance:)), @"switch_init_status": @(NO)}
@@ -134,6 +138,14 @@
     (void)cell;
     SCLicenseViewController *controller =
         [[SCLicenseViewController alloc] initWithStyle:UITableViewStyleGrouped];
+    [self.navigationController pushViewController:controller animated:YES];
+}
+
+- (void)handleVPNWithEntryCellInstance:(TableViewCellWithEntry *)cell
+{
+    (void)cell;
+    TLinkVPNSettingsViewController *controller =
+        [[TLinkVPNSettingsViewController alloc] init];
     [self.navigationController pushViewController:controller animated:YES];
 }
 
@@ -405,7 +417,7 @@
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
     (void)tableView;
-    if (section == 3) {
+    if (section == 4) {
         return NSLocalizedString(@"scriptRuntimeSettingsHint", nil);
     }
     return nil;

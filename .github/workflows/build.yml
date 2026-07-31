@@ -39,6 +39,7 @@ jobs:
           node scripts/check-ocr-p1-cpu-only.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
+          node scripts/check-vpn-p2-rootfull-broker.mjs
 
       - name: Validate public license build inputs
         run: |
@@ -132,7 +133,7 @@ jobs:
           chmod +x layout/Applications/TLinkauto.app/TLinkauto
           if [ -f layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext ]; then
             chmod +x layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
-            codesign --force --sign - --entitlements layout/entitlements.plist layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex
+            codesign --force --sign - --entitlements layout/shortcut-entitlements.plist layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex
           fi
           codesign --force --sign - --entitlements layout/entitlements.plist layout/Applications/TLinkauto.app
 

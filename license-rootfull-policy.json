@@ -160,6 +160,12 @@
       "gate_status": "active_phase_4_launch_time_recheck"
     },
     {
+      "component": "vpn_broker",
+      "feature": "automation",
+      "source": "vpn-broker/main.mm",
+      "gate_status": "active_vpn_phase_2_per_request"
+    },
+    {
       "component": "app_ui",
       "feature": "automation",
       "source": "TLinkauto/TLinkauto",

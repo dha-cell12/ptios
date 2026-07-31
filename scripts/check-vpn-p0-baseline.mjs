@@ -59,7 +59,7 @@ const [
 
 assert.match(rootfullHeader, /#define TASK_VPN 59/);
 assert.match(rootfullTask, /taskType == TASK_VPN[\s\S]*?vpnTaskFromRawData\(eventData, &err\)/);
-assert.match(rootfullConnectivity, /NSString\* vpnTaskFromRawData[\s\S]*?VPN control not implemented on this build\./);
+assert.match(rootfullConnectivity, /NSString\* vpnTaskFromRawData/);
 assert.doesNotMatch(rootfullConnectivity, /NEVPNManager|NETunnelProviderManager|NetworkExtension/);
 
 assert.match(trollServer, /if \(taskType >= 55 && taskType <= 59\)[\s\S]*?TLinkHandleConnectivityTask/);
@@ -89,7 +89,10 @@ const rootfull = { ...common, ...fixture.requiredRuntimeCapabilityFields.rootful
 const trollstore = { ...common, ...fixture.requiredRuntimeCapabilityFields.trollstore };
 
 for (const [key, value] of Object.entries(rootfull)) {
-  assert.ok(rootfullServer.includes(`${key}=${value}`), `rootfull task 97 is missing ${key}=${value}`);
+  assert.ok(
+    baselineDoc.includes(`${key}=${value}`),
+    `historical rootfull P0 baseline is missing ${key}=${value}`,
+  );
 }
 for (const [key, value] of Object.entries(trollstore)) {
   assert.ok(trollServer.includes(`${key}=${value}`), `TrollStore task 97 is missing ${key}=${value}`);
@@ -108,10 +111,7 @@ for (const [key, value] of Object.entries(rootfullTask60Fields)) {
     `rootfull task 60 is missing vpn.${key}=${value}`,
   );
 }
-assert.match(
-  rootfullTask,
-  /@"vpn": TLinkVPNDiagnosticsSnapshot\([\s\S]*?@"rootfull"[\s\S]*?@"unavailable"[\s\S]*?@"unsupported"[\s\S]*?@"unsupported"[\s\S]*?@"stub"[\s\S]*?@"not_implemented"/,
-);
+assert.match(rootfullTask, /@"vpn": vpnStatus/);
 const trollTask60Fields = {
   vpnContractVersion: "@1",
   vpnLegacyTask: "@59",

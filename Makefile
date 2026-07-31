@@ -14,7 +14,7 @@ endif
 export TLINK_LICENSE_MODE
 export TLINK_LICENSE_FORCE_ENFORCEMENT
 
-SUBPROJECTS = appdelegate tlinkauto-binary tlinkauto-jsd pccontrol
+SUBPROJECTS = appdelegate tlinkauto-binary tlinkauto-jsd vpn-broker pccontrol
 
 include $(THEOS)/makefiles/common.mk
 include $(THEOS)/makefiles/aggregate.mk

@@ -50,6 +50,11 @@
       "component": "script_helper",
       "binary": "usr/libexec/tlinkauto-jsd",
       "source": "tlinkauto-jsd/TLinkJSHelperServer.mm"
+    },
+    {
+      "component": "vpn_broker",
+      "binary": "usr/libexec/tlinkauto-vpnd",
+      "source": "vpn-broker/main.mm"
     }
   ],
   "diagnostic_tasks": {
@@ -98,6 +103,12 @@
       "start_gate": true,
       "heartbeat_seconds": 1,
       "revocation_action": "cancel_javascript_wake_waiters_close_file_handles"
+    },
+    "vpn_broker": {
+      "feature": "automation",
+      "per_request_gate": true,
+      "transport": "loopback_6014",
+      "deny_action": "stable_error_no_networkextension_call"
     }
   },
   "ui_feature_policy": {
