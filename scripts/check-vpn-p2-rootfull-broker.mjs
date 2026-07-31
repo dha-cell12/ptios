@@ -90,6 +90,12 @@ assert.match(manager, /TLinkVPNManagerIsOwned/);
 assert.match(manager, /vpn_foreign_profile_present/);
 assert.match(manager, /TLinkauto Managed VPN \(tlinkauto-managed-v1\)/);
 assert.match(manager, /kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly/);
+assert.match(manager, /kSecAttrAccessGroup:\s*kTLinkVPNKeychainAccessGroup/);
+assert.match(manager, /kTLinkVPNKeychainAccessGroup\s*=\s*[\r\n\s]*@"com\.tlinkauto\.tlinkauto"/);
+assert.match(manager, /kSecReturnPersistentRef\]\s*=\s*[\r\n\s]*\(__bridge id\)kCFBooleanTrue/);
+assert.doesNotMatch(manager, /kSecReturnPersistentRef\]\s*=\s*@1/);
+assert.match(manager, /@"os_status":\s*@\(effectiveStatus\)/);
+assert.match(manager, /password persistent reference save failed OSStatus=%d/);
 assert.match(manager, /passwordReference = passwordReference/);
 assert.match(manager, /NEVPNProtocolIKEv2/);
 assert.match(manager, /protocol\.IKESecurityAssociationParameters/);
@@ -122,6 +128,7 @@ for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
 }
 
 assert.match(appEntitlements, /com\.apple\.developer\.networking\.vpn\.api[\s\S]*allow-vpn/);
+assert.match(appEntitlements, /keychain-access-groups[\s\S]*com\.tlinkauto\.tlinkauto/);
 assert.doesNotMatch(appEntitlements, /packet-tunnel-provider/);
 assert.doesNotMatch(shortcutEntitlements, /networking\.vpn\.api|networking\.networkextension/);
 assert.match(workflow, /shortcut-entitlements\.plist/);
@@ -138,6 +145,7 @@ assert.match(vpnSettings, /secureTextEntry = secure/);
 assert.match(vpnSettings, /TLinkVPNConfigureIKEv2/);
 assert.match(vpnSettings, /TLinkVPNSetConnected\(YES/);
 assert.match(vpnSettings, /TLinkVPNSetConnected\(NO/);
+assert.match(vpnSettings, /result\[@"os_status"\]/);
 assert.doesNotMatch(vpnSettings, /send:|byPort:6000|6014/);
 
 for (const marker of [

@@ -105,16 +105,35 @@
         NSString *connection = [result[@"connection_status"] isKindOfClass:[NSString class]]
             ? result[@"connection_status"]
             : @"unknown";
+        NSNumber *osStatus = [result[@"os_status"] isKindOfClass:[NSNumber class]]
+            ? result[@"os_status"]
+            : nil;
+        NSString *nativeError = [result[@"native_error"] isKindOfClass:[NSString class]]
+            ? result[@"native_error"]
+            : @"";
+        NSString *diagnostic = @"";
+        if (osStatus) {
+            diagnostic = [diagnostic stringByAppendingFormat:
+                @"\nOSStatus: %@", osStatus];
+        }
+        if (nativeError.length > 0) {
+            diagnostic = [diagnostic stringByAppendingFormat:
+                @"\nNative error: %@", nativeError];
+        }
         self.statusLabel.text = [NSString stringWithFormat:
-            @"Code: %@\nConfigured: %@\nEnabled: %@\nConnection: %@",
+            @"Code: %@\nConfigured: %@\nEnabled: %@\nConnection: %@%@",
             code,
             [result[@"configured"] boolValue] ? @"yes" : @"no",
             [result[@"enabled"] boolValue] ? @"yes" : @"no",
-            connection];
+            connection,
+            diagnostic];
         if (![result[@"ok"] boolValue]) {
+            NSString *alertMessage = diagnostic.length > 0
+                ? [NSString stringWithFormat:@"%@%@", code, diagnostic]
+                : code;
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:title
-                                 message:code
+                                 message:alertMessage
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"OK"
                                                      style:UIAlertActionStyleDefault

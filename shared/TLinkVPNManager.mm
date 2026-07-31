@@ -8,6 +8,8 @@ static NSString *const kTLinkVPNDescription =
 static NSString *const kTLinkVPNKeychainService =
     @"com.tlinkauto.vpn.ikev2.v1";
 static NSString *const kTLinkVPNKeychainAccount = @"password";
+static NSString *const kTLinkVPNKeychainAccessGroup =
+    @"com.tlinkauto.tlinkauto";
 
 NSString *TLinkVPNOwnedDescription(void)
 {
@@ -77,6 +79,7 @@ static NSData *TLinkVPNStorePassword(
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService: kTLinkVPNKeychainService,
         (__bridge id)kSecAttrAccount: kTLinkVPNKeychainAccount,
+        (__bridge id)kSecAttrAccessGroup: kTLinkVPNKeychainAccessGroup,
     };
     SecItemDelete((__bridge CFDictionaryRef)query);
 
@@ -85,7 +88,8 @@ static NSData *TLinkVPNStorePassword(
     add[(__bridge id)kSecValueData] = passwordData;
     add[(__bridge id)kSecAttrAccessible] =
         (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
-    add[(__bridge id)kSecReturnPersistentRef] = @1;
+    add[(__bridge id)kSecReturnPersistentRef] =
+        (__bridge id)kCFBooleanTrue;
 
     CFTypeRef result = NULL;
     OSStatus status = SecItemAdd(
@@ -93,11 +97,21 @@ static NSData *TLinkVPNStorePassword(
         &result);
     if (status != errSecSuccess || !result) {
         if (result) CFRelease(result);
+        OSStatus effectiveStatus = status == errSecSuccess
+            ? errSecInternalComponent
+            : status;
+        CFStringRef statusMessage =
+            SecCopyErrorMessageString(effectiveStatus, NULL);
+        NSString *nativeError = CFBridgingRelease(statusMessage) ?: @"";
+        NSLog(@"[TLinkVPN] password persistent reference save failed OSStatus=%d",
+              (int)effectiveStatus);
         if (error) {
             *error = [NSError errorWithDomain:NSOSStatusErrorDomain
-                                         code:status
+                                         code:effectiveStatus
                                      userInfo:@{
-                NSLocalizedDescriptionKey: @"vpn_keychain_password_save_failed"
+                NSLocalizedDescriptionKey: @"vpn_keychain_password_save_failed",
+                @"native_error": nativeError,
+                @"os_status": @(effectiveStatus),
             }];
         }
         return nil;
@@ -156,8 +170,12 @@ void TLinkVPNConfigureIKEv2(
         TLinkVPNStorePassword(password, &keychainError);
     if (!passwordReference) {
         TLinkVPNComplete(completion, TLinkVPNResult(false,
-            keychainError.localizedDescription ?: @"vpn_keychain_password_save_failed",
-            nil));
+            @"vpn_keychain_password_save_failed",
+            @{
+                @"os_status": keychainError.userInfo[@"os_status"]
+                    ?: @(keychainError.code),
+                @"native_error": keychainError.userInfo[@"native_error"] ?: @"",
+            }));
         return;
     }
 

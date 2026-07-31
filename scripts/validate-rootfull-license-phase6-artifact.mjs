@@ -170,6 +170,7 @@ for (const relative of binaries) {
 
 const app = join(rootfs, "Applications/TLinkauto.app");
 const allowVPNMarker = "com.apple.developer.networking.vpn.api";
+const sharedKeychainGroup = "com.tlinkauto.tlinkauto";
 for (const relative of [
   "Applications/TLinkauto.app/TLinkauto",
   "usr/libexec/tlinkauto-vpnd",
@@ -180,13 +181,18 @@ for (const relative of [
       entitlements.includes("allow-vpn"),
     `${relative} is missing the signed allow-vpn entitlement`,
   );
+  assert.ok(
+    entitlements.includes("keychain-access-groups") &&
+      entitlements.includes(sharedKeychainGroup),
+    `${relative} is missing the shared VPN Keychain access group`,
+  );
 }
 const authorityEntitlements = signedEntitlements(
   join(rootfs, "usr/libexec/tlinkauto-licensed"),
 );
 assert.ok(
   authorityEntitlements.includes("keychain-access-groups") &&
-    authorityEntitlements.includes("com.tlinkauto.tlinkauto"),
+    authorityEntitlements.includes(sharedKeychainGroup),
   "license authority is missing the shared app Keychain access group",
 );
 assert.ok(

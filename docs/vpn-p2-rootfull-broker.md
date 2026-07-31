@@ -75,9 +75,29 @@ prompt; approve it in the foreground.
 
 The password is stored as a persistent Keychain reference using
 `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. The app and broker share
-the existing narrow TLinkauto Keychain group. Server, username, password,
+the exact `com.tlinkauto.tlinkauto` Keychain group. The Security query uses
+the real `kCFBooleanTrue` value for `kSecReturnPersistentRef`; using an
+`NSNumber` here can make `SecItemAdd` reject the query. Server, username, password,
 shared secret, certificates, and provider configuration are never accepted
 through task `59` or the loopback broker protocol.
+
+Example form values (replace them with values issued by the VPN server):
+
+| Field | Example | Notes |
+| --- | --- | --- |
+| IKEv2 server address | `vpn.example.com` | Hostname or IP only; do not add `https://` or a path. |
+| Remote identifier | `vpn.example.com` | Usually the identity in the server certificate. Leaving it empty uses the server address. |
+| Username | `device01@example.com` | IKEv2/EAP account name. |
+| Password | `the-issued-vpn-password` | Stored only in the device Keychain. |
+
+This P2 form supports IKEv2 extended authentication with username/password.
+It does not configure a pre-shared key, client certificate, WireGuard, or
+OpenVPN profile.
+
+If Keychain storage fails, the screen now shows the numeric `OSStatus` and a
+safe native error description without logging the password. Rebuild and
+reinstall the package before retesting because the entitlement and binary
+must come from the same artifact.
 
 The loopback protocol accepts exactly four fixed commands: `query`,
 `connect`, `disconnect`, and `diagnostics`.
