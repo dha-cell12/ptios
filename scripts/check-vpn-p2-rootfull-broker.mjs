@@ -88,6 +88,11 @@ assert.match(managerHeader, /TLinkVPNConfigureIKEv2/);
 assert.match(manager, /\[NEVPNManager sharedManager\]/);
 assert.match(manager, /TLinkVPNManagerIsOwned/);
 assert.match(manager, /vpn_foreign_profile_present/);
+assert.match(manager, /TLinkVPNServerIsLoopback/);
+assert.match(manager, /inet_pton\(AF_INET/);
+assert.match(manager, /IN6_IS_ADDR_LOOPBACK/);
+assert.match(manager, /vpn_server_loopback_not_allowed/);
+assert.match(manager, /vpn_connection_failed/);
 assert.match(manager, /TLinkauto Managed VPN \(tlinkauto-managed-v1\)/);
 assert.match(manager, /kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly/);
 assert.match(manager, /kSecAttrAccessGroup:\s*kTLinkVPNKeychainAccessGroup/);
@@ -146,6 +151,11 @@ assert.match(vpnSettings, /TLinkVPNConfigureIKEv2/);
 assert.match(vpnSettings, /TLinkVPNSetConnected\(YES/);
 assert.match(vpnSettings, /TLinkVPNSetConnected\(NO/);
 assert.match(vpnSettings, /result\[@"os_status"\]/);
+assert.match(vpnSettings, /UIActivityIndicatorViewStyleMedium/);
+assert.match(vpnSettings, /pollTransitionStatusForGeneration/);
+assert.match(vpnSettings, /Status probe:/);
+assert.match(vpnSettings, /beginTransitionStatusPolling:@"Connecting"/);
+assert.match(vpnSettings, /endTransitionStatusPolling/);
 assert.doesNotMatch(vpnSettings, /send:|byPort:6000|6014/);
 
 for (const marker of [

@@ -89,7 +89,7 @@ assert.match(
 );
 assert.match(
   trollServer,
-  /if \(requestedAction == 2\)[\s\S]*?TLinkVPNDiagnosticsBase64\([\s\S]*?@"trollstore"/,
+  /if \(requestedAction == 2\)[\s\S]*?TLinkVPNTrollStoreDiagnosticsSnapshot/,
 );
 assert.match(rootfullConnectivity, /vpn_diagnostics_takes_no_arguments/);
 assert.match(trollServer, /vpn_diagnostics_takes_no_arguments/);
@@ -97,12 +97,13 @@ assert.match(
   rootfullTask,
   /TLinkVPNDiagnosticsSnapshot\([\s\S]*?@"rootfull"/,
 );
-assert.match(trollServer, /@"vpn_diagnostics": TLinkVPNDiagnosticsSnapshot\(/);
+assert.match(trollServer, /@"vpn_diagnostics": TLinkVPNTrollStoreDiagnosticsSnapshot\(/);
 
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
   assert.ok(p1Doc.includes(`${key}=${value}`) || key === "vpnPhase",
     `historical rootfull P1 documentation is missing ${key}=${value}`);
-  assert.ok(trollServer.includes(`${key}=${value}`), `TrollStore task 97 is missing ${key}=${value}`);
+  assert.ok(p1Doc.includes(`${key}=${value}`) || key === "vpnPhase",
+    `historical TrollStore P1 documentation is missing ${key}=${value}`);
 }
 
 for (const key of Object.keys(fixture.requiredTopLevelFields)) {

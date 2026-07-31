@@ -39,7 +39,8 @@ task success.
 
 Stable errors include `vpn_broker_unavailable`, `vpn_not_configured`,
 `vpn_profile_disabled`, `vpn_start_failed`, `vpn_transition_timeout`, and
-`vpn_license_denied`.
+`vpn_license_denied`. A transition that returns to `Disconnected` reports
+`vpn_connection_failed` without waiting for the full timeout.
 
 ## Profile ownership
 
@@ -90,6 +91,11 @@ Example form values (replace them with values issued by the VPN server):
 | Username | `device01@example.com` | IKEv2/EAP account name. |
 | Password | `the-issued-vpn-password` | Stored only in the device Keychain. |
 
+Loopback destinations (`127.0.0.0/8`, `::1`, and `localhost`) are rejected
+with `vpn_server_loopback_not_allowed`. On iOS they refer to the phone itself,
+not the PC running the test. Use the LAN address of the IKEv2 host and make
+UDP 500/4500 reachable from the phone.
+
 This P2 form supports IKEv2 extended authentication with username/password.
 It does not configure a pre-shared key, client certificate, WireGuard, or
 OpenVPN profile.
@@ -98,6 +104,11 @@ If Keychain storage fails, the screen now shows the numeric `OSStatus` and a
 safe native error description without logging the password. Rebuild and
 reinstall the package before retesting because the entitlement and binary
 must come from the same artifact.
+
+While Connect or Disconnect is pending, the screen displays a spinner,
+elapsed seconds, and the current `NEVPNStatus` refreshed once per second.
+The final result remains single-shot, so the task `59` wire contract and the
+broker's terminal-state requirement do not change.
 
 The loopback protocol accepts exactly four fixed commands: `query`,
 `connect`, `disconnect`, and `diagnostics`.

@@ -2,14 +2,20 @@
 
 #import <NetworkExtension/NetworkExtension.h>
 #import <Security/Security.h>
+#import <arpa/inet.h>
 
 static NSString *const kTLinkVPNDescription =
     @"TLinkauto Managed VPN (tlinkauto-managed-v1)";
 static NSString *const kTLinkVPNKeychainService =
     @"com.tlinkauto.vpn.ikev2.v1";
 static NSString *const kTLinkVPNKeychainAccount = @"password";
+#if TLINK_VPN_TROLLSTORE_RUNTIME
+static NSString *const kTLinkVPNKeychainAccessGroup =
+    @"StreamCtl.com.tlinkauto.streamcontrol";
+#else
 static NSString *const kTLinkVPNKeychainAccessGroup =
     @"com.tlinkauto.tlinkauto";
+#endif
 
 NSString *TLinkVPNOwnedDescription(void)
 {
@@ -46,6 +52,30 @@ static BOOL TLinkVPNManagerIsOwned(NEVPNManager *manager)
 {
     return manager.protocolConfiguration != nil &&
            [manager.localizedDescription isEqualToString:kTLinkVPNDescription];
+}
+
+static BOOL TLinkVPNServerIsLoopback(NSString *serverAddress)
+{
+    NSString *candidate = [[serverAddress
+        stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+    if (candidate.length == 0) return false;
+    if ([candidate isEqualToString:@"localhost"]) return true;
+    if ([candidate hasPrefix:@"["] && [candidate hasSuffix:@"]"] &&
+        candidate.length > 2) {
+        candidate = [candidate substringWithRange:
+            NSMakeRange(1, candidate.length - 2)];
+    }
+
+    struct in_addr ipv4;
+    if (inet_pton(AF_INET, candidate.UTF8String, &ipv4) == 1) {
+        return (ntohl(ipv4.s_addr) & 0xff000000U) == 0x7f000000U;
+    }
+    struct in6_addr ipv6;
+    if (inet_pton(AF_INET6, candidate.UTF8String, &ipv6) == 1) {
+        return IN6_IS_ADDR_LOOPBACK(&ipv6);
+    }
+    return false;
 }
 
 static NSDictionary *TLinkVPNStatusFields(NEVPNManager *manager)
@@ -163,6 +193,11 @@ void TLinkVPNConfigureIKEv2(
             TLinkVPNResult(false, @"vpn_configuration_incomplete", nil));
         return;
     }
+    if (TLinkVPNServerIsLoopback(server)) {
+        TLinkVPNComplete(completion,
+            TLinkVPNResult(false, @"vpn_server_loopback_not_allowed", nil));
+        return;
+    }
     if (remote.length == 0) remote = server;
 
     NSError *keychainError = nil;
@@ -271,6 +306,13 @@ void TLinkVPNSetConnected(
                     TLinkVPNResult(false, @"vpn_profile_disabled", nil));
                 return;
             }
+            if (connected && TLinkVPNServerIsLoopback(
+                    manager.protocolConfiguration.serverAddress)) {
+                TLinkVPNComplete(completion, TLinkVPNResult(false,
+                    @"vpn_server_loopback_not_allowed",
+                    TLinkVPNStatusFields(manager)));
+                return;
+            }
 
             NEVPNStatus target = connected
                 ? NEVPNStatusConnected
@@ -308,6 +350,10 @@ void TLinkVPNSetConnected(
                 } else if (connected && status == NEVPNStatusInvalid) {
                     finish(TLinkVPNResult(false,
                         @"vpn_connection_became_invalid",
+                        TLinkVPNStatusFields(manager)));
+                } else if (connected && status == NEVPNStatusDisconnected) {
+                    finish(TLinkVPNResult(false,
+                        @"vpn_connection_failed",
                         TLinkVPNStatusFields(manager)));
                 }
             }];

@@ -3,6 +3,7 @@
 #import "LicenseLifecycleCoordinator.h"
 #import "LicenseViewController.h"
 #import "TLinkSocketClient.h"
+#import "../../TLinkauto/TLinkauto/Settings/TLinkVPNSettingsViewController.h"
 #import <Photos/Photos.h>
 #import <UserNotifications/UserNotifications.h>
 
@@ -43,11 +44,11 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
         _sections = @[
             @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status"],
             runtimeSettings,
-            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: query only", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v12", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
+            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: foreground IKEv2 candidate", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v12", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
     } else {
         _sections = @[
-            @[@"License", @"Remote Bridge", @"Restart streamd", @"Respring Device", @"DEBUG"],
+            @[@"License", @"Remote Bridge", @"Managed VPN", @"Restart streamd", @"Respring Device", @"DEBUG"],
             runtimeSettings,
         ];
     }
@@ -464,6 +465,10 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
                 cell.detailTextLabel.text = enabled ? (url.length > 0 ? url : @"Enabled, not configured") : @"Disabled";
                 cell.imageView.image = [UIImage systemImageNamed:@"network"];
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            } else if ([title isEqualToString:@"Managed VPN"]) {
+                cell.detailTextLabel.text = @"Experimental foreground IKEv2 control";
+                cell.imageView.image = [UIImage systemImageNamed:@"lock.shield"];
+                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             } else if ([title isEqualToString:@"Restart streamd"]) {
                 cell.detailTextLabel.text = @"Replace and restart the task service";
                 cell.imageView.image = [UIImage systemImageNamed:@"arrow.clockwise"];
@@ -516,6 +521,10 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
             [self.navigationController pushViewController:license animated:YES];
         } else if ([title isEqualToString:@"Remote Bridge"]) {
             [self editRemoteBridge];
+        } else if ([title isEqualToString:@"Managed VPN"]) {
+            TLinkVPNSettingsViewController *vpn =
+                [[TLinkVPNSettingsViewController alloc] init];
+            [self.navigationController pushViewController:vpn animated:YES];
         } else if ([title isEqualToString:@"Restart streamd"]) {
             [self restartStreamd];
         } else if ([title isEqualToString:@"Respring Device"]) {

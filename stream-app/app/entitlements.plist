@@ -15,6 +15,10 @@
 	<array>
 		<string>StreamCtl.com.tlinkauto.streamcontrol</string>
 	</array>
+	<key>com.apple.developer.networking.vpn.api</key>
+	<array>
+		<string>allow-vpn</string>
+	</array>
 	<key>com.apple.private.security.no-container</key>
 	<true/>
 	<key>com.apple.private.security.no-sandbox</key>

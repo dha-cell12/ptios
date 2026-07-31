@@ -103,6 +103,26 @@ const appBinary = (await readFile(join(app, "StreamControl"))).toString("latin1"
 const streamdBinary = (await readFile(join(app, "streamd"))).toString("latin1");
 assert.ok(appBinary.includes("serviceVersion=23"), "StreamControl does not require service v23");
 assert.ok(streamdBinary.includes("serviceVersion=23"), "streamd does not expose service v23");
+assert.ok(appBinary.includes("StreamControl_app_6015"), "StreamControl lacks VPN P3 foreground broker evidence");
+assert.ok(streamdBinary.includes("vpn_foreground_app_required"), "streamd lacks VPN P3 broker routing evidence");
+
+const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
+const streamdEntitlements = execFileSync("ldid", ["-e", join(app, "streamd")], { encoding: "utf8" });
+assert.ok(
+  appEntitlements.includes("com.apple.developer.networking.vpn.api") &&
+    appEntitlements.includes("allow-vpn"),
+  "StreamControl is missing the signed allow-vpn entitlement",
+);
+assert.ok(
+  appEntitlements.includes("keychain-access-groups") &&
+    appEntitlements.includes("StreamCtl.com.tlinkauto.streamcontrol"),
+  "StreamControl is missing the TrollStore VPN Keychain group",
+);
+assert.ok(
+  !streamdEntitlements.includes("com.apple.developer.networking.vpn.api") &&
+    !streamdEntitlements.includes("com.apple.developer.networking.networkextension"),
+  "streamd must not inherit VPN or packet-tunnel entitlements",
+);
 
 const forbidden = [
   "LICENSE_SIGNING_PRIVATE_JWK",
@@ -125,6 +145,7 @@ const manifest = {
   license_mode: mode,
   compile_marker: expectedMarker,
   service_version: 23,
+  vpn_phase: 3,
   config: {
     endpoint: expected.LicenseEndpoint,
     key_id: expected.LicenseKeyID,

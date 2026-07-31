@@ -9,6 +9,7 @@ on:
       - 'license-task-policy.json'
       - 'scripts/**'
       - 'docs/license-*.md'
+      - 'docs/vpn-*.md'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
@@ -19,6 +20,7 @@ on:
       - 'license-task-policy.json'
       - 'scripts/**'
       - 'docs/license-*.md'
+      - 'docs/vpn-*.md'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
@@ -152,6 +154,8 @@ jobs:
           test -f scripts/check-vpn-p0-baseline.mjs
           test -f scripts/check-vpn-p1-diagnostics.mjs
           test -f scripts/check-vpn-p2-rootfull-broker.mjs
+          test -f scripts/check-vpn-p3-trollstore-foreground.mjs
+          test -f scripts/Test-TLinkVPNPhase3.ps1
           test -f docs/license-phase6-release-gate.md
           test -f docs/ocr-p0-baseline.md
           test -f docs/ocr-p1-cpu-only.md
@@ -159,6 +163,7 @@ jobs:
           test -f docs/vpn-p0-baseline.md
           test -f docs/vpn-p1-diagnostics.md
           test -f docs/vpn-p2-rootfull-broker.md
+          test -f docs/vpn-p3-trollstore-foreground.md
           node --check license-worker/src/index.js
           node --check license-worker/scripts/generate-keys.mjs
           node --test license-worker/test/worker.test.mjs
@@ -169,6 +174,7 @@ jobs:
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
+          node scripts/check-vpn-p3-trollstore-foreground.mjs
           node --check scripts/validate-license-artifact.mjs
           node scripts/check-license-release-readiness.mjs
           test -f stream-app/app/TLinkSocketClient.mm
@@ -553,11 +559,16 @@ jobs:
           grep -q 'TLinkCellularInterfaceActive' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkHandleVPNConnectivity' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkVPNInterfaceActive' stream-app/streamd/POCSocketServer.mm
-          grep -q 'vpn=query_only_interface_probe' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vpn=foreground_app_ikev2_candidate' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkMobileWiFiState' stream-app/streamd/POCSocketServer.mm
           grep -q 'MobileWiFi.framework' stream-app/streamd/POCSocketServer.mm
           grep -q 'best_effort_private_framework' stream-app/streamd/POCSocketServer.mm
-          grep -q 'vpn_control_requires_profile_or_private_entitlement' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vpn_foreground_app_required' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkVPNForegroundBroker.mm' stream-app/app/Makefile
+          grep -q 'NetworkExtension' stream-app/app/Makefile
+          grep -q 'TLinkVPNStartForegroundBroker' stream-app/app/AppDelegate.mm
+          grep -q 'com.apple.developer.networking.vpn.api' stream-app/app/entitlements.plist
+          ! grep -q 'com.apple.developer.networking.vpn.api' stream-app/streamd/entitlements.plist
           grep -q 'Wi-Fi Status' stream-app/app/SettingsViewController.mm
           grep -q 'Bluetooth Status' stream-app/app/SettingsViewController.mm
           grep -q 'Airplane Status' stream-app/app/SettingsViewController.mm

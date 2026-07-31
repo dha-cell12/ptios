@@ -1,0 +1,51 @@
+{
+  "phase": 3,
+  "runtime": "trollstore",
+  "legacyTask": 59,
+  "brokerHost": "127.0.0.1",
+  "brokerPort": 6015,
+  "brokerProcess": "StreamControl_foreground_app",
+  "profileIdentifier": "tlinkauto-managed-v1",
+  "profileType": "ikev2",
+  "transitionTimeoutSeconds": 20,
+  "brokerCommands": [
+    "query",
+    "connect",
+    "disconnect",
+    "diagnostics"
+  ],
+  "stableErrors": [
+    "vpn_foreground_app_required",
+    "vpn_trollstore_entitlement_unavailable",
+    "vpn_not_configured",
+    "vpn_profile_disabled",
+    "vpn_server_loopback_not_allowed",
+    "vpn_start_failed",
+    "vpn_connection_failed",
+    "vpn_transition_timeout",
+    "vpn_license_denied"
+  ],
+  "requiredCapabilityFields": {
+    "vpnState": "foreground_candidate",
+    "vpnQuery": "app_broker_6015_with_interface_fallback",
+    "vpnControl": "app_broker_6015_foreground_only",
+    "vpnBackend": "nevpnmanager_ikev2_candidate",
+    "vpnBroker": "StreamControl_app_6015",
+    "vpnPhase": "3",
+    "vpnDiagnostics": "task59_action2_base64_json_v1",
+    "vpnEntitlementProbe": "foreground_app_process_via_592",
+    "vpnProfileIdentifier": "tlinkauto-managed-v1"
+  },
+  "security": {
+    "configurationTransport": "foreground_app_only",
+    "secretStorage": "keychain_after_first_unlock_this_device_only",
+    "keychainAccessGroup": "StreamCtl.com.tlinkauto.streamcontrol",
+    "credentialsOverTask59": false,
+    "brokerLicenseFeature": "automation",
+    "streamdVPNEntitlement": false,
+    "packetTunnelProvider": false,
+    "onDemandEnabled": false,
+    "foreignProfileMutation": false,
+    "queryFallback": "interface_probe"
+  }
+}

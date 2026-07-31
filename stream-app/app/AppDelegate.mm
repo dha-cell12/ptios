@@ -17,6 +17,7 @@
 #import "LicenseLifecycleCoordinator.h"
 #import "StreamSupervisor.h"
 #import "TLinkSocketClient.h"
+#import "TLinkVPNForegroundBroker.h"
 #import "../../shared/TLinkLicenseVerifier.h"
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,7 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
     [self.licenseLifecycleCoordinator handleApplicationDidBecomeActive];
     [self startAppSideOCRServer];
     [self startAppSideClipboardServer];
+    TLinkVPNStartForegroundBroker();
     [self startVisualFeedbackMonitor];
 }
 

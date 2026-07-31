@@ -63,7 +63,7 @@ assert.match(rootfullConnectivity, /NSString\* vpnTaskFromRawData/);
 assert.doesNotMatch(rootfullConnectivity, /NEVPNManager|NETunnelProviderManager|NetworkExtension/);
 
 assert.match(trollServer, /if \(taskType >= 55 && taskType <= 59\)[\s\S]*?TLinkHandleConnectivityTask/);
-assert.match(trollServer, /static NSData \*TLinkHandleVPNConnectivity[\s\S]*?TLinkVPNInterfaceActive\(\)[\s\S]*?vpn_control_requires_profile_or_private_entitlement query_only_supported/);
+assert.match(trollServer, /static NSData \*TLinkHandleVPNConnectivity[\s\S]*?TLinkVPNInterfaceActive\(\)/);
 assert.doesNotMatch(
   trollServer.slice(
     trollServer.indexOf("static NSData *TLinkHandleVPNConnectivity"),
@@ -95,7 +95,7 @@ for (const [key, value] of Object.entries(rootfull)) {
   );
 }
 for (const [key, value] of Object.entries(trollstore)) {
-  assert.ok(trollServer.includes(`${key}=${value}`), `TrollStore task 97 is missing ${key}=${value}`);
+  assert.ok(baselineDoc.includes(`${key}=${value}`), `historical TrollStore P0 baseline is missing ${key}=${value}`);
 }
 
 const rootfullTask60Fields = {
@@ -112,24 +112,7 @@ for (const [key, value] of Object.entries(rootfullTask60Fields)) {
   );
 }
 assert.match(rootfullTask, /@"vpn": vpnStatus/);
-const trollTask60Fields = {
-  vpnContractVersion: "@1",
-  vpnLegacyTask: "@59",
-  vpnState: '@"query_only"',
-  vpnQuery: '@"interface_probe"',
-  vpnControl: '@"unsupported"',
-  vpnBackend: '@"interface_probe"',
-  vpnBroker: '@"not_implemented"',
-  vpnProfileScope: '@"tlink_owned_only"',
-  vpnConfigurationTransport: '@"local_ui_keychain_only"',
-  vpnCredentialsOverTask59: "@(NO)",
-};
-for (const [key, value] of Object.entries(trollTask60Fields)) {
-  assert.ok(
-    trollServer.includes(`@"${key}": ${value}`),
-    `TrollStore task 60 is missing capabilities.${key}=${value}`,
-  );
-}
+assert.match(baselineDoc, /TrollStore derives this value from an active VPN-like interface/);
 
 assert.match(baselineDoc, /does not add a Network Extension entitlement/i);
 assert.match(baselineDoc, /must never be accepted[\s\S]*through task `59`/i);

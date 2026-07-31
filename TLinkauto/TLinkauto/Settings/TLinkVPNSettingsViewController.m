@@ -8,6 +8,10 @@
 @property(nonatomic, strong) UITextField *usernameField;
 @property(nonatomic, strong) UITextField *passwordField;
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UIActivityIndicatorView *transitionSpinner;
+@property(nonatomic, copy) NSString *transitionAction;
+@property(nonatomic, strong) NSDate *transitionStartedAt;
+@property(nonatomic, assign) NSUInteger transitionGeneration;
 @end
 
 @implementation TLinkVPNSettingsViewController
@@ -65,6 +69,10 @@
                                                       weight:UIFontWeightRegular];
     self.statusLabel.text = @"Status: loading";
 
+    self.transitionSpinner = [[UIActivityIndicatorView alloc]
+        initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    self.transitionSpinner.hidesWhenStopped = YES;
+
     UIStackView *buttons = [[UIStackView alloc] initWithArrangedSubviews:@[
         [self buttonWithTitle:@"Save Profile" action:@selector(saveProfile)],
         [self buttonWithTitle:@"Connect" action:@selector(connectVPN)],
@@ -81,6 +89,7 @@
         self.passwordField,
         security,
         buttons,
+        self.transitionSpinner,
         self.statusLabel,
     ]];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -94,6 +103,53 @@
         [stack.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:20],
     ]];
     [self refreshStatus];
+}
+
+- (void)pollTransitionStatusForGeneration:(NSUInteger)generation
+{
+    if (generation != self.transitionGeneration ||
+        self.transitionAction.length == 0) return;
+
+    TLinkVPNReadManagerStatus(^(NSDictionary *result) {
+        if (generation != self.transitionGeneration ||
+            self.transitionAction.length == 0) return;
+        NSTimeInterval elapsed = -[self.transitionStartedAt timeIntervalSinceNow];
+        NSString *connection = [result[@"connection_status"]
+            isKindOfClass:[NSString class]]
+            ? result[@"connection_status"]
+            : @"unknown";
+        NSString *code = [result[@"code"] isKindOfClass:[NSString class]]
+            ? result[@"code"]
+            : @"vpn_status_unknown";
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"%@… %.0fs\nConnection: %@\nStatus probe: %@",
+            self.transitionAction,
+            elapsed,
+            connection,
+            code];
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+            (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self pollTransitionStatusForGeneration:generation];
+        });
+    });
+}
+
+- (void)beginTransitionStatusPolling:(NSString *)action
+{
+    self.transitionGeneration += 1;
+    self.transitionAction = action;
+    self.transitionStartedAt = [NSDate date];
+    [self.transitionSpinner startAnimating];
+    [self pollTransitionStatusForGeneration:self.transitionGeneration];
+}
+
+- (void)endTransitionStatusPolling
+{
+    self.transitionGeneration += 1;
+    self.transitionAction = nil;
+    self.transitionStartedAt = nil;
+    [self.transitionSpinner stopAnimating];
 }
 
 - (void)showResult:(NSDictionary *)result title:(NSString *)title
@@ -169,16 +225,22 @@
 
 - (void)connectVPN
 {
+    if (self.transitionAction.length > 0) return;
     self.statusLabel.text = @"Connecting…";
+    [self beginTransitionStatusPolling:@"Connecting"];
     TLinkVPNSetConnected(YES, 20.0, ^(NSDictionary *result) {
+        [self endTransitionStatusPolling];
         [self showResult:result title:@"VPN Connect"];
     });
 }
 
 - (void)disconnectVPN
 {
+    if (self.transitionAction.length > 0) return;
     self.statusLabel.text = @"Disconnecting…";
+    [self beginTransitionStatusPolling:@"Disconnecting"];
     TLinkVPNSetConnected(NO, 20.0, ^(NSDictionary *result) {
+        [self endTransitionStatusPolling];
         [self showResult:result title:@"VPN Disconnect"];
     });
 }
