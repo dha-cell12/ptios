@@ -1,0 +1,76 @@
+{
+  "diagnosticsVersion": 1,
+  "request": "592\r\n",
+  "responsePrefix": "0;;",
+  "encoding": "base64-json",
+  "profileIdentifier": "tlinkauto-managed-v1",
+  "requiredTopLevelFields": {
+    "contract_version": 1,
+    "diagnostics_version": 1,
+    "phase": 1,
+    "legacy_task": 59,
+    "broker_target": "foreground_app_or_entitled_agent",
+    "broker_ready": 0,
+    "profile_scope": "tlink_owned_only",
+    "profile_identifier": "tlinkauto-managed-v1",
+    "profile_state": "not_probed",
+    "configuration_transport": "local_ui_keychain_only",
+    "credentials_over_task59": 0,
+    "entitlement_probe_scope": "current_process_only"
+  },
+  "requiredEntitlementFields": [
+    "probe_source",
+    "probe_available",
+    "vpn_api_present",
+    "vpn_api_values",
+    "allow_vpn",
+    "networkextension_present",
+    "networkextension_values",
+    "packet_tunnel_provider"
+  ],
+  "requiredNetworkExtensionFields": [
+    "framework_loaded",
+    "manager_class_available",
+    "api_exercised"
+  ],
+  "requiredRuntimeFields": [
+    "runtime",
+    "state",
+    "query",
+    "control",
+    "backend",
+    "broker",
+    "effective_connected_known",
+    "effective_connected",
+    "control_preflight",
+    "generated_at_ms"
+  ],
+  "requiredCapabilityFields": {
+    "vpnPhase": "1",
+    "vpnDiagnostics": "task59_action2_base64_json_v1",
+    "vpnEntitlementProbe": "sec_task_current_process",
+    "vpnProfileIdentifier": "tlinkauto-managed-v1"
+  },
+  "samples": {
+    "rootfull": {
+      "runtime": "rootfull",
+      "state": "unavailable",
+      "query": "unsupported",
+      "control": "unsupported",
+      "backend": "stub",
+      "broker": "not_implemented",
+      "effective_connected_known": false,
+      "effective_connected": null
+    },
+    "trollstore": {
+      "runtime": "trollstore",
+      "state": "query_only",
+      "query": "interface_probe",
+      "control": "unsupported",
+      "backend": "interface_probe",
+      "broker": "not_implemented",
+      "effective_connected_known": true,
+      "effective_connected": false
+    }
+  }
+}

@@ -39,6 +39,12 @@ TrollStore runtime.
   unsupported until the TLink-owned broker path is implemented. VPN
   configuration and credentials are local-UI/Keychain only and are forbidden
   on port `6000`. See `docs/vpn-p0-baseline.md`.
+- VPN P1 implements read-only task `592` diagnostics as base64 JSON using the
+  same shared module as rootfull. It probes the current process with
+  `SecTaskCopyValueForEntitlement`, checks NetworkExtension framework/class
+  availability without exercising manager APIs, and reports the interface
+  heuristic as `effective_connected`. Production entitlements and action `1`
+  control remain unchanged; see `docs/vpn-p1-diagnostics.md`.
 
 ## Deferred Or Limited
 

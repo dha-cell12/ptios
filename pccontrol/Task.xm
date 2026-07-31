@@ -3,6 +3,7 @@
 #include "../shared/TLinkRootfullLicenseBuild.h"
 #include "../shared/TLinkLicenseVerifier.h"
 #include "../shared/TLinkRootfullLicensePolicy.h"
+#include "../shared/TLinkVPNDiagnostics.h"
 #import <Foundation/Foundation.h>
 #ifndef YES
 #define YES true
@@ -1214,18 +1215,14 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                         : @{},
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
-                @"vpn": @{
-                    @"vpn_contract_version": @1,
-                    @"legacy_task": @59,
-                    @"state": @"unavailable",
-                    @"query": @"unsupported",
-                    @"control": @"unsupported",
-                    @"backend": @"stub",
-                    @"broker": @"not_implemented",
-                    @"profile_scope": @"tlink_owned_only",
-                    @"configuration_transport": @"local_ui_keychain_only",
-                    @"credentials_over_task59": @0,
-                },
+                @"vpn": TLinkVPNDiagnosticsSnapshot(
+                    @"rootfull",
+                    @"unavailable",
+                    @"unsupported",
+                    @"unsupported",
+                    @"stub",
+                    @"not_implemented",
+                    nil),
                 @"license": licenseStatus,
             };
 

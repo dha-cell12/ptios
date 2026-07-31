@@ -2,6 +2,7 @@
 #include <dlfcn.h>
 
 #import "Connectivity.h"
+#import "../shared/TLinkVPNDiagnostics.h"
 
 static BOOL zx_parseActionValue(UInt8 *eventData, int *outAction, int *outValue, NSError **error)
 {
@@ -184,9 +185,50 @@ NSString* cellularDataTaskFromRawData(UInt8 *eventData, NSError **error)
 
 NSString* vpnTaskFromRawData(UInt8 *eventData, NSError **error)
 {
-    // VPN control typically requires entitlements. Provide a best-effort stub.
+    // P1 exposes read-only, base64-JSON diagnostics. Query/control remain at
+    // the frozen P0 baseline until an entitled broker is proven on device.
     int action = 0, value = 0;
     if (!zx_parseActionValue(eventData, &action, &value, error)) return nil;
+
+    if (action == 2) {
+        NSString *raw = [NSString stringWithFormat:@"%s", eventData ?: (UInt8*)""];
+        NSArray *parts = [raw componentsSeparatedByString:@";;"];
+        if ([parts count] != 1) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
+                                             code:999
+                                         userInfo:@{
+                    NSLocalizedDescriptionKey:
+                        @"-1;;vpn_diagnostics_takes_no_arguments\r\n"
+                }];
+            }
+            return nil;
+        }
+        NSError *diagnosticsError = nil;
+        NSString *base64 = TLinkVPNDiagnosticsBase64(
+            @"rootfull",
+            @"unavailable",
+            @"unsupported",
+            @"unsupported",
+            @"stub",
+            @"not_implemented",
+            nil,
+            &diagnosticsError);
+        if (!base64) {
+            if (error) {
+                NSString *message = diagnosticsError.localizedDescription
+                    ?: @"vpn_diagnostics_encode_failed";
+                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
+                                             code:999
+                                         userInfo:@{
+                    NSLocalizedDescriptionKey:
+                        [NSString stringWithFormat:@"-1;;%@\r\n", message]
+                }];
+            }
+            return nil;
+        }
+        return base64;
+    }
 
     if (error) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;VPN control not implemented on this build.\r\n"}];

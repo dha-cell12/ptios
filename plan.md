@@ -179,6 +179,12 @@ Known unresolved issues / deferred investigation:
   production backend is enabled in P0. Configuration stays in foreground UI,
   secrets stay in Keychain, and credentials are forbidden on port `6000`;
   see `docs/vpn-p0-baseline.md`.
+- VPN P1 now implements the reserved task `592` response with a shared
+  base64-JSON schema for rootfull and TrollStore. The probe reads only the
+  current process entitlements and checks NetworkExtension framework/class
+  availability without saving, starting, or stopping a profile. Production
+  VPN entitlements and action `1` remain disabled pending device evidence;
+  see `docs/vpn-p1-diagnostics.md`.
 - Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v12 keeps direct background Pasteboard access, handles best-effort keep-awake requests, sends background toast/alert/dialog through CFUserNotification, and applies the same signed-license gate as streamd. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
 - Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.

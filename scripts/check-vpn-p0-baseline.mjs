@@ -32,6 +32,7 @@ const [
   rootfullConnectivity,
   rootfullTask,
   rootfullServer,
+  sharedVPN,
   trollServer,
   pythonClient,
   pythonDataHandler,
@@ -45,6 +46,7 @@ const [
   read("pccontrol/Connectivity.xm"),
   read("pccontrol/Task.xm"),
   read("tlinkauto-binary/SocketServer.mm"),
+  read("shared/TLinkVPNDiagnostics.mm"),
   read("stream-app/streamd/POCSocketServer.mm"),
   read("webtango/tlinkauto/client.py"),
   read("webtango/tlinkauto/datahandler.py"),
@@ -96,21 +98,20 @@ for (const [key, value] of Object.entries(trollstore)) {
 const rootfullTask60Fields = {
   vpn_contract_version: "@1",
   legacy_task: "@59",
-  state: '@"unavailable"',
-  query: '@"unsupported"',
-  control: '@"unsupported"',
-  backend: '@"stub"',
-  broker: '@"not_implemented"',
   profile_scope: '@"tlink_owned_only"',
   configuration_transport: '@"local_ui_keychain_only"',
   credentials_over_task59: "@0",
 };
 for (const [key, value] of Object.entries(rootfullTask60Fields)) {
   assert.ok(
-    rootfullTask.includes(`@"${key}": ${value}`),
+    sharedVPN.includes(`@"${key}": ${value}`),
     `rootfull task 60 is missing vpn.${key}=${value}`,
   );
 }
+assert.match(
+  rootfullTask,
+  /@"vpn": TLinkVPNDiagnosticsSnapshot\([\s\S]*?@"rootfull"[\s\S]*?@"unavailable"[\s\S]*?@"unsupported"[\s\S]*?@"unsupported"[\s\S]*?@"stub"[\s\S]*?@"not_implemented"/,
+);
 const trollTask60Fields = {
   vpnContractVersion: "@1",
   vpnLegacyTask: "@59",

@@ -150,11 +150,13 @@ jobs:
           test -f scripts/Start-TLinkLicenseSoak.ps1
           test -f scripts/Collect-TLinkOCRBaseline.ps1
           test -f scripts/check-vpn-p0-baseline.mjs
+          test -f scripts/check-vpn-p1-diagnostics.mjs
           test -f docs/license-phase6-release-gate.md
           test -f docs/ocr-p0-baseline.md
           test -f docs/ocr-p1-cpu-only.md
           test -f docs/ocr-p1-device-findings.md
           test -f docs/vpn-p0-baseline.md
+          test -f docs/vpn-p1-diagnostics.md
           node --check license-worker/src/index.js
           node --check license-worker/scripts/generate-keys.mjs
           node --test license-worker/test/worker.test.mjs
@@ -163,6 +165,7 @@ jobs:
           node scripts/check-ocr-p0-baseline.mjs
           node scripts/check-ocr-p1-cpu-only.mjs
           node scripts/check-vpn-p0-baseline.mjs
+          node scripts/check-vpn-p1-diagnostics.mjs
           node --check scripts/validate-license-artifact.mjs
           node scripts/check-license-release-readiness.mjs
           test -f stream-app/app/TLinkSocketClient.mm

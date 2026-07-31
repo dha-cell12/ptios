@@ -38,6 +38,7 @@ jobs:
           node scripts/check-ocr-p0-baseline.mjs
           node scripts/check-ocr-p1-cpu-only.mjs
           node scripts/check-vpn-p0-baseline.mjs
+          node scripts/check-vpn-p1-diagnostics.mjs
 
       - name: Validate public license build inputs
         run: |

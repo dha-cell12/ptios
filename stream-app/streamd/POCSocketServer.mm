@@ -7,6 +7,7 @@
 #import <Photos/Photos.h>
 #import "../../shared/TLinkJSFileHandle.h"
 #import "../../shared/TLinkLicenseVerifier.h"
+#import "../../shared/TLinkVPNDiagnostics.h"
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
@@ -50,6 +51,8 @@
 
 extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 extern char **environ;
+
+static BOOL TLinkVPNInterfaceActive(void);
 
 // ---------------------------------------------------------------------------
 // POC socket server
@@ -5799,6 +5802,10 @@ static NSData *TLinkHandleHelloStatus(void)
         @"vpnProfileScope": @"tlink_owned_only",
         @"vpnConfigurationTransport": @"local_ui_keychain_only",
         @"vpnCredentialsOverTask59": @(NO),
+        @"vpnPhase": @1,
+        @"vpnDiagnostics": @"task59_action2_base64_json_v1",
+        @"vpnEntitlementProbe": @"sec_task_current_process",
+        @"vpnProfileIdentifier": @"tlinkauto-managed-v1",
         @"frontmost": @(YES),
         @"clearData": @(YES),
         @"clearDataMode": @"privhelper_best_effort_data_container_only",
@@ -5853,6 +5860,14 @@ static NSData *TLinkHandleHelloStatus(void)
         @"script": TLinkScriptStatusDictionary(),
         @"license": licenseStatus,
         @"license_enforcement": licenseEnforcement,
+        @"vpn_diagnostics": TLinkVPNDiagnosticsSnapshot(
+            @"trollstore",
+            @"query_only",
+            @"interface_probe",
+            @"unsupported",
+            @"interface_probe",
+            @"not_implemented",
+            @(TLinkVPNInterfaceActive())),
         @"license_lifecycle": licenseLifecycle,
         @"background_service": backgroundService,
         @"remote_bridge": remoteBridge,
@@ -7441,6 +7456,31 @@ static NSData *TLinkHandleCellularConnectivity(NSString *body, int taskType)
 
 static NSData *TLinkHandleVPNConnectivity(NSString *body, int taskType)
 {
+    NSArray<NSString *> *parts = TLinkSplitBody(body);
+    int requestedAction =
+        parts.count >= 1 && parts[0].length > 0 ? [parts[0] intValue] : 0;
+    if (requestedAction == 2) {
+        if (parts.count != 1) {
+            return TLinkError(@"vpn_diagnostics_takes_no_arguments");
+        }
+        NSError *diagnosticsError = nil;
+        NSString *base64 = TLinkVPNDiagnosticsBase64(
+            @"trollstore",
+            @"query_only",
+            @"interface_probe",
+            @"unsupported",
+            @"interface_probe",
+            @"not_implemented",
+            @(TLinkVPNInterfaceActive()),
+            &diagnosticsError);
+        if (!base64) {
+            return TLinkError(
+                diagnosticsError.localizedDescription
+                    ?: @"vpn_diagnostics_encode_failed");
+        }
+        return TLinkSuccess(base64);
+    }
+
     int action = 0;
     int requestedValue = 0;
     NSString *parseError = nil;
@@ -7958,6 +7998,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" vpnState=query_only vpnQuery=interface_probe"];
         cap = [cap stringByAppendingString:@" vpnControl=unsupported vpnBackend=interface_probe"];
         cap = [cap stringByAppendingString:@" vpnBroker=not_implemented"];
+        cap = [cap stringByAppendingString:@" vpnPhase=1"];
+        cap = [cap stringByAppendingString:@" vpnDiagnostics=task59_action2_base64_json_v1"];
+        cap = [cap stringByAppendingString:@" vpnEntitlementProbe=sec_task_current_process"];
+        cap = [cap stringByAppendingString:@" vpnProfileIdentifier=tlinkauto-managed-v1"];
         cap = [cap stringByAppendingString:@" licenseContractVersion=1 licensePolicyVersion=1"];
         cap = [cap stringByAppendingString:@" licenseLifecycle=foreground_bg_single_flight_backoff_v1"];
         cap = [cap stringByAppendingFormat:@" licenseGeneration=%llu licenseGenerationSync=darwin_plus_request_check",
