@@ -190,15 +190,21 @@ Known unresolved issues / deferred investigation:
   reference, while the mobile `tlinkauto-vpnd` LaunchDaemon performs
   license-gated query/connect/disconnect over loopback port `6014`. Task
   `591` waits for terminal `NEVPNStatus`, on-demand stays disabled, and the
-  broker refuses foreign profiles. Rootfull device validation with a real
-  IKEv2 endpoint remains required; see `docs/vpn-p2-rootfull-broker.md`.
+  broker refuses foreign profiles. Live IKEv2 control was validated on device
+  on 2026-08-01; see `docs/vpn-p2-rootfull-broker.md`.
 - VPN P3 adds an experimental TrollStore foreground-app candidate. Streamd
   keeps task `59` on port `6000` and forwards fixed commands to StreamControl
   on loopback port `6015`; only the app carries `allow-vpn`, configuration and
   credentials remain local UI/Keychain, and query retains the historical
   interface fallback. Control fails closed when the app is not active or the
-  entitlement is stripped. Device promotion evidence remains required; see
-  `docs/vpn-p3-trollstore-foreground.md`.
+  entitlement is stripped. Live IKEv2 control was validated on device on
+  2026-08-01; see `docs/vpn-p3-trollstore-foreground.md`.
+- VPN P4 promotes rootfull to `full_control` and TrollStore to
+  `app_side_control`, and adds local-UI-only `NEOnDemandRuleConnect`
+  auto-reconnect for the owned profile. Explicit task `591;;0` disables
+  on-demand before stopping so the terminal disconnect remains deterministic.
+  Task `59` stays contract v1 and never accepts credentials or on-demand
+  configuration; see `docs/vpn-p4-on-demand.md`.
 - Foreground dependency reduction uses the proven clipboard UIDaemon pattern. `clipboardd` v12 keeps direct background Pasteboard access, handles best-effort keep-awake requests, sends background toast/alert/dialog through CFUserNotification, and applies the same signed-license gate as streamd. StreamControl writes a short-lived foreground heartbeat so foreground and background feedback are not duplicated.
 - Device validation of v10 proved that a UIDaemon `UIWindow` could report visible in memory while the compositor did not place it above the active app. v11 removes that false-success path. Foreground toast still supports `0` top, `1` center, `2` bottom; background toast is visible through CFUserNotification but fixed at center and reports `limited_on_trollstore`. True positioned background toast remains deferred until a proven SpringBoard/BackBoard window-hosting path exists. Dialog button results are not yet bridged back to the original task.
 - A global touch indicator still requires SpringBoard/BackBoard window ownership or injection and remains foreground-only. The daemon cannot safely make a normal app UIWindow appear over arbitrary foreground apps.

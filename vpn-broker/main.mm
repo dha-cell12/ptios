@@ -94,17 +94,19 @@ static NSString *TLinkVPNBrokerResponse(NSString *command)
         NSMutableDictionary *diagnostics = [
             TLinkVPNDiagnosticsSnapshot(
                 @"rootfull",
-                @"broker_managed",
+                @"full_control",
                 @"app_broker_6014",
                 @"app_broker_6014",
                 @"nevpnmanager_ikev2",
                 @"tlinkauto_vpnd_6014",
                 effectiveConnected)
             mutableCopy];
-        diagnostics[@"phase"] = @2;
+        diagnostics[@"phase"] = @4;
         diagnostics[@"broker_ready"] = @1;
         diagnostics[@"broker_target"] = @"tlinkauto_vpnd";
         diagnostics[@"entitlement_probe_scope"] = @"broker_process";
+        diagnostics[@"on_demand_policy"] =
+            @"local_ui_connect_all_networks_explicit_disconnect_disables";
         diagnostics[@"profile_state"] = [status[@"configured"] boolValue]
             ? @"configured"
             : @"not_configured";
@@ -112,6 +114,11 @@ static NSString *TLinkVPNBrokerResponse(NSString *command)
             @"available": @([status[@"ok"] boolValue]),
             @"configured": @([status[@"configured"] boolValue]),
             @"enabled": @([status[@"enabled"] boolValue]),
+            @"on_demand_enabled":
+                @([status[@"on_demand_enabled"] boolValue]),
+            @"on_demand_rule_count":
+                status[@"on_demand_rule_count"] ?: @0,
+            @"on_demand_mode": status[@"on_demand_mode"] ?: @"disabled",
             @"connection_status":
                 [status[@"connection_status"] isKindOfClass:[NSString class]]
                     ? status[@"connection_status"]

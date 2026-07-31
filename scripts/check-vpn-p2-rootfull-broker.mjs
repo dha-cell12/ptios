@@ -125,11 +125,11 @@ assert.match(connectivity, /@"connect"/);
 assert.match(connectivity, /@"disconnect"/);
 assert.match(connectivity, /@"diagnostics"/);
 assert.doesNotMatch(connectivity, /NEVPNManager|startVPNTunnel|saveToPreferences/);
-assert.match(task, /@"broker_managed"/);
+assert.match(p2Doc, /vpnState=broker_managed/);
 assert.match(task, /@"tlinkauto_vpnd_6014"/);
 
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
-  assert.ok(rootServer.includes(`${key}=${value}`), `rootfull task 97 is missing ${key}=${value}`);
+  assert.ok(p2Doc.includes(`${key}=${value}`), `historical rootfull P2 baseline is missing ${key}=${value}`);
 }
 
 assert.match(appEntitlements, /com\.apple\.developer\.networking\.vpn\.api[\s\S]*allow-vpn/);

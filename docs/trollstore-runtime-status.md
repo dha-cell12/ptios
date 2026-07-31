@@ -51,16 +51,21 @@ TrollStore runtime.
   on `127.0.0.1:6015`; streamd remains unentitled, forwards fixed task `59`
   commands, and preserves the interface query fallback. The capability stays
   `foreground_candidate` until device diagnostics prove the entitlement,
-  profile lifecycle, terminal transitions, and real traffic. See
-  `docs/vpn-p3-trollstore-foreground.md`.
+  profile lifecycle, terminal transitions, and real traffic. Live control was
+  reported working on 2026-08-01. See `docs/vpn-p3-trollstore-foreground.md`.
+- VPN P4 promotes the path to `app_side_control` and adds opt-in
+  `NEOnDemandRuleConnect` auto-reconnect in the local Managed VPN UI. Task
+  `591;;0` disables on-demand before stopping, while task `59` remains wire
+  compatible and cannot carry credentials or policy changes. See
+  `docs/vpn-p4-on-demand.md`.
 
 ## Deferred Or Limited
 
 - Keychain clearing remains deferred because arbitrary target keychain access groups require separate entitlement handling.
-- VPN P3 control remains experimental and foreground-only. If TrollStore
-  strips `allow-vpn` or refuses the candidate artifact, retain the previous
-  query-only build and use the explicit diagnostics for the later manual
-  Settings fallback track.
+- VPN task control on TrollStore remains foreground-only. Once on-demand is
+  persisted, iOS may reconnect without a new foreground task, but a fresh
+  `591` request still requires StreamControl active. Devices that strip
+  `allow-vpn` must retain the query-only/manual Settings fallback.
 - Vision OCR CPU-only remains experimental for the former `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract is still the stable/default OCR path. P1 keeps task `27/91` responses byte-compatible, defaults legacy task `27` requests to the `app_cpu` bridge, and exposes `worker_cpu` only as an explicit canary. Task `97` reports both profiles, CPU-only enforcement, no fallback/selector, and `visionOCRState=experimental`. See `docs/ocr-p1-cpu-only.md`.
 - Activator/Siri equivalents remain `limited_on_trollstore`.
 - Full SpringBoard overlay behavior is replaced by foreground app overlays plus background CFUserNotification system notices/alerts. The dialog result is not bridged back to the original synchronous task, and the touch indicator remains foreground-only.

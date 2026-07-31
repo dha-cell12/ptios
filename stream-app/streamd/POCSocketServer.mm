@@ -5794,18 +5794,20 @@ static NSData *TLinkHandleHelloStatus(void)
         @"airplane": @(YES),
         @"cellularData": @(YES),
         @"vpn": @(YES),
-        @"vpnMode": @"foreground_app_ikev2_candidate",
+        @"vpnMode": @"foreground_app_ikev2_on_demand",
         @"vpnContractVersion": @1,
         @"vpnLegacyTask": @59,
-        @"vpnState": @"foreground_candidate",
+        @"vpnState": @"app_side_control",
         @"vpnQuery": @"app_broker_6015_with_interface_fallback",
         @"vpnControl": @"app_broker_6015_foreground_only",
-        @"vpnBackend": @"nevpnmanager_ikev2_candidate",
+        @"vpnBackend": @"nevpnmanager_ikev2",
         @"vpnBroker": @"StreamControl_app_6015",
         @"vpnProfileScope": @"tlink_owned_only",
         @"vpnConfigurationTransport": @"local_ui_keychain_only",
         @"vpnCredentialsOverTask59": @(NO),
-        @"vpnPhase": @3,
+        @"vpnPhase": @4,
+        @"vpnOnDemand": @"local_ui_connect_all_networks",
+        @"vpnDisconnectPolicy": @"explicit_disconnect_disables_on_demand",
         @"vpnDiagnostics": @"task59_action2_base64_json_v1",
         @"vpnEntitlementProbe": @"foreground_app_process_via_592",
         @"vpnProfileIdentifier": @"tlinkauto-managed-v1",
@@ -7321,18 +7323,20 @@ static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
 {
     NSMutableDictionary *diagnostics = [TLinkVPNDiagnosticsSnapshot(
         @"trollstore",
-        @"foreground_candidate",
+        @"app_side_control",
         @"app_broker_6015_with_interface_fallback",
         @"app_broker_6015_foreground_only",
-        @"nevpnmanager_ikev2_candidate",
+        @"nevpnmanager_ikev2",
         @"StreamControl_app_6015",
         effectiveConnected) mutableCopy];
-    diagnostics[@"phase"] = @3;
+    diagnostics[@"phase"] = @4;
     diagnostics[@"broker_ready"] = @0;
     diagnostics[@"broker_target"] = @"StreamControl_foreground_app";
     diagnostics[@"entitlement_probe_scope"] = @"streamd_process_fallback";
     diagnostics[@"control_preflight"] = @"requires_foreground_app_probe";
     diagnostics[@"profile_state"] = @"not_probed";
+    diagnostics[@"on_demand_policy"] =
+        @"local_ui_connect_all_networks_explicit_disconnect_disables";
     diagnostics[@"broker_last_error"] = brokerError ?: @"";
     return diagnostics;
 }
@@ -8069,15 +8073,17 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];
         cap = [cap stringByAppendingString:@" vpnCredentialsOverTask59=forbidden"];
         cap = [cap stringByReplacingOccurrencesOfString:@"vpn=query_only_interface_probe"
-                                             withString:@"vpn=foreground_app_ikev2_candidate"];
+                                             withString:@"vpn=foreground_app_ikev2_on_demand"];
         cap = [cap stringByReplacingOccurrencesOfString:@"unsupported=keychain,vpnControl,"
                                              withString:@"unsupported=keychain,"];
         cap = [cap stringByReplacingOccurrencesOfString:@"vpnQuery,shellTaskGated"
-                                             withString:@"vpnQuery,vpnControlCandidate,shellTaskGated"];
-        cap = [cap stringByAppendingString:@" vpnState=foreground_candidate vpnQuery=app_broker_6015_with_interface_fallback"];
-        cap = [cap stringByAppendingString:@" vpnControl=app_broker_6015_foreground_only vpnBackend=nevpnmanager_ikev2_candidate"];
+                                             withString:@"vpnQuery,vpnControl,vpnOnDemand,shellTaskGated"];
+        cap = [cap stringByAppendingString:@" vpnState=app_side_control vpnQuery=app_broker_6015_with_interface_fallback"];
+        cap = [cap stringByAppendingString:@" vpnControl=app_broker_6015_foreground_only vpnBackend=nevpnmanager_ikev2"];
         cap = [cap stringByAppendingString:@" vpnBroker=StreamControl_app_6015"];
-        cap = [cap stringByAppendingString:@" vpnPhase=3"];
+        cap = [cap stringByAppendingString:@" vpnPhase=4"];
+        cap = [cap stringByAppendingString:@" vpnOnDemand=local_ui_connect_all_networks"];
+        cap = [cap stringByAppendingString:@" vpnDisconnectPolicy=explicit_disconnect_disables_on_demand"];
         cap = [cap stringByAppendingString:@" vpnDiagnostics=task59_action2_base64_json_v1"];
         cap = [cap stringByAppendingString:@" vpnEntitlementProbe=foreground_app_process_via_592"];
         cap = [cap stringByAppendingString:@" vpnProfileIdentifier=tlinkauto-managed-v1"];

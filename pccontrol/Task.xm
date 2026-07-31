@@ -1195,15 +1195,17 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
             NSMutableDictionary *vpnStatus = [
                 TLinkVPNDiagnosticsSnapshot(
                     @"rootfull",
-                    @"broker_managed",
+                    @"full_control",
                     @"broker_localhost_6014",
                     @"broker_localhost_6014",
                     @"nevpnmanager_ikev2",
                     @"tlinkauto_vpnd_6014",
                     nil)
                 mutableCopy];
-            vpnStatus[@"phase"] = @2;
+            vpnStatus[@"phase"] = @4;
             vpnStatus[@"broker_target"] = @"tlinkauto_vpnd";
+            vpnStatus[@"on_demand_policy"] =
+                @"local_ui_connect_all_networks_explicit_disconnect_disables";
             vpnStatus[@"entitlement_probe_scope"] =
                 @"springboard_process_fallback_use_task592_for_broker";
 

@@ -81,6 +81,7 @@ static BOOL TLinkVPNServerIsLoopback(NSString *serverAddress)
 static NSDictionary *TLinkVPNStatusFields(NEVPNManager *manager)
 {
     BOOL owned = TLinkVPNManagerIsOwned(manager);
+    BOOL onDemandEnabled = owned && manager.onDemandEnabled;
     NEVPNStatus connectionStatus = manager.connection
         ? manager.connection.status
         : NEVPNStatusInvalid;
@@ -88,6 +89,11 @@ static NSDictionary *TLinkVPNStatusFields(NEVPNManager *manager)
         @"profile_owned": @(owned),
         @"configured": @(owned && manager.protocolConfiguration != nil),
         @"enabled": @(owned && manager.enabled),
+        @"on_demand_enabled": @(onDemandEnabled),
+        @"on_demand_rule_count": @(owned ? manager.onDemandRules.count : 0),
+        @"on_demand_mode": onDemandEnabled
+            ? @"connect_all_networks"
+            : @"disabled",
         @"connection_status": TLinkVPNStatusName(connectionStatus),
         @"connected": @(owned && connectionStatus == NEVPNStatusConnected),
         @"profile_identifier": @"tlinkauto-managed-v1",
@@ -281,6 +287,66 @@ void TLinkVPNConfigureIKEv2(
     });
 }
 
+void TLinkVPNSetOnDemandEnabled(
+    BOOL enabled,
+    TLinkVPNResultCompletion completion)
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NEVPNManager *manager = [NEVPNManager sharedManager];
+        [manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
+            if (loadError) {
+                TLinkVPNComplete(completion, TLinkVPNResult(false,
+                    @"vpn_load_preferences_failed",
+                    @{@"native_error": loadError.localizedDescription ?: @""}));
+                return;
+            }
+            if (!TLinkVPNManagerIsOwned(manager)) {
+                TLinkVPNComplete(completion,
+                    TLinkVPNResult(false, @"vpn_not_configured", nil));
+                return;
+            }
+
+            if (enabled) {
+                NEOnDemandRuleConnect *connectRule =
+                    [[NEOnDemandRuleConnect alloc] init];
+                manager.onDemandRules = @[connectRule];
+                manager.onDemandEnabled = true;
+                manager.enabled = true;
+            } else {
+                manager.onDemandEnabled = false;
+                manager.onDemandRules = @[];
+            }
+
+            [manager saveToPreferencesWithCompletionHandler:^(NSError *saveError) {
+                if (saveError) {
+                    TLinkVPNComplete(completion, TLinkVPNResult(false,
+                        @"vpn_on_demand_save_failed",
+                        @{@"native_error": saveError.localizedDescription ?: @""}));
+                    return;
+                }
+                [manager loadFromPreferencesWithCompletionHandler:^(NSError *reloadError) {
+                    if (reloadError) {
+                        TLinkVPNComplete(completion, TLinkVPNResult(false,
+                            @"vpn_reload_preferences_failed",
+                            @{@"native_error": reloadError.localizedDescription ?: @""}));
+                        return;
+                    }
+                    BOOL applied = manager.onDemandEnabled == enabled &&
+                        (!enabled || manager.onDemandRules.count > 0);
+                    TLinkVPNComplete(completion, TLinkVPNResult(
+                        applied,
+                        applied
+                            ? (enabled
+                                ? @"vpn_on_demand_enabled"
+                                : @"vpn_on_demand_disabled")
+                            : @"vpn_on_demand_verification_failed",
+                        TLinkVPNStatusFields(manager)));
+                }];
+            }];
+        }];
+    });
+}
+
 void TLinkVPNSetConnected(
     BOOL connected,
     NSTimeInterval timeout,
@@ -311,6 +377,24 @@ void TLinkVPNSetConnected(
                 TLinkVPNComplete(completion, TLinkVPNResult(false,
                     @"vpn_server_loopback_not_allowed",
                     TLinkVPNStatusFields(manager)));
+                return;
+            }
+            if (!connected && manager.onDemandEnabled) {
+                TLinkVPNSetOnDemandEnabled(false,
+                    ^(NSDictionary *onDemandResult) {
+                    if (![onDemandResult[@"ok"] boolValue]) {
+                        TLinkVPNComplete(completion, TLinkVPNResult(false,
+                            @"vpn_disconnect_disable_on_demand_failed",
+                            @{
+                                @"native_error":
+                                    onDemandResult[@"native_error"] ?: @"",
+                                @"on_demand_error":
+                                    onDemandResult[@"code"] ?: @"unknown",
+                            }));
+                        return;
+                    }
+                    TLinkVPNSetConnected(false, timeout, completion);
+                });
                 return;
             }
 

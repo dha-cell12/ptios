@@ -56,10 +56,10 @@ static NSDictionary *TLinkVPNForegroundPreflight(void)
 {
     return TLinkVPNDiagnosticsSnapshot(
         @"trollstore",
-        @"foreground_candidate",
+        @"app_side_control",
         @"app_broker_6015_with_interface_fallback",
         @"app_broker_6015_foreground_only",
-        @"nevpnmanager_ikev2_candidate",
+        @"nevpnmanager_ikev2",
         @"StreamControl_app_6015",
         nil);
 }
@@ -82,7 +82,7 @@ static NSString *TLinkVPNForegroundDiagnosticsResponse(void)
         8.0);
     BOOL managerAvailable = [status[@"ok"] boolValue];
 
-    diagnostics[@"phase"] = @3;
+    diagnostics[@"phase"] = @4;
     diagnostics[@"broker_ready"] = @(active && entitlementReady && managerAvailable);
     diagnostics[@"broker_target"] = @"StreamControl_foreground_app";
     diagnostics[@"entitlement_probe_scope"] = @"foreground_app_process";
@@ -97,10 +97,16 @@ static NSString *TLinkVPNForegroundDiagnosticsResponse(void)
                 ? @"foreground_manager_ready"
                 : @"manager_api_failed"));
     diagnostics[@"app_active"] = @(active);
+    diagnostics[@"on_demand_policy"] =
+        @"local_ui_connect_all_networks_explicit_disconnect_disables";
     diagnostics[@"manager_status"] = @{
         @"available": @(managerAvailable),
         @"configured": @([status[@"configured"] boolValue]),
         @"enabled": @([status[@"enabled"] boolValue]),
+        @"on_demand_enabled":
+            @([status[@"on_demand_enabled"] boolValue]),
+        @"on_demand_rule_count": status[@"on_demand_rule_count"] ?: @0,
+        @"on_demand_mode": status[@"on_demand_mode"] ?: @"disabled",
         @"connection_status":
             [status[@"connection_status"] isKindOfClass:[NSString class]]
                 ? status[@"connection_status"]

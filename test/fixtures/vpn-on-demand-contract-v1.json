@@ -1,0 +1,49 @@
+{
+  "phase": 4,
+  "contractVersion": 1,
+  "legacyTask": 59,
+  "profileIdentifier": "tlinkauto-managed-v1",
+  "onDemandRule": "connect_all_networks",
+  "configurationTransport": "local_ui_only",
+  "explicitDisconnectPolicy": "disable_on_demand_then_stop",
+  "runtimes": {
+    "rootfull": {
+      "state": "full_control",
+      "broker": "tlinkauto_vpnd_6014",
+      "requiredCapabilityFields": {
+        "vpnState": "full_control",
+        "vpnPhase": "4",
+        "vpnOnDemand": "local_ui_connect_all_networks",
+        "vpnDisconnectPolicy": "explicit_disconnect_disables_on_demand"
+      }
+    },
+    "trollstore": {
+      "state": "app_side_control",
+      "broker": "StreamControl_app_6015",
+      "requiredCapabilityFields": {
+        "vpnState": "app_side_control",
+        "vpnPhase": "4",
+        "vpnOnDemand": "local_ui_connect_all_networks",
+        "vpnDisconnectPolicy": "explicit_disconnect_disables_on_demand"
+      }
+    }
+  },
+  "diagnosticsFields": [
+    "on_demand_policy",
+    "manager_status.on_demand_enabled",
+    "manager_status.on_demand_rule_count",
+    "manager_status.on_demand_mode"
+  ],
+  "stableErrors": [
+    "vpn_not_configured",
+    "vpn_on_demand_save_failed",
+    "vpn_on_demand_verification_failed",
+    "vpn_disconnect_disable_on_demand_failed"
+  ],
+  "security": {
+    "credentialsOverTask59": false,
+    "onDemandControlOverTask59": false,
+    "foreignProfileMutation": false,
+    "packetTunnelProvider": false
+  }
+}

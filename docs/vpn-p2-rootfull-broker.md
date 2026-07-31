@@ -21,6 +21,24 @@ PC client :6000
 The broker executable is `/usr/libexec/tlinkauto-vpnd`. Launchd runs it as
 `mobile`, and it binds only to `127.0.0.1:6014`.
 
+The frozen P2 capability baseline was:
+
+```text
+vpnState=broker_managed
+vpnQuery=broker_localhost_6014
+vpnControl=broker_localhost_6014
+vpnBackend=nevpnmanager_ikev2
+vpnBroker=tlinkauto_vpnd_6014
+vpnPhase=2
+vpnDiagnostics=task59_action2_base64_json_v1
+vpnEntitlementProbe=broker_process_via_592
+vpnProfileIdentifier=tlinkauto-managed-v1
+```
+
+Live IKEv2 connect/query/disconnect was reported working on rootfull on
+2026-08-01. The current implementation is promoted by VPN P4; this document
+continues to freeze the P2 broker and security baseline.
+
 ## Task behavior
 
 The legacy bytes remain unchanged:

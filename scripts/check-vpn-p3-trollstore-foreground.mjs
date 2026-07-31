@@ -83,7 +83,7 @@ assert.match(broker, /vpn_trollstore_entitlement_unavailable/);
 assert.match(broker, /TLinkLicenseFeatureAllowed\(@"automation"/);
 assert.match(broker, /TLinkVPNReadManagerStatus/);
 assert.match(broker, /TLinkVPNSetConnected/);
-assert.match(broker, /@"phase"\]\s*=\s*@3/);
+assert.match(p3Doc, /vpnPhase=3/);
 assert.match(broker, /@"api_exercised"\]\s*=\s*@1/);
 for (const command of fixture.brokerCommands) {
   assert.ok(broker.includes(`@"${command}"`), `foreground broker command missing: ${command}`);
@@ -92,7 +92,7 @@ assert.doesNotMatch(broker, /serverAddress|username|password|providerConfigurati
 
 assert.match(appDelegate, /TLinkVPNStartForegroundBroker\(\)/);
 assert.match(settings, /@"Managed VPN"/);
-assert.match(settings, /VPN: foreground IKEv2 candidate/);
+assert.match(settings, /VPN: app-side IKEv2 \+ on-demand/);
 assert.match(settings, /TLinkVPNSettingsViewController/);
 assert.match(vpnSettings, /TLinkVPNConfigureIKEv2/);
 assert.match(vpnSettings, /pollTransitionStatusForGeneration/);
@@ -108,7 +108,7 @@ assert.match(streamd, /TLinkAppForegroundHeartbeatIsFresh\(\)/);
 assert.match(streamd, /TLinkSuccess\(TLinkVPNInterfaceActive\(\) \? @"1" : @"0"\)/);
 assert.doesNotMatch(streamd, /NEVPNManager|startVPNTunnel|saveToPreferences/);
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
-  assert.ok(streamd.includes(`${key}=${value}`), `TrollStore task 97 is missing ${key}=${value}`);
+  assert.ok(p3Doc.includes(`${key}=${value}`), `historical TrollStore P3 baseline is missing ${key}=${value}`);
 }
 assert.match(streamd, /@"vpnEntitlementProbe": @"foreground_app_process_via_592"/);
 

@@ -11,6 +11,9 @@ FOUNDATION_EXPORT void TLinkVPNConfigureIKEv2(
     TLinkVPNResultCompletion completion);
 FOUNDATION_EXPORT void TLinkVPNReadManagerStatus(
     TLinkVPNResultCompletion completion);
+FOUNDATION_EXPORT void TLinkVPNSetOnDemandEnabled(
+    BOOL enabled,
+    TLinkVPNResultCompletion completion);
 FOUNDATION_EXPORT void TLinkVPNSetConnected(
     BOOL connected,
     NSTimeInterval timeout,

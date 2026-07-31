@@ -8,6 +8,7 @@
 @property(nonatomic, strong) UITextField *usernameField;
 @property(nonatomic, strong) UITextField *passwordField;
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UISwitch *onDemandSwitch;
 @property(nonatomic, strong) UIActivityIndicatorView *transitionSpinner;
 @property(nonatomic, copy) NSString *transitionAction;
 @property(nonatomic, strong) NSDate *transitionStartedAt;
@@ -61,7 +62,21 @@
     security.textColor = [UIColor secondaryLabelColor];
     security.text =
         @"The password is stored in ThisDeviceOnly Keychain. VPN configuration "
-         "and credentials are never sent through port 6000.";
+         "and credentials are never sent through port 6000. Disconnecting "
+         "explicitly also disables Auto-Reconnect.";
+
+    UILabel *onDemandLabel = [[UILabel alloc] init];
+    onDemandLabel.text = @"Auto-Reconnect (On Demand)";
+    onDemandLabel.font = [UIFont systemFontOfSize:16];
+    self.onDemandSwitch = [[UISwitch alloc] init];
+    [self.onDemandSwitch addTarget:self
+                            action:@selector(onDemandChanged:)
+                  forControlEvents:UIControlEventValueChanged];
+    UIStackView *onDemandRow = [[UIStackView alloc]
+        initWithArrangedSubviews:@[onDemandLabel, self.onDemandSwitch]];
+    onDemandRow.axis = UILayoutConstraintAxisHorizontal;
+    onDemandRow.alignment = UIStackViewAlignmentCenter;
+    onDemandRow.distribution = UIStackViewDistributionEqualSpacing;
 
     self.statusLabel = [[UILabel alloc] init];
     self.statusLabel.numberOfLines = 0;
@@ -88,6 +103,7 @@
         self.usernameField,
         self.passwordField,
         security,
+        onDemandRow,
         buttons,
         self.transitionSpinner,
         self.statusLabel,
@@ -167,6 +183,13 @@
         NSString *nativeError = [result[@"native_error"] isKindOfClass:[NSString class]]
             ? result[@"native_error"]
             : @"";
+        NSNumber *onDemand = [result[@"on_demand_enabled"]
+            isKindOfClass:[NSNumber class]]
+            ? result[@"on_demand_enabled"]
+            : nil;
+        if (onDemand) {
+            [self.onDemandSwitch setOn:onDemand.boolValue animated:YES];
+        }
         NSString *diagnostic = @"";
         if (osStatus) {
             diagnostic = [diagnostic stringByAppendingFormat:
@@ -177,10 +200,11 @@
                 @"\nNative error: %@", nativeError];
         }
         self.statusLabel.text = [NSString stringWithFormat:
-            @"Code: %@\nConfigured: %@\nEnabled: %@\nConnection: %@%@",
+            @"Code: %@\nConfigured: %@\nEnabled: %@\nAuto-Reconnect: %@\nConnection: %@%@",
             code,
             [result[@"configured"] boolValue] ? @"yes" : @"no",
             [result[@"enabled"] boolValue] ? @"yes" : @"no",
+            onDemand.boolValue ? @"on" : @"off",
             connection,
             diagnostic];
         if (![result[@"ok"] boolValue]) {
@@ -196,6 +220,25 @@
                                                    handler:nil]];
             [self presentViewController:alert animated:YES completion:nil];
         }
+    });
+}
+
+- (void)onDemandChanged:(UISwitch *)sender
+{
+    BOOL requested = sender.isOn;
+    sender.enabled = NO;
+    self.statusLabel.text = requested
+        ? @"Enabling Auto-Reconnect..."
+        : @"Disabling Auto-Reconnect...";
+    TLinkVPNSetOnDemandEnabled(requested, ^(NSDictionary *result) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sender.enabled = YES;
+            if (![result[@"ok"] boolValue] &&
+                ![result[@"on_demand_enabled"] isKindOfClass:[NSNumber class]]) {
+                [sender setOn:!requested animated:YES];
+            }
+            [self showResult:result title:@"VPN Auto-Reconnect"];
+        });
     });
 }
 

@@ -15,6 +15,25 @@ PC task 59 -> streamd :6000 -> 127.0.0.1:6015
   -> NEVPNManager -> TLink-owned IKEv2 profile
 ```
 
+The frozen P3 capability baseline was:
+
+```text
+vpnState=foreground_candidate
+vpnQuery=app_broker_6015_with_interface_fallback
+vpnControl=app_broker_6015_foreground_only
+vpnBackend=nevpnmanager_ikev2_candidate
+vpnBroker=StreamControl_app_6015
+vpnPhase=3
+vpnDiagnostics=task59_action2_base64_json_v1
+vpnEntitlementProbe=foreground_app_process_via_592
+vpnProfileIdentifier=tlinkauto-managed-v1
+```
+
+Live IKEv2 connect/query/disconnect was reported working on TrollStore on
+2026-08-01. VPN P4 therefore promotes this path to `app_side_control` and
+adds opt-in on-demand behavior. The broker remains foreground-only for new
+task requests.
+
 The legacy bytes and terminal-state semantics remain contract v1. Server and
 credential fields are never accepted on port `6000` or `6015`.
 

@@ -131,6 +131,8 @@ const evidence = {
   "usr/libexec/tlinkauto-vpnd": [
     "vpn_license_denied",
     "tlinkauto-managed-v1",
+    "vpn_on_demand_enabled",
+    "local_ui_connect_all_networks_explicit_disconnect_disables",
     "rootfull_license_authority_client_v1",
   ],
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib": [

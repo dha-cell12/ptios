@@ -105,6 +105,9 @@ assert.ok(appBinary.includes("serviceVersion=23"), "StreamControl does not requi
 assert.ok(streamdBinary.includes("serviceVersion=23"), "streamd does not expose service v23");
 assert.ok(appBinary.includes("StreamControl_app_6015"), "StreamControl lacks VPN P3 foreground broker evidence");
 assert.ok(streamdBinary.includes("vpn_foreground_app_required"), "streamd lacks VPN P3 broker routing evidence");
+assert.ok(appBinary.includes("vpn_on_demand_enabled"), "StreamControl lacks VPN P4 on-demand manager evidence");
+assert.ok(appBinary.includes("Auto-Reconnect (On Demand)"), "StreamControl lacks VPN P4 local UI evidence");
+assert.ok(streamdBinary.includes("vpnPhase=4"), "streamd lacks VPN P4 capability evidence");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
 const streamdEntitlements = execFileSync("ldid", ["-e", join(app, "streamd")], { encoding: "utf8" });

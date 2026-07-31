@@ -42,6 +42,7 @@ jobs:
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
           node scripts/check-vpn-p3-trollstore-foreground.mjs
+          node scripts/check-vpn-p4-on-demand.mjs
 
       - name: Validate public license build inputs
         run: |
