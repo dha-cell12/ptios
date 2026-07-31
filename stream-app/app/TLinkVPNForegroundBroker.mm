@@ -207,7 +207,7 @@ static void TLinkVPNForegroundHandleClient(int client)
         : @"-1;;vpn_broker_empty_request\r\n";
     NSData *responseData =
         [response dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
-    const uint8_t *cursor = responseData.bytes;
+    const uint8_t *cursor = (const uint8_t *)responseData.bytes;
     NSUInteger remaining = responseData.length;
     while (remaining > 0) {
         ssize_t sent = send(client, cursor, remaining, 0);
