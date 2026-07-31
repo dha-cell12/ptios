@@ -186,18 +186,18 @@ void TLinkVPNConfigureIKEv2(
             protocol.useExtendedAuthentication = true;
             protocol.disconnectOnSleep = false;
 
-            protocol.ikeSecurityAssociationParameters.encryptionAlgorithm =
-                NEVPNIKEEncryptionAlgorithmAES256;
-            protocol.ikeSecurityAssociationParameters.integrityAlgorithm =
-                NEVPNIKEIntegrityAlgorithmSHA256;
-            protocol.ikeSecurityAssociationParameters.diffieHellmanGroup =
-                NEVPNIKEDiffieHellmanGroup14;
+            protocol.IKESecurityAssociationParameters.encryptionAlgorithm =
+                NEVPNIKEv2EncryptionAlgorithmAES256;
+            protocol.IKESecurityAssociationParameters.integrityAlgorithm =
+                NEVPNIKEv2IntegrityAlgorithmSHA256;
+            protocol.IKESecurityAssociationParameters.diffieHellmanGroup =
+                NEVPNIKEv2DiffieHellmanGroup14;
             protocol.childSecurityAssociationParameters.encryptionAlgorithm =
-                NEVPNIKEEncryptionAlgorithmAES256;
+                NEVPNIKEv2EncryptionAlgorithmAES256;
             protocol.childSecurityAssociationParameters.integrityAlgorithm =
-                NEVPNIKEIntegrityAlgorithmSHA256;
+                NEVPNIKEv2IntegrityAlgorithmSHA256;
             protocol.childSecurityAssociationParameters.diffieHellmanGroup =
-                NEVPNIKEDiffieHellmanGroup14;
+                NEVPNIKEv2DiffieHellmanGroup14;
 
             manager.localizedDescription = kTLinkVPNDescription;
             manager.protocolConfiguration = protocol;
