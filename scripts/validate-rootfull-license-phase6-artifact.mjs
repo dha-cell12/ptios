@@ -90,7 +90,7 @@ const binaries = [
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
   "Library/MobileSubstrate/DynamicLibraries/appdelegate.dylib",
 ];
-const verifierBinaries = new Set([
+const verifierModeBinaries = new Set([
   "Applications/TLinkauto.app/TLinkauto",
   "usr/bin/tlinkautod",
   "usr/bin/tlinkautob",
@@ -98,6 +98,10 @@ const verifierBinaries = new Set([
   "usr/libexec/tlinkauto-licensed",
   "usr/libexec/tlinkauto-vpnd",
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
+]);
+const localVerifierBinaries = new Set([
+  "Applications/TLinkauto.app/TLinkauto",
+  "usr/libexec/tlinkauto-licensed",
 ]);
 const evidence = {
   "Applications/TLinkauto.app/TLinkauto": [
@@ -117,7 +121,7 @@ const evidence = {
   "usr/libexec/tlinkauto-jsd": [
     "script_helper_start",
     "license_revoked_during_execution",
-    "signed_device_checkpoint_v1",
+    "rootfull_license_authority_client_v1",
   ],
   "usr/libexec/tlinkauto-licensed": [
     "license_authority_signed_status_v1",
@@ -127,7 +131,7 @@ const evidence = {
   "usr/libexec/tlinkauto-vpnd": [
     "vpn_license_denied",
     "tlinkauto-managed-v1",
-    "signed_device_checkpoint_v1",
+    "rootfull_license_authority_client_v1",
   ],
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib": [
     "active client closed by license",
@@ -143,9 +147,11 @@ for (const relative of binaries) {
   const content = bytes.toString("latin1");
   assert.ok(content.includes(rootfullMarker), `${relative} lacks ${rootfullMarker}`);
   assert.ok(!content.includes(wrongRootfullMarker), `${relative} contains ${wrongRootfullMarker}`);
-  if (verifierBinaries.has(relative)) {
+  if (verifierModeBinaries.has(relative)) {
     assert.ok(content.includes(verifierMarker), `${relative} lacks ${verifierMarker}`);
     assert.ok(!content.includes(wrongVerifierMarker), `${relative} contains ${wrongVerifierMarker}`);
+  }
+  if (localVerifierBinaries.has(relative)) {
     for (const marker of [
       "license_device_key_mismatch",
       "rootfull_release_integrity_v1",

@@ -125,6 +125,11 @@ assert.match(postinst, /rm -f \/var\/mobile\/Library\/TLinkauto\/run\/license-au
 
 assert.match(socketServer, /licenseAuthority=unix_signed_nonce_v1/);
 assert.match(artifactValidator, /usr\/libexec\/tlinkauto-licensed/);
+assert.match(artifactValidator, /const verifierModeBinaries = new Set/);
+assert.match(
+  artifactValidator,
+  /const localVerifierBinaries = new Set\(\[[\s\S]*Applications\/TLinkauto\.app\/TLinkauto[\s\S]*usr\/libexec\/tlinkauto-licensed[\s\S]*\]\)/,
+);
 assert.match(artifactValidator, /license authority is missing the shared app Keychain access group/);
 assert.match(artifactValidator, /license authority must not inherit VPN entitlements/);
 assert.match(artifactValidator, /missing the signed license authority client/);
