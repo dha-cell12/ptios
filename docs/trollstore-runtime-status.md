@@ -58,14 +58,22 @@ TrollStore runtime.
   `591;;0` disables on-demand before stopping, while task `59` remains wire
   compatible and cannot carry credentials or policy changes. See
   `docs/vpn-p4-on-demand.md`.
+- VPN P5 adds a dedicated `vpnagent` candidate on loopback port `6016`.
+  `privhelper` starts it with the mobile persona (UID/GID 501), and task 59
+  tries it before the existing foreground app broker. It carries the same
+  app identity, VPN entitlement, and Keychain group but accepts no profile or
+  credential input. The state remains `background_agent_candidate` until
+  backgrounded-device transitions are proven; see
+  `docs/vpn-p5-background-agent.md`.
 
 ## Deferred Or Limited
 
 - Keychain clearing remains deferred because arbitrary target keychain access groups require separate entitlement handling.
-- VPN task control on TrollStore remains foreground-only. Once on-demand is
-  persisted, iOS may reconnect without a new foreground task, but a fresh
-  `591` request still requires StreamControl active. Devices that strip
-  `allow-vpn` must retain the query-only/manual Settings fallback.
+- VPN P5 is a device-validation candidate. After StreamControl has launched
+  the services once, fresh task `591` requests should use the mobile
+  `vpnagent` without keeping the app foreground. A force-quit, reboot, stripped
+  entitlement, or iOS rejection of headless `NEVPNManager` can still require
+  reopening StreamControl or using the foreground/manual Settings fallback.
 - Vision OCR CPU-only remains experimental for the former `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract is still the stable/default OCR path. P1 keeps task `27/91` responses byte-compatible, defaults legacy task `27` requests to the `app_cpu` bridge, and exposes `worker_cpu` only as an explicit canary. Task `97` reports both profiles, CPU-only enforcement, no fallback/selector, and `visionOCRState=experimental`. See `docs/ocr-p1-cpu-only.md`.
 - Activator/Siri equivalents remain `limited_on_trollstore`.
 - Full SpringBoard overlay behavior is replaced by foreground app overlays plus background CFUserNotification system notices/alerts. The dialog result is not bridged back to the original synchronous task, and the touch indicator remains foreground-only.

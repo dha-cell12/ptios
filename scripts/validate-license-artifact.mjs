@@ -86,7 +86,7 @@ assert.doesNotMatch(expected.LicenseKeyID, /REPLACE_/i, "license key id is a pla
 assert.match(expected.LicensePublicKeyX, /^[A-Za-z0-9_-]{43}$/, "invalid P-256 public key X");
 assert.match(expected.LicensePublicKeyY, /^[A-Za-z0-9_-]{43}$/, "invalid P-256 public key Y");
 
-const executables = ["StreamControl", "streamd", "clipboardd", "privhelper"];
+const executables = ["StreamControl", "streamd", "clipboardd", "vpnagent", "privhelper"];
 const expectedMarker = mode === "enforced" ? "enforced_compile_time_v1" : "observe_compile_time_v1";
 const unexpectedMarker = mode === "enforced" ? "observe_compile_time_v1" : "enforced_compile_time_v1";
 const executableHashes = {};
@@ -101,20 +101,40 @@ for (const name of executables) {
 
 const appBinary = (await readFile(join(app, "StreamControl"))).toString("latin1");
 const streamdBinary = (await readFile(join(app, "streamd"))).toString("latin1");
+const vpnagentBinary = (await readFile(join(app, "vpnagent"))).toString("latin1");
 assert.ok(appBinary.includes("serviceVersion=23"), "StreamControl does not require service v23");
 assert.ok(streamdBinary.includes("serviceVersion=23"), "streamd does not expose service v23");
 assert.ok(appBinary.includes("StreamControl_app_6015"), "StreamControl lacks VPN P3 foreground broker evidence");
 assert.ok(streamdBinary.includes("vpn_foreground_app_required"), "streamd lacks VPN P3 broker routing evidence");
 assert.ok(appBinary.includes("vpn_on_demand_enabled"), "StreamControl lacks VPN P4 on-demand manager evidence");
 assert.ok(appBinary.includes("Auto-Reconnect (On Demand)"), "StreamControl lacks VPN P4 local UI evidence");
-assert.ok(streamdBinary.includes("vpnPhase=4"), "streamd lacks VPN P4 capability evidence");
+assert.ok(streamdBinary.includes("vpnPhase=5"), "streamd lacks VPN P5 capability evidence");
+assert.ok(streamdBinary.includes("vpnagent_6016_then_StreamControl_6015"), "streamd lacks VPN P5 routing evidence");
+assert.ok(vpnagentBinary.includes("vpnagent_ready version=1 phase=5"), "vpnagent lacks P5 readiness evidence");
+assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
 const streamdEntitlements = execFileSync("ldid", ["-e", join(app, "streamd")], { encoding: "utf8" });
+const vpnagentEntitlements = execFileSync("ldid", ["-e", join(app, "vpnagent")], { encoding: "utf8" });
 assert.ok(
   appEntitlements.includes("com.apple.developer.networking.vpn.api") &&
     appEntitlements.includes("allow-vpn"),
   "StreamControl is missing the signed allow-vpn entitlement",
+);
+assert.ok(
+  vpnagentEntitlements.includes("com.apple.developer.networking.vpn.api") &&
+    vpnagentEntitlements.includes("allow-vpn"),
+  "vpnagent is missing the signed allow-vpn entitlement",
+);
+assert.ok(
+  vpnagentEntitlements.includes("keychain-access-groups") &&
+    vpnagentEntitlements.includes("StreamCtl.com.tlinkauto.streamcontrol"),
+  "vpnagent is missing the TrollStore VPN Keychain group",
+);
+assert.ok(
+  !vpnagentEntitlements.includes("com.apple.developer.networking.networkextension") &&
+    !vpnagentEntitlements.includes("packet-tunnel-provider"),
+  "vpnagent must not receive packet-tunnel-provider entitlement",
 );
 assert.ok(
   appEntitlements.includes("keychain-access-groups") &&
@@ -148,7 +168,7 @@ const manifest = {
   license_mode: mode,
   compile_marker: expectedMarker,
   service_version: 23,
-  vpn_phase: 3,
+  vpn_phase: 5,
   config: {
     endpoint: expected.LicenseEndpoint,
     key_id: expected.LicenseKeyID,

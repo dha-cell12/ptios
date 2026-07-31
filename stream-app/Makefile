@@ -8,7 +8,7 @@ APP_BUNDLE := StreamControl.app
 TIPA := packages/$(APP_NAME).tipa
 PAYLOAD_DIR := _payload/Payload
 
-.PHONY: all streamd clipboardd app privhelper embed package clean
+.PHONY: all streamd clipboardd vpnagent app privhelper embed package clean
 
 all: package
 
@@ -18,13 +18,16 @@ streamd:
 clipboardd:
 	$(MAKE) -C clipboardd stage FINALPACKAGE=1
 
+vpnagent:
+	$(MAKE) -C vpnagent stage FINALPACKAGE=1
+
 app:
 	$(MAKE) -C app stage FINALPACKAGE=1
 
 privhelper:
 	$(MAKE) -C privhelper stage FINALPACKAGE=1
 
-embed: streamd clipboardd app privhelper
+embed: streamd clipboardd vpnagent app privhelper
 	@set -e; \
 	APP="app/.theos/_/Applications/$(APP_BUNDLE)"; \
 	if [ ! -d "$$APP" ]; then \
@@ -37,6 +40,10 @@ embed: streamd clipboardd app privhelper
 	CLIPBOARDD="clipboardd/.theos/_/usr/bin/clipboardd"; \
 	if [ ! -f "$$CLIPBOARDD" ]; then \
 	  CLIPBOARDD=$$(find clipboardd/.theos -maxdepth 8 -type f -name 'clipboardd' ! -path '*/dSYM/*' | head -n1); \
+	fi; \
+	VPNAGENT="vpnagent/.theos/_/usr/bin/vpnagent"; \
+	if [ ! -f "$$VPNAGENT" ]; then \
+	  VPNAGENT=$$(find vpnagent/.theos -maxdepth 8 -type f -name 'vpnagent' ! -path '*/dSYM/*' | head -n1); \
 	fi; \
 	PRIVHELPER="privhelper/.theos/_/usr/bin/privhelper"; \
 	if [ ! -f "$$PRIVHELPER" ]; then \
@@ -54,6 +61,9 @@ embed: streamd clipboardd app privhelper
 	if [ -z "$$CLIPBOARDD" ] || [ ! -f "$$CLIPBOARDD" ]; then \
 	  echo "ERROR: clipboardd executable not found"; exit 1; \
 	fi; \
+	if [ -z "$$VPNAGENT" ] || [ ! -f "$$VPNAGENT" ]; then \
+	  echo "ERROR: vpnagent executable not found"; exit 1; \
+	fi; \
 	if [ ! -f "$$APP/Info.plist" ]; then \
 	  cp app/Info.plist "$$APP/Info.plist"; \
 	fi; \
@@ -61,6 +71,8 @@ embed: streamd clipboardd app privhelper
 	chmod 755 "$$APP/streamd"; \
 	cp "$$CLIPBOARDD" "$$APP/clipboardd"; \
 	chmod 755 "$$APP/clipboardd"; \
+	cp "$$VPNAGENT" "$$APP/vpnagent"; \
+	chmod 755 "$$APP/vpnagent"; \
 	cp "$$PRIVHELPER" "$$APP/privhelper"; \
 	chmod 755 "$$APP/privhelper"; \
 	rm -rf "$$APP/CompatibilityExamples"; \
@@ -68,6 +80,7 @@ embed: streamd clipboardd app privhelper
 	if command -v ldid >/dev/null 2>&1; then \
 	  ldid -Sstreamd/entitlements.plist "$$APP/streamd"; \
 	  ldid -Sclipboardd/entitlements.plist "$$APP/clipboardd"; \
+	  ldid -Svpnagent/entitlements.plist "$$APP/vpnagent"; \
 	  ldid -Sapp/entitlements.plist "$$APP/privhelper"; \
 	  ldid -Sapp/entitlements.plist "$$APP/$(APP_NAME)"; \
 	fi; \
@@ -75,12 +88,13 @@ embed: streamd clipboardd app privhelper
 	test -x "$$APP/$(APP_NAME)"; \
 	test -x "$$APP/streamd"; \
 	test -x "$$APP/clipboardd"; \
+	test -x "$$APP/vpnagent"; \
 	test -x "$$APP/privhelper"; \
 	test -f "$$APP/LicenseConfig.plist"; \
 	test -f "$$APP/CompatibilityExamples/01 Runtime Storage.js"; \
 	test -f "$$APP/CompatibilityExamples/06 App Process Shell.js"; \
 	test -f "$$APP/CompatibilityExamples/07 File Handle.js"; \
-	echo "Embedded streamd and clipboardd into $$APP"
+	echo "Embedded streamd, clipboardd, and vpnagent into $$APP"
 
 package: embed
 	@set -e; \
@@ -95,6 +109,7 @@ package: embed
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/$(APP_NAME)"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/streamd"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/clipboardd"; \
+	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/vpnagent"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/privhelper"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/LicenseConfig.plist"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/01 Runtime Storage.js"; \
@@ -105,6 +120,7 @@ package: embed
 clean:
 	-$(MAKE) -C streamd clean
 	-$(MAKE) -C clipboardd clean
+	-$(MAKE) -C vpnagent clean
 	-$(MAKE) -C app clean
 	-$(MAKE) -C privhelper clean
 	rm -rf _payload packages

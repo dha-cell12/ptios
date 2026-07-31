@@ -1,0 +1,37 @@
+{
+  "phase": 5,
+  "contractVersion": 1,
+  "legacyTask": 59,
+  "runtime": "trollstore",
+  "state": "background_agent_candidate",
+  "agent": {
+    "executable": "vpnagent",
+    "port": 6016,
+    "personaUid": 501,
+    "personaGid": 501,
+    "version": 1,
+    "commands": ["ping", "query", "connect", "disconnect", "diagnostics"]
+  },
+  "routing": {
+    "primary": "vpnagent_6016",
+    "recovery": "streamd_privhelper_ensure_vpnagent",
+    "fallback": "StreamControl_app_6015",
+    "queryLastResort": "streamd_interface_probe"
+  },
+  "requiredCapabilityFields": {
+    "vpnState": "background_agent_candidate",
+    "vpnQuery": "agent_6016_app_6015_interface_fallback",
+    "vpnControl": "agent_6016_with_foreground_fallback",
+    "vpnBackend": "nevpnmanager_ikev2_background_agent_candidate",
+    "vpnBroker": "vpnagent_6016_then_StreamControl_6015",
+    "vpnPhase": "5",
+    "vpnBackgroundAgent": "experimental_mobile_process"
+  },
+  "security": {
+    "loopbackOnly": true,
+    "credentialsOverAgent": false,
+    "credentialsOverTask59": false,
+    "packetTunnelProvider": false,
+    "licenseFeature": "automation"
+  }
+}

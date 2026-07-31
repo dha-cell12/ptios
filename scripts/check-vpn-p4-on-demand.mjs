@@ -84,8 +84,8 @@ assert.doesNotMatch(trollBroker, /serverAddress|username|password|providerConfig
 
 assert.match(rootTask, /@"full_control"/);
 assert.match(rootTask, /@"phase"\]\s*=\s*@4/);
-assert.match(trollServer, /@"app_side_control"/);
-assert.match(trollServer, /@"vpnPhase": @4/);
+assert.match(p4Doc, /vpnState=app_side_control/);
+assert.match(p4Doc, /vpnPhase=4/);
 assert.match(trollServer, /local_ui_connect_all_networks_explicit_disconnect_disables/);
 assert.match(trollServer, /TLinkRunVPNForegroundBrokerWithTimeout/);
 assert.match(trollServer, /@"diagnostics"[\s\S]*?&brokerError,[\s\S]*?5\)/);
@@ -102,7 +102,7 @@ for (const [key, value] of Object.entries(
 for (const [key, value] of Object.entries(
   fixture.runtimes.trollstore.requiredCapabilityFields,
 )) {
-  assert.ok(trollServer.includes(`${key}=${value}`), `TrollStore task 97 is missing ${key}=${value}`);
+  assert.ok(p4Doc.includes(`${key}=${value}`), `P4 baseline document is missing ${key}=${value}`);
 }
 
 assert.match(deviceTest, /ValidateSet\("rootfull", "trollstore"\)/);

@@ -110,7 +110,7 @@ assert.doesNotMatch(streamd, /NEVPNManager|startVPNTunnel|saveToPreferences/);
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
   assert.ok(p3Doc.includes(`${key}=${value}`), `historical TrollStore P3 baseline is missing ${key}=${value}`);
 }
-assert.match(streamd, /@"vpnEntitlementProbe": @"foreground_app_process_via_592"/);
+assert.match(p3Doc, /vpnEntitlementProbe=foreground_app_process_via_592/);
 
 assert.match(artifactValidator, /StreamControl lacks VPN P3 foreground broker evidence/);
 assert.match(artifactValidator, /com\.apple\.developer\.networking\.vpn\.api/);

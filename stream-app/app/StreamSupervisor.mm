@@ -40,6 +40,7 @@ extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 
 static const NSTimeInterval kSCRespawnThrottle = 3.0;
 static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=23";
+static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 
 @implementation SCStreamSupervisor {
     dispatch_queue_t _queue;
@@ -119,10 +120,11 @@ static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=23";
             }
         }
         if (completion) {
-            NSString *detail = [NSString stringWithFormat:@"streamd_probe_%@ pid=%d service_marker=%@",
+            NSString *detail = [NSString stringWithFormat:@"streamd_probe_%@ pid=%d service_marker=%@ vpn_marker=%@",
                                 running ? @"ok" : @"failed",
                                 self->_pid,
-                                kSCRequiredStreamdServiceMarker];
+                                kSCRequiredStreamdServiceMarker,
+                                kSCRequiredVPNServiceMarker];
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(running, detail);
             });
@@ -248,7 +250,9 @@ static NSString *const kSCRequiredStreamdServiceMarker = @"serviceVersion=23";
     }
 
     pid_t pid = [self streamdPidFromHelloStatusLocked];
-    BOOL versionMatches = [status containsString:kSCRequiredStreamdServiceMarker];
+    BOOL versionMatches =
+        [status containsString:kSCRequiredStreamdServiceMarker] &&
+        [status containsString:kSCRequiredVPNServiceMarker];
     BOOL pathMatches = YES;
     NSString *runningPath = @"";
     if (pid > 0) {

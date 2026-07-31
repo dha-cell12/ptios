@@ -55,6 +55,7 @@ extern char **environ;
 static BOOL TLinkVPNInterfaceActive(void);
 static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
     NSNumber *effectiveConnected,
+    NSString *agentError,
     NSString *brokerError);
 
 // ---------------------------------------------------------------------------
@@ -5794,22 +5795,23 @@ static NSData *TLinkHandleHelloStatus(void)
         @"airplane": @(YES),
         @"cellularData": @(YES),
         @"vpn": @(YES),
-        @"vpnMode": @"foreground_app_ikev2_on_demand",
+        @"vpnMode": @"background_agent_ikev2_on_demand_candidate",
         @"vpnContractVersion": @1,
         @"vpnLegacyTask": @59,
-        @"vpnState": @"app_side_control",
-        @"vpnQuery": @"app_broker_6015_with_interface_fallback",
-        @"vpnControl": @"app_broker_6015_foreground_only",
-        @"vpnBackend": @"nevpnmanager_ikev2",
-        @"vpnBroker": @"StreamControl_app_6015",
+        @"vpnState": @"background_agent_candidate",
+        @"vpnQuery": @"agent_6016_app_6015_interface_fallback",
+        @"vpnControl": @"agent_6016_with_foreground_fallback",
+        @"vpnBackend": @"nevpnmanager_ikev2_background_agent_candidate",
+        @"vpnBroker": @"vpnagent_6016_then_StreamControl_6015",
         @"vpnProfileScope": @"tlink_owned_only",
         @"vpnConfigurationTransport": @"local_ui_keychain_only",
         @"vpnCredentialsOverTask59": @(NO),
-        @"vpnPhase": @4,
+        @"vpnPhase": @5,
+        @"vpnBackgroundAgent": @"experimental_mobile_process",
         @"vpnOnDemand": @"local_ui_connect_all_networks",
         @"vpnDisconnectPolicy": @"explicit_disconnect_disables_on_demand",
         @"vpnDiagnostics": @"task59_action2_base64_json_v1",
-        @"vpnEntitlementProbe": @"foreground_app_process_via_592",
+        @"vpnEntitlementProbe": @"vpnagent_process_then_foreground_app_via_592",
         @"vpnProfileIdentifier": @"tlinkauto-managed-v1",
         @"frontmost": @(YES),
         @"clearData": @(YES),
@@ -5818,7 +5820,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"shellMode": sTLinkShellTaskEnabled ? @"local_sh_gated_timeout_base64_json" : @"disabled_by_settings",
         @"hidMonitor": @(YES),
         @"privhelper": @(YES),
-        @"privhelperMode": @"open_kill_restart_ensure_streamd_clipboardd_foreground_broker_respring",
+        @"privhelperMode": @"open_kill_restart_ensure_streamd_clipboardd_vpnagent_mobile_foreground_fallback_respring",
         @"installedBundlePath": TLinkInstalledApplicationBundlePath() ?: @"",
         @"resolvedStreamdPath": TLinkBundledExecutablePath(@"streamd") ?: @"",
         @"resolvedPrivhelperPath": TLinkPrivhelperPath() ?: @"",
@@ -5867,6 +5869,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"license_enforcement": licenseEnforcement,
         @"vpn_diagnostics": TLinkVPNTrollStoreDiagnosticsSnapshot(
             @(TLinkVPNInterfaceActive()),
+            @"probe_vpnagent_via_task_592",
             @"probe_foreground_app_via_task_592"),
         @"license_lifecycle": licenseLifecycle,
         @"background_service": backgroundService,
@@ -7319,29 +7322,111 @@ static BOOL TLinkVPNInterfaceActive(void)
 
 static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
     NSNumber *effectiveConnected,
+    NSString *agentError,
     NSString *brokerError)
 {
     NSMutableDictionary *diagnostics = [TLinkVPNDiagnosticsSnapshot(
         @"trollstore",
-        @"app_side_control",
-        @"app_broker_6015_with_interface_fallback",
-        @"app_broker_6015_foreground_only",
-        @"nevpnmanager_ikev2",
-        @"StreamControl_app_6015",
+        @"background_agent_candidate",
+        @"agent_6016_app_6015_interface_fallback",
+        @"agent_6016_with_foreground_fallback",
+        @"nevpnmanager_ikev2_background_agent_candidate",
+        @"vpnagent_6016_then_StreamControl_6015",
         effectiveConnected) mutableCopy];
-    diagnostics[@"phase"] = @4;
+    diagnostics[@"phase"] = @5;
     diagnostics[@"broker_ready"] = @0;
-    diagnostics[@"broker_target"] = @"StreamControl_foreground_app";
+    diagnostics[@"broker_target"] = @"vpnagent_mobile_then_StreamControl_foreground_app";
     diagnostics[@"entitlement_probe_scope"] = @"streamd_process_fallback";
-    diagnostics[@"control_preflight"] = @"requires_foreground_app_probe";
+    diagnostics[@"control_preflight"] = @"requires_vpnagent_or_foreground_app_probe";
     diagnostics[@"profile_state"] = @"not_probed";
     diagnostics[@"on_demand_policy"] =
         @"local_ui_connect_all_networks_explicit_disconnect_disables";
     diagnostics[@"diagnostics_source"] = @"streamd_interface_fallback";
+    diagnostics[@"background_agent_expected"] = @1;
+    diagnostics[@"background_agent_port"] = @6016;
+    diagnostics[@"background_agent_last_error"] = agentError ?: @"";
     diagnostics[@"foreground_heartbeat_fresh"] =
         @(TLinkAppForegroundHeartbeatIsFresh());
     diagnostics[@"broker_last_error"] = brokerError ?: @"";
     return diagnostics;
+}
+
+static NSData *TLinkRunVPNBackgroundAgentWithTimeout(
+    NSString *command,
+    NSString **failure,
+    int timeoutSeconds)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        if (failure) *failure = @"vpnagent_socket_failed";
+        return nil;
+    }
+    struct timeval timeout = {MAX(2, MIN(timeoutSeconds, 30)), 0};
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#ifdef SO_NOSIGPIPE
+    int noSigPipe = 1;
+    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+#endif
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(6016);
+    inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+    if (connect(sock, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(sock);
+        if (failure) *failure = @"vpnagent_unavailable";
+        return nil;
+    }
+
+    NSString *line = [NSString stringWithFormat:@"%@\n", command ?: @""];
+    NSData *request = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (!TLinkWriteAllToFd(sock, request.bytes, request.length)) {
+        close(sock);
+        if (failure) *failure = @"vpnagent_request_write_failed";
+        return nil;
+    }
+    NSData *response = TLinkReadSocketResponse(sock);
+    close(sock);
+    if (response.length == 0) {
+        if (failure) *failure = @"vpnagent_timeout_or_empty_response";
+        return nil;
+    }
+    return response;
+}
+
+static NSData *TLinkRunVPNBackgroundAgentWithRecovery(
+    NSString *command,
+    NSString **failure,
+    int timeoutSeconds)
+{
+    NSData *response = TLinkRunVPNBackgroundAgentWithTimeout(
+        command, failure, timeoutSeconds);
+    if (response.length > 0) return response;
+
+    NSString *streamdPath = TLinkCurrentStreamdExecutablePath();
+    if (streamdPath.length == 0) {
+        if (failure) *failure = @"vpnagent_recovery_streamd_path_unavailable";
+        return nil;
+    }
+    int ensureExit = TLinkRunPrivhelper(
+        @[@"--ensure-vpnagent", streamdPath], 6000);
+    if (ensureExit != 0) {
+        if (failure) {
+            *failure = [NSString stringWithFormat:
+                @"vpnagent_recovery_failed_exit_%d", ensureExit];
+        }
+        return nil;
+    }
+    return TLinkRunVPNBackgroundAgentWithTimeout(
+        command, failure, timeoutSeconds);
+}
+
+static NSData *TLinkRunVPNBackgroundAgent(
+    NSString *command,
+    NSString **failure)
+{
+    return TLinkRunVPNBackgroundAgentWithRecovery(command, failure, 30);
 }
 
 static NSData *TLinkRunVPNForegroundBrokerWithTimeout(
@@ -7542,6 +7627,14 @@ static NSData *TLinkHandleVPNConnectivity(NSString *body, int taskType)
         if (parts.count != 1) {
             return TLinkError(@"vpn_diagnostics_takes_no_arguments");
         }
+        NSString *agentError = nil;
+        NSData *agentResponse = TLinkRunVPNBackgroundAgentWithRecovery(
+            @"diagnostics",
+            &agentError,
+            5);
+        NSString *agentText = TLinkResponseStringFromData(agentResponse);
+        if ([agentText hasPrefix:@"0;;"]) return agentResponse;
+
         NSString *brokerError = nil;
         NSData *brokerResponse = TLinkRunVPNForegroundBrokerWithTimeout(
             @"diagnostics",
@@ -7555,6 +7648,7 @@ static NSData *TLinkHandleVPNConnectivity(NSString *body, int taskType)
 
         NSDictionary *diagnostics = TLinkVPNTrollStoreDiagnosticsSnapshot(
             @(TLinkVPNInterfaceActive()),
+            agentError ?: agentText ?: @"vpnagent_unavailable",
             brokerError ?: brokerText ?: @"vpn_foreground_app_required");
         NSError *jsonError = nil;
         NSData *json = [NSJSONSerialization dataWithJSONObject:diagnostics
@@ -7571,6 +7665,12 @@ static NSData *TLinkHandleVPNConnectivity(NSString *body, int taskType)
         return TLinkError(parseError ?: @"connectivity_bad_payload");
     }
     if (action == 0) {
+        NSString *agentError = nil;
+        NSData *agentResponse = TLinkRunVPNBackgroundAgent(
+            @"query", &agentError);
+        NSString *agentText = TLinkResponseStringFromData(agentResponse);
+        if ([agentText hasPrefix:@"0;;"]) return agentResponse;
+
         NSString *brokerError = nil;
         NSData *brokerResponse = TLinkAppForegroundHeartbeatIsFresh()
             ? TLinkRunVPNForegroundBroker(@"query", &brokerError)
@@ -7579,15 +7679,24 @@ static NSData *TLinkHandleVPNConnectivity(NSString *body, int taskType)
         if ([brokerText hasPrefix:@"0;;"]) return brokerResponse;
         return TLinkSuccess(TLinkVPNInterfaceActive() ? @"1" : @"0");
     }
+    NSString *agentError = nil;
+    NSData *agentResponse = TLinkRunVPNBackgroundAgent(
+        requestedValue ? @"connect" : @"disconnect",
+        &agentError);
+    NSString *agentText = TLinkResponseStringFromData(agentResponse);
+    if ([agentText hasPrefix:@"0;;"]) return agentResponse;
+
     if (!TLinkAppForegroundHeartbeatIsFresh()) {
-        return TLinkError(@"vpn_foreground_app_required");
+        if (agentResponse.length > 0) return agentResponse;
+        return TLinkError(agentError ?: @"vpnagent_unavailable");
     }
     NSString *brokerError = nil;
     NSData *brokerResponse = TLinkRunVPNForegroundBroker(
         requestedValue ? @"connect" : @"disconnect",
         &brokerError);
     if (brokerResponse.length > 0) return brokerResponse;
-    return TLinkError(brokerError ?: @"vpn_foreground_app_required");
+    if (agentResponse.length > 0) return agentResponse;
+    return TLinkError(brokerError ?: agentError ?: @"vpnagent_unavailable");
 }
 
 static NSData *TLinkHandleConnectivityTask(int taskType, NSString *body)
@@ -8085,19 +8194,19 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];
         cap = [cap stringByAppendingString:@" vpnCredentialsOverTask59=forbidden"];
         cap = [cap stringByReplacingOccurrencesOfString:@"vpn=query_only_interface_probe"
-                                             withString:@"vpn=foreground_app_ikev2_on_demand"];
+                                             withString:@"vpn=background_agent_ikev2_on_demand_candidate"];
         cap = [cap stringByReplacingOccurrencesOfString:@"unsupported=keychain,vpnControl,"
                                              withString:@"unsupported=keychain,"];
         cap = [cap stringByReplacingOccurrencesOfString:@"vpnQuery,shellTaskGated"
                                              withString:@"vpnQuery,vpnControl,vpnOnDemand,shellTaskGated"];
-        cap = [cap stringByAppendingString:@" vpnState=app_side_control vpnQuery=app_broker_6015_with_interface_fallback"];
-        cap = [cap stringByAppendingString:@" vpnControl=app_broker_6015_foreground_only vpnBackend=nevpnmanager_ikev2"];
-        cap = [cap stringByAppendingString:@" vpnBroker=StreamControl_app_6015"];
-        cap = [cap stringByAppendingString:@" vpnPhase=4"];
+        cap = [cap stringByAppendingString:@" vpnState=background_agent_candidate vpnQuery=agent_6016_app_6015_interface_fallback"];
+        cap = [cap stringByAppendingString:@" vpnControl=agent_6016_with_foreground_fallback vpnBackend=nevpnmanager_ikev2_background_agent_candidate"];
+        cap = [cap stringByAppendingString:@" vpnBroker=vpnagent_6016_then_StreamControl_6015"];
+        cap = [cap stringByAppendingString:@" vpnPhase=5 vpnBackgroundAgent=experimental_mobile_process"];
         cap = [cap stringByAppendingString:@" vpnOnDemand=local_ui_connect_all_networks"];
         cap = [cap stringByAppendingString:@" vpnDisconnectPolicy=explicit_disconnect_disables_on_demand"];
         cap = [cap stringByAppendingString:@" vpnDiagnostics=task59_action2_base64_json_v1"];
-        cap = [cap stringByAppendingString:@" vpnEntitlementProbe=foreground_app_process_via_592"];
+        cap = [cap stringByAppendingString:@" vpnEntitlementProbe=vpnagent_process_then_foreground_app_via_592"];
         cap = [cap stringByAppendingString:@" vpnProfileIdentifier=tlinkauto-managed-v1"];
         cap = [cap stringByAppendingString:@" licenseContractVersion=1 licensePolicyVersion=1"];
         cap = [cap stringByAppendingString:@" licenseLifecycle=foreground_bg_single_flight_backoff_v1"];

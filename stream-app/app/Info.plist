@@ -63,6 +63,7 @@
 	<array>
 		<string>privhelper</string>
 		<string>clipboardd</string>
+		<string>vpnagent</string>
 	</array>
 </dict>
 </plist>

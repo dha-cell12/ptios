@@ -19,6 +19,16 @@
 
 extern char **environ;
 
+#ifndef POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE
+#define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
+#endif
+
+extern "C" {
+int posix_spawnattr_set_persona_np(posix_spawnattr_t *attr, uid_t persona_id, uint32_t flags);
+int posix_spawnattr_set_persona_uid_np(posix_spawnattr_t *attr, uid_t uid);
+int posix_spawnattr_set_persona_gid_np(posix_spawnattr_t *attr, uid_t gid);
+}
+
 #ifndef PROC_PIDPATHINFO_MAXSIZE
 #define PROC_PIDPATHINFO_MAXSIZE 4096
 #endif
@@ -411,7 +421,7 @@ static BOOL TLinkHelperProcessHasName(struct kinfo_proc *proc, const char *name)
     return strcmp(base, name) == 0;
 }
 
-static void TLinkHelperKillClipboardd(void)
+static void TLinkHelperKillProcessNamed(const char *name)
 {
     int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
     size_t len = 0;
@@ -426,10 +436,15 @@ static void TLinkHelperKillClipboardd(void)
     for (int i = 0; i < count; i++) {
         pid_t pid = procs[i].kp_proc.p_pid;
         if (pid <= 1 || pid == getpid()) continue;
-        if (TLinkHelperProcessHasName(&procs[i], "clipboardd")) kill(pid, SIGKILL);
+        if (TLinkHelperProcessHasName(&procs[i], name)) kill(pid, SIGKILL);
     }
     free(procs);
     usleep(200000);
+}
+
+static void TLinkHelperKillClipboardd(void)
+{
+    TLinkHelperKillProcessNamed("clipboardd");
 }
 
 static BOOL TLinkClipboarddProbeIsCurrent(NSString *probe)
@@ -485,6 +500,84 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
     return 53;
 }
 
+static BOOL TLinkVPNAgentProbeIsCurrent(NSString *probe)
+{
+    return [probe hasPrefix:@"0;;vpnagent_ready"] &&
+           [probe containsString:@"version=1"] &&
+           [probe containsString:@"phase=5"];
+}
+
+static int TLinkEnsureVPNAgent(NSString *streamdPath, BOOL replaceExisting)
+{
+    NSString *vpnagentPath = [[streamdPath stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"vpnagent"];
+    if (![[vpnagentPath lastPathComponent] isEqualToString:@"vpnagent"] ||
+        ![vpnagentPath hasSuffix:@"/StreamControl.app/vpnagent"] ||
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:vpnagentPath]) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-vpnagent: invalid path=%@",
+                        vpnagentPath ?: @""]);
+        return 54;
+    }
+
+    NSString *probe = TLinkHelperSendLoopbackLine(@"ping\n", 6016, 1);
+    if (TLinkVPNAgentProbeIsCurrent(probe) && !replaceExisting) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-vpnagent: already responding %@",
+                        [probe stringByTrimmingCharactersInSet:
+                            [NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+        return 0;
+    }
+
+    TLinkHelperKillProcessNamed("vpnagent");
+    const char *path = [vpnagentPath fileSystemRepresentation];
+    char *arg0 = strdup(path);
+    char *arg1 = strdup("--daemon");
+    if (!arg0 || !arg1) {
+        free(arg0); free(arg1);
+        return 55;
+    }
+    char *const argv[] = { arg0, arg1, NULL };
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    int persona = posix_spawnattr_set_persona_np(
+        &attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+    int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 501);
+    int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 501);
+    if (persona != 0 || personaUid != 0 || personaGid != 0) {
+        posix_spawnattr_destroy(&attr);
+        free(arg0); free(arg1);
+        TLinkHelperLog([NSString stringWithFormat:
+            @"ensure-vpnagent: mobile persona failed persona=%d uid=%d gid=%d",
+            persona, personaUid, personaGid]);
+        return 56;
+    }
+
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, path, NULL, &attr, argv, environ);
+    posix_spawnattr_destroy(&attr);
+    free(arg0); free(arg1);
+    if (rc != 0 || pid <= 0) {
+        TLinkHelperLog([NSString stringWithFormat:
+            @"ensure-vpnagent: spawn failed rc=%d path=%@", rc, vpnagentPath]);
+        return 57;
+    }
+
+    TLinkHelperLog([NSString stringWithFormat:
+        @"ensure-vpnagent: spawned pid=%d persona=mobile uid=501 gid=501", pid]);
+    for (int i = 0; i < 12; i++) {
+        usleep(250000);
+        probe = TLinkHelperSendLoopbackLine(@"ping\n", 6016, 1);
+        if (TLinkVPNAgentProbeIsCurrent(probe)) {
+            TLinkHelperLog([NSString stringWithFormat:@"ensure-vpnagent: probe ok %@",
+                            [probe stringByTrimmingCharactersInSet:
+                                [NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+            return 0;
+        }
+    }
+    TLinkHelperLog([NSString stringWithFormat:
+        @"ensure-vpnagent: pid=%d did not become ready", pid]);
+    return 58;
+}
+
 static BOOL TLinkHelperStreamdPathAllowed(NSString *streamdPath)
 {
     NSString *normalized = TLinkHelperNormalizedPath(streamdPath);
@@ -508,6 +601,10 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
     int clipboardExit = TLinkEnsureClipboardd(normalized, replaceExisting);
     TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: clipboardd exit=%d replace=%d",
                     clipboardExit, replaceExisting ? 1 : 0]);
+
+    int vpnagentExit = TLinkEnsureVPNAgent(normalized, replaceExisting);
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: vpnagent exit=%d replace=%d",
+                    vpnagentExit, replaceExisting ? 1 : 0]);
 
     NSString *before = TLinkHelperSendLocalTaskLine(@"97\n", 1);
     if (before.length > 0 && !replaceExisting) {
@@ -843,7 +940,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=8 scope=ensure-streamd,ensure-clipboardd,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
+            TLinkHelperLog(@"privhelper version=9 scope=ensure-streamd,ensure-clipboardd,ensure-vpnagent-mobile,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
             return 0;
         }
 
@@ -854,6 +951,17 @@ int main(int argc, char *argv[])
                 if (strcmp(argv[i], "--replace") == 0) replaceExisting = YES;
             }
             return TLinkEnsureStreamd(streamdPath, replaceExisting);
+        }
+
+        if (argc >= 3 && strcmp(argv[1], "--ensure-vpnagent") == 0) {
+            NSString *streamdPath = [NSString stringWithUTF8String:argv[2]] ?: @"";
+            NSString *normalized = TLinkHelperNormalizedPath(streamdPath);
+            if (!TLinkHelperStreamdPathAllowed(normalized)) {
+                TLinkHelperLog([NSString stringWithFormat:
+                    @"ensure-vpnagent: refused streamd path=%@", streamdPath]);
+                return 59;
+            }
+            return TLinkEnsureVPNAgent(normalized, NO);
         }
 
         if (argc >= 2 && strcmp(argv[1], "--kill-streamd") == 0) {
@@ -901,7 +1009,7 @@ int main(int argc, char *argv[])
             return TLinkRespring();
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
+        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --ensure-vpnagent /path/to/streamd | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
         return 64;
     }
 }
