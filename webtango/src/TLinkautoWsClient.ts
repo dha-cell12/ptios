@@ -145,11 +145,15 @@ export class TLinkautoWsClient {
   }
 
   async request(task: number, ...args: Array<string | number>): Promise<ZxResponse> {
+    return this.requestWithTimeout(task, 1000, ...args);
+  }
+
+  async requestWithTimeout(task: number, timeoutMs: number, ...args: Array<string | number>): Promise<ZxResponse> {
     await this.waitOpen();
     this.lastTx = Date.now();
     const payload = `${task}${args.map(String).join(';;')}\r\n`;
     this.ws.send(payload);
-    const line = await this.nextLine();
+    const line = await this.nextLine(timeoutMs);
     return this.decodeResponse(line);
   }
 

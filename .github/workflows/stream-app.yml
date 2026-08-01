@@ -161,6 +161,9 @@ jobs:
           test -f scripts/check-zoom-p1-multitouch.mjs
           test -f scripts/Test-TLinkZoomPhase1.ps1
           test -f test/fixtures/zoom-p1-contract-v1.json
+          test -f scripts/check-zoom-p2-observability.mjs
+          test -f scripts/Test-TLinkZoomPhase2.ps1
+          test -f test/fixtures/zoom-p2-observability-v1.json
           test -f scripts/check-vpn-p0-baseline.mjs
           test -f scripts/check-vpn-p1-diagnostics.mjs
           test -f scripts/check-vpn-p2-rootfull-broker.mjs
@@ -176,6 +179,7 @@ jobs:
           test -f docs/ocr-p1-device-findings.md
           test -f docs/zoom-p0-baseline.md
           test -f docs/zoom-p1-multitouch.md
+          test -f docs/zoom-p2-observability-webtango.md
           test -f docs/vpn-p0-baseline.md
           test -f docs/vpn-p1-diagnostics.md
           test -f docs/vpn-p2-rootfull-broker.md
@@ -191,6 +195,7 @@ jobs:
           node scripts/check-ocr-p1-cpu-only.mjs
           node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-zoom-p1-multitouch.mjs
+          node scripts/check-zoom-p2-observability.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs

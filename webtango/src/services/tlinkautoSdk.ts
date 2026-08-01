@@ -1,5 +1,13 @@
 import { TLinkautoWsClient } from '../TLinkautoWsClient';
 
+export type ZoomOptions = {
+  durationMs?: number;
+  fingerCount?: 2 | 3;
+  steps?: number;
+  angleDegrees?: number;
+  baseFinger?: number;
+};
+
 export class TLinkautoDeviceSdk {
   private client: TLinkautoWsClient;
   private screenScale: number | null = null;
@@ -34,6 +42,26 @@ export class TLinkautoDeviceSdk {
       await sleep(durationMs / steps);
     }
     this.client.touch(0, 1, x2, y2);
+  }
+
+  async zoom(centerX: number, centerY: number, startRadius: number, endRadius: number, options: ZoomOptions = {}) {
+    await this.waitOpen();
+    const durationMs = options.durationMs ?? 300;
+    const response = await this.client.requestWithTimeout(
+      64,
+      Math.max(3000, durationMs + 2000),
+      'zoom',
+      centerX,
+      centerY,
+      startRadius,
+      endRadius,
+      durationMs,
+      options.fingerCount ?? 2,
+      options.steps ?? 20,
+      options.angleDegrees ?? 0,
+      options.baseFinger ?? 0,
+    );
+    if (!response.ok) throw new Error(response.raw || 'zoom failed');
   }
 
   async getScreenSize() {

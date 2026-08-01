@@ -40,6 +40,7 @@ jobs:
           node scripts/check-ocr-p1-cpu-only.mjs
           node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-zoom-p1-multitouch.mjs
+          node scripts/check-zoom-p2-observability.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs

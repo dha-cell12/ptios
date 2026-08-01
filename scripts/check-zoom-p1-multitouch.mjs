@@ -109,14 +109,14 @@ assertZoomImplementation("rootfull", rootTask, {
   downFrame: /zx_performTouchFrame\(TOUCH_DOWN/,
   moveFrame: /zx_performTouchFrame\(TOUCH_MOVE/,
   upFrame: /zx_performTouchFrame\(TOUCH_UP/,
-  exceptionCleanup: /if \(fingersDown\) zx_performTouchFrame\(TOUCH_UP/,
+  exceptionCleanup: /if \(fingersDown\) \{[\s\S]*?zx_performTouchFrame\(TOUCH_UP/,
 });
 assertZoomImplementation("TrollStore", trollServer, {
   handler: /static BOOL TLinkHandleNativeZoom/,
   downFrame: /TLinkPerformTouchFrame\(POC_TOUCH_DOWN/,
   moveFrame: /TLinkPerformTouchFrame\(POC_TOUCH_MOVE/,
   upFrame: /TLinkPerformTouchFrame\(POC_TOUCH_UP/,
-  exceptionCleanup: /if \(fingersDown\) TLinkPerformTouchFrame\(POC_TOUCH_UP/,
+  exceptionCleanup: /if \(fingersDown\) \{[\s\S]*?TLinkPerformTouchFrame\(POC_TOUCH_UP/,
 });
 
 for (const [label, source, frameName, rawName] of [
@@ -145,11 +145,13 @@ assert.match(rootPolicy, /\{64, "automation"\}/);
 
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
   const marker = `${key}=${value}`;
-  assert.ok(rootServer.includes(marker), `rootfull task 97 is missing ${marker}`);
-  assert.ok(trollServer.includes(marker), `TrollStore task 97 is missing ${marker}`);
-  assert.ok(phase1Doc.includes(marker), `Zoom P1 documentation is missing ${marker}`);
+  assert.ok(phase1Doc.includes(marker), `historical Zoom P1 documentation is missing ${marker}`);
+  if (key !== "zoomPhase") {
+    assert.ok(rootServer.includes(marker), `rootfull task 97 is missing ${marker}`);
+    assert.ok(trollServer.includes(marker), `TrollStore task 97 is missing ${marker}`);
+  }
 }
-assert.match(rootTask, /@"zoom": @\{[\s\S]*?@"phase": @1[\s\S]*?@"state": @"experimental"[\s\S]*?@"implemented": @1/);
+assert.match(rootTask, /@"zoom": @\{[\s\S]*?@"state": @"experimental"[\s\S]*?@"implemented": @1/);
 assert.match(trollServer, /@"zoom": @\(YES\)/);
 assert.match(trollServer, /@"zoomState": @"experimental"/);
 assert.match(trollServer, /@"zoomDeviceValidated": @\(NO\)/);
@@ -171,6 +173,7 @@ assert.match(deviceTest, /if \(\$RunGesture\)/);
 assert.match(deviceTest, /zoom_finger_count_unsupported allowed=2,3/);
 assert.match(deviceTest, /\[string\]\$Direction = "both"/);
 assert.match(phase1Doc, /client disconnect does not interrupt/i);
+assert.match(phase1Doc, /Historical implementation milestone/i);
 assert.match(phase1Doc, /device\.zoom\(375, 667, 60, 160/);
 assert.match(phase0Doc, /Historical baseline/i);
 assert.match(trollStatusDoc, /Zoom P1/);

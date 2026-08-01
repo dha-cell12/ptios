@@ -566,6 +566,18 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
     return `await device.swipe(${x}, ${Math.round(height * 0.75)}, ${x}, ${Math.round(height * 0.25)}, 500);`;
   };
 
+  const zoomSnippet = (direction: 'spread' | 'pinch') => {
+    const width = screenSize?.width ?? 375;
+    const height = screenSize?.height ?? 667;
+    const centerX = point?.x ?? Math.round(width / 2);
+    const centerY = point?.y ?? Math.round(height / 2);
+    const inner = Math.max(20, Math.round(Math.min(width, height) * 0.08));
+    const outer = Math.max(inner + 20, Math.round(Math.min(width, height) * 0.2));
+    const start = direction === 'spread' ? inner : outer;
+    const end = direction === 'spread' ? outer : inner;
+    return `await device.zoom(${centerX}, ${centerY}, ${start}, ${end}, { durationMs: 300, fingerCount: 2, steps: 20 });`;
+  };
+
   return (
     <div className="ide-screen-panel">
       <div className="ide-tools-header">
@@ -595,6 +607,8 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
               <button type="button" disabled={!point} onClick={() => point && insertSnippet(`await device.tap(${point.x}, ${point.y}, 650);`)}><span>Long Press</span></button>
               <button type="button" onClick={() => insertSnippet(swipeSnippet())}><span>Swipe</span></button>
               <button type="button" onClick={() => insertSnippet(scrollUpSnippet())}><span>Scroll up</span></button>
+              <button type="button" onClick={() => insertSnippet(zoomSnippet('spread'))}><span>Zoom in</span></button>
+              <button type="button" onClick={() => insertSnippet(zoomSnippet('pinch'))}><span>Zoom out</span></button>
               <button type="button" onClick={() => insertSnippet('// input text via raw TLinkauto task if needed') }><span>Input Text</span></button>
               <button type="button" onClick={() => insertSnippet('const response = await device.request(25, 1);\nlog(response);')}><span>Raw Task</span></button>
             </div>

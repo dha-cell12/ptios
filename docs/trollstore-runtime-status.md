@@ -18,6 +18,12 @@ TrollStore runtime.
   cleanup on an Objective-C dispatch exception. Task `10/64/65` legacy paths
   remain unchanged. Device promotion evidence is pending; see
   `docs/zoom-p1-multitouch.md`.
+- Zoom P2 adds process-lifetime task `60` diagnostics for attempt/success/
+  rejection/exception counts, exact HID parent-frame accounting, and last-run
+  parameters. WebTango now has a timeout-aware `TLinkautoDeviceSdk.zoom()` API,
+  editor types/completion, and Zoom in/out snippet actions. Capability remains
+  `experimental` with device validation pending; see
+  `docs/zoom-p2-observability-webtango.md`.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.

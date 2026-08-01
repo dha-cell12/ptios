@@ -49,6 +49,50 @@
 extern CFRunLoopRef recordRunLoop;
 extern ScriptPlayer *scriptPlayer;
 static std::atomic<uint64_t> sTLinkSpringBoardLicenseTask10DropCount(0);
+static std::atomic<uint64_t> sTLinkZoomAttemptCount(0);
+static std::atomic<uint64_t> sTLinkZoomSuccessCount(0);
+static std::atomic<uint64_t> sTLinkZoomValidationRejectedCount(0);
+static std::atomic<uint64_t> sTLinkZoomDispatchExceptionCount(0);
+static std::atomic<uint64_t> sTLinkZoomCleanupCount(0);
+static std::atomic<uint64_t> sTLinkZoomFrameCount(0);
+static std::atomic<uint64_t> sTLinkZoomLastAtMs(0);
+static std::atomic<int> sTLinkZoomLastResult(0);
+static std::atomic<int> sTLinkZoomLastDirection(0);
+static std::atomic<int> sTLinkZoomLastFingerCount(0);
+static std::atomic<int> sTLinkZoomLastSteps(0);
+static std::atomic<int> sTLinkZoomLastDurationMs(0);
+
+static uint64_t zx_zoomNowMs(void)
+{
+    return (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
+}
+
+static NSDictionary *zx_zoomDiagnostics(void)
+{
+    uint64_t attempts = sTLinkZoomAttemptCount.load(std::memory_order_relaxed);
+    uint64_t successes = sTLinkZoomSuccessCount.load(std::memory_order_relaxed);
+    uint64_t validationRejected = sTLinkZoomValidationRejectedCount.load(std::memory_order_relaxed);
+    uint64_t dispatchExceptions = sTLinkZoomDispatchExceptionCount.load(std::memory_order_relaxed);
+    uint64_t completed = successes + validationRejected + dispatchExceptions;
+    int result = sTLinkZoomLastResult.load(std::memory_order_relaxed);
+    int direction = sTLinkZoomLastDirection.load(std::memory_order_relaxed);
+    return @{
+        @"schema": @"zoom_runtime_diagnostics_v1",
+        @"attempt_count": @(attempts),
+        @"success_count": @(successes),
+        @"validation_rejected_count": @(validationRejected),
+        @"dispatch_exception_count": @(dispatchExceptions),
+        @"cleanup_count": @(sTLinkZoomCleanupCount.load(std::memory_order_relaxed)),
+        @"frame_count": @(sTLinkZoomFrameCount.load(std::memory_order_relaxed)),
+        @"in_flight": @(attempts > completed ? attempts - completed : 0),
+        @"last_at_ms": @(sTLinkZoomLastAtMs.load(std::memory_order_relaxed)),
+        @"last_result": result == 1 ? @"success" : (result == 2 ? @"validation_rejected" : (result == 3 ? @"dispatch_exception" : @"none")),
+        @"last_direction": direction > 0 ? @"spread" : (direction < 0 ? @"pinch" : @"unknown"),
+        @"last_finger_count": @(sTLinkZoomLastFingerCount.load(std::memory_order_relaxed)),
+        @"last_steps": @(sTLinkZoomLastSteps.load(std::memory_order_relaxed)),
+        @"last_duration_ms": @(sTLinkZoomLastDurationMs.load(std::memory_order_relaxed)),
+    };
+}
 
 /*
 get task type
@@ -90,6 +134,7 @@ static void zx_performTouchFrame(int type, int baseFinger, const CGPoint *points
                               zx_clampTouchCoord(points[i].y)];
     }
     performTouchFromRawData((UInt8 *)[payload UTF8String]);
+    sTLinkZoomFrameCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 static NSArray<NSString *> *zx_splitTaskParts(UInt8 *eventData)
@@ -178,6 +223,13 @@ static bool zx_parseZoomInteger(NSString *text, int *value)
 
 static bool zx_zoomError(NSError **err, NSString *message)
 {
+    if ([message hasPrefix:@"zoom_dispatch_exception"]) {
+        sTLinkZoomDispatchExceptionCount.fetch_add(1, std::memory_order_relaxed);
+        sTLinkZoomLastResult.store(3, std::memory_order_relaxed);
+    } else {
+        sTLinkZoomValidationRejectedCount.fetch_add(1, std::memory_order_relaxed);
+        sTLinkZoomLastResult.store(2, std::memory_order_relaxed);
+    }
     if (err) {
         NSString *response = [NSString stringWithFormat:@"-1;;%@\r\n", message ?: @"zoom_failed"];
         *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
@@ -205,6 +257,13 @@ static void zx_zoomPoints(CGPoint *points,
 
 static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
 {
+    sTLinkZoomAttemptCount.fetch_add(1, std::memory_order_relaxed);
+    sTLinkZoomLastAtMs.store(zx_zoomNowMs(), std::memory_order_relaxed);
+    sTLinkZoomLastResult.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastDirection.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastFingerCount.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastSteps.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastDurationMs.store(0, std::memory_order_relaxed);
     if (parts.count < 8 || parts.count > 10) {
         return zx_zoomError(err, @"zoom_bad_payload expected=zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]");
     }
@@ -220,6 +279,11 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
     if (!zx_parseZoomInteger(parts[7], &steps)) return zx_zoomError(err, @"zoom_invalid_number field=steps");
     if (parts.count >= 9 && !zx_parseZoomNumber(parts[8], &angleDegrees)) return zx_zoomError(err, @"zoom_invalid_number field=angle_degrees");
     if (parts.count >= 10 && !zx_parseZoomInteger(parts[9], &baseFinger)) return zx_zoomError(err, @"zoom_invalid_number field=base_finger");
+
+    sTLinkZoomLastDirection.store(endRadius > startRadius ? 1 : (endRadius < startRadius ? -1 : 0), std::memory_order_relaxed);
+    sTLinkZoomLastFingerCount.store(fingerCount, std::memory_order_relaxed);
+    sTLinkZoomLastSteps.store(steps, std::memory_order_relaxed);
+    sTLinkZoomLastDurationMs.store(durationMs, std::memory_order_relaxed);
 
     if (durationMs < 50 || durationMs > 5000) return zx_zoomError(err, @"zoom_duration_out_of_range min=50 max=5000");
     if (fingerCount != 2 && fingerCount != 3) return zx_zoomError(err, @"zoom_finger_count_unsupported allowed=2,3");
@@ -264,9 +328,14 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
         zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
         fingersDown = false;
     } @catch (__unused NSException *exception) {
-        if (fingersDown) zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
+        if (fingersDown) {
+            sTLinkZoomCleanupCount.fetch_add(1, std::memory_order_relaxed);
+            zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
+        }
         return zx_zoomError(err, @"zoom_dispatch_exception");
     }
+    sTLinkZoomSuccessCount.fetch_add(1, std::memory_order_relaxed);
+    sTLinkZoomLastResult.store(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1365,7 +1434,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
                 @"zoom": @{
-                    @"phase": @1,
+                    @"phase": @2,
                     @"state": @"experimental",
                     @"implemented": @1,
                     @"task": @64,
@@ -1377,6 +1446,8 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"cleanup": @"all_fingers_up_on_exception_v1",
                     @"device_validated": @0,
                     @"legacy_task64_unchanged": @1,
+                    @"clients": @"task64_python_js_webtango_v1",
+                    @"diagnostics": zx_zoomDiagnostics(),
                 },
                 @"vpn": vpnStatus,
                 @"license": licenseStatus,

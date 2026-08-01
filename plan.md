@@ -245,6 +245,12 @@ Known unresolved issues / deferred investigation:
   all-fingers-up cleanup on dispatch exception. Capability state remains
   `experimental` with `zoomDeviceValidated=0` until both builds pass the device
   matrix in `docs/zoom-p1-multitouch.md`.
+- Zoom P2 adds `zoom_runtime_diagnostics_v1` to task `60`, including lifecycle
+  counters, exact parent-frame counts, last direction/finger/step/duration and
+  in-flight state. WebTango SDK/Automation IDE now exposes timeout-aware
+  `device.zoom()` and pinch/spread snippets. Runtime state stays `experimental`
+  and `zoomDeviceValidated=0`; see
+  `docs/zoom-p2-observability-webtango.md`.
 - Clear app data now has a TrollStore extension task: `72<bundle.id>`. It runs through privhelper, refuses protected bundles, and only clears safe app data containers under `/var/mobile/Containers/Data/Application/`. Keychain clearing remains deferred.
 
 ## License MVP

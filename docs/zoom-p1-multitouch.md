@@ -1,5 +1,9 @@
 # Zoom P1 — experimental multi-touch dispatch
 
+> Historical implementation milestone: P2 keeps this gesture behavior and adds
+> task `60` counters plus WebTango integration. See
+> `docs/zoom-p2-observability-webtango.md`.
+
 ## Implemented result
 
 Zoom P1 implements the additive task `64` contract frozen by P0 on both

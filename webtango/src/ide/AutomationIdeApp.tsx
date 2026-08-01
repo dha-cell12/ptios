@@ -38,6 +38,13 @@ const automationApiTypes = `
 declare const device: {
   tap(x: number, y: number, holdMs?: number): Promise<void>;
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs?: number): Promise<void>;
+  zoom(centerX: number, centerY: number, startRadius: number, endRadius: number, options?: {
+    durationMs?: number;
+    fingerCount?: 2 | 3;
+    steps?: number;
+    angleDegrees?: number;
+    baseFinger?: number;
+  }): Promise<void>;
   getScreenSize(): Promise<{ width: number; height: number } | null>;
   screenshot(path: string, region?: [number, number, number, number]): Promise<string>;
   pickColor(x: number, y: number): Promise<{ red: number; green: number; blue: number; hex: string }>;
@@ -85,6 +92,11 @@ const completionSnippets = [
     label: 'device.swipe',
     detail: 'Swipe between coordinates',
     insertText: 'await device.swipe(${1:x1}, ${2:y1}, ${3:x2}, ${4:y2}, ${5:300});',
+  },
+  {
+    label: 'device.zoom',
+    detail: 'Two- or three-finger pinch/spread',
+    insertText: 'await device.zoom(${1:centerX}, ${2:centerY}, ${3:60}, ${4:160}, { durationMs: ${5:300}, fingerCount: ${6:2}, steps: ${7:20} });',
   },
   {
     label: 'device.getScreenSize',

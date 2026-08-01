@@ -1,0 +1,46 @@
+{
+  "phase": 2,
+  "state": "experimental",
+  "deviceValidated": false,
+  "wire": "task64_additive_zoom_v1",
+  "diagnosticsSchema": "zoom_runtime_diagnostics_v1",
+  "diagnosticsFields": [
+    "attempt_count",
+    "success_count",
+    "validation_rejected_count",
+    "dispatch_exception_count",
+    "cleanup_count",
+    "frame_count",
+    "in_flight",
+    "last_at_ms",
+    "last_result",
+    "last_direction",
+    "last_finger_count",
+    "last_steps",
+    "last_duration_ms"
+  ],
+  "results": ["none", "success", "validation_rejected", "dispatch_exception"],
+  "directions": ["unknown", "spread", "pinch"],
+  "counterInvariants": {
+    "completed": "success_count+validation_rejected_count+dispatch_exception_count",
+    "inFlight": "max(attempt_count-completed,0)",
+    "successfulGestureFrames": "steps+1",
+    "validationRejectFrames": 0
+  },
+  "clients": {
+    "raw": "task64",
+    "python": "TLinkauto.zoom",
+    "javascript": "device.zoom",
+    "webtango": "TLinkautoDeviceSdk.zoom",
+    "webtangoTimeout": "max(3000,duration_ms+2000)"
+  },
+  "requiredCapabilityFields": {
+    "zoomState": "experimental",
+    "zoomTask": "64",
+    "zoomWire": "task64_additive_zoom_v1",
+    "zoomPhase": "2",
+    "zoomDiagnostics": "zoom_runtime_diagnostics_v1",
+    "zoomClients": "task64_python_js_webtango_v1",
+    "zoomDeviceValidated": "0"
+  }
+}

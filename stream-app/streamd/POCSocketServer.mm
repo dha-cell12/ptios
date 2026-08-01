@@ -31,6 +31,7 @@
 #include <sys/sysctl.h>
 #include <sys/wait.h>
 #include <sys/utsname.h>
+#include <atomic>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <tesseract/baseapi.h>
@@ -184,6 +185,46 @@ static NSString *TLinkJoinParts(NSArray<NSString *> *parts, NSUInteger start)
 static uint64_t TLinkNowMs(void)
 {
     return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+}
+
+static std::atomic<uint64_t> sTLinkZoomAttemptCount(0);
+static std::atomic<uint64_t> sTLinkZoomSuccessCount(0);
+static std::atomic<uint64_t> sTLinkZoomValidationRejectedCount(0);
+static std::atomic<uint64_t> sTLinkZoomDispatchExceptionCount(0);
+static std::atomic<uint64_t> sTLinkZoomCleanupCount(0);
+static std::atomic<uint64_t> sTLinkZoomFrameCount(0);
+static std::atomic<uint64_t> sTLinkZoomLastAtMs(0);
+static std::atomic<int> sTLinkZoomLastResult(0);
+static std::atomic<int> sTLinkZoomLastDirection(0);
+static std::atomic<int> sTLinkZoomLastFingerCount(0);
+static std::atomic<int> sTLinkZoomLastSteps(0);
+static std::atomic<int> sTLinkZoomLastDurationMs(0);
+
+static NSDictionary *TLinkZoomDiagnosticsDictionary(void)
+{
+    uint64_t attempts = sTLinkZoomAttemptCount.load(std::memory_order_relaxed);
+    uint64_t successes = sTLinkZoomSuccessCount.load(std::memory_order_relaxed);
+    uint64_t validationRejected = sTLinkZoomValidationRejectedCount.load(std::memory_order_relaxed);
+    uint64_t dispatchExceptions = sTLinkZoomDispatchExceptionCount.load(std::memory_order_relaxed);
+    uint64_t completed = successes + validationRejected + dispatchExceptions;
+    int result = sTLinkZoomLastResult.load(std::memory_order_relaxed);
+    int direction = sTLinkZoomLastDirection.load(std::memory_order_relaxed);
+    return @{
+        @"schema": @"zoom_runtime_diagnostics_v1",
+        @"attempt_count": @(attempts),
+        @"success_count": @(successes),
+        @"validation_rejected_count": @(validationRejected),
+        @"dispatch_exception_count": @(dispatchExceptions),
+        @"cleanup_count": @(sTLinkZoomCleanupCount.load(std::memory_order_relaxed)),
+        @"frame_count": @(sTLinkZoomFrameCount.load(std::memory_order_relaxed)),
+        @"in_flight": @(attempts > completed ? attempts - completed : 0),
+        @"last_at_ms": @(sTLinkZoomLastAtMs.load(std::memory_order_relaxed)),
+        @"last_result": result == 1 ? @"success" : (result == 2 ? @"validation_rejected" : (result == 3 ? @"dispatch_exception" : @"none")),
+        @"last_direction": direction > 0 ? @"spread" : (direction < 0 ? @"pinch" : @"unknown"),
+        @"last_finger_count": @(sTLinkZoomLastFingerCount.load(std::memory_order_relaxed)),
+        @"last_steps": @(sTLinkZoomLastSteps.load(std::memory_order_relaxed)),
+        @"last_duration_ms": @(sTLinkZoomLastDurationMs.load(std::memory_order_relaxed)),
+    };
 }
 
 static NSData *TLinkHandleTaskLine(const char *line);
@@ -2676,6 +2717,7 @@ static void TLinkPerformTouchFrame(int type, int baseFinger, const CGPoint *poin
         TLinkRecordTouchIndicator(points[i].x, points[i].y, type, @"native-zoom");
     }
     POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
+    sTLinkZoomFrameCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 static BOOL TLinkHandleNativeTap(NSString *body, NSString **error)
@@ -2856,6 +2898,13 @@ static BOOL TLinkParseZoomInteger(NSString *text, int *value)
 
 static BOOL TLinkZoomError(NSString **error, NSString *message)
 {
+    if ([message hasPrefix:@"zoom_dispatch_exception"]) {
+        sTLinkZoomDispatchExceptionCount.fetch_add(1, std::memory_order_relaxed);
+        sTLinkZoomLastResult.store(3, std::memory_order_relaxed);
+    } else {
+        sTLinkZoomValidationRejectedCount.fetch_add(1, std::memory_order_relaxed);
+        sTLinkZoomLastResult.store(2, std::memory_order_relaxed);
+    }
     if (error) *error = message ?: @"zoom_failed";
     return NO;
 }
@@ -2878,6 +2927,13 @@ static void TLinkZoomPoints(CGPoint *points,
 
 static BOOL TLinkHandleNativeZoom(NSArray<NSString *> *parts, NSString **error)
 {
+    sTLinkZoomAttemptCount.fetch_add(1, std::memory_order_relaxed);
+    sTLinkZoomLastAtMs.store((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0), std::memory_order_relaxed);
+    sTLinkZoomLastResult.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastDirection.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastFingerCount.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastSteps.store(0, std::memory_order_relaxed);
+    sTLinkZoomLastDurationMs.store(0, std::memory_order_relaxed);
     if (parts.count < 8 || parts.count > 10) {
         return TLinkZoomError(error, @"zoom_bad_payload expected=zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]");
     }
@@ -2893,6 +2949,11 @@ static BOOL TLinkHandleNativeZoom(NSArray<NSString *> *parts, NSString **error)
     if (!TLinkParseZoomInteger(parts[7], &steps)) return TLinkZoomError(error, @"zoom_invalid_number field=steps");
     if (parts.count >= 9 && !TLinkParseZoomNumber(parts[8], &angleDegrees)) return TLinkZoomError(error, @"zoom_invalid_number field=angle_degrees");
     if (parts.count >= 10 && !TLinkParseZoomInteger(parts[9], &baseFinger)) return TLinkZoomError(error, @"zoom_invalid_number field=base_finger");
+
+    sTLinkZoomLastDirection.store(endRadius > startRadius ? 1 : (endRadius < startRadius ? -1 : 0), std::memory_order_relaxed);
+    sTLinkZoomLastFingerCount.store(fingerCount, std::memory_order_relaxed);
+    sTLinkZoomLastSteps.store(steps, std::memory_order_relaxed);
+    sTLinkZoomLastDurationMs.store(durationMs, std::memory_order_relaxed);
 
     if (durationMs < 50 || durationMs > 5000) return TLinkZoomError(error, @"zoom_duration_out_of_range min=50 max=5000");
     if (fingerCount != 2 && fingerCount != 3) return TLinkZoomError(error, @"zoom_finger_count_unsupported allowed=2,3");
@@ -2939,9 +3000,14 @@ static BOOL TLinkHandleNativeZoom(NSArray<NSString *> *parts, NSString **error)
         TLinkPerformTouchFrame(POC_TOUCH_UP, baseFinger, points, fingerCount);
         fingersDown = NO;
     } @catch (__unused NSException *exception) {
-        if (fingersDown) TLinkPerformTouchFrame(POC_TOUCH_UP, baseFinger, points, fingerCount);
+        if (fingersDown) {
+            sTLinkZoomCleanupCount.fetch_add(1, std::memory_order_relaxed);
+            TLinkPerformTouchFrame(POC_TOUCH_UP, baseFinger, points, fingerCount);
+        }
         return TLinkZoomError(error, @"zoom_dispatch_exception");
     }
+    sTLinkZoomSuccessCount.fetch_add(1, std::memory_order_relaxed);
+    sTLinkZoomLastResult.store(1, std::memory_order_relaxed);
     return YES;
 }
 
@@ -5834,7 +5900,9 @@ static NSData *TLinkHandleHelloStatus(void)
         @"zoomValidation": @"preflight_bounds_v1",
         @"zoomCleanup": @"all_fingers_up_on_exception_v1",
         @"zoomDeviceValidated": @(NO),
-        @"zoomPhase": @1,
+        @"zoomPhase": @2,
+        @"zoomClients": @"task64_python_js_webtango_v1",
+        @"zoomDiagnostics": TLinkZoomDiagnosticsDictionary(),
         @"capture": @(YES),
         @"captureMode": @"detached_iosurface_bitmap",
         @"screenshotAlbum": @(YES),
@@ -8345,9 +8413,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
         cap = [cap stringByAppendingString:@" multiTouchRaw=legacy_task10_parent_frames"];
         cap = [cap stringByAppendingString:@" zoomState=experimental zoomTask=64 zoomWire=task64_additive_zoom_v1"];
-        cap = [cap stringByAppendingString:@" zoomFingerCounts=2,3 zoomBackend=legacy_multitouch_parent_frames zoomPhase=1"];
+        cap = [cap stringByAppendingString:@" zoomFingerCounts=2,3 zoomBackend=legacy_multitouch_parent_frames zoomPhase=2"];
         cap = [cap stringByAppendingString:@" zoomGeometry=radial_linear_interpolation_v1 zoomValidation=preflight_bounds_v1"];
         cap = [cap stringByAppendingString:@" zoomCleanup=all_fingers_up_on_exception_v1 zoomDeviceValidated=0"];
+        cap = [cap stringByAppendingString:@" zoomDiagnostics=zoom_runtime_diagnostics_v1 zoomClients=task64_python_js_webtango_v1"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];
         cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];
