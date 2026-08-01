@@ -1258,6 +1258,18 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         int durationMs = TLinkScriptIntOption(opts, @"durationMs", (int)llround(TLinkScriptDoubleOption(opts, @"duration", 0.3) * 1000.0));
         return TLinkScriptTaskResult(weakSession, 64, [NSString stringWithFormat:@"%d;;%d;;%@", finger, durationMs, pointList]);
     };
+    device[@"zoom"] = ^NSDictionary *(double centerX, double centerY, double startRadius, double endRadius, JSValue *optionsValue) {
+        NSDictionary *opts = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        int durationMs = TLinkScriptIntOption(opts, @"durationMs", 300);
+        int fingerCount = TLinkScriptIntOption(opts, @"fingerCount", 2);
+        int steps = TLinkScriptIntOption(opts, @"steps", 20);
+        double angleDegrees = TLinkScriptDoubleOption(opts, @"angleDegrees", 0.0);
+        int baseFinger = TLinkScriptIntOption(opts, @"baseFinger", 0);
+        NSString *payload = [NSString stringWithFormat:@"zoom;;%.2f;;%.2f;;%.2f;;%.2f;;%d;;%d;;%d;;%.2f;;%d",
+                             centerX, centerY, startRadius, endRadius, durationMs,
+                             fingerCount, steps, angleDegrees, baseFinger];
+        return TLinkScriptTaskResult(weakSession, 64, payload);
+    };
     device[@"batch"] = ^NSDictionary *(JSValue *commandsValue) {
         NSArray *commands = TLinkScriptArrayFromJSValue(commandsValue);
         if (![commands isKindOfClass:[NSArray class]] || commands.count == 0) {
@@ -2652,6 +2664,20 @@ static void TLinkPerformSingleTouch(int type, int finger, CGFloat x, CGFloat y)
     POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
 }
 
+static void TLinkPerformTouchFrame(int type, int baseFinger, const CGPoint *points, int count)
+{
+    NSMutableString *payload = [NSMutableString stringWithFormat:@"%d", count];
+    for (int i = 0; i < count; i++) {
+        [payload appendFormat:@"%d%02d%05d%05d",
+                              type,
+                              baseFinger + i,
+                              TLinkClampTouchCoord(points[i].x),
+                              TLinkClampTouchCoord(points[i].y)];
+        TLinkRecordTouchIndicator(points[i].x, points[i].y, type, @"native-zoom");
+    }
+    POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
+}
+
 static BOOL TLinkHandleNativeTap(NSString *body, NSString **error)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
@@ -2808,13 +2834,123 @@ static BOOL TLinkParseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
     return YES;
 }
 
+static BOOL TLinkParseZoomNumber(NSString *text, double *value)
+{
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) return NO;
+    NSScanner *scanner = [NSScanner scannerWithString:text];
+    double parsed = 0.0;
+    if (![scanner scanDouble:&parsed] || !scanner.isAtEnd || !isfinite(parsed)) return NO;
+    if (value) *value = parsed;
+    return YES;
+}
+
+static BOOL TLinkParseZoomInteger(NSString *text, int *value)
+{
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) return NO;
+    NSScanner *scanner = [NSScanner scannerWithString:text];
+    long long parsed = 0;
+    if (![scanner scanLongLong:&parsed] || !scanner.isAtEnd || parsed < INT_MIN || parsed > INT_MAX) return NO;
+    if (value) *value = (int)parsed;
+    return YES;
+}
+
+static BOOL TLinkZoomError(NSString **error, NSString *message)
+{
+    if (error) *error = message ?: @"zoom_failed";
+    return NO;
+}
+
+static void TLinkZoomPoints(CGPoint *points,
+                            int fingerCount,
+                            double centerX,
+                            double centerY,
+                            double radius,
+                            double angleDegrees)
+{
+    const double degreesToRadians = 3.14159265358979323846 / 180.0;
+    double baseAngle = angleDegrees * degreesToRadians;
+    for (int finger = 0; finger < fingerCount; finger++) {
+        double angle = baseAngle + (2.0 * 3.14159265358979323846 * (double)finger / (double)fingerCount);
+        points[finger] = CGPointMake((CGFloat)(centerX + cos(angle) * radius),
+                                    (CGFloat)(centerY + sin(angle) * radius));
+    }
+}
+
+static BOOL TLinkHandleNativeZoom(NSArray<NSString *> *parts, NSString **error)
+{
+    if (parts.count < 8 || parts.count > 10) {
+        return TLinkZoomError(error, @"zoom_bad_payload expected=zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]");
+    }
+
+    double centerX = 0.0, centerY = 0.0, startRadius = 0.0, endRadius = 0.0, angleDegrees = 0.0;
+    int durationMs = 0, fingerCount = 0, steps = 0, baseFinger = 0;
+    if (!TLinkParseZoomNumber(parts[1], &centerX)) return TLinkZoomError(error, @"zoom_invalid_number field=center_x");
+    if (!TLinkParseZoomNumber(parts[2], &centerY)) return TLinkZoomError(error, @"zoom_invalid_number field=center_y");
+    if (!TLinkParseZoomNumber(parts[3], &startRadius)) return TLinkZoomError(error, @"zoom_invalid_number field=start_radius");
+    if (!TLinkParseZoomNumber(parts[4], &endRadius)) return TLinkZoomError(error, @"zoom_invalid_number field=end_radius");
+    if (!TLinkParseZoomInteger(parts[5], &durationMs)) return TLinkZoomError(error, @"zoom_invalid_number field=duration_ms");
+    if (!TLinkParseZoomInteger(parts[6], &fingerCount)) return TLinkZoomError(error, @"zoom_invalid_number field=finger_count");
+    if (!TLinkParseZoomInteger(parts[7], &steps)) return TLinkZoomError(error, @"zoom_invalid_number field=steps");
+    if (parts.count >= 9 && !TLinkParseZoomNumber(parts[8], &angleDegrees)) return TLinkZoomError(error, @"zoom_invalid_number field=angle_degrees");
+    if (parts.count >= 10 && !TLinkParseZoomInteger(parts[9], &baseFinger)) return TLinkZoomError(error, @"zoom_invalid_number field=base_finger");
+
+    if (durationMs < 50 || durationMs > 5000) return TLinkZoomError(error, @"zoom_duration_out_of_range min=50 max=5000");
+    if (fingerCount != 2 && fingerCount != 3) return TLinkZoomError(error, @"zoom_finger_count_unsupported allowed=2,3");
+    if (steps < 2 || steps > 120) return TLinkZoomError(error, @"zoom_steps_out_of_range min=2 max=120");
+    if (startRadius <= 0.0 || endRadius <= 0.0) return TLinkZoomError(error, @"zoom_radius_invalid positive_required=1");
+    if (startRadius == endRadius) return TLinkZoomError(error, @"zoom_radius_unchanged");
+    if (angleDegrees < -360.0 || angleDegrees > 360.0) return TLinkZoomError(error, @"zoom_angle_out_of_range min=-360 max=360");
+    if (baseFinger < 0 || baseFinger + fingerCount > 20) return TLinkZoomError(error, @"zoom_finger_range_invalid allowed=0..19");
+
+    CGFloat scale = [UIScreen mainScreen].scale;
+    CGSize bounds = [UIScreen mainScreen].bounds.size;
+    CGFloat screenWidth = MIN(bounds.width * scale, bounds.height * scale);
+    CGFloat screenHeight = MAX(bounds.width * scale, bounds.height * scale);
+    if (screenWidth <= 0.0 || screenHeight <= 0.0) return TLinkZoomError(error, @"zoom_screen_unavailable");
+
+    CGPoint points[3];
+    for (int step = 0; step < steps; step++) {
+        double t = (double)step / (double)(steps - 1);
+        double radius = startRadius + (endRadius - startRadius) * t;
+        TLinkZoomPoints(points, fingerCount, centerX, centerY, radius, angleDegrees);
+        for (int finger = 0; finger < fingerCount; finger++) {
+            if (points[finger].x < 0.0 || points[finger].x >= screenWidth ||
+                points[finger].y < 0.0 || points[finger].y >= screenHeight) {
+                return TLinkZoomError(error, [NSString stringWithFormat:@"zoom_point_out_of_bounds step=%d finger=%d screen=%.0fx%.0f",
+                                               step, baseFinger + finger, screenWidth, screenHeight]);
+            }
+        }
+    }
+
+    BOOL fingersDown = NO;
+    @try {
+        TLinkZoomPoints(points, fingerCount, centerX, centerY, startRadius, angleDegrees);
+        TLinkPerformTouchFrame(POC_TOUCH_DOWN, baseFinger, points, fingerCount);
+        fingersDown = YES;
+
+        int sleepPerIntervalUs = durationMs * 1000 / (steps - 1);
+        for (int step = 1; step < steps; step++) {
+            if (sleepPerIntervalUs > 0) usleep((useconds_t)sleepPerIntervalUs);
+            double t = (double)step / (double)(steps - 1);
+            double radius = startRadius + (endRadius - startRadius) * t;
+            TLinkZoomPoints(points, fingerCount, centerX, centerY, radius, angleDegrees);
+            TLinkPerformTouchFrame(POC_TOUCH_MOVE, baseFinger, points, fingerCount);
+        }
+        TLinkPerformTouchFrame(POC_TOUCH_UP, baseFinger, points, fingerCount);
+        fingersDown = NO;
+    } @catch (__unused NSException *exception) {
+        if (fingersDown) TLinkPerformTouchFrame(POC_TOUCH_UP, baseFinger, points, fingerCount);
+        return TLinkZoomError(error, @"zoom_dispatch_exception");
+    }
+    return YES;
+}
+
 static BOOL TLinkHandleNativeGesture(NSString *body, NSString **error)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
     if (parts.count > 0 &&
         [[parts[0] lowercaseString] isEqualToString:@"zoom"]) {
-        if (error) *error = @"zoom_not_implemented_phase0";
-        return NO;
+        return TLinkHandleNativeZoom(parts, error);
     }
     if (parts.count < 3) {
         if (error) *error = @"Native gesture format: finger;;duration_ms;;x,y|x,y|...";
@@ -5688,13 +5824,17 @@ static NSData *TLinkHandleHelloStatus(void)
         @"tapMacroMode": @"bounded_async_native_tap",
         @"multiTouchRaw": @(YES),
         @"multiTouchRawMode": @"legacy_task10_parent_with_multiple_finger_children",
-        @"zoom": @(NO),
-        @"zoomState": @"contract_only",
+        @"zoom": @(YES),
+        @"zoomState": @"experimental",
         @"zoomTask": @64,
         @"zoomWire": @"task64_additive_zoom_v1",
         @"zoomFingerCounts": @[@2, @3],
         @"zoomBackend": @"legacy_multitouch_parent_frames",
-        @"zoomPhase": @0,
+        @"zoomGeometry": @"radial_linear_interpolation_v1",
+        @"zoomValidation": @"preflight_bounds_v1",
+        @"zoomCleanup": @"all_fingers_up_on_exception_v1",
+        @"zoomDeviceValidated": @(NO),
+        @"zoomPhase": @1,
         @"capture": @(YES),
         @"captureMode": @"detached_iosurface_bitmap",
         @"screenshotAlbum": @(YES),
@@ -8204,8 +8344,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
         cap = [cap stringByAppendingString:@" multiTouchRaw=legacy_task10_parent_frames"];
-        cap = [cap stringByAppendingString:@" zoomState=contract_only zoomTask=64 zoomWire=task64_additive_zoom_v1"];
-        cap = [cap stringByAppendingString:@" zoomFingerCounts=2,3 zoomBackend=legacy_multitouch_parent_frames zoomPhase=0"];
+        cap = [cap stringByAppendingString:@" zoomState=experimental zoomTask=64 zoomWire=task64_additive_zoom_v1"];
+        cap = [cap stringByAppendingString:@" zoomFingerCounts=2,3 zoomBackend=legacy_multitouch_parent_frames zoomPhase=1"];
+        cap = [cap stringByAppendingString:@" zoomGeometry=radial_linear_interpolation_v1 zoomValidation=preflight_bounds_v1"];
+        cap = [cap stringByAppendingString:@" zoomCleanup=all_fingers_up_on_exception_v1 zoomDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];
         cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];

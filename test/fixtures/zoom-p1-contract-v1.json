@@ -1,0 +1,71 @@
+{
+  "phase": 1,
+  "contractVersion": 1,
+  "state": "experimental",
+  "implemented": true,
+  "deviceValidated": false,
+  "task": 64,
+  "wire": "task64_additive_zoom_v1",
+  "requestFormat": "zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]",
+  "fingerCounts": [2, 3],
+  "defaults": {
+    "angleDegrees": 0,
+    "baseFinger": 0
+  },
+  "limits": {
+    "durationMs": { "min": 50, "max": 5000 },
+    "steps": { "min": 2, "max": 120 },
+    "fingerIndex": { "min": 0, "max": 19 },
+    "radius": { "minExclusive": 0 },
+    "angleDegrees": { "min": -360, "max": 360 }
+  },
+  "geometry": {
+    "mode": "radial_linear_interpolation_v1",
+    "stepCountIncludesEndpoints": true,
+    "fingerSpacing": "equal_around_circle",
+    "spread": "end_radius_gt_start_radius",
+    "pinch": "end_radius_lt_start_radius"
+  },
+  "dispatch": {
+    "mode": "legacy_multitouch_parent_frames",
+    "downFrames": 1,
+    "moveFrames": "steps_minus_1",
+    "upFrames": 1,
+    "allFingersInEveryFrame": true,
+    "validation": "preflight_bounds_v1",
+    "cleanup": "all_fingers_up_on_exception_v1",
+    "successResponse": "0"
+  },
+  "stableErrors": [
+    "zoom_bad_payload",
+    "zoom_invalid_number",
+    "zoom_duration_out_of_range",
+    "zoom_finger_count_unsupported",
+    "zoom_steps_out_of_range",
+    "zoom_radius_invalid",
+    "zoom_radius_unchanged",
+    "zoom_angle_out_of_range",
+    "zoom_finger_range_invalid",
+    "zoom_screen_unavailable",
+    "zoom_point_out_of_bounds",
+    "zoom_dispatch_exception"
+  ],
+  "requiredCapabilityFields": {
+    "multiTouchRaw": "legacy_task10_parent_frames",
+    "zoomState": "experimental",
+    "zoomTask": "64",
+    "zoomWire": "task64_additive_zoom_v1",
+    "zoomFingerCounts": "2,3",
+    "zoomBackend": "legacy_multitouch_parent_frames",
+    "zoomPhase": "1",
+    "zoomGeometry": "radial_linear_interpolation_v1",
+    "zoomValidation": "preflight_bounds_v1",
+    "zoomCleanup": "all_fingers_up_on_exception_v1",
+    "zoomDeviceValidated": "0"
+  },
+  "legacyCompatibility": {
+    "task10Unchanged": true,
+    "task64SingleFingerUnchanged": true,
+    "task65SequentialBatchUnchanged": true
+  }
+}

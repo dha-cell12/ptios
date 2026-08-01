@@ -24,6 +24,9 @@ JSExportAs(longPress,
 JSExportAs(gesture,
 - (NSDictionary *)gesture:(NSArray *)points options:(NSDictionary *)options
 );
+JSExportAs(zoom,
+- (NSDictionary *)zoom:(double)centerX centerY:(double)centerY startRadius:(double)startRadius endRadius:(double)endRadius options:(NSDictionary *)options
+);
 JSExportAs(pickColor,
 - (NSDictionary *)pickColor:(double)x y:(double)y
 );

@@ -62,6 +62,13 @@ TASK_VPN = 59
 # Hello/status probe
 TASK_HELLO_STATUS = 60
 
+# Native touch helpers
+TASK_PERFORM_TOUCH_ACK = 61
+TASK_NATIVE_TAP = 62
+TASK_NATIVE_SWIPE = 63
+TASK_NATIVE_GESTURE = 64
+TASK_NATIVE_BATCH = 65
+
 # Manual frame lifecycle and batched frame checks
 TASK_FRAME_CAPTURE = 66
 TASK_FRAME_RELEASE = 67

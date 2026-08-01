@@ -9,6 +9,7 @@ extern NSString * const TLinkJSNativeMethodTap;
 extern NSString * const TLinkJSNativeMethodSwipe;
 extern NSString * const TLinkJSNativeMethodLongPress;
 extern NSString * const TLinkJSNativeMethodGesture;
+extern NSString * const TLinkJSNativeMethodZoom;
 extern NSString * const TLinkJSNativeMethodPickColor;
 extern NSString * const TLinkJSNativeMethodScreenshotRegion;
 extern NSString * const TLinkJSNativeMethodBatch;

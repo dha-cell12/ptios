@@ -6,6 +6,7 @@ NSString * const TLinkJSNativeMethodTap = @"tap";
 NSString * const TLinkJSNativeMethodSwipe = @"swipe";
 NSString * const TLinkJSNativeMethodLongPress = @"longPress";
 NSString * const TLinkJSNativeMethodGesture = @"gesture";
+NSString * const TLinkJSNativeMethodZoom = @"zoom";
 NSString * const TLinkJSNativeMethodPickColor = @"pickColor";
 NSString * const TLinkJSNativeMethodScreenshotRegion = @"screenshotRegion";
 NSString * const TLinkJSNativeMethodBatch = @"batch";

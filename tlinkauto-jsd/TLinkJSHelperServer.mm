@@ -277,7 +277,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         @"arguments": arguments ?: @[],
         @"sessionId": sessionId ?: @"",
     };
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    NSTimeInterval nativeRPCTimeout = [method isEqualToString:@"zoom"] ? 7.0 : 5.0;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:nativeRPCTimeout];
     [self.rpcCondition lock];
     while (self.pendingNativeRequest && !_cancelState->stopped.load(std::memory_order_acquire)) {
         if (![self.rpcCondition waitUntilDate:deadline]) break;
@@ -686,6 +687,11 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         };
         device[@"gesture"] = ^NSDictionary *(NSArray *points, NSDictionary *options) {
             return [weakSelf executeNativeRPCMethod:@"gesture" arguments:@[points ?: @[], options ?: @{}] sessionId:sessionId];
+        };
+        device[@"zoom"] = ^NSDictionary *(double centerX, double centerY, double startRadius, double endRadius, NSDictionary *options) {
+            return [weakSelf executeNativeRPCMethod:@"zoom"
+                                          arguments:@[@(centerX), @(centerY), @(startRadius), @(endRadius), options ?: @{}]
+                                          sessionId:sessionId];
         };
         device[@"pickColor"] = ^NSDictionary *(double x, double y) {
             return [weakSelf executeNativeRPCMethod:@"pickColor" arguments:@[@(x), @(y)] sessionId:sessionId];

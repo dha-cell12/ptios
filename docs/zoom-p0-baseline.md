@@ -1,5 +1,9 @@
 # Zoom P0 baseline — contract only
 
+> Historical baseline: Zoom P1 now implements this unchanged wire contract in
+> experimental mode. See `docs/zoom-p1-multitouch.md`. The P0 rejection below
+> describes P0 builds only.
+
 ## Outcome
 
 P0 freezes one additive, shared contract for a future two- or three-finger

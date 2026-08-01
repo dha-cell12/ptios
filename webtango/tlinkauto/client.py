@@ -49,6 +49,29 @@ class TLinkauto:
                                                         touch_event['y'] * 10)
         self.s.send(datahandler.format_socket_data(tasktypes.TASK_PERFORM_TOUCH, str(len(touch_list)) + event_data))
 
+    def zoom(self, center_x, center_y, start_radius, end_radius,
+             duration_ms=300, finger_count=2, steps=20,
+             angle_degrees=0, base_finger=0):
+        """Perform a radial two- or three-finger pinch/spread gesture.
+
+        ``end_radius > start_radius`` spreads outward; the reverse pinches
+        inward. Coordinates and radii use the native task coordinate space.
+        """
+        self.s.send(datahandler.format_socket_data(
+            tasktypes.TASK_NATIVE_GESTURE,
+            "zoom",
+            center_x,
+            center_y,
+            start_radius,
+            end_radius,
+            duration_ms,
+            finger_count,
+            steps,
+            angle_degrees,
+            base_finger,
+        ))
+        return datahandler.decode_socket_data(self.s.recv(1024))
+
     # --------------------
     # Connectivity & network
     def turn_on_wifi(self):

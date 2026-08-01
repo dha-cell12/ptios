@@ -43,6 +43,8 @@
 #include <signal.h>
 #include <os/lock.h>
 #include <atomic>
+#include <math.h>
+#include <limits.h>
 
 extern CFRunLoopRef recordRunLoop;
 extern ScriptPlayer *scriptPlayer;
@@ -74,6 +76,19 @@ static NSString *zx_touchPayload(int type, int finger, CGFloat x, CGFloat y)
 static void zx_performSingleTouch(int type, int finger, CGFloat x, CGFloat y)
 {
     NSString *payload = zx_touchPayload(type, finger, x, y);
+    performTouchFromRawData((UInt8 *)[payload UTF8String]);
+}
+
+static void zx_performTouchFrame(int type, int baseFinger, const CGPoint *points, int count)
+{
+    NSMutableString *payload = [NSMutableString stringWithFormat:@"%d", count];
+    for (int i = 0; i < count; i++) {
+        [payload appendFormat:@"%d%02d%05d%05d",
+                              type,
+                              baseFinger + i,
+                              zx_clampTouchCoord(points[i].x),
+                              zx_clampTouchCoord(points[i].y)];
+    }
     performTouchFromRawData((UInt8 *)[payload UTF8String]);
 }
 
@@ -141,16 +156,126 @@ static bool zx_parseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
     return true;
 }
 
+static bool zx_parseZoomNumber(NSString *text, double *value)
+{
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) return false;
+    NSScanner *scanner = [NSScanner scannerWithString:text];
+    double parsed = 0.0;
+    if (![scanner scanDouble:&parsed] || !scanner.isAtEnd || !isfinite(parsed)) return false;
+    if (value) *value = parsed;
+    return true;
+}
+
+static bool zx_parseZoomInteger(NSString *text, int *value)
+{
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) return false;
+    NSScanner *scanner = [NSScanner scannerWithString:text];
+    long long parsed = 0;
+    if (![scanner scanLongLong:&parsed] || !scanner.isAtEnd || parsed < INT_MIN || parsed > INT_MAX) return false;
+    if (value) *value = (int)parsed;
+    return true;
+}
+
+static bool zx_zoomError(NSError **err, NSString *message)
+{
+    if (err) {
+        NSString *response = [NSString stringWithFormat:@"-1;;%@\r\n", message ?: @"zoom_failed"];
+        *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
+                                   code:999
+                               userInfo:@{NSLocalizedDescriptionKey: response}];
+    }
+    return false;
+}
+
+static void zx_zoomPoints(CGPoint *points,
+                          int fingerCount,
+                          double centerX,
+                          double centerY,
+                          double radius,
+                          double angleDegrees)
+{
+    const double degreesToRadians = 3.14159265358979323846 / 180.0;
+    double baseAngle = angleDegrees * degreesToRadians;
+    for (int finger = 0; finger < fingerCount; finger++) {
+        double angle = baseAngle + (2.0 * 3.14159265358979323846 * (double)finger / (double)fingerCount);
+        points[finger] = CGPointMake((CGFloat)(centerX + cos(angle) * radius),
+                                    (CGFloat)(centerY + sin(angle) * radius));
+    }
+}
+
+static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
+{
+    if (parts.count < 8 || parts.count > 10) {
+        return zx_zoomError(err, @"zoom_bad_payload expected=zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]");
+    }
+
+    double centerX = 0.0, centerY = 0.0, startRadius = 0.0, endRadius = 0.0, angleDegrees = 0.0;
+    int durationMs = 0, fingerCount = 0, steps = 0, baseFinger = 0;
+    if (!zx_parseZoomNumber(parts[1], &centerX)) return zx_zoomError(err, @"zoom_invalid_number field=center_x");
+    if (!zx_parseZoomNumber(parts[2], &centerY)) return zx_zoomError(err, @"zoom_invalid_number field=center_y");
+    if (!zx_parseZoomNumber(parts[3], &startRadius)) return zx_zoomError(err, @"zoom_invalid_number field=start_radius");
+    if (!zx_parseZoomNumber(parts[4], &endRadius)) return zx_zoomError(err, @"zoom_invalid_number field=end_radius");
+    if (!zx_parseZoomInteger(parts[5], &durationMs)) return zx_zoomError(err, @"zoom_invalid_number field=duration_ms");
+    if (!zx_parseZoomInteger(parts[6], &fingerCount)) return zx_zoomError(err, @"zoom_invalid_number field=finger_count");
+    if (!zx_parseZoomInteger(parts[7], &steps)) return zx_zoomError(err, @"zoom_invalid_number field=steps");
+    if (parts.count >= 9 && !zx_parseZoomNumber(parts[8], &angleDegrees)) return zx_zoomError(err, @"zoom_invalid_number field=angle_degrees");
+    if (parts.count >= 10 && !zx_parseZoomInteger(parts[9], &baseFinger)) return zx_zoomError(err, @"zoom_invalid_number field=base_finger");
+
+    if (durationMs < 50 || durationMs > 5000) return zx_zoomError(err, @"zoom_duration_out_of_range min=50 max=5000");
+    if (fingerCount != 2 && fingerCount != 3) return zx_zoomError(err, @"zoom_finger_count_unsupported allowed=2,3");
+    if (steps < 2 || steps > 120) return zx_zoomError(err, @"zoom_steps_out_of_range min=2 max=120");
+    if (startRadius <= 0.0 || endRadius <= 0.0) return zx_zoomError(err, @"zoom_radius_invalid positive_required=1");
+    if (startRadius == endRadius) return zx_zoomError(err, @"zoom_radius_unchanged");
+    if (angleDegrees < -360.0 || angleDegrees > 360.0) return zx_zoomError(err, @"zoom_angle_out_of_range min=-360 max=360");
+    if (baseFinger < 0 || baseFinger + fingerCount > 20) return zx_zoomError(err, @"zoom_finger_range_invalid allowed=0..19");
+
+    CGFloat screenWidth = [Screen getScreenWidth];
+    CGFloat screenHeight = [Screen getScreenHeight];
+    if (screenWidth <= 0.0 || screenHeight <= 0.0) return zx_zoomError(err, @"zoom_screen_unavailable");
+
+    CGPoint points[3];
+    for (int step = 0; step < steps; step++) {
+        double t = (double)step / (double)(steps - 1);
+        double radius = startRadius + (endRadius - startRadius) * t;
+        zx_zoomPoints(points, fingerCount, centerX, centerY, radius, angleDegrees);
+        for (int finger = 0; finger < fingerCount; finger++) {
+            if (points[finger].x < 0.0 || points[finger].x >= screenWidth ||
+                points[finger].y < 0.0 || points[finger].y >= screenHeight) {
+                return zx_zoomError(err, [NSString stringWithFormat:@"zoom_point_out_of_bounds step=%d finger=%d screen=%.0fx%.0f",
+                                          step, baseFinger + finger, screenWidth, screenHeight]);
+            }
+        }
+    }
+
+    bool fingersDown = false;
+    @try {
+        zx_zoomPoints(points, fingerCount, centerX, centerY, startRadius, angleDegrees);
+        zx_performTouchFrame(TOUCH_DOWN, baseFinger, points, fingerCount);
+        fingersDown = true;
+
+        int sleepPerIntervalUs = durationMs * 1000 / (steps - 1);
+        for (int step = 1; step < steps; step++) {
+            if (sleepPerIntervalUs > 0) usleep((useconds_t)sleepPerIntervalUs);
+            double t = (double)step / (double)(steps - 1);
+            double radius = startRadius + (endRadius - startRadius) * t;
+            zx_zoomPoints(points, fingerCount, centerX, centerY, radius, angleDegrees);
+            zx_performTouchFrame(TOUCH_MOVE, baseFinger, points, fingerCount);
+        }
+        zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
+        fingersDown = false;
+    } @catch (__unused NSException *exception) {
+        if (fingersDown) zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
+        return zx_zoomError(err, @"zoom_dispatch_exception");
+    }
+    return true;
+}
+
 static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
     if (parts.count > 0 &&
         [[parts[0] lowercaseString] isEqualToString:@"zoom"]) {
-        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
-                                             code:999
-                                         userInfo:@{NSLocalizedDescriptionKey:
-                                             @"-1;;zoom_not_implemented_phase0\r\n"}];
-        return false;
+        return zx_handleNativeZoom(parts, err);
     }
     if (parts.count < 3) {
         if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture format: finger;;duration_ms;;x,y|x,y|...\r\n"}];
@@ -1240,12 +1365,17 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
                 @"zoom": @{
-                    @"phase": @0,
-                    @"state": @"contract_only",
+                    @"phase": @1,
+                    @"state": @"experimental",
+                    @"implemented": @1,
                     @"task": @64,
                     @"wire": @"task64_additive_zoom_v1",
                     @"finger_counts": @[@2, @3],
                     @"backend": @"legacy_multitouch_parent_frames",
+                    @"geometry": @"radial_linear_interpolation_v1",
+                    @"validation": @"preflight_bounds_v1",
+                    @"cleanup": @"all_fingers_up_on_exception_v1",
+                    @"device_validated": @0,
                     @"legacy_task64_unchanged": @1,
                 },
                 @"vpn": vpnStatus,

@@ -330,6 +330,28 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
         NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%@", finger, duration, encoded];
         return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_GESTURE, payload] context:context]];
     }
+    else if ([method isEqualToString:TLinkJSNativeMethodZoom]) {
+        double centerX = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : NAN;
+        double centerY = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : NAN;
+        double startRadius = [args count] > 2 ? [[args objectAtIndex:2] doubleValue] : NAN;
+        double endRadius = [args count] > 3 ? [[args objectAtIndex:3] doubleValue] : NAN;
+        NSDictionary *options = [args count] > 4 && [[args objectAtIndex:4] isKindOfClass:[NSDictionary class]]
+            ? [args objectAtIndex:4]
+            : @{};
+        if (!TLinkautoJSIsFiniteNumber(centerX) || !TLinkautoJSIsFiniteNumber(centerY) ||
+            !TLinkautoJSIsFiniteNumber(startRadius) || !TLinkautoJSIsFiniteNumber(endRadius)) {
+            return [TLinkJSNativeResponse responseWithError:@"zoom(...) requires finite center and radius values" code:@-1];
+        }
+        int durationMs = TLinkautoJSIntOption(options, @"durationMs", 300);
+        int fingerCount = TLinkautoJSIntOption(options, @"fingerCount", 2);
+        int steps = TLinkautoJSIntOption(options, @"steps", 20);
+        double angleDegrees = TLinkautoJSDoubleOption(options, @"angleDegrees", 0.0);
+        int baseFinger = TLinkautoJSIntOption(options, @"baseFinger", 0);
+        NSString *payload = [NSString stringWithFormat:@"zoom;;%.2f;;%.2f;;%.2f;;%.2f;;%d;;%d;;%d;;%.2f;;%d",
+                             centerX, centerY, startRadius, endRadius, durationMs,
+                             fingerCount, steps, angleDegrees, baseFinger];
+        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_GESTURE, payload] context:context]];
+    }
     else if ([method isEqualToString:TLinkJSNativeMethodPickColor]) {
         double x = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : 0;
         double y = [args count] > 1 ? [[args objectAtIndex:1] doubleValue] : 0;

@@ -10,10 +10,14 @@ TrollStore runtime.
 - Core automation: touch `10/61-65`, sleep `18`, device info `25`, screenshot `29`.
 - Zoom P0 freezes an additive task `64` contract for two- or three-finger
   pinch/spread while leaving legacy task `64` and raw task `10` unchanged.
-  The raw backend can already place multiple finger children in one parent HID
-  event, but high-level zoom remains `contract_only` and returns
-  `zoom_not_implemented_phase0` without dispatching a touch. See
+  This remains the historical contract baseline; see
   `docs/zoom-p0-baseline.md`.
+- Zoom P1 implements that contract in `experimental` state. It preflights all
+  generated coordinates, then emits synchronized down/move/up parent frames
+  for two or three equally spaced fingers and performs best-effort all-fingers
+  cleanup on an Objective-C dispatch exception. Task `10/64/65` legacy paths
+  remain unchanged. Device promotion evidence is pending; see
+  `docs/zoom-p1-multitouch.md`.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.

@@ -96,30 +96,24 @@ assert.ok(
 assert.match(rootPolicy, /\{64, "automation"\}/);
 
 assert.match(rootTask, /\[\[parts\[0\] lowercaseString\] isEqualToString:@"zoom"\]/);
-assert.match(rootTask, /@"-1;;zoom_not_implemented_phase0\\r\\n"/);
 assert.match(rootTask, /Native gesture format: finger;;duration_ms;;x,y\|x,y\|\.\.\./);
-assert.match(rootTask, /@"zoom": @\{[\s\S]*?@"phase": @0[\s\S]*?@"state": @"contract_only"[\s\S]*?@"legacy_task64_unchanged": @1/);
 
 assert.match(trollServer, /\[\[parts\[0\] lowercaseString\] isEqualToString:@"zoom"\]/);
-assert.match(trollServer, /@"zoom_not_implemented_phase0"/);
 assert.match(trollServer, /Native gesture format: finger;;duration_ms;;x,y\|x,y\|\.\.\./);
-assert.match(trollServer, /@"zoom": @\(NO\)/);
-assert.match(trollServer, /@"zoomState": @"contract_only"/);
 assert.match(trollServer, /@"zoomFingerCounts": @\[@2, @3\]/);
+assert.match(rootServer, /zoomWire=task64_additive_zoom_v1/);
+assert.match(trollServer, /zoomWire=task64_additive_zoom_v1/);
 
 const fields = fixture.requiredCapabilityFields;
 for (const [key, value] of Object.entries(fields)) {
   const marker = `${key}=${value}`;
-  assert.ok(rootServer.includes(marker), `rootfull task 97 is missing ${marker}`);
-  assert.ok(trollServer.includes(marker), `TrollStore task 97 is missing ${marker}`);
-  assert.ok(baselineDoc.includes(marker), `Zoom P0 documentation is missing ${marker}`);
+  assert.ok(baselineDoc.includes(marker), `historical Zoom P0 documentation is missing ${marker}`);
 }
 
-assert.doesNotMatch(rootTask, /zx_handleNativeZoom/);
-assert.doesNotMatch(trollServer, /TLinkHandleNativeZoom/);
 assert.match(deviceTest, /gesture_dispatched = \$false/);
 assert.match(deviceTest, /64zoom;;500;;900;;60;;160;;300;;2;;20/);
 assert.match(deviceTest, /-1;;zoom_not_implemented_phase0/);
+assert.match(baselineDoc, /Historical baseline/i);
 assert.match(baselineDoc, /does not synthesize a zoom\s+gesture yet/i);
 assert.match(baselineDoc, /no\s+HID event is dispatched/i);
 assert.match(baselineDoc, /Task `64` remains under[\s\S]*`automation` gate/i);
@@ -129,5 +123,5 @@ assert.match(rootWorkflow, /node scripts\/check-zoom-p0-baseline\.mjs/);
 assert.match(trollWorkflow, /node scripts\/check-zoom-p0-baseline\.mjs/);
 
 console.log(
-  "Zoom P0 baseline OK: task 64 additive contract reserved; task 10 multi-touch foundation and legacy task 64 frozen",
+  "Zoom P0 baseline OK: historical contract preserved; task 10 multi-touch foundation and legacy task 64 frozen",
 );

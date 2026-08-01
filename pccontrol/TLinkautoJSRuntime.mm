@@ -156,7 +156,7 @@ static NSSet<NSString *> *TLinkautoJSHelperRPCAllowlist(void)
     dispatch_once(&onceToken, ^{
         methods = [NSSet setWithArray:@[
             TLinkJSNativeMethodToast, TLinkJSNativeMethodTap, TLinkJSNativeMethodSwipe,
-            TLinkJSNativeMethodLongPress, TLinkJSNativeMethodGesture, TLinkJSNativeMethodPickColor,
+            TLinkJSNativeMethodLongPress, TLinkJSNativeMethodGesture, TLinkJSNativeMethodZoom, TLinkJSNativeMethodPickColor,
             TLinkJSNativeMethodScreenshotRegion, TLinkJSNativeMethodScreenshotTo,
             TLinkJSNativeMethodGetScreenSize, TLinkJSNativeMethodFrontMostAppId,
             TLinkJSNativeMethodFrontMostPid, TLinkJSNativeMethodOrientation,
@@ -1276,6 +1276,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 - (NSDictionary *)gesture:(NSArray *)points options:(NSDictionary *)options
 {
     return [self.runtime executeNativeRequest:TLinkJSNativeMethodGesture arguments:@[points ?: @[], options ?: @{}]];
+}
+
+- (NSDictionary *)zoom:(double)centerX centerY:(double)centerY startRadius:(double)startRadius endRadius:(double)endRadius options:(NSDictionary *)options
+{
+    return [self.runtime executeNativeRequest:TLinkJSNativeMethodZoom
+                                    arguments:@[@(centerX), @(centerY), @(startRadius), @(endRadius), options ?: @{}]];
 }
 
 - (NSDictionary *)pickColor:(double)x y:(double)y
