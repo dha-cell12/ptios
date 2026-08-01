@@ -8,6 +8,12 @@ TrollStore runtime.
 - Task server: port `6000`, legacy line protocol, success `0;;...`, error `-1;;...`.
 - H.264 stream: ports `7001-7006`.
 - Core automation: touch `10/61-65`, sleep `18`, device info `25`, screenshot `29`.
+- Zoom P0 freezes an additive task `64` contract for two- or three-finger
+  pinch/spread while leaving legacy task `64` and raw task `10` unchanged.
+  The raw backend can already place multiple finger children in one parent HID
+  event, but high-level zoom remains `contract_only` and returns
+  `zoom_not_implemented_phase0` without dispatching a touch. See
+  `docs/zoom-p0-baseline.md`.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.

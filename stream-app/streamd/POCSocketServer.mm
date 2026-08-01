@@ -2811,6 +2811,11 @@ static BOOL TLinkParseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
 static BOOL TLinkHandleNativeGesture(NSString *body, NSString **error)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
+    if (parts.count > 0 &&
+        [[parts[0] lowercaseString] isEqualToString:@"zoom"]) {
+        if (error) *error = @"zoom_not_implemented_phase0";
+        return NO;
+    }
     if (parts.count < 3) {
         if (error) *error = @"Native gesture format: finger;;duration_ms;;x,y|x,y|...";
         return NO;
@@ -5681,6 +5686,15 @@ static NSData *TLinkHandleHelloStatus(void)
         @"touchRecordingMode": @"iohid_monitor_raw_js_replay",
         @"tapMacro": @(YES),
         @"tapMacroMode": @"bounded_async_native_tap",
+        @"multiTouchRaw": @(YES),
+        @"multiTouchRawMode": @"legacy_task10_parent_with_multiple_finger_children",
+        @"zoom": @(NO),
+        @"zoomState": @"contract_only",
+        @"zoomTask": @64,
+        @"zoomWire": @"task64_additive_zoom_v1",
+        @"zoomFingerCounts": @[@2, @3],
+        @"zoomBackend": @"legacy_multitouch_parent_frames",
+        @"zoomPhase": @0,
         @"capture": @(YES),
         @"captureMode": @"detached_iosurface_bitmap",
         @"screenshotAlbum": @(YES),
@@ -8189,6 +8203,9 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
+        cap = [cap stringByAppendingString:@" multiTouchRaw=legacy_task10_parent_frames"];
+        cap = [cap stringByAppendingString:@" zoomState=contract_only zoomTask=64 zoomWire=task64_additive_zoom_v1"];
+        cap = [cap stringByAppendingString:@" zoomFingerCounts=2,3 zoomBackend=legacy_multitouch_parent_frames zoomPhase=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];
         cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];

@@ -38,6 +38,7 @@ jobs:
           node scripts/check-rootfull-license-authority.mjs
           node scripts/check-ocr-p0-baseline.mjs
           node scripts/check-ocr-p1-cpu-only.mjs
+          node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs

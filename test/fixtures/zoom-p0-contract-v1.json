@@ -1,0 +1,58 @@
+{
+  "phase": 0,
+  "contractVersion": 1,
+  "state": "contract_only",
+  "task": 64,
+  "legacyTask64": {
+    "format": "finger;;duration_ms;;x,y|x,y|...",
+    "unchanged": true,
+    "singleFinger": true
+  },
+  "reservedZoom": {
+    "discriminator": "zoom",
+    "format": "zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]",
+    "fingerCounts": [2, 3],
+    "direction": {
+      "spread": "end_radius_gt_start_radius",
+      "pinch": "end_radius_lt_start_radius"
+    },
+    "defaults": {
+      "angleDegrees": 0,
+      "baseFinger": 0
+    },
+    "stablePhase0Error": "zoom_not_implemented_phase0"
+  },
+  "rawFoundation": {
+    "task": 10,
+    "recordWidth": 13,
+    "recordFormat": "type:1,index:2,x_tenths:5,y_tenths:5",
+    "wireCountDigits": 1,
+    "wireMaxTouchesPerFrame": 9,
+    "backendMaxFingerIndex": 20,
+    "simultaneousParentEvent": true,
+    "touchTypes": {
+      "up": 0,
+      "down": 1,
+      "move": 2
+    }
+  },
+  "limits": {
+    "durationMs": { "min": 50, "max": 5000 },
+    "steps": { "min": 2, "max": 120 },
+    "radius": { "minExclusive": 0 },
+    "angleDegrees": { "min": -360, "max": 360 }
+  },
+  "runtimes": {
+    "rootfull": { "backend": "pccontrol_touch_parent_event" },
+    "trollstore": { "backend": "streamd_touch_parent_event" }
+  },
+  "requiredCapabilityFields": {
+    "multiTouchRaw": "legacy_task10_parent_frames",
+    "zoomState": "contract_only",
+    "zoomTask": "64",
+    "zoomWire": "task64_additive_zoom_v1",
+    "zoomFingerCounts": "2,3",
+    "zoomBackend": "legacy_multitouch_parent_frames",
+    "zoomPhase": "0"
+  }
+}

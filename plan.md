@@ -234,6 +234,12 @@ Known unresolved issues / deferred investigation:
 - Vision OCR recovery P0 is now frozen in `docs/ocr-p0-baseline.md`: legacy task `27/91` fixtures are enforced in CI, task `97` additively reports the deferred Vision route and Tesseract default, and `scripts/Collect-TLinkOCRBaseline.ps1` collects reproducible device evidence. P0 does not enable Vision CPU-only or change the OCR wire format.
 - Vision OCR recovery P1 implements a CPU-only TrollStore canary: legacy task `27` defaults to `app_cpu`, optional ninth-field profile `worker_cpu` enables the isolated direct path, iOS 14-16 uses `usesCPUOnly`, and iOS 17+ assigns an `MLCPUComputeDevice` to every Vision compute stage. Task `91` remains the stable/default engine, task `27` response bytes are unchanged, and device promotion evidence is still required; see `docs/ocr-p1-cpu-only.md`.
 - Vision OCR P1 device validation is deferred after the A9/iOS 15.8.8 matrix failed: `worker_cpu` crashed with signal 11 during `vision_perform_requests`, and a fresh-launch Fast `app_cpu` request remained blocked through the 20-second watchdog while port `6000` survived. Keep task `91` as the production/default OCR path and revisit the preserved CPU-only canary on stronger hardware using `docs/ocr-p1-device-findings.md`.
+- Zoom P0 freezes `task64_additive_zoom_v1` for two- and three-finger
+  pinch/spread on rootfull and TrollStore. Both task `10` backends already
+  support multiple finger children in one parent HID frame, while the reserved
+  `64zoom...` syntax remains `contract_only` and deterministically returns
+  `zoom_not_implemented_phase0` without dispatching. Legacy task `10/64` is
+  unchanged; see `docs/zoom-p0-baseline.md`.
 - Clear app data now has a TrollStore extension task: `72<bundle.id>`. It runs through privhelper, refuses protected bundles, and only clears safe app data containers under `/var/mobile/Containers/Data/Application/`. Keychain clearing remains deferred.
 
 ## License MVP

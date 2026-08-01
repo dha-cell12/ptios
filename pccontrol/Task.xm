@@ -144,6 +144,14 @@ static bool zx_parseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
 static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
+    if (parts.count > 0 &&
+        [[parts[0] lowercaseString] isEqualToString:@"zoom"]) {
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"
+                                             code:999
+                                         userInfo:@{NSLocalizedDescriptionKey:
+                                             @"-1;;zoom_not_implemented_phase0\r\n"}];
+        return false;
+    }
     if (parts.count < 3) {
         if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture format: finger;;duration_ms;;x,y|x,y|...\r\n"}];
         return false;
@@ -1230,6 +1238,15 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                         ? [scriptPlayer licenseRuntimeDiagnostics]
                         : @{},
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
+                },
+                @"zoom": @{
+                    @"phase": @0,
+                    @"state": @"contract_only",
+                    @"task": @64,
+                    @"wire": @"task64_additive_zoom_v1",
+                    @"finger_counts": @[@2, @3],
+                    @"backend": @"legacy_multitouch_parent_frames",
+                    @"legacy_task64_unchanged": @1,
                 },
                 @"vpn": vpnStatus,
                 @"license": licenseStatus,

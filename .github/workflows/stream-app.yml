@@ -10,6 +10,8 @@ on:
       - 'scripts/**'
       - 'docs/license-*.md'
       - 'docs/vpn-*.md'
+      - 'docs/zoom-*.md'
+      - 'test/fixtures/zoom-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
@@ -21,6 +23,8 @@ on:
       - 'scripts/**'
       - 'docs/license-*.md'
       - 'docs/vpn-*.md'
+      - 'docs/zoom-*.md'
+      - 'test/fixtures/zoom-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
@@ -151,6 +155,9 @@ jobs:
           test -f scripts/Test-TLinkLicensePhase6.ps1
           test -f scripts/Start-TLinkLicenseSoak.ps1
           test -f scripts/Collect-TLinkOCRBaseline.ps1
+          test -f scripts/check-zoom-p0-baseline.mjs
+          test -f scripts/Test-TLinkZoomPhase0.ps1
+          test -f test/fixtures/zoom-p0-contract-v1.json
           test -f scripts/check-vpn-p0-baseline.mjs
           test -f scripts/check-vpn-p1-diagnostics.mjs
           test -f scripts/check-vpn-p2-rootfull-broker.mjs
@@ -164,6 +171,7 @@ jobs:
           test -f docs/ocr-p0-baseline.md
           test -f docs/ocr-p1-cpu-only.md
           test -f docs/ocr-p1-device-findings.md
+          test -f docs/zoom-p0-baseline.md
           test -f docs/vpn-p0-baseline.md
           test -f docs/vpn-p1-diagnostics.md
           test -f docs/vpn-p2-rootfull-broker.md
@@ -177,6 +185,7 @@ jobs:
           node scripts/check-license-recovery.mjs
           node scripts/check-ocr-p0-baseline.mjs
           node scripts/check-ocr-p1-cpu-only.mjs
+          node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
