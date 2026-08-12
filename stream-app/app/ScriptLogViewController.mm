@@ -141,6 +141,37 @@
     [text appendFormat:@"last_error: %@\n", [self stringValue:script[@"last_error"]]];
     [text appendString:@"\n"];
 
+    NSDictionary *history = [status[@"run_history"] isKindOfClass:[NSDictionary class]] ? status[@"run_history"] : @{};
+    NSArray *runs = [history[@"runs"] isKindOfClass:[NSArray class]] ? history[@"runs"] : @[];
+    [text appendFormat:@"history: %@ runs (%@ failed)\n",
+                       [self stringValue:history[@"total_count"]],
+                       [self stringValue:history[@"failed_count"]]];
+    for (NSDictionary *run in runs) {
+        if (![run isKindOfClass:[NSDictionary class]]) continue;
+        NSString *runId = [self stringValue:run[@"run_id"]];
+        if (runId.length > 8) runId = [runId substringToIndex:8];
+        [text appendFormat:@"- %@ %@ %@ms %@\n",
+                           runId,
+                           [self stringValue:run[@"state"]],
+                           [self stringValue:run[@"duration_ms"]],
+                           [[self stringValue:run[@"entry_path"]] lastPathComponent]];
+        NSDictionary *evidence = [run[@"failure_evidence"] isKindOfClass:[NSDictionary class]] ? run[@"failure_evidence"] : @{};
+        if (evidence.count > 0) {
+            [text appendFormat:@"  error: %@\n", [self stringValue:evidence[@"error"]]];
+            [text appendFormat:@"  evidence: screenshot=%@ metadata=%@\n",
+                               [evidence[@"screenshot_captured"] boolValue] ? @"yes" : @"no",
+                               [self stringValue:evidence[@"metadata_path"]]];
+            if (![evidence[@"screenshot_captured"] boolValue]) {
+                [text appendFormat:@"  screenshot_error: %@\n", [self stringValue:evidence[@"screenshot_error"]]];
+            }
+            NSArray *evidenceTail = [evidence[@"log_tail"] isKindOfClass:[NSArray class]] ? evidence[@"log_tail"] : @[];
+            for (id line in evidenceTail) {
+                [text appendFormat:@"  | %@\n", [self stringValue:line]];
+            }
+        }
+    }
+    [text appendString:@"\ncurrent log:\n"];
+
     NSArray *tail = [script[@"log_tail"] isKindOfClass:[NSArray class]] ? script[@"log_tail"] : @[];
     if (tail.count == 0) {
         [text appendString:@"<no script log lines>\n"];

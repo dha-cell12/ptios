@@ -94,7 +94,7 @@ for (const source of [rootServer, trollRuntime, docs]) {
 assert.match(trollExample, /stable\.attempts === 3/);
 assert.match(trollExample, /timeout\.attempts === 1/);
 assert.match(rootExample, /TLinkauto\.smartWaitSchema/);
-assert.match(scriptsController, /lastScript = \[suitePath stringByAppendingPathComponent:@"09 Smart Wait\.tl"\]/);
+assert.match(scriptsController, /lastScript = \[suitePath stringByAppendingPathComponent:@"10 Failure Evidence\.tl"\]/);
 assert.match(scriptsController, /installCompatibilityExamples:[\s\S]*?fileExistsAtPath:scriptPath[\s\S]*?continue;/);
 assert.match(status, /Smart Wait v1/);
 assert.match(plan, /Smart Wait v1/);

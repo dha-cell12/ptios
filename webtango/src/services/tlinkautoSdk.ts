@@ -74,6 +74,20 @@ export class TLinkautoDeviceSdk {
     return this.client.getScreenScale();
   }
 
+  async getRunHistory(): Promise<RunHistorySnapshot> {
+    await this.waitOpen();
+    const response = await this.client.requestWithTimeout(60, 5000);
+    if (!response.ok || response.parts.length < 1) {
+      throw new Error(response.raw || 'run history status failed');
+    }
+    const status = JSON.parse(decodeBase64Utf8(response.parts[0]));
+    const history = status?.run_history;
+    if (!history || history.schema !== 'run_history_v1' || !Array.isArray(history.runs)) {
+      throw new Error('run_history_v1 is unavailable');
+    }
+    return history as RunHistorySnapshot;
+  }
+
   async getCoordinateDiagnostics(): Promise<CoordinateDiagnostics> {
     await this.waitOpen();
     const [screenSize, screenScale] = await Promise.all([this.getScreenSize(), this.getScreenScale()]);
@@ -644,6 +658,52 @@ export type PickedColor = {
   green: number;
   blue: number;
   hex: string;
+};
+
+export type FailureEvidence = {
+  schema: 'failure_evidence_v1';
+  run_id: string;
+  captured_at_ms: number;
+  error: string;
+  log_tail: string[];
+  log_tail_truncated: boolean;
+  console_log_path: string;
+  screenshot_path: string;
+  screenshot_captured: boolean;
+  screenshot_error: string;
+  metadata_path: string;
+};
+
+export type RunHistoryRecord = {
+  schema: 'run_history_v1';
+  run_id: string;
+  runtime: 'rootfull' | 'trollstore' | string;
+  bundle_path: string;
+  entry_path: string;
+  state: 'running' | 'finished' | 'failed' | 'cancelled' | 'license_revoked' | string;
+  started_at_ms: number;
+  ended_at_ms: number;
+  duration_ms: number;
+  error: string;
+  play_settings: Record<string, number>;
+  failure_evidence: FailureEvidence | Record<string, never>;
+  record_path: string;
+};
+
+export type RunHistorySnapshot = {
+  schema: 'run_history_v1';
+  state: 'implemented';
+  root_path: string;
+  retention_max_runs: number;
+  failure_log_tail_max_lines: number;
+  failure_error_max_characters: number;
+  status_log_tail_max_lines: number;
+  status_log_line_max_characters: number;
+  status_error_max_characters: number;
+  failure_console_read_max_bytes: number;
+  total_count: number;
+  failed_count: number;
+  runs: RunHistoryRecord[];
 };
 
 export type SmartWaitOptions = {

@@ -627,12 +627,14 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
 - (NSString *)currentConsoleLogPath
 {
-    return _helperRunning ? (_helperConsoleLogPath ?: @"") : (_core.currentConsoleLogPath ?: @"");
+    if ([_lastEffectiveRuntimeLocation isEqualToString:@"helper"]) return _helperConsoleLogPath ?: @"";
+    return _core.currentConsoleLogPath ?: @"";
 }
 
 - (NSString *)currentConsoleLatestLogPath
 {
-    return _helperRunning ? (_helperConsoleLatestLogPath ?: @"") : (_core.currentConsoleLatestLogPath ?: @"");
+    if ([_lastEffectiveRuntimeLocation isEqualToString:@"helper"]) return _helperConsoleLatestLogPath ?: @"";
+    return _core.currentConsoleLatestLogPath ?: @"";
 }
 
 - (NSDictionary *)currentManifest

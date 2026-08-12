@@ -68,6 +68,7 @@ declare const device: {
   }): Promise<void>;
   getScreenSize(): Promise<{ width: number; height: number } | null>;
   screenshot(path: string, region?: [number, number, number, number]): Promise<string>;
+  getRunHistory(): Promise<{ schema: 'run_history_v1'; total_count: number; failed_count: number; runs: Array<{ run_id: string; state: string; duration_ms: number; error: string; failure_evidence: unknown }> }>;
   pickColor(x: number, y: number): Promise<{ red: number; green: number; blue: number; hex: string }>;
   colorEquals(x: number, y: number, hex: string, tolerance?: number): Promise<boolean>;
   frontMostAppId(): Promise<string>;
@@ -160,6 +161,11 @@ const completionSnippets = [
     label: 'device.screenshot',
     detail: 'Save screenshot or region PNG on device',
     insertText: 'const path = await device.screenshot("${1:/var/mobile/Library/TLinkauto/templates/template.png}", [${2:x}, ${3:y}, ${4:w}, ${5:h}]);\nlog(path);',
+  },
+  {
+    label: 'device.getRunHistory',
+    detail: 'Read persistent script runs and failure evidence from task 60',
+    insertText: 'const history = await device.getRunHistory();\nlog(history.runs);',
   },
   {
     label: 'device.pickColor',

@@ -4,6 +4,7 @@
 #include "../shared/TLinkLicenseVerifier.h"
 #include "../shared/TLinkRootfullLicensePolicy.h"
 #include "../shared/TLinkVPNDiagnostics.h"
+#include "../shared/TLinkRunHistory.h"
 #import <Foundation/Foundation.h>
 #ifndef YES
 #define YES true
@@ -1433,6 +1434,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                         : @{},
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
+                @"run_history": TLinkRunHistorySnapshot(20),
                 @"zoom": @{
                     @"phase": @2,
                     @"state": @"experimental",

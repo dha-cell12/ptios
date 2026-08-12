@@ -38,6 +38,12 @@ TrollStore runtime.
   behavior remains `contract_only`/`observe_only`; legacy clients are unchanged
   and no pairing claim is device-validated. See
   `docs/secure-pairing-p0-baseline.md`.
+- Run History & Failure Evidence v1 persists the newest 50 script runs with a
+  common rootfull/TrollStore schema. Failed and license-revoked runs retain a
+  bounded log tail, original error, evidence JSON and best-effort screenshot;
+  capture failure is recorded without hiding the script failure. Task `60`,
+  StreamControl Logs and WebTango expose the newest records. Device promotion
+  remains pending; see `docs/run-history-failure-evidence-v1.md`.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.

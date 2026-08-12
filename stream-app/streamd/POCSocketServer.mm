@@ -8,6 +8,7 @@
 #import "../../shared/TLinkJSFileHandle.h"
 #import "../../shared/TLinkLicenseVerifier.h"
 #import "../../shared/TLinkSmartWaitPrelude.h"
+#import "../../shared/TLinkRunHistory.h"
 #import "../../shared/TLinkVPNDiagnostics.h"
 #include <string.h>
 #include <ctype.h>
@@ -59,6 +60,7 @@ static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
     NSNumber *effectiveConnected,
     NSString *agentError,
     NSString *brokerError);
+static CaptureOutcome *TLinkRunCaptureOnMain(void);
 
 // ---------------------------------------------------------------------------
 // POC socket server
@@ -590,6 +592,7 @@ static NSDictionary *TLinkTapMacroStatusDictionary(void)
 @property(nonatomic, assign) BOOL licenseRevoked;
 @property(nonatomic, assign) uint64_t lastLicenseCheckAtMs;
 @property(nonatomic, copy) NSString *licenseRevocationError;
+@property(nonatomic, copy) NSString *historyRunId;
 @property(nonatomic, strong) NSMutableArray<NSString *> *logs;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *fileHandles;
 @property(nonatomic, assign) NSUInteger nextFileHandleId;
@@ -875,6 +878,8 @@ static void TLinkScriptMarkTerminal(TLinkScriptSession *session, NSString *state
 {
     if (!session) return;
     TLinkScriptCloseOpenFiles(session);
+    NSArray<NSString *> *logTail = nil;
+    NSString *runId = nil;
     @synchronized (session) {
         if (session.licenseRevoked) {
             state = @"license_revoked";
@@ -883,11 +888,45 @@ static void TLinkScriptMarkTerminal(TLinkScriptSession *session, NSString *state
         session.state = state ?: @"finished";
         session.endedAtMs = TLinkNowMs();
         session.lastError = error ?: @"";
+        NSUInteger start = session.logs.count > 50 ? session.logs.count - 50 : 0;
+        logTail = session.logs.count > 0
+            ? [session.logs subarrayWithRange:NSMakeRange(start, session.logs.count - start)]
+            : @[];
+        runId = session.historyRunId ?: @"";
     }
     if (error.length > 0) {
         sTLinkLastScriptError = error;
         sTLinkLastScriptErrorTs = session.endedAtMs;
     }
+
+    NSString *screenshotPath = @"";
+    NSString *screenshotError = @"";
+    BOOL failed = [state isEqualToString:@"failed"] || [state isEqualToString:@"license_revoked"];
+    if (failed && runId.length > 0) {
+        CaptureOutcome *outcome = TLinkRunCaptureOnMain();
+        if (outcome && outcome.image && outcome.result != CaptureResultFail) {
+            screenshotPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:
+                [NSString stringWithFormat:@"%@.png", runId]];
+            NSData *png = UIImagePNGRepresentation(outcome.image);
+            if (!png || ![png writeToFile:screenshotPath atomically:NO]) {
+                screenshotError = @"failure_evidence_screenshot_write_failed";
+                screenshotPath = @"";
+            }
+        } else {
+            screenshotError = outcome.diagnostics ?: @"failure_evidence_capture_failed";
+        }
+    }
+    TLinkRunHistoryFinish(runId,
+                          state ?: @"finished",
+                          error ?: @"",
+                          logTail ?: @[],
+                          @"",
+                          screenshotPath,
+                          screenshotError,
+                          @{
+                              @"current_run": @(session.currentRun),
+                              @"total_runs": @(session.totalRuns),
+                          });
 }
 
 static BOOL TLinkScriptIsActive(TLinkScriptSession *session)
@@ -2231,6 +2270,15 @@ static NSData *TLinkHandlePlayScript(NSString *body)
     session.logs = [NSMutableArray array];
     session.fileHandles = [NSMutableDictionary dictionary];
     session.nextFileHandleId = 1;
+    NSDictionary *historyRecord = TLinkRunHistoryBegin(@"trollstore",
+                                                        bundlePath,
+                                                        entryPath,
+                                                        @{
+                                                            @"repeat_times": @(repeatTimes),
+                                                            @"interval": @(intervalSeconds),
+                                                            @"speed": @(speed),
+                                                        });
+    session.historyRunId = historyRecord[@"run_id"] ?: @"";
     sTLinkScriptSession = session;
     sTLinkLastScriptError = @"";
     sTLinkLastScriptErrorTs = 0;
@@ -5986,6 +6034,15 @@ static NSData *TLinkHandleHelloStatus(void)
         @"smartWaitIntervalMinMs": @20,
         @"smartWaitStableFramesMax": @10,
         @"smartWaitDeviceValidated": @(NO),
+        @"runHistory": @(YES),
+        @"runHistoryState": @"implemented",
+        @"runHistoryVersion": @1,
+        @"runHistorySchema": TLinkRunHistorySchemaV1,
+        @"failureEvidenceSchema": TLinkFailureEvidenceSchemaV1,
+        @"runHistoryTransport": @"task60_status_json_v1",
+        @"runHistoryRetentionMaxRuns": @50,
+        @"failureEvidenceScreenshot": @"best_effort_png_on_failure",
+        @"runHistoryDeviceValidated": @(NO),
         @"securePairing": @(NO),
         @"securePairingState": @"contract_only",
         @"securePairingPhase": @0,
@@ -6113,6 +6170,7 @@ static NSData *TLinkHandleHelloStatus(void)
             @"model": TLinkModelName(),
         },
         @"script": TLinkScriptStatusDictionary(),
+        @"run_history": TLinkRunHistorySnapshot(20),
         @"secure_pairing": @{
             @"phase": @0,
             @"state": @"contract_only",
@@ -8454,6 +8512,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" zoomCleanup=all_fingers_up_on_exception_v1 zoomDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" zoomDiagnostics=zoom_runtime_diagnostics_v1 zoomClients=task64_python_js_webtango_v1"];
         cap = [cap stringByAppendingString:@" smartWaitState=implemented smartWaitPhase=1 smartWaitSchema=smart_wait_result_v1 smartWaitClients=rootfull_js_trollstore_js_webtango_v1 smartWaitLocators=predicate,app,color,image,text,image_gone,tap_when_visible smartWaitFrameStrategy=fresh_frame_per_attempt_release_always_template_open_once smartWaitDeviceValidated=0"];
+        cap = [cap stringByAppendingString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];

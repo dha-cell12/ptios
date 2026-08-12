@@ -12,8 +12,10 @@ on:
       - 'docs/vpn-*.md'
       - 'docs/zoom-*.md'
       - 'docs/secure-pairing-*.md'
+      - 'docs/run-history-*.md'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
+      - 'test/fixtures/run-history-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
@@ -27,8 +29,10 @@ on:
       - 'docs/vpn-*.md'
       - 'docs/zoom-*.md'
       - 'docs/secure-pairing-*.md'
+      - 'docs/run-history-*.md'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
+      - 'test/fixtures/run-history-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
@@ -171,6 +175,9 @@ jobs:
           test -f scripts/check-smart-wait-v1.mjs
           test -f scripts/Test-TLinkSmartWaitV1.ps1
           test -f test/fixtures/smart-wait-v1.json
+          test -f scripts/check-run-history-v1.mjs
+          test -f scripts/Test-TLinkRunHistoryV1.ps1
+          test -f test/fixtures/run-history-failure-evidence-v1.json
           test -f scripts/check-secure-pairing-p0.mjs
           test -f scripts/Test-TLinkSecurePairingPhase0.ps1
           test -f test/fixtures/secure-pairing-contract-v1.json
@@ -191,6 +198,7 @@ jobs:
           test -f docs/zoom-p1-multitouch.md
           test -f docs/zoom-p2-observability-webtango.md
           test -f docs/smart-wait-visual-locator-v1.md
+          test -f docs/run-history-failure-evidence-v1.md
           test -f docs/secure-pairing-p0-baseline.md
           test -f docs/vpn-p0-baseline.md
           test -f docs/vpn-p1-diagnostics.md
@@ -209,6 +217,7 @@ jobs:
           node scripts/check-zoom-p1-multitouch.mjs
           node scripts/check-zoom-p2-observability.mjs
           node scripts/check-smart-wait-v1.mjs
+          node scripts/check-run-history-v1.mjs
           node scripts/check-secure-pairing-p0.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
@@ -229,6 +238,7 @@ jobs:
           test -f stream-app/app/BackgroundServiceScheduler.mm
           test -f 'stream-app/app/CompatibilityExamples/01 Runtime Storage.js'
           test -f 'stream-app/app/CompatibilityExamples/09 Smart Wait.js'
+          test -f 'stream-app/app/CompatibilityExamples/10 Failure Evidence.js'
           test -f 'stream-app/app/CompatibilityExamples/02 Clipboard Keyboard.js'
           test -f 'stream-app/app/CompatibilityExamples/03 Color Frame.js'
           test -f 'stream-app/app/CompatibilityExamples/04 Screenshot Image.js'

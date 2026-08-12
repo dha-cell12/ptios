@@ -564,8 +564,6 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
         os_unfair_lock_unlock(&_logStateLock);
         dispatch_sync(_logQueue, ^{}); // flush
         
-        _consoleLogPath = nil;
-        _consoleLatestLogPath = nil;
         _running = NO;
     }
 }

@@ -285,6 +285,12 @@ Known unresolved issues / deferred investigation:
   AES-256-GCM sessions, strict replay/downgrade rules, pairing scopes, and
   revocation. P0 is capability-only (`contract_only`, `observe_only`) and does
   not alter legacy task/H264 behavior; see `docs/secure-pairing-p0-baseline.md`.
+- Run History & Failure Evidence v1 adds common durable run records for
+  rootfull and TrollStore under `/var/mobile/Library/TLinkauto/run-history`.
+  Failure evidence retains bounded logs, the primary error, metadata and a
+  best-effort screenshot without changing task `19/20/60` compatibility. Task
+  `60`, StreamControl Logs and WebTango expose the newest runs; see
+  `docs/run-history-failure-evidence-v1.md`.
 
 Nói gọn: nên biến stream-app thành “TLinkauto TrollStore runtime” chính thức, rồi kéo từng module từ pccontrol sang theo thứ tự: touch/capture trước, image/OCR tiếp, script runtime sau, cuối cùng mới đến admin/process/connectivity.
 **UI Parity là tiêu chí bắt buộc** để người dùng dễ sử dụng và chuyển đổi mượt mà.

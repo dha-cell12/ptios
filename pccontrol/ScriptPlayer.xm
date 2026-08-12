@@ -11,6 +11,8 @@
 #import "TLinkautoJSRuntime.h"
 #import "TLinkTaskContext.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
+#import "../shared/TLinkRunHistory.h"
+#import "Screen.h"
 #include <os/lock.h>
 
 static BOOL isPlaying = false;
@@ -46,6 +48,8 @@ typedef NS_ENUM(NSInteger, TLinkScriptState) {
     uint64_t _licenseHeartbeatCheckCount;
     uint64_t _licenseRevocationCount;
     BOOL _licenseRevokedCurrentRun;
+    NSString *_historyRunId;
+    NSString *_historyConsoleLogPath;
 }
 
 static BOOL tlinkautoJavaScriptRuntimeEnabled(void) {
@@ -88,6 +92,56 @@ static NSString *tlinkautoStringValue(id value) {
     };
     os_unfair_lock_unlock(&_playerLock);
     return diagnostics;
+}
+
+- (void)beginRunHistoryIfNeeded:(NSString *)entryPath {
+    @synchronized (self) {
+        if (_historyRunId.length > 0) return;
+        NSDictionary *record = TLinkRunHistoryBegin(@"rootfull",
+                                                     scriptBundlePath ?: @"",
+                                                     entryPath ?: @"",
+                                                     @{
+                                                         @"repeat_times": @(repeatTime),
+                                                         @"interval": @(interval),
+                                                         @"speed": @(speed),
+                                                     });
+        _historyRunId = [record[@"run_id"] copy];
+        _historyConsoleLogPath = @"";
+    }
+}
+
+- (void)finishRunHistoryWithState:(NSString *)state error:(NSString *)error {
+    NSString *runId = nil;
+    NSString *consolePath = nil;
+    @synchronized (self) {
+        runId = _historyRunId;
+        consolePath = _historyConsoleLogPath;
+        _historyRunId = nil;
+        _historyConsoleLogPath = nil;
+    }
+    if (runId.length == 0) return;
+
+    NSString *screenshotPath = @"";
+    NSString *screenshotError = @"";
+    BOOL failed = [state isEqualToString:@"failed"] || [state isEqualToString:@"license_revoked"];
+    if (failed) {
+        screenshotPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:
+            [NSString stringWithFormat:@"%@.png", runId]];
+        NSError *captureError = nil;
+        NSString *saved = [Screen screenShotToPath:screenshotPath region:CGRectZero error:&captureError];
+        if (saved.length == 0) {
+            screenshotError = captureError.localizedDescription ?: @"capture_failed";
+            screenshotPath = @"";
+        }
+    }
+    TLinkRunHistoryFinish(runId,
+                          state ?: @"finished",
+                          error ?: @"",
+                          @[],
+                          consolePath ?: @"",
+                          screenshotPath,
+                          screenshotError,
+                          @{});
 }
 
 - (void)stopLicenseHeartbeatForGeneration:(uint64_t)generation {
@@ -226,12 +280,14 @@ static NSString *tlinkautoStringValue(id value) {
     BOOL isDir;
     if (![[NSFileManager defaultManager] fileExistsAtPath:scriptBundlePath isDirectory:&isDir] || !isDir) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Path not found or it is not a directory.\r\n"}];
+        [self finishRunHistoryWithState:@"failed" error:@"Unable to run the script. Path not found or it is not a directory."];
         return -1;
     }
 
     NSString *infoFilePath = [NSString stringWithFormat:@"%@/info.plist", scriptBundlePath];
     if (![[NSFileManager defaultManager] fileExistsAtPath:infoFilePath isDirectory:&isDir]) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Info.plist not found.\r\n"}];
+        [self finishRunHistoryWithState:@"failed" error:@"Unable to run the script. Info.plist not found."];
         return -1;
     }
     NSDictionary *scriptInfo = [NSDictionary dictionaryWithContentsOfFile:infoFilePath];
@@ -241,6 +297,7 @@ static NSString *tlinkautoStringValue(id value) {
     NSString *entryFileName = tlinkautoStringValue(manifest[@"entry"]) ?: scriptInfo[@"Entry"];
     if (!entryFileName || [entryFileName length] == 0) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Script entry is missing.\r\n"}];
+        [self finishRunHistoryWithState:@"failed" error:@"Script entry is missing."];
         return -1;
     }
     NSString *fileExtension = [entryFileName pathExtension];
@@ -262,6 +319,7 @@ static NSString *tlinkautoStringValue(id value) {
     });
 
     NSString *entryFilePath = [scriptBundlePath stringByAppendingPathComponent:entryFileName];
+    [self beginRunHistoryIfNeeded:entryFilePath];
 
     if ([fileExtension isEqualToString:@"raw"]) {
         currentScriptType = 1;
@@ -277,11 +335,13 @@ static NSString *tlinkautoStringValue(id value) {
     } else if ([runtime isEqualToString:@"javascriptcore"] || [fileExtension isEqualToString:@"js"]) {
         if (!tlinkautoJavaScriptRuntimeEnabled()) {
             if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScriptCore runtime is disabled.\r\n"}];
+            [self finishRunHistoryWithState:@"failed" error:@"JavaScriptCore runtime is disabled."];
             [self clear];
             return -1;
         }
         if (apiVersion && [apiVersion intValue] != 1) {
             if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript API version: %@\r\n", apiVersion]}];
+            [self finishRunHistoryWithState:@"failed" error:[NSString stringWithFormat:@"Unsupported JavaScript API version: %@", apiVersion]];
             [self clear];
             return -1;
         }
@@ -292,6 +352,7 @@ static NSString *tlinkautoStringValue(id value) {
         if (_state != TLinkScriptStateIdle) {
             os_unfair_lock_unlock(&_playerLock);
             if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Script is already running.\r\n"}];
+            [self finishRunHistoryWithState:@"failed" error:@"Script is already running."];
             return -1;
         }
         _state = TLinkScriptStateScheduled;
@@ -314,11 +375,13 @@ static NSString *tlinkautoStringValue(id value) {
     } else if ([runtime isEqualToString:@"python"] || [fileExtension isEqualToString:@"py"]) {
         if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Python script support has been removed. Please migrate this script to JavaScript.\r\n"}];
         setLastScriptError(@"Python script support has been removed. Please migrate this script to JavaScript.");
+        [self finishRunHistoryWithState:@"failed" error:getLastScriptError()];
         [self clear];
         return -1;
     }
     
     if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
+    [self finishRunHistoryWithState:@"failed" error:[NSString stringWithFormat:@"Unsupported script entry extension: %@", fileExtension ?: @""]];
     [self clear];
     return -1;
 }
@@ -344,6 +407,8 @@ static NSString *tlinkautoStringValue(id value) {
         showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script because TLinkauto cannot open the file. File path: %@", filePath], 999);
         setLastScriptError([NSString stringWithFormat:@"Cannot open raw script: %@", filePath]);
         isPlaying = false;
+        [self stopLicenseHeartbeatForGeneration:0];
+        [self finishRunHistoryWithState:@"failed" error:getLastScriptError()];
         return;
     }
     
@@ -389,6 +454,9 @@ static NSString *tlinkautoStringValue(id value) {
 
     NSError *runError = nil;
     BOOL ok = [runtime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest context:session.taskContext error:&runError];
+    @synchronized (self) {
+        _historyConsoleLogPath = [[runtime currentConsoleLogPath] copy] ?: @"";
+    }
     
     os_unfair_lock_lock(&_playerLock);
     if (_currentSession != session) {
@@ -436,6 +504,19 @@ static NSString *tlinkautoStringValue(id value) {
     }
     os_unfair_lock_unlock(&_playerLock);
 
+    NSString *state = ok ? @"finished" : @"failed";
+    NSString *error = ok ? @"" : getLastScriptError();
+    if ([session.cancellationToken isCancelled]) {
+        if (_licenseRevokedCurrentRun) {
+            state = @"license_revoked";
+            error = getLastScriptError();
+        } else {
+            state = @"cancelled";
+            error = @"";
+        }
+    }
+    [self finishRunHistoryWithState:state error:error];
+
     dispatch_async(dispatch_get_main_queue(), ^{
         [self clearLegacyState];
     });
@@ -473,6 +554,11 @@ static NSString *tlinkautoStringValue(id value) {
         currentScriptType = 0;
         CFRunLoopRun();
     } else {
+        if (_licenseRevokedCurrentRun) {
+            [self finishRunHistoryWithState:@"license_revoked" error:getLastScriptError()];
+        } else {
+            [self finishRunHistoryWithState:@"finished" error:@""];
+        }
         [self clear];
     }
 }
@@ -510,6 +596,7 @@ static NSString *tlinkautoStringValue(id value) {
             _state = TLinkScriptStateIdle;
             isPlaying = false;
             os_unfair_lock_unlock(&_playerLock);
+            [self finishRunHistoryWithState:@"cancelled" error:@""];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self clearLegacyState];
             });
@@ -536,9 +623,11 @@ static NSString *tlinkautoStringValue(id value) {
     } else {
         os_unfair_lock_unlock(&_playerLock);
         if (currentScriptType == 0) {
+            [self finishRunHistoryWithState:@"cancelled" error:@""];
             [self clear];
         } else if (currentScriptType == 1) {
             scriptPlayForceStop = true;
+            [self finishRunHistoryWithState:@"cancelled" error:@""];
             [self clear];
         }
     }

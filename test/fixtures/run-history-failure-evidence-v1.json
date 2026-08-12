@@ -1,0 +1,87 @@
+{
+  "phase": 1,
+  "state": "implemented",
+  "deviceValidated": false,
+  "transport": "task60_status_json_v1",
+  "schemas": {
+    "history": "run_history_v1",
+    "evidence": "failure_evidence_v1"
+  },
+  "paths": {
+    "root": "/var/mobile/Library/TLinkauto/run-history",
+    "index": "/var/mobile/Library/TLinkauto/run-history/index.json",
+    "runs": "/var/mobile/Library/TLinkauto/run-history/runs/<run_id>.json",
+    "evidenceMetadata": "/var/mobile/Library/TLinkauto/run-history/evidence/<run_id>.json",
+    "evidenceScreenshot": "/var/mobile/Library/TLinkauto/run-history/evidence/<run_id>.png"
+  },
+  "states": ["running", "finished", "failed", "cancelled", "license_revoked"],
+  "historyFields": [
+    "schema",
+    "run_id",
+    "runtime",
+    "bundle_path",
+    "entry_path",
+    "state",
+    "started_at_ms",
+    "ended_at_ms",
+    "duration_ms",
+    "error",
+    "play_settings",
+    "failure_evidence",
+    "record_path"
+  ],
+  "evidenceFields": [
+    "schema",
+    "run_id",
+    "captured_at_ms",
+    "error",
+    "log_tail",
+    "log_tail_truncated",
+    "console_log_path",
+    "screenshot_path",
+    "screenshot_captured",
+    "screenshot_error",
+    "metadata_path"
+  ],
+  "retention": {
+    "maximumRuns": 50,
+    "statusRuns": 20,
+    "maximumFailureLogLines": 50,
+    "maximumLogLineCharacters": 1000,
+    "maximumErrorCharacters": 4000,
+    "statusFailureLogLines": 3,
+    "statusLogLineCharacters": 240,
+    "statusErrorCharacters": 500,
+    "maximumConsoleReadBytes": 262144,
+    "pruneOrder": "oldest_first_with_owned_artifacts",
+    "crossProcessSerialization": "flock_history_lock_v1"
+  },
+  "capturePolicy": {
+    "terminalFailureStates": ["failed", "license_revoked"],
+    "screenshot": "best_effort_png",
+    "screenshotFailureDoesNotReplaceScriptFailure": true,
+    "successStoresEvidence": false,
+    "cancelledStoresEvidence": false,
+    "secretsInMetadata": "best_effort_redacted"
+  },
+  "runtimes": {
+    "rootfull": {
+      "logSource": "javascriptcore_console_file_tail",
+      "screenshotBackend": "springboard_screen_capture"
+    },
+    "trollstore": {
+      "logSource": "streamd_session_log_tail",
+      "screenshotBackend": "capture_core_best_effort"
+    }
+  },
+  "requiredCapabilityFields": {
+    "runHistoryState": "implemented",
+    "runHistoryVersion": "1",
+    "runHistorySchema": "run_history_v1",
+    "failureEvidenceSchema": "failure_evidence_v1",
+    "runHistoryTransport": "task60_status_json_v1",
+    "runHistoryRetentionMaxRuns": "50",
+    "failureEvidenceScreenshot": "best_effort_png_on_failure",
+    "runHistoryDeviceValidated": "0"
+  }
+}
