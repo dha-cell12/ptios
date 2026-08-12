@@ -135,6 +135,141 @@ export class TLinkautoDeviceSdk {
     );
   }
 
+  async frontMostAppId(): Promise<string> {
+    await this.waitOpen();
+    const response = await this.client.request(34);
+    if (!response.ok || response.parts.length < 1) {
+      throw new Error(response.raw || 'frontMostAppId failed');
+    }
+    return response.parts[0];
+  }
+
+  async waitUntil<T>(
+    predicate: (attempt: number) => T | false | null | undefined | Promise<T | false | null | undefined>,
+    options: SmartWaitOptions = {},
+  ): Promise<SmartWaitResult<T>> {
+    return this.runWait('wait_until', predicate, options, false);
+  }
+
+  async waitForApp(bundleId: string, options: SmartWaitOptions = {}): Promise<SmartWaitResult<string>> {
+    if (!bundleId) throw new Error('waitForApp requires bundleId');
+    const result = await this.runWait(
+      'wait_for_app',
+      async () => {
+        const current = await this.frontMostAppId();
+        return current === bundleId ? current : false;
+      },
+      options,
+      true,
+    );
+    return Object.assign(result, { bundleId });
+  }
+
+  async waitForColor(
+    x: number,
+    y: number,
+    color: SmartWaitColor,
+    options: SmartWaitOptions & { tolerance?: number } = {},
+  ): Promise<SmartWaitResult<PickedColor>> {
+    const expected = normalizeSmartWaitColor(color);
+    const tolerance = Math.max(0, finiteNumber(options.tolerance, 0));
+    const result = await this.runWait(
+      'wait_for_color',
+      async () => {
+        const current = await this.pickColor(x, y);
+        const matched =
+          Math.abs(current.red - expected.red) <= tolerance &&
+          Math.abs(current.green - expected.green) <= tolerance &&
+          Math.abs(current.blue - expected.blue) <= tolerance;
+        return matched ? current : false;
+      },
+      options,
+      true,
+    );
+    return Object.assign(result, { expected, tolerance, x, y });
+  }
+
+  async waitForImage(
+    imagePath: string,
+    options: WaitForImageOptions = {},
+  ): Promise<SmartWaitResult<FindImageResult>> {
+    return this.waitForImageState(imagePath, options, true, 'wait_for_image') as Promise<SmartWaitResult<FindImageResult>>;
+  }
+
+  async waitUntilGone(
+    imagePath: string,
+    options: WaitForImageOptions = {},
+  ): Promise<SmartWaitResult<{ gone: true; lastMatch: FindImageResult }> & { gone: boolean }> {
+    const result = await this.waitForImageState(imagePath, options, false, 'wait_until_gone');
+    return Object.assign(result, { found: false, gone: result.ok }) as unknown as SmartWaitResult<{
+      gone: true;
+      lastMatch: FindImageResult;
+    }> & { gone: boolean };
+  }
+
+  async waitForText(
+    text: string,
+    options: WaitForTextOptions = {},
+  ): Promise<SmartWaitResult<OcrResult>> {
+    if (!text) throw new Error('waitForText requires non-empty text');
+    const region = options.region || (await this.fullScreenRegion());
+    const result = await this.runWait(
+      'wait_for_text',
+      async () => {
+        const ocr = await this.ocr({
+          region,
+          lang: options.lang ?? 'eng',
+          oem: options.oem,
+          psm: options.psm,
+          whitelist: options.whitelist,
+          scaleUp: options.scaleUp,
+          thresholdMode: options.thresholdMode,
+          coord: options.coord,
+          maxAgeMs: options.maxAgeMs,
+          ttlMs: Math.max(1000, boundedInteger(options.intervalMs, 200, 20, 10000) + 500),
+        });
+        return smartWaitTextMatches(ocr.text, text, options) ? ocr : false;
+      },
+      options,
+      true,
+    );
+    return Object.assign(result, {
+      locator: {
+        type: 'text',
+        text,
+        matchMode: options.matchMode ?? 'contains',
+        caseSensitive: options.caseSensitive ?? false,
+      },
+    });
+  }
+
+  async tapWhenVisible(
+    imagePath: string,
+    options: TapWhenVisibleOptions = {},
+  ): Promise<SmartWaitResult<FindImageResult> & {
+    tapped: boolean;
+    tapX?: number;
+    tapY?: number;
+  }> {
+    const result = await this.waitForImage(imagePath, options);
+    const output = Object.assign(result, { kind: 'tap_when_visible', tapped: false as boolean });
+    if (!output.ok || !output.value) return output;
+    const tapX = output.value.centerX + finiteNumber(options.offsetX, 0);
+    const tapY = output.value.centerY + finiteNumber(options.offsetY, 0);
+    try {
+      await this.tap(tapX, tapY, options.holdMs ?? 60);
+      return Object.assign(output, { tapped: true, tapX, tapY });
+    } catch (error) {
+      return Object.assign(output, {
+        ok: false,
+        tapped: false,
+        tapX,
+        tapY,
+        lastError: smartWaitErrorText(error),
+      });
+    }
+  }
+
   async openImage(path: string): Promise<ImageObjectRef> {
     await this.waitOpen();
     const scale = await this.getNativeScale();
@@ -227,6 +362,56 @@ export class TLinkautoDeviceSdk {
     };
   }
 
+  async findImageObjectInFrame(
+    frame: FrameRef | number,
+    image: ImageObjectRef | number,
+    options: FindImageOptions & { maxAgeMs?: number } = {},
+  ): Promise<FindImageResult> {
+    await this.waitOpen();
+    const scale = await this.getNativeScale();
+    const frameId = typeof frame === 'number' ? frame : frame.id;
+    const imageId = typeof image === 'number' ? image : image.id;
+    const region = this.scaleRegion(options.region || [0, 0, 0, 0], scale);
+    const response = await this.client.request(
+      68,
+      frameId,
+      imageId,
+      region[0],
+      region[1],
+      region[2],
+      region[3],
+      options.acceptable ?? 0.9,
+      options.scaleMin ?? 1.0,
+      options.scaleMax ?? 1.0,
+      options.scaleStep ?? 1.0,
+      options.pixelSkip ?? 0,
+      'pixel',
+      options.maxAgeMs ?? 1000,
+    );
+    if (!response.ok || response.parts.length < 7) {
+      throw new Error(response.raw || 'findImageObjectInFrame failed');
+    }
+    const x = this.fromNativeCoord(Number(response.parts[0]), scale);
+    const y = this.fromNativeCoord(Number(response.parts[1]), scale);
+    const width = this.fromNativeLength(Number(response.parts[2]), scale);
+    const height = this.fromNativeLength(Number(response.parts[3]), scale);
+    return {
+      found: x >= 0 && y >= 0 && width > 0 && height > 0,
+      x,
+      y,
+      width,
+      height,
+      centerX: this.fromNativeCoord(Number(response.parts[4]), scale),
+      centerY: this.fromNativeCoord(Number(response.parts[5]), scale),
+      score: Number(response.parts[6]),
+      native: {
+        region,
+        result: response.parts.slice(0, 11),
+        coordScale: scale,
+      },
+    };
+  }
+
   async captureFrame(options: CaptureFrameOptions = {}): Promise<FrameRef> {
     await this.waitOpen();
     const response = await this.client.request(
@@ -290,6 +475,114 @@ export class TLinkautoDeviceSdk {
     return this.client.request(task, ...args);
   }
 
+  private async waitForImageState(
+    imagePath: string,
+    options: WaitForImageOptions,
+    wantPresent: boolean,
+    kind: 'wait_for_image' | 'wait_until_gone',
+  ): Promise<SmartWaitResult<FindImageResult | { gone: true; lastMatch: FindImageResult }>> {
+    if (!imagePath) throw new Error(`${kind} requires image path`);
+    const image = await this.openImage(imagePath);
+    try {
+      const result = await this.runWait<FindImageResult | { gone: true; lastMatch: FindImageResult }>(
+        kind,
+        async () => {
+          const frame = await this.captureFrame({
+            gray: true,
+            bgra: false,
+            ttlMs: Math.max(1000, boundedInteger(options.intervalMs, 200, 20, 10000) + 500),
+          });
+          try {
+            const match = await this.findImageObjectInFrame(frame, image, options);
+            if (wantPresent ? match.found : !match.found) {
+              return wantPresent ? match : { gone: true as const, lastMatch: match };
+            }
+            return false;
+          } finally {
+            await this.releaseFrame(frame).catch(() => {});
+          }
+        },
+        options,
+        true,
+      );
+      return Object.assign(result, { locator: { type: 'image', path: imagePath } });
+    } finally {
+      await this.releaseImage(image).catch(() => {});
+    }
+  }
+
+  private async runWait<T>(
+    kind: string,
+    predicate: (attempt: number) => T | false | null | undefined | Promise<T | false | null | undefined>,
+    options: SmartWaitOptions,
+    visual: boolean,
+  ): Promise<SmartWaitResult<T>> {
+    const timeoutMs = boundedInteger(options.timeoutMs, 5000, 0, 300000);
+    const intervalMs = boundedInteger(options.intervalMs, 200, 20, 10000);
+    const stableFrames = boundedInteger(options.stableFrames, 1, 1, 10);
+    const ignoreErrors = options.ignoreErrors ?? visual;
+    const startedAt = Date.now();
+    let attempts = 0;
+    let stableMatches = 0;
+    let lastValue: T | false | null | undefined;
+    let lastError = '';
+
+    const finish = (ok: boolean, timedOut: boolean, cancelled: boolean, value?: T): SmartWaitResult<T> => ({
+      schema: 'smart_wait_result_v1',
+      kind,
+      ok,
+      found: ok,
+      timedOut,
+      cancelled,
+      attempts,
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+      stableMatches,
+      value,
+      lastError,
+    });
+
+    while (true) {
+      if (options.signal?.aborted) return finish(false, false, true);
+      attempts += 1;
+      try {
+        const value = await predicate(attempts);
+        lastValue = value;
+        if (value) {
+          stableMatches += 1;
+          if (stableMatches >= stableFrames) return finish(true, false, false, value);
+        } else {
+          stableMatches = 0;
+        }
+      } catch (error) {
+        stableMatches = 0;
+        lastError = smartWaitErrorText(error);
+        if (options.signal?.aborted) return finish(false, false, true);
+        if (!ignoreErrors) throw error;
+      }
+
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= timeoutMs) break;
+      try {
+        await sleep(Math.min(intervalMs, timeoutMs - elapsedMs), options.signal);
+      } catch (error) {
+        if (options.signal?.aborted) return finish(false, false, true);
+        throw error;
+      }
+    }
+
+    const result = finish(false, true, false, lastValue || undefined);
+    if (options.throwOnTimeout) {
+      throw Object.assign(new Error(`${kind} timed out after ${result.elapsedMs}ms`), { result });
+    }
+    return result;
+  }
+
+  private async fullScreenRegion(): Promise<RegionTuple> {
+    const size = await this.getScreenSize();
+    if (!size) throw new Error('screen size unavailable');
+    return [0, 0, size.width, size.height];
+  }
+
   private async getNativeScale() {
     if (this.coordinateScale && this.coordinateScale > 0) return this.coordinateScale;
     const frame = await this.captureFrame({ gray: true, bgra: false, ttlMs: 1000 });
@@ -351,6 +644,55 @@ export type PickedColor = {
   green: number;
   blue: number;
   hex: string;
+};
+
+export type SmartWaitOptions = {
+  timeoutMs?: number;
+  intervalMs?: number;
+  stableFrames?: number;
+  ignoreErrors?: boolean;
+  throwOnTimeout?: boolean;
+  signal?: AbortSignal;
+};
+
+export type SmartWaitResult<T> = {
+  schema: 'smart_wait_result_v1';
+  kind: string;
+  ok: boolean;
+  found: boolean;
+  timedOut: boolean;
+  cancelled: boolean;
+  attempts: number;
+  elapsedMs: number;
+  stableMatches: number;
+  value?: T;
+  lastError: string;
+  locator?: { type: string; path?: string; text?: string; matchMode?: string; caseSensitive?: boolean };
+};
+
+export type SmartWaitColor = string | [number, number, number] | {
+  red?: number;
+  green?: number;
+  blue?: number;
+  r?: number;
+  g?: number;
+  b?: number;
+};
+
+export type WaitForImageOptions = FindImageOptions & SmartWaitOptions & {
+  maxAgeMs?: number;
+};
+
+export type WaitForTextOptions = SmartWaitOptions & Omit<OcrOptions, 'region' | 'ttlMs'> & {
+  region?: RegionTuple;
+  matchMode?: 'contains' | 'equals' | 'regex';
+  caseSensitive?: boolean;
+};
+
+export type TapWhenVisibleOptions = WaitForImageOptions & {
+  offsetX?: number;
+  offsetY?: number;
+  holdMs?: number;
 };
 
 export type RegionTuple = [number, number, number, number];
@@ -483,6 +825,51 @@ function roundCoord(value: number) {
 
 function isNear(value: number, target: number) {
   return Math.abs(value - target) < 0.05;
+}
+
+function finiteNumber(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
+  return Math.max(minimum, Math.min(maximum, Math.floor(finiteNumber(value, fallback))));
+}
+
+function normalizeSmartWaitColor(color: SmartWaitColor): { red: number; green: number; blue: number } {
+  if (typeof color === 'string') return hexToRgb(color);
+  if (Array.isArray(color)) {
+    return { red: smartWaitColorChannel(color[0]), green: smartWaitColorChannel(color[1]), blue: smartWaitColorChannel(color[2]) };
+  }
+  if (color && typeof color === 'object') {
+    return {
+      red: smartWaitColorChannel(color.red ?? color.r),
+      green: smartWaitColorChannel(color.green ?? color.g),
+      blue: smartWaitColorChannel(color.blue ?? color.b),
+    };
+  }
+  throw new Error('waitForColor requires #RRGGBB or RGB object');
+}
+
+function smartWaitColorChannel(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 255) {
+    throw new Error('waitForColor channels must be between 0 and 255');
+  }
+  return Math.round(parsed);
+}
+
+function smartWaitTextMatches(actual: string, expected: string, options: WaitForTextOptions) {
+  const mode = options.matchMode ?? 'contains';
+  if (mode === 'regex') return new RegExp(expected, options.caseSensitive ? '' : 'i').test(actual);
+  const left = options.caseSensitive ? actual : actual.toLocaleLowerCase();
+  const right = options.caseSensitive ? expected : expected.toLocaleLowerCase();
+  return mode === 'equals' ? left === right : left.includes(right);
+}
+
+function smartWaitErrorText(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error || 'unknown_error');
 }
 
 function parseOcrResponse(parts: string[], diagnostics?: OcrResult['diagnostics']): OcrResult {

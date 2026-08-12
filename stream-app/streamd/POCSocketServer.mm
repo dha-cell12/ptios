@@ -7,6 +7,7 @@
 #import <Photos/Photos.h>
 #import "../../shared/TLinkJSFileHandle.h"
 #import "../../shared/TLinkLicenseVerifier.h"
+#import "../../shared/TLinkSmartWaitPrelude.h"
 #import "../../shared/TLinkVPNDiagnostics.h"
 #include <string.h>
 #include <ctype.h>
@@ -1912,6 +1913,9 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
                 @"runtime": @"javascriptcore",
                 @"runtimeLocation": @"streamd",
                 @"fileHandleAPI": @YES,
+                @"smartWaitAPI": @YES,
+                @"smartWaitVersion": @1,
+                @"smartWaitSchema": @"smart_wait_result_v1",
                 @"fileHandleModes": @[@"r", @"rb", @"r+", @"rb+", @"w", @"wb", @"w+", @"wb+", @"a", @"ab", @"a+", @"ab+"],
                 @"maxOpenFiles": @(kTLinkScriptMaxOpenFiles),
                 @"maxFileTransferBytes": @(kTLinkScriptMaxFileTransferBytes),
@@ -2058,6 +2062,8 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(data.length)} : @{@"ok": @NO, @"path": path, @"error": @"write_json_failed"};
     };
     context[@"device"] = device;
+    [context evaluateScript:TLinkSmartWaitPreludeSource()
+              withSourceURL:[NSURL URLWithString:@"tlinkauto://smart-wait-v1.js"]];
 }
 
 static NSDictionary *TLinkScriptStatusDictionary(void)
@@ -5969,6 +5975,26 @@ static NSData *TLinkHandleHelloStatus(void)
         @"scriptHardwareKey": @(YES),
         @"scriptTapMacro": @(YES),
         @"scriptLogClear": @(YES),
+        @"smartWait": @(YES),
+        @"smartWaitState": @"implemented",
+        @"smartWaitPhase": @1,
+        @"smartWaitSchema": @"smart_wait_result_v1",
+        @"smartWaitClients": @"rootfull_js_trollstore_js_webtango_v1",
+        @"smartWaitLocators": @[@"predicate", @"app", @"color", @"image", @"text", @"image_gone", @"tap_when_visible"],
+        @"smartWaitFrameStrategy": @"fresh_frame_per_attempt_release_always_template_open_once",
+        @"smartWaitTimeoutMaxMs": @300000,
+        @"smartWaitIntervalMinMs": @20,
+        @"smartWaitStableFramesMax": @10,
+        @"smartWaitDeviceValidated": @(NO),
+        @"securePairing": @(NO),
+        @"securePairingState": @"contract_only",
+        @"securePairingPhase": @0,
+        @"securePairingContractVersion": @1,
+        @"securePairingTransport": @"zxsp_json_v1",
+        @"securePairingMode": @"observe_only",
+        @"securePairingLegacyPolicy": @"unchanged_p0",
+        @"securePairingCrypto": @"p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm",
+        @"securePairingDeviceValidated": @(NO),
         @"license": @(YES),
         @"licenseSignedLease": @(YES),
         @"licenseDeviceBound": @(YES),
@@ -6087,6 +6113,16 @@ static NSData *TLinkHandleHelloStatus(void)
             @"model": TLinkModelName(),
         },
         @"script": TLinkScriptStatusDictionary(),
+        @"secure_pairing": @{
+            @"phase": @0,
+            @"state": @"contract_only",
+            @"contract_version": @1,
+            @"transport": @"zxsp_json_v1",
+            @"mode": @"observe_only",
+            @"legacy_policy": @"unchanged_p0",
+            @"crypto": @"p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm",
+            @"device_validated": @0,
+        },
         @"license": licenseStatus,
         @"license_enforcement": licenseEnforcement,
         @"vpn_diagnostics": TLinkVPNTrollStoreDiagnosticsSnapshot(
@@ -8417,6 +8453,8 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" zoomGeometry=radial_linear_interpolation_v1 zoomValidation=preflight_bounds_v1"];
         cap = [cap stringByAppendingString:@" zoomCleanup=all_fingers_up_on_exception_v1 zoomDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" zoomDiagnostics=zoom_runtime_diagnostics_v1 zoomClients=task64_python_js_webtango_v1"];
+        cap = [cap stringByAppendingString:@" smartWaitState=implemented smartWaitPhase=1 smartWaitSchema=smart_wait_result_v1 smartWaitClients=rootfull_js_trollstore_js_webtango_v1 smartWaitLocators=predicate,app,color,image,text,image_gone,tap_when_visible smartWaitFrameStrategy=fresh_frame_per_attempt_release_always_template_open_once smartWaitDeviceValidated=0"];
+        cap = [cap stringByAppendingString:@" securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];
         cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];

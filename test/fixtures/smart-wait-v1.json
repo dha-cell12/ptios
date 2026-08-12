@@ -1,0 +1,58 @@
+{
+  "phase": 1,
+  "state": "implemented",
+  "deviceValidated": false,
+  "apiVersion": 1,
+  "resultSchema": "smart_wait_result_v1",
+  "clients": "rootfull_js_trollstore_js_webtango_v1",
+  "methods": [
+    "waitUntil",
+    "waitForApp",
+    "waitForColor",
+    "waitForImage",
+    "waitForText",
+    "waitUntilGone",
+    "tapWhenVisible"
+  ],
+  "locators": [
+    "predicate",
+    "app",
+    "color",
+    "image",
+    "text",
+    "image_gone",
+    "tap_when_visible"
+  ],
+  "resultFields": [
+    "schema",
+    "kind",
+    "ok",
+    "found",
+    "timedOut",
+    "cancelled",
+    "attempts",
+    "elapsedMs",
+    "stableMatches",
+    "value",
+    "lastError"
+  ],
+  "limits": {
+    "defaultTimeoutMs": 5000,
+    "maximumTimeoutMs": 300000,
+    "defaultIntervalMs": 200,
+    "minimumIntervalMs": 20,
+    "maximumIntervalMs": 10000,
+    "defaultStableFrames": 1,
+    "maximumStableFrames": 10
+  },
+  "resourcePolicy": {
+    "template": "open_once_release_always",
+    "frame": "fresh_per_attempt_release_always",
+    "ocrEngine": "tesseract_task91_stable_default"
+  },
+  "timeoutPolicy": {
+    "attemptAtTimeoutZero": 1,
+    "throwsByDefault": false,
+    "throwOnTimeoutOption": true
+  }
+}

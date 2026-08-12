@@ -824,6 +824,9 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
         NSString *scriptName = [[resourceName stringByDeletingPathExtension] stringByAppendingPathExtension:@"tl"];
         NSString *scriptPath = [suitePath stringByAppendingPathComponent:scriptName];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:scriptPath]) {
+            continue;
+        }
         NSError *writeError = nil;
         if ([self writeCompatibilityScriptAtPath:scriptPath source:source error:&writeError]) {
             installed++;
@@ -845,7 +848,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     BOOL isDir = NO;
     if ([fm fileExistsAtPath:suitePath isDirectory:&isDir] && isDir) {
         NSString *firstScript = [suitePath stringByAppendingPathComponent:@"01 Runtime Storage.tl"];
-        NSString *lastScript = [suitePath stringByAppendingPathComponent:@"08 License Heartbeat.tl"];
+        NSString *lastScript = [suitePath stringByAppendingPathComponent:@"09 Smart Wait.tl"];
         if ([fm fileExistsAtPath:firstScript] && [fm fileExistsAtPath:lastScript]) return;
     }
 

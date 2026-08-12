@@ -1,0 +1,307 @@
+{
+  "phase": 0,
+  "contractVersion": 1,
+  "state": "contract_only",
+  "enforcement": "observe_only",
+  "deviceValidated": false,
+  "baseline": {
+    "rootfull": {
+      "taskEndpoint": "tcp://0.0.0.0:6000",
+      "taskProtocols": ["legacy_line_v0", "zxtp_json_v1"],
+      "peerAuthentication": false,
+      "confidentiality": false,
+      "replayProtection": false
+    },
+    "trollstore": {
+      "taskEndpoint": "tcp://0.0.0.0:6000",
+      "taskProtocols": ["legacy_line_v0"],
+      "peerAuthentication": false,
+      "confidentiality": false,
+      "replayProtection": false,
+      "remoteBridge": "outbound_wss_bearer_transport_only"
+    },
+    "streamPorts": [7001, 7002, 7003, 7004, 7005, 7006],
+    "licenseIsPeerAuthentication": false
+  },
+  "threatModel": {
+    "assets": [
+      "task_control_authority",
+      "screenshots_and_live_video",
+      "ocr_and_script_data",
+      "clipboard_content",
+      "vpn_shell_and_admin_operations",
+      "device_identifiers",
+      "pairing_identity_and_scope_records"
+    ],
+    "trustBoundaries": [
+      "ios_device_and_local_confirmation_ui",
+      "controller_untrusted_until_paired",
+      "lan_usb_tunnel_proxy_relay_and_wss_transport",
+      "rootfull_daemon_springboard_and_trollstore_helpers",
+      "license_worker_entitlement_not_peer_identity"
+    ],
+    "adversaryCapabilities": [
+      "passive_network_capture",
+      "active_mitm_and_message_injection",
+      "replay_reorder_duplicate_and_downgrade",
+      "malformed_or_oversized_frame_delivery",
+      "stolen_relay_bearer_or_expired_bootstrap_reuse"
+    ],
+    "requiredSecurityProperties": [
+      "mutual_peer_authentication",
+      "confidentiality_and_integrity",
+      "forward_secrecy",
+      "replay_and_downgrade_resistance",
+      "local_approval_and_least_privilege_scopes",
+      "revocation_and_secret_redaction"
+    ],
+    "outOfScope": [
+      "compromised_unlocked_ios_kernel",
+      "compromised_paired_controller",
+      "shoulder_surfing_live_pairing_qr",
+      "traffic_analysis_metadata"
+    ]
+  },
+  "outerFrame": {
+    "magicAscii": "ZXSP",
+    "version": 1,
+    "headerBytes": 12,
+    "byteOrder": "big_endian",
+    "fields": [
+      { "name": "magic", "offset": 0, "bytes": 4 },
+      { "name": "version", "offset": 4, "bytes": 1 },
+      { "name": "message_type", "offset": 5, "bytes": 1 },
+      { "name": "flags", "offset": 6, "bytes": 2 },
+      { "name": "body_length", "offset": 8, "bytes": 4 }
+    ],
+    "bodyEncoding": "utf8_json",
+    "binaryEncoding": "base64url_no_padding",
+    "maximumHandshakeBodyBytes": 65536,
+    "maximumFrameBodyBytes": 1048576,
+    "unknownVersionAction": "error_then_close",
+    "malformedFrameAction": "close",
+    "legacyFallbackAfterMagic": false
+  },
+  "messageTypes": {
+    "pair.begin": 1,
+    "pair.challenge": 2,
+    "pair.finish": 3,
+    "pair.complete": 4,
+    "session.open": 16,
+    "session.accept": 17,
+    "secure.data": 32,
+    "secure.close": 33,
+    "error": 127
+  },
+  "pairing": {
+    "bootstrapTransport": "local_ui_qr_or_copy_only",
+    "bootstrapFields": [
+      "contract_version",
+      "pairing_id",
+      "setup_secret",
+      "device_id",
+      "device_identity_fingerprint",
+      "host",
+      "port",
+      "expires_at"
+    ],
+    "setupSecretBytes": 32,
+    "pairingIdBytes": 16,
+    "nonceBytes": 32,
+    "windowSeconds": 120,
+    "singleUse": true,
+    "requiresLocalApproval": true,
+    "networkMayOpenPairingWindow": false,
+    "maximumPendingAttemptsPerWindow": 5,
+    "publicKeyEncoding": "p256_x963_uncompressed_65_bytes",
+    "fingerprint": "base64url_sha256_device_identity_public_key",
+    "signatureEncoding": "ecdsa_p256_sha256_ieee_p1363_64_bytes",
+    "jsonCanonicalization": "rfc8785_jcs",
+    "pairBeginFields": [
+      "v",
+      "type",
+      "pairing_id",
+      "client_name",
+      "client_identity_key",
+      "client_ephemeral_key",
+      "client_nonce",
+      "requested_scopes"
+    ],
+    "pairChallengeFields": [
+      "v",
+      "type",
+      "pairing_id",
+      "device_id",
+      "device_identity_key",
+      "device_ephemeral_key",
+      "device_nonce",
+      "granted_scopes",
+      "expires_at",
+      "device_signature",
+      "device_proof"
+    ],
+    "pairFinishFields": [
+      "v",
+      "type",
+      "pairing_id",
+      "client_signature",
+      "client_proof"
+    ],
+    "pairCompleteFields": [
+      "v",
+      "type",
+      "pairing_id",
+      "client_id",
+      "granted_scopes",
+      "completed_at",
+      "complete_proof"
+    ],
+    "pairKey": {
+      "primitive": "hkdf_sha256",
+      "ikm": "p256_ephemeral_ecdh_shared_secret",
+      "salt": "setup_secret",
+      "infoAscii": "tlinkauto/secure-pairing/v1/pair-proof",
+      "lengthBytes": 32
+    },
+    "transcript": "sha256_ascii_TLINK-SP-V1-PAIR-nul_then_u32be_len_and_jcs_pair_begin_then_u32be_len_and_jcs_pair_challenge_without_proofs",
+    "proof": "hmac_sha256_pair_key_over_role_and_pair_transcript_hash",
+    "proofRoleLabels": {
+      "device": "TLINK-SP-V1-DEVICE\\0",
+      "client": "TLINK-SP-V1-CLIENT\\0",
+      "complete": "TLINK-SP-V1-COMPLETE\\0"
+    },
+    "completeProofInput": "complete_role_label_then_pair_transcript_hash_then_rfc8785_jcs_pair_complete_without_complete_proof",
+    "identityProof": "ecdsa_signature_over_pair_transcript_hash",
+    "approvalOrder": "begin_then_local_approval_then_challenge",
+    "storage": {
+      "deviceIdentity": "keychain_this_device_only_secure_enclave_preferred",
+      "pairedClientRecord": "keychain_this_device_only",
+      "setupSecret": "memory_only_zeroize_on_close"
+    }
+  },
+  "session": {
+    "authentication": "mutual_ecdsa_p256_identity_signatures",
+    "forwardSecrecy": "fresh_p256_ephemeral_ecdh_per_session",
+    "kdf": "hkdf_sha256",
+    "kdfSalt": "sha256_client_nonce_then_device_nonce",
+    "kdfInfoAscii": "tlinkauto/secure-pairing/v1/session",
+    "keyMaterialBytes": 72,
+    "keySplit": [
+      "client_to_device_aes256_key_32",
+      "device_to_client_aes256_key_32",
+      "client_to_device_nonce_prefix_4",
+      "device_to_client_nonce_prefix_4"
+    ],
+    "aead": "aes_256_gcm",
+    "tagBytes": 16,
+    "nonce": "direction_nonce_prefix_4_then_sequence_uint64_be",
+    "sequenceEncoding": "decimal_string_uint64",
+    "initialSequence": "0",
+    "sequencePolicy": "strict_contiguous_per_direction_close_on_duplicate_or_gap",
+    "maximumAgeSeconds": 28800,
+    "maximumFramesPerDirection": 4294967296,
+    "maximumPlaintextBytes": 1000000,
+    "compression": "forbidden_v1",
+    "replayCache": {
+      "sessionOpenTimestampSkewSeconds": 60,
+      "clientNonceTtlSeconds": 600
+    },
+    "sessionOpenFields": [
+      "v",
+      "type",
+      "client_id",
+      "client_ephemeral_key",
+      "client_nonce",
+      "timestamp",
+      "client_signature"
+    ],
+    "sessionAcceptFields": [
+      "v",
+      "type",
+      "session_id",
+      "device_ephemeral_key",
+      "device_nonce",
+      "expires_at",
+      "granted_scopes",
+      "device_signature"
+    ],
+    "secureDataFields": [
+      "v",
+      "type",
+      "session_id",
+      "direction",
+      "sequence",
+      "ciphertext",
+      "tag"
+    ],
+    "authenticatedData": "ascii_TLINK-SP-V1-DATA-nul_then_rfc8785_jcs_metadata_without_ciphertext_or_tag",
+    "clientOpenSignatureInput": "sha256_ascii_TLINK-SP-V1-OPEN-nul_then_u32be_len_and_rfc8785_jcs_session_open_without_client_signature",
+    "deviceAcceptSignatureInput": "sha256_ascii_TLINK-SP-V1-ACCEPT-nul_then_u32be_len_and_rfc8785_jcs_complete_session_open_then_u32be_len_and_rfc8785_jcs_session_accept_without_device_signature",
+    "plaintextTypes": ["task.request", "task.response"],
+    "taskRequestFields": ["id", "task", "args"],
+    "taskResponseFields": ["id", "ok", "data", "error"],
+    "fireAndForgetTasks": [10, 14, 15, 16, 17, 19, 20, 36, 38, 39, 40]
+  },
+  "authorization": {
+    "scopeVocabulary": ["observe", "automation", "stream", "script", "admin", "shell"],
+    "effectivePermission": "intersection_of_pairing_scope_and_license_feature",
+    "defaultRequestedScopes": ["observe"],
+    "scopeEscalation": "local_ui_reapproval_required",
+    "revocation": "local_ui_immediate_new_session_denial_and_active_session_close"
+  },
+  "stableErrors": [
+    "unsupported_secure_pairing_version",
+    "invalid_secure_pairing_frame",
+    "pairing_window_closed",
+    "pairing_failed",
+    "pairing_approval_denied",
+    "client_revoked",
+    "session_replay",
+    "session_expired",
+    "bad_sequence",
+    "decrypt_failed",
+    "scope_denied",
+    "secure_pairing_required"
+  ],
+  "migration": {
+    "phase0": "contract_only_observe_no_behavior_change",
+    "phase1": "optional_pairing_and_session_telemetry_legacy_unchanged",
+    "phase2": "protected_control_and_stream_ticket_clients",
+    "phase3": "explicit_opt_in_enforcement_then_release_default",
+    "unauthenticatedAllowlistWhenEnforced": [97, 99],
+    "silentDowngradeAfterSecureCapabilityObserved": false
+  },
+  "requiredCapabilityFields": {
+    "securePairingState": "contract_only",
+    "securePairingPhase": "0",
+    "securePairingContractVersion": "1",
+    "securePairingTransport": "zxsp_json_v1",
+    "securePairingMode": "observe_only",
+    "securePairingLegacyPolicy": "unchanged_p0",
+    "securePairingCrypto": "p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm",
+    "securePairingDeviceValidated": "0"
+  },
+  "testVectors": {
+    "outerErrorFrame": {
+      "messageType": 127,
+      "flags": 0,
+      "bodyUtf8": "{\"v\":1,\"type\":\"error\"}",
+      "frameHex": "5a585350017f0000000000167b2276223a312c2274797065223a226572726f72227d"
+    },
+    "hkdfSha256Rfc5869Case1": {
+      "ikmHex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+      "saltHex": "000102030405060708090a0b0c",
+      "infoHex": "f0f1f2f3f4f5f6f7f8f9",
+      "length": 42,
+      "okmHex": "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
+    },
+    "aes256GcmEmpty": {
+      "keyHex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "nonceHex": "000000000000000000000000",
+      "plaintextHex": "",
+      "aadHex": "",
+      "ciphertextHex": "",
+      "tagHex": "530f8afbc74536b9a963b4f1c4cb738b"
+    }
+  }
+}

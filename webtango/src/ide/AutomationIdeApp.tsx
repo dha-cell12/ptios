@@ -35,6 +35,27 @@ type MonacoEditor = Parameters<OnMount>[0];
 type Monaco = Parameters<OnMount>[1];
 
 const automationApiTypes = `
+type SmartWaitOptions = {
+  timeoutMs?: number;
+  intervalMs?: number;
+  stableFrames?: number;
+  ignoreErrors?: boolean;
+  throwOnTimeout?: boolean;
+  signal?: AbortSignal;
+};
+type SmartWaitResult<T> = {
+  schema: "smart_wait_result_v1";
+  kind: string;
+  ok: boolean;
+  found: boolean;
+  timedOut: boolean;
+  cancelled: boolean;
+  attempts: number;
+  elapsedMs: number;
+  stableMatches: number;
+  value?: T;
+  lastError: string;
+};
 declare const device: {
   tap(x: number, y: number, holdMs?: number): Promise<void>;
   swipe(x1: number, y1: number, x2: number, y2: number, durationMs?: number): Promise<void>;
@@ -49,6 +70,10 @@ declare const device: {
   screenshot(path: string, region?: [number, number, number, number]): Promise<string>;
   pickColor(x: number, y: number): Promise<{ red: number; green: number; blue: number; hex: string }>;
   colorEquals(x: number, y: number, hex: string, tolerance?: number): Promise<boolean>;
+  frontMostAppId(): Promise<string>;
+  waitUntil<T>(predicate: (attempt: number) => T | false | null | undefined | Promise<T | false | null | undefined>, options?: SmartWaitOptions): Promise<SmartWaitResult<T>>;
+  waitForApp(bundleId: string, options?: SmartWaitOptions): Promise<SmartWaitResult<string>>;
+  waitForColor(x: number, y: number, color: string | [number, number, number] | { red: number; green: number; blue: number }, options?: SmartWaitOptions & { tolerance?: number }): Promise<SmartWaitResult<{ red: number; green: number; blue: number; hex: string }>>;
   findImage(imagePath: string, options?: {
     region?: [number, number, number, number];
     acceptable?: number;
@@ -57,6 +82,25 @@ declare const device: {
     scaleStep?: number;
     pixelSkip?: number;
   }): Promise<{ found: boolean; x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>;
+  waitForImage(imagePath: string, options?: SmartWaitOptions & {
+    region?: [number, number, number, number];
+    acceptable?: number;
+    scaleMin?: number;
+    scaleMax?: number;
+    scaleStep?: number;
+    pixelSkip?: number;
+  }): Promise<SmartWaitResult<{ found: boolean; x: number; y: number; width: number; height: number; centerX: number; centerY: number; score: number }>>;
+  waitUntilGone(imagePath: string, options?: SmartWaitOptions & {
+    region?: [number, number, number, number];
+    acceptable?: number;
+  }): Promise<SmartWaitResult<unknown> & { gone: boolean }>;
+  tapWhenVisible(imagePath: string, options?: SmartWaitOptions & {
+    region?: [number, number, number, number];
+    acceptable?: number;
+    offsetX?: number;
+    offsetY?: number;
+    holdMs?: number;
+  }): Promise<SmartWaitResult<unknown> & { tapped: boolean; tapX?: number; tapY?: number }>;
   captureImage(region: [number, number, number, number]): Promise<{ id: number; width: number; height: number; region?: [number, number, number, number] }>;
   findImageObject(image: { id: number } | number, options?: {
     region?: [number, number, number, number];
@@ -74,6 +118,15 @@ declare const device: {
     scaleUp?: number;
     whitelist?: string;
   }): Promise<{ text: string; raw: string[] }>;
+  waitForText(text: string, options?: SmartWaitOptions & {
+    region?: [number, number, number, number];
+    lang?: string;
+    psm?: number;
+    scaleUp?: number;
+    whitelist?: string;
+    matchMode?: "contains" | "equals" | "regex";
+    caseSensitive?: boolean;
+  }): Promise<SmartWaitResult<{ text: string; raw: string[] }>>;
   request(task: number, ...args: Array<string | number>): Promise<{ ok: boolean; parts: string[]; raw: string }>;
 };
 declare function sleep(ms: number): Promise<void>;
@@ -119,6 +172,16 @@ const completionSnippets = [
     insertText: 'const ok = await device.colorEquals(${1:x}, ${2:y}, "${3:#FFFFFF}", ${4:10});',
   },
   {
+    label: 'device.waitForApp',
+    detail: 'Wait until an app becomes foreground',
+    insertText: 'const app = await device.waitForApp("${1:com.example.app}", { timeoutMs: ${2:10000}, signal });\nassert(app.ok, `App wait failed: ${app.lastError}`);',
+  },
+  {
+    label: 'device.waitForColor',
+    detail: 'Wait for a stable color match',
+    insertText: 'const color = await device.waitForColor(${1:x}, ${2:y}, "${3:#FFFFFF}", { tolerance: ${4:10}, stableFrames: ${5:2}, timeoutMs: ${6:10000}, signal });\nassert(color.ok, "Color not found");',
+  },
+  {
     label: 'device.findImage',
     detail: 'Find template image in region',
     insertText: 'const found = await device.findImage("${1:/var/mobile/Library/TLinkauto/templates/template.png}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  acceptable: ${6:0.9},\n  scaleMin: ${7:1},\n  scaleMax: ${8:1},\n  pixelSkip: ${9:1}\n});\nlog(found);',
@@ -129,9 +192,29 @@ const completionSnippets = [
     insertText: 'const template = await device.captureImage([${1:x}, ${2:y}, ${3:w}, ${4:h}]);\ntry {\n  const found = await device.findImageObject(template, {\n    region: [${5:0}, ${6:0}, ${7:0}, ${8:0}],\n    acceptable: ${9:0.9},\n    scaleMin: ${10:1},\n    scaleMax: ${11:1},\n    pixelSkip: ${12:1}\n  });\n  log(found);\n} finally {\n  await device.releaseImage(template);\n}',
   },
   {
+    label: 'device.waitForImage',
+    detail: 'Wait for a stable template match using fresh frames',
+    insertText: 'const match = await device.waitForImage("${1:/var/mobile/Library/TLinkauto/templates/button.png}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  acceptable: ${6:0.9},\n  stableFrames: ${7:2},\n  timeoutMs: ${8:10000},\n  signal\n});\nassert(match.ok, `Image wait failed: ${match.lastError}`);',
+  },
+  {
+    label: 'device.tapWhenVisible',
+    detail: 'Wait for an image and tap its center',
+    insertText: 'const tapped = await device.tapWhenVisible("${1:/var/mobile/Library/TLinkauto/templates/button.png}", { timeoutMs: ${2:10000}, stableFrames: ${3:2}, signal });\nassert(tapped.ok && tapped.tapped, "Target was not tapped");',
+  },
+  {
+    label: 'device.waitUntilGone',
+    detail: 'Wait until a template disappears',
+    insertText: 'const gone = await device.waitUntilGone("${1:/var/mobile/Library/TLinkauto/templates/loading.png}", { timeoutMs: ${2:15000}, stableFrames: ${3:2}, signal });\nassert(gone.ok && gone.gone, "Loading indicator is still visible");',
+  },
+  {
     label: 'device.ocr',
     detail: 'Run Tesseract OCR on region',
     insertText: 'const text = await device.ocr({\n  region: [${1:x}, ${2:y}, ${3:w}, ${4:h}],\n  lang: "${5:vie}",\n  psm: ${6:7},\n  scaleUp: ${7:2}\n});\nlog(text);',
+  },
+  {
+    label: 'device.waitForText',
+    detail: 'Wait for OCR text with contains, equals or regex matching',
+    insertText: 'const text = await device.waitForText("${1:Đăng nhập}", {\n  region: [${2:x}, ${3:y}, ${4:w}, ${5:h}],\n  lang: "${6:vie}",\n  matchMode: "${7:contains}",\n  stableFrames: ${8:2},\n  timeoutMs: ${9:10000},\n  signal\n});\nassert(text.ok, `Text wait failed: ${text.lastError}`);',
   },
   {
     label: 'device.request',

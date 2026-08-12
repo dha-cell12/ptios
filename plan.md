@@ -173,6 +173,12 @@ text/base64, seek/tell/flush/close, are bundle-relative, and are automatically
 closed at the end of every script evaluation.
 
 Known unresolved issues / deferred investigation:
+- Smart Wait v1 is implemented across rootfull JavaScriptCore, TrollStore
+  JavaScriptCore, and WebTango with one shared result schema, bounded timeout,
+  cancellation, consecutive stable matches, and deterministic image/frame
+  cleanup. Task `60/97`, packaged smoke scripts, a behavioral Node checker and
+  the WebTango IDE expose the feature. Device validation of real image and OCR
+  locators remains pending; see `docs/smart-wait-visual-locator-v1.md`.
 - VPN P0 now freezes legacy task `59` as contract v1, reserves action `2` for
   future base64-JSON diagnostics, and reports the current rootfull `stub` and
   TrollStore `interface_probe` states through task `60/97`. No entitlement or
@@ -273,6 +279,12 @@ Known unresolved issues / deferred investigation:
 - Certificate pinning and rootfull runtime enforcement remain deferred
   hardening work; see `docs/license-cloudflare-worker.md`.
 - Screenshot task 29 now supports action 1 file capture plus action 2 save-to-album and action 3 clear-album using the `TLinkauto` Photos album. Socket tasks must not trigger Photos permission UI; StreamControl Settings has `Photo Access` for foreground authorization. Clear album removes assets from the `TLinkauto` album only, not from the whole photo library, to avoid iOS delete-confirmation popups.
+- Secure Pairing P0 freezes the rootfull/TrollStore plaintext exposure baseline,
+  threat model, and additive `ZXSP` wire contract v1. It specifies a local-UI
+  256-bit QR bootstrap, mutual P-256 identity plus ephemeral ECDH, HKDF-SHA256,
+  AES-256-GCM sessions, strict replay/downgrade rules, pairing scopes, and
+  revocation. P0 is capability-only (`contract_only`, `observe_only`) and does
+  not alter legacy task/H264 behavior; see `docs/secure-pairing-p0-baseline.md`.
 
 Nói gọn: nên biến stream-app thành “TLinkauto TrollStore runtime” chính thức, rồi kéo từng module từ pccontrol sang theo thứ tự: touch/capture trước, image/OCR tiếp, script runtime sau, cuối cùng mới đến admin/process/connectivity.
 **UI Parity là tiêu chí bắt buộc** để người dùng dễ sử dụng và chuyển đổi mượt mà.

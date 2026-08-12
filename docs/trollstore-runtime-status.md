@@ -24,6 +24,20 @@ TrollStore runtime.
   editor types/completion, and Zoom in/out snippet actions. Capability remains
   `experimental` with device validation pending; see
   `docs/zoom-p2-observability-webtango.md`.
+- Smart Wait v1 installs the same bounded `waitUntil`, `waitForApp`,
+  `waitForColor`, `waitForImage`, `waitForText`, `waitUntilGone`, and
+  `tapWhenVisible` APIs in rootfull JavaScriptCore, TrollStore JavaScriptCore,
+  and WebTango. Image locators keep one template handle for the wait and use a
+  fresh, always-released frame per attempt; text locators retain stable task 91
+  Tesseract as the OCR engine. The implementation is present while device
+  promotion remains pending; see `docs/smart-wait-visual-locator-v1.md`.
+- Secure Pairing P0 freezes the current unauthenticated network baseline and
+  additive `ZXSP` JSON wire contract v1 for rootfull and TrollStore. It defines
+  local-UI QR bootstrap, mutual P-256 identity/ephemeral proof, AES-256-GCM
+  sessions, replay rules, scopes, revocation, and downgrade policy. Runtime
+  behavior remains `contract_only`/`observe_only`; legacy clients are unchanged
+  and no pairing claim is device-validated. See
+  `docs/secure-pairing-p0-baseline.md`.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.

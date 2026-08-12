@@ -11,7 +11,9 @@ on:
       - 'docs/license-*.md'
       - 'docs/vpn-*.md'
       - 'docs/zoom-*.md'
+      - 'docs/secure-pairing-*.md'
       - 'test/fixtures/zoom-*.json'
+      - 'test/fixtures/secure-pairing-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
@@ -24,7 +26,9 @@ on:
       - 'docs/license-*.md'
       - 'docs/vpn-*.md'
       - 'docs/zoom-*.md'
+      - 'docs/secure-pairing-*.md'
       - 'test/fixtures/zoom-*.json'
+      - 'test/fixtures/secure-pairing-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
@@ -164,6 +168,12 @@ jobs:
           test -f scripts/check-zoom-p2-observability.mjs
           test -f scripts/Test-TLinkZoomPhase2.ps1
           test -f test/fixtures/zoom-p2-observability-v1.json
+          test -f scripts/check-smart-wait-v1.mjs
+          test -f scripts/Test-TLinkSmartWaitV1.ps1
+          test -f test/fixtures/smart-wait-v1.json
+          test -f scripts/check-secure-pairing-p0.mjs
+          test -f scripts/Test-TLinkSecurePairingPhase0.ps1
+          test -f test/fixtures/secure-pairing-contract-v1.json
           test -f scripts/check-vpn-p0-baseline.mjs
           test -f scripts/check-vpn-p1-diagnostics.mjs
           test -f scripts/check-vpn-p2-rootfull-broker.mjs
@@ -180,6 +190,8 @@ jobs:
           test -f docs/zoom-p0-baseline.md
           test -f docs/zoom-p1-multitouch.md
           test -f docs/zoom-p2-observability-webtango.md
+          test -f docs/smart-wait-visual-locator-v1.md
+          test -f docs/secure-pairing-p0-baseline.md
           test -f docs/vpn-p0-baseline.md
           test -f docs/vpn-p1-diagnostics.md
           test -f docs/vpn-p2-rootfull-broker.md
@@ -196,6 +208,8 @@ jobs:
           node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-zoom-p1-multitouch.mjs
           node scripts/check-zoom-p2-observability.mjs
+          node scripts/check-smart-wait-v1.mjs
+          node scripts/check-secure-pairing-p0.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
@@ -214,6 +228,7 @@ jobs:
           test -f stream-app/app/BackgroundServiceScheduler.h
           test -f stream-app/app/BackgroundServiceScheduler.mm
           test -f 'stream-app/app/CompatibilityExamples/01 Runtime Storage.js'
+          test -f 'stream-app/app/CompatibilityExamples/09 Smart Wait.js'
           test -f 'stream-app/app/CompatibilityExamples/02 Clipboard Keyboard.js'
           test -f 'stream-app/app/CompatibilityExamples/03 Color Frame.js'
           test -f 'stream-app/app/CompatibilityExamples/04 Screenshot Image.js'
@@ -726,6 +741,7 @@ jobs:
           grep 'Payload/StreamControl.app/CompatibilityExamples/06 App Process Shell.js' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/07 File Handle.js' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/CompatibilityExamples/08 License Heartbeat.js' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/CompatibilityExamples/09 Smart Wait.js' stream-app/packages/StreamControl.tipa.contents.txt
 
           APP="stream-app/app/.theos/_/Applications/StreamControl.app"
           if [ ! -d "$APP" ]; then
@@ -742,6 +758,7 @@ jobs:
           test -f "$APP/CompatibilityExamples/06 App Process Shell.js"
           test -f "$APP/CompatibilityExamples/07 File Handle.js"
           test -f "$APP/CompatibilityExamples/08 License Heartbeat.js"
+          test -f "$APP/CompatibilityExamples/09 Smart Wait.js"
 
           echo "--- StreamControl entitlements ---"
           ldid -e "$APP/StreamControl" || true

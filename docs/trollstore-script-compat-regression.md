@@ -26,6 +26,8 @@ Expected markers:
 - `scriptImageAPI`
 - `scriptOCRAPI`
 - `scriptAppAPI`
+- `smartWaitState=implemented`
+- `smartWaitSchema=smart_wait_result_v1`
 - `imageMatch=naive_rgba`
 - `ocr=tesseract_true_static_libs_memory_fallback`
 
@@ -48,10 +50,12 @@ Packaged example scripts:
 
 - On first launch after install, the root `Scripts` tab seeds a
   `Compatibility Tests` folder automatically when it is missing. The folder
-  contains eight editable `.tl` bundles covering runtime/storage, file handles,
+  contains nine editable `.tl` bundles covering runtime/storage, file handles,
   license heartbeat, background
   clipboard, color/frame, screenshot/image, Tesseract OCR, and
-  app/process/shell.
+  app/process/shell, plus Smart Wait stable-match and timeout behavior.
+  Updating an existing eight-script suite adds only the missing Smart Wait
+  bundle and does not overwrite edited compatibility scripts.
 - In `Scripts`, tap `+` then `Compatibility Suite` only when you want to
   install another copy of the packaged suite manually.
 - Every script logs `compat/<group> start`, normalized result objects, and a
@@ -70,6 +74,7 @@ where available:
 - Color/frame: `pickColor`, `findColor`, `isColors`, `findMultiColor`, `captureFrame`, `releaseFrame`, `releaseAllFrames`, `framePickColor`, `framePickColors`, `frameFindColor`, `frameIsColors`, `frameFindMultiColor`
 - Image: `openImage`, `captureImage`, `releaseImage`, `findImageInFrame`, `matchTemplate`
 - OCR: `ocrLanguages`, `ocrFrame`, `ocr`
+- Smart Wait: `waitUntil`, `waitForApp`, `waitForColor`, `waitForImage`, `waitForText`, `waitUntilGone`, `tapWhenVisible`
 - App/process: `openApp`, `killApp`, `clearAppData`, `appState`, `appInfo`, `appPid`, `frontMostAppId`, `frontMostPid`, `appPaths`, `listBundles`, `openUrl`
 - Paths/info: `rootDir`, `currentDir`, `botPath`, `info`, `batteryInfo`, `getScreenSize`
 - Raw task/storage: `task`, `taskResult`, `runTask`, `readText`, `writeText`, `readJSON`, `writeJSON`, `fileExists`, `deleteFile`, `openFile`
@@ -117,6 +122,15 @@ License heartbeat smoke:
 4. The script log must contain `license_revoked_during_execution`; its open
    file handle is closed by the runtime. Reactivation permits a new run without
    restarting `streamd`.
+
+Smart Wait smoke:
+
+1. Open `Scripts > Compatibility Tests > 09 Smart Wait.tl` and tap Play.
+2. Confirm the log reports `stable.ok=true`, `stable.attempts=3`, and
+   `stable.stableMatches=2`.
+3. Confirm the zero-timeout check reports `timedOut=true` and `attempts=1`.
+4. Foreground app and current-screen color checks must finish without a leaked
+   frame/image handle or a non-empty `last_error`.
 
 Task `249` should contain `clipboard_backend_ready`, `version=12` in its decoded
 diagnostic, and `daemon_direct_write=1` after a successful task `247`. Task

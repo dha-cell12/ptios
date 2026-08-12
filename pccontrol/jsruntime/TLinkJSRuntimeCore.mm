@@ -1,5 +1,6 @@
 #import "TLinkJSRuntimeCore.h"
 #import "TLinkautoDeviceBridge.h"
+#import "../../shared/TLinkSmartWaitPrelude.h"
 #import <os/lock.h>
 #include <atomic>
 #include <dlfcn.h>
@@ -540,6 +541,8 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     [context evaluateScript:consolePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://console-prelude.js"]];
     [context evaluateScript:modulePrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://module-prelude.js"]];
     [context evaluateScript:helperPrelude withSourceURL:[NSURL URLWithString:@"tlinkauto://helper-prelude.js"]];
+    [context evaluateScript:TLinkSmartWaitPreludeSource()
+              withSourceURL:[NSURL URLWithString:@"tlinkauto://smart-wait-v1.js"]];
     NSURL *sourceURL = [NSURL fileURLWithPath:scriptPath ?: @"script.js"];
     [context evaluateScript:script withSourceURL:sourceURL];
     BOOL success = !context.exception && ![self isAborted];

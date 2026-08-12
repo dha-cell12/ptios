@@ -94,6 +94,7 @@ embed: streamd clipboardd vpnagent app privhelper
 	test -f "$$APP/CompatibilityExamples/01 Runtime Storage.js"; \
 	test -f "$$APP/CompatibilityExamples/06 App Process Shell.js"; \
 	test -f "$$APP/CompatibilityExamples/07 File Handle.js"; \
+	test -f "$$APP/CompatibilityExamples/09 Smart Wait.js"; \
 	echo "Embedded streamd, clipboardd, and vpnagent into $$APP"
 
 package: embed
@@ -114,6 +115,7 @@ package: embed
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/LicenseConfig.plist"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/01 Runtime Storage.js"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/07 File Handle.js"; \
+	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/09 Smart Wait.js"; \
 	( cd _payload && zip -qr9 ../$(TIPA) Payload ); \
 	echo "Created $(TIPA)"
 
