@@ -52,6 +52,9 @@ assert.match(implementation, /event_poll_capacity_reached/);
 assert.match(implementation, /@"next_cursor": @\(cursor\)/);
 assert.match(implementation, /event_request_invalid/);
 assert.match(implementation, /event_topic_invalid/);
+assert.match(implementation, /TLinkEventParseUnsignedCursor/);
+assert.match(implementation, /strtoull\(utf8, &end, 10\)/);
+assert.doesNotMatch(implementation, /\[parts\[0\] unsignedLongLongValue\]/);
 
 for (const makefile of [rootMakefile, daemonMakefile, trollMakefile]) {
   assert.match(makefile, /TLinkEventChannel\.mm/);

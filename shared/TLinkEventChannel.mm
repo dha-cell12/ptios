@@ -2,7 +2,9 @@
 
 #include <atomic>
 #include <dispatch/dispatch.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <stdint.h>
@@ -32,6 +34,24 @@ static NSObject *TLinkEventProcessLock(void)
 static uint64_t TLinkEventNowMs(void)
 {
     return (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
+}
+
+static BOOL TLinkEventParseUnsignedCursor(NSString *text, uint64_t *value)
+{
+    if (!value) return NO;
+    if (text.length == 0) {
+        *value = 0;
+        return YES;
+    }
+
+    const char *utf8 = [text UTF8String];
+    if (!utf8) return NO;
+    char *end = NULL;
+    errno = 0;
+    unsigned long long parsed = strtoull(utf8, &end, 10);
+    if (errno == ERANGE || end == utf8 || !end || *end != '\0') return NO;
+    *value = (uint64_t)parsed;
+    return YES;
 }
 
 NSString *TLinkEventChannelRootPath(void)
@@ -297,7 +317,12 @@ NSDictionary *TLinkEventChannelPollBody(NSString *body, NSString **error)
         if (error) *error = @"event_request_invalid";
         return @{};
     }
-    uint64_t cursor = parts.count > 0 ? [parts[0] unsignedLongLongValue] : 0;
+    NSString *cursorText = parts.count > 0 ? parts[0] : @"";
+    uint64_t cursor = 0;
+    if (!TLinkEventParseUnsignedCursor(cursorText, &cursor)) {
+        if (error) *error = @"event_request_invalid";
+        return @{};
+    }
     NSInteger requestedTimeout = parts.count > 1 ? [parts[1] integerValue] : (NSInteger)kTLinkEventPollDefaultTimeoutMs;
     NSInteger requestedMax = parts.count > 2 ? [parts[2] integerValue] : (NSInteger)kTLinkEventPollDefaultMaxEvents;
     if (requestedTimeout < 0 || requestedTimeout > (NSInteger)kTLinkEventPollMaxTimeoutMs) {
