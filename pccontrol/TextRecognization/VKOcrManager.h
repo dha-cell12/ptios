@@ -1,5 +1,5 @@
 #ifndef VKOcrManager_H
-#define VKOcrManager_H'
+#define VKOcrManager_H
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>

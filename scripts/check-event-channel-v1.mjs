@@ -67,6 +67,8 @@ assert.ok(!JSON.parse(rootLicensePolicy).exempt_tasks.includes(95));
 assert.match(rootServer, /zx_deferLegacyEventPoll/);
 assert.match(rootServer, /zx_deferJSONEventPoll/);
 assert.match(rootServer, /eventPollPending/);
+assert.doesNotMatch(rootServer, /eventPollPending\s*=\s*(?:YES|NO)/);
+assert.doesNotMatch(rootServer, /@"ok":\s*@(?:YES|NO)/);
 assert.match(rootServer, /TLinkRootfullLicenseTaskAllowed\(95/);
 assert.match(rootServer, /ctx\.writeStream = NULL/);
 assert.match(rootServer, /taskType == 95/);

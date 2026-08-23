@@ -75,6 +75,7 @@ const [
   pythonClient,
   collector,
   baselineDoc,
+  ocrHeader,
 ] = await Promise.all([
   read("stream-app/streamd/POCSocketServer.mm"),
   read("stream-app/streamd/POCSocketServer.mm"),
@@ -85,7 +86,11 @@ const [
   read("webtango/tlinkauto/client.py"),
   read("scripts/Collect-TLinkOCRBaseline.ps1"),
   read("docs/ocr-p0-baseline.md"),
+  read("pccontrol/TextRecognization/VKOcrManager.h"),
 ]);
+
+assert.match(ocrHeader, /^#ifndef VKOcrManager_H\r?\n#define VKOcrManager_H\r?$/m);
+assert.doesNotMatch(ocrHeader, /#define VKOcrManager_H'/);
 
 assert.match(trollServer, /if \(taskType == 27\)[\s\S]*?TLinkHandleVisionOCR\(body\)/);
 assert.match(trollServer, /if \(taskType == 91\)[\s\S]*?TLinkHandleTesseractOCRCompat\(body\)/);
