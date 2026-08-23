@@ -69,6 +69,8 @@ declare const device: {
   getScreenSize(): Promise<{ width: number; height: number } | null>;
   screenshot(path: string, region?: [number, number, number, number]): Promise<string>;
   getRunHistory(): Promise<{ schema: 'run_history_v1'; total_count: number; failed_count: number; runs: Array<{ run_id: string; state: string; duration_ms: number; error: string; failure_evidence: unknown }> }>;
+  pollEvents(cursor?: number, options?: { timeoutMs?: number; maxEvents?: number; topics?: string[] }): Promise<{ schema: 'event_channel_v1'; next_cursor: number; gap: boolean; timed_out: boolean; events: Array<{ sequence: number; topic: string; type: string; payload: Record<string, unknown> }> }>;
+  subscribeEvents(listener: (event: { sequence: number; topic: string; type: string; payload: Record<string, unknown> }) => void | Promise<void>, options?: { cursor?: number; timeoutMs?: number; maxEvents?: number; topics?: string[]; onGap?: (batch: { oldest_cursor: number; latest_cursor: number }) => void | Promise<void>; onError?: (error: Error) => void }): () => void;
   pickColor(x: number, y: number): Promise<{ red: number; green: number; blue: number; hex: string }>;
   colorEquals(x: number, y: number, hex: string, tolerance?: number): Promise<boolean>;
   frontMostAppId(): Promise<string>;
@@ -166,6 +168,11 @@ const completionSnippets = [
     label: 'device.getRunHistory',
     detail: 'Read persistent script runs and failure evidence from task 60',
     insertText: 'const history = await device.getRunHistory();\nlog(history.runs);',
+  },
+  {
+    label: 'device.subscribeEvents',
+    detail: 'Subscribe to resumable asynchronous device events',
+    insertText: 'const unsubscribe = device.subscribeEvents((event) => {\n  log(event);\n}, { topics: ["${1:script.run}"], cursor: ${2:0} });\n// call unsubscribe() when finished',
   },
   {
     label: 'device.pickColor',

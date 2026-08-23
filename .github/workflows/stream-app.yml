@@ -13,9 +13,13 @@ on:
       - 'docs/zoom-*.md'
       - 'docs/secure-pairing-*.md'
       - 'docs/run-history-*.md'
+      - 'docs/event-channel-*.md'
+      - 'docs/adaptive-streaming-*.md'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
+      - 'test/fixtures/event-channel-*.json'
+      - 'test/fixtures/adaptive-streaming-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   pull_request:
@@ -30,9 +34,13 @@ on:
       - 'docs/zoom-*.md'
       - 'docs/secure-pairing-*.md'
       - 'docs/run-history-*.md'
+      - 'docs/event-channel-*.md'
+      - 'docs/adaptive-streaming-*.md'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
+      - 'test/fixtures/event-channel-*.json'
+      - 'test/fixtures/adaptive-streaming-*.json'
       - 'tlinkauto-jsd/**'
       - '.github/workflows/stream-app.yml'
   workflow_dispatch:
@@ -176,8 +184,15 @@ jobs:
           test -f scripts/Test-TLinkSmartWaitV1.ps1
           test -f test/fixtures/smart-wait-v1.json
           test -f scripts/check-run-history-v1.mjs
+          test -f scripts/check-trollstore-ui-refresh.mjs
           test -f scripts/Test-TLinkRunHistoryV1.ps1
           test -f test/fixtures/run-history-failure-evidence-v1.json
+          test -f scripts/check-event-channel-v1.mjs
+          test -f scripts/Test-TLinkEventChannelV1.ps1
+          test -f test/fixtures/event-channel-v1.json
+          test -f scripts/check-adaptive-streaming-v1.mjs
+          test -f scripts/Test-TLinkAdaptiveStreamingV1.ps1
+          test -f test/fixtures/adaptive-streaming-v1.json
           test -f scripts/check-secure-pairing-p0.mjs
           test -f scripts/Test-TLinkSecurePairingPhase0.ps1
           test -f test/fixtures/secure-pairing-contract-v1.json
@@ -199,6 +214,8 @@ jobs:
           test -f docs/zoom-p2-observability-webtango.md
           test -f docs/smart-wait-visual-locator-v1.md
           test -f docs/run-history-failure-evidence-v1.md
+          test -f docs/event-channel-v1.md
+          test -f docs/adaptive-streaming-self-healing-v1.md
           test -f docs/secure-pairing-p0-baseline.md
           test -f docs/vpn-p0-baseline.md
           test -f docs/vpn-p1-diagnostics.md
@@ -218,6 +235,9 @@ jobs:
           node scripts/check-zoom-p2-observability.mjs
           node scripts/check-smart-wait-v1.mjs
           node scripts/check-run-history-v1.mjs
+          node scripts/check-trollstore-ui-refresh.mjs
+          node scripts/check-event-channel-v1.mjs
+          node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-secure-pairing-p0.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
@@ -234,6 +254,10 @@ jobs:
           test -f stream-app/app/ImageViewerViewController.mm
           test -f stream-app/app/PlaySettingsViewController.mm
           test -f stream-app/app/SettingsViewController.mm
+          test -f stream-app/app/DashboardViewController.mm
+          test -f stream-app/app/ServiceLogViewController.mm
+          test -f stream-app/app/TLinkLogStore.mm
+          test -f stream-app/app/TLinkTheme.mm
           test -f stream-app/app/BackgroundServiceScheduler.h
           test -f stream-app/app/BackgroundServiceScheduler.mm
           test -f 'stream-app/app/CompatibilityExamples/01 Runtime Storage.js'
@@ -271,7 +295,8 @@ jobs:
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/AppDelegate.mm
           grep -q 'applicationDidEnterBackground' stream-app/app/AppDelegate.mm
           grep -q 'tabs.selectedIndex = 0' stream-app/app/AppDelegate.mm
-          grep -Fq 'tabs.viewControllers = @[scriptsNav, settingsNav]' stream-app/app/AppDelegate.mm
+          grep -Fq 'tabs.viewControllers = @[dashboardNav, scriptsNav, settingsNav]' stream-app/app/AppDelegate.mm
+          grep -q 'applyCurrentAppearanceStyleToWindow' stream-app/app/AppDelegate.mm
           if grep -Eq '(^|[[:space:]])ViewController\.mm([[:space:]]|$)' stream-app/app/Makefile; then
             echo "Legacy service tab controller must not be compiled."
             exit 1
@@ -331,8 +356,10 @@ jobs:
             node --check "$script"
           done
           grep -q 'QuartzCore' stream-app/app/Makefile
-          grep -q 'Ensure Service' stream-app/app/ViewController.mm
-          grep -q 'Restart streamd' stream-app/app/ViewController.mm
+          grep -q 'Ensure service' stream-app/app/DashboardViewController.mm
+          grep -q 'Restart streamd' stream-app/app/DashboardViewController.mm
+          grep -q 'TLinkLogStoreDidAppendNotification' stream-app/app/TLinkLogStore.mm
+          grep -q 'presentAppearancePicker' stream-app/app/SettingsViewController.mm
           grep -q 'ensureService' stream-app/app/StreamSupervisor.h
           grep -q 'ensureServiceLockedWithReplace' stream-app/app/StreamSupervisor.mm
           grep -q 'kSCRequiredStreamdServiceMarker' stream-app/app/StreamSupervisor.mm
@@ -705,6 +732,8 @@ jobs:
           grep -q 'navigationButtonWithSystemImage' stream-app/app/ScriptsViewController.mm
           grep -q 'CGRectMake(0, 0, 40.0, 40.0)' stream-app/app/ScriptsViewController.mm
           grep -q 'UINavigationItemLargeTitleDisplayModeNever' stream-app/app/ScriptsViewController.mm
+          grep -q 'headerButtonWithSystemImage' stream-app/app/ScriptsViewController.mm
+          grep -q 'updateSearchResultsForSearchController' stream-app/app/ScriptsViewController.mm
           grep -q 'preferredFontForTextStyle:UIFontTextStyleBody' stream-app/app/ScriptsViewController.mm
           grep -q 'constraintEqualToConstant:42.0' stream-app/app/ScriptsViewController.mm
           grep -q 'SCScriptEditorViewController' stream-app/app/ScriptEditorViewController.mm
@@ -713,6 +742,7 @@ jobs:
           grep -q 'editorKeyboardToolbar' stream-app/app/ScriptEditorViewController.mm
           grep -q 'scrollCaretToVisibleAnimated' stream-app/app/ScriptEditorViewController.mm
           grep -q 'UIKeyboardWillChangeFrameNotification' stream-app/app/ScriptEditorViewController.mm
+          grep -q 'applySyntaxHighlighting' stream-app/app/ScriptEditorViewController.mm
           grep -q 'SCPlaySettingsViewController' stream-app/app/PlaySettingsViewController.mm
           grep -q '/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist' stream-app/app/PlaySettingsViewController.mm
           grep -q 'showScriptLogs' stream-app/app/ScriptsViewController.mm

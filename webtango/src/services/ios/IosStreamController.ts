@@ -74,7 +74,7 @@ export class IosStreamController {
     } else if (profile === 'eco') {
       await this.startMpegts(urls.streamEco, true);
     } else if (profile === 'worker') {
-      const ok = await this.startWorker(urls.h264Worker);
+      const ok = await this.startWorker(urls.h264Worker, urls.tlinkauto);
       if (!ok) {
         options.onProfileFallback?.('worker', 'fast', 'OffscreenCanvas worker unavailable');
         await this.startMpegts(urls.stream, false);
@@ -167,7 +167,7 @@ export class IosStreamController {
     return true;
   }
 
-  private async startWorker(url: string): Promise<boolean> {
+  private async startWorker(url: string, feedbackUrl: string): Promise<boolean> {
     const { workerCanvas, video } = this.targets;
     if (!workerCanvas || !('transferControlToOffscreen' in workerCanvas) || !('Worker' in window)) return false;
     video.style.display = 'none';
@@ -192,10 +192,10 @@ export class IosStreamController {
           }
         };
         if (this.offscreen) {
-          this.worker!.postMessage({ type: 'start', url, canvas: this.offscreen }, [this.offscreen]);
+          this.worker!.postMessage({ type: 'start', url, feedbackUrl, port: 7004, canvas: this.offscreen }, [this.offscreen]);
           this.offscreen = undefined;
         } else {
-          this.worker!.postMessage({ type: 'start', url });
+          this.worker!.postMessage({ type: 'start', url, feedbackUrl, port: 7004 });
         }
       });
     } catch (e) {

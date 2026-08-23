@@ -1,6 +1,8 @@
 type WorkerStartMessage = {
   type: 'start';
   url: string;
+  feedbackUrl?: string;
+  port?: number;
   canvas?: OffscreenCanvas;
 };
 
@@ -49,6 +51,17 @@ let stopped = false;
 let renderCanvas: OffscreenCanvas | undefined;
 let lastPostedWidth = 0;
 let lastPostedHeight = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let watchdogTimer: ReturnType<typeof setInterval> | undefined;
+let feedbackSocket: WebSocket | undefined;
+let activeUrl = '';
+let activeFeedbackUrl = '';
+let activePort = 7004;
+let reconnectAttempts = 0;
+let lastFrameAt = 0;
+let lastFeedbackAt = 0;
+let connectionGeneration = 0;
+const MAX_RECONNECT_ATTEMPTS = 6;
 
 function appendBytes(a: Uint8Array, b: Uint8Array) {
   if (a.length === 0) return b;
@@ -68,8 +81,13 @@ function msFromUsDelta(endUs?: number, startUs?: number) {
   return Math.max(0, (endUs - startUs) / 1000);
 }
 
-function stop() {
+function stop(final = true) {
+  connectionGeneration += 1;
   stopped = true;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = undefined;
+  if (watchdogTimer) clearInterval(watchdogTimer);
+  watchdogTimer = undefined;
   try {
     socket?.close();
   } catch {}
@@ -78,17 +96,56 @@ function stop() {
     decoder?.close();
   } catch {}
   decoder = undefined;
+  try { feedbackSocket?.close(); } catch {}
+  feedbackSocket = undefined;
+  if (final) reconnectAttempts = 0;
   lastPostedWidth = 0;
   lastPostedHeight = 0;
+}
+
+function sendFeedback(metrics: Metrics, stalled = false) {
+  if (!activeFeedbackUrl || performance.now() - lastFeedbackAt < 1000) return;
+  lastFeedbackAt = performance.now();
+  try {
+    if (!feedbackSocket || feedbackSocket.readyState > WebSocket.OPEN) {
+      feedbackSocket = new WebSocket(activeFeedbackUrl);
+    }
+    if (feedbackSocket.readyState !== WebSocket.OPEN) return;
+    const payload = btoa(JSON.stringify({
+      schema: 'stream_feedback_v1', port: activePort, fps: metrics.fps, kbps: metrics.kbps,
+      decode_queue: metrics.decode_queue, dropped: metrics.dropped,
+      total_approx_ms: metrics.total_approx_ms, stalled,
+    }));
+    feedbackSocket.send(`94${payload}\r\n`);
+  } catch {}
+}
+
+function scheduleReconnect(reason: string) {
+  if (stopped || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS || reconnectTimer) {
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) self.postMessage({ type: 'recovery-exhausted', reason });
+    return;
+  }
+  reconnectAttempts += 1;
+  const delayMs = Math.min(5000, 250 * 2 ** (reconnectAttempts - 1));
+  self.postMessage({ type: 'recovering', reason, attempt: reconnectAttempts, delayMs });
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined;
+    start(activeUrl, undefined, activeFeedbackUrl, activePort, true);
+  }, delayMs);
 }
 
 function postMetrics(metrics: Metrics) {
   self.postMessage({ type: 'metrics', metrics });
 }
 
-function start(url: string, canvas?: OffscreenCanvas) {
-  stop();
+function start(url: string, canvas?: OffscreenCanvas, feedbackUrl = '', port = 7004, recovering = false) {
+  stop(false);
   stopped = false;
+  const runGeneration = connectionGeneration;
+  activeUrl = url;
+  activeFeedbackUrl = feedbackUrl;
+  activePort = port;
+  if (!recovering) reconnectAttempts = 0;
   if (canvas) renderCanvas = canvas;
   if (!renderCanvas) {
     self.postMessage({ type: 'start-failed', reason: 'OffscreenCanvas missing' });
@@ -138,9 +195,11 @@ function start(url: string, canvas?: OffscreenCanvas) {
   let fps = 0;
   let bytesPerSec = 0;
   let lastMetricsAt = 0;
+  let latestMetrics: Metrics | undefined;
 
   decoder = new VideoDecoderCtor({
     output(frame) {
+      if (runGeneration !== connectionGeneration) { frame.close(); return; }
       const outputStartMs = performance.now();
       const meta = metaByTimestamp.get(frame.timestamp);
       if (meta) metaByTimestamp.delete(frame.timestamp);
@@ -175,6 +234,8 @@ function start(url: string, canvas?: OffscreenCanvas) {
     },
     error(e) {
       self.postMessage({ type: 'decoder-error', error: String(e) });
+      try { socket?.close(); } catch {}
+      scheduleReconnect('decoder_error');
     },
   });
 
@@ -199,13 +260,27 @@ function start(url: string, canvas?: OffscreenCanvas) {
 
   socket = new WebSocket(url);
   socket.binaryType = 'arraybuffer';
-  socket.onerror = () => self.postMessage({ type: 'start-failed', reason: 'WebSocket error' });
+  socket.onerror = () => {
+    if (runGeneration !== connectionGeneration) return;
+    if (!sawFrame) self.postMessage({ type: 'start-failed', reason: 'WebSocket error' });
+  };
   socket.onclose = () => {
-    if (!stopped) self.postMessage({ type: 'closed' });
+    if (runGeneration !== connectionGeneration) return;
+    if (!stopped) {
+      self.postMessage({ type: 'closed' });
+      scheduleReconnect('socket_closed');
+    }
   };
 
+  watchdogTimer = setInterval(() => {
+    if (runGeneration !== connectionGeneration || stopped || !sawFrame || performance.now() - lastFrameAt < 3000) return;
+    if (latestMetrics) sendFeedback(latestMetrics, true);
+    try { socket?.close(); } catch {}
+    scheduleReconnect('frame_stall');
+  }, 1000);
+
   socket.onmessage = (ev) => {
-    if (stopped || !decoder) return;
+    if (runGeneration !== connectionGeneration || stopped || !decoder) return;
     const browserRecvMs = performance.now();
     pending = appendBytes(pending, new Uint8Array(ev.data as ArrayBuffer));
 
@@ -260,6 +335,12 @@ function start(url: string, canvas?: OffscreenCanvas) {
       lastTimestamp = relativeTimestamp > lastTimestamp ? relativeTimestamp : lastTimestamp + 1;
 
       frames += 1;
+      if (lastFrameId > 0 && frameId > lastFrameId + 1) dropped += frameId - lastFrameId - 1;
+      lastFrameAt = browserRecvMs;
+      if (reconnectAttempts > 0) {
+        self.postMessage({ type: 'recovered', attempts: reconnectAttempts });
+        reconnectAttempts = 0;
+      }
       lastFrameId = frameId;
       captureMs = smooth(captureMs, msFromUsDelta(captureDoneUs, captureStartUs));
       encodeMs = smooth(encodeMs, msFromUsDelta(encodeDoneUs, captureDoneUs));
@@ -319,7 +400,7 @@ function start(url: string, canvas?: OffscreenCanvas) {
 
       if (browserRecvMs - lastMetricsAt > 500) {
         lastMetricsAt = browserRecvMs;
-        postMetrics({
+        latestMetrics = {
           frame: lastFrameId,
           fps,
           source_ms: sourceMs,
@@ -337,14 +418,16 @@ function start(url: string, canvas?: OffscreenCanvas) {
           rendered,
           frames,
           kbps: (bytesPerSec * 8) / 1000,
-        });
+        };
+        postMetrics(latestMetrics);
+        sendFeedback(latestMetrics);
       }
     }
   };
 }
 
 self.onmessage = (event: MessageEvent<WorkerMessage>) => {
-  if (event.data.type === 'start') start(event.data.url, event.data.canvas);
+  if (event.data.type === 'start') start(event.data.url, event.data.canvas, event.data.feedbackUrl, event.data.port);
   if (event.data.type === 'stop') stop();
 };
 

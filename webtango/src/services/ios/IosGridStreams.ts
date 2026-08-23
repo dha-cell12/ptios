@@ -83,7 +83,7 @@ export class IosGridStreams {
         }
       };
       worker.postMessage(
-        { type: 'start', url: urls.h264Worker, canvas: offscreen },
+        { type: 'start', url: urls.h264Worker, feedbackUrl: urls.tlinkauto, port: 7004, canvas: offscreen },
         [offscreen]
       );
       this.streams.set(device.id, {

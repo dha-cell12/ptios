@@ -3,6 +3,8 @@
 #include "SocketServer.h"
 #include "IPCConstants.h"
 #include "../shared/TLinkRootfullLicenseBuild.h"
+#include "../shared/TLinkEventChannel.h"
+#include "../shared/TLinkAdaptiveStreaming.h"
 #include "../shared/TLinkLicenseVerifier.h"
 #include "../shared/TLinkRootfullLicensePolicy.h"
 #include <string.h>
@@ -45,6 +47,7 @@ typedef NS_ENUM(uint8_t, ZXWireProtocol) {
 @property(nonatomic, assign) CFRunLoopRef runLoop;
 @property(nonatomic, strong) NSMutableData *buffer;
 @property(nonatomic, assign) ZXWireProtocol protocol;
+@property(nonatomic, assign) BOOL eventPollPending;
 @end
 
 @implementation ZXClientContext
@@ -60,10 +63,91 @@ static std::atomic<uint64_t> sTLinkRootfullLicenseTask10DropCount(0);
 static NSData *zx_handleLegacyRequestBytes(const char *buffer);
 static void zx_processClientBuffer(ZXClientContext *ctx);
 static void zx_writeAll(CFWriteStreamRef stream, NSData *data);
+static NSData *zx_dataFromCString(const char *cstr);
 static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId);
 static NSData *zx_frameJSONResponse(NSDictionary *obj);
 static void zx_logf(const char *fmt, ...);
 static bool zx_isHotPathPayload(const char *payload);
+static dispatch_queue_t socketQueue(void);
+
+static NSData *zx_eventChannelResponse(NSString *body)
+{
+    NSString *error = nil;
+    NSDictionary *batch = TLinkEventChannelPollBody(body, &error);
+    if (error.length > 0) {
+        return zx_dataFromCString([[NSString stringWithFormat:@"-1;;%@\r\n", error] UTF8String]);
+    }
+    NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
+    if (json.length == 0) return zx_dataFromCString("-1;;event_channel_json_failed\r\n");
+    NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+    return zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String]);
+}
+
+static BOOL zx_deferLegacyEventPoll(ZXClientContext *ctx, NSString *body)
+{
+    if (!ctx || !ctx.writeStream) return NO;
+    NSString *licenseDenial = nil;
+    if (!TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)) {
+        zx_writeAll(ctx.writeStream, zx_dataFromCString([licenseDenial UTF8String]));
+        return YES;
+    }
+    __block CFWriteStreamRef stream = NULL;
+    @synchronized (ctx) {
+        if (ctx.eventPollPending) {
+            zx_writeAll(ctx.writeStream, zx_dataFromCString("-1;;event_poll_already_pending\r\n"));
+            return YES;
+        }
+        ctx.eventPollPending = YES;
+        stream = ctx.writeStream;
+        CFRetain(stream);
+    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSData *response = zx_eventChannelResponse(body);
+        dispatch_async(socketQueue(), ^{
+            @synchronized (ctx) {
+                if (ctx.writeStream == stream) zx_writeAll(stream, response);
+                ctx.eventPollPending = NO;
+            }
+            CFRelease(stream);
+        });
+    });
+    return YES;
+}
+
+static BOOL zx_deferJSONEventPoll(ZXClientContext *ctx, NSString *body, NSNumber *requestId)
+{
+    if (!ctx || !ctx.writeStream) return NO;
+    NSString *licenseDenial = nil;
+    if (!TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)) {
+        NSDictionary *denied = zx_jsonResponseFromLegacy(zx_dataFromCString([licenseDenial UTF8String]), requestId);
+        zx_writeAll(ctx.writeStream, zx_frameJSONResponse(denied));
+        return YES;
+    }
+    __block CFWriteStreamRef stream = NULL;
+    @synchronized (ctx) {
+        if (ctx.eventPollPending) {
+            NSDictionary *busy = @{ @"id": requestId ?: @0, @"ok": @NO,
+                                    @"data": [NSNull null], @"error": @"event_poll_already_pending" };
+            zx_writeAll(ctx.writeStream, zx_frameJSONResponse(busy));
+            return YES;
+        }
+        ctx.eventPollPending = YES;
+        stream = ctx.writeStream;
+        CFRetain(stream);
+    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSDictionary *object = zx_jsonResponseFromLegacy(zx_eventChannelResponse(body), requestId);
+        NSData *response = zx_frameJSONResponse(object);
+        dispatch_async(socketQueue(), ^{
+            @synchronized (ctx) {
+                if (ctx.writeStream == stream) zx_writeAll(stream, response);
+                ctx.eventPollPending = NO;
+            }
+            CFRelease(stream);
+        });
+    });
+    return YES;
+}
 
 static dispatch_queue_t socketQueue()
 {
@@ -84,7 +168,13 @@ static void zx_cleanupClient(CFReadStreamRef readStream)
     NSNumber *key = @((long)readStream);
     ZXClientContext *ctx = [socketClients objectForKey:key];
     if (ctx) {
-        CFWriteStreamRef writeStream = ctx.writeStream;
+        CFWriteStreamRef writeStream = NULL;
+        @synchronized (ctx) {
+            writeStream = ctx.writeStream;
+            ctx.writeStream = NULL;
+            ctx.readStream = NULL;
+            ctx.eventPollPending = NO;
+        }
         CFRunLoopRef runLoop = ctx.runLoop ? ctx.runLoop : CFRunLoopGetCurrent();
         [socketClients removeObjectForKey:key];
 
@@ -649,7 +739,7 @@ static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buf
                 TLinkRootfullLicenseBuildMode(),
                 TLinkLicenseBuildMode()];
             capability = [capability stringByReplacingOccurrencesOfString:@" securePairingState=contract_only"
-                                                               withString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0 securePairingState=contract_only"];
+                                                               withString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0 eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0 adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0 securePairingState=contract_only"];
             return zx_dataFromCString([capability UTF8String]);
         }
         case 99:
@@ -684,6 +774,22 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
                 taskType,
                 [licenseDenial UTF8String] ?: "license_required");
         return zx_dataFromCString([licenseDenial UTF8String]);
+    }
+
+    if (taskType == 95) {
+        NSString *body = strlen(buffer) > 2 ? [NSString stringWithUTF8String:buffer + 2] : @"";
+        if ([body hasPrefix:@";;"]) body = [body substringFromIndex:2];
+        return zx_eventChannelResponse(body ?: @"");
+    }
+
+    if (taskType == 94) {
+        NSString *body = strlen(buffer) > 2 ? [NSString stringWithUTF8String:buffer + 2] : @"";
+        if ([body hasPrefix:@";;"]) body = [body substringFromIndex:2];
+        NSString *feedbackError = nil;
+        NSDictionary *accepted = TLinkAdaptiveStreamingSubmitFeedback(@"rootfull", body, &feedbackError);
+        if (feedbackError.length > 0) return zx_dataFromCString([[NSString stringWithFormat:@"-1;;%@\r\n", feedbackError] UTF8String]);
+        NSData *json = [NSJSONSerialization dataWithJSONObject:accepted options:0 error:nil];
+        return zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", [json base64EncodedStringWithOptions:0] ?: @""] UTF8String]);
     }
 
     NSData *phase6Diagnostic = zx_rootfullPhase6DiagnosticResponse(taskType, buffer);
@@ -891,8 +997,15 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                 char *line = (char *)malloc(lineLen + 1);
                 memcpy(line, bytes, lineLen);
                 line[lineLen] = 0;
-                NSData *resp = zx_handleLegacyRequestBytes(line);
-                zx_writeAll(ctx.writeStream, resp);
+                int taskType = getTaskTypeFromBuffer(line);
+                if (taskType == 95) {
+                    NSString *body = [NSString stringWithUTF8String:line + 2] ?: @"";
+                    if ([body hasPrefix:@";;"]) body = [body substringFromIndex:2];
+                    zx_deferLegacyEventPoll(ctx, body);
+                } else {
+                    NSData *resp = zx_handleLegacyRequestBytes(line);
+                    zx_writeAll(ctx.writeStream, resp);
+                }
                 free(line);
             }
 
@@ -970,10 +1083,14 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                 // because many clients don't read responses for these tasks.
                 // Emitting a frame would desync subsequent request/response pairs.
                 bool fireAndForget = (task == 10 || task == 14 || task == 15 || task == 16 || task == 17 || task == 19 || task == 20 || task == 36 || task == 38 || task == 39 || task == 40);
-                NSData *legacyResp = zx_handleLegacyRequestBytes([legacy UTF8String]);
-                if (!fireAndForget) {
-                    NSDictionary *respObj = zx_jsonResponseFromLegacy(legacyResp, reqId);
-                    zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+                if (task == 95) {
+                    zx_deferJSONEventPoll(ctx, [legacy substringFromIndex:2], reqId);
+                } else {
+                    NSData *legacyResp = zx_handleLegacyRequestBytes([legacy UTF8String]);
+                    if (!fireAndForget) {
+                        NSDictionary *respObj = zx_jsonResponseFromLegacy(legacyResp, reqId);
+                        zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
+                    }
                 }
             }
         }

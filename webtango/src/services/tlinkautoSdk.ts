@@ -10,11 +10,13 @@ export type ZoomOptions = {
 
 export class TLinkautoDeviceSdk {
   private client: TLinkautoWsClient;
+  private eventUrl: string;
   private screenScale: number | null = null;
   private coordinateScale: number | null = null;
 
   constructor(wsBase: string, deviceId: string) {
-    this.client = new TLinkautoWsClient(`${wsBase}/ios/${encodeURIComponent(deviceId)}/tlinkauto`);
+    this.eventUrl = `${wsBase}/ios/${encodeURIComponent(deviceId)}/tlinkauto`;
+    this.client = new TLinkautoWsClient(this.eventUrl);
   }
 
   async waitOpen(timeoutMs = 1500) {
@@ -86,6 +88,69 @@ export class TLinkautoDeviceSdk {
       throw new Error('run_history_v1 is unavailable');
     }
     return history as RunHistorySnapshot;
+  }
+
+  async pollEvents(cursor = 0, options: EventPollOptions = {}): Promise<EventChannelBatch> {
+    const timeoutMs = boundedInteger(options.timeoutMs, 20000, 0, 25000);
+    const maxEvents = boundedInteger(options.maxEvents, 16, 1, 32);
+    const topics = normalizeEventTopics(options.topics);
+    const eventClient = new TLinkautoWsClient(this.eventUrl);
+    try {
+      await eventClient.waitOpen(Math.min(5000, Math.max(1500, timeoutMs + 1000)));
+      return await pollEventClient(eventClient, cursor, timeoutMs, maxEvents, topics);
+    } finally {
+      eventClient.close();
+    }
+  }
+
+  subscribeEvents(
+    listener: (event: TLinkEvent) => void | Promise<void>,
+    options: EventSubscriptionOptions = {},
+  ): () => void {
+    const eventClient = new TLinkautoWsClient(this.eventUrl);
+    const timeoutMs = boundedInteger(options.timeoutMs, 20000, 1000, 25000);
+    const maxEvents = boundedInteger(options.maxEvents, 16, 1, 32);
+    const topics = normalizeEventTopics(options.topics);
+    let cursor = Math.max(0, Math.floor(finiteNumber(options.cursor, 0)));
+    let stopped = false;
+    let activeEventClient = eventClient;
+
+    void (async () => {
+      let retryMs = 250;
+      while (!stopped) {
+        try {
+          await activeEventClient.waitOpen(5000);
+          const batch = await pollEventClient(activeEventClient, cursor, timeoutMs, maxEvents, topics);
+          if (batch.state === 'busy') {
+            await sleep(batch.retry_after_ms ?? retryMs);
+            continue;
+          }
+          if (batch.state === 'error') {
+            throw new Error(batch.error || 'event channel poll failed');
+          }
+          if (batch.gap) await options.onGap?.(batch);
+          for (const event of batch.events) {
+            if (stopped) break;
+            await listener(event);
+          }
+          cursor = batch.next_cursor;
+          retryMs = 250;
+        } catch (error) {
+          if (stopped) break;
+          options.onError?.(error instanceof Error ? error : new Error(String(error)));
+          activeEventClient.close();
+          await sleep(retryMs);
+          retryMs = Math.min(5000, retryMs * 2);
+          activeEventClient = new TLinkautoWsClient(this.eventUrl);
+        }
+      }
+      activeEventClient.close();
+    })();
+
+    return () => {
+      stopped = true;
+      activeEventClient.close();
+    };
   }
 
   async getCoordinateDiagnostics(): Promise<CoordinateDiagnostics> {
@@ -706,6 +771,44 @@ export type RunHistorySnapshot = {
   runs: RunHistoryRecord[];
 };
 
+export type TLinkEvent = {
+  schema: 'tlink_event_v1';
+  sequence: number;
+  event_id: string;
+  timestamp_ms: number;
+  runtime: 'rootfull' | 'trollstore' | string;
+  topic: string;
+  type: string;
+  payload: Record<string, unknown>;
+};
+
+export type EventChannelBatch = {
+  schema: 'event_channel_v1';
+  state: 'ready' | 'busy' | 'error';
+  cursor: number;
+  next_cursor: number;
+  oldest_cursor: number;
+  latest_cursor: number;
+  gap: boolean;
+  has_more: boolean;
+  timed_out: boolean;
+  events: TLinkEvent[];
+  error?: string;
+  retry_after_ms?: number;
+};
+
+export type EventPollOptions = {
+  timeoutMs?: number;
+  maxEvents?: number;
+  topics?: string[];
+};
+
+export type EventSubscriptionOptions = EventPollOptions & {
+  cursor?: number;
+  onGap?: (batch: EventChannelBatch) => void | Promise<void>;
+  onError?: (error: Error) => void;
+};
+
 export type SmartWaitOptions = {
   timeoutMs?: number;
   intervalMs?: number;
@@ -894,6 +997,46 @@ function finiteNumber(value: unknown, fallback: number) {
 
 function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, Math.floor(finiteNumber(value, fallback))));
+}
+
+function normalizeEventTopics(topics: string[] | undefined): string[] {
+  const normalized = (topics ?? ['*']).map((topic) => String(topic).trim().toLowerCase());
+  if (normalized.length === 0 || normalized.length > 16 ||
+      normalized.some((topic) => topic !== '*' && !/^[a-z0-9._-]{1,64}$/.test(topic))) {
+    throw new Error('event topic must be * or 1-64 characters from [a-z0-9._-]');
+  }
+  return [...new Set(normalized)];
+}
+
+async function pollEventClient(
+  client: TLinkautoWsClient,
+  cursor: number,
+  timeoutMs: number,
+  maxEvents: number,
+  topics: string[],
+): Promise<EventChannelBatch> {
+  const response = await client.requestWithTimeout(
+    95,
+    timeoutMs + 5000,
+    Math.max(0, Math.floor(cursor)),
+    timeoutMs,
+    maxEvents,
+    topics.join(','),
+  );
+  if (!response.ok || response.parts.length < 1) {
+    throw new Error(response.raw || 'event channel poll failed');
+  }
+  const batch = JSON.parse(decodeBase64Utf8(response.parts[0])) as EventChannelBatch;
+  if (!batch || batch.schema !== 'event_channel_v1' || !Array.isArray(batch.events)) {
+    throw new Error('event_channel_v1 is unavailable');
+  }
+  if (batch.state === 'error') {
+    throw new Error(batch.error || 'event channel poll failed');
+  }
+  if (!Number.isFinite(batch.next_cursor) || !Number.isFinite(batch.latest_cursor)) {
+    throw new Error('event channel cursor contract is invalid');
+  }
+  return batch;
 }
 
 function normalizeSmartWaitColor(color: SmartWaitColor): { red: number; green: number; blue: number } {

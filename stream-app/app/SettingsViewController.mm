@@ -3,6 +3,7 @@
 #import "LicenseLifecycleCoordinator.h"
 #import "LicenseViewController.h"
 #import "TLinkSocketClient.h"
+#import "TLinkTheme.h"
 #import "../../TLinkauto/TLinkauto/Settings/TLinkVPNSettingsViewController.h"
 #import <Photos/Photos.h>
 #import <UserNotifications/UserNotifications.h>
@@ -38,6 +39,12 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
 {
     [super viewDidLoad];
     self.title = _debugMode ? @"DEBUG" : @"Settings";
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
+    if (self.navigationController) {
+        self.navigationController.navigationBar.prefersLargeTitles = YES;
+    }
+    self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    self.tableView.separatorInset = UIEdgeInsetsMake(0, 58.0, 0, 0);
     [self loadConfig];
     NSArray<NSString *> *runtimeSettings = @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"];
     if (_debugMode) {
@@ -47,17 +54,45 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
             @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v12", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
     } else {
+        // Grouped like iOS Settings: Appearance · Account · Connectivity · Service · Runtime · Danger
         _sections = @[
-            @[@"License", @"Remote Bridge", @"Managed VPN", @"Restart streamd", @"Respring Device", @"DEBUG"],
+            @[@"Appearance"],
+            @[@"License"],
+            @[@"Remote Bridge", @"Managed VPN"],
+            @[@"Restart streamd", @"DEBUG"],
             runtimeSettings,
+            @[@"Respring Device"],
         ];
     }
 
-    _resultView = [[UITextView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, _debugMode ? 180.0 : 120.0)];
+    CGFloat footerHeight = _debugMode ? 180.0 : 132.0;
+    UIView *footerWrap = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, footerHeight)];
+    footerWrap.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+
+    UIView *card = [TLinkTheme cardContainerView];
+    card.frame = CGRectMake(16.0, 12.0, MAX(0.0, CGRectGetWidth(footerWrap.bounds) - 32.0), footerHeight - 20.0);
+    card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [footerWrap addSubview:card];
+
+    UILabel *statusCaption = [[UILabel alloc] initWithFrame:CGRectMake(14.0, 12.0, MAX(0.0, CGRectGetWidth(card.bounds) - 28.0), 16.0)];
+    statusCaption.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    statusCaption.text = _debugMode ? @"DIAGNOSTICS" : @"SERVICE STATUS";
+    statusCaption.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    statusCaption.textColor = [TLinkTheme subtleTextColor];
+    [card addSubview:statusCaption];
+
+    _resultView = [[UITextView alloc] initWithFrame:CGRectMake(10.0, 30.0, MAX(0.0, CGRectGetWidth(card.bounds) - 20.0), MAX(40.0, CGRectGetHeight(card.bounds) - 42.0))];
+    _resultView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _resultView.editable = NO;
-    _resultView.font = [UIFont fontWithName:@"Menlo" size:11.0] ?: [UIFont systemFontOfSize:11.0];
+    _resultView.scrollEnabled = YES;
+    _resultView.backgroundColor = [UIColor clearColor];
+    _resultView.textContainerInset = UIEdgeInsetsMake(0, 0, 0, 0);
+    _resultView.textContainer.lineFragmentPadding = 0;
+    _resultView.font = [TLinkTheme logFont];
+    _resultView.textColor = [UIColor secondaryLabelColor];
     _resultView.text = _debugMode ? @"Diagnostics will appear here." : @"Service status will appear here.";
-    self.tableView.tableFooterView = _resultView;
+    [card addSubview:_resultView];
+    self.tableView.tableFooterView = footerWrap;
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -419,6 +454,47 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
     }];
 }
 
+- (void)applyAppearanceStyle:(TLinkAppearanceStyle)style
+{
+    [TLinkTheme setCurrentAppearanceStyle:style];
+    UIWindow *window = self.view.window;
+    if (!window) {
+        for (UIWindow *candidate in [UIApplication sharedApplication].windows) {
+            if (candidate.isKeyWindow) { window = candidate; break; }
+        }
+    }
+    [TLinkTheme applyCurrentAppearanceStyleToWindow:window];
+    [self.tableView reloadData];
+    self->_resultView.text = [NSString stringWithFormat:@"Appearance set to %@", [TLinkTheme displayNameForAppearanceStyle:style]];
+}
+
+- (void)presentAppearancePicker
+{
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Appearance"
+                                                                 message:@"Choose how StreamControl looks."
+                                                          preferredStyle:UIAlertControllerStyleActionSheet];
+    TLinkAppearanceStyle current = [TLinkTheme currentAppearanceStyle];
+    NSArray<NSNumber *> *styles = @[@(TLinkAppearanceStyleSystem), @(TLinkAppearanceStyleLight), @(TLinkAppearanceStyleDark)];
+    for (NSNumber *styleNumber in styles) {
+        TLinkAppearanceStyle style = (TLinkAppearanceStyle)styleNumber.integerValue;
+        NSString *name = [TLinkTheme displayNameForAppearanceStyle:style];
+        NSString *label = style == current ? [NSString stringWithFormat:@"%@ \u2713", name] : name;
+        [sheet addAction:[UIAlertAction actionWithTitle:label
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(__unused UIAlertAction *action) {
+            [self applyAppearanceStyle:style];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    UIPopoverPresentationController *popover = sheet.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = self.tableView;
+        popover.sourceRect = CGRectMake(CGRectGetMidX(self.tableView.bounds), CGRectGetMidY(self.tableView.bounds), 1.0, 1.0);
+        popover.permittedArrowDirections = 0;
+    }
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
     return (NSInteger)_sections.count;
@@ -432,11 +508,51 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
     if (!_debugMode) {
-        return section == 0 ? @"Service" : @"Runtime Settings";
+        switch (section) {
+            case 0: return @"Appearance";
+            case 1: return @"Account";
+            case 2: return @"Connectivity";
+            case 3: return @"Service";
+            case 4: return @"Runtime Settings";
+            case 5: return @"Danger Zone";
+            default: return nil;
+        }
     }
     if (section == 0) return @"Diagnostics";
     if (section == 1) return @"Runtime Settings";
     return @"TrollStore Compatibility";
+}
+
+- (UIImage *)tlink_settingsGlyphNamed:(NSString *)name background:(UIColor *)bg
+{
+    UIImage *symbol = [UIImage systemImageNamed:name];
+    if (!symbol) return nil;
+    CGFloat size = 30.0;
+    CGRect rect = CGRectMake(0, 0, size, size);
+    UIGraphicsBeginImageContextWithOptions(rect.size, NO, 0);
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:8.0];
+    [bg setFill];
+    [path fill];
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:15.0 weight:UIImageSymbolWeightSemibold];
+    UIImage *tinted = [[symbol imageByApplyingSymbolConfiguration:cfg] imageWithTintColor:[UIColor whiteColor] renderingMode:UIImageRenderingModeAlwaysOriginal];
+    CGSize s = tinted.size;
+    [tinted drawInRect:CGRectMake((size - s.width) * 0.5, (size - s.height) * 0.5, s.width, s.height)];
+    UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return out;
+}
+
+- (void)tlink_applySettingsChromeToCell:(UITableViewCell *)cell
+{
+    cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    cell.textLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
+    cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+    cell.detailTextLabel.numberOfLines = 2;
+    cell.imageView.layer.cornerRadius = 8.0;
+    cell.imageView.clipsToBounds = YES;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -449,54 +565,70 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
     NSString *title = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
     cell.textLabel.text = title;
     cell.textLabel.textColor = [UIColor labelColor];
+    cell.detailTextLabel.text = nil;
     cell.imageView.image = nil;
     cell.accessoryView = nil;
-    if (indexPath.section == 0) {
-        if (!_debugMode) {
-            if ([title isEqualToString:@"License"]) {
-                NSDictionary *status = [[SCLicenseManager sharedManager] localStatus];
-                cell.detailTextLabel.text = status[@"state"] ?: @"unknown";
-                cell.imageView.image = [UIImage systemImageNamed:@"key.fill"];
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            } else if ([title isEqualToString:@"Remote Bridge"]) {
-                NSDictionary *remote = [_config[@"remote_bridge"] isKindOfClass:[NSDictionary class]] ? _config[@"remote_bridge"] : @{};
-                BOOL enabled = [remote[@"enabled"] boolValue];
-                NSString *url = [remote[@"url"] isKindOfClass:[NSString class]] ? remote[@"url"] : @"";
-                cell.detailTextLabel.text = enabled ? (url.length > 0 ? url : @"Enabled, not configured") : @"Disabled";
-                cell.imageView.image = [UIImage systemImageNamed:@"network"];
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            } else if ([title isEqualToString:@"Managed VPN"]) {
-                cell.detailTextLabel.text = @"Experimental foreground IKEv2 control";
-                cell.imageView.image = [UIImage systemImageNamed:@"lock.shield"];
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            } else if ([title isEqualToString:@"Restart streamd"]) {
-                cell.detailTextLabel.text = @"Replace and restart the task service";
-                cell.imageView.image = [UIImage systemImageNamed:@"arrow.clockwise"];
-                cell.accessoryType = UITableViewCellAccessoryNone;
-            } else if ([title isEqualToString:@"Respring Device"]) {
-                cell.detailTextLabel.text = @"Restart SpringBoard";
-                cell.textLabel.textColor = [UIColor systemRedColor];
-                cell.imageView.image = [UIImage systemImageNamed:@"power"];
-                cell.accessoryType = UITableViewCellAccessoryNone;
-            } else {
-                cell.detailTextLabel.text = @"Open diagnostics and compatibility tools";
-                cell.imageView.image = [UIImage systemImageNamed:@"ladybug"];
-                cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            }
-        } else {
-            cell.detailTextLabel.text = @"Tap to run";
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        }
-        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    } else if (indexPath.section == 1) {
+    cell.accessoryType = UITableViewCellAccessoryNone;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    [self tlink_applySettingsChromeToCell:cell];
+
+    BOOL isRuntimeSection = (!_debugMode && indexPath.section == 4) || (_debugMode && indexPath.section == 1);
+    BOOL isCompatSection = _debugMode && indexPath.section == 2;
+
+    if (isRuntimeSection) {
         cell.detailTextLabel.text = [self runtimeSettingDetailAtRow:indexPath.row];
-        cell.accessoryType = UITableViewCellAccessoryNone;
         cell.accessoryView = [self runtimeSwitchForRow:indexPath.row];
-        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    } else {
+        NSArray<NSString *> *runtimeIcons = @[ @"hand.tap.fill", @"arrow.left.arrow.right", @"speaker.wave.2.fill", @"terminal.fill" ];
+        NSString *icon = indexPath.row >= 0 && indexPath.row < (NSInteger)runtimeIcons.count ? runtimeIcons[(NSUInteger)indexPath.row] : @"switch.2";
+        cell.imageView.image = [self tlink_settingsGlyphNamed:icon background:[TLinkTheme accentColor]];
+        return cell;
+    }
+
+    if (isCompatSection) {
         cell.detailTextLabel.text = @"Planned compatibility fallback";
-        cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        return cell;
+    }
+
+    if (_debugMode) {
+        cell.detailTextLabel.text = @"Tap to run";
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"hammer.fill" background:[UIColor systemGrayColor]];
+        return cell;
+    }
+
+    // Non-debug action rows (any section except runtime/danger handled above/below)
+    if ([title isEqualToString:@"Appearance"]) {
+        cell.detailTextLabel.text = [TLinkTheme displayNameForAppearanceStyle:[TLinkTheme currentAppearanceStyle]];
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"circle.lefthalf.filled" background:[TLinkTheme accentColor]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else if ([title isEqualToString:@"License"]) {
+        NSDictionary *status = [[SCLicenseManager sharedManager] localStatus];
+        cell.detailTextLabel.text = status[@"state"] ?: @"unknown";
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"key.fill" background:[UIColor systemOrangeColor]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else if ([title isEqualToString:@"Remote Bridge"]) {
+        NSDictionary *remote = [_config[@"remote_bridge"] isKindOfClass:[NSDictionary class]] ? _config[@"remote_bridge"] : @{};
+        BOOL enabled = [remote[@"enabled"] boolValue];
+        NSString *url = [remote[@"url"] isKindOfClass:[NSString class]] ? remote[@"url"] : @"";
+        cell.detailTextLabel.text = enabled ? (url.length > 0 ? url : @"Enabled, not configured") : @"Disabled";
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"network" background:[UIColor systemTealColor]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else if ([title isEqualToString:@"Managed VPN"]) {
+        cell.detailTextLabel.text = @"Experimental foreground IKEv2 control";
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"lock.shield" background:[UIColor systemIndigoColor]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else if ([title isEqualToString:@"Restart streamd"]) {
+        cell.detailTextLabel.text = @"Replace and restart the task service";
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"arrow.clockwise" background:[UIColor systemGreenColor]];
+    } else if ([title isEqualToString:@"Respring Device"]) {
+        cell.detailTextLabel.text = @"Restart SpringBoard immediately";
+        cell.textLabel.textColor = [UIColor systemRedColor];
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"power" background:[UIColor systemRedColor]];
+    } else if ([title isEqualToString:@"DEBUG"]) {
+        cell.detailTextLabel.text = @"Open diagnostics and compatibility tools";
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"ladybug" background:[UIColor systemGrayColor]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     }
     return cell;
 }
@@ -504,7 +636,8 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 1) {
+    BOOL isRuntimeSection = (!_debugMode && indexPath.section == 4) || (_debugMode && indexPath.section == 1);
+    if (isRuntimeSection) {
         UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
         UISwitch *switchView = [cell.accessoryView isKindOfClass:[UISwitch class]] ? (UISwitch *)cell.accessoryView : nil;
         if (!switchView) return;
@@ -512,11 +645,13 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
         [self runtimeSwitchChanged:switchView];
         return;
     }
-    if (indexPath.section != 0) return;
+    if (_debugMode && indexPath.section != 0) return;
 
     NSString *title = _sections[(NSUInteger)indexPath.section][(NSUInteger)indexPath.row];
     if (!_debugMode) {
-        if ([title isEqualToString:@"License"]) {
+        if ([title isEqualToString:@"Appearance"]) {
+            [self presentAppearancePicker];
+        } else if ([title isEqualToString:@"License"]) {
             SCLicenseViewController *license = [[SCLicenseViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
             [self.navigationController pushViewController:license animated:YES];
         } else if ([title isEqualToString:@"Remote Bridge"]) {

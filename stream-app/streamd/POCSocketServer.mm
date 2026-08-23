@@ -5,7 +5,10 @@
 #import <ImageIO/ImageIO.h>
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <Photos/Photos.h>
+#import "H264Stream.h"
 #import "../../shared/TLinkJSFileHandle.h"
+#import "../../shared/TLinkEventChannel.h"
+#import "../../shared/TLinkAdaptiveStreaming.h"
 #import "../../shared/TLinkLicenseVerifier.h"
 #import "../../shared/TLinkSmartWaitPrelude.h"
 #import "../../shared/TLinkRunHistory.h"
@@ -109,6 +112,7 @@ static dispatch_queue_t POCSocketQueue(void)
 @property(nonatomic, assign) CFWriteStreamRef writeStream;
 @property(nonatomic, assign) CFRunLoopRef runLoop;
 @property(nonatomic, strong) NSMutableData *buffer;
+@property(nonatomic, assign) BOOL eventPollPending;
 @end
 
 @implementation POCClientContext
@@ -6171,6 +6175,8 @@ static NSData *TLinkHandleHelloStatus(void)
         },
         @"script": TLinkScriptStatusDictionary(),
         @"run_history": TLinkRunHistorySnapshot(20),
+        @"event_channel": TLinkEventChannelStatus(),
+        @"adaptive_streaming": TLinkH264AdaptiveStreamingStatus(),
         @"secure_pairing": @{
             @"phase": @0,
             @"state": @"contract_only",
@@ -8133,7 +8139,7 @@ static const TLinkLicenseTaskPolicyEntry kTLinkLicenseTaskPolicy[] = {
     {66, "automation"}, {67, "automation"}, {68, "automation"},
     {69, "automation"}, {70, "automation"}, {71, "shell"},
     {72, "admin"}, {73, "script"}, {74, "admin"},
-    {90, "automation"}, {91, "automation"}, {98, "automation"},
+    {90, "automation"}, {91, "automation"}, {94, "stream"}, {95, "automation"}, {98, "automation"},
 };
 
 static NSString *TLinkLicenseFeatureForTask(int taskType)
@@ -8486,6 +8492,23 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleTesseractOCRCompat(body);
     }
 
+    if (taskType == 94) {
+        NSString *feedbackError = nil;
+        NSDictionary *accepted = TLinkAdaptiveStreamingSubmitFeedback(@"trollstore", body, &feedbackError);
+        if (feedbackError.length > 0) return TLinkError(feedbackError);
+        NSData *json = [NSJSONSerialization dataWithJSONObject:accepted options:0 error:nil];
+        return json.length > 0 ? TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"") : TLinkError(@"adaptive_feedback_json_failed");
+    }
+
+    if (taskType == 95) {
+        NSString *eventError = nil;
+        NSDictionary *batch = TLinkEventChannelPollBody(body, &eventError);
+        if (eventError.length > 0) return TLinkError(eventError);
+        NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
+        if (json.length == 0) return TLinkError(@"event_channel_json_failed");
+        return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
+    }
+
     if (taskType == 96) {
         POCLogf("task-server: task96 shutdown requested");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)),
@@ -8502,6 +8525,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=23"];
         cap = [cap stringByAppendingFormat:@" licenseBuildMode=%@", TLinkLicenseBuildMode()];
         cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,90"];
+        cap = [cap stringByReplacingOccurrencesOfString:@"90,91,96" withString:@"90,91,94,95,96"];
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
@@ -8513,6 +8537,8 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" zoomDiagnostics=zoom_runtime_diagnostics_v1 zoomClients=task64_python_js_webtango_v1"];
         cap = [cap stringByAppendingString:@" smartWaitState=implemented smartWaitPhase=1 smartWaitSchema=smart_wait_result_v1 smartWaitClients=rootfull_js_trollstore_js_webtango_v1 smartWaitLocators=predicate,app,color,image,text,image_gone,tap_when_visible smartWaitFrameStrategy=fresh_frame_per_attempt_release_always_template_open_once smartWaitDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0"];
+        cap = [cap stringByAppendingString:@" eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0"];
+        cap = [cap stringByAppendingString:@" adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];
@@ -8652,9 +8678,15 @@ NSData *TLinkDispatchTaskLineData(NSData *lineData)
     memcpy(line, bytes, lineLen);
     line[lineLen] = 0;
     __block NSData *response = nil;
-    dispatch_sync(POCSocketQueue(), ^{
+    if (POCTaskTypeFromBuffer(line) == 95) {
+        // The shared dispatcher is also used by the remote bridge.  Long-poll
+        // directly so it never monopolizes the serial socket queue.
         response = POCHandleLine(line);
-    });
+    } else {
+        dispatch_sync(POCSocketQueue(), ^{
+            response = POCHandleLine(line);
+        });
+    }
     free(line);
     return response;
 }
@@ -8670,6 +8702,46 @@ static void POCWriteAll(CFWriteStreamRef stream, NSData *data)
         bytes += wrote;
         remaining -= wrote;
     }
+}
+
+static void POCDeferEventPoll(POCClientContext *ctx, NSString *body)
+{
+    if (!ctx || !ctx.writeStream) return;
+    NSString *licenseError = nil;
+    if (!TLinkLicenseFeatureAllowed(@"automation", &licenseError)) {
+        POCWriteAll(ctx.writeStream, TLinkLicenseDeniedResponse(95, @"automation", licenseError));
+        return;
+    }
+    __block CFWriteStreamRef stream = NULL;
+    @synchronized (ctx) {
+        if (ctx.eventPollPending) {
+            POCWriteAll(ctx.writeStream, TLinkError(@"event_poll_already_pending"));
+            return;
+        }
+        ctx.eventPollPending = YES;
+        stream = ctx.writeStream;
+        CFRetain(stream);
+    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *eventError = nil;
+        NSDictionary *batch = TLinkEventChannelPollBody(body, &eventError);
+        NSData *response = nil;
+        if (eventError.length > 0) {
+            response = TLinkError(eventError);
+        } else {
+            NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
+            response = json.length > 0
+                ? TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"")
+                : TLinkError(@"event_channel_json_failed");
+        }
+        dispatch_async(POCSocketQueue(), ^{
+            @synchronized (ctx) {
+                if (ctx.writeStream == stream) POCWriteAll(stream, response);
+                ctx.eventPollPending = NO;
+            }
+            CFRelease(stream);
+        });
+    });
 }
 
 static void POCProcessBuffer(POCClientContext *ctx)
@@ -8698,8 +8770,13 @@ static void POCProcessBuffer(POCClientContext *ctx)
             char *line = (char *)malloc(lineLen + 1);
             memcpy(line, bytes, lineLen);
             line[lineLen] = 0;
-            NSData *resp = POCHandleLine(line);
-            if (resp) POCWriteAll(ctx.writeStream, resp);
+            int taskType = POCTaskTypeFromBuffer(line);
+            if (taskType == 95) {
+                POCDeferEventPoll(ctx, TLinkBodyFromLine(line));
+            } else {
+                NSData *resp = POCHandleLine(line);
+                if (resp) POCWriteAll(ctx.writeStream, resp);
+            }
             free(line);
         }
 
@@ -8720,7 +8797,13 @@ static void POCCleanupClient(CFReadStreamRef readStream)
     POCClientContext *ctx = [sClients objectForKey:key];
     if (!ctx) return;
 
-    CFWriteStreamRef writeStream = ctx.writeStream;
+    CFWriteStreamRef writeStream = NULL;
+    @synchronized (ctx) {
+        writeStream = ctx.writeStream;
+        ctx.writeStream = NULL;
+        ctx.readStream = NULL;
+        ctx.eventPollPending = NO;
+    }
     CFRunLoopRef runLoop = ctx.runLoop ? ctx.runLoop : CFRunLoopGetCurrent();
     [sClients removeObjectForKey:key];
 

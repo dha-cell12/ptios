@@ -1,4 +1,5 @@
 #import "ScriptEditorViewController.h"
+#import "TLinkTheme.h"
 
 @interface SCScriptEditorViewController () <UITextViewDelegate, UITextFieldDelegate>
 @end
@@ -257,6 +258,7 @@
     }
     _textView.text = text ?: @"";
     _cachedTotalLines = [self lineCountInString:_textView.text upToIndex:_textView.text.length];
+    [self applySyntaxHighlighting];
     [self setDirty:NO];
     [self updateCursorStatus];
 }
@@ -549,6 +551,7 @@
 {
     _fontSize = MIN(24.0, MAX(11.0, _fontSize + delta));
     _textView.font = [UIFont monospacedSystemFontOfSize:_fontSize weight:UIFontWeightRegular];
+    [self applySyntaxHighlighting];
     [self updateCursorStatus];
 }
 
@@ -672,6 +675,61 @@
                          _fontSize];
 }
 
+- (void)applySyntaxHighlighting
+{
+    if (_textView.markedTextRange != nil) return; // don't disrupt IME composition
+    NSTextStorage *storage = _textView.textStorage;
+    NSString *text = storage.string;
+    NSUInteger length = text.length;
+    NSRange fullRange = NSMakeRange(0, length);
+    UIFont *font = [UIFont monospacedSystemFontOfSize:_fontSize weight:UIFontWeightRegular];
+
+    [storage beginEditing];
+    [storage addAttribute:NSFontAttributeName value:font range:fullRange];
+    [storage addAttribute:NSForegroundColorAttributeName value:[UIColor labelColor] range:fullRange];
+
+    if (length > 0 && length <= 60000) {
+        static NSRegularExpression *keywordRegex;
+        static NSRegularExpression *numberRegex;
+        static NSRegularExpression *stringCommentRegex;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            keywordRegex = [NSRegularExpression regularExpressionWithPattern:@"\\b(?:var|let|const|function|return|if|else|for|while|do|switch|case|break|continue|new|delete|typeof|instanceof|void|this|null|true|false|undefined|class|extends|super|import|export|from|as|async|await|yield|try|catch|finally|throw|in|of|default|get|set|static)\\b"
+                                                                     options:0
+                                                                       error:nil];
+            numberRegex = [NSRegularExpression regularExpressionWithPattern:@"\\b\\d+(?:\\.\\d+)?\\b"
+                                                                    options:0
+                                                                      error:nil];
+            stringCommentRegex = [NSRegularExpression regularExpressionWithPattern:@"(//[^\\n]*)|(/\\*[\\s\\S]*?\\*/)|(\"(?:\\\\.|[^\"\\\\\\n])*\")|('(?:\\\\.|[^'\\\\\\n])*')|(`(?:\\\\.|[^`\\\\])*`)"
+                                                                          options:0
+                                                                            error:nil];
+        });
+
+        UIColor *keywordColor = [TLinkTheme accentColor];
+        UIColor *numberColor = [UIColor systemOrangeColor];
+        UIColor *stringColor = [UIColor systemGreenColor];
+        UIColor *commentColor = [UIColor systemGrayColor];
+
+        [keywordRegex enumerateMatchesInString:text options:0 range:fullRange usingBlock:^(NSTextCheckingResult *match, __unused NSMatchingFlags flags, __unused BOOL *stop) {
+            [storage addAttribute:NSForegroundColorAttributeName value:keywordColor range:match.range];
+        }];
+        [numberRegex enumerateMatchesInString:text options:0 range:fullRange usingBlock:^(NSTextCheckingResult *match, __unused NSMatchingFlags flags, __unused BOOL *stop) {
+            [storage addAttribute:NSForegroundColorAttributeName value:numberColor range:match.range];
+        }];
+        [stringCommentRegex enumerateMatchesInString:text options:0 range:fullRange usingBlock:^(NSTextCheckingResult *match, __unused NSMatchingFlags flags, __unused BOOL *stop) {
+            BOOL isComment = ([match rangeAtIndex:1].location != NSNotFound) || ([match rangeAtIndex:2].location != NSNotFound);
+            [storage addAttribute:NSForegroundColorAttributeName value:(isComment ? commentColor : stringColor) range:match.range];
+        }];
+    }
+
+    [storage endEditing];
+
+    _textView.typingAttributes = @{
+        NSFontAttributeName: font,
+        NSForegroundColorAttributeName: [UIColor labelColor],
+    };
+}
+
 - (NSUInteger)lineCountInString:(NSString *)text upToIndex:(NSUInteger)limit
 {
     NSUInteger boundedLimit = MIN(limit, text.length);
@@ -692,6 +750,7 @@
 {
     (void)textView;
     _cachedTotalLines = [self lineCountInString:_textView.text upToIndex:_textView.text.length];
+    [self applySyntaxHighlighting];
     [self setDirty:YES];
     [self updateCursorStatus];
     dispatch_async(dispatch_get_main_queue(), ^{

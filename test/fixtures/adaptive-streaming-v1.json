@@ -1,0 +1,28 @@
+{
+  "phase": 1,
+  "state": "implemented",
+  "deviceValidated": false,
+  "schema": "adaptive_streaming_v1",
+  "feedbackSchema": "stream_feedback_v1",
+  "feedbackTask": 94,
+  "feedbackTransport": "task94_base64_json_v1",
+  "levels": ["high", "balanced", "survival"],
+  "limits": {
+    "feedbackMaxBytes": 16384,
+    "feedbackFreshMs": 5000,
+    "feedbackMinimumIntervalMs": 750,
+    "changeCooldownMs": 5000,
+    "goodSamplesToRecover": 4,
+    "encoderRestartsPerSession": 3,
+    "clientReconnectAttempts": 6,
+    "clientStallMs": 3000
+  },
+  "semantics": {
+    "compatibility": "existing_ports_profiles_and_zxh2_header_unchanged",
+    "adaptation": "fps_and_bitrate_only_v1",
+    "hysteresis": "fast_down_slow_up",
+    "thermalCeiling": "adaptive_targets_never_exceed_thermal_targets",
+    "selfHealing": "bounded_encoder_restart_and_client_reconnect",
+    "events": "stream.health"
+  }
+}

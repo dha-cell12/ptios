@@ -14,6 +14,8 @@
 #include <unistd.h>
 #import "ScriptsViewController.h"
 #import "SettingsViewController.h"
+#import "DashboardViewController.h"
+#import "TLinkTheme.h"
 #import "LicenseLifecycleCoordinator.h"
 #import "StreamSupervisor.h"
 #import "TLinkSocketClient.h"
@@ -23,9 +25,9 @@
 // ---------------------------------------------------------------------------
 // SCAppDelegate
 //
-// Stands up the window + navigation controller and forces light mode to match
-// the Tlinkauto app's visual style. The supervisor is created/owned by the
-// app delegate so the service lifecycle is independent from any visible tab.
+// Stands up the window + tab bar controller and applies the user's chosen
+// appearance (System/Light/Dark via TLinkTheme). The supervisor is created/owned
+// by the app delegate so the service lifecycle is independent from any visible tab.
 // ---------------------------------------------------------------------------
 
 static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/TLinkauto/runtime/app_foreground_heartbeat";
@@ -112,26 +114,30 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
 
+    TLinkDashboardViewController *dashboard = [[TLinkDashboardViewController alloc] initWithSupervisor:self.serviceSupervisor];
     SCScriptsViewController *scripts = [[SCScriptsViewController alloc] initWithScriptsPath:@"/var/mobile/Library/TLinkauto/scripts"];
     SCSettingsViewController *settings = [[SCSettingsViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
 
+    UINavigationController *dashboardNav = [[UINavigationController alloc] initWithRootViewController:dashboard];
+    dashboardNav.navigationBar.prefersLargeTitles = YES;
     UINavigationController *scriptsNav = [[UINavigationController alloc] initWithRootViewController:scripts];
     UINavigationController *settingsNav = [[UINavigationController alloc] initWithRootViewController:settings];
 
+    dashboardNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Overview"
+                                                            image:[UIImage systemImageNamed:@"gauge"]
+                                                              tag:0];
     scriptsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Scripts"
                                                           image:[UIImage systemImageNamed:@"list.dash"]
-                                                            tag:0];
+                                                            tag:1];
     settingsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Settings"
                                                            image:[UIImage systemImageNamed:@"gearshape"]
-                                                             tag:1];
+                                                             tag:2];
 
     UITabBarController *tabs = [[UITabBarController alloc] init];
-    tabs.viewControllers = @[scriptsNav, settingsNav];
+    tabs.viewControllers = @[dashboardNav, scriptsNav, settingsNav];
     tabs.selectedIndex = 0;
 
-    if (@available(iOS 13.0, *)) {
-        self.window.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
-    }
+    [TLinkTheme applyCurrentAppearanceStyleToWindow:self.window];
 
     self.window.rootViewController = tabs;
     [self.window makeKeyAndVisible];

@@ -92,6 +92,12 @@
 #define TASK_UPDATE_CACHE 90
 #define TASK_OCR_TESSERACT_REGION 91
 
+// Additive adaptive-stream feedback: base64(stream_feedback_v1 JSON)
+#define TASK_STREAM_FEEDBACK 94
+
+// Additive async event channel: cursor;;timeout_ms;;max_events;;topic_csv
+#define TASK_EVENT_CHANNEL 95
+
 #define TASK_SERVICE_RESTART 96
 #define TASK_CAPABILITY_REPORT 97
 #define TASK_TEST 99

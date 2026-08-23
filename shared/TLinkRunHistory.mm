@@ -1,4 +1,5 @@
 #import "TLinkRunHistory.h"
+#import "TLinkEventChannel.h"
 
 #include <fcntl.h>
 #include <sys/file.h>
@@ -213,6 +214,7 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
     @synchronized (TLinkRunHistoryLock()) {
         TLinkRunHistoryEnsureDirectories();
         int lockFd = TLinkRunHistoryAcquireFileLock();
+        if (lockFd < 0) return @{};
         NSString *runId = [NSUUID UUID].UUIDString.lowercaseString;
         uint64_t now = TLinkRunHistoryNowMs();
         NSString *recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:
@@ -238,6 +240,14 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
         TLinkRunHistoryWriteJSON(record, recordPath);
         TLinkRunHistoryWriteIndex(runs);
         TLinkRunHistoryReleaseFileLock(lockFd);
+        TLinkEventChannelPublish(runtime ?: @"unknown",
+                                 @"script.run",
+                                 @"started",
+                                 @{
+                                     @"run_id": runId,
+                                     @"bundle_path": bundlePath ?: @"",
+                                     @"entry_path": entryPath ?: @"",
+                                 });
         return record;
     }
 }
@@ -255,6 +265,7 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
     @synchronized (TLinkRunHistoryLock()) {
         TLinkRunHistoryEnsureDirectories();
         int lockFd = TLinkRunHistoryAcquireFileLock();
+        if (lockFd < 0) return @{};
         NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndex();
         NSUInteger index = [runs indexOfObjectPassingTest:^BOOL(NSDictionary *record, NSUInteger idx, BOOL *stop) {
             (void)idx;
@@ -321,6 +332,16 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
         TLinkRunHistoryWriteJSON(record, recordPath);
         TLinkRunHistoryWriteIndex(runs);
         TLinkRunHistoryReleaseFileLock(lockFd);
+        TLinkEventChannelPublish(record[@"runtime"] ?: @"unknown",
+                                 @"script.run",
+                                 terminalState,
+                                 @{
+                                     @"run_id": runId,
+                                     @"state": terminalState,
+                                     @"duration_ms": record[@"duration_ms"] ?: @0,
+                                     @"error": redactedError ?: @"",
+                                     @"evidence_available": @([record[@"failure_evidence"] count] > 0),
+                                 });
         return record;
     }
 }

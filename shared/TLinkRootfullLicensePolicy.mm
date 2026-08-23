@@ -71,6 +71,8 @@ static const TLinkRootfullLicenseTaskPolicyEntry kTLinkRootfullLicenseTaskPolicy
     {72, "admin"},
     {90, "automation"},
     {91, "automation"},
+    {94, "stream"},
+    {95, "automation"},
 };
 
 BOOL TLinkRootfullLicenseTaskIsExempt(NSInteger taskType)
@@ -171,4 +173,3 @@ BOOL TLinkRootfullLicenseComponentAllowed(NSString *feature,
     }
     return NO;
 }
-

@@ -1,4 +1,5 @@
 import * as mpegts from 'mpegts.js';
+import { TLinkautoWsClient } from '../../TLinkautoWsClient';
 
 export type IosStreamProfile = 'fast' | 'rtc' | 'worker' | 'eco';
 
@@ -22,6 +23,11 @@ export class IosStreamService {
   private rtcStatsTimer?: number;
 
   private mpegPlayer?: mpegts.Player;
+  private feedbackClient?: TLinkautoWsClient;
+  private reconnectTimer?: number;
+  private reconnectAttempts = 0;
+  private lastFrameAt = 0;
+  private activeStart?: { deviceId: string; wsBase: string; httpBase: string; profile: IosStreamProfile };
 
   mount(ui: IosStreamUI) {
     this.ui = ui;
@@ -39,6 +45,7 @@ export class IosStreamService {
     const currentRunId = this.runId;
     this.deviceId = deviceId;
     this.profile = profile;
+    this.activeStart = { deviceId, wsBase, httpBase, profile };
 
     let useFastPath = false;
     if (profile === 'fast') {
@@ -65,6 +72,12 @@ export class IosStreamService {
 
   stop() {
     this.runId++;
+    if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    this.reconnectAttempts = 0;
+    this.activeStart = undefined;
+    this.feedbackClient?.close();
+    this.feedbackClient = undefined;
     
     if (this.h264Socket) {
       this.h264Socket.close();
@@ -153,11 +166,42 @@ export class IosStreamService {
         error: (e) => {
           console.error('[ios-h264] decoder error', e);
           settle(false);
+          try { socket.close(); } catch {}
         }
       });
 
       let configured = false;
       let sawFrame = false;
+      let frameCount = 0;
+      let statBytes = 0;
+      let statStarted = performance.now();
+      let lastFeedbackAt = 0;
+
+      const sendFeedback = (decodeQueue: number, stalled = false) => {
+        const now = performance.now();
+        if (!this.activeStart || now - lastFeedbackAt < 1000) return;
+        lastFeedbackAt = now;
+        const elapsed = Math.max(1, now - statStarted);
+        const feedback = {
+          schema: 'stream_feedback_v1', port: this.activeStart.profile === 'worker' ? 7004 : 7003,
+          fps: frameCount * 1000 / elapsed,
+          kbps: statBytes * 8 / elapsed, decode_queue: decodeQueue, dropped: 0,
+          total_approx_ms: 0, stalled,
+        };
+        frameCount = 0; statBytes = 0; statStarted = now;
+        try {
+          this.feedbackClient ??= new TLinkautoWsClient(`${this.activeStart.wsBase}/ios/${encodeURIComponent(this.activeStart.deviceId)}/tlinkauto`);
+          void this.feedbackClient.waitOpen(1500).then(() =>
+            this.feedbackClient?.requestWithTimeout(94, 3000, btoa(JSON.stringify(feedback))).catch(() => {}),
+          ).catch(() => {});
+        } catch {}
+      };
+
+      const watchdog = window.setInterval(() => {
+        if (this.runId !== runId || !sawFrame || performance.now() - this.lastFrameAt < 3000) return;
+        sendFeedback(decoder.decodeQueueSize, true);
+        try { socket.close(); } catch {}
+      }, 1000);
 
       const configureDecoder = () => {
         if (configured) return;
@@ -234,6 +278,10 @@ export class IosStreamService {
           pending = pending.slice(frameLength);
 
           const isKey = (flags & 1) !== 0;
+          frameCount += 1;
+          statBytes += payloadLength;
+          this.lastFrameAt = performance.now();
+          sendFeedback(decoder.decodeQueueSize);
           if (!configured) {
             if (!isKey) continue;
             try {
@@ -273,11 +321,32 @@ export class IosStreamService {
 
       socket.onerror = () => settle(false);
       socket.onclose = () => {
+        clearInterval(watchdog);
         if (!sawFrame) settle(false);
+        if (this.runId === runId && sawFrame) this.scheduleReconnect('raw_socket_closed');
       };
       
       setTimeout(() => settle(false), 5000);
     });
+  }
+
+  private scheduleReconnect(reason: string) {
+    if (!this.activeStart || this.reconnectTimer !== undefined || this.reconnectAttempts >= 6) return;
+    this.reconnectAttempts += 1;
+    const delay = Math.min(5000, 250 * 2 ** (this.reconnectAttempts - 1));
+    console.warn(`[ios-stream] self-healing ${reason}, reconnect ${this.reconnectAttempts}/6 in ${delay}ms`);
+    const start = { ...this.activeStart };
+    const attempt = this.reconnectAttempts;
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = undefined;
+      const reconnect = this.start(start.deviceId, start.wsBase, start.httpBase, start.profile);
+      // start() performs a full transport cleanup; preserve the bounded retry
+      // counter across that cleanup until a connection actually succeeds.
+      this.reconnectAttempts = attempt;
+      void reconnect.then((ok) => {
+        if (ok) this.reconnectAttempts = 0;
+      });
+    }, delay);
   }
 
   private async fetchIceConfig(httpBase: string) {

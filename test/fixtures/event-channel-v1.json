@@ -1,0 +1,40 @@
+{
+  "phase": 1,
+  "state": "implemented",
+  "deviceValidated": false,
+  "task": 95,
+  "schema": "event_channel_v1",
+  "eventSchema": "tlink_event_v1",
+  "transport": "task95_long_poll_v1",
+  "request": "95<cursor>;;<timeout_ms>;;<max_events>;;<topic_csv>",
+  "resume": "cursor_v1",
+  "topics": ["script.run", "stream.health"],
+  "limits": {
+    "journalMaxEvents": 256,
+    "pollMaxEvents": 32,
+    "pollDefaultEvents": 16,
+    "pollTimeoutMaxMs": 25000,
+    "payloadMaxBytes": 4096,
+    "maxConcurrentPollsPerRuntime": 8
+  },
+  "semantics": {
+    "ordering": "global_monotonic_sequence",
+    "delivery": "at_least_once_with_cursor_commit_by_client",
+    "retentionGap": "explicit_gap_oldest_cursor_latest_cursor",
+    "emptyPoll": "timed_out_true_empty_events",
+    "topicFilter": "exact_or_wildcard",
+    "crossProcessJournal": "flock_atomic_json_v1",
+    "controlSocketIsolation": "dedicated_subscription_connection"
+  },
+  "requiredCapabilityFields": {
+    "eventChannelState": "implemented",
+    "eventChannelVersion": "1",
+    "eventChannelSchema": "event_channel_v1",
+    "eventChannelTransport": "task95_long_poll_v1",
+    "eventChannelResume": "cursor_v1",
+    "eventChannelJournalMaxEvents": "256",
+    "eventChannelPollMaxEvents": "32",
+    "eventChannelPollTimeoutMaxMs": "25000",
+    "eventChannelDeviceValidated": "0"
+  }
+}

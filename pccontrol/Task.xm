@@ -5,6 +5,8 @@
 #include "../shared/TLinkRootfullLicensePolicy.h"
 #include "../shared/TLinkVPNDiagnostics.h"
 #include "../shared/TLinkRunHistory.h"
+#include "../shared/TLinkEventChannel.h"
+#include "../shared/TLinkAdaptiveStreaming.h"
 #import <Foundation/Foundation.h>
 #ifndef YES
 #define YES true
@@ -1435,6 +1437,8 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                     @"scheduler_license": TLinkSchedulerLicenseDiagnostics(),
                 },
                 @"run_history": TLinkRunHistorySnapshot(20),
+                @"event_channel": TLinkEventChannelStatus(),
+                @"adaptive_streaming": TLinkH264AdaptiveStreamingStatus(),
                 @"zoom": @{
                     @"phase": @2,
                     @"state": @"experimental",

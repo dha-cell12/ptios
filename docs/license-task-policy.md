@@ -12,7 +12,7 @@ list hoac component gate khong con khop nhau.
 | `script` | `19`, `20`, `36-39`, `41`, `73` |
 | `admin` | `31`, `72`, `74` |
 | `shell` | `13`, `71` |
-| `stream` | H264 accept/stream loop tren `7001-7006`, khong co line task rieng |
+| `stream` | H264 accept/stream loop tren `7001-7006`; task `94` feedback adaptive bounded |
 
 Task `10` la legacy fire-and-forget nen co gate rieng trong `POCHandleLine`.
 Moi lan bi deny se tang `license_enforcement.task10_drop_count` trong task `60`.

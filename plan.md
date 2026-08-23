@@ -291,6 +291,15 @@ Known unresolved issues / deferred investigation:
   best-effort screenshot without changing task `19/20/60` compatibility. Task
   `60`, StreamControl Logs and WebTango expose the newest runs; see
   `docs/run-history-failure-evidence-v1.md`.
+- Event Channel v1 adds task `95` cursor-based asynchronous long-poll for both
+  runtimes. A bounded cross-process journal delivers resumable `script.run`
+  lifecycle events without blocking the control socket queue; WebTango uses a
+  dedicated subscription connection. See `docs/event-channel-v1.md`.
+- Adaptive Streaming & Self-Healing v1 adds bounded task `94` decoder/network
+  feedback, fast-down/slow-up bitrate and FPS hysteresis under the existing
+  thermal ceiling, three bounded native encoder recoveries, and six WebTango
+  reconnect attempts. Existing ports, profiles and ZXH2 framing remain
+  compatible; see `docs/adaptive-streaming-self-healing-v1.md`.
 
 Nói gọn: nên biến stream-app thành “TLinkauto TrollStore runtime” chính thức, rồi kéo từng module từ pccontrol sang theo thứ tự: touch/capture trước, image/OCR tiếp, script runtime sau, cuối cùng mới đến admin/process/connectivity.
 **UI Parity là tiêu chí bắt buộc** để người dùng dễ sử dụng và chuyển đổi mượt mà.

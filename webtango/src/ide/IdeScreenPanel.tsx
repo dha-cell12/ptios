@@ -218,6 +218,8 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
         worker.postMessage({
           type: 'start',
           url: `${wsBase}/ios/${encodeURIComponent(deviceId)}/h264-worker`,
+          feedbackUrl: `${wsBase}/ios/${encodeURIComponent(deviceId)}/tlinkauto`,
+          port: 7004,
           canvas: offscreen,
         }, [offscreen]);
         return;
@@ -226,6 +228,8 @@ export function IdeScreenPanel({ device, httpBase, wsBase, insertSnippet, addLog
       worker.postMessage({
         type: 'start',
         url: `${wsBase}/ios/${encodeURIComponent(deviceId)}/h264-worker`,
+        feedbackUrl: `${wsBase}/ios/${encodeURIComponent(deviceId)}/tlinkauto`,
+        port: 7004,
       });
     } catch (error) {
       setStatus('Stream unavailable');

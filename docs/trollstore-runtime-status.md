@@ -44,6 +44,16 @@ TrollStore runtime.
   capture failure is recorded without hiding the script failure. Task `60`,
   StreamControl Logs and WebTango expose the newest records. Device promotion
   remains pending; see `docs/run-history-failure-evidence-v1.md`.
+- Event Channel v1 exposes task `95` long-poll with cursor resume, explicit
+  retention-gap reporting and a bounded shared journal. `script.run` lifecycle
+  events are available to rootfull, TrollStore and WebTango without blocking
+  normal task dispatch. Device promotion remains pending; see
+  `docs/event-channel-v1.md`.
+- Adaptive Streaming v1 accepts bounded WebTango health feedback on licensed
+  task `94`, selects `high`, `balanced` or `survival` FPS/bitrate with
+  hysteresis, and performs bounded encoder/client recovery. Existing H264
+  ports and ZXH2 framing are unchanged. Device promotion remains pending; see
+  `docs/adaptive-streaming-self-healing-v1.md`.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.

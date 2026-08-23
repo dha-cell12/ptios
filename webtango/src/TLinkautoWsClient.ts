@@ -150,6 +150,7 @@ export class TLinkautoWsClient {
 
   async requestWithTimeout(task: number, timeoutMs: number, ...args: Array<string | number>): Promise<ZxResponse> {
     await this.waitOpen();
+    this.suppressKeepalive(timeoutMs + 1000);
     this.lastTx = Date.now();
     const payload = `${task}${args.map(String).join(';;')}\r\n`;
     this.ws.send(payload);

@@ -3,6 +3,7 @@
 #import "PlaySettingsViewController.h"
 #import "ScriptEditorViewController.h"
 #import "ScriptLogViewController.h"
+#import "TLinkTheme.h"
 #import "TLinkSocketClient.h"
 #import "../../shared/TLinkLicenseVerifier.h"
 #include <math.h>
@@ -41,8 +42,13 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 @end
 
+@interface SCScriptsViewController () <UISearchResultsUpdating>
+@end
+
 @implementation SCScriptsViewController {
     NSMutableArray<SCScriptEntry *> *_entries;
+    NSMutableArray<SCScriptEntry *> *_filteredEntries;
+    UISearchController *_searchController;
     UILabel *_emptyLabel;
     UILabel *_statusLabel;
     UILabel *_statusTitleLabel;
@@ -50,7 +56,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     UIView *_actionHeaderView;
     UIView *_statusFooterView;
     UIButton *_editActionButton;
-    UIBarButtonItem *_addButtonItem;
+    UIButton *_addHeaderButton;
     NSString *_scriptsPath;
     BOOL _attemptedCompatibilitySeed;
 }
@@ -82,18 +88,15 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     self.tableView.sectionFooterHeight = 10.0;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.navigationController.navigationBar.prefersLargeTitles = NO;
+    self.navigationItem.titleView = [[UIView alloc] initWithFrame:CGRectZero];
 
-    UIBarButtonItem *refresh = [self navigationButtonWithSystemImage:@"arrow.clockwise"
-                                                           tintColor:[UIColor systemBlueColor]
-                                                     backgroundColor:[UIColor secondarySystemBackgroundColor]
-                                                              action:@selector(reloadScripts)
-                                                  accessibilityLabel:@"Refresh Scripts"];
-    _addButtonItem = [self navigationButtonWithSystemImage:@"plus"
-                                                 tintColor:[UIColor whiteColor]
-                                           backgroundColor:[UIColor systemBlueColor]
-                                                    action:@selector(showAddMenu)
-                                        accessibilityLabel:@"Add Script or Folder"];
-    self.navigationItem.rightBarButtonItems = @[refresh, _addButtonItem];
+    _searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
+    _searchController.obscuresBackgroundDuringPresentation = NO;
+    _searchController.searchResultsUpdater = self;
+    _searchController.searchBar.placeholder = @"Search scripts";
+    self.navigationItem.searchController = _searchController;
+    self.navigationItem.hidesSearchBarWhenScrolling = YES;
+    self.definesPresentationContext = YES;
 
     _emptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _emptyLabel.text = @"No scripts found";
@@ -175,16 +178,43 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (void)buildActionHeader
 {
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
-    _actionHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 92.0)];
+    _actionHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 158.0)];
     _actionHeaderView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    titleLabel.text = self.title.length > 0 ? self.title : @"Scripts";
+    titleLabel.font = [UIFont systemFontOfSize:32.0 weight:UIFontWeightBold];
+    titleLabel.textColor = [UIColor labelColor];
+    titleLabel.adjustsFontSizeToFitWidth = YES;
+    titleLabel.minimumScaleFactor = 0.6;
+    titleLabel.numberOfLines = 1;
+    [_actionHeaderView addSubview:titleLabel];
+
+    UIButton *refreshButton = [self headerButtonWithSystemImage:@"arrow.clockwise"
+                                                      tintColor:[UIColor systemBlueColor]
+                                                backgroundColor:[UIColor secondarySystemBackgroundColor]
+                                                         action:@selector(reloadScripts)
+                                             accessibilityLabel:@"Refresh Scripts"];
+    _addHeaderButton = [self headerButtonWithSystemImage:@"plus"
+                                               tintColor:[UIColor whiteColor]
+                                         backgroundColor:[UIColor systemBlueColor]
+                                                  action:@selector(showAddMenu)
+                                       accessibilityLabel:@"Add Script or Folder"];
+    UIStackView *buttonRow = [[UIStackView alloc] initWithArrangedSubviews:@[refreshButton, _addHeaderButton]];
+    buttonRow.translatesAutoresizingMaskIntoConstraints = NO;
+    buttonRow.axis = UILayoutConstraintAxisHorizontal;
+    buttonRow.spacing = 10.0;
+    buttonRow.alignment = UIStackViewAlignmentCenter;
+    [_actionHeaderView addSubview:buttonRow];
 
     UIView *surface = [[UIView alloc] initWithFrame:CGRectZero];
     surface.translatesAutoresizingMaskIntoConstraints = NO;
     surface.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    surface.layer.cornerRadius = 8.0;
+    surface.layer.cornerRadius = 18.0;
     surface.layer.shadowColor = [UIColor blackColor].CGColor;
-    surface.layer.shadowOpacity = 0.05;
-    surface.layer.shadowRadius = 8.0;
+    surface.layer.shadowOpacity = 0.06;
+    surface.layer.shadowRadius = 10.0;
     surface.layer.shadowOffset = CGSizeMake(0, 3.0);
     [_actionHeaderView addSubview:surface];
 
@@ -208,7 +238,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     [surface addSubview:stack];
 
     [NSLayoutConstraint activateConstraints:@[
-        [surface.topAnchor constraintEqualToAnchor:_actionHeaderView.topAnchor constant:8.0],
+        [titleLabel.topAnchor constraintEqualToAnchor:_actionHeaderView.topAnchor constant:6.0],
+        [titleLabel.leadingAnchor constraintEqualToAnchor:_actionHeaderView.leadingAnchor constant:20.0],
+        [buttonRow.centerYAnchor constraintEqualToAnchor:titleLabel.centerYAnchor],
+        [buttonRow.trailingAnchor constraintEqualToAnchor:_actionHeaderView.trailingAnchor constant:-16.0],
+        [buttonRow.leadingAnchor constraintGreaterThanOrEqualToAnchor:titleLabel.trailingAnchor constant:12.0],
+        [surface.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:12.0],
         [surface.leadingAnchor constraintEqualToAnchor:_actionHeaderView.leadingAnchor constant:16.0],
         [surface.trailingAnchor constraintEqualToAnchor:_actionHeaderView.trailingAnchor constant:-16.0],
         [surface.bottomAnchor constraintEqualToAnchor:_actionHeaderView.bottomAnchor constant:-8.0],
@@ -220,24 +255,55 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     self.tableView.tableHeaderView = _actionHeaderView;
 }
 
+- (UIButton *)headerButtonWithSystemImage:(NSString *)imageName
+                                tintColor:(UIColor *)tintColor
+                          backgroundColor:(UIColor *)backgroundColor
+                                   action:(SEL)action
+                       accessibilityLabel:(NSString *)accessibilityLabel
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    button.backgroundColor = backgroundColor;
+    button.tintColor = tintColor;
+    button.layer.cornerRadius = 10.0;
+    button.layer.shadowColor = [UIColor blackColor].CGColor;
+    button.layer.shadowOpacity = 0.08;
+    button.layer.shadowRadius = 5.0;
+    button.layer.shadowOffset = CGSizeMake(0, 2.0);
+    UIImageSymbolConfiguration *configuration =
+        [UIImageSymbolConfiguration configurationWithPointSize:18.0 weight:UIImageSymbolWeightMedium];
+    [button setImage:[[UIImage systemImageNamed:imageName] imageByApplyingSymbolConfiguration:configuration]
+            forState:UIControlStateNormal];
+    button.accessibilityLabel = accessibilityLabel;
+    [button.widthAnchor constraintEqualToConstant:40.0].active = YES;
+    [button.heightAnchor constraintEqualToConstant:40.0].active = YES;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
 - (void)buildStatusFooter
 {
     CGFloat width = CGRectGetWidth(self.tableView.bounds);
-    _statusFooterView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 132.0)];
+    _statusFooterView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 136.0)];
     _statusFooterView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
 
     UIView *surface = [[UIView alloc] initWithFrame:CGRectZero];
     surface.translatesAutoresizingMaskIntoConstraints = NO;
     surface.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    surface.layer.cornerRadius = 8.0;
+    surface.layer.cornerRadius = 18.0;
+    surface.layer.shadowColor = [UIColor blackColor].CGColor;
+    surface.layer.shadowOpacity = 0.06;
+    surface.layer.shadowRadius = 10.0;
+    surface.layer.shadowOffset = CGSizeMake(0, 3.0);
     [_statusFooterView addSubview:surface];
 
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"sparkles"]];
     icon.translatesAutoresizingMaskIntoConstraints = NO;
     icon.contentMode = UIViewContentModeCenter;
-    icon.tintColor = [UIColor systemBlueColor];
-    icon.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.08];
-    icon.layer.cornerRadius = 8.0;
+    icon.tintColor = [UIColor systemGreenColor];
+    icon.backgroundColor = [[UIColor systemGreenColor] colorWithAlphaComponent:0.14];
+    icon.layer.cornerRadius = 12.0;
+    icon.tag = 9101;
     [surface addSubview:icon];
 
     _statusTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -350,12 +416,24 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     BOOL starting = [firstLine hasPrefix:@"Starting"];
     BOOL running = [firstLine hasPrefix:@"Running"];
     BOOL failed = [firstLine hasPrefix:@"Failed"];
+    BOOL stopped = [firstLine hasPrefix:@"Script stopped"] || [firstLine hasPrefix:@"Stopping"];
     _statusTitleLabel.text = firstLine.length > 0 ? firstLine : @"Script Status";
     _statusLabel.text = detail.length > 0 ? detail : (running ? @"Script runtime is active" : value);
-    _statusProgressView.progressTintColor = failed ? [UIColor systemRedColor] : [UIColor systemBlueColor];
+    UIColor *tone = failed ? [UIColor systemRedColor]
+        : (running || starting ? [UIColor systemGreenColor]
+           : (stopped ? [UIColor systemOrangeColor] : [UIColor systemBlueColor]));
+    _statusProgressView.progressTintColor = tone;
+    UIImageView *icon = [_statusFooterView viewWithTag:9101];
+    if ([icon isKindOfClass:[UIImageView class]]) {
+        NSString *symbol = failed ? @"xmark.circle.fill" : (running ? @"play.fill" : (starting ? @"hourglass" : @"sparkles"));
+        icon.image = [UIImage systemImageNamed:symbol];
+        icon.tintColor = tone;
+        icon.backgroundColor = [tone colorWithAlphaComponent:0.14];
+    }
     float progress = failed ? 1.0f : (running ? 0.42f : (starting ? 0.16f : 0.28f));
     [_statusProgressView setProgress:progress animated:YES];
     self.tableView.tableFooterView = _statusFooterView;
+    [self.tableView reloadData];
 }
 
 - (BOOL)ensureScriptsPathWritableWithError:(NSString **)error
@@ -699,7 +777,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     UIPopoverPresentationController *popover = sheet.popoverPresentationController;
     if (popover) {
-        popover.barButtonItem = self.navigationItem.rightBarButtonItems.lastObject;
+        popover.sourceView = _addHeaderButton;
+        popover.sourceRect = _addHeaderButton.bounds;
     }
     [self presentViewController:sheet animated:YES completion:nil];
 }
@@ -904,6 +983,42 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     [self.navigationController pushViewController:logs animated:YES];
 }
 
+- (BOOL)isSearching
+{
+    return _searchController.isActive && _searchController.searchBar.text.length > 0;
+}
+
+- (NSArray<SCScriptEntry *> *)visibleEntries
+{
+    return [self isSearching] ? (_filteredEntries ?: @[]) : _entries;
+}
+
+- (void)applySearchFilter
+{
+    if ([self isSearching]) {
+        NSString *query = _searchController.searchBar.text;
+        NSMutableArray<SCScriptEntry *> *filtered = [NSMutableArray array];
+        for (SCScriptEntry *entry in _entries) {
+            NSString *name = entry.name ?: entry.path.lastPathComponent;
+            if ([name rangeOfString:query options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [filtered addObject:entry];
+            }
+        }
+        _filteredEntries = filtered;
+    } else {
+        _filteredEntries = nil;
+    }
+    _emptyLabel.text = [self isSearching] ? @"No matching scripts" : @"No scripts found";
+    _emptyLabel.hidden = [self visibleEntries].count > 0;
+    [self.tableView reloadData];
+}
+
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController
+{
+    (void)searchController;
+    [self applySearchFilter];
+}
+
 - (void)reloadScripts
 {
     [_entries removeAllObjects];
@@ -939,18 +1054,17 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         [_entries addObject:entry];
     }
 
-    _emptyLabel.hidden = _entries.count > 0;
-    [self.tableView reloadData];
+    [self applySearchFilter];
 }
 
 - (void)refreshEmptyState
 {
-    _emptyLabel.hidden = _entries.count > 0;
+    _emptyLabel.hidden = [self visibleEntries].count > 0;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    return _entries.count;
+    return [self visibleEntries].count;
 }
 
 - (UIButton *)playButtonForRow:(NSInteger)row
@@ -1026,8 +1140,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (void)folderActionsButtonTapped:(UIButton *)button
 {
     NSInteger row = button.tag;
-    if (row < 0 || (NSUInteger)row >= _entries.count) return;
-    SCScriptEntry *entry = _entries[(NSUInteger)row];
+    if (row < 0 || (NSUInteger)row >= [self visibleEntries].count) return;
+    SCScriptEntry *entry = [self visibleEntries][(NSUInteger)row];
     if (!entry.directory || entry.scriptBundle) return;
 
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:entry.name ?: @"Folder"
@@ -1069,21 +1183,29 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
 
-    SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    SCScriptEntry *entry = [self visibleEntries][(NSUInteger)indexPath.row];
     cell.textLabel.text = entry.name;
     if (entry.directory) {
         cell.detailTextLabel.text = entry.scriptBundle ? @"Script Bundle" : @"Folder";
     } else {
         cell.detailTextLabel.text = entry.path.lastPathComponent;
     }
+    UIColor *iconTint = [UIColor systemBlueColor];
     if (entry.scriptBundle) {
-        cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
+        cell.imageView.image = [UIImage systemImageNamed:@"doc.text.fill"];
+        iconTint = [UIColor systemIndigoColor];
+        if ([_statusTitleLabel.text containsString:entry.name ?: @""]) {
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · Running", cell.detailTextLabel.text ?: @"Script Bundle"];
+        }
     } else if (entry.directory) {
-        cell.imageView.image = [UIImage systemImageNamed:@"folder"];
+        cell.imageView.image = [UIImage systemImageNamed:@"folder.fill"];
+        iconTint = [UIColor systemOrangeColor];
     } else if ([self isImageFilePath:entry.path]) {
         cell.imageView.image = [UIImage systemImageNamed:@"photo"];
+        iconTint = [UIColor systemTealColor];
     } else {
-        cell.imageView.image = [UIImage systemImageNamed:@"doc.text"];
+        cell.imageView.image = [UIImage systemImageNamed:@"curlybraces"];
+        iconTint = [UIColor systemBlueColor];
     }
     cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
     cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
@@ -1093,9 +1215,9 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
     cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
     cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
     cell.detailTextLabel.numberOfLines = 1;
-    cell.imageView.tintColor = [UIColor systemBlueColor];
-    cell.imageView.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.08];
-    cell.imageView.layer.cornerRadius = 8.0;
+    cell.imageView.tintColor = iconTint;
+    cell.imageView.backgroundColor = [iconTint colorWithAlphaComponent:0.14];
+    cell.imageView.layer.cornerRadius = 11.0;
     cell.imageView.clipsToBounds = YES;
     cell.imageView.preferredSymbolConfiguration =
         [UIImageSymbolConfiguration configurationWithPointSize:21.0 weight:UIImageSymbolWeightRegular];
@@ -1111,7 +1233,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
 {
     (void)tableView;
-    return indexPath.row >= 0 && (NSUInteger)indexPath.row < _entries.count;
+    return indexPath.row >= 0 && (NSUInteger)indexPath.row < [self visibleEntries].count;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForDeleteConfirmationButtonForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -1123,12 +1245,12 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)confirmDeleteEntryAtIndexPath:(NSIndexPath *)indexPath completion:(void (^)(BOOL finished))completion
 {
-    if (indexPath.row < 0 || (NSUInteger)indexPath.row >= _entries.count) {
+    if (indexPath.row < 0 || (NSUInteger)indexPath.row >= [self visibleEntries].count) {
         if (completion) completion(NO);
         return;
     }
 
-    SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    SCScriptEntry *entry = [self visibleEntries][(NSUInteger)indexPath.row];
     NSString *kind = entry.scriptBundle ? @"script bundle" : (entry.directory ? @"folder" : @"file");
     NSString *message = [NSString stringWithFormat:@"Delete %@ \"%@\"?", kind, entry.name ?: entry.path.lastPathComponent];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Delete"
@@ -1151,15 +1273,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
             return;
         }
 
-        NSUInteger idx = [self->_entries indexOfObjectIdenticalTo:entry];
-        if (idx != NSNotFound) {
-            [self->_entries removeObjectAtIndex:idx];
-            NSIndexPath *deletedPath = [NSIndexPath indexPathForRow:(NSInteger)idx inSection:0];
-            [self.tableView deleteRowsAtIndexPaths:@[deletedPath] withRowAnimation:UITableViewRowAnimationAutomatic];
-        } else {
-            [self reloadScripts];
-        }
-        [self refreshEmptyState];
+        [self reloadScripts];
         if (completion) completion(YES);
     }]];
     [self presentViewController:alert animated:YES completion:nil];
@@ -1236,7 +1350,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
                                                                              handler:^(__unused UIContextualAction *action, __unused UIView *sourceView, void (^completionHandler)(BOOL)) {
         [self confirmDeleteEntryAtIndexPath:indexPath completion:completionHandler];
     }];
-    SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    SCScriptEntry *entry = [self visibleEntries][(NSUInteger)indexPath.row];
     NSMutableArray<UIContextualAction *> *actions = [NSMutableArray arrayWithObject:deleteAction];
     UIContextualAction *renameAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal
                                                                                title:@"Rename"
@@ -1272,7 +1386,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    SCScriptEntry *entry = [self visibleEntries][(NSUInteger)indexPath.row];
     if (entry.directory) {
         SCScriptsViewController *child = [[SCScriptsViewController alloc] initWithScriptsPath:entry.path];
         child.title = entry.name;
@@ -1284,7 +1398,7 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 
 - (void)tableView:(UITableView *)tableView accessoryButtonTappedForRowWithIndexPath:(NSIndexPath *)indexPath
 {
-    SCScriptEntry *entry = _entries[(NSUInteger)indexPath.row];
+    SCScriptEntry *entry = [self visibleEntries][(NSUInteger)indexPath.row];
     if (entry.scriptBundle || [self isPlayableFileEntry:entry]) {
         [self playScript:entry];
     }
@@ -1293,8 +1407,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (void)playButtonTapped:(UIButton *)button
 {
     NSInteger row = button.tag;
-    if (row < 0 || (NSUInteger)row >= _entries.count) return;
-    SCScriptEntry *entry = _entries[(NSUInteger)row];
+    if (row < 0 || (NSUInteger)row >= [self visibleEntries].count) return;
+    SCScriptEntry *entry = [self visibleEntries][(NSUInteger)row];
     if (entry.scriptBundle || [self isPlayableFileEntry:entry]) {
         [self playScript:entry];
     }
@@ -1303,8 +1417,8 @@ static NSString *const kTLinkScriptsPath = @"/var/mobile/Library/TLinkauto/scrip
 - (void)settingsButtonTapped:(UIButton *)button
 {
     NSInteger row = button.tag;
-    if (row < 0 || (NSUInteger)row >= _entries.count) return;
-    [self showPlaySettingsForEntry:_entries[(NSUInteger)row]];
+    if (row < 0 || (NSUInteger)row >= [self visibleEntries].count) return;
+    [self showPlaySettingsForEntry:[self visibleEntries][(NSUInteger)row]];
 }
 
 - (void)showPlaySettingsForEntry:(SCScriptEntry *)entry

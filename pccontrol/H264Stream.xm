@@ -2,6 +2,7 @@
 #include "H264Stream.h"
 #include "Screen.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
+#import "../shared/TLinkAdaptiveStreaming.h"
 
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -29,6 +30,22 @@ typedef struct {
     int averageBitrate;
     bool rawAnnexB;
 } ZXH264Profile;
+
+static NSString *zx_profileName(const ZXH264Profile *profile) {
+    switch (profile->port) {
+        case 7001: return @"fast";
+        case 7002: return @"eco";
+        case 7003: return @"raw";
+        case 7004: return @"worker";
+        case 7005: return @"rtc_lan";
+        case 7006: return @"rtc_wan";
+        default: return @"unknown";
+    }
+}
+
+NSDictionary *TLinkH264AdaptiveStreamingStatus(void) {
+    return TLinkAdaptiveStreamingStatus(@"rootfull");
+}
 
 // Profiles:
 // - Fast: lower latency, higher CPU/heat.
@@ -620,11 +637,14 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         int currentEncFps = profile->targetFPS;
         double streamSeconds = 0.0;
         CFAbsoluteTime nextLicenseCheck = 0;
+        NSString *endReason = @"client_closed";
+        int encoderRecoveryCount = 0;
+        bool forceNextKeyframe = true;
 
         bool running = true;
 
         enc = createEncoder(profile);
-        if (!enc) running = false;
+        if (!enc) { running = false; endReason = @"encoder_create_failed"; }
 
         if (running) {
              CVReturn cr = CVPixelBufferCreate(kCFAllocatorDefault,
@@ -646,6 +666,12 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
             sendTables(fd, &patCC, &pmtCC);
         }
 
+        if (running) {
+            TLinkAdaptiveStreamingSessionStarted(@"rootfull", profile->port, zx_profileName(profile),
+                                                 profile->width, profile->height,
+                                                 profile->targetFPS, profile->averageBitrate);
+        }
+
         while (running) {
             @autoreleasepool {
                 CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
@@ -659,6 +685,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                               profile->port,
                               licenseDenial ?: @"license_required");
                         running = false;
+                        endReason = @"license_revoked";
                         break;
                     }
                     nextLicenseCheck = now + 5.0;
@@ -675,6 +702,11 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     }
 
                     desiredBitrate = zx_maxBitrateForThermalState(profile->averageBitrate);
+                    NSDictionary *adaptive = TLinkAdaptiveStreamingDecision(
+                        @"rootfull", profile->port, profile->targetFPS, profile->minFPS,
+                        profile->averageBitrate, desiredFPS, desiredBitrate);
+                    desiredFPS = [adaptive[@"target_fps"] intValue];
+                    desiredBitrate = [adaptive[@"target_bitrate"] intValue];
                     if (desiredBitrate != currentBitrate || desiredFPS != currentEncFps) {
                         currentBitrate = desiredBitrate;
                         currentEncFps = desiredFPS;
@@ -685,7 +717,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 CFAbsoluteTime frameStart = CFAbsoluteTimeGetCurrent();
                 uint64_t captureStartUs = zx_now_us();
                 CGImageRef img = [Screen createScreenShotCGImageRef];
-                if (!img) { running = false; break; }
+                if (!img) { running = false; endReason = @"capture_failed"; break; }
 
                 CVPixelBufferLockBaseAddress(pb, 0);
 
@@ -720,7 +752,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 // Force keyframe on first frame
                 CFMutableDictionaryRef opts = NULL;
-                if (frame == 0) {
+                if (frame == 0 || forceNextKeyframe) {
                     opts = CFDictionaryCreateMutable(kCFAllocatorDefault, 1,
                                                      &kCFTypeDictionaryKeyCallBacks,
                                                      &kCFTypeDictionaryValueCallBacks);
@@ -740,20 +772,50 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 if (st != noErr) {
                     releaseFrameCtx(f);
-                    running = false;
-                    break;
+                    if (encoderRecoveryCount < 3) {
+                        encoderRecoveryCount++;
+                        VTCompressionSessionInvalidate(enc); CFRelease(enc);
+                        enc = createEncoder(profile);
+                        if (enc) {
+                            forceNextKeyframe = true;
+                            zx_applyEncoderRate(enc, desiredFPS, desiredBitrate);
+                            TLinkAdaptiveStreamingRecordRecovery(@"rootfull", profile->port, @"encode_submit_failed", YES);
+                            continue;
+                        }
+                    }
+                    TLinkAdaptiveStreamingRecordRecovery(@"rootfull", profile->port, @"encode_submit_failed", NO);
+                    running = false; endReason = @"encoder_recovery_exhausted"; break;
                 }
+                forceNextKeyframe = false;
 
                 if (dispatch_semaphore_wait(f->sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC))) != 0) {
-                    releaseFrameCtx(f);
-                    running = false;
-                    break;
+                    bool frameReleased = false;
+                    if (encoderRecoveryCount < 3) {
+                        encoderRecoveryCount++;
+                        VTCompressionSessionInvalidate(enc); CFRelease(enc); enc = NULL;
+                        // Invalidation drains encoder callbacks before the frame
+                        // context is returned to the shared pool.
+                        releaseFrameCtx(f);
+                        frameReleased = true;
+                        enc = createEncoder(profile);
+                        if (enc) {
+                            forceNextKeyframe = true;
+                            zx_applyEncoderRate(enc, desiredFPS, desiredBitrate);
+                            TLinkAdaptiveStreamingRecordRecovery(@"rootfull", profile->port, @"encode_timeout", YES);
+                            continue;
+                        }
+                    }
+                    if (enc) { VTCompressionSessionInvalidate(enc); CFRelease(enc); enc = NULL; }
+                    if (!frameReleased) releaseFrameCtx(f);
+                    TLinkAdaptiveStreamingRecordRecovery(@"rootfull", profile->port, @"encode_timeout", NO);
+                    running = false; endReason = @"encoder_recovery_exhausted"; break;
                 }
 
                 CFIndex hlen = CFDataGetLength(f->data);
                 if (hlen <= 0) {
                     releaseFrameCtx(f);
                     running = false;
+                    endReason = @"empty_encoded_frame";
                     break;
                 }
 
@@ -813,6 +875,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 if (!ok) {
                     running = false;
+                    endReason = @"socket_send_failed";
                     break;
                 }
 
@@ -846,6 +909,8 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
             VTCompressionSessionInvalidate(enc);
             CFRelease(enc);
         }
+
+        TLinkAdaptiveStreamingSessionEnded(@"rootfull", profile->port, endReason);
 
         shutdown(fd, SHUT_RDWR);
         close(fd);
