@@ -10,6 +10,7 @@ const appInfo = read("stream-app/app/Info.plist");
 const helper = read("stream-app/privhelper/main.mm");
 const streamd = read("stream-app/streamd/POCSocketServer.mm");
 const settings = read("stream-app/app/SettingsViewController.mm");
+const workflow = read(".github/workflows/stream-app.yml");
 
 assert.match(makefile, /clipboardd_PRIVATE_FRAMEWORKS = IOKit/);
 assert.match(source, /IOHIDEventSystemClientCreate\(kCFAllocatorDefault\)/);
@@ -45,6 +46,11 @@ assert.match(helper, /version=13/);
 assert.match(streamd, /diagnostic containsString:@"version=13"/);
 assert.match(settings, /Two short Volume Up clicks open Launch \/ Record \/ Cancel/);
 assert.match(settings, /Volume Trigger Status/);
+assert.match(workflow, /grep -q 'version=13' stream-app\/clipboardd\/main\.mm/);
+assert.match(workflow, /registered_keyboard_page_12_usage_233/);
+assert.ok(workflow.includes(`grep -q 'containsString:@"version=13"' stream-app/streamd/POCSocketServer.mm`));
+assert.ok(workflow.includes(`grep -q 'containsString:@"version=13"' stream-app/privhelper/main.mm`));
+assert.doesNotMatch(workflow, /grep -q 'version=12' stream-app\/clipboardd\/main\.mm/);
 assert.doesNotMatch(source, /MSHookFunction|Substrate|libhooker/);
 
 console.log("TrollStore direct IOHID volume-trigger contract checks passed");
