@@ -73,8 +73,8 @@ TrollStore runtime.
 - Script UI management: normal folders expose a visible ellipsis menu with Rename Folder, Duplicate, and Delete Folder. The Logs screen includes a confirmed Clear Log action backed by task `73`; it clears the current session log buffer while allowing a running script to append new lines afterward.
 - Background recovery: after StreamControl has been opened once, it registers and submits `BGAppRefreshTask` plus `BGProcessingTask` requests. When iOS grants execution, the handler reschedules itself, calls the same supervisor/privhelper path, and completes only after tcp/6000 passes the service-version probe. This is `best_effort_bgtaskscheduler_after_first_launch`, not guaranteed boot startup. Scheduling/firing/completion diagnostics are stored in `/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist` and included by Settings > Export Diagnostics.
 - Script regression suite: the root `Scripts` tab auto-seeds a `Compatibility Tests` folder from packaged examples on first launch; `Scripts > + > Compatibility Suite` can install another copy manually. The eight `.tl` bundles exercise each compatibility API group independently, including shared file handles and license-revocation heartbeat behavior.
-- Keyboard/text: task `24` uses `clipboardd` v12 on port `6012` with private background Pasteboard entitlements and the same signed-license gate as `streamd`. Every write is read-back verified before `streamd` trusts daemon reads. Subtask `1` inserts text using background clipboard plus HID `Command+V`; subtask `5` pastes the existing clipboard; subtasks `3/4` use HID arrows and Backspace. Devices that ignore the Pasteboard entitlements fall back to the foreground app bridge on port `6013`. Show/hide keyboard remains `limited_on_trollstore` because it needs the rootfull SpringBoard keyboard observer.
-- Background UI bridge: `clipboardd` v12 receives toast/alert/dialog fallback events from `streamd`. Device validation proved that a UIDaemon `UIWindow` can exist in memory without being compositor-hosted above the active app, so that path is no longer reported as successful. Background toast/alert/dialog now use `CFUserNotificationDisplayAlert`. Background toast is visible but fixed at the system center; the rootfull position argument is preserved only for foreground UIKit toast and is reported as limited in background responses.
+- Keyboard/text: task `24` uses `clipboardd` v15 on port `6012` with private background Pasteboard entitlements and the same signed-license gate as `streamd`. Every write is read-back verified before `streamd` trusts daemon reads. Subtask `1` inserts text using background clipboard plus HID `Command+V`; subtask `5` pastes the existing clipboard; subtasks `3/4` use HID arrows and Backspace. Devices that ignore the Pasteboard entitlements fall back to the foreground app bridge on port `6013`. Show/hide keyboard remains `limited_on_trollstore` because it needs the rootfull SpringBoard keyboard observer.
+- Background UI bridge: `clipboardd` v15 sends toast to the hidden nested `TLinkUIService.app` on port `6017`. The service runs as mobile, owns a secure non-key pass-through window at level `20000099.9`, supports top/center/bottom placement, and is declared for lock-screen UI. `privhelper` requests a SpringBoardServices bundle launch first and falls back to a mobile-persona spawn; `clipboardd` applies the same launch-first recovery if the socket is absent. Alert/dialog and unavailable-service toast retain `CFUserNotificationDisplayAlert` as a fixed-center fallback. This path does not inject SpringBoard or load Substrate.
 - Keep awake: task `40` updates both the foreground app idle timer and the persistent UIKit daemon. The daemon path is best-effort because TrollStore does not provide a public global power assertion equivalent to SpringBoard injection.
 - App/process: `11`, `31-35`, `50-54` via streamd plus privhelper where needed.
 - Admin extension: task `72` clears safe app data containers through privhelper. It refuses protected bundles and unsafe paths.
@@ -123,7 +123,7 @@ TrollStore runtime.
   using the foreground/manual Settings fallback.
 - Vision OCR CPU-only remains experimental for the former `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract is still the stable/default OCR path. P1 keeps task `27/91` responses byte-compatible, defaults legacy task `27` requests to the `app_cpu` bridge, and exposes `worker_cpu` only as an explicit canary. Task `97` reports both profiles, CPU-only enforcement, no fallback/selector, and `visionOCRState=experimental`. See `docs/ocr-p1-cpu-only.md`.
 - Activator/Siri equivalents remain `limited_on_trollstore`.
-- Full SpringBoard overlay behavior is replaced by foreground app overlays plus background CFUserNotification system notices/alerts. The dialog result is not bridged back to the original synchronous task, and the touch indicator remains foreground-only.
+- Full SpringBoard injection remains absent. Foreground feedback uses app overlays; background toast uses `TLinkUIService.app` with a CFUserNotification fallback, while alert/dialog continue through system alerts. Dialog results are not bridged back to the original synchronous task, and the touch indicator remains foreground-only.
 - Widget-assisted boot wake is implemented for the TrollStore build. `TLinkBootWidget.appex` invokes its wake helper from both non-preview snapshots and repeating timelines, checks task port `6000`, then tries the private full SpringBoardServices launch API with the unlock option, the simple SBS launch API, and LaunchServices in that order. It deliberately does not gate the wake attempt on a `/var/mobile` marker that may be unavailable before first unlock. Settings -> Boot Script stores the selected JavaScript as the priority `00-boot-script` autolaunch entry; disabling Boot Script prevents script execution but does not disable the widget's service wake-lock behavior. The widget displays the latest wake result and writes `/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist`. This path remains best effort because WidgetKit controls actual refresh/launch timing; it is not a platformized LaunchDaemon. BGTaskScheduler remains the fallback after first launch.
 
 ## Quick Manual Checks
@@ -200,21 +200,26 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "91check_langs"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 ```
 
-Background visual fallback (put StreamControl in the background first):
+Background visual service (put StreamControl in the background first):
 
 ```powershell
-Invoke-TLinkTask -HostIP $iphoneIP -Task "220;;Background toast v14;;3;;2;;16"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "220;;Background toast v15;;3;;2;;16"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "12TLinkauto;;Background alert test;;3"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "401"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 ```
 
 The toast and alert should appear without bringing StreamControl to the
-foreground. Task `249` should report `version=14`,
-`background_visual_mode=cfusernotification_toast_alert_fixed_center`, the
-requested toast position, and `toast_effective_position=center`. A background
-position other than center remains `limited_on_trollstore`; arbitrary global
-positioning needs a proven SpringBoard/BackBoard compositor-hosting mechanism.
+foreground. In **Settings -> DEBUG**, `Toast UI Service Status` should decode a
+live `uiservice_ready;;version=1` response containing `uid=501`, `euid=501`,
+`window_ready=1`, and `passthrough=1`; `Show Background Toast Test` sends task
+`2412`. Task `249` should report `version=15` and
+`background_visual_mode=uiservice_positioned_toast_cfusernotification_fallback`.
+The persisted service state is
+`/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist`. If the response
+instead says `background_visual_cfusernotification_queued`, collect that plist
+and `/var/mobile/Library/TLinkauto/uiservice.log`; the fixed-center system alert
+was used because port `6017` was unavailable.
 
 Direct Volume Up trigger:
 
@@ -230,7 +235,7 @@ Task `249` should show `volume_hid_listener=1`,
 `volume_listener_state=registered_keyboard_page_12_usage_233`, and increment
 `volume_double_clicks`; it should also report `mobile_identity=1`. The same state is persisted in
 `/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist`. This is a direct
-IOHID observer in `clipboardd` v14 and does not require Substrate or an
+IOHID observer in `clipboardd` v15 and does not require Substrate or an
 Activator listener.
 
 Script compatibility smoke:

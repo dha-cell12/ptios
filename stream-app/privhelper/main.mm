@@ -36,6 +36,7 @@ int posix_spawnattr_set_persona_gid_np(posix_spawnattr_t *attr, uid_t gid);
 extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 
 typedef int (*TLinkHelperSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
+static BOOL TLinkHelperOpenBundleWithSBS(NSString *bundleId, int *outRc);
 
 static NSString *TLinkHelperLogPath(void)
 {
@@ -449,7 +450,7 @@ static void TLinkHelperKillClipboardd(void)
 
 static BOOL TLinkClipboarddProbeIsCurrent(NSString *probe)
 {
-    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=14"];
+    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=15"];
 }
 
 static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
@@ -498,6 +499,90 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
     }
     TLinkHelperLog([NSString stringWithFormat:@"ensure-clipboardd: pid=%d did not become ready", pid]);
     return 53;
+}
+
+static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
+{
+    return [probe hasPrefix:@"0;;uiservice_ready"] &&
+           [probe containsString:@"version=1"] &&
+           [probe containsString:@";;uid=501;;"] &&
+           [probe containsString:@";;euid=501;;"] &&
+           [probe containsString:@"window_ready=1"];
+}
+
+static int TLinkEnsureUIService(NSString *streamdPath, BOOL replaceExisting)
+{
+    NSString *appPath = [streamdPath stringByDeletingLastPathComponent];
+    NSString *servicePath = [appPath stringByAppendingPathComponent:@"TLinkUIService.app/TLinkUIService"];
+    if (![servicePath hasSuffix:@"/StreamControl.app/TLinkUIService.app/TLinkUIService"] ||
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:servicePath]) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: invalid path=%@", servicePath ?: @""]);
+        return 80;
+    }
+
+    NSString *probe = TLinkHelperSendLoopbackLine(@"ping\n", 6017, 1);
+    if (TLinkUIServiceProbeIsCurrent(probe) && !replaceExisting) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: already responding %@",
+                        [probe stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]);
+        return 0;
+    }
+
+    TLinkHelperKillProcessNamed("TLinkUIService");
+    int sbsRc = INT_MIN;
+    if (TLinkHelperOpenBundleWithSBS(@"com.tlinkauto.streamcontrol.uiservice", &sbsRc)) {
+        for (int i = 0; i < 8; i++) {
+            usleep(250000);
+            probe = TLinkHelperSendLoopbackLine(@"ping\n", 6017, 1);
+            if (TLinkUIServiceProbeIsCurrent(probe)) {
+                TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: SpringBoardServices probe ok %@",
+                    [probe stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]);
+                return 0;
+            }
+        }
+    }
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: SpringBoardServices unavailable rc=%d; using mobile persona spawn", sbsRc]);
+
+    const char *path = [servicePath fileSystemRepresentation];
+    char *arg0 = strdup(path);
+    char *arg1 = strdup("--daemon");
+    if (!arg0 || !arg1) {
+        free(arg0); free(arg1);
+        return 81;
+    }
+    char *const argv[] = { arg0, arg1, NULL };
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    int persona = posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+    int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 501);
+    int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 501);
+    if (persona != 0 || personaUid != 0 || personaGid != 0) {
+        posix_spawnattr_destroy(&attr);
+        free(arg0); free(arg1);
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: mobile persona failed persona=%d uid=%d gid=%d",
+                        persona, personaUid, personaGid]);
+        return 82;
+    }
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, path, NULL, &attr, argv, environ);
+    posix_spawnattr_destroy(&attr);
+    free(arg0); free(arg1);
+    if (rc != 0 || pid <= 0) {
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: spawn failed rc=%d path=%@", rc, servicePath]);
+        return 83;
+    }
+
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: spawned pid=%d persona=mobile uid=501 gid=501", pid]);
+    for (int i = 0; i < 12; i++) {
+        usleep(250000);
+        probe = TLinkHelperSendLoopbackLine(@"ping\n", 6017, 1);
+        if (TLinkUIServiceProbeIsCurrent(probe)) {
+            TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: probe ok %@",
+                            [probe stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]);
+            return 0;
+        }
+    }
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: pid=%d did not become ready", pid]);
+    return 84;
 }
 
 static BOOL TLinkVPNAgentProbeIsCurrent(NSString *probe)
@@ -605,6 +690,10 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
     int clipboardExit = TLinkEnsureClipboardd(normalized, replaceExisting);
     TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: clipboardd exit=%d replace=%d",
                     clipboardExit, replaceExisting ? 1 : 0]);
+
+    int uiServiceExit = TLinkEnsureUIService(normalized, replaceExisting);
+    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: uiservice exit=%d replace=%d",
+                    uiServiceExit, replaceExisting ? 1 : 0]);
 
     int vpnagentExit = TLinkEnsureVPNAgent(normalized, replaceExisting);
     TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: vpnagent exit=%d replace=%d",
@@ -944,7 +1033,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=9 scope=ensure-streamd,ensure-clipboardd,ensure-vpnagent-mobile,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
+            TLinkHelperLog(@"privhelper version=9 scope=ensure-streamd,ensure-clipboardd,ensure-uiservice-mobile,ensure-vpnagent-mobile,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
             return 0;
         }
 

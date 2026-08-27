@@ -78,7 +78,7 @@ shows the latest result directly in the widget. Wake diagnostics are written to
 
 ## Volume Up action menu
 
-`clipboardd` v14 registers an `IOHIDEventSystemClient` directly and watches
+`clipboardd` v15 registers an `IOHIDEventSystemClient` directly and watches
 keyboard usage page `12`, usage `233` (Volume Up). Two short clicks, each under
 400 ms and no more than 500 ms apart, show a secure high-level UIKit menu with
 **Launch**, **Record**, and **Cancel**. Launch lists script bundles and `.js`
@@ -94,6 +94,24 @@ Settings switch **Double-click Popup** is read at trigger time. Listener and
 menu diagnostics are written to
 `/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist` and are also
 included in the task `249` clipboardd diagnostic payload.
+
+## Background toast UI service
+
+The TrollStore package embeds the hidden nested app
+`TLinkUIService.app`. `privhelper` first requests a compositor-aware launch via
+SpringBoardServices and falls back to a mobile-persona spawn; `clipboardd` uses
+the same launch-first/re-spawn recovery if port `6017` is unavailable. The service owns a
+secure, non-key, touch-pass-through window at level `20000099.9`, so background
+toast keeps the requested top/center/bottom position without opening
+StreamControl. `UIApplicationShowsViewsWhileLocked`, `SecureKey`, the hidden app
+tag, and the platform/extension-host networking entitlement set mirror the
+working standalone UI-service model; no SpringBoard hook or Substrate library is
+loaded.
+
+If the dedicated service cannot answer, `clipboardd` retains
+`CFUserNotification` as a visible fixed-center fallback. Inspect **Settings ->
+DEBUG -> Toast UI Service Status**, run **Show Background Toast Test**, or read
+`/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist`.
 
 ## Remote Bridge MVP
 

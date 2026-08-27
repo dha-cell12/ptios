@@ -112,6 +112,17 @@ const appBinary = (await readFile(join(app, "StreamControl"))).toString("latin1"
 const streamdBinary = (await readFile(join(app, "streamd"))).toString("latin1");
 const clipboarddBinary = (await readFile(join(app, "clipboardd"))).toString("latin1");
 const vpnagentBinary = (await readFile(join(app, "vpnagent"))).toString("latin1");
+const uiServicePath = join(app, "TLinkUIService.app", "TLinkUIService");
+const uiServiceInfoPath = join(app, "TLinkUIService.app", "Info.plist");
+const uiServiceBytes = await readFile(uiServicePath);
+const uiServiceBinary = uiServiceBytes.toString("latin1");
+let uiServiceInfoXML;
+try {
+  uiServiceInfoXML = execFileSync("/usr/bin/plutil", ["-convert", "xml1", "-o", "-", uiServiceInfoPath], { encoding: "utf8" });
+} catch {
+  uiServiceInfoXML = await readFile(uiServiceInfoPath, "utf8");
+}
+executableHashes.TLinkUIService = createHash("sha256").update(uiServiceBytes).digest("hex");
 const widgetPath = join(app, "PlugIns", "TLinkBootWidget.appex", "TLinkBootWidget");
 const widgetBytes = await readFile(widgetPath);
 const widgetBinary = widgetBytes.toString("latin1");
@@ -134,15 +145,28 @@ assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifier"), "boot wid
 assert.ok(widgetBinary.includes("LSApplicationWorkspace"), "boot widget lacks the LaunchServices fallback");
 assert.ok(widgetBinary.includes("/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist"), "boot widget lacks wake diagnostics");
 assert.ok(widgetBinary.includes("com.tlinkauto.streamcontrol"), "boot widget lacks the StreamControl host identifier");
-assert.ok(clipboarddBinary.includes("clipboardd_ready;;version=14"), "clipboardd does not expose service v14");
+assert.ok(clipboarddBinary.includes("clipboardd_ready;;version=15"), "clipboardd does not expose service v15");
 assert.ok(clipboarddBinary.includes("registered_keyboard_page_12_usage_233"), "clipboardd lacks the direct IOHID Volume Up listener");
 assert.ok(clipboarddBinary.includes("Volume Up was pressed twice."), "clipboardd lacks the volume action menu");
 assert.ok(clipboarddBinary.includes("volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback"), "clipboardd lacks the system-alert volume menu backend");
 assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist"), "clipboardd lacks volume-trigger diagnostics");
+assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clipboardd lacks the background toast UI-service route");
+assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
+assert.ok(clipboarddBinary.includes("SBSLaunchApplicationWithIdentifier"), "clipboardd lacks compositor-aware UI-service launch");
+assert.ok(clipboarddBinary.includes("SBSLaunchApplicationWithIdentifier"), "clipboardd lacks compositor-aware UI-service launch");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=1"), "TLinkUIService lacks readiness evidence");
+assert.ok(uiServiceBinary.includes("window_ready_passthrough"), "TLinkUIService lacks pass-through window evidence");
+assert.ok(uiServiceBinary.includes("/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist"), "TLinkUIService lacks diagnostics");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleIdentifier"), "com.tlinkauto.streamcontrol.uiservice", "TLinkUIService has the wrong bundle identifier");
+assert.equal(plistValue(uiServiceInfoXML, "UIApplicationShowsViewsWhileLocked"), true, "TLinkUIService lacks lock-screen UI permission");
+assert.equal(plistValue(uiServiceInfoXML, "UIApplicationExitsOnSuspend"), false, "TLinkUIService suspend policy is missing");
+assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
+assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
 const streamdEntitlements = execFileSync("ldid", ["-e", join(app, "streamd")], { encoding: "utf8" });
 const clipboarddEntitlements = execFileSync("ldid", ["-e", join(app, "clipboardd")], { encoding: "utf8" });
+const uiServiceEntitlements = execFileSync("ldid", ["-e", uiServicePath], { encoding: "utf8" });
 const vpnagentEntitlements = execFileSync("ldid", ["-e", join(app, "vpnagent")], { encoding: "utf8" });
 const widgetEntitlements = execFileSync("ldid", ["-e", widgetPath], { encoding: "utf8" });
 assert.ok(
@@ -182,8 +206,18 @@ assert.ok(
 );
 assert.ok(
   clipboarddEntitlements.includes("com.apple.private.hid.client.event-monitor") &&
-    clipboarddEntitlements.includes("IOHIDEventSystemUserClient"),
-  "clipboardd is missing direct IOHID monitor entitlements",
+    clipboarddEntitlements.includes("IOHIDEventSystemUserClient") &&
+    clipboarddEntitlements.includes("com.apple.springboard.launchapplications"),
+  "clipboardd is missing direct IOHID or UI-service launch entitlements",
+);
+assert.ok(
+  uiServiceEntitlements.includes("platform-application") &&
+    uiServiceEntitlements.includes("com.apple.private.extension-host") &&
+    uiServiceEntitlements.includes("com.apple.developer.networking.HotspotHelper") &&
+    uiServiceEntitlements.includes("com.apple.developer.networking.multicast") &&
+    uiServiceEntitlements.includes("com.apple.developer.networking.vpn.api") &&
+    uiServiceEntitlements.includes("allow-vpn"),
+  "TLinkUIService is missing its TrollStore background UI entitlement set",
 );
 
 const forbidden = [

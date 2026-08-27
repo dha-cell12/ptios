@@ -157,6 +157,10 @@ jobs:
           test -f stream-app/clipboardd/Makefile
           test -f stream-app/clipboardd/main.mm
           test -f stream-app/clipboardd/entitlements.plist
+          test -f stream-app/uiservice/Makefile
+          test -f stream-app/uiservice/main.mm
+          test -f stream-app/uiservice/Info.plist
+          test -f stream-app/uiservice/entitlements.plist
           test -f stream-app/privhelper/Makefile
           test -f stream-app/privhelper/main.mm
           test -f shared/TLinkLicenseVerifier.h
@@ -192,6 +196,7 @@ jobs:
           test -f scripts/check-trollstore-ui-refresh.mjs
           test -f scripts/check-trollstore-widget-boot.mjs
           test -f scripts/check-trollstore-volume-trigger.mjs
+          test -f scripts/check-trollstore-toast-uiservice.mjs
           test -f scripts/Test-TLinkRunHistoryV1.ps1
           test -f test/fixtures/run-history-failure-evidence-v1.json
           test -f scripts/check-event-channel-v1.mjs
@@ -245,6 +250,7 @@ jobs:
           node scripts/check-trollstore-ui-refresh.mjs
           node scripts/check-trollstore-widget-boot.mjs
           node scripts/check-trollstore-volume-trigger.mjs
+          node scripts/check-trollstore-toast-uiservice.mjs
           node scripts/check-event-channel-v1.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-secure-pairing-p0.mjs
@@ -399,17 +405,25 @@ jobs:
           grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
           grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
           grep -q 'kTCCServicePasteboard' stream-app/clipboardd/entitlements.plist
-          grep -q 'version=14' stream-app/clipboardd/main.mm
+          grep -q 'version=15' stream-app/clipboardd/main.mm
           grep -q 'registered_keyboard_page_12_usage_233' stream-app/clipboardd/main.mm
           grep -q 'com.apple.private.hid.client.event-monitor' stream-app/clipboardd/entitlements.plist
           grep -q '../../shared/TLinkLicenseVerifier.mm' stream-app/clipboardd/Makefile
           grep -q 'TLinkLicenseFeatureAllowed' stream-app/clipboardd/main.mm
           grep -q 'kCFUserNotificationNoDefaultButtonFlag' stream-app/clipboardd/main.mm
           grep -q 'toast_overlay_visible' stream-app/clipboardd/main.mm
-          grep -q 'toast_effective_position=center' stream-app/clipboardd/main.mm
+          grep -q 'toast_effective_position=uiservice_or_center_fallback' stream-app/clipboardd/main.mm
           grep -q 'initWithBundleIdentifier' stream-app/clipboardd/main.mm
           grep -q 'CFUserNotificationDisplayNotice' stream-app/clipboardd/main.mm
           grep -q 'CFUserNotificationDisplayAlert' stream-app/clipboardd/main.mm
+          grep -q 'TLinkSendUIServiceToast' stream-app/clipboardd/main.mm
+          grep -q 'TLinkRespawnUIService' stream-app/clipboardd/main.mm
+          grep -q 'SBSLaunchApplicationWithIdentifier' stream-app/clipboardd/main.mm
+          grep -q 'com.apple.springboard.launchapplications' stream-app/clipboardd/entitlements.plist
+          grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
+          grep -q 'return nil;' stream-app/uiservice/main.mm
+          grep -q 'UIApplicationShowsViewsWhileLocked' stream-app/uiservice/Info.plist
+          grep -q 'com.apple.private.extension-host' stream-app/uiservice/entitlements.plist
           grep -q 'com.apple.springboard.CFUserNotification' stream-app/clipboardd/entitlements.plist
           grep -q 'UserNotifications' stream-app/clipboardd/Makefile
           grep -q 'TLinkHandleBackgroundUIBridge' stream-app/clipboardd/main.mm
@@ -486,8 +500,10 @@ jobs:
           grep -q 'resolvedOpenFilePath' pccontrol/TLinkautoJSRuntime.mm
           grep -q '\[deviceBridge closeOpenFiles\]' pccontrol/jsruntime/TLinkJSRuntimeCore.mm
           grep -q 'backgroundToastFixedCenter' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=14"' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=14"' stream-app/privhelper/main.mm
+          grep -q 'containsString:@"version=15"' stream-app/streamd/POCSocketServer.mm
+          grep -q 'containsString:@"version=15"' stream-app/privhelper/main.mm
+          grep -q 'TLinkEnsureUIService' stream-app/privhelper/main.mm
+          grep -q 'Toast UI Service Status' stream-app/app/SettingsViewController.mm
           grep -q 'app_foreground_heartbeat' stream-app/app/AppDelegate.mm
           grep -q 'Notification Access' stream-app/app/SettingsViewController.mm
           grep -q 'clipboardUIDaemon' stream-app/streamd/POCSocketServer.mm
@@ -793,6 +809,8 @@ jobs:
           grep 'Payload/StreamControl.app/StreamControl' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/streamd' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/clipboardd' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/TLinkUIService.app/Info.plist' stream-app/packages/StreamControl.tipa.contents.txt
+          grep 'Payload/StreamControl.app/TLinkUIService.app/TLinkUIService' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/vpnagent' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/privhelper' stream-app/packages/StreamControl.tipa.contents.txt
           grep 'Payload/StreamControl.app/PlugIns/TLinkBootWidget.appex/Info.plist' stream-app/packages/StreamControl.tipa.contents.txt
@@ -812,6 +830,8 @@ jobs:
           test -x "$APP/StreamControl"
           test -x "$APP/streamd"
           test -x "$APP/clipboardd"
+          test -f "$APP/TLinkUIService.app/Info.plist"
+          test -x "$APP/TLinkUIService.app/TLinkUIService"
           test -x "$APP/vpnagent"
           test -x "$APP/privhelper"
           test -f "$APP/PlugIns/TLinkBootWidget.appex/Info.plist"
@@ -829,6 +849,8 @@ jobs:
           ldid -e "$APP/streamd" || true
           echo "--- clipboardd entitlements ---"
           ldid -e "$APP/clipboardd" || true
+          echo "--- TLinkUIService entitlements ---"
+          ldid -e "$APP/TLinkUIService.app/TLinkUIService" || true
           echo "--- vpnagent entitlements ---"
           ldid -e "$APP/vpnagent" || true
           echo "--- privhelper entitlements ---"

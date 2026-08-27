@@ -67,6 +67,7 @@
 	<array>
 		<string>privhelper</string>
 		<string>clipboardd</string>
+		<string>TLinkUIService.app/TLinkUIService</string>
 	</array>
 </dict>
 </plist>

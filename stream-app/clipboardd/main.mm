@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <signal.h>
+#include <spawn.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -18,6 +19,8 @@
 typedef void (*TLinkUIApplicationInitializeFn)(void);
 typedef void (*TLinkUIApplicationInstantiateSingletonFn)(Class);
 typedef void (*TLinkUIKitBootstrapFn)(void);
+typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
+extern char **environ;
 typedef SInt32 (*TLinkCFUserNotificationDisplayNoticeFn)(CFTimeInterval,
                                                           CFOptionFlags,
                                                           CFURLRef,
@@ -175,6 +178,105 @@ static NSString *TLinkSendStreamdLine(NSString *line)
     if (responseData.length == 0) return @"streamd_no_response";
     NSString *response = [[NSString alloc] initWithData:responseData encoding:NSUTF8StringEncoding];
     return [response stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"streamd_non_utf8_response";
+}
+
+static int TLinkConnectUIService(void)
+{
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    if (client < 0) return -1;
+    struct timeval timeout = {1, 0};
+    setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(6017);
+    inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+    if (connect(client, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(client);
+        return -1;
+    }
+    return client;
+}
+
+static BOOL TLinkRequestUIServiceApplicationLaunch(void)
+{
+    void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
+                          RTLD_LAZY | RTLD_GLOBAL);
+    if (!handle) return NO;
+    TLinkSBSLaunchApplicationFn launch =
+        (TLinkSBSLaunchApplicationFn)dlsym(handle, "SBSLaunchApplicationWithIdentifier");
+    int rc = launch ? launch(CFSTR("com.tlinkauto.streamcontrol.uiservice"), false) : -1;
+    TLinkClipboardLog([NSString stringWithFormat:@"uiservice SBS launch rc=%d", rc]);
+    return rc == 0;
+}
+
+static BOOL TLinkRespawnUIService(void)
+{
+    NSString *servicePath = [NSBundle.mainBundle.bundlePath
+        stringByAppendingPathComponent:@"TLinkUIService.app/TLinkUIService"];
+    if (![servicePath hasSuffix:@"/StreamControl.app/TLinkUIService.app/TLinkUIService"] ||
+        ![NSFileManager.defaultManager isExecutableFileAtPath:servicePath]) {
+        TLinkClipboardLog([NSString stringWithFormat:@"uiservice respawn refused path=%@", servicePath ?: @""]);
+        return NO;
+    }
+    const char *path = [servicePath fileSystemRepresentation];
+    char *arg0 = strdup(path);
+    char *arg1 = strdup("--daemon");
+    if (!arg0 || !arg1) {
+        free(arg0); free(arg1);
+        return NO;
+    }
+    char *const argv[] = {arg0, arg1, NULL};
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, path, NULL, NULL, argv, environ);
+    free(arg0); free(arg1);
+    TLinkClipboardLog([NSString stringWithFormat:@"uiservice respawn rc=%d pid=%d uid=%d euid=%d",
+        rc, pid, getuid(), geteuid()]);
+    return rc == 0 && pid > 0;
+}
+
+static NSString *TLinkSendUIServiceLine(NSString *line)
+{
+    int client = TLinkConnectUIService();
+    if (client < 0 && TLinkRequestUIServiceApplicationLaunch()) {
+        for (int attempt = 0; attempt < 4 && client < 0; attempt++) {
+            usleep(150000);
+            client = TLinkConnectUIService();
+        }
+    }
+    if (client < 0 && TLinkRespawnUIService()) {
+        for (int attempt = 0; attempt < 4 && client < 0; attempt++) {
+            usleep(150000);
+            client = TLinkConnectUIService();
+        }
+    }
+    if (client < 0) return [NSString stringWithFormat:@"uiservice_connect_failed errno=%d", errno];
+    NSData *request = [line dataUsingEncoding:NSUTF8StringEncoding];
+    write(client, request.bytes, request.length);
+    NSMutableData *responseData = [NSMutableData data];
+    char buffer[1024];
+    while (responseData.length < 8192) {
+        ssize_t count = read(client, buffer, sizeof(buffer));
+        if (count <= 0) break;
+        [responseData appendBytes:buffer length:(NSUInteger)count];
+        if (memchr(buffer, '\n', (size_t)count)) break;
+    }
+    close(client);
+    NSString *response = responseData.length > 0
+        ? [[NSString alloc] initWithData:responseData encoding:NSUTF8StringEncoding]
+        : @"uiservice_no_response";
+    return [response stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+static NSString *TLinkSendUIServiceToast(NSDictionary *payload)
+{
+    NSMutableDictionary *requestPayload = [payload mutableCopy] ?: [NSMutableDictionary dictionary];
+    requestPayload[@"action"] = @"toast";
+    NSData *json = [NSJSONSerialization dataWithJSONObject:requestPayload options:0 error:nil];
+    if (json.length == 0) return @"uiservice_json_failed";
+    NSString *encoded = [json base64EncodedStringWithOptions:0];
+    return TLinkSendUIServiceLine([NSString stringWithFormat:@"1;;%@\n", encoded ?: @""]);
 }
 
 static BOOL TLinkIsScriptBundleAtPath(NSString *path)
@@ -776,6 +878,14 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
         NSInteger requestedPosition = [payload[@"position"] integerValue];
         if (requestedPosition < 0 || requestedPosition > 2) requestedPosition = 2;
         sTLinkToastLastPosition = requestedPosition;
+        NSString *uiServiceResponse = TLinkSendUIServiceToast(payload);
+        if ([uiServiceResponse isEqualToString:@"0"] || [uiServiceResponse hasPrefix:@"0;;"]) {
+            sTLinkLastBackgroundVisualResult = @"uiservice_window_toast_queued";
+            TLinkClipboardLog([NSString stringWithFormat:@"background toast forwarded to TLinkUIService response=%@", uiServiceResponse]);
+            return [NSString stringWithFormat:@"0;;background_visual_uiservice_queued;;toast;;requested_position=%ld;;effective_position=%ld;;passthrough=1\r\n",
+                    (long)requestedPosition, (long)requestedPosition];
+        }
+        TLinkClipboardLog([NSString stringWithFormat:@"TLinkUIService unavailable; CFUserNotification fallback response=%@", uiServiceResponse ?: @"<nil>"]);
         TLinkScheduleCFUserNotification(payload, @"uidaemon_window_not_compositor_hosted");
         return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;toast;;requested_position=%ld;;effective_position=center;;limited_on_trollstore\r\n",
                 (long)requestedPosition];
@@ -796,6 +906,24 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         if (subtask == 10) {
             TLinkShowVolumeActionMenu();
             return @"0;;volume_menu_test_queued\r\n";
+        }
+        if (subtask == 11) {
+            NSString *probe = TLinkSendUIServiceLine(@"ping\n");
+            NSData *probeData = [probe dataUsingEncoding:NSUTF8StringEncoding];
+            return [NSString stringWithFormat:@"0;;uiservice_probe_b64=%@\r\n",
+                    [probeData base64EncodedStringWithOptions:0] ?: @""];
+        }
+        if (subtask == 12) {
+            NSString *response = TLinkSendUIServiceToast(@{
+                @"message": @"TLinkUIService background toast test",
+                @"duration": @3,
+                @"position": @0,
+                @"fontSize": @16,
+                @"allow_screenshot": @NO,
+            });
+            return ([response isEqualToString:@"0"] || [response hasPrefix:@"0;;"])
+                ? [NSString stringWithFormat:@"0;;uiservice_toast_test_queued;;%@\r\n", response]
+                : [NSString stringWithFormat:@"-1;;uiservice_toast_test_failed;;%@\r\n", response ?: @"unknown"];
         }
         UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
 
@@ -841,7 +969,7 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=14;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;volume_hid_listener=%d;;volume_listener_state=%@;;volume_popup_enabled=%d;;volume_up_events=%lu;;volume_double_clicks=%lu;;volume_menu_visible=%d;;volume_last_action=%@;;volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=15;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;volume_hid_listener=%d;;volume_listener_state=%@;;volume_popup_enabled=%d;;volume_up_events=%lu;;volume_double_clicks=%lu;;volume_menu_visible=%d;;volume_last_action=%@;;volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback;;background_visual_mode=uiservice_positioned_toast_cfusernotification_fallback;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=uiservice_or_center_fallback;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)state, (long)systemState,

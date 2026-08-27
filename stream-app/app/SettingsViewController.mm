@@ -16,6 +16,7 @@ static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/
 static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/remote_bridge.plist";
 static NSString *const kTLinkWidgetBootDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist";
 static NSString *const kTLinkVolumeTriggerDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist";
+static NSString *const kTLinkUIServiceDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist";
 
 @implementation SCSettingsViewController {
     NSArray<NSArray<NSString *> *> *_sections;
@@ -52,9 +53,9 @@ static NSString *const kTLinkVolumeTriggerDiagnosticsPath = @"/var/mobile/Librar
     NSArray<NSString *> *runtimeSettings = @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"];
     if (_debugMode) {
         _sections = @[
-            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status", @"Widget Boot Wake Status", @"Volume Trigger Status", @"Show Volume Menu Test"],
+            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status", @"Widget Boot Wake Status", @"Volume Trigger Status", @"Show Volume Menu Test", @"Toast UI Service Status", @"Show Background Toast Test"],
             runtimeSettings,
-            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v14", @"Volume Trigger: direct IOHID + system alert fallback", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: not required for volume trigger", @"Privhelper: open_kill_restart_ensure_respring"],
+            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background UI service", @"Toast: foreground or UI-service positioned; CF alert fallback", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v15 + UI service v1", @"Volume Trigger: direct IOHID + system alert fallback", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: not required for volume trigger", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
     } else {
         // Grouped like iOS Settings: Appearance · Account · Connectivity · Service · Runtime · Danger
@@ -305,6 +306,9 @@ static NSString *const kTLinkVolumeTriggerDiagnosticsPath = @"/var/mobile/Librar
         NSDictionary *volumeTrigger = [NSDictionary dictionaryWithContentsOfFile:kTLinkVolumeTriggerDiagnosticsPath] ?: @{};
         [report appendFormat:@"volume_trigger_path: %@\nvolume_trigger: %@\n\n",
          kTLinkVolumeTriggerDiagnosticsPath, volumeTrigger];
+        NSDictionary *uiService = [NSDictionary dictionaryWithContentsOfFile:kTLinkUIServiceDiagnosticsPath] ?: @{};
+        [report appendFormat:@"toast_uiservice_path: %@\ntoast_uiservice: %@\n\n",
+         kTLinkUIServiceDiagnosticsPath, uiService];
         NSDictionary *licenseStatus = [[SCLicenseManager sharedManager] localStatus] ?: @{};
         [report appendFormat:@"license_status: %@\n\n", licenseStatus];
         NSDictionary *licenseLifecycle = [[SCLicenseLifecycleCoordinator sharedCoordinator] diagnostics] ?: @{};
@@ -763,6 +767,46 @@ static NSString *const kTLinkVolumeTriggerDiagnosticsPath = @"/var/mobile/Librar
             NSString *response = [TLinkSocketClient sendLineAndRead:@"2410\n" timeout:4.0];
             dispatch_async(dispatch_get_main_queue(), ^{
                 self->_resultView.text = [NSString stringWithFormat:@"Volume menu test:\n%@", response ?: @"<no response>"];
+            });
+        });
+        return;
+    }
+
+    if ([title isEqualToString:@"Toast UI Service Status"]) {
+        NSDictionary *status = [NSDictionary dictionaryWithContentsOfFile:kTLinkUIServiceDiagnosticsPath];
+        _resultView.text = @"Reading TLinkUIService live status...";
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            NSString *live = [TLinkSocketClient sendLineAndRead:@"2411\n" timeout:4.0];
+            NSString *decodedProbe = @"<UI service probe unavailable>";
+            NSString *marker = @"uiservice_probe_b64=";
+            NSRange markerRange = [live rangeOfString:marker];
+            if (live.length > 0 && markerRange.location != NSNotFound) {
+                NSString *encoded = [[live substringFromIndex:NSMaxRange(markerRange)]
+                    stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                NSData *decodedData = [[NSData alloc] initWithBase64EncodedString:encoded options:0];
+                NSString *decoded = decodedData
+                    ? [[NSString alloc] initWithData:decodedData encoding:NSUTF8StringEncoding]
+                    : nil;
+                if (decoded.length > 0) decodedProbe = decoded;
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self->_resultView.text = [NSString stringWithFormat:@"Live TLinkUIService:\n%@\n\nTask 2411 envelope:\n%@\n\nPersisted %@\n%@",
+                    decodedProbe,
+                    live ?: @"<no response>",
+                    kTLinkUIServiceDiagnosticsPath,
+                    status ?: @"<none>"];
+            });
+        });
+        return;
+    }
+
+    if ([title isEqualToString:@"Show Background Toast Test"]) {
+        _resultView.text = @"Requesting the standalone background toast service...";
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            NSString *response = [TLinkSocketClient sendLineAndRead:@"2412\n" timeout:4.0];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self->_resultView.text = [NSString stringWithFormat:@"Background toast test:\n%@",
+                    response ?: @"<no response>"];
             });
         });
         return;

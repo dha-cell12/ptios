@@ -1,6 +1,6 @@
 # stream-app aggregate build
 #
-# Builds streamd + clipboardd + StreamControl.app + WidgetKit extension, embeds them, and
+# Builds streamd + clipboardd + TLinkUIService.app + StreamControl.app + WidgetKit extension, embeds them, and
 # packages a TrollStore-compatible .tipa at packages/StreamControl.tipa.
 
 APP_NAME := StreamControl
@@ -11,7 +11,7 @@ TLINK_SWIFT_COMPILER := $(shell command -v swift 2>/dev/null)
 TLINK_SWIFT_SUPPORT_DIR := $(THEOS)/vendor/swift-support
 TLINK_SWIFT_OUTPUT_MAP_TOOL := $(TLINK_SWIFT_SUPPORT_DIR)/.theos_build/release/generate-output-file-map
 
-.PHONY: all streamd clipboardd vpnagent app privhelper swift-support widget embed package clean
+.PHONY: all streamd clipboardd uiservice vpnagent app privhelper swift-support widget embed package clean
 
 all: package
 
@@ -20,6 +20,9 @@ streamd:
 
 clipboardd:
 	$(MAKE) -C clipboardd stage FINALPACKAGE=1
+
+uiservice:
+	$(MAKE) -C uiservice stage FINALPACKAGE=1
 
 vpnagent:
 	$(MAKE) -C vpnagent stage FINALPACKAGE=1
@@ -45,7 +48,7 @@ swift-support:
 widget: swift-support
 	$(MAKE) -C widget stage FINALPACKAGE=1 THEOS_USE_PARALLEL_BUILDING=0
 
-embed: streamd clipboardd vpnagent app privhelper widget
+embed: streamd clipboardd uiservice vpnagent app privhelper widget
 	@set -e; \
 	APP="app/.theos/_/Applications/$(APP_BUNDLE)"; \
 	if [ ! -d "$$APP" ]; then \
@@ -58,6 +61,10 @@ embed: streamd clipboardd vpnagent app privhelper widget
 	CLIPBOARDD="clipboardd/.theos/_/usr/bin/clipboardd"; \
 	if [ ! -f "$$CLIPBOARDD" ]; then \
 	  CLIPBOARDD=$$(find clipboardd/.theos -maxdepth 8 -type f -name 'clipboardd' ! -path '*/dSYM/*' | head -n1); \
+	fi; \
+	UISERVICE="uiservice/.theos/_/usr/bin/TLinkUIService"; \
+	if [ ! -f "$$UISERVICE" ]; then \
+	  UISERVICE=$$(find uiservice/.theos -maxdepth 8 -type f -name 'TLinkUIService' ! -path '*/dSYM/*' | head -n1); \
 	fi; \
 	VPNAGENT="vpnagent/.theos/_/usr/bin/vpnagent"; \
 	if [ ! -f "$$VPNAGENT" ]; then \
@@ -83,6 +90,9 @@ embed: streamd clipboardd vpnagent app privhelper widget
 	if [ -z "$$CLIPBOARDD" ] || [ ! -f "$$CLIPBOARDD" ]; then \
 	  echo "ERROR: clipboardd executable not found"; exit 1; \
 	fi; \
+	if [ -z "$$UISERVICE" ] || [ ! -f "$$UISERVICE" ]; then \
+	  echo "ERROR: TLinkUIService executable not found"; exit 1; \
+	fi; \
 	if [ -z "$$VPNAGENT" ] || [ ! -f "$$VPNAGENT" ]; then \
 	  echo "ERROR: vpnagent executable not found"; exit 1; \
 	fi; \
@@ -96,6 +106,11 @@ embed: streamd clipboardd vpnagent app privhelper widget
 	chmod 755 "$$APP/streamd"; \
 	cp "$$CLIPBOARDD" "$$APP/clipboardd"; \
 	chmod 755 "$$APP/clipboardd"; \
+	rm -rf "$$APP/TLinkUIService.app"; \
+	mkdir -p "$$APP/TLinkUIService.app"; \
+	cp "$$UISERVICE" "$$APP/TLinkUIService.app/TLinkUIService"; \
+	cp uiservice/Info.plist "$$APP/TLinkUIService.app/Info.plist"; \
+	chmod 755 "$$APP/TLinkUIService.app/TLinkUIService"; \
 	cp "$$VPNAGENT" "$$APP/vpnagent"; \
 	chmod 755 "$$APP/vpnagent"; \
 	cp "$$PRIVHELPER" "$$APP/privhelper"; \
@@ -108,6 +123,7 @@ embed: streamd clipboardd vpnagent app privhelper widget
 	if command -v ldid >/dev/null 2>&1; then \
 	  ldid -Sstreamd/entitlements.plist "$$APP/streamd"; \
 	  ldid -Sclipboardd/entitlements.plist "$$APP/clipboardd"; \
+	  ldid -Suiservice/entitlements.plist "$$APP/TLinkUIService.app/TLinkUIService"; \
 	  ldid -Svpnagent/entitlements.plist "$$APP/vpnagent"; \
 	  ldid -Sapp/entitlements.plist "$$APP/privhelper"; \
 	  ldid -Swidget/entitlements.plist "$$APP/PlugIns/TLinkBootWidget.appex/TLinkBootWidget"; \
@@ -117,6 +133,8 @@ embed: streamd clipboardd vpnagent app privhelper widget
 	test -x "$$APP/$(APP_NAME)"; \
 	test -x "$$APP/streamd"; \
 	test -x "$$APP/clipboardd"; \
+	test -f "$$APP/TLinkUIService.app/Info.plist"; \
+	test -x "$$APP/TLinkUIService.app/TLinkUIService"; \
 	test -x "$$APP/vpnagent"; \
 	test -x "$$APP/privhelper"; \
 	test -f "$$APP/PlugIns/TLinkBootWidget.appex/Info.plist"; \
@@ -127,7 +145,7 @@ embed: streamd clipboardd vpnagent app privhelper widget
 	test -f "$$APP/CompatibilityExamples/07 File Handle.js"; \
 	test -f "$$APP/CompatibilityExamples/09 Smart Wait.js"; \
 	test -f "$$APP/CompatibilityExamples/10 Failure Evidence.js"; \
-	echo "Embedded streamd, clipboardd, vpnagent, and TLinkBootWidget into $$APP"
+	echo "Embedded streamd, clipboardd, TLinkUIService.app, vpnagent, and TLinkBootWidget into $$APP"
 
 package: embed
 	@set -e; \
@@ -142,6 +160,8 @@ package: embed
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/$(APP_NAME)"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/streamd"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/clipboardd"; \
+	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/TLinkUIService.app/Info.plist"; \
+	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/TLinkUIService.app/TLinkUIService"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/vpnagent"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/privhelper"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/PlugIns/TLinkBootWidget.appex/Info.plist"; \
@@ -157,6 +177,7 @@ package: embed
 clean:
 	-$(MAKE) -C streamd clean
 	-$(MAKE) -C clipboardd clean
+	-$(MAKE) -C uiservice clean
 	-$(MAKE) -C vpnagent clean
 	-$(MAKE) -C app clean
 	-$(MAKE) -C privhelper clean

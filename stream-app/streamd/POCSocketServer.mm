@@ -311,7 +311,9 @@ static NSString *TLinkVisualSafeText(NSString *text)
     return safe ?: @"";
 }
 
-static uint64_t TLinkRecordToast(NSString *message, double duration, int type, int position, int fontSize, NSString *source)
+static uint64_t TLinkRecordToastWithOptions(NSString *message, double duration, int type,
+                                            int position, int fontSize, BOOL allowScreenshot,
+                                            NSString *source)
 {
     NSString *safeMessage = TLinkVisualSafeText(message);
     if (safeMessage.length == 0) return 0;
@@ -333,6 +335,7 @@ static uint64_t TLinkRecordToast(NSString *message, double duration, int type, i
             @"type": @(type),
             @"position": @(position),
             @"fontSize": @(fontSize),
+            @"allow_screenshot": @(allowScreenshot),
             @"source": source ?: @"unknown",
             @"ts_ms": @(TLinkNowMs()),
         }];
@@ -348,10 +351,17 @@ static uint64_t TLinkRecordToast(NSString *message, double duration, int type, i
         @"duration": @(duration),
         @"position": @(position),
         @"fontSize": @(fontSize),
+        @"allow_screenshot": @(allowScreenshot),
         @"type": @(type),
         @"event_id": @(eventId),
     });
     return eventId;
+}
+
+static uint64_t TLinkRecordToast(NSString *message, double duration, int type, int position,
+                                 int fontSize, NSString *source)
+{
+    return TLinkRecordToastWithOptions(message, duration, type, position, fontSize, NO, source);
 }
 
 static uint64_t TLinkRecordAlert(NSString *title, NSString *message, double duration, NSString *source)
@@ -1162,8 +1172,11 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         int type = opts[@"type"] ? [opts[@"type"] intValue] : 0;
         int position = opts[@"position"] ? [opts[@"position"] intValue] : 2;
         int fontSize = opts[@"fontSize"] ? [opts[@"fontSize"] intValue] : 15;
-        uint64_t eventId = TLinkRecordToast(text, duration, type, position, fontSize, @"script");
-        return @{@"ok": @YES, @"mode": @"foreground_positioned_or_background_cfusernotification_fixed_center", @"event_id": @(eventId)};
+        NSNumber *allowScreenshotValue = opts[@"allow_screenshot"] ?: opts[@"allowScreenshot"];
+        BOOL allowScreenshot = allowScreenshotValue ? allowScreenshotValue.boolValue : NO;
+        uint64_t eventId = TLinkRecordToastWithOptions(text, duration, type, position, fontSize,
+                                                       allowScreenshot, @"script");
+        return @{@"ok": @YES, @"mode": @"foreground_or_background_uiservice_positioned_with_cf_fallback", @"event_id": @(eventId)};
     };
     device[@"alert"] = ^NSDictionary *(JSValue *titleValue, JSValue *messageValue, JSValue *options) {
         NSString *title = titleValue && ![titleValue isUndefined] && ![titleValue isNull] ? [titleValue toString] : @"TLinkauto";
@@ -2334,9 +2347,11 @@ static NSData *TLinkHandleToast(NSString *body)
     double duration = parts.count >= 3 ? [parts[2] doubleValue] : 2.0;
     int position = parts.count >= 4 ? [parts[3] intValue] : 2;
     int fontSize = parts.count >= 5 ? [parts[4] intValue] : 15;
-    uint64_t eventId = TLinkRecordToast(message, duration, type, position, fontSize, @"task22");
+    BOOL allowScreenshot = parts.count >= 6 ? [parts[5] boolValue] : NO;
+    uint64_t eventId = TLinkRecordToastWithOptions(message, duration, type, position, fontSize,
+                                                   allowScreenshot, @"task22");
     if (eventId == 0) return TLinkError(@"toast_missing_message");
-    return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu;;foreground_positioned_or_background_cfusernotification_fixed_center;;requested_position=%d", eventId, position]);
+    return TLinkSuccess([NSString stringWithFormat:@"toast_queued;;%llu;;foreground_or_background_uiservice_positioned_with_cf_fallback;;requested_position=%d", eventId, position]);
 }
 
 static NSData *TLinkHandleAlertBox(NSString *body)
@@ -4410,6 +4425,12 @@ static NSData *TLinkHandleKeyboard(NSString *body)
     if (subtask == 10) {
         return TLinkRunAppSideClipboard(@"10");
     }
+    if (subtask == 11) {
+        return TLinkRunAppSideClipboard(@"11");
+    }
+    if (subtask == 12) {
+        return TLinkRunAppSideClipboard(@"12");
+    }
     return TLinkUnsupported(24, @"limited_on_trollstore unknown_keyboard_subtask");
 }
 
@@ -4636,7 +4657,7 @@ static void TLinkUpdateClipboardDaemonVerification(NSData *diagnosticResponse)
 {
     NSString *diagnostic = TLinkResponseStringFromData(diagnosticResponse);
     sTLinkClipboardDaemonWriteVerified =
-        [diagnostic containsString:@"version=14"] &&
+        [diagnostic containsString:@"version=15"] &&
         [diagnostic containsString:@"background_entitlement=1"] &&
         [diagnostic containsString:@"write_verified=1"];
 }
@@ -4653,6 +4674,15 @@ static NSData *TLinkRunAppSideClipboard(NSString *body)
         NSString *diagnosticB64 = [diagnosticData base64EncodedStringWithOptions:0] ?: @"";
         return TLinkSuccess([NSString stringWithFormat:@"clipboard_backend_ready;;mode=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback;;app_port=6013;;daemon_port=6012;;daemon_direct_write=%d;;daemon_diag_b64=%@",
                              sTLinkClipboardDaemonWriteVerified ? 1 : 0, diagnosticB64]);
+    }
+
+    // UI controls do not depend on a previous Pasteboard write verification.
+    // They must reach the always-on clipboardd even on a fresh installation.
+    BOOL daemonControl = [body isEqualToString:@"10"] ||
+                         [body isEqualToString:@"11"] ||
+                         [body isEqualToString:@"12"];
+    if (daemonControl) {
+        return TLinkRunClipboardService(body, 6012, 1500);
     }
 
     BOOL writeOperation = [body hasPrefix:@"7;;"] || [body hasPrefix:@"8;;"];
@@ -5983,7 +6013,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"backgroundUIBridge": @(YES),
         @"backgroundVisualNotifications": @(YES),
         @"backgroundVisualCFUserNotification": @(YES),
-        @"backgroundPositionedToastOverlay": @(NO),
+        @"backgroundPositionedToastOverlay": @(YES),
+        @"backgroundToastUIService": @"TLinkUIService.app_port_6017_passthrough_v1",
         @"backgroundToastFixedCenter": @(YES),
         @"clipboardMode": @"background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback",
         @"keyboardHIDPaste": @(YES),
@@ -6088,7 +6119,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"keepAwake": @(YES),
         @"keepAwakeMode": @"foreground_app_plus_background_uidaemon_best_effort",
         @"visualFeedback": @(YES),
-        @"visualFeedbackMode": @"foreground_positioned_overlay_background_cfusernotification_fixed_center",
+        @"visualFeedbackMode": @"foreground_overlay_background_uiservice_positioned_cfusernotification_fallback",
         @"toastOverlay": @(YES),
         @"alertOverlay": @(YES),
         @"dialogOverlay": @(YES),
@@ -8523,7 +8554,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastFixedCenter,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,backgroundPositionedToastOverlay,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_positioned_overlay_background_cfusernotification_fixed_center toast=foreground_positioned_background_fixed_center_limited_on_trollstore dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
+        NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastUIService,backgroundToastFixedCenter,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_background_uiservice_positioned_cfusernotification_fallback toast=foreground_or_background_uiservice_positioned_with_cf_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_clipboardd_uiservice_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
         NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
         cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=23"];
         cap = [cap stringByAppendingFormat:@" licenseBuildMode=%@", TLinkLicenseBuildMode()];
