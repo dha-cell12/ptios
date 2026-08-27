@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 
 #include <arpa/inet.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -12,8 +13,14 @@
 #include <unistd.h>
 #import <objc/message.h>
 
+typedef int (*TLinkUIServiceSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
+typedef CFStringRef (*TLinkUIServiceSBSCopyFrontmostApplicationFn)(void);
+
 static NSString *const kTLinkUIServiceDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist";
+static NSString *const kTLinkUIServiceRestoreBundlePath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle";
 static NSString *sTLinkLastResult = @"starting";
+static NSString *sTLinkRestoreBundle = @"";
+static NSString *sTLinkRestoreResult = @"pending";
 static NSUInteger sTLinkToastCount = 0;
 static BOOL sTLinkWindowReady = NO;
 static BOOL sTLinkToastSecure = YES;
@@ -94,7 +101,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @3,
+        @"version": @4,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -103,6 +110,8 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"mobile_identity": @(geteuid() == 501 && getegid() == 501),
         @"window_ready": @(sTLinkWindowReady),
         @"launch_mode": @"UIApplicationMain",
+        @"restore_bundle": sTLinkRestoreBundle ?: @"",
+        @"restore_result": sTLinkRestoreResult ?: @"unknown",
         @"window_level": @(sTLinkToastWindow.windowLevel),
         @"requested_window_level": @20000099.9,
         @"window_context_id": @(TLinkToastWindowContextID()),
@@ -259,14 +268,15 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=3;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIApplicationMain;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;passthrough=1;;secure=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=4;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIApplicationMain_restore_frontmost;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;passthrough=1;;secure=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;restore_bundle=%@;;restore_result=%@;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 sTLinkWindowReady ? 1 : 0, TLinkToastWindowContextID(), sTLinkToastWindow.windowLevel,
                 sTLinkToastWindow.hidden ? 1 : 0, sTLinkToastWindow.isKeyWindow ? 1 : 0,
                 sTLinkToastSecure ? 1 : 0, (unsigned long)sTLinkRequestCount,
                 (unsigned long)sTLinkInvalidRequestCount, (unsigned long)sTLinkToastCount,
-                (long)sTLinkLastPosition, sTLinkLastResult ?: @"unknown"];
+                (long)sTLinkLastPosition, sTLinkRestoreBundle ?: @"",
+                sTLinkRestoreResult ?: @"unknown", sTLinkLastResult ?: @"unknown"];
     }
     sTLinkRequestCount += 1;
     if (![trimmed hasPrefix:@"1;;"]) {
@@ -334,6 +344,106 @@ static void TLinkStartServerIfNecessary(void)
     [serverThread start];
 }
 
+static void *TLinkUIServiceSpringBoardServicesHandle(void)
+{
+    static void *handle = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
+                        RTLD_LAZY | RTLD_GLOBAL);
+    });
+    return handle;
+}
+
+static NSString *TLinkUIServiceCopyFrontmostBundle(void)
+{
+    void *handle = TLinkUIServiceSpringBoardServicesHandle();
+    if (!handle) return nil;
+    const char *symbols[] = {
+        "SBSCopyFrontmostApplicationDisplayIdentifier",
+        "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay",
+        "SBSGetMostElevatedApplicationBundleIdentifier",
+        "SBSGetMostElevatedApplicationDisplayIdentifier",
+    };
+    for (NSUInteger index = 0; index < sizeof(symbols) / sizeof(symbols[0]); index++) {
+        TLinkUIServiceSBSCopyFrontmostApplicationFn copyFrontmost =
+            (TLinkUIServiceSBSCopyFrontmostApplicationFn)dlsym(handle, symbols[index]);
+        if (!copyFrontmost) continue;
+        CFStringRef value = copyFrontmost();
+        NSString *bundle = value ? [(__bridge NSString *)value copy] : nil;
+        if (value && strncmp(symbols[index], "SBSCopy", 7) == 0) CFRelease(value);
+        if (bundle.length > 0) return bundle;
+    }
+    return nil;
+}
+
+static void TLinkRestorePreviousApplication(void)
+{
+    NSString *raw = [NSString stringWithContentsOfFile:kTLinkUIServiceRestoreBundlePath
+                                               encoding:NSUTF8StringEncoding
+                                                  error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:kTLinkUIServiceRestoreBundlePath error:nil];
+    sTLinkRestoreBundle = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
+    NSString *serviceBundle = NSBundle.mainBundle.bundleIdentifier ?: @"com.tlinkauto.streamcontrol.uiservice";
+    if (sTLinkRestoreBundle.length == 0) {
+        sTLinkRestoreResult = @"marker_missing";
+        TLinkUIServiceLog(@"restore_frontmost skipped marker_missing");
+        TLinkWriteUIServiceDiagnostics();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(800 * NSEC_PER_MSEC)),
+                       dispatch_get_main_queue(), ^{
+            if ([TLinkUIServiceCopyFrontmostBundle() isEqualToString:serviceBundle]) {
+                TLinkUIServiceLog(@"restore_frontmost marker missing and service is frontmost; exiting");
+                exit(0);
+            }
+        });
+        return;
+    }
+    if ([sTLinkRestoreBundle isEqualToString:serviceBundle]) {
+        sTLinkRestoreResult = @"marker_is_uiservice";
+        TLinkUIServiceLog(@"restore_frontmost skipped marker_is_uiservice");
+        TLinkWriteUIServiceDiagnostics();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(800 * NSEC_PER_MSEC)),
+                       dispatch_get_main_queue(), ^{ exit(0); });
+        return;
+    }
+
+    void *handle = TLinkUIServiceSpringBoardServicesHandle();
+    TLinkUIServiceSBSLaunchApplicationFn launch = handle
+        ? (TLinkUIServiceSBSLaunchApplicationFn)dlsym(handle, "SBSLaunchApplicationWithIdentifier")
+        : NULL;
+    int rc = launch ? launch((__bridge CFStringRef)sTLinkRestoreBundle, false) : -1;
+    sTLinkRestoreResult = rc == 0 ? @"launch_requested" : [NSString stringWithFormat:@"launch_failed_%d", rc];
+    TLinkUIServiceLog([NSString stringWithFormat:@"restore_frontmost bundle=%@ rc=%d context_id=%u",
+        sTLinkRestoreBundle, rc, TLinkToastWindowContextID()]);
+    TLinkWriteUIServiceDiagnostics();
+
+    if (rc != 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(350 * NSEC_PER_MSEC)),
+                       dispatch_get_main_queue(), ^{
+            TLinkUIServiceLog(@"restore_frontmost failed; exiting transparent foreground service");
+            exit(0);
+        });
+        return;
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(800 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        NSString *frontmost = TLinkUIServiceCopyFrontmostBundle();
+        if ([frontmost isEqualToString:serviceBundle]) {
+            sTLinkRestoreResult = @"verify_still_frontmost_exit";
+            TLinkUIServiceLog(@"restore_frontmost verification failed; exiting transparent foreground service");
+            TLinkWriteUIServiceDiagnostics();
+            exit(0);
+        }
+        sTLinkRestoreResult = frontmost.length > 0
+            ? [NSString stringWithFormat:@"verified_%@", frontmost]
+            : @"requested_frontmost_unavailable";
+        TLinkUIServiceLog([NSString stringWithFormat:@"restore_frontmost verified frontmost=%@",
+            frontmost ?: @"<unavailable>"]);
+        TLinkWriteUIServiceDiagnostics();
+    });
+}
+
 @implementation TLinkUIServiceDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
@@ -350,7 +460,11 @@ static void TLinkStartServerIfNecessary(void)
         (long)application.applicationState, TLinkToastWindowContextID(),
         self.window.hidden ? 1 : 0, self.window.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(350 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        TLinkRestorePreviousApplication();
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1200 * NSEC_PER_MSEC)),
                    dispatch_get_main_queue(), ^{
         TLinkUIServiceLog([NSString stringWithFormat:@"UIApplicationMain settled state=%ld context_id=%u hidden=%d key=%d",
             (long)application.applicationState, TLinkToastWindowContextID(),
@@ -389,7 +503,7 @@ int main(int argc, char *argv[])
             chown([runtime fileSystemRepresentation], 501, 501);
             if (setgid(501) != 0 || setuid(501) != 0) return 74;
         }
-        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIApplicationMain uid=%d euid=%d gid=%d egid=%d",
+        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIApplicationMain_restore_frontmost uid=%d euid=%d gid=%d egid=%d",
             getuid(), geteuid(), getgid(), getegid()]);
         return UIApplicationMain(argc, argv,
                                  NSStringFromClass(TLinkUIServiceApplication.class),

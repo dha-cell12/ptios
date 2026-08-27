@@ -504,7 +504,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=3"] &&
+           [probe containsString:@"version=4"] &&
            [probe containsString:@"launch_mode=UIApplicationMain"] &&
            [probe containsString:@";;uid=501;;"] &&
            [probe containsString:@";;euid=501;;"] &&
@@ -529,6 +529,13 @@ static int TLinkEnsureUIService(NSString *streamdPath, BOOL replaceExisting)
     }
 
     TLinkHelperKillProcessNamed("TLinkUIService");
+    NSString *restorePath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle";
+    [@"com.tlinkauto.streamcontrol" writeToFile:restorePath
+                                      atomically:YES
+                                        encoding:NSUTF8StringEncoding
+                                           error:nil];
+    chmod([restorePath fileSystemRepresentation], 0644);
+    chown([restorePath fileSystemRepresentation], 501, 501);
     int sbsRc = INT_MIN;
     if (TLinkHelperOpenBundleWithSBS(@"com.tlinkauto.streamcontrol.uiservice", &sbsRc)) {
         for (int i = 0; i < 8; i++) {
@@ -692,9 +699,19 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
     TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: clipboardd exit=%d replace=%d",
                     clipboardExit, replaceExisting ? 1 : 0]);
 
-    int uiServiceExit = TLinkEnsureUIService(normalized, replaceExisting);
-    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: uiservice exit=%d replace=%d",
-                    uiServiceExit, replaceExisting ? 1 : 0]);
+    int uiServiceExit = 0;
+    if (replaceExisting) {
+        // Restart streamd must not wait for a UIKit application lifecycle.
+        // clipboardd launches the UI service on demand for the next toast.
+        TLinkHelperKillProcessNamed("TLinkUIService");
+        [[NSFileManager defaultManager] removeItemAtPath:
+            @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle" error:nil];
+        TLinkHelperLog(@"ensure-streamd: uiservice deferred_on_replace; clipboardd will launch on demand");
+    } else {
+        uiServiceExit = TLinkEnsureUIService(normalized, NO);
+        TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: uiservice exit=%d replace=0",
+                        uiServiceExit]);
+    }
 
     int vpnagentExit = TLinkEnsureVPNAgent(normalized, replaceExisting);
     TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: vpnagent exit=%d replace=%d",

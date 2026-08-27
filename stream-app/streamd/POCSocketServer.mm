@@ -6019,7 +6019,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"backgroundVisualNotifications": @(YES),
         @"backgroundVisualCFUserNotification": @(YES),
         @"backgroundPositionedToastOverlay": @(YES),
-        @"backgroundToastUIService": @"TLinkUIService.app_port_6017_uimain_context_v3_always",
+        @"backgroundToastUIService": @"TLinkUIService.app_port_6017_uimain_context_v4_restore_frontmost",
         @"backgroundToastFixedCenter": @(YES),
         @"clipboardMode": @"background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback",
         @"keyboardHIDPaste": @(YES),

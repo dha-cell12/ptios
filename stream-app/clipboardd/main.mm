@@ -20,6 +20,7 @@ typedef void (*TLinkUIApplicationInitializeFn)(void);
 typedef void (*TLinkUIApplicationInstantiateSingletonFn)(Class);
 typedef void (*TLinkUIKitBootstrapFn)(void);
 typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
+typedef CFStringRef (*TLinkSBSCopyFrontmostApplicationFn)(void);
 extern char **environ;
 typedef SInt32 (*TLinkCFUserNotificationDisplayNoticeFn)(CFTimeInterval,
                                                           CFOptionFlags,
@@ -204,10 +205,36 @@ static BOOL TLinkRequestUIServiceApplicationLaunch(void)
     void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
                           RTLD_LAZY | RTLD_GLOBAL);
     if (!handle) return NO;
+    NSString *restoreBundle = nil;
+    NSString *restorePath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle";
+    [[NSFileManager defaultManager] removeItemAtPath:restorePath error:nil];
+    const char *frontmostSymbols[] = {
+        "SBSCopyFrontmostApplicationDisplayIdentifier",
+        "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay",
+        "SBSGetMostElevatedApplicationBundleIdentifier",
+        "SBSGetMostElevatedApplicationDisplayIdentifier",
+    };
+    for (NSUInteger index = 0; index < sizeof(frontmostSymbols) / sizeof(frontmostSymbols[0]); index++) {
+        TLinkSBSCopyFrontmostApplicationFn copyFrontmost =
+            (TLinkSBSCopyFrontmostApplicationFn)dlsym(handle, frontmostSymbols[index]);
+        if (!copyFrontmost) continue;
+        CFStringRef value = copyFrontmost();
+        if (value) {
+            restoreBundle = [(__bridge NSString *)value copy];
+            if (strncmp(frontmostSymbols[index], "SBSCopy", 7) == 0) CFRelease(value);
+        }
+        if (restoreBundle.length > 0) break;
+    }
+    if (restoreBundle.length > 0 &&
+        ![restoreBundle isEqualToString:@"com.tlinkauto.streamcontrol.uiservice"]) {
+        [restoreBundle writeToFile:restorePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        chmod([restorePath fileSystemRepresentation], 0644);
+    }
     TLinkSBSLaunchApplicationFn launch =
         (TLinkSBSLaunchApplicationFn)dlsym(handle, "SBSLaunchApplicationWithIdentifier");
     int rc = launch ? launch(CFSTR("com.tlinkauto.streamcontrol.uiservice"), false) : -1;
-    TLinkClipboardLog([NSString stringWithFormat:@"uiservice SBS launch rc=%d", rc]);
+    TLinkClipboardLog([NSString stringWithFormat:@"uiservice SBS launch rc=%d restore_bundle=%@",
+        rc, restoreBundle ?: @"<none>"]);
     return rc == 0;
 }
 

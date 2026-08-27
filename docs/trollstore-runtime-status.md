@@ -75,6 +75,7 @@ TrollStore runtime.
 - Script regression suite: the root `Scripts` tab auto-seeds a `Compatibility Tests` folder from packaged examples on first launch; `Scripts > + > Compatibility Suite` can install another copy manually. The eight `.tl` bundles exercise each compatibility API group independently, including shared file handles and license-revocation heartbeat behavior.
 - Keyboard/text: task `24` uses `clipboardd` v15 on port `6012` with private background Pasteboard entitlements and the same signed-license gate as `streamd`. Every write is read-back verified before `streamd` trusts daemon reads. Subtask `1` inserts text using background clipboard plus HID `Command+V`; subtask `5` pastes the existing clipboard; subtasks `3/4` use HID arrows and Backspace. Devices that ignore the Pasteboard entitlements fall back to the foreground app bridge on port `6013`. Show/hide keyboard remains `limited_on_trollstore` because it needs the rootfull SpringBoard keyboard observer.
 - Background UI bridge: `clipboardd` v15 sends toast to the hidden nested `TLinkUIService.app` on port `6017`. Toast uses this route in both foreground and background so a fresh app heartbeat cannot swallow an immediate script toast. The service runs as mobile, owns a secure non-key pass-through window, supports top/center/bottom placement, and is declared for lock-screen UI. UIKit may report an effective level of `10000000` after clamping the requested `20000099.9`; diagnostics expose both values. `privhelper` requests a SpringBoardServices bundle launch first and falls back to a mobile-persona spawn; `clipboardd` applies the same launch-first recovery if the socket is absent. Alert/dialog and unavailable-service toast retain `CFUserNotificationDisplayAlert` as a fixed-center fallback. This path does not inject SpringBoard or load Substrate.
+- UI-service foreground safety (v4): after `UIApplicationMain` creates a real compositor context, the service restores the previously frontmost application through SpringBoardServices and verifies that it no longer owns foreground. If restoration fails it exits instead of leaving an invisible app above StreamControl. An explicit **Restart streamd** kills and defers the UI service; `clipboardd` starts it on demand for the next toast, so restart completion does not depend on UIKit startup.
 - Keep awake: task `40` updates both the foreground app idle timer and the persistent UIKit daemon. The daemon path is best-effort because TrollStore does not provide a public global power assertion equivalent to SpringBoard injection.
 - App/process: `11`, `31-35`, `50-54` via streamd plus privhelper where needed.
 - Admin extension: task `72` clears safe app data containers through privhelper. It refuses protected bundles and unsafe paths.
@@ -211,7 +212,7 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 
 The toast and alert should appear without bringing StreamControl to the
 foreground. In **Settings -> DEBUG**, `Toast UI Service Status` should decode a
-live `uiservice_ready;;version=3` response containing `uid=501`, `euid=501`,
+live `uiservice_ready;;version=4` response containing `uid=501`, `euid=501`,
 `window_ready=1`, and `passthrough=1`; `Show Background Toast Test` sends task
 `2412`. Task `249` should report `version=15` and
 `background_visual_mode=uiservice_positioned_toast_cfusernotification_fallback`.
