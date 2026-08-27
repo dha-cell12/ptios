@@ -1,4 +1,5 @@
 #import "SettingsViewController.h"
+#import "BootScriptViewController.h"
 #import "LicenseManager.h"
 #import "LicenseLifecycleCoordinator.h"
 #import "LicenseViewController.h"
@@ -13,6 +14,7 @@ static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinka
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist";
 static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/remote_bridge.plist";
+static NSString *const kTLinkWidgetBootDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist";
 
 @implementation SCSettingsViewController {
     NSArray<NSArray<NSString *> *> *_sections;
@@ -49,7 +51,7 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
     NSArray<NSString *> *runtimeSettings = @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"];
     if (_debugMode) {
         _sections = @[
-            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status"],
+            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status", @"Widget Boot Wake Status"],
             runtimeSettings,
             @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v12", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
@@ -59,7 +61,7 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
             @[@"Appearance"],
             @[@"License"],
             @[@"Remote Bridge", @"Managed VPN"],
-            @[@"Restart streamd", @"DEBUG"],
+            @[@"Boot Script", @"Restart streamd", @"DEBUG"],
             runtimeSettings,
             @[@"Respring Device"],
         ];
@@ -618,6 +620,15 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
         cell.detailTextLabel.text = @"Experimental foreground IKEv2 control";
         cell.imageView.image = [self tlink_settingsGlyphNamed:@"lock.shield" background:[UIColor systemIndigoColor]];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else if ([title isEqualToString:@"Boot Script"]) {
+        NSDictionary *boot = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/TLinkauto/config/tweak/boot_script.plist"];
+        BOOL enabled = [boot[@"enabled"] boolValue];
+        NSString *script = [boot[@"script"] isKindOfClass:[NSString class]] ? boot[@"script"] : @"";
+        cell.detailTextLabel.text = enabled
+            ? [NSString stringWithFormat:@"Enabled · %@", script.lastPathComponent ?: @"selected"]
+            : (script.length > 0 ? [NSString stringWithFormat:@"Disabled · %@", script.lastPathComponent] : @"Choose the script to run after reboot");
+        cell.imageView.image = [self tlink_settingsGlyphNamed:@"bolt.fill" background:[UIColor systemOrangeColor]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     } else if ([title isEqualToString:@"Restart streamd"]) {
         cell.detailTextLabel.text = @"Replace and restart the task service";
         cell.imageView.image = [self tlink_settingsGlyphNamed:@"arrow.clockwise" background:[UIColor systemGreenColor]];
@@ -660,6 +671,9 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
             TLinkVPNSettingsViewController *vpn =
                 [[TLinkVPNSettingsViewController alloc] init];
             [self.navigationController pushViewController:vpn animated:YES];
+        } else if ([title isEqualToString:@"Boot Script"]) {
+            SCBootScriptViewController *boot = [[SCBootScriptViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+            [self.navigationController pushViewController:boot animated:YES];
         } else if ([title isEqualToString:@"Restart streamd"]) {
             [self restartStreamd];
         } else if ([title isEqualToString:@"Respring Device"]) {
@@ -700,6 +714,14 @@ static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library
         _resultView.text = status
             ? [NSString stringWithFormat:@"%@\n%@", kTLinkRemoteBridgeDiagnosticsPath, status]
             : @"No Remote Bridge diagnostics yet. Enable it in Settings and wait about 5 seconds.";
+        return;
+    }
+
+    if ([title isEqualToString:@"Widget Boot Wake Status"]) {
+        NSDictionary *status = [NSDictionary dictionaryWithContentsOfFile:kTLinkWidgetBootDiagnosticsPath];
+        _resultView.text = status
+            ? [NSString stringWithFormat:@"%@\n%@", kTLinkWidgetBootDiagnosticsPath, status]
+            : @"No widget wake diagnostics yet. Enable Boot Script, add the TLinkauto Boot Wake widget, then wait for a timeline refresh.";
         return;
     }
 

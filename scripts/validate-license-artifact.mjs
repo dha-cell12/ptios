@@ -102,6 +102,10 @@ for (const name of executables) {
 const appBinary = (await readFile(join(app, "StreamControl"))).toString("latin1");
 const streamdBinary = (await readFile(join(app, "streamd"))).toString("latin1");
 const vpnagentBinary = (await readFile(join(app, "vpnagent"))).toString("latin1");
+const widgetPath = join(app, "PlugIns", "TLinkBootWidget.appex", "TLinkBootWidget");
+const widgetBytes = await readFile(widgetPath);
+const widgetBinary = widgetBytes.toString("latin1");
+executableHashes.TLinkBootWidget = createHash("sha256").update(widgetBytes).digest("hex");
 assert.ok(appBinary.includes("serviceVersion=23"), "StreamControl does not require service v23");
 assert.ok(streamdBinary.includes("serviceVersion=23"), "streamd does not expose service v23");
 assert.ok(appBinary.includes("StreamControl_app_6015"), "StreamControl lacks VPN P3 foreground broker evidence");
@@ -115,10 +119,14 @@ assert.ok(streamdBinary.includes("vpnagent_6016_then_StreamControl_6015"), "stre
 assert.ok(vpnagentBinary.includes("vpnagent_ready version=2 phase=5"), "vpnagent lacks P5 readiness evidence");
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
+assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions"), "boot widget lacks the SpringBoardServices wake path");
+assert.ok(widgetBinary.includes("/var/mobile/Library/TLinkauto/runtime/widget_boot_enabled"), "boot widget lacks the persistent enable marker");
+assert.ok(widgetBinary.includes("com.tlinkauto.streamcontrol"), "boot widget lacks the StreamControl host identifier");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
 const streamdEntitlements = execFileSync("ldid", ["-e", join(app, "streamd")], { encoding: "utf8" });
 const vpnagentEntitlements = execFileSync("ldid", ["-e", join(app, "vpnagent")], { encoding: "utf8" });
+const widgetEntitlements = execFileSync("ldid", ["-e", widgetPath], { encoding: "utf8" });
 assert.ok(
   appEntitlements.includes("com.apple.developer.networking.vpn.api") &&
     appEntitlements.includes("allow-vpn"),
@@ -148,6 +156,11 @@ assert.ok(
   !streamdEntitlements.includes("com.apple.developer.networking.vpn.api") &&
     !streamdEntitlements.includes("com.apple.developer.networking.networkextension"),
   "streamd must not inherit VPN or packet-tunnel entitlements",
+);
+assert.ok(
+  widgetEntitlements.includes("com.apple.backboardd.launchapplications") &&
+    widgetEntitlements.includes("platform-application"),
+  "boot widget is missing its TrollStore launch entitlements",
 );
 
 const forbidden = [

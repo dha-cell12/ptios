@@ -58,6 +58,7 @@ export function renderAdminDashboard(nonce) {
     }
     .input:focus, .select:focus { border-color: #1677ff; box-shadow: 0 0 0 3px rgba(22, 119, 255, .12); }
     .auth-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .auth-guide-actions { margin-top: 14px; }
     .notice {
       display: none; margin: 0 0 16px; padding: 10px 12px; border: 1px solid #c7dafa;
       border-radius: 6px; background: #eef5ff; color: #17457f; font-size: 14px;
@@ -128,6 +129,22 @@ export function renderAdminDashboard(nonce) {
     }
     .key-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; }
     .danger-zone { padding-top: 16px; border-top: 1px solid #e3e7ec; }
+    #guide-dialog { width: min(860px, calc(100% - 24px)); }
+    .guide-content { line-height: 1.55; }
+    .guide-content h3 { margin: 0 0 8px; font-size: 16px; }
+    .guide-content p { margin: 0 0 10px; }
+    .guide-content ul, .guide-content ol { margin: 8px 0 0; padding-left: 22px; }
+    .guide-content li + li { margin-top: 6px; }
+    .guide-section { padding-bottom: 16px; border-bottom: 1px solid #e7ebef; }
+    .guide-section:last-child { padding-bottom: 0; border-bottom: 0; }
+    .guide-callout {
+      padding: 11px 12px; border: 1px solid #c7dafa; border-radius: 6px;
+      background: #eef5ff; color: #17457f;
+    }
+    .guide-callout.warning { border-color: #efd49b; background: #fff8e8; color: #744b00; }
+    .guide-table { width: 100%; border: 1px solid #e1e5ea; border-radius: 6px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
+    .guide-table th, .guide-table td { padding: 9px 10px; font-size: 13px; text-transform: none; }
+    code { padding: 2px 5px; border-radius: 4px; background: #edf2f7; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
     .device-list { border: 1px solid #e1e5ea; border-radius: 6px; overflow: hidden; }
     .device {
       display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px;
@@ -167,6 +184,7 @@ export function renderAdminDashboard(nonce) {
       </div>
       <div id="top-actions" class="actions hidden">
         <span class="connected"><span class="status-dot"></span>Connected</span>
+        <button id="guide-button" class="button quiet" type="button">Hướng dẫn</button>
         <button id="refresh-button" class="button quiet" type="button" title="Refresh licenses">Refresh</button>
         <button id="new-button" class="button primary" type="button">New License</button>
         <button id="lock-button" class="button quiet" type="button" title="Forget admin token">Lock</button>
@@ -187,6 +205,9 @@ export function renderAdminDashboard(nonce) {
           </div>
         </div>
       </form>
+      <div class="actions auth-guide-actions">
+        <button id="auth-guide-button" class="button quiet" type="button">Xem hướng dẫn quản trị</button>
+      </div>
     </section>
 
     <section id="dashboard-view" class="hidden">
@@ -331,6 +352,89 @@ export function renderAdminDashboard(nonce) {
         <button id="manage-submit" class="button primary" type="submit">Save Changes</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="guide-dialog" aria-labelledby="guide-title">
+    <div class="dialog-head">
+      <div>
+        <h2 id="guide-title">Hướng dẫn quản trị license</h2>
+        <div class="muted small">Áp dụng cho dashboard Worker tại <code>/admin</code></div>
+      </div>
+      <button class="button quiet" data-close="guide-dialog" type="button" aria-label="Đóng hướng dẫn">Đóng</button>
+    </div>
+    <div class="dialog-body guide-content">
+      <section class="guide-section">
+        <h3>1. Đăng nhập an toàn</h3>
+        <ol>
+          <li>Mở dashboard bằng HTTPS và nhập đúng secret <code>ADMIN_TOKEN</code> của Worker.</li>
+          <li>Token chỉ nằm trong bộ nhớ của tab hiện tại; dashboard không ghi vào cookie hay local storage.</li>
+          <li>Nhấn <strong>Lock</strong> trước khi rời máy dùng chung. Không gửi token qua chat, log hoặc ảnh chụp.</li>
+        </ol>
+      </section>
+
+      <section class="guide-section">
+        <h3>2. Tạo license mới</h3>
+        <ol>
+          <li>Nhấn <strong>New License</strong>, dùng key được tạo tự động hoặc nhập key riêng.</li>
+          <li>Đặt <strong>Maximum devices</strong> là số thiết bị được active đồng thời.</li>
+          <li>Chọn ngày hết hạn; để trống nếu license vĩnh viễn.</li>
+          <li>Chọn ít nhất một feature rồi nhấn <strong>Create License</strong>.</li>
+          <li>Sao chép key ngay khi kết quả xuất hiện. Worker chỉ lưu SHA-256 hash nên không thể xem lại clear key.</li>
+        </ol>
+      </section>
+
+      <section class="guide-section">
+        <h3>3. Ý nghĩa feature</h3>
+        <table class="guide-table">
+          <thead><tr><th>Feature</th><th>Cho phép</th></tr></thead>
+          <tbody>
+            <tr><td><code>automation</code></td><td>Touch, app/process, clipboard, OCR, VPN và các tác vụ tự động hóa thông thường.</td></tr>
+            <tr><td><code>stream</code></td><td>Nhận luồng H264 và feedback Adaptive Streaming.</td></tr>
+            <tr><td><code>script</code></td><td>Chạy/dừng script, scheduler, log và runtime script.</td></tr>
+            <tr><td><code>admin</code></td><td>Clear app data, kill app, respring và tác vụ quản trị nhạy cảm.</td></tr>
+            <tr><td><code>shell</code></td><td>Thực thi shell; thiết bị vẫn phải bật local setting cho shell.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="guide-section">
+        <h3>4. Quản lý một license</h3>
+        <ul>
+          <li><strong>Save Changes:</strong> cập nhật status, số thiết bị, ngày hết hạn và feature.</li>
+          <li><strong>Revoke thiết bị:</strong> thu hồi một binding và giải phóng một slot; thiết bị đó có thể active lại nếu còn slot và còn key.</li>
+          <li><strong>Reset Device Slots:</strong> revoke toàn bộ binding đang active và xóa challenge dở dang. Dùng sau restore, đổi máy hoặc mất private key.</li>
+          <li><strong>Revoke License:</strong> chặn activation/refresh của toàn bộ license. Chỉ chọn lại status Active khi thực sự muốn cấp quyền trở lại.</li>
+        </ul>
+        <p class="guide-callout warning"><strong>Lưu ý:</strong> thay đổi server không sửa lease đã ký đang nằm trên thiết bị. Muốn kiểm tra ngay, mở Settings → License → Refresh Lease hoặc chờ lifecycle refresh; revoke sẽ bị phát hiện ở lần refresh kế tiếp.</p>
+      </section>
+
+      <section class="guide-section">
+        <h3>5. Đọc trạng thái</h3>
+        <ul>
+          <li><strong>Active:</strong> license đang bật và chưa đến ngày hết hạn.</li>
+          <li><strong>Expired:</strong> status vẫn active nhưng đã qua License expiration.</li>
+          <li><strong>Revoked:</strong> license đã bị thu hồi thủ công.</li>
+          <li><strong>Devices A / B:</strong> A là binding active hiện tại, B là giới hạn thiết bị.</li>
+          <li><strong>License expiration</strong> là hạn quyền cố định; khác với hạn lease ngắn được gia hạn tự động trên thiết bị.</li>
+        </ul>
+      </section>
+
+      <section class="guide-section">
+        <h3>6. Xử lý lỗi nhanh</h3>
+        <ul>
+          <li><code>Unauthorized</code>: kiểm tra hoặc rotate <code>ADMIN_TOKEN</code>, sau đó deploy secret lại.</li>
+          <li><code>license_exists</code>: key đã tồn tại; tạo một key mới.</li>
+          <li><code>device_limit_reached</code>: revoke thiết bị cũ hoặc Reset Device Slots.</li>
+          <li><code>device_revoked</code>: active lại bằng key; nếu thiết bị đã đổi private key, reset slot trước.</li>
+          <li><code>license_revoked_or_expired</code>: kiểm tra status và License expiration rồi Refresh Lease.</li>
+          <li><code>device_mismatch</code> hoặc thiếu private key: không copy lease giữa máy; reset slot và active lại trên đúng thiết bị.</li>
+        </ul>
+        <p class="guide-callout">Sau thao tác quản trị, kiểm tra task 75: trạng thái mong đợi là <code>valid</code> hoặc <code>offline_grace</code>, với <code>effective_access=true</code> và <code>device_key_proof=true</code>.</p>
+      </section>
+    </div>
+    <div class="dialog-foot">
+      <button class="button primary" data-close="guide-dialog" type="button">Đã hiểu</button>
+    </div>
   </dialog>
 
   <script nonce="${nonce}">
@@ -561,6 +665,10 @@ export function renderAdminDashboard(nonce) {
         byId("create-dialog").showModal();
       }
 
+      function openGuide() {
+        byId("guide-dialog").showModal();
+      }
+
       async function copyCreatedKey() {
         var input = byId("created-key");
         try {
@@ -755,6 +863,8 @@ export function renderAdminDashboard(nonce) {
         if (!adminToken) lockDashboard();
       });
       byId("refresh-button").addEventListener("click", function () { loadLicenses(currentOffset); });
+      byId("guide-button").addEventListener("click", openGuide);
+      byId("auth-guide-button").addEventListener("click", openGuide);
       byId("new-button").addEventListener("click", openCreate);
       byId("lock-button").addEventListener("click", function () { lockDashboard(); setNotice("Admin token cleared."); });
       byId("search-input").addEventListener("input", renderRows);

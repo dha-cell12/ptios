@@ -18,6 +18,7 @@ on:
       - 'stream-app/app/LicenseViewController.mm'
       - 'stream-app/app/StreamSupervisor.mm'
       - 'docs/license-phase6-release-gate.md'
+      - 'docs/license-admin-site-guide.md'
       - 'stream-app/streamd/POCSocketServer.mm'
       - 'stream-app/streamd/H264Stream.mm'
       - 'stream-app/clipboardd/main.mm'
@@ -41,6 +42,7 @@ on:
       - 'stream-app/app/LicenseViewController.mm'
       - 'stream-app/app/StreamSupervisor.mm'
       - 'docs/license-phase6-release-gate.md'
+      - 'docs/license-admin-site-guide.md'
       - 'stream-app/streamd/POCSocketServer.mm'
       - 'stream-app/streamd/H264Stream.mm'
       - 'stream-app/clipboardd/main.mm'
@@ -96,6 +98,9 @@ jobs:
           grep -q '/v1/admin/license' src/index.js
           grep -q '/v1/admin/revoke-device' src/index.js
           grep -q 'TLinkauto Licenses' src/dashboard.js
+          grep -q 'Hướng dẫn quản trị license' src/dashboard.js
+          test -f ../docs/license-admin-site-guide.md
+          grep -q 'Reset Device Slots' ../docs/license-admin-site-guide.md
           ! grep -q 'localStorage\.' src/dashboard.js
           sed -i 's/REPLACE_WITH_D1_DATABASE_ID/00000000-0000-0000-0000-000000000000/' wrangler.jsonc
           npx wrangler d1 execute tlinkauto-license --local --file schema.sql

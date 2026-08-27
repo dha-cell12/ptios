@@ -45,6 +45,10 @@ token in page memory only; it does not write it to cookies, `localStorage`, or
 `sessionStorage`. Use the **Lock** action before leaving a shared browser.
 Always access the dashboard over HTTPS.
 
+The dashboard includes a Vietnamese **Hướng dẫn** dialog. The complete
+operations runbook is available at
+[`../docs/license-admin-site-guide.md`](../docs/license-admin-site-guide.md).
+
 The dashboard can:
 
 - list and filter licenses with active, revoked, and expired totals;

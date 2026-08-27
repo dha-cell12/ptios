@@ -11,7 +11,7 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = StreamControl
 
-StreamControl_FILES = main.mm AppDelegate.mm TLinkTheme.mm TLinkLogStore.mm DashboardViewController.mm ServiceLogViewController.mm BackgroundServiceScheduler.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm ScriptEditorViewController.mm ScriptLogViewController.mm ImageViewerViewController.mm PlaySettingsViewController.mm SettingsViewController.mm LicenseManager.mm LicenseLifecycleCoordinator.mm LicenseViewController.mm TLinkVPNForegroundBroker.mm ../../TLinkauto/TLinkauto/Settings/TLinkVPNSettingsViewController.m ../../shared/TLinkVPNManager.mm ../../shared/TLinkVPNDiagnostics.mm ../../shared/TLinkLicenseVerifier.mm
+StreamControl_FILES = main.mm AppDelegate.mm TLinkTheme.mm TLinkLogStore.mm DashboardViewController.mm ServiceLogViewController.mm BackgroundServiceScheduler.mm StreamSupervisor.mm TLinkSocketClient.mm ScriptsViewController.mm ScriptEditorViewController.mm ScriptLogViewController.mm ImageViewerViewController.mm PlaySettingsViewController.mm BootScriptViewController.mm SettingsViewController.mm LicenseManager.mm LicenseLifecycleCoordinator.mm LicenseViewController.mm TLinkVPNForegroundBroker.mm ../../TLinkauto/TLinkauto/Settings/TLinkVPNSettingsViewController.m ../../shared/TLinkVPNManager.mm ../../shared/TLinkVPNDiagnostics.mm ../../shared/TLinkLicenseVerifier.mm
 StreamControl_RESOURCE_FILES = Info.plist LicenseConfig.plist
 StreamControl_RESOURCE_DIRS = CompatibilityExamples
 StreamControl_FRAMEWORKS = UIKit CoreFoundation CoreGraphics QuartzCore Vision CoreML ImageIO Photos UserNotifications BackgroundTasks Security NetworkExtension

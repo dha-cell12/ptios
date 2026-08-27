@@ -1,6 +1,6 @@
 # stream-app aggregate build
 #
-# Builds streamd + clipboardd + StreamControl.app, embeds the services, and
+# Builds streamd + clipboardd + StreamControl.app + WidgetKit extension, embeds them, and
 # packages a TrollStore-compatible .tipa at packages/StreamControl.tipa.
 
 APP_NAME := StreamControl
@@ -8,7 +8,7 @@ APP_BUNDLE := StreamControl.app
 TIPA := packages/$(APP_NAME).tipa
 PAYLOAD_DIR := _payload/Payload
 
-.PHONY: all streamd clipboardd vpnagent app privhelper embed package clean
+.PHONY: all streamd clipboardd vpnagent app privhelper widget embed package clean
 
 all: package
 
@@ -27,7 +27,10 @@ app:
 privhelper:
 	$(MAKE) -C privhelper stage FINALPACKAGE=1
 
-embed: streamd clipboardd vpnagent app privhelper
+widget:
+	$(MAKE) -C widget stage FINALPACKAGE=1
+
+embed: streamd clipboardd vpnagent app privhelper widget
 	@set -e; \
 	APP="app/.theos/_/Applications/$(APP_BUNDLE)"; \
 	if [ ! -d "$$APP" ]; then \
@@ -49,6 +52,10 @@ embed: streamd clipboardd vpnagent app privhelper
 	if [ ! -f "$$PRIVHELPER" ]; then \
 	  PRIVHELPER=$$(find privhelper/.theos -maxdepth 8 -type f -name 'privhelper' ! -path '*/dSYM/*' | head -n1); \
 	fi; \
+	WIDGET="widget/.theos/_/Applications/$(APP_BUNDLE)/PlugIns/TLinkBootWidget.appex"; \
+	if [ ! -d "$$WIDGET" ]; then \
+	  WIDGET=$$(find widget/.theos/_ -maxdepth 10 -name 'TLinkBootWidget.appex' -type d | head -n1); \
+	fi; \
 	if [ -z "$$APP" ] || [ ! -d "$$APP" ]; then \
 	  echo "ERROR: $(APP_BUNDLE) not found"; exit 1; \
 	fi; \
@@ -64,6 +71,9 @@ embed: streamd clipboardd vpnagent app privhelper
 	if [ -z "$$VPNAGENT" ] || [ ! -f "$$VPNAGENT" ]; then \
 	  echo "ERROR: vpnagent executable not found"; exit 1; \
 	fi; \
+	if [ -z "$$WIDGET" ] || [ ! -d "$$WIDGET" ] || [ ! -x "$$WIDGET/TLinkBootWidget" ]; then \
+	  echo "ERROR: TLinkBootWidget.appex not found"; exit 1; \
+	fi; \
 	if [ ! -f "$$APP/Info.plist" ]; then \
 	  cp app/Info.plist "$$APP/Info.plist"; \
 	fi; \
@@ -75,6 +85,9 @@ embed: streamd clipboardd vpnagent app privhelper
 	chmod 755 "$$APP/vpnagent"; \
 	cp "$$PRIVHELPER" "$$APP/privhelper"; \
 	chmod 755 "$$APP/privhelper"; \
+	mkdir -p "$$APP/PlugIns"; \
+	rm -rf "$$APP/PlugIns/TLinkBootWidget.appex"; \
+	cp -R "$$WIDGET" "$$APP/PlugIns/TLinkBootWidget.appex"; \
 	rm -rf "$$APP/CompatibilityExamples"; \
 	cp -R app/CompatibilityExamples "$$APP/CompatibilityExamples"; \
 	if command -v ldid >/dev/null 2>&1; then \
@@ -82,6 +95,7 @@ embed: streamd clipboardd vpnagent app privhelper
 	  ldid -Sclipboardd/entitlements.plist "$$APP/clipboardd"; \
 	  ldid -Svpnagent/entitlements.plist "$$APP/vpnagent"; \
 	  ldid -Sapp/entitlements.plist "$$APP/privhelper"; \
+	  ldid -Swidget/entitlements.plist "$$APP/PlugIns/TLinkBootWidget.appex/TLinkBootWidget"; \
 	  ldid -Sapp/entitlements.plist "$$APP/$(APP_NAME)"; \
 	fi; \
 	test -f "$$APP/Info.plist"; \
@@ -90,13 +104,15 @@ embed: streamd clipboardd vpnagent app privhelper
 	test -x "$$APP/clipboardd"; \
 	test -x "$$APP/vpnagent"; \
 	test -x "$$APP/privhelper"; \
+	test -f "$$APP/PlugIns/TLinkBootWidget.appex/Info.plist"; \
+	test -x "$$APP/PlugIns/TLinkBootWidget.appex/TLinkBootWidget"; \
 	test -f "$$APP/LicenseConfig.plist"; \
 	test -f "$$APP/CompatibilityExamples/01 Runtime Storage.js"; \
 	test -f "$$APP/CompatibilityExamples/06 App Process Shell.js"; \
 	test -f "$$APP/CompatibilityExamples/07 File Handle.js"; \
 	test -f "$$APP/CompatibilityExamples/09 Smart Wait.js"; \
 	test -f "$$APP/CompatibilityExamples/10 Failure Evidence.js"; \
-	echo "Embedded streamd, clipboardd, and vpnagent into $$APP"
+	echo "Embedded streamd, clipboardd, vpnagent, and TLinkBootWidget into $$APP"
 
 package: embed
 	@set -e; \
@@ -113,6 +129,8 @@ package: embed
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/clipboardd"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/vpnagent"; \
 	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/privhelper"; \
+	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/PlugIns/TLinkBootWidget.appex/Info.plist"; \
+	test -x "$(PAYLOAD_DIR)/$(APP_BUNDLE)/PlugIns/TLinkBootWidget.appex/TLinkBootWidget"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/LicenseConfig.plist"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/01 Runtime Storage.js"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/07 File Handle.js"; \
@@ -127,4 +145,5 @@ clean:
 	-$(MAKE) -C vpnagent clean
 	-$(MAKE) -C app clean
 	-$(MAKE) -C privhelper clean
+	-$(MAKE) -C widget clean
 	rm -rf _payload packages

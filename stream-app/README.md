@@ -49,6 +49,24 @@ make            # build cả app (.tipa) lẫn streamd
 `streamd` được đóng gói vào bundle app (`StreamControl.app/streamd`) để app
 spawn bằng đường dẫn tương đối.
 
+## Widget-assisted Boot Script
+
+The TrollStore package embeds `PlugIns/TLinkBootWidget.appex`. To enable the
+reboot path:
+
+1. Open **Settings -> Boot Script**, choose a JavaScript or script bundle, and
+   enable **Boot Script**.
+2. Add **TLinkauto Boot Wake** to the iOS Home Screen.
+3. Reboot. When WidgetKit schedules the widget, it launches StreamControl if
+   task port `6000` is absent. StreamControl starts `streamd`, and the selected
+   `00-boot-script` autolaunch entry runs through the normal licensed script
+   runtime.
+
+The extension requests a new timeline every five minutes, but iOS may throttle
+or defer it. This is a TrollStore/private-API, best-effort wake path rather than
+a LaunchDaemon. Wake diagnostics are written to
+`/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist`.
+
 ## Remote Bridge MVP
 
 Service v23 keeps the LAN ports above and can also make an outbound WSS

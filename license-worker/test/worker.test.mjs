@@ -538,6 +538,11 @@ test("admin dashboard and ID-based management expose no recoverable license key"
   assert.match(dashboard.headers.get("content-security-policy"), /script-src 'nonce-/);
   assert.match(dashboardHtml, /TLinkauto Licenses/);
   assert.match(dashboardHtml, /ADMIN_TOKEN/);
+  assert.match(dashboardHtml, /Hướng dẫn quản trị license/);
+  assert.match(dashboardHtml, /Reset Device Slots/);
+  assert.match(dashboardHtml, /Worker chỉ lưu SHA-256 hash/);
+  assert.match(dashboardHtml, /function openGuide\(\)/);
+  assert.doesNotMatch(dashboardHtml, /\sstyle=/);
   assert.doesNotMatch(dashboardHtml, /phase-test-admin/);
 
   const unauthorized = await call(env, "/v1/admin/licenses");

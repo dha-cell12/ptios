@@ -41,6 +41,9 @@ multiple processes and sensitive business decisions remain server-side.
 
 ## Cloudflare Setup
 
+The administration dashboard and device/license recovery procedures are
+documented in [`license-admin-site-guide.md`](license-admin-site-guide.md).
+
 ```bash
 cd license-worker
 npm install

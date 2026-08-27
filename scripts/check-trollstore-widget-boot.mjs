@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const read = (path) => readFileSync(path, "utf8");
+
+const aggregate = read("stream-app/Makefile");
+const widgetMakefile = read("stream-app/widget/Makefile");
+const widgetInfo = read("stream-app/widget/Info.plist");
+const widgetEntitlements = read("stream-app/widget/entitlements.plist");
+const widgetSource = read("stream-app/widget/TLinkBootWidget.swift");
+const wakeHelper = read("stream-app/widget/TLinkWidgetWakeHelper.m");
+const bootController = read("stream-app/app/BootScriptViewController.mm");
+const appMakefile = read("stream-app/app/Makefile");
+const settings = read("stream-app/app/SettingsViewController.mm");
+const runtimeStatus = read("docs/trollstore-runtime-status.md");
+
+assert.match(widgetMakefile, /TLinkBootWidget_BUNDLE_EXTENSION = appex/);
+assert.match(widgetMakefile, /TLinkBootWidget_DYNAMIC_LIBRARY = 0/);
+assert.match(widgetMakefile, /TLinkBootWidget_APP_EXTENSION_SAFE = 1/);
+assert.match(widgetInfo, /com\.apple\.widgetkit-extension/);
+assert.match(widgetInfo, /com\.tlinkauto\.streamcontrol\.bootwidget/);
+assert.match(widgetEntitlements, /com\.apple\.backboardd\.launchapplications/);
+assert.match(widgetEntitlements, /com\.apple\.frontboard\.launchapplications/);
+assert.match(widgetSource, /policy: \.after/);
+assert.match(widgetSource, /wakeHostApplicationIfNecessary/);
+assert.match(wakeHelper, /SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions/);
+assert.match(wakeHelper, /SBSApplicationLaunchOptionUnlockDeviceKey/);
+assert.match(wakeHelper, /widget_boot_enabled/);
+assert.match(wakeHelper, /htons\(6000\)/);
+assert.match(wakeHelper, /kTLinkWidgetWakeRetryInterval = 30\.0/);
+assert.match(wakeHelper, /KERN_BOOTTIME/);
+assert.match(bootController, /00-boot-script/);
+assert.match(bootController, /NSFileProtectionNone/);
+assert.match(bootController, /widget_wake_then_streamd_autolaunch/);
+assert.match(appMakefile, /BootScriptViewController\.mm/);
+assert.match(settings, /@"Boot Script"/);
+assert.match(settings, /Widget Boot Wake Status/);
+assert.match(aggregate, /widget\/entitlements\.plist/);
+assert.match(aggregate, /PlugIns\/TLinkBootWidget\.appex/);
+assert.match(runtimeStatus, /Widget-assisted boot wake/);
+
+console.log("TrollStore Widget Boot contract checks passed");
