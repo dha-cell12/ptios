@@ -3,6 +3,7 @@
 #import <arpa/inet.h>
 #import <dlfcn.h>
 #import <netinet/in.h>
+#import <objc/message.h>
 #import <stdint.h>
 #import <string.h>
 #import <sys/socket.h>
@@ -11,11 +12,11 @@
 #import <unistd.h>
 
 static NSString *const kTLinkHostBundleIdentifier = @"com.tlinkauto.streamcontrol";
-static NSString *const kTLinkBootEnabledMarkerPath = @"/var/mobile/Library/TLinkauto/runtime/widget_boot_enabled";
 static NSString *const kTLinkWidgetWakeDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist";
 static const NSTimeInterval kTLinkWidgetWakeRetryInterval = 30.0;
 
 typedef int (*TLinkSBSLaunchApplicationFn)(NSString *, NSURL *, NSDictionary *, NSDictionary *, BOOL);
+typedef int (*TLinkSBSSimpleLaunchApplicationFn)(CFStringRef, Boolean);
 
 @implementation TLinkWidgetWakeHelper
 
@@ -73,13 +74,39 @@ typedef int (*TLinkSBSLaunchApplicationFn)(NSString *, NSURL *, NSDictionary *, 
     }
 }
 
-+ (void)wakeHostApplicationIfNecessary
++ (BOOL)launchWithApplicationWorkspace
 {
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    if (![fileManager fileExistsAtPath:kTLinkBootEnabledMarkerPath]) return;
+    dlopen("/System/Library/PrivateFrameworks/MobileCoreServices.framework/MobileCoreServices", RTLD_LAZY | RTLD_GLOBAL);
+    dlopen("/System/Library/PrivateFrameworks/LaunchServices.framework/LaunchServices", RTLD_LAZY | RTLD_GLOBAL);
+    dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices", RTLD_LAZY | RTLD_GLOBAL);
+    Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
+    SEL defaultSelector = NSSelectorFromString(@"defaultWorkspace");
+    if (!workspaceClass || ![workspaceClass respondsToSelector:defaultSelector]) return NO;
+
+    id workspace = nil;
+    @try {
+        workspace = ((id (*)(Class, SEL))objc_msgSend)(workspaceClass, defaultSelector);
+    } @catch (__unused NSException *exception) {
+        workspace = nil;
+    }
+    if (!workspace) return NO;
+
+    for (NSString *selectorName in @[@"openApplicationWithBundleID:", @"openApplicationWithBundleIdentifier:"]) {
+        SEL selector = NSSelectorFromString(selectorName);
+        if (![workspace respondsToSelector:selector]) continue;
+        @try {
+            if (((BOOL (*)(id, SEL, NSString *))objc_msgSend)(workspace, selector, kTLinkHostBundleIdentifier)) return YES;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return NO;
+}
+
++ (NSString *)wakeHostApplicationIfNecessary
+{
     if ([self isTaskServiceListening]) {
         [self writeDiagnosticsWithResult:@"service_already_running" returnCode:0];
-        return;
+        return @"service_already_running";
     }
 
     NSDictionary *lastDiagnostics = [self lastDiagnostics];
@@ -88,31 +115,60 @@ typedef int (*TLinkSBSLaunchApplicationFn)(NSString *, NSURL *, NSDictionary *, 
     uint64_t currentBootTime = [self bootTimeSeconds];
     NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
     if (lastBootTime == currentBootTime && lastAttempt > 0 && now >= lastAttempt &&
-        now - lastAttempt < kTLinkWidgetWakeRetryInterval) return;
+        now - lastAttempt < kTLinkWidgetWakeRetryInterval) return @"retry_throttled";
+
+    [self writeDiagnosticsWithResult:@"launch_attempt_started" returnCode:0];
 
     void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
-                          RTLD_NOW | RTLD_LOCAL);
+                          RTLD_LAZY | RTLD_GLOBAL);
     if (!handle) {
+        if ([self launchWithApplicationWorkspace]) {
+            [self writeDiagnosticsWithResult:@"launch_requested_workspace" returnCode:0];
+            return @"launch_requested_workspace";
+        }
         [self writeDiagnosticsWithResult:@"springboard_services_unavailable" returnCode:-1];
-        return;
+        return @"springboard_services_unavailable";
     }
 
     TLinkSBSLaunchApplicationFn launch = (TLinkSBSLaunchApplicationFn)dlsym(
         handle, "SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions");
-    if (!launch) {
-        [self writeDiagnosticsWithResult:@"launch_symbol_unavailable" returnCode:-2];
-        dlclose(handle);
-        return;
-    }
-
     NSString *unlockKey = @"unlockDevice";
     NSString *const *unlockKeyAddress = (NSString *const *)dlsym(handle, "SBSApplicationLaunchOptionUnlockDeviceKey");
     if (unlockKeyAddress && *unlockKeyAddress) unlockKey = *unlockKeyAddress;
     NSDictionary *launchOptions = @{unlockKey: @YES};
-    int returnCode = launch(kTLinkHostBundleIdentifier, nil, nil, launchOptions, NO);
-    [self writeDiagnosticsWithResult:returnCode == 0 ? @"launch_requested" : @"launch_returned_error"
-                           returnCode:returnCode];
+
+    int returnCode = -2;
+    if (launch) {
+        // Different iOS builds have consumed this option from either options
+        // dictionary. Supplying it to both matches the working XXTouch path.
+        returnCode = launch(kTLinkHostBundleIdentifier, nil, launchOptions, launchOptions, NO);
+        if (returnCode == 0) {
+            [self writeDiagnosticsWithResult:@"launch_requested_full_sbs" returnCode:0];
+            dlclose(handle);
+            return @"launch_requested_full_sbs";
+        }
+    }
+
+    TLinkSBSSimpleLaunchApplicationFn simpleLaunch = (TLinkSBSSimpleLaunchApplicationFn)dlsym(
+        handle, "SBSLaunchApplicationWithIdentifier");
+    if (simpleLaunch) {
+        int simpleReturnCode = simpleLaunch((__bridge CFStringRef)kTLinkHostBundleIdentifier, false);
+        if (simpleReturnCode == 0) {
+            [self writeDiagnosticsWithResult:@"launch_requested_simple_sbs" returnCode:0];
+            dlclose(handle);
+            return @"launch_requested_simple_sbs";
+        }
+        returnCode = simpleReturnCode;
+    }
     dlclose(handle);
+
+    if ([self launchWithApplicationWorkspace]) {
+        [self writeDiagnosticsWithResult:@"launch_requested_workspace" returnCode:0];
+        return @"launch_requested_workspace";
+    }
+
+    [self writeDiagnosticsWithResult:@"launch_failed" returnCode:returnCode];
+    return [NSString stringWithFormat:@"launch_failed_%d", returnCode];
 }
 
 @end

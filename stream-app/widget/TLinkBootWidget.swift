@@ -3,20 +3,22 @@ import WidgetKit
 
 private struct TLinkBootEntry: TimelineEntry {
     let date: Date
+    let status: String
 }
 
 private struct TLinkBootProvider: TimelineProvider {
     func placeholder(in context: Context) -> TLinkBootEntry {
-        TLinkBootEntry(date: Date())
+        TLinkBootEntry(date: Date(), status: "preview")
     }
 
     func getSnapshot(in context: Context, completion: @escaping (TLinkBootEntry) -> Void) {
-        completion(TLinkBootEntry(date: Date()))
+        let status = context.isPreview ? "preview" : TLinkWidgetWakeHelper.wakeHostApplicationIfNecessary()
+        completion(TLinkBootEntry(date: Date(), status: status))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<TLinkBootEntry>) -> Void) {
-        TLinkWidgetWakeHelper.wakeHostApplicationIfNecessary()
-        let entry = TLinkBootEntry(date: Date())
+        let status = TLinkWidgetWakeHelper.wakeHostApplicationIfNecessary()
+        let entry = TLinkBootEntry(date: Date(), status: status)
         let nextRefresh = Calendar.current.date(byAdding: .minute, value: 5, to: entry.date)
             ?? entry.date.addingTimeInterval(300)
         completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
@@ -41,9 +43,11 @@ private struct TLinkBootWidgetView: View {
                 Text("TLinkauto")
                     .font(.headline)
                     .foregroundColor(.white)
-                Text("Boot wake ready")
+                Text(entry.status.replacingOccurrences(of: "_", with: " "))
                     .font(.caption)
                     .foregroundColor(Color.white.opacity(0.78))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -60,7 +64,7 @@ struct TLinkBootWidget: Widget {
             TLinkBootWidgetView(entry: entry)
         }
         .configurationDisplayName("TLinkauto Boot Wake")
-        .description("Wakes the TrollStore runtime after reboot when Boot Script is enabled.")
+        .description("Wakes the TrollStore runtime; Boot Script controls which script runs afterward.")
         .supportedFamilies([.systemSmall])
     }
 }

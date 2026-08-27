@@ -120,7 +120,9 @@ assert.ok(vpnagentBinary.includes("vpnagent_ready version=2 phase=5"), "vpnagent
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
 assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions"), "boot widget lacks the SpringBoardServices wake path");
-assert.ok(widgetBinary.includes("/var/mobile/Library/TLinkauto/runtime/widget_boot_enabled"), "boot widget lacks the persistent enable marker");
+assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifier"), "boot widget lacks the simple SpringBoardServices fallback");
+assert.ok(widgetBinary.includes("LSApplicationWorkspace"), "boot widget lacks the LaunchServices fallback");
+assert.ok(widgetBinary.includes("/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist"), "boot widget lacks wake diagnostics");
 assert.ok(widgetBinary.includes("com.tlinkauto.streamcontrol"), "boot widget lacks the StreamControl host identifier");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

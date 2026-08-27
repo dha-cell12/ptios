@@ -64,13 +64,16 @@ reboot path:
    enable **Boot Script**.
 2. Add **TLinkauto Boot Wake** to the iOS Home Screen.
 3. Reboot. When WidgetKit schedules the widget, it launches StreamControl if
-   task port `6000` is absent. StreamControl starts `streamd`, and the selected
+   task port `6000` is absent. The wake attempt is not gated on configuration
+   files that may be inaccessible before first unlock. StreamControl starts
+   `streamd`, and the selected
    `00-boot-script` autolaunch entry runs through the normal licensed script
    runtime.
 
 The extension requests a new timeline every five minutes, but iOS may throttle
 or defer it. This is a TrollStore/private-API, best-effort wake path rather than
-a LaunchDaemon. Wake diagnostics are written to
+a LaunchDaemon. It also attempts wake during a non-preview widget snapshot and
+shows the latest result directly in the widget. Wake diagnostics are written to
 `/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist`.
 
 ## Remote Bridge MVP
