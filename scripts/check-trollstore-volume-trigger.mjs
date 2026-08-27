@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const read = (path) => readFileSync(path, "utf8");
+
+const source = read("stream-app/clipboardd/main.mm");
+const makefile = read("stream-app/clipboardd/Makefile");
+const entitlements = read("stream-app/clipboardd/entitlements.plist");
+const appInfo = read("stream-app/app/Info.plist");
+const helper = read("stream-app/privhelper/main.mm");
+const streamd = read("stream-app/streamd/POCSocketServer.mm");
+const settings = read("stream-app/app/SettingsViewController.mm");
+
+assert.match(makefile, /clipboardd_PRIVATE_FRAMEWORKS = IOKit/);
+assert.match(source, /IOHIDEventSystemClientCreate\(kCFAllocatorDefault\)/);
+assert.match(source, /IOHIDEventSystemClientScheduleWithRunLoop/);
+assert.match(source, /IOHIDEventSystemClientRegisterEventCallback/);
+assert.match(source, /setgid\(501\)/);
+assert.match(source, /setuid\(501\)/);
+assert.match(source, /kIOHIDEventTypeKeyboard/);
+assert.match(source, /usagePage != 12 \|\| usage != 233/);
+assert.match(source, /heldFor >= 0\.4/);
+assert.match(source, /now - sTLinkVolumeFirstClickUptime <= 0\.5/);
+assert.match(source, /if \(sTLinkVolumeMenuVisible\) return/);
+assert.match(source, /sTLinkVolumeMenuVisible = YES;[\s\S]*TLinkPresentVolumeController\(menu\)/);
+assert.match(source, /actionWithTitle:@"Launch"/);
+assert.match(source, /actionWithTitle:@"Record"/);
+assert.match(source, /actionWithTitle:@"Cancel"/);
+assert.match(source, /TLinkSendStreamdLine\(\[NSString stringWithFormat:@"19%@"/);
+assert.match(source, /TLinkSendStreamdLine\(@"14"\)/);
+assert.match(source, /recording_already_started/);
+assert.match(source, /TLinkSendStreamdLine\(@"15"\)/);
+assert.match(source, /windowLevel = \(UIWindowLevel\)20000099\.9/);
+assert.match(source, /_setSecure:/);
+assert.match(source, /sTLinkVolumeRootController\.view/);
+assert.match(source, /volume_trigger\.plist/);
+assert.match(source, /version=13/);
+assert.match(source, /mobile_identity=%d/);
+assert.match(entitlements, /com\.apple\.private\.hid\.client\.event-monitor/);
+assert.match(entitlements, /IOHIDEventSystemUserClient/);
+assert.match(entitlements, /com\.apple\.iohideventsystem/);
+assert.match(appInfo, /UIApplicationShowsViewsWhileLocked/);
+assert.match(appInfo, /<key>SecureKey<\/key>/);
+assert.match(helper, /version=13/);
+assert.match(streamd, /diagnostic containsString:@"version=13"/);
+assert.match(settings, /Two short Volume Up clicks open Launch \/ Record \/ Cancel/);
+assert.match(settings, /Volume Trigger Status/);
+assert.doesNotMatch(source, /MSHookFunction|Substrate|libhooker/);
+
+console.log("TrollStore direct IOHID volume-trigger contract checks passed");

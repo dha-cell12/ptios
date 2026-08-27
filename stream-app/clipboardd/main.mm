@@ -3,6 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 #import "../../shared/TLinkLicenseVerifier.h"
+#import "../streamd/headers/IOHIDEventSystemClient.h"
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -55,6 +56,14 @@ typedef SInt32 (*TLinkCFUserNotificationDisplayAlertFn)(CFTimeInterval,
 @implementation TLinkClipboardApplicationDelegate
 @end
 
+@interface TLinkVolumeWindow : UIWindow
+@end
+
+@implementation TLinkVolumeWindow
+- (BOOL)_isSecure { return YES; }
+- (BOOL)_shouldCreateContextAsSecure { return YES; }
+@end
+
 @interface UNUserNotificationCenter (TLinkPrivateBundleCenter)
 - (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier;
 - (instancetype)initWithBundleIdentifier:(NSString *)bundleIdentifier queue:(dispatch_queue_t)queue;
@@ -66,8 +75,387 @@ static NSInteger sTLinkNotificationAuthorizationStatus = -1;
 static NSString *sTLinkLastBackgroundVisualResult = @"none";
 static NSString *sTLinkNotificationCenterMode = @"uninitialized";
 static NSInteger sTLinkToastLastPosition = -1;
+static void TLinkClipboardLog(NSString *message);
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 static NSString *const kTLinkStreamControlBundleIdentifier = @"com.tlinkauto.streamcontrol";
+static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
+static NSString *const kTLinkScriptsRootPath = @"/var/mobile/Library/TLinkauto/scripts";
+static NSString *const kTLinkVolumeDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist";
+static IOHIDEventSystemClientRef sTLinkVolumeHIDClient = NULL;
+static TLinkVolumeWindow *sTLinkVolumeWindow = nil;
+static UIViewController *sTLinkVolumeRootController = nil;
+static BOOL sTLinkVolumeMenuVisible = NO;
+static BOOL sTLinkVolumeUpIsDown = NO;
+static NSTimeInterval sTLinkVolumeUpDownUptime = 0.0;
+static NSTimeInterval sTLinkVolumeFirstClickUptime = 0.0;
+static NSUInteger sTLinkVolumeClickGeneration = 0;
+static NSUInteger sTLinkVolumeUpEventCount = 0;
+static NSUInteger sTLinkVolumeDoubleClickCount = 0;
+static NSString *sTLinkVolumeListenerState = @"not_started";
+static NSString *sTLinkVolumeLastAction = @"none";
+
+static BOOL TLinkVolumePopupEnabled(void)
+{
+    NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:kTLinkSettingsConfigPath];
+    NSNumber *value = [config[@"double_click_volume_show_popup"] isKindOfClass:[NSNumber class]]
+        ? config[@"double_click_volume_show_popup"]
+        : nil;
+    return value ? value.boolValue : YES;
+}
+
+static void TLinkWriteVolumeDiagnostics(void)
+{
+    NSString *directory = [kTLinkVolumeDiagnosticsPath stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:nil];
+    NSDictionary *diagnostics = @{
+        @"version": @1,
+        @"listener": sTLinkVolumeListenerState ?: @"unknown",
+        @"enabled": @(TLinkVolumePopupEnabled()),
+        @"hid_client": @(sTLinkVolumeHIDClient != NULL),
+        @"volume_up_events": @(sTLinkVolumeUpEventCount),
+        @"double_clicks": @(sTLinkVolumeDoubleClickCount),
+        @"menu_visible": @(sTLinkVolumeMenuVisible),
+        @"last_action": sTLinkVolumeLastAction ?: @"none",
+        @"updated_at": @([[NSDate date] timeIntervalSince1970]),
+    };
+    [diagnostics writeToFile:kTLinkVolumeDiagnosticsPath atomically:YES];
+    [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone}
+                                     ofItemAtPath:kTLinkVolumeDiagnosticsPath
+                                            error:nil];
+}
+
+static NSString *TLinkSendStreamdLine(NSString *line)
+{
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    if (client < 0) return [NSString stringWithFormat:@"socket_failed errno=%d", errno];
+    struct timeval timeout = {4, 0};
+    setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(6000);
+    inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+    if (connect(client, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        NSString *error = [NSString stringWithFormat:@"connect_streamd_failed errno=%d", errno];
+        close(client);
+        return error;
+    }
+
+    NSString *payload = [line hasSuffix:@"\n"] ? line : [line stringByAppendingString:@"\n"];
+    NSData *request = [payload dataUsingEncoding:NSUTF8StringEncoding];
+    const uint8_t *bytes = (const uint8_t *)request.bytes;
+    NSUInteger remaining = request.length;
+    while (remaining > 0) {
+        ssize_t written = write(client, bytes, remaining);
+        if (written <= 0) break;
+        bytes += written;
+        remaining -= (NSUInteger)written;
+    }
+
+    NSMutableData *responseData = [NSMutableData data];
+    char buffer[2048];
+    while (responseData.length < 65536) {
+        ssize_t count = read(client, buffer, sizeof(buffer));
+        if (count <= 0) break;
+        [responseData appendBytes:buffer length:(NSUInteger)count];
+        if (memchr(buffer, '\n', (size_t)count)) break;
+    }
+    close(client);
+    if (responseData.length == 0) return @"streamd_no_response";
+    NSString *response = [[NSString alloc] initWithData:responseData encoding:NSUTF8StringEncoding];
+    return [response stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] ?: @"streamd_non_utf8_response";
+}
+
+static BOOL TLinkIsScriptBundleAtPath(NSString *path)
+{
+    NSString *extension = path.pathExtension.lowercaseString;
+    if ([extension isEqualToString:@"tl"] || [extension isEqualToString:@"xxt"]) return YES;
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    return [fileManager fileExistsAtPath:[path stringByAppendingPathComponent:@"manifest.json"]] ||
+           [fileManager fileExistsAtPath:[path stringByAppendingPathComponent:@"info.plist"]];
+}
+
+static NSArray<NSString *> *TLinkVolumeScriptPaths(void)
+{
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSURL *rootURL = [NSURL fileURLWithPath:kTLinkScriptsRootPath isDirectory:YES];
+    NSDirectoryEnumerator<NSURL *> *enumerator = [fileManager enumeratorAtURL:rootURL
+                                                   includingPropertiesForKeys:@[NSURLIsDirectoryKey, NSURLIsRegularFileKey]
+                                                                      options:NSDirectoryEnumerationSkipsHiddenFiles
+                                                                 errorHandler:^BOOL(__unused NSURL *url, __unused NSError *error) {
+        return YES;
+    }];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *url in enumerator) {
+        NSNumber *isDirectory = nil;
+        NSNumber *isRegularFile = nil;
+        [url getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:nil];
+        [url getResourceValue:&isRegularFile forKey:NSURLIsRegularFileKey error:nil];
+        NSString *path = url.path ?: @"";
+        if (isDirectory.boolValue && TLinkIsScriptBundleAtPath(path)) {
+            [paths addObject:path];
+            [enumerator skipDescendants];
+        } else if (isRegularFile.boolValue && [path.pathExtension.lowercaseString isEqualToString:@"js"]) {
+            [paths addObject:path];
+        }
+    }
+    return [paths sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
+        return [left.lastPathComponent localizedCaseInsensitiveCompare:right.lastPathComponent];
+    }];
+}
+
+static void TLinkDismissVolumeWindow(void)
+{
+    [sTLinkVolumeRootController dismissViewControllerAnimated:NO completion:nil];
+    sTLinkVolumeWindow.hidden = YES;
+    sTLinkVolumeWindow.rootViewController = nil;
+    sTLinkVolumeRootController = nil;
+    sTLinkVolumeWindow = nil;
+    sTLinkVolumeMenuVisible = NO;
+    TLinkWriteVolumeDiagnostics();
+}
+
+static void TLinkPrepareSecureVolumeWindow(void)
+{
+    if (sTLinkVolumeWindow) return;
+    CGRect bounds = [UIScreen mainScreen].bounds;
+    sTLinkVolumeWindow = [[TLinkVolumeWindow alloc] initWithFrame:bounds];
+    sTLinkVolumeWindow.windowLevel = (UIWindowLevel)20000099.9;
+    sTLinkVolumeWindow.backgroundColor = [UIColor clearColor];
+    sTLinkVolumeWindow.opaque = NO;
+    sTLinkVolumeRootController = [[UIViewController alloc] init];
+    sTLinkVolumeRootController.view.backgroundColor = [UIColor clearColor];
+    sTLinkVolumeWindow.rootViewController = sTLinkVolumeRootController;
+    for (id target in @[sTLinkVolumeWindow, sTLinkVolumeRootController.view]) {
+        for (NSString *selectorName in @[@"_setSecure:", @"setSecure:"]) {
+            SEL secureSelector = NSSelectorFromString(selectorName);
+            if ([target respondsToSelector:secureSelector]) {
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(target, secureSelector, YES);
+                break;
+            }
+        }
+    }
+    [sTLinkVolumeWindow makeKeyAndVisible];
+}
+
+static void TLinkPresentVolumeController(UIAlertController *controller)
+{
+    TLinkPrepareSecureVolumeWindow();
+    UIPopoverPresentationController *popover = controller.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = sTLinkVolumeRootController.view;
+        popover.sourceRect = CGRectMake(CGRectGetMidX(sTLinkVolumeRootController.view.bounds),
+                                        CGRectGetMidY(sTLinkVolumeRootController.view.bounds), 1.0, 1.0);
+        popover.permittedArrowDirections = 0;
+    }
+    [sTLinkVolumeRootController presentViewController:controller animated:YES completion:nil];
+}
+
+static void TLinkShowVolumeResult(NSString *title, NSString *message)
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:title ?: @"TLinkauto"
+                                                                       message:message ?: @""
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            TLinkDismissVolumeWindow();
+        }]];
+        TLinkPresentVolumeController(alert);
+    });
+}
+
+static void TLinkRunVolumeScript(NSString *path)
+{
+    sTLinkVolumeLastAction = [NSString stringWithFormat:@"launch_requested:%@", path.lastPathComponent ?: @""];
+    TLinkWriteVolumeDiagnostics();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *response = TLinkSendStreamdLine([NSString stringWithFormat:@"19%@", path ?: @""]);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            BOOL succeeded = [response isEqualToString:@"0"] || [response hasPrefix:@"0;;"];
+            sTLinkVolumeLastAction = succeeded ? @"launch_succeeded" : @"launch_failed";
+            TLinkClipboardLog([NSString stringWithFormat:@"volume trigger: launch path=%@ response=%@", path ?: @"", response ?: @""]);
+            TLinkWriteVolumeDiagnostics();
+            TLinkShowVolumeResult(@"Launch", response);
+        });
+    });
+}
+
+static void TLinkShowVolumeScriptPicker(void)
+{
+    NSArray<NSString *> *paths = TLinkVolumeScriptPaths();
+    if (paths.count == 0) {
+        TLinkShowVolumeResult(@"Launch", @"No .tl, .xxt, or .js script was found in the scripts folder.");
+        return;
+    }
+    UIAlertController *picker = [UIAlertController alertControllerWithTitle:@"Choose Script"
+                                                                     message:kTLinkScriptsRootPath
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+    NSString *prefix = [kTLinkScriptsRootPath stringByAppendingString:@"/"];
+    for (NSString *path in paths) {
+        NSString *display = [path hasPrefix:prefix] ? [path substringFromIndex:prefix.length] : path.lastPathComponent;
+        [picker addAction:[UIAlertAction actionWithTitle:display
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(__unused UIAlertAction *action) {
+            TLinkRunVolumeScript(path);
+        }]];
+    }
+    [picker addAction:[UIAlertAction actionWithTitle:@"Back" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) {
+        TLinkDismissVolumeWindow();
+    }]];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        TLinkPresentVolumeController(picker);
+    });
+}
+
+static void TLinkToggleVolumeRecording(void)
+{
+    sTLinkVolumeLastAction = @"record_requested";
+    TLinkWriteVolumeDiagnostics();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *response = TLinkSendStreamdLine(@"14");
+        if ([response containsString:@"recording_already_started"]) {
+            response = TLinkSendStreamdLine(@"15");
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            BOOL succeeded = [response isEqualToString:@"0"] || [response hasPrefix:@"0;;"];
+            sTLinkVolumeLastAction = succeeded ? @"record_succeeded" : @"record_failed";
+            TLinkClipboardLog([NSString stringWithFormat:@"volume trigger: record response=%@", response ?: @""]);
+            TLinkWriteVolumeDiagnostics();
+            TLinkShowVolumeResult(@"Record", response);
+        });
+    });
+}
+
+static void TLinkShowVolumeActionMenu(void)
+{
+    NSCAssert([NSThread isMainThread], @"Volume UI must be presented on main thread");
+    if (sTLinkVolumeMenuVisible) return;
+    if (!TLinkVolumePopupEnabled()) {
+        sTLinkVolumeLastAction = @"double_click_ignored_disabled";
+        TLinkWriteVolumeDiagnostics();
+        return;
+    }
+    sTLinkVolumeMenuVisible = YES;
+    sTLinkVolumeLastAction = @"menu_presented";
+    TLinkWriteVolumeDiagnostics();
+
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"TLinkauto"
+                                                                   message:@"Volume Up was pressed twice."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Launch" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        TLinkShowVolumeScriptPicker();
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Record" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        TLinkToggleVolumeRecording();
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) {
+        sTLinkVolumeLastAction = @"cancelled";
+        TLinkDismissVolumeWindow();
+    }]];
+    TLinkPresentVolumeController(menu);
+}
+
+static void TLinkHandleVolumeUpTransition(BOOL down, BOOL repeat)
+{
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    sTLinkVolumeUpEventCount += 1;
+    if (down) {
+        if (repeat || sTLinkVolumeUpIsDown) return;
+        sTLinkVolumeUpIsDown = YES;
+        sTLinkVolumeUpDownUptime = now;
+        return;
+    }
+    if (!sTLinkVolumeUpIsDown) return;
+    sTLinkVolumeUpIsDown = NO;
+    NSTimeInterval heldFor = now - sTLinkVolumeUpDownUptime;
+    if (heldFor < 0.0 || heldFor >= 0.4) {
+        sTLinkVolumeFirstClickUptime = 0.0;
+        sTLinkVolumeClickGeneration += 1;
+        sTLinkVolumeLastAction = @"volume_up_hold_ignored";
+        TLinkWriteVolumeDiagnostics();
+        return;
+    }
+
+    if (sTLinkVolumeFirstClickUptime > 0.0 && now - sTLinkVolumeFirstClickUptime <= 0.5) {
+        sTLinkVolumeFirstClickUptime = 0.0;
+        sTLinkVolumeClickGeneration += 1;
+        sTLinkVolumeDoubleClickCount += 1;
+        TLinkShowVolumeActionMenu();
+        return;
+    }
+
+    sTLinkVolumeFirstClickUptime = now;
+    NSUInteger generation = ++sTLinkVolumeClickGeneration;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (generation == sTLinkVolumeClickGeneration) sTLinkVolumeFirstClickUptime = 0.0;
+    });
+}
+
+static void TLinkVolumeHIDCallback(__unused void *target,
+                                   __unused void *refcon,
+                                   __unused IOHIDEventQueueRef queue,
+                                   IOHIDEventRef event)
+{
+    if (!event || IOHIDEventGetType(event) != kIOHIDEventTypeKeyboard) return;
+    int usagePage = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldKeyboardUsagePage);
+    int usage = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldKeyboardUsage);
+    if (usagePage != 12 || usage != 233) return;
+    BOOL down = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldKeyboardDown) != 0;
+    BOOL repeat = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldKeyboardRepeat) != 0;
+    if ([NSThread isMainThread]) TLinkHandleVolumeUpTransition(down, repeat);
+    else dispatch_async(dispatch_get_main_queue(), ^{ TLinkHandleVolumeUpTransition(down, repeat); });
+}
+
+static void TLinkStartVolumeHIDListener(void)
+{
+    if (sTLinkVolumeHIDClient) return;
+    sTLinkVolumeHIDClient = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    if (!sTLinkVolumeHIDClient) {
+        sTLinkVolumeListenerState = @"iohid_client_create_failed";
+        TLinkClipboardLog(@"volume trigger: IOHIDEventSystemClientCreate returned NULL");
+        TLinkWriteVolumeDiagnostics();
+        return;
+    }
+    IOHIDEventSystemClientScheduleWithRunLoop(sTLinkVolumeHIDClient,
+                                               CFRunLoopGetMain(),
+                                               kCFRunLoopDefaultMode);
+    IOHIDEventSystemClientRegisterEventCallback(sTLinkVolumeHIDClient,
+                                                 TLinkVolumeHIDCallback,
+                                                 NULL,
+                                                 NULL);
+    sTLinkVolumeListenerState = @"registered_keyboard_page_12_usage_233";
+    TLinkClipboardLog(@"volume trigger: IOHID listener registered page=12 usage=233 double_click_ms=500 hold_ms=400");
+    TLinkWriteVolumeDiagnostics();
+}
+
+static BOOL TLinkAdoptMobileIdentity(void)
+{
+    if (geteuid() != 0) return geteuid() == 501 && getegid() == 501;
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSArray<NSString *> *writablePaths = @[
+        @"/var/mobile/Library/TLinkauto",
+        @"/var/mobile/Library/TLinkauto/runtime",
+    ];
+    for (NSString *path in writablePaths) {
+        [fileManager createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
+        chown([path fileSystemRepresentation], 501, 501);
+    }
+    chown([@"/var/mobile/Library/TLinkauto/clipboardd.log" fileSystemRepresentation], 501, 501);
+    if (setgid(501) != 0) {
+        TLinkClipboardLog([NSString stringWithFormat:@"mobile identity: setgid(501) failed errno=%d", errno]);
+        return NO;
+    }
+    if (setuid(501) != 0) {
+        TLinkClipboardLog([NSString stringWithFormat:@"mobile identity: setuid(501) failed errno=%d", errno]);
+        return NO;
+    }
+    return geteuid() == 501 && getegid() == 501;
+}
 
 static void TLinkClipboardLog(NSString *message)
 {
@@ -269,7 +657,7 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
         return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;toast;;requested_position=%ld;;effective_position=center;;limited_on_trollstore\r\n",
                 (long)requestedPosition];
     }
-    TLinkScheduleCFUserNotification(payload, @"v12_background_visual");
+    TLinkScheduleCFUserNotification(payload, @"v13_background_visual");
     return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;%@\r\n", kind];
 }
 
@@ -326,9 +714,18 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=12;;pid=%d;;uid=%d;;euid=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
-                getpid(), getuid(), geteuid(), (long)state, (long)systemState,
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=13;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;volume_hid_listener=%d;;volume_listener_state=%@;;volume_popup_enabled=%d;;volume_up_events=%lu;;volume_double_clicks=%lu;;volume_menu_visible=%d;;volume_last_action=%@;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+                getpid(), getuid(), geteuid(), getgid(), getegid(),
+                (geteuid() == 501 && getegid() == 501) ? 1 : 0,
+                (long)state, (long)systemState,
                 sTLinkClipboardWriteVerified ? 1 : 0,
+                sTLinkVolumeHIDClient ? 1 : 0,
+                sTLinkVolumeListenerState ?: @"unknown",
+                TLinkVolumePopupEnabled() ? 1 : 0,
+                (unsigned long)sTLinkVolumeUpEventCount,
+                (unsigned long)sTLinkVolumeDoubleClickCount,
+                sTLinkVolumeMenuVisible ? 1 : 0,
+                sTLinkVolumeLastAction ?: @"none",
                 (long)sTLinkToastLastPosition,
                 sTLinkNotificationCenterMode ?: @"unknown",
                 NSBundle.mainBundle.bundleIdentifier ?: @"<nil>",
@@ -520,7 +917,11 @@ int main(int argc, char *argv[])
         (void)argv;
         signal(SIGPIPE, SIG_IGN);
         TLinkClipboardLog([NSString stringWithFormat:@"starting pid=%d uid=%d euid=%d", getpid(), getuid(), geteuid()]);
+        BOOL mobileIdentity = TLinkAdoptMobileIdentity();
+        TLinkClipboardLog([NSString stringWithFormat:@"identity mobile=%d uid=%d euid=%d gid=%d egid=%d",
+                           mobileIdentity ? 1 : 0, getuid(), geteuid(), getgid(), getegid()]);
         TLinkInitializeUIKitPlugin();
+        TLinkStartVolumeHIDListener();
         TLinkRefreshNotificationAuthorizationStatus();
         NSThread *serverThread = [[NSThread alloc] initWithBlock:^{
             TLinkRunClipboardServer();

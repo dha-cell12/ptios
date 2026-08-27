@@ -76,6 +76,22 @@ a LaunchDaemon. It also attempts wake during a non-preview widget snapshot and
 shows the latest result directly in the widget. Wake diagnostics are written to
 `/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist`.
 
+## Volume Up action menu
+
+`clipboardd` v13 registers an `IOHIDEventSystemClient` directly and watches
+keyboard usage page `12`, usage `233` (Volume Up). Two short clicks, each under
+400 ms and no more than 500 ms apart, show a secure high-level UIKit menu with
+**Launch**, **Record**, and **Cancel**. Launch lists script bundles and `.js`
+files under `/var/mobile/Library/TLinkauto/scripts` and starts the selected item
+through task `19`. Record starts task `14`; selecting it again while recording
+saves through task `15`.
+
+This path does not load a SpringBoard tweak, Substrate, or Activator. The
+Settings switch **Double-click Popup** is read at trigger time. Listener and
+menu diagnostics are written to
+`/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist` and are also
+included in the task `249` clipboardd diagnostic payload.
+
 ## Remote Bridge MVP
 
 Service v23 keeps the LAN ports above and can also make an outbound WSS

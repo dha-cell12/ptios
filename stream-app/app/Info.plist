@@ -39,6 +39,10 @@
 	</array>
 	<key>UIStatusBarHidden</key>
 	<false/>
+	<key>UIApplicationShowsViewsWhileLocked</key>
+	<true/>
+	<key>SecureKey</key>
+	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>TLinkauto saves and clears screenshots in its own photo album when requested.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

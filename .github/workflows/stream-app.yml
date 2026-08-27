@@ -191,6 +191,7 @@ jobs:
           test -f scripts/check-run-history-v1.mjs
           test -f scripts/check-trollstore-ui-refresh.mjs
           test -f scripts/check-trollstore-widget-boot.mjs
+          test -f scripts/check-trollstore-volume-trigger.mjs
           test -f scripts/Test-TLinkRunHistoryV1.ps1
           test -f test/fixtures/run-history-failure-evidence-v1.json
           test -f scripts/check-event-channel-v1.mjs
@@ -243,6 +244,7 @@ jobs:
           node scripts/check-run-history-v1.mjs
           node scripts/check-trollstore-ui-refresh.mjs
           node scripts/check-trollstore-widget-boot.mjs
+          node scripts/check-trollstore-volume-trigger.mjs
           node scripts/check-event-channel-v1.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-secure-pairing-p0.mjs

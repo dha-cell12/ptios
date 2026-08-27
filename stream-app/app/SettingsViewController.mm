@@ -15,6 +15,7 @@ static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Li
 static NSString *const kTLinkBackgroundSchedulerDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/background_service_scheduler.plist";
 static NSString *const kTLinkRemoteBridgeDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/remote_bridge.plist";
 static NSString *const kTLinkWidgetBootDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist";
+static NSString *const kTLinkVolumeTriggerDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist";
 
 @implementation SCSettingsViewController {
     NSArray<NSArray<NSString *> *> *_sections;
@@ -51,9 +52,9 @@ static NSString *const kTLinkWidgetBootDiagnosticsPath = @"/var/mobile/Library/T
     NSArray<NSString *> *runtimeSettings = @[@"Touch Indicator", @"Switch App Before Playing", @"Double-click Popup", @"Enable Shell Task"];
     if (_debugMode) {
         _sections = @[
-            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status", @"Widget Boot Wake Status"],
+            @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status", @"Widget Boot Wake Status", @"Volume Trigger Status"],
             runtimeSettings,
-            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v12", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: limited_on_trollstore", @"Privhelper: open_kill_restart_ensure_respring"],
+            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: deferred; Tesseract active", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background system alert", @"Toast: foreground positioned, background fixed center", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: helper ensure streamd + clipboardd v13", @"Volume Trigger: direct IOHID + secure UIKit alert", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: not required for volume trigger", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
     } else {
         // Grouped like iOS Settings: Appearance · Account · Connectivity · Service · Runtime · Danger
@@ -216,7 +217,7 @@ static NSString *const kTLinkWidgetBootDiagnosticsPath = @"/var/mobile/Library/T
         case 1:
             return @"Saved for script compatibility";
         case 2:
-            return @"Saved; Activator fallback is limited";
+            return @"Two short Volume Up clicks open Launch / Record / Cancel";
         case 3:
             return @"Run task 13/71 via local /bin/sh with timeout";
         default:
@@ -301,6 +302,9 @@ static NSString *const kTLinkWidgetBootDiagnosticsPath = @"/var/mobile/Library/T
         NSDictionary *backgroundScheduler = [NSDictionary dictionaryWithContentsOfFile:kTLinkBackgroundSchedulerDiagnosticsPath] ?: @{};
         [report appendFormat:@"background_scheduler_path: %@\nbackground_scheduler: %@\n\n",
          kTLinkBackgroundSchedulerDiagnosticsPath, backgroundScheduler];
+        NSDictionary *volumeTrigger = [NSDictionary dictionaryWithContentsOfFile:kTLinkVolumeTriggerDiagnosticsPath] ?: @{};
+        [report appendFormat:@"volume_trigger_path: %@\nvolume_trigger: %@\n\n",
+         kTLinkVolumeTriggerDiagnosticsPath, volumeTrigger];
         NSDictionary *licenseStatus = [[SCLicenseManager sharedManager] localStatus] ?: @{};
         [report appendFormat:@"license_status: %@\n\n", licenseStatus];
         NSDictionary *licenseLifecycle = [[SCLicenseLifecycleCoordinator sharedCoordinator] diagnostics] ?: @{};
@@ -722,6 +726,14 @@ static NSString *const kTLinkWidgetBootDiagnosticsPath = @"/var/mobile/Library/T
         _resultView.text = status
             ? [NSString stringWithFormat:@"%@\n%@", kTLinkWidgetBootDiagnosticsPath, status]
             : @"No widget wake diagnostics yet. Enable Boot Script, add the TLinkauto Boot Wake widget, then wait for a timeline refresh.";
+        return;
+    }
+
+    if ([title isEqualToString:@"Volume Trigger Status"]) {
+        NSDictionary *status = [NSDictionary dictionaryWithContentsOfFile:kTLinkVolumeTriggerDiagnosticsPath];
+        _resultView.text = status
+            ? [NSString stringWithFormat:@"%@\n%@", kTLinkVolumeTriggerDiagnosticsPath, status]
+            : @"No volume trigger diagnostics yet. Restart streamd, then press Volume Up twice.";
         return;
     }
 

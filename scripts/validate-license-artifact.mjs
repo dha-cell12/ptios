@@ -71,6 +71,7 @@ for (const [key, value] of Object.entries(expected)) {
 }
 
 const configPath = join(app, "LicenseConfig.plist");
+const appInfoPath = join(app, "Info.plist");
 let configXML;
 try {
   configXML = execFileSync("/usr/bin/plutil", ["-convert", "xml1", "-o", "-", configPath], { encoding: "utf8" });
@@ -80,6 +81,14 @@ try {
 for (const [key, value] of Object.entries(expected)) {
   assert.equal(plistValue(configXML, key), value, `artifact ${key} does not match the CI input`);
 }
+let appInfoXML;
+try {
+  appInfoXML = execFileSync("/usr/bin/plutil", ["-convert", "xml1", "-o", "-", appInfoPath], { encoding: "utf8" });
+} catch {
+  appInfoXML = await readFile(appInfoPath, "utf8");
+}
+assert.equal(plistValue(appInfoXML, "UIApplicationShowsViewsWhileLocked"), true, "app lacks lock-screen UI permission");
+assert.equal(plistValue(appInfoXML, "SecureKey"), true, "app lacks the secure-window bundle flag");
 assert.match(expected.LicenseEndpoint, /^https:\/\//, "license endpoint must use HTTPS");
 assert.doesNotMatch(expected.LicenseEndpoint, /REPLACE_|localhost|127\.0\.0\.1/i, "license endpoint is a placeholder or local address");
 assert.doesNotMatch(expected.LicenseKeyID, /REPLACE_/i, "license key id is a placeholder");
@@ -101,6 +110,7 @@ for (const name of executables) {
 
 const appBinary = (await readFile(join(app, "StreamControl"))).toString("latin1");
 const streamdBinary = (await readFile(join(app, "streamd"))).toString("latin1");
+const clipboarddBinary = (await readFile(join(app, "clipboardd"))).toString("latin1");
 const vpnagentBinary = (await readFile(join(app, "vpnagent"))).toString("latin1");
 const widgetPath = join(app, "PlugIns", "TLinkBootWidget.appex", "TLinkBootWidget");
 const widgetBytes = await readFile(widgetPath);
@@ -124,9 +134,14 @@ assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifier"), "boot wid
 assert.ok(widgetBinary.includes("LSApplicationWorkspace"), "boot widget lacks the LaunchServices fallback");
 assert.ok(widgetBinary.includes("/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist"), "boot widget lacks wake diagnostics");
 assert.ok(widgetBinary.includes("com.tlinkauto.streamcontrol"), "boot widget lacks the StreamControl host identifier");
+assert.ok(clipboarddBinary.includes("clipboardd_ready;;version=13"), "clipboardd does not expose service v13");
+assert.ok(clipboarddBinary.includes("registered_keyboard_page_12_usage_233"), "clipboardd lacks the direct IOHID Volume Up listener");
+assert.ok(clipboarddBinary.includes("Volume Up was pressed twice."), "clipboardd lacks the volume action menu");
+assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist"), "clipboardd lacks volume-trigger diagnostics");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
 const streamdEntitlements = execFileSync("ldid", ["-e", join(app, "streamd")], { encoding: "utf8" });
+const clipboarddEntitlements = execFileSync("ldid", ["-e", join(app, "clipboardd")], { encoding: "utf8" });
 const vpnagentEntitlements = execFileSync("ldid", ["-e", join(app, "vpnagent")], { encoding: "utf8" });
 const widgetEntitlements = execFileSync("ldid", ["-e", widgetPath], { encoding: "utf8" });
 assert.ok(
@@ -163,6 +178,11 @@ assert.ok(
   widgetEntitlements.includes("com.apple.backboardd.launchapplications") &&
     widgetEntitlements.includes("platform-application"),
   "boot widget is missing its TrollStore launch entitlements",
+);
+assert.ok(
+  clipboarddEntitlements.includes("com.apple.private.hid.client.event-monitor") &&
+    clipboarddEntitlements.includes("IOHIDEventSystemUserClient"),
+  "clipboardd is missing direct IOHID monitor entitlements",
 );
 
 const forbidden = [

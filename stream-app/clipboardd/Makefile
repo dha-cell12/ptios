@@ -9,6 +9,7 @@ TOOL_NAME = clipboardd
 
 clipboardd_FILES = main.mm ../../shared/TLinkLicenseVerifier.mm
 clipboardd_FRAMEWORKS = Foundation UIKit CoreFoundation UserNotifications Security
+clipboardd_PRIVATE_FRAMEWORKS = IOKit
 clipboardd_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 clipboardd_CCFLAGS = -std=c++14
 ifeq ($(TLINK_LICENSE_FORCE_ENFORCEMENT),1)
