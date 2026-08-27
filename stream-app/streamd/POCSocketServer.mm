@@ -4407,6 +4407,9 @@ static NSData *TLinkHandleKeyboard(NSString *body)
     if (subtask == 9) {
         return TLinkRunAppSideClipboard(@"9");
     }
+    if (subtask == 10) {
+        return TLinkRunAppSideClipboard(@"10");
+    }
     return TLinkUnsupported(24, @"limited_on_trollstore unknown_keyboard_subtask");
 }
 
@@ -4633,7 +4636,7 @@ static void TLinkUpdateClipboardDaemonVerification(NSData *diagnosticResponse)
 {
     NSString *diagnostic = TLinkResponseStringFromData(diagnosticResponse);
     sTLinkClipboardDaemonWriteVerified =
-        [diagnostic containsString:@"version=13"] &&
+        [diagnostic containsString:@"version=14"] &&
         [diagnostic containsString:@"background_entitlement=1"] &&
         [diagnostic containsString:@"write_verified=1"];
 }

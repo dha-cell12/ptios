@@ -134,9 +134,10 @@ assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifier"), "boot wid
 assert.ok(widgetBinary.includes("LSApplicationWorkspace"), "boot widget lacks the LaunchServices fallback");
 assert.ok(widgetBinary.includes("/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist"), "boot widget lacks wake diagnostics");
 assert.ok(widgetBinary.includes("com.tlinkauto.streamcontrol"), "boot widget lacks the StreamControl host identifier");
-assert.ok(clipboarddBinary.includes("clipboardd_ready;;version=13"), "clipboardd does not expose service v13");
+assert.ok(clipboarddBinary.includes("clipboardd_ready;;version=14"), "clipboardd does not expose service v14");
 assert.ok(clipboarddBinary.includes("registered_keyboard_page_12_usage_233"), "clipboardd lacks the direct IOHID Volume Up listener");
 assert.ok(clipboarddBinary.includes("Volume Up was pressed twice."), "clipboardd lacks the volume action menu");
+assert.ok(clipboarddBinary.includes("volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback"), "clipboardd lacks the system-alert volume menu backend");
 assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist"), "clipboardd lacks volume-trigger diagnostics");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

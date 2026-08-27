@@ -203,14 +203,14 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 Background visual fallback (put StreamControl in the background first):
 
 ```powershell
-Invoke-TLinkTask -HostIP $iphoneIP -Task "220;;Background toast v13;;3;;2;;16"
+Invoke-TLinkTask -HostIP $iphoneIP -Task "220;;Background toast v14;;3;;2;;16"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "12TLinkauto;;Background alert test;;3"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "401"
 Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 ```
 
 The toast and alert should appear without bringing StreamControl to the
-foreground. Task `249` should report `version=13`,
+foreground. Task `249` should report `version=14`,
 `background_visual_mode=cfusernotification_toast_alert_fixed_center`, the
 requested toast position, and `toast_effective_position=center`. A background
 position other than center remains `limited_on_trollstore`; arbitrary global
@@ -230,7 +230,7 @@ Task `249` should show `volume_hid_listener=1`,
 `volume_listener_state=registered_keyboard_page_12_usage_233`, and increment
 `volume_double_clicks`; it should also report `mobile_identity=1`. The same state is persisted in
 `/var/mobile/Library/TLinkauto/runtime/volume_trigger.plist`. This is a direct
-IOHID observer in `clipboardd` v13 and does not require Substrate or an
+IOHID observer in `clipboardd` v14 and does not require Substrate or an
 Activator listener.
 
 Script compatibility smoke:

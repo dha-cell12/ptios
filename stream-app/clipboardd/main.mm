@@ -93,6 +93,9 @@ static NSUInteger sTLinkVolumeUpEventCount = 0;
 static NSUInteger sTLinkVolumeDoubleClickCount = 0;
 static NSString *sTLinkVolumeListenerState = @"not_started";
 static NSString *sTLinkVolumeLastAction = @"none";
+static BOOL sTLinkVolumeLastEventDown = NO;
+static BOOL sTLinkVolumeLastEventRepeat = NO;
+static NSTimeInterval sTLinkVolumeLastEventAt = 0.0;
 
 static BOOL TLinkVolumePopupEnabled(void)
 {
@@ -119,6 +122,9 @@ static void TLinkWriteVolumeDiagnostics(void)
         @"double_clicks": @(sTLinkVolumeDoubleClickCount),
         @"menu_visible": @(sTLinkVolumeMenuVisible),
         @"last_action": sTLinkVolumeLastAction ?: @"none",
+        @"last_event_down": @(sTLinkVolumeLastEventDown),
+        @"last_event_repeat": @(sTLinkVolumeLastEventRepeat),
+        @"last_event_at_uptime": @(sTLinkVolumeLastEventAt),
         @"updated_at": @([[NSDate date] timeIntervalSince1970]),
     };
     [diagnostics writeToFile:kTLinkVolumeDiagnosticsPath atomically:YES];
@@ -207,6 +213,108 @@ static NSArray<NSString *> *TLinkVolumeScriptPaths(void)
     return [paths sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
         return [left.lastPathComponent localizedCaseInsensitiveCompare:right.lastPathComponent];
     }];
+}
+
+static dispatch_queue_t TLinkVolumeSystemMenuQueue(void)
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = dispatch_queue_create("com.tlinkauto.clipboardd.volume-system-menu", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+static NSInteger TLinkDisplayVolumeSystemAlert(NSString *title,
+                                                NSString *message,
+                                                NSString *defaultTitle,
+                                                NSString *alternateTitle,
+                                                NSString *otherTitle)
+{
+    TLinkCFUserNotificationDisplayAlertFn displayAlert =
+        (TLinkCFUserNotificationDisplayAlertFn)dlsym(RTLD_DEFAULT, "CFUserNotificationDisplayAlert");
+    if (!displayAlert) return -2;
+    CFOptionFlags responseFlags = 0;
+    SInt32 result = displayAlert(60.0,
+                                0,
+                                NULL,
+                                NULL,
+                                NULL,
+                                (__bridge CFStringRef)(title ?: @"TLinkauto"),
+                                (__bridge CFStringRef)(message ?: @""),
+                                (__bridge CFStringRef)(defaultTitle ?: @"OK"),
+                                alternateTitle.length > 0 ? (__bridge CFStringRef)alternateTitle : NULL,
+                                otherTitle.length > 0 ? (__bridge CFStringRef)otherTitle : NULL,
+                                &responseFlags);
+    TLinkClipboardLog([NSString stringWithFormat:@"volume system alert result=%d response=%lu title=%@",
+                       (int)result, (unsigned long)(responseFlags & 0x3), title ?: @""]);
+    return result == 0 ? (NSInteger)(responseFlags & 0x3) : -1;
+}
+
+static NSString *TLinkChooseVolumeScriptWithSystemAlerts(NSArray<NSString *> *paths)
+{
+    NSString *prefix = [kTLinkScriptsRootPath stringByAppendingString:@"/"];
+    for (NSUInteger index = 0; index < paths.count; index += 2) {
+        NSString *firstPath = paths[index];
+        NSString *secondPath = index + 1 < paths.count ? paths[index + 1] : nil;
+        NSString *firstTitle = [firstPath hasPrefix:prefix] ? [firstPath substringFromIndex:prefix.length] : firstPath.lastPathComponent;
+        NSString *secondTitle = [secondPath hasPrefix:prefix] ? [secondPath substringFromIndex:prefix.length] : secondPath.lastPathComponent;
+        BOOL hasMore = index + 2 < paths.count;
+        NSString *page = [NSString stringWithFormat:@"Scripts %lu-%lu of %lu",
+                          (unsigned long)(index + 1),
+                          (unsigned long)MIN(index + 2, paths.count),
+                          (unsigned long)paths.count];
+        NSInteger choice = TLinkDisplayVolumeSystemAlert(@"Choose Script",
+                                                          page,
+                                                          firstTitle,
+                                                          secondPath ? secondTitle : @"Cancel",
+                                                          hasMore ? @"More" : (secondPath ? @"Cancel" : nil));
+        if (choice == 0) return firstPath;
+        if (choice == 1) return secondPath;
+        if (choice == 2 && hasMore) continue;
+        return nil;
+    }
+    return nil;
+}
+
+static BOOL TLinkScheduleVolumeSystemMenu(void)
+{
+    if (!dlsym(RTLD_DEFAULT, "CFUserNotificationDisplayAlert")) return NO;
+    dispatch_async(TLinkVolumeSystemMenuQueue(), ^{
+        NSInteger choice = TLinkDisplayVolumeSystemAlert(@"TLinkauto",
+                                                          @"Volume Up was pressed twice.",
+                                                          @"Launch",
+                                                          @"Record",
+                                                          @"Cancel");
+        NSString *lastAction = @"system_menu_cancelled";
+        if (choice == 0) {
+            NSArray<NSString *> *paths = TLinkVolumeScriptPaths();
+            NSString *path = paths.count > 0 ? TLinkChooseVolumeScriptWithSystemAlerts(paths) : nil;
+            if (paths.count == 0) {
+                TLinkDisplayVolumeSystemAlert(@"Launch", @"No script was found in the scripts folder.", @"OK", nil, nil);
+                lastAction = @"launch_no_scripts";
+            } else if (path.length > 0) {
+                NSString *response = TLinkSendStreamdLine([NSString stringWithFormat:@"19%@", path]);
+                BOOL succeeded = [response isEqualToString:@"0"] || [response hasPrefix:@"0;;"];
+                TLinkDisplayVolumeSystemAlert(@"Launch", response, @"OK", nil, nil);
+                lastAction = succeeded ? @"launch_succeeded" : @"launch_failed";
+                TLinkClipboardLog([NSString stringWithFormat:@"volume system menu launch path=%@ response=%@", path, response]);
+            }
+        } else if (choice == 1) {
+            NSString *response = TLinkSendStreamdLine(@"14");
+            if ([response containsString:@"recording_already_started"]) response = TLinkSendStreamdLine(@"15");
+            BOOL succeeded = [response isEqualToString:@"0"] || [response hasPrefix:@"0;;"];
+            TLinkDisplayVolumeSystemAlert(@"Record", response, @"OK", nil, nil);
+            lastAction = succeeded ? @"record_succeeded" : @"record_failed";
+            TLinkClipboardLog([NSString stringWithFormat:@"volume system menu record response=%@", response]);
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sTLinkVolumeLastAction = lastAction;
+            sTLinkVolumeMenuVisible = NO;
+            TLinkWriteVolumeDiagnostics();
+        });
+    });
+    return YES;
 }
 
 static void TLinkDismissVolumeWindow(void)
@@ -344,6 +452,12 @@ static void TLinkShowVolumeActionMenu(void)
     sTLinkVolumeLastAction = @"menu_presented";
     TLinkWriteVolumeDiagnostics();
 
+    if (TLinkScheduleVolumeSystemMenu()) {
+        sTLinkVolumeLastAction = @"system_menu_queued";
+        TLinkWriteVolumeDiagnostics();
+        return;
+    }
+
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"TLinkauto"
                                                                    message:@"Volume Up was pressed twice."
                                                             preferredStyle:UIAlertControllerStyleAlert];
@@ -364,10 +478,17 @@ static void TLinkHandleVolumeUpTransition(BOOL down, BOOL repeat)
 {
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     sTLinkVolumeUpEventCount += 1;
+    sTLinkVolumeLastEventDown = down;
+    sTLinkVolumeLastEventRepeat = repeat;
+    sTLinkVolumeLastEventAt = now;
     if (down) {
-        if (repeat || sTLinkVolumeUpIsDown) return;
+        if (repeat || sTLinkVolumeUpIsDown) {
+            TLinkWriteVolumeDiagnostics();
+            return;
+        }
         sTLinkVolumeUpIsDown = YES;
         sTLinkVolumeUpDownUptime = now;
+        TLinkWriteVolumeDiagnostics();
         return;
     }
     if (!sTLinkVolumeUpIsDown) return;
@@ -391,6 +512,8 @@ static void TLinkHandleVolumeUpTransition(BOOL down, BOOL repeat)
 
     sTLinkVolumeFirstClickUptime = now;
     NSUInteger generation = ++sTLinkVolumeClickGeneration;
+    sTLinkVolumeLastAction = @"volume_up_single_click_waiting";
+    TLinkWriteVolumeDiagnostics();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (generation == sTLinkVolumeClickGeneration) sTLinkVolumeFirstClickUptime = 0.0;
     });
@@ -657,7 +780,7 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
         return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;toast;;requested_position=%ld;;effective_position=center;;limited_on_trollstore\r\n",
                 (long)requestedPosition];
     }
-    TLinkScheduleCFUserNotification(payload, @"v13_background_visual");
+    TLinkScheduleCFUserNotification(payload, @"v14_background_visual");
     return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;%@\r\n", kind];
 }
 
@@ -669,6 +792,10 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
     @try {
         if (subtask == 90) {
             return TLinkHandleBackgroundUIBridge(parts);
+        }
+        if (subtask == 10) {
+            TLinkShowVolumeActionMenu();
+            return @"0;;volume_menu_test_queued\r\n";
         }
         UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
 
@@ -714,7 +841,7 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=13;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;volume_hid_listener=%d;;volume_listener_state=%@;;volume_popup_enabled=%d;;volume_up_events=%lu;;volume_double_clicks=%lu;;volume_menu_visible=%d;;volume_last_action=%@;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=14;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;volume_hid_listener=%d;;volume_listener_state=%@;;volume_popup_enabled=%d;;volume_up_events=%lu;;volume_double_clicks=%lu;;volume_menu_visible=%d;;volume_last_action=%@;;volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback;;background_visual_mode=cfusernotification_toast_alert_fixed_center;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=center;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)state, (long)systemState,

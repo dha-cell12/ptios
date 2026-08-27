@@ -399,7 +399,7 @@ jobs:
           grep -q 'com.apple.Pasteboard.background-access' stream-app/clipboardd/entitlements.plist
           grep -q 'com.apple.Pasteboard.paste-unchecked' stream-app/clipboardd/entitlements.plist
           grep -q 'kTCCServicePasteboard' stream-app/clipboardd/entitlements.plist
-          grep -q 'version=13' stream-app/clipboardd/main.mm
+          grep -q 'version=14' stream-app/clipboardd/main.mm
           grep -q 'registered_keyboard_page_12_usage_233' stream-app/clipboardd/main.mm
           grep -q 'com.apple.private.hid.client.event-monitor' stream-app/clipboardd/entitlements.plist
           grep -q '../../shared/TLinkLicenseVerifier.mm' stream-app/clipboardd/Makefile
@@ -486,8 +486,8 @@ jobs:
           grep -q 'resolvedOpenFilePath' pccontrol/TLinkautoJSRuntime.mm
           grep -q '\[deviceBridge closeOpenFiles\]' pccontrol/jsruntime/TLinkJSRuntimeCore.mm
           grep -q 'backgroundToastFixedCenter' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=13"' stream-app/streamd/POCSocketServer.mm
-          grep -q 'containsString:@"version=13"' stream-app/privhelper/main.mm
+          grep -q 'containsString:@"version=14"' stream-app/streamd/POCSocketServer.mm
+          grep -q 'containsString:@"version=14"' stream-app/privhelper/main.mm
           grep -q 'app_foreground_heartbeat' stream-app/app/AppDelegate.mm
           grep -q 'Notification Access' stream-app/app/SettingsViewController.mm
           grep -q 'clipboardUIDaemon' stream-app/streamd/POCSocketServer.mm
