@@ -293,6 +293,9 @@ jobs:
           grep -q 'clipboardd' stream-app/Makefile
           grep -q 'vpnagent' stream-app/Makefile
           grep -q 'TLinkBootWidget.appex' stream-app/Makefile
+          grep -q 'swift-bootstrapper.pl' stream-app/Makefile
+          grep -q 'generate-output-file-map' stream-app/Makefile
+          grep -q 'THEOS_USE_PARALLEL_BUILDING = 0' stream-app/widget/Makefile
           grep -q '<string>privhelper</string>' stream-app/app/Info.plist
           grep -q '<string>clipboardd</string>' stream-app/app/Info.plist
           ! grep -q '<string>vpnagent</string>' stream-app/app/Info.plist
@@ -773,6 +776,8 @@ jobs:
         run: |
           set -euo pipefail
           make clean || true
+          make swift-support
+          test -x "$THEOS/vendor/swift-support/.theos_build/release/generate-output-file-map"
           make package FINALPACKAGE=1
 
       - name: Validate package

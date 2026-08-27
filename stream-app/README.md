@@ -49,6 +49,12 @@ make            # build cả app (.tipa) lẫn streamd
 `streamd` được đóng gói vào bundle app (`StreamControl.app/streamd`) để app
 spawn bằng đường dẫn tương đối.
 
+The aggregate build runs `make swift-support` before the WidgetKit target and
+disables parallel compilation for that Swift bundle. This prevents Theos from
+requesting `generate-output-file-map` before its host-side Swift tools exist.
+If building outside CI, clone Theos recursively so `vendor/swift-support` and
+its `Package.swift` are present.
+
 ## Widget-assisted Boot Script
 
 The TrollStore package embeds `PlugIns/TLinkBootWidget.appex`. To enable the

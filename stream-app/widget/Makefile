@@ -2,6 +2,9 @@
 
 TARGET = iphone:clang:latest:14.0
 ARCHS = arm64 arm64e
+# Theos' Swift-support bootstrap and bundle compilation can otherwise race:
+# generate-output-file-map may be requested before swift-support is built.
+THEOS_USE_PARALLEL_BUILDING = 0
 
 include $(THEOS)/makefiles/common.mk
 

@@ -13,10 +13,12 @@ const bootController = read("stream-app/app/BootScriptViewController.mm");
 const appMakefile = read("stream-app/app/Makefile");
 const settings = read("stream-app/app/SettingsViewController.mm");
 const runtimeStatus = read("docs/trollstore-runtime-status.md");
+const workflow = read(".github/workflows/stream-app.yml");
 
 assert.match(widgetMakefile, /TLinkBootWidget_BUNDLE_EXTENSION = appex/);
 assert.match(widgetMakefile, /TLinkBootWidget_DYNAMIC_LIBRARY = 0/);
 assert.match(widgetMakefile, /TLinkBootWidget_APP_EXTENSION_SAFE = 1/);
+assert.match(widgetMakefile, /THEOS_USE_PARALLEL_BUILDING = 0/);
 assert.match(widgetInfo, /com\.apple\.widgetkit-extension/);
 assert.match(widgetInfo, /com\.tlinkauto\.streamcontrol\.bootwidget/);
 assert.match(widgetEntitlements, /com\.apple\.backboardd\.launchapplications/);
@@ -37,6 +39,12 @@ assert.match(settings, /@"Boot Script"/);
 assert.match(settings, /Widget Boot Wake Status/);
 assert.match(aggregate, /widget\/entitlements\.plist/);
 assert.match(aggregate, /PlugIns\/TLinkBootWidget\.appex/);
+assert.match(aggregate, /swift-support:/);
+assert.match(aggregate, /swift-bootstrapper\.pl/);
+assert.match(aggregate, /generate-output-file-map/);
+assert.match(aggregate, /THEOS_NO_SWIFT_CACHE=2/);
 assert.match(runtimeStatus, /Widget-assisted boot wake/);
+assert.match(workflow, /make swift-support/);
+assert.match(workflow, /swift-support\/\.theos_build\/release\/generate-output-file-map/);
 
 console.log("TrollStore Widget Boot contract checks passed");

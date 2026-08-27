@@ -7,8 +7,11 @@ APP_NAME := StreamControl
 APP_BUNDLE := StreamControl.app
 TIPA := packages/$(APP_NAME).tipa
 PAYLOAD_DIR := _payload/Payload
+TLINK_SWIFT_COMPILER := $(shell command -v swift 2>/dev/null)
+TLINK_SWIFT_SUPPORT_DIR := $(THEOS)/vendor/swift-support
+TLINK_SWIFT_OUTPUT_MAP_TOOL := $(TLINK_SWIFT_SUPPORT_DIR)/.theos_build/release/generate-output-file-map
 
-.PHONY: all streamd clipboardd vpnagent app privhelper widget embed package clean
+.PHONY: all streamd clipboardd vpnagent app privhelper swift-support widget embed package clean
 
 all: package
 
@@ -27,8 +30,20 @@ app:
 privhelper:
 	$(MAKE) -C privhelper stage FINALPACKAGE=1
 
-widget:
-	$(MAKE) -C widget stage FINALPACKAGE=1
+swift-support:
+	@test -n "$(TLINK_SWIFT_COMPILER)" || { echo "ERROR: Swift compiler not found in PATH"; exit 1; }
+	@test -x "$(THEOS)/bin/swift-bootstrapper.pl" || { echo "ERROR: Theos swift-bootstrapper.pl not found"; exit 1; }
+	@test -f "$(TLINK_SWIFT_SUPPORT_DIR)/Package.swift" || { echo "ERROR: Theos swift-support submodule is missing; clone Theos recursively"; exit 1; }
+	@if [ ! -x "$(TLINK_SWIFT_OUTPUT_MAP_TOOL)" ]; then \
+	  echo "Bootstrapping Theos Swift support"; \
+	  THEOS_NO_SWIFT_CACHE=2 "$(THEOS)/bin/swift-bootstrapper.pl" \
+	    "$(TLINK_SWIFT_COMPILER)" "$(TLINK_SWIFT_SUPPORT_DIR)" \
+	    'echo "Building Theos Swift support tools"'; \
+	fi
+	@test -x "$(TLINK_SWIFT_OUTPUT_MAP_TOOL)" || { echo "ERROR: generate-output-file-map was not built"; exit 1; }
+
+widget: swift-support
+	$(MAKE) -C widget stage FINALPACKAGE=1 THEOS_USE_PARALLEL_BUILDING=0
 
 embed: streamd clipboardd vpnagent app privhelper widget
 	@set -e; \
