@@ -23,6 +23,8 @@ static NSUInteger sTLinkToastCount = 0;
 static BOOL sTLinkWindowReady = NO;
 static BOOL sTLinkToastSecure = YES;
 static NSInteger sTLinkLastPosition = 2;
+static NSUInteger sTLinkRequestCount = 0;
+static NSUInteger sTLinkInvalidRequestCount = 0;
 static UIView *sTLinkToastBubble = nil;
 static NSUInteger sTLinkToastGeneration = 0;
 
@@ -83,7 +85,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @1,
+        @"version": @2,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -92,9 +94,12 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"mobile_identity": @(geteuid() == 501 && getegid() == 501),
         @"window_ready": @(sTLinkWindowReady),
         @"window_level": @(sTLinkToastWindow.windowLevel),
+        @"requested_window_level": @20000099.9,
         @"secure": @(sTLinkToastSecure),
         @"last_position": @(sTLinkLastPosition),
         @"toast_count": @(sTLinkToastCount),
+        @"request_count": @(sTLinkRequestCount),
+        @"invalid_request_count": @(sTLinkInvalidRequestCount),
         @"last_result": sTLinkLastResult ?: @"unknown",
         @"updated_at": @([NSDate.date timeIntervalSince1970]),
     };
@@ -198,6 +203,8 @@ static void TLinkShowToast(NSDictionary *payload)
     sTLinkToastBubble = bubble;
     sTLinkToastCount += 1;
     sTLinkLastResult = [NSString stringWithFormat:@"toast_visible_position_%ld", (long)position];
+    TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d",
+        (unsigned long)sTLinkToastCount, (long)position, duration, sTLinkToastSecure ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
 
     [UIView animateWithDuration:0.18 animations:^{
@@ -236,17 +243,27 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=1;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;window_ready=%d;;window_level=%.1f;;passthrough=1;;secure=%d;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=2;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;window_ready=%d;;window_level=%.1f;;requested_window_level=20000099.9;;passthrough=1;;secure=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 sTLinkWindowReady ? 1 : 0, sTLinkToastWindow.windowLevel,
-                sTLinkToastSecure ? 1 : 0, (unsigned long)sTLinkToastCount,
+                sTLinkToastSecure ? 1 : 0, (unsigned long)sTLinkRequestCount,
+                (unsigned long)sTLinkInvalidRequestCount, (unsigned long)sTLinkToastCount,
                 (long)sTLinkLastPosition, sTLinkLastResult ?: @"unknown"];
     }
-    if (![trimmed hasPrefix:@"1;;"]) return @"-1;;bad_request\r\n";
+    sTLinkRequestCount += 1;
+    if (![trimmed hasPrefix:@"1;;"]) {
+        sTLinkInvalidRequestCount += 1;
+        sTLinkLastResult = @"bad_request";
+        TLinkWriteUIServiceDiagnostics();
+        return @"-1;;bad_request\r\n";
+    }
     NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:[trimmed substringFromIndex:3] options:0];
     NSDictionary *payload = jsonData ? [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil] : nil;
     if (![payload isKindOfClass:NSDictionary.class] || ![payload[@"action"] isEqualToString:@"toast"]) {
+        sTLinkInvalidRequestCount += 1;
+        sTLinkLastResult = @"bad_toast_payload";
+        TLinkWriteUIServiceDiagnostics();
         return @"-1;;bad_toast_payload\r\n";
     }
     __block BOOL queued = NO;

@@ -14,6 +14,7 @@ const clipboardd = read("stream-app/clipboardd/main.mm");
 const clipboarddEntitlements = read("stream-app/clipboardd/entitlements.plist");
 const streamd = read("stream-app/streamd/POCSocketServer.mm");
 const settings = read("stream-app/app/SettingsViewController.mm");
+const appDelegate = read("stream-app/app/AppDelegate.mm");
 const workflow = read(".github/workflows/stream-app.yml");
 const runtimeStatus = read("docs/trollstore-runtime-status.md");
 
@@ -43,7 +44,8 @@ assert.match(source, /_shouldCreateContextAsSecure/);
 assert.match(source, /allow_screenshot/);
 assert.match(source, /setgid\(501\)/);
 assert.match(source, /setuid\(501\)/);
-assert.match(source, /uiservice_ready;;version=1/);
+assert.match(source, /uiservice_ready;;version=2/);
+assert.match(source, /request_count/);
 assert.match(source, /uiservice_toast\.plist/);
 
 assert.match(helper, /TLinkEnsureUIService/);
@@ -61,6 +63,10 @@ assert.match(streamd, /backgroundToastUIService/);
 assert.match(streamd, /@"backgroundPositionedToastOverlay": @\(YES\)/);
 assert.match(streamd, /foreground_or_background_uiservice_positioned_with_cf_fallback/);
 assert.match(streamd, /@"allow_screenshot": @\(allowScreenshot\)/);
+assert.match(streamd, /BOOL forceUIService = \[kind isEqualToString:@"toast"\]/);
+assert.match(streamd, /@"delivery": @"uiservice"/);
+assert.match(appDelegate, /\[event\[@"delivery"\] isEqualToString:@"uiservice"\]/);
+assert.match(settings, /UI service v2/);
 
 assert.match(settings, /Toast UI Service Status/);
 assert.match(settings, /Show Background Toast Test/);

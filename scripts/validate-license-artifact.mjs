@@ -154,13 +154,14 @@ assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clip
 assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
 assert.ok(clipboarddBinary.includes("SBSLaunchApplicationWithIdentifier"), "clipboardd lacks compositor-aware UI-service launch");
 assert.ok(clipboarddBinary.includes("SBSLaunchApplicationWithIdentifier"), "clipboardd lacks compositor-aware UI-service launch");
-assert.ok(uiServiceBinary.includes("uiservice_ready;;version=1"), "TLinkUIService lacks readiness evidence");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=2"), "TLinkUIService lacks v2 readiness evidence");
 assert.ok(uiServiceBinary.includes("window_ready_passthrough"), "TLinkUIService lacks pass-through window evidence");
 assert.ok(uiServiceBinary.includes("/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist"), "TLinkUIService lacks diagnostics");
 assert.equal(plistValue(uiServiceInfoXML, "CFBundleIdentifier"), "com.tlinkauto.streamcontrol.uiservice", "TLinkUIService has the wrong bundle identifier");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationShowsViewsWhileLocked"), true, "TLinkUIService lacks lock-screen UI permission");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationExitsOnSuspend"), false, "TLinkUIService suspend policy is missing");
 assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "2", "TLinkUIService bundle version is stale");
 assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

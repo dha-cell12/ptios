@@ -336,6 +336,7 @@ static uint64_t TLinkRecordToastWithOptions(NSString *message, double duration, 
             @"position": @(position),
             @"fontSize": @(fontSize),
             @"allow_screenshot": @(allowScreenshot),
+            @"delivery": @"uiservice",
             @"source": source ?: @"unknown",
             @"ts_ms": @(TLinkNowMs()),
         }];
@@ -511,7 +512,8 @@ static NSDictionary *TLinkVisualFeedbackDictionary(void)
             @"last_dialog_value": sTLinkLastDialogValue ?: @"",
             @"touch_indicator_enabled": @(sTLinkTouchIndicatorEnabled),
             @"foreground_app_active": @(TLinkAppForegroundHeartbeatIsFresh()),
-            @"background_fallback_mode": @"cfusernotification_system_alert",
+            @"background_fallback_mode": @"toast_uiservice_always_alert_dialog_cfusernotification",
+            @"toast_delivery": @"uiservice_always",
             @"events": sTLinkVisualEvents ? [sTLinkVisualEvents copy] : @[],
         };
     }
@@ -4614,7 +4616,10 @@ static BOOL TLinkAppForegroundHeartbeatIsFresh(void)
 
 static void TLinkDispatchBackgroundVisualFallback(NSDictionary *event)
 {
-    if (![event isKindOfClass:[NSDictionary class]] || TLinkAppForegroundHeartbeatIsFresh()) return;
+    if (![event isKindOfClass:[NSDictionary class]]) return;
+    NSString *kind = [event[@"kind"] isKindOfClass:NSString.class] ? event[@"kind"] : @"";
+    BOOL forceUIService = [kind isEqualToString:@"toast"];
+    if (!forceUIService && TLinkAppForegroundHeartbeatIsFresh()) return;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSError *jsonError = nil;
         NSData *jsonData = [NSJSONSerialization dataWithJSONObject:event options:0 error:&jsonError];
@@ -6014,7 +6019,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"backgroundVisualNotifications": @(YES),
         @"backgroundVisualCFUserNotification": @(YES),
         @"backgroundPositionedToastOverlay": @(YES),
-        @"backgroundToastUIService": @"TLinkUIService.app_port_6017_passthrough_v1",
+        @"backgroundToastUIService": @"TLinkUIService.app_port_6017_passthrough_v2_always",
         @"backgroundToastFixedCenter": @(YES),
         @"clipboardMode": @"background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback",
         @"keyboardHIDPaste": @(YES),

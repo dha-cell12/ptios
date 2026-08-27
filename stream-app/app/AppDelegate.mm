@@ -375,6 +375,10 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
         if (tsMs > 0 && nowMs > tsMs && nowMs - tsMs > 10000) continue;
 
         if ([kind isEqualToString:@"toast"]) {
+            // Toast is owned by TLinkUIService in both foreground and background.
+            // Keep the event in task 60 for observability, but do not render a
+            // duplicate app-window overlay.
+            if ([event[@"delivery"] isEqualToString:@"uiservice"]) continue;
             id messageObject = event[@"message"];
             NSString *message = [messageObject isKindOfClass:[NSString class]] ? messageObject : @"";
             if (message.length == 0) continue;
