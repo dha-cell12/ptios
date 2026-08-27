@@ -211,7 +211,7 @@ Invoke-TLinkTask -HostIP $iphoneIP -Task "249"
 
 The toast and alert should appear without bringing StreamControl to the
 foreground. In **Settings -> DEBUG**, `Toast UI Service Status` should decode a
-live `uiservice_ready;;version=2` response containing `uid=501`, `euid=501`,
+live `uiservice_ready;;version=3` response containing `uid=501`, `euid=501`,
 `window_ready=1`, and `passthrough=1`; `Show Background Toast Test` sends task
 `2412`. Task `249` should report `version=15` and
 `background_visual_mode=uiservice_positioned_toast_cfusernotification_fallback`.

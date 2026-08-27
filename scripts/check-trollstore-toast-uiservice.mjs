@@ -44,8 +44,12 @@ assert.match(source, /_shouldCreateContextAsSecure/);
 assert.match(source, /allow_screenshot/);
 assert.match(source, /setgid\(501\)/);
 assert.match(source, /setuid\(501\)/);
-assert.match(source, /uiservice_ready;;version=2/);
+assert.match(source, /uiservice_ready;;version=3/);
 assert.match(source, /request_count/);
+assert.match(source, /UIApplicationMain\(argc, argv/);
+assert.match(source, /didFinishLaunchingWithOptions/);
+assert.match(source, /window_context_id/);
+assert.doesNotMatch(source, /__completeAndRunAsPlugin/);
 assert.match(source, /uiservice_toast\.plist/);
 
 assert.match(helper, /TLinkEnsureUIService/);
@@ -66,7 +70,7 @@ assert.match(streamd, /@"allow_screenshot": @\(allowScreenshot\)/);
 assert.match(streamd, /BOOL forceUIService = \[kind isEqualToString:@"toast"\]/);
 assert.match(streamd, /@"delivery": @"uiservice"/);
 assert.match(appDelegate, /\[event\[@"delivery"\] isEqualToString:@"uiservice"\]/);
-assert.match(settings, /UI service v2/);
+assert.match(settings, /UI service v3/);
 
 assert.match(settings, /Toast UI Service Status/);
 assert.match(settings, /Show Background Toast Test/);
