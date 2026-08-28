@@ -38,6 +38,8 @@
 	<true/>
 	<key>com.apple.runningboard.assertions.frontboard</key>
 	<true/>
+	<key>com.apple.multitasking.systemappassertions</key>
+	<true/>
 	<key>com.apple.springboard.launchapplications</key>
 	<true/>
 	<key>com.apple.springboard.accessibility-window-hosting</key>

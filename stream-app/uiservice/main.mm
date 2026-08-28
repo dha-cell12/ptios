@@ -34,10 +34,18 @@ static BOOL sTLinkBKSDisplayServicesStartAvailable = NO;
 static BOOL sTLinkUIApplicationInitializeAvailable = NO;
 static BOOL sTLinkUIApplicationInstantiateAvailable = NO;
 static BOOL sTLinkPluginCompletionAvailable = NO;
+static id sTLinkForegroundAssertion = nil;
+static BOOL sTLinkForegroundAssertionCreated = NO;
+static BOOL sTLinkForegroundAssertionAcquired = NO;
 
-@interface TLinkUIServiceApplication : UIApplication @end
+@interface TLinkUIServiceApplication : UIApplication
+- (UIApplicationState)tlinkSystemApplicationState;
+@end
 
-@implementation TLinkUIServiceApplication @end
+@implementation TLinkUIServiceApplication
+- (UIApplicationState)applicationState { return UIApplicationStateActive; }
+- (UIApplicationState)tlinkSystemApplicationState { return [super applicationState]; }
+@end
 
 @interface TLinkUIServiceDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic, strong) UIWindow *window;
@@ -60,6 +68,7 @@ static BOOL sTLinkPluginCompletionAvailable = NO;
     return NO;
 }
 - (BOOL)_isSecure { return YES; }
+- (BOOL)_isSystemWindow { return YES; }
 - (BOOL)_shouldCreateContextAsSecure { return YES; }
 - (BOOL)canBecomeKeyWindow { return NO; }
 @end
@@ -69,6 +78,23 @@ static UIViewController *sTLinkRootController = nil;
 
 static void TLinkPrepareToastWindow(void);
 static void TLinkStartServerIfNecessary(void);
+static void TLinkRefreshHostedWindow(void);
+
+static BOOL TLinkForegroundAssertionIsValid(void)
+{
+    SEL valid = NSSelectorFromString(@"valid");
+    return sTLinkForegroundAssertion && [sTLinkForegroundAssertion respondsToSelector:valid]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(sTLinkForegroundAssertion, valid)
+        : NO;
+}
+
+static UIApplicationState TLinkSystemApplicationState(void)
+{
+    UIApplication *application = UIApplication.sharedApplication;
+    return [application isKindOfClass:TLinkUIServiceApplication.class]
+        ? [(TLinkUIServiceApplication *)application tlinkSystemApplicationState]
+        : (application ? application.applicationState : (UIApplicationState)-1);
+}
 
 static uint32_t TLinkToastWindowContextID(void)
 {
@@ -103,7 +129,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @7,
+        @"version": @8,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -118,12 +144,18 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"bootstrap_uiapplication_initialize": @(sTLinkUIApplicationInitializeAvailable),
         @"bootstrap_uiapplication_instantiate": @(sTLinkUIApplicationInstantiateAvailable),
         @"bootstrap_complete_as_plugin": @(sTLinkPluginCompletionAvailable),
+        @"foreground_assertion_created": @(sTLinkForegroundAssertionCreated),
+        @"foreground_assertion_acquired": @(sTLinkForegroundAssertionAcquired),
+        @"foreground_assertion_valid": @(TLinkForegroundAssertionIsValid()),
         @"window_level": @(sTLinkToastWindow.windowLevel),
         @"requested_window_level": @20000099.9,
         @"window_context_id": @(TLinkToastWindowContextID()),
         @"window_hidden": @(sTLinkToastWindow.hidden),
         @"window_key": @(sTLinkToastWindow.isKeyWindow),
+        @"window_width": @(CGRectGetWidth(sTLinkToastWindow.bounds)),
+        @"window_height": @(CGRectGetHeight(sTLinkToastWindow.bounds)),
         @"application_state": @(UIApplication.sharedApplication ? UIApplication.sharedApplication.applicationState : -1),
+        @"system_application_state": @(TLinkSystemApplicationState()),
         @"secure": @(sTLinkToastSecure),
         @"last_position": @(sTLinkLastPosition),
         @"toast_count": @(sTLinkToastCount),
@@ -168,6 +200,17 @@ static void TLinkPrepareToastWindow(void)
     sTLinkWindowReady = YES;
     sTLinkLastResult = @"window_ready_passthrough";
     TLinkWriteUIServiceDiagnostics();
+}
+
+static void TLinkRefreshHostedWindow(void)
+{
+    if (!sTLinkToastWindow) return;
+    sTLinkToastWindow.hidden = YES;
+    sTLinkToastWindow.hidden = NO;
+    [sTLinkToastWindow setNeedsLayout];
+    [sTLinkRootController.view setNeedsLayout];
+    [sTLinkRootController.view setNeedsDisplay];
+    [CATransaction flush];
 }
 
 static void TLinkShowToast(NSDictionary *payload)
@@ -232,11 +275,14 @@ static void TLinkShowToast(NSDictionary *payload)
     sTLinkToastBubble = bubble;
     sTLinkToastCount += 1;
     sTLinkLastResult = [NSString stringWithFormat:@"toast_visible_position_%ld", (long)position];
-    TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d context_id=%u hidden=%d key=%d",
+    TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d app_state=%ld system_state=%ld assertion_valid=%d context_id=%u hidden=%d key=%d",
         (unsigned long)sTLinkToastCount, (long)position, duration, sTLinkToastSecure ? 1 : 0,
+        (long)UIApplication.sharedApplication.applicationState,
+        (long)TLinkSystemApplicationState(), TLinkForegroundAssertionIsValid() ? 1 : 0,
         TLinkToastWindowContextID(), sTLinkToastWindow.hidden ? 1 : 0,
         sTLinkToastWindow.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
+    TLinkRefreshHostedWindow();
     [UIView animateWithDuration:0.18 animations:^{
         bubble.alpha = 1.0;
         bubble.transform = CGAffineTransformIdentity;
@@ -273,12 +319,17 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=7;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHosted;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;passthrough=1;;secure=%d;;plugin_complete=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=8;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedNoIdleForeground;;application_state=%ld;;system_application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;system_window=1;;passthrough=1;;secure=%d;;plugin_complete=%d;;foreground_assertion_created=%d;;foreground_assertion_acquired=%d;;foreground_assertion_valid=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
+                (long)UIApplication.sharedApplication.applicationState,
+                (long)TLinkSystemApplicationState(),
                 sTLinkWindowReady ? 1 : 0, TLinkToastWindowContextID(), sTLinkToastWindow.windowLevel,
                 sTLinkToastWindow.hidden ? 1 : 0, sTLinkToastWindow.isKeyWindow ? 1 : 0,
                 sTLinkToastSecure ? 1 : 0, sTLinkPluginCompletionAvailable ? 1 : 0,
+                sTLinkForegroundAssertionCreated ? 1 : 0,
+                sTLinkForegroundAssertionAcquired ? 1 : 0,
+                TLinkForegroundAssertionIsValid() ? 1 : 0,
                 (unsigned long)sTLinkRequestCount,
                 (unsigned long)sTLinkInvalidRequestCount, (unsigned long)sTLinkToastCount,
                 (long)sTLinkLastPosition, sTLinkLastResult ?: @"unknown"];
@@ -382,6 +433,49 @@ static void TLinkStartServerIfNecessary(void)
 
 @end
 
+static void TLinkAcquireForegroundAssertion(void)
+{
+    if (sTLinkForegroundAssertion) return;
+    dlopen("/System/Library/PrivateFrameworks/AssertionServices.framework/AssertionServices",
+           RTLD_LAZY | RTLD_GLOBAL);
+    Class assertionClass = NSClassFromString(@"BKSProcessAssertion");
+    SEL initializer = NSSelectorFromString(@"initWithPID:flags:reason:name:withHandler:");
+    if (!assertionClass || ![assertionClass instancesRespondToSelector:initializer]) {
+        TLinkUIServiceLog([NSString stringWithFormat:
+            @"foreground assertion unavailable class=%d selector=%d",
+            assertionClass ? 1 : 0,
+            assertionClass && [assertionClass instancesRespondToSelector:initializer] ? 1 : 0]);
+        return;
+    }
+
+    // AssertionServices SPI values used by hosted system UI services:
+    // PreventTaskSuspend | PreventTaskThrottleDown | AllowIdleSleep |
+    // WantsForegroundResourcePriority, with BackgroundUI reason.
+    const uint32_t flags = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3);
+    const uint32_t reason = 7;
+    id allocation = ((id (*)(id, SEL))objc_msgSend)(assertionClass, @selector(alloc));
+    id handler = [^(BOOL acquired) {
+        sTLinkForegroundAssertionAcquired = acquired;
+        TLinkUIServiceLog([NSString stringWithFormat:
+            @"foreground assertion acquisition acquired=%d valid=%d system_state=%ld",
+            acquired ? 1 : 0, TLinkForegroundAssertionIsValid() ? 1 : 0,
+            (long)TLinkSystemApplicationState()]);
+        TLinkWriteUIServiceDiagnostics();
+        if (acquired) {
+            dispatch_async(dispatch_get_main_queue(), ^{ TLinkRefreshHostedWindow(); });
+        }
+    } copy];
+    sTLinkForegroundAssertion =
+        ((id (*)(id, SEL, pid_t, uint32_t, uint32_t, id, id))objc_msgSend)(
+            allocation, initializer, getpid(), flags, reason,
+            @"TLinkUIService no_idle_foreground", handler);
+    sTLinkForegroundAssertionCreated = sTLinkForegroundAssertion != nil;
+    TLinkUIServiceLog([NSString stringWithFormat:
+        @"foreground assertion requested created=%d valid=%d flags=0x%x reason=%u",
+        sTLinkForegroundAssertionCreated ? 1 : 0,
+        TLinkForegroundAssertionIsValid() ? 1 : 0, flags, reason]);
+}
+
 static BOOL TLinkInitializeUIKitPlugin(void)
 {
     void *graphics = dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices",
@@ -438,6 +532,7 @@ static BOOL TLinkInitializeUIKitPlugin(void)
     if (!delegate) delegate = [[TLinkUIServiceDelegate alloc] init];
     application.delegate = delegate;
     application.idleTimerDisabled = YES;
+    TLinkAcquireForegroundAssertion();
     SEL accessibilityInit = NSSelectorFromString(@"_accessibilityInit");
     if ([application respondsToSelector:accessibilityInit]) {
         ((void (*)(id, SEL))objc_msgSend)(application, accessibilityInit);
@@ -466,13 +561,16 @@ static BOOL TLinkInitializeUIKitPlugin(void)
     TLinkStartServerIfNecessary();
     sTLinkLastResult = @"plugin_hosted_ready";
     TLinkUIServiceLog([NSString stringWithFormat:
-        @"plugin hosted ready bundle=%@ class=%@ state=%ld gs=%d gsevent=%d bks=%d initialize=%d instantiate=%d complete=1 context_id=%u hidden=%d key=%d",
+        @"plugin hosted ready bundle=%@ class=%@ state=%ld system_state=%ld gs=%d gsevent=%d bks=%d initialize=%d instantiate=%d complete=1 assertion_created=%d assertion_acquired=%d assertion_valid=%d context_id=%u hidden=%d key=%d",
         NSBundle.mainBundle.bundleIdentifier, NSStringFromClass(application.class),
-        (long)application.applicationState,
+        (long)application.applicationState, (long)TLinkSystemApplicationState(),
         sTLinkGSInitializeAvailable ? 1 : 0, sTLinkGSEventInitializeAvailable ? 1 : 0,
         sTLinkBKSDisplayServicesStartAvailable ? 1 : 0,
         sTLinkUIApplicationInitializeAvailable ? 1 : 0,
         sTLinkUIApplicationInstantiateAvailable ? 1 : 0,
+        sTLinkForegroundAssertionCreated ? 1 : 0,
+        sTLinkForegroundAssertionAcquired ? 1 : 0,
+        TLinkForegroundAssertionIsValid() ? 1 : 0,
         TLinkToastWindowContextID(), sTLinkToastWindow.hidden ? 1 : 0,
         sTLinkToastWindow.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
@@ -494,7 +592,7 @@ int main(int argc, char *argv[])
             chown([runtime fileSystemRepresentation], 501, 501);
             if (setgid(501) != 0 || setuid(501) != 0) return 74;
         }
-        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIKitPluginHosted uid=%d euid=%d gid=%d egid=%d",
+        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIKitPluginHostedNoIdleForeground uid=%d euid=%d gid=%d egid=%d",
             getuid(), geteuid(), getgid(), getegid()]);
         if (!TLinkInitializeUIKitPlugin()) return 75;
         CFRunLoopRun();
