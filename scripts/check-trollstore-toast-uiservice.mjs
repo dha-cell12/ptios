@@ -65,6 +65,7 @@ assert.match(clipboardd, /TLinkSendUIServiceToast\(payload\)/);
 assert.match(clipboardd, /TLinkRespawnUIService/);
 assert.match(clipboardd, /SBSLaunchApplicationWithIdentifier/);
 assert.match(clipboardd, /uiservice_restore_bundle/);
+assert.match(clipboardd, /#include <sys\/stat\.h>/);
 assert.match(clipboarddEntitlements, /com\.apple\.springboard\.launchapplications/);
 assert.match(clipboardd, /background_visual_uiservice_queued/);
 assert.match(clipboardd, /CFUserNotification fallback/);
