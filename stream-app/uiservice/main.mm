@@ -31,6 +31,8 @@ static BOOL sTLinkServerStarted = NO;
 static UIView *sTLinkToastBubble = nil;
 static CATextLayer *sTLinkToastTextLayer = nil;
 static CATextLayer *sTLinkHostTextLayer = nil;
+static UIWindow *sTLinkBinderRootWindow = nil;
+static CATextLayer *sTLinkBinderRootTextLayer = nil;
 static NSUInteger sTLinkToastGeneration = 0;
 static BOOL sTLinkGSInitializeAvailable = NO;
 static BOOL sTLinkGSEventInitializeAvailable = NO;
@@ -98,6 +100,7 @@ static void TLinkRefreshHostedWindow(void);
 static BOOL TLinkSetupForegroundPresentationBinder(void);
 static void TLinkAssertForegroundScene(void);
 static UIWindowScene *TLinkDiscoverHostedWindowScene(void);
+static UIWindow *TLinkDiscoverBinderRootWindow(void);
 
 static BOOL TLinkForegroundSceneIsForeground(void)
 {
@@ -138,6 +141,10 @@ static void TLinkAttachToastWindowToHostScene(void)
 {
     if (!sTLinkHostWindow) return;
     if (@available(iOS 13.0, *)) {
+        // The presentation binder owns a private UIRootWindow. Discover it on
+        // every attach attempt because FrontBoard can populate the binder's
+        // object graph asynchronously after addScene: returns.
+        TLinkDiscoverBinderRootWindow();
         UIWindowScene *hostScene = sTLinkHostWindow.windowScene ?: TLinkDiscoverHostedWindowScene();
         if (hostScene && sTLinkHostWindow.windowScene != hostScene) {
             sTLinkHostWindow.windowScene = hostScene;
@@ -170,7 +177,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @14,
+        @"version": @15,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -192,6 +199,17 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"presentation_binder_created": @(sTLinkPresentationBinder != nil),
         @"scene_discovery_source": sTLinkSceneDiscoverySource ?: @"none",
         @"scene_discovery_succeeded": @(sTLinkDiscoveredWindowScene != nil),
+        @"binder_root_window_found": @(sTLinkBinderRootWindow != nil),
+        @"binder_root_window_class": sTLinkBinderRootWindow ? NSStringFromClass(sTLinkBinderRootWindow.class) : @"none",
+        @"binder_root_window_context_id": @(TLinkWindowContextID(sTLinkBinderRootWindow)),
+        @"binder_root_window_hidden": @(sTLinkBinderRootWindow.hidden),
+        @"binder_root_window_key": @(sTLinkBinderRootWindow.isKeyWindow),
+        @"binder_root_window_level": @(sTLinkBinderRootWindow.windowLevel),
+        @"binder_root_window_width": @(CGRectGetWidth(sTLinkBinderRootWindow.bounds)),
+        @"binder_root_window_height": @(CGRectGetHeight(sTLinkBinderRootWindow.bounds)),
+        @"binder_root_window_scene_attached": @(TLinkWindowHasScene(sTLinkBinderRootWindow)),
+        @"binder_root_window_scene_activation_state": @(TLinkWindowSceneActivationState(sTLinkBinderRootWindow)),
+        @"binder_root_text_layer_attached": @(sTLinkBinderRootTextLayer.superlayer != nil),
         @"connected_scene_count": @(UIApplication.sharedApplication.connectedScenes.count),
         @"application_window_count": @(UIApplication.sharedApplication.windows.count),
         @"window_level": @(sTLinkToastWindow.windowLevel),
@@ -213,7 +231,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"application_state": @(UIApplication.sharedApplication ? UIApplication.sharedApplication.applicationState : -1),
         @"secure": @(sTLinkToastSecure),
         @"window_secure_at_creation": @(sTLinkToastWindowSecureAtCreation),
-        @"render_mode": @"key_host_catextlayer_with_secondary_window_fallback",
+        @"render_mode": @"binder_uirootwindow_catextlayer_with_key_host_fallback",
         @"last_position": @(sTLinkLastPosition),
         @"toast_count": @(sTLinkToastCount),
         @"request_count": @(sTLinkRequestCount),
@@ -291,6 +309,9 @@ static void TLinkRefreshHostedWindow(void)
     [sTLinkToastWindow setNeedsLayout];
     [sTLinkRootController.view setNeedsLayout];
     [sTLinkRootController.view setNeedsDisplay];
+    [sTLinkBinderRootWindow setNeedsLayout];
+    [sTLinkBinderRootWindow.layer setNeedsLayout];
+    [sTLinkBinderRootWindow.layer setNeedsDisplay];
     [CATransaction flush];
 }
 
@@ -304,9 +325,11 @@ static void TLinkShowToast(NSDictionary *payload)
         [sTLinkToastBubble removeFromSuperview];
         [sTLinkToastTextLayer removeFromSuperlayer];
         [sTLinkHostTextLayer removeFromSuperlayer];
+        [sTLinkBinderRootTextLayer removeFromSuperlayer];
         sTLinkToastBubble = nil;
         sTLinkToastTextLayer = nil;
         sTLinkHostTextLayer = nil;
+        sTLinkBinderRootTextLayer = nil;
         sTLinkToastWindow.hidden = YES;
         sTLinkToastWindow.rootViewController = nil;
         sTLinkToastWindow = nil;
@@ -314,6 +337,7 @@ static void TLinkShowToast(NSDictionary *payload)
         sTLinkWindowReady = NO;
     }
     TLinkAssertForegroundScene();
+    TLinkDiscoverBinderRootWindow();
     TLinkAttachToastWindowToHostScene();
     TLinkPrepareToastWindow();
     TLinkAttachToastWindowToHostScene();
@@ -337,9 +361,11 @@ static void TLinkShowToast(NSDictionary *payload)
     [sTLinkToastBubble removeFromSuperview];
     [sTLinkToastTextLayer removeFromSuperlayer];
     [sTLinkHostTextLayer removeFromSuperlayer];
+    [sTLinkBinderRootTextLayer removeFromSuperlayer];
     sTLinkToastBubble = nil;
     sTLinkToastTextLayer = nil;
     sTLinkHostTextLayer = nil;
+    sTLinkBinderRootTextLayer = nil;
     NSUInteger generation = ++sTLinkToastGeneration;
 
     CGRect bounds = sTLinkToastWindow.bounds;
@@ -404,15 +430,34 @@ static void TLinkShowToast(NSDictionary *payload)
     hostTextLayer.contentsScale = UIScreen.mainScreen.scale;
     hostTextLayer.zPosition = 2000.0;
     [sTLinkHostWindow.layer addSublayer:hostTextLayer];
+    CATextLayer *binderRootTextLayer = nil;
+    UIWindow *binderRootWindow = TLinkDiscoverBinderRootWindow();
+    if (binderRootWindow) {
+        binderRootTextLayer = [CATextLayer layer];
+        binderRootTextLayer.frame = bubble.frame;
+        binderRootTextLayer.string = message;
+        binderRootTextLayer.fontSize = fontSize;
+        binderRootTextLayer.foregroundColor = UIColor.whiteColor.CGColor;
+        binderRootTextLayer.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.86].CGColor;
+        binderRootTextLayer.alignmentMode = kCAAlignmentCenter;
+        binderRootTextLayer.wrapped = YES;
+        binderRootTextLayer.cornerRadius = 10.0;
+        binderRootTextLayer.contentsScale = UIScreen.mainScreen.scale;
+        binderRootTextLayer.zPosition = 3000.0;
+        [binderRootWindow.layer addSublayer:binderRootTextLayer];
+    }
     sTLinkToastBubble = bubble;
     sTLinkToastTextLayer = textLayer;
     sTLinkHostTextLayer = hostTextLayer;
+    sTLinkBinderRootTextLayer = binderRootTextLayer;
     sTLinkToastCount += 1;
     sTLinkLastResult = [NSString stringWithFormat:@"toast_visible_position_%ld", (long)position];
-    TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d app_state=%ld scene_foreground=%d binder=%d context_id=%u hidden=%d key=%d",
+    TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d app_state=%ld scene_foreground=%d binder=%d binder_root=%@ binder_root_context_id=%u context_id=%u hidden=%d key=%d",
         (unsigned long)sTLinkToastCount, (long)position, duration, sTLinkToastSecure ? 1 : 0,
         (long)UIApplication.sharedApplication.applicationState,
         TLinkForegroundSceneIsForeground() ? 1 : 0, sTLinkPresentationBinder ? 1 : 0,
+        binderRootWindow ? NSStringFromClass(binderRootWindow.class) : @"none",
+        TLinkWindowContextID(binderRootWindow),
         TLinkWindowContextID(sTLinkToastWindow), sTLinkToastWindow.hidden ? 1 : 0,
         sTLinkToastWindow.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
@@ -423,9 +468,11 @@ static void TLinkShowToast(NSDictionary *payload)
         [bubble removeFromSuperview];
         [textLayer removeFromSuperlayer];
         [hostTextLayer removeFromSuperlayer];
+        [binderRootTextLayer removeFromSuperlayer];
         sTLinkToastBubble = nil;
         sTLinkToastTextLayer = nil;
         sTLinkHostTextLayer = nil;
+        sTLinkBinderRootTextLayer = nil;
         sTLinkLastResult = @"toast_hidden";
         TLinkWriteUIServiceDiagnostics();
         TLinkRefreshHostedWindow();
@@ -451,7 +498,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=14;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=2002.0;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=key_host_catextlayer_with_secondary_window_fallback;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=15;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=2002.0;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=binder_uirootwindow_catextlayer_with_key_host_fallback;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,
@@ -663,9 +710,129 @@ static UIWindowScene *TLinkWindowSceneFromObjectGraph(id value,
     return nil;
 }
 
+static UIWindow *TLinkBinderRootWindowFromObjectGraph(id value,
+                                                       NSInteger depth,
+                                                       NSMutableSet<NSValue *> *visited)
+{
+    if (!value || depth < 0 || visited.count >= 256) return nil;
+    if ([value isKindOfClass:UIWindow.class]) {
+        UIWindow *window = (UIWindow *)value;
+        NSString *windowClass = NSStringFromClass(window.class);
+        BOOL isBinderWindow = [windowClass containsString:@"UIRootWindow"] ||
+                              [windowClass containsString:@"RootWindow"] ||
+                              [windowClass containsString:@"HostingWindow"];
+        if (isBinderWindow && window != sTLinkHostWindow && window != sTLinkToastWindow) {
+            return window;
+        }
+    }
+
+    NSValue *identity = [NSValue valueWithPointer:(__bridge const void *)value];
+    if ([visited containsObject:identity]) return nil;
+    [visited addObject:identity];
+
+    if ([value isKindOfClass:NSDictionary.class]) {
+        for (id child in [(NSDictionary *)value allValues]) {
+            UIWindow *window = TLinkBinderRootWindowFromObjectGraph(child, depth - 1, visited);
+            if (window) return window;
+        }
+        return nil;
+    }
+    if ([value isKindOfClass:NSArray.class] || [value isKindOfClass:NSSet.class] ||
+        [value isKindOfClass:NSOrderedSet.class]) {
+        for (id child in value) {
+            UIWindow *window = TLinkBinderRootWindowFromObjectGraph(child, depth - 1, visited);
+            if (window) return window;
+        }
+        return nil;
+    }
+    if (depth == 0) return nil;
+
+    NSString *className = NSStringFromClass([value class]);
+    BOOL mayOwnWindow = [className containsString:@"Binder"] ||
+                        [className containsString:@"Presentation"] ||
+                        [className containsString:@"StateMachine"] ||
+                        [className containsString:@"Scene"] ||
+                        [className containsString:@"RootWindow"] ||
+                        [className containsString:@"WindowHosting"] ||
+                        [className hasPrefix:@"FB"] || [className hasPrefix:@"_UI"];
+    if (!mayOwnWindow) return nil;
+
+    for (Class current = object_getClass(value); current; current = class_getSuperclass(current)) {
+        unsigned int count = 0;
+        Ivar *ivars = class_copyIvarList(current, &count);
+        for (unsigned int index = 0; index < count; index++) {
+            const char *type = ivar_getTypeEncoding(ivars[index]);
+            if (!type || type[0] != '@') continue;
+            id child = object_getIvar(value, ivars[index]);
+            UIWindow *window = TLinkBinderRootWindowFromObjectGraph(child, depth - 1, visited);
+            if (window) {
+                free(ivars);
+                return window;
+            }
+        }
+        free(ivars);
+    }
+    return nil;
+}
+
+static UIWindow *TLinkDiscoverBinderRootWindow(void)
+{
+    if (sTLinkBinderRootWindow || !sTLinkPresentationBinder) return sTLinkBinderRootWindow;
+
+    NSArray<NSString *> *keys = @[
+        @"rootWindow", @"_rootWindow", @"hostingWindow", @"_hostingWindow",
+        @"presentationWindow", @"_presentationWindow", @"window", @"_window",
+        @"stateMachine", @"_stateMachine"
+    ];
+    for (NSString *key in keys) {
+        @try {
+            id candidate = [sTLinkPresentationBinder valueForKey:key];
+            UIWindow *window = TLinkBinderRootWindowFromObjectGraph(
+                candidate, 6, [NSMutableSet set]);
+            if (window) {
+                sTLinkBinderRootWindow = window;
+                if (CGRectIsEmpty(window.bounds)) window.frame = UIScreen.mainScreen.bounds;
+                window.backgroundColor = UIColor.clearColor;
+                window.opaque = NO;
+                window.userInteractionEnabled = NO;
+                window.hidden = NO;
+                TLinkUIServiceLog([NSString stringWithFormat:
+                    @"binder root window discovered source=%@.%@ class=%@ context_id=%u hidden=%d key=%d level=%.1f",
+                    NSStringFromClass([sTLinkPresentationBinder class]), key,
+                    NSStringFromClass(window.class), TLinkWindowContextID(window),
+                    window.hidden ? 1 : 0, window.isKeyWindow ? 1 : 0, window.windowLevel]);
+                return window;
+            }
+        } @catch (__unused NSException *exception) {}
+    }
+
+    UIWindow *window = TLinkBinderRootWindowFromObjectGraph(
+        sTLinkPresentationBinder, 8, [NSMutableSet set]);
+    if (window) {
+        sTLinkBinderRootWindow = window;
+        if (CGRectIsEmpty(window.bounds)) window.frame = UIScreen.mainScreen.bounds;
+        window.backgroundColor = UIColor.clearColor;
+        window.opaque = NO;
+        window.userInteractionEnabled = NO;
+        window.hidden = NO;
+        TLinkUIServiceLog([NSString stringWithFormat:
+            @"binder root window discovered source=%@.object_graph class=%@ context_id=%u hidden=%d key=%d level=%.1f",
+            NSStringFromClass([sTLinkPresentationBinder class]), NSStringFromClass(window.class),
+            TLinkWindowContextID(window), window.hidden ? 1 : 0,
+            window.isKeyWindow ? 1 : 0, window.windowLevel]);
+    }
+    return window;
+}
+
 static UIWindowScene *TLinkDiscoverHostedWindowScene(void)
 {
     if (@available(iOS 13.0, *)) {
+        UIWindow *binderRootWindow = TLinkDiscoverBinderRootWindow();
+        if (binderRootWindow.windowScene) {
+            sTLinkDiscoveredWindowScene = binderRootWindow.windowScene;
+            sTLinkSceneDiscoverySource = @"UIRootWindowScenePresentationBinder.rootWindow";
+            return sTLinkDiscoveredWindowScene;
+        }
         if (sTLinkDiscoveredWindowScene) return sTLinkDiscoveredWindowScene;
         UIApplication *application = UIApplication.sharedApplication;
         for (UIScene *scene in application.connectedScenes) {
