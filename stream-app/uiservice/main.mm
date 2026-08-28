@@ -45,7 +45,8 @@ static BOOL sTLinkForegroundSceneSetupAttempted = NO;
 static BOOL sTLinkForegroundSceneSetupSucceeded = NO;
 static UIWindowScene *sTLinkDiscoveredWindowScene = nil;
 static NSString *sTLinkSceneDiscoverySource = @"none";
-static const BOOL kTLinkSyntheticForegroundSceneEnabled = NO;
+static const BOOL kTLinkFullScreenSyntheticSceneEnabled = NO;
+static const BOOL kTLinkCompactPresentationSceneEnabled = YES;
 
 @interface TLinkUIServiceApplication : UIApplication @end
 
@@ -95,8 +96,8 @@ static void TLinkPrepareHostWindow(void);
 static void TLinkPrepareToastWindow(void);
 static void TLinkStartServerIfNecessary(void);
 static void TLinkRefreshHostedWindow(void);
-static BOOL TLinkSetupForegroundPresentationBinder(void);
-static void TLinkAssertForegroundScene(void);
+static BOOL TLinkSetupCompactPresentationScene(CGRect presentationFrame);
+static void TLinkSetCompactScenePresentation(CGRect presentationFrame, BOOL foreground);
 static UIWindowScene *TLinkDiscoverHostedWindowScene(void);
 static void TLinkPresentLocalHostWindow(void);
 static void TLinkHidePresentationWindowsIfIdle(NSUInteger generation);
@@ -138,13 +139,12 @@ static NSInteger TLinkWindowSceneActivationState(UIWindow *window)
 
 static void TLinkAttachToastWindowToHostScene(void)
 {
-    if (!kTLinkSyntheticForegroundSceneEnabled) return;
-    // XXTUIService keeps its key UIWindow local to the hosted UIKit plugin.
-    // Its FrontBoard scene exists only to maintain foreground eligibility.
-    // Attaching our windows to that synthetic scene creates standalone CA
-    // contexts which are valid but have no compositor presentation surface.
+    if (!kTLinkCompactPresentationSceneEnabled) return;
     if (@available(iOS 13.0, *)) {
-        TLinkDiscoverHostedWindowScene();
+        UIWindowScene *scene = TLinkDiscoverHostedWindowScene();
+        if (!scene) return;
+        sTLinkHostWindow.windowScene = scene;
+        sTLinkToastWindow.windowScene = scene;
     }
 }
 
@@ -191,6 +191,7 @@ static void TLinkHidePresentationWindowsIfIdle(NSUInteger generation)
     if (sTLinkToastBubble || sTLinkToastTextLayer || sTLinkHostTextLayer) return;
     sTLinkToastWindow.hidden = YES;
     sTLinkHostWindow.hidden = YES;
+    TLinkSetCompactScenePresentation(CGRectZero, NO);
 }
 
 static void TLinkWriteUIServiceDiagnostics(void)
@@ -198,7 +199,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @20,
+        @"version": @21,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -206,7 +207,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"egid": @(getegid()),
         @"mobile_identity": @(geteuid() == 501 && getegid() == 501),
         @"window_ready": @(sTLinkWindowReady),
-        @"launch_mode": @"UIKitPluginHostedLocalWindowNoSyntheticScene",
+        @"launch_mode": @"UIKitPluginHostedCompactFrontBoardScene",
         @"bootstrap_gs_initialize": @(sTLinkGSInitializeAvailable),
         @"bootstrap_gs_event_initialize": @(sTLinkGSEventInitializeAvailable),
         @"bootstrap_bks_display_services": @(sTLinkBKSDisplayServicesStartAvailable),
@@ -215,14 +216,15 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"bootstrap_complete_as_plugin": @(sTLinkPluginCompletionAvailable),
         @"foreground_scene_setup_attempted": @(sTLinkForegroundSceneSetupAttempted),
         @"foreground_scene_setup_succeeded": @(sTLinkForegroundSceneSetupSucceeded),
-        @"synthetic_foreground_scene_disabled": @(!kTLinkSyntheticForegroundSceneEnabled),
+        @"fullscreen_synthetic_scene_disabled": @(!kTLinkFullScreenSyntheticSceneEnabled),
+        @"compact_presentation_scene_enabled": @(kTLinkCompactPresentationSceneEnabled),
         @"foreground_scene_created": @(sTLinkForegroundScene != nil),
         @"foreground_scene_is_foreground": @(TLinkForegroundSceneIsForeground()),
         @"presentation_binder_created": @(sTLinkPresentationBinder != nil),
         @"scene_discovery_source": sTLinkSceneDiscoverySource ?: @"none",
         @"scene_discovery_succeeded": @(sTLinkDiscoveredWindowScene != nil),
-        @"local_key_window_mode": @YES,
-        @"window_scene_attachment_intentionally_disabled": @YES,
+        @"local_key_window_mode": @NO,
+        @"window_scene_attachment_enabled": @(kTLinkCompactPresentationSceneEnabled),
         @"host_window_context_zero": @(TLinkWindowContextID(sTLinkHostWindow) == 0),
         @"toast_window_context_zero": @(TLinkWindowContextID(sTLinkToastWindow) == 0),
         @"application_key_window_matches_host": @(TLinkCurrentApplicationKeyWindow() == sTLinkHostWindow),
@@ -250,7 +252,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"application_state": @(UIApplication.sharedApplication ? UIApplication.sharedApplication.applicationState : -1),
         @"secure": @(sTLinkToastSecure),
         @"window_secure_at_creation": @(sTLinkToastWindowSecureAtCreation),
-        @"render_mode": @"xxtouch_compact_local_window_no_synthetic_scene",
+        @"render_mode": @"xxtouch_compact_frontboard_scene_attached_windows",
         @"last_position": @(sTLinkLastPosition),
         @"toast_count": @(sTLinkToastCount),
         @"request_count": @(sTLinkRequestCount),
@@ -326,6 +328,36 @@ static void TLinkRefreshHostedWindow(void)
     [CATransaction flush];
 }
 
+static void TLinkAttachCompactWindowsWithRetries(NSUInteger generation,
+                                                  CGSize size,
+                                                  NSInteger remaining)
+{
+    if (generation != sTLinkToastGeneration ||
+        (!sTLinkToastBubble && !sTLinkToastTextLayer && !sTLinkHostTextLayer)) return;
+    TLinkAttachToastWindowToHostScene();
+    if (TLinkWindowHasScene(sTLinkHostWindow) && TLinkWindowHasScene(sTLinkToastWindow)) {
+        CGRect localFrame = CGRectMake(0.0, 0.0, size.width, size.height);
+        sTLinkHostWindow.frame = localFrame;
+        sTLinkToastWindow.frame = localFrame;
+        TLinkPresentLocalHostWindow();
+        sTLinkToastWindow.hidden = NO;
+        sTLinkLastResult = @"compact_scene_windows_attached";
+        TLinkRefreshHostedWindow();
+        TLinkWriteUIServiceDiagnostics();
+        return;
+    }
+    if (remaining <= 0) {
+        sTLinkLastResult = @"compact_scene_window_attach_timeout";
+        TLinkUIServiceLog(@"compact scene created but UIWindowScene discovery/attachment timed out");
+        TLinkWriteUIServiceDiagnostics();
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(50 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        TLinkAttachCompactWindowsWithRetries(generation, size, remaining - 1);
+    });
+}
+
 static void TLinkShowToast(NSDictionary *payload)
 {
     BOOL allowScreenshot = [payload[@"allow_screenshot"] boolValue];
@@ -395,8 +427,15 @@ static void TLinkShowToast(NSDictionary *payload)
     CGFloat x = (CGRectGetWidth(bounds) - width) * 0.5;
 
     CGRect presentationFrame = CGRectMake(x, y, width, height);
-    sTLinkHostWindow.frame = presentationFrame;
-    sTLinkToastWindow.frame = presentationFrame;
+    BOOL compactSceneReady = TLinkSetupCompactPresentationScene(presentationFrame);
+    if (compactSceneReady) TLinkAttachToastWindowToHostScene();
+    BOOL attachedToCompactScene = TLinkWindowHasScene(sTLinkHostWindow) &&
+        TLinkWindowHasScene(sTLinkToastWindow);
+    CGRect windowFrame = attachedToCompactScene
+        ? CGRectMake(0.0, 0.0, width, height)
+        : presentationFrame;
+    sTLinkHostWindow.frame = windowFrame;
+    sTLinkToastWindow.frame = windowFrame;
     sTLinkHostController.view.frame = sTLinkHostWindow.bounds;
     sTLinkRootController.view.frame = sTLinkToastWindow.bounds;
 
@@ -447,6 +486,9 @@ static void TLinkShowToast(NSDictionary *payload)
     sTLinkToastBubble = bubble;
     sTLinkToastTextLayer = textLayer;
     sTLinkHostTextLayer = hostTextLayer;
+    if (compactSceneReady && !attachedToCompactScene) {
+        TLinkAttachCompactWindowsWithRetries(generation, CGSizeMake(width, height), 20);
+    }
     sTLinkToastCount += 1;
     sTLinkLastResult = [NSString stringWithFormat:@"toast_visible_position_%ld", (long)position];
     TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d app_state=%ld scene_foreground=%d binder=%d local_host_context_id=%u local_host_scene=%d local_host_hidden=%d local_host_key=%d app_key_matches=%d secondary_context_id=%u",
@@ -494,7 +536,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=20;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedLocalWindowNoSyntheticScene;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_compact_local_window_no_synthetic_scene;;plugin_complete=%d;;synthetic_scene_disabled=1;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=21;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedCompactFrontBoardScene;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_compact_frontboard_scene_attached_windows;;plugin_complete=%d;;fullscreen_scene_disabled=1;;compact_scene_enabled=1;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,
@@ -762,10 +804,15 @@ static UIWindowScene *TLinkDiscoverHostedWindowScene(void)
     return nil;
 }
 
-static BOOL TLinkSetupForegroundPresentationBinder(void)
+static BOOL TLinkSetupCompactPresentationScene(CGRect presentationFrame)
 {
-    if (!kTLinkSyntheticForegroundSceneEnabled) return NO;
-    if (sTLinkForegroundSceneSetupAttempted) return sTLinkForegroundSceneSetupSucceeded;
+    if (!kTLinkCompactPresentationSceneEnabled || CGRectIsEmpty(presentationFrame)) return NO;
+    if (sTLinkForegroundSceneSetupAttempted) {
+        if (sTLinkForegroundSceneSetupSucceeded) {
+            TLinkSetCompactScenePresentation(presentationFrame, YES);
+        }
+        return sTLinkForegroundSceneSetupSucceeded;
+    }
     sTLinkForegroundSceneSetupAttempted = YES;
     dlopen("/System/Library/PrivateFrameworks/FrontBoard.framework/FrontBoard",
            RTLD_LAZY | RTLD_GLOBAL);
@@ -803,7 +850,7 @@ static BOOL TLinkSetupForegroundPresentationBinder(void)
         id displayConfiguration = TLinkSendObject(screen, @"displayConfiguration");
         id definition = TLinkSendObject(definitionClass, @"definition");
         NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier ?: @"com.tlinkauto.streamcontrol.uiservice";
-        NSString *sceneIdentifier = [bundleIdentifier stringByAppendingString:@".foreground"];
+        NSString *sceneIdentifier = [bundleIdentifier stringByAppendingString:@".compact-toast"];
         id identity = ((id (*)(id, SEL, id))objc_msgSend)(
             identityClass, NSSelectorFromString(@"identityForIdentifier:"), sceneIdentifier);
         id clientIdentity = TLinkSendObject(clientIdentityClass, @"localIdentity");
@@ -817,11 +864,7 @@ static BOOL TLinkSetupForegroundPresentationBinder(void)
             parametersClass, NSSelectorFromString(@"parametersForSpecification:"), definitionSpecification);
         id settings = TLinkSendObject(settingsClass, @"new");
         ((void (*)(id, SEL, id))objc_msgSend)(settings, NSSelectorFromString(@"setDisplayConfiguration:"), displayConfiguration);
-        SEL referenceBoundsSelector = NSSelectorFromString(@"_referenceBounds");
-        CGRect referenceBounds = [screen respondsToSelector:referenceBoundsSelector]
-            ? ((CGRect (*)(id, SEL))objc_msgSend)(screen, referenceBoundsSelector)
-            : screen.bounds;
-        ((void (*)(id, SEL, CGRect))objc_msgSend)(settings, NSSelectorFromString(@"setFrame:"), referenceBounds);
+        ((void (*)(id, SEL, CGRect))objc_msgSend)(settings, NSSelectorFromString(@"setFrame:"), presentationFrame);
         ((void (*)(id, SEL, double))objc_msgSend)(settings, NSSelectorFromString(@"setLevel:"), 1.0);
         ((void (*)(id, SEL, BOOL))objc_msgSend)(settings, NSSelectorFromString(@"setForeground:"), YES);
         ((void (*)(id, SEL, NSInteger))objc_msgSend)(settings, NSSelectorFromString(@"setInterfaceOrientation:"), 1);
@@ -866,7 +909,7 @@ static BOOL TLinkSetupForegroundPresentationBinder(void)
             @"foreground scene setup success=%d scene=%d binder=%d foreground=%d identifier=%@ frame=%.1fx%.1f",
             sTLinkForegroundSceneSetupSucceeded ? 1 : 0, scene ? 1 : 0, binder ? 1 : 0,
             TLinkForegroundSceneIsForeground() ? 1 : 0, sceneIdentifier,
-            CGRectGetWidth(referenceBounds), CGRectGetHeight(referenceBounds)]);
+            CGRectGetWidth(presentationFrame), CGRectGetHeight(presentationFrame)]);
     } @catch (NSException *exception) {
         sTLinkForegroundSceneSetupSucceeded = NO;
         sTLinkLastResult = @"frontboard_scene_exception";
@@ -877,18 +920,19 @@ static BOOL TLinkSetupForegroundPresentationBinder(void)
     return sTLinkForegroundSceneSetupSucceeded;
 }
 
-static void TLinkAssertForegroundScene(void)
+static void TLinkSetCompactScenePresentation(CGRect presentationFrame, BOOL foreground)
 {
-    if (!kTLinkSyntheticForegroundSceneEnabled) return;
     if (!sTLinkForegroundScene || !sTLinkForegroundSceneSettings) return;
     @try {
+        ((void (*)(id, SEL, CGRect))objc_msgSend)(
+            sTLinkForegroundSceneSettings, NSSelectorFromString(@"setFrame:"), presentationFrame);
         ((void (*)(id, SEL, BOOL))objc_msgSend)(
-            sTLinkForegroundSceneSettings, NSSelectorFromString(@"setForeground:"), YES);
+            sTLinkForegroundSceneSettings, NSSelectorFromString(@"setForeground:"), foreground);
         ((void (*)(id, SEL, id, id, id))objc_msgSend)(
             sTLinkForegroundScene,
             NSSelectorFromString(@"updateSettings:withTransitionContext:completion:"),
             sTLinkForegroundSceneSettings, nil, nil);
-        TLinkRefreshHostedWindow();
+        if (foreground) TLinkRefreshHostedWindow();
     } @catch (NSException *exception) {
         sTLinkLastResult = @"frontboard_scene_update_exception";
         TLinkUIServiceLog([NSString stringWithFormat:@"foreground scene update exception=%@",
@@ -1015,7 +1059,7 @@ int main(int argc, char *argv[])
             chown([runtime fileSystemRepresentation], 501, 501);
             if (setgid(501) != 0 || setuid(501) != 0) return 74;
         }
-        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIKitPluginHostedLocalWindowNoSyntheticScene uid=%d euid=%d gid=%d egid=%d",
+        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIKitPluginHostedCompactFrontBoardScene uid=%d euid=%d gid=%d egid=%d",
             getuid(), geteuid(), getgid(), getegid()]);
         if (!TLinkInitializeUIKitPlugin()) return 75;
         CFRunLoopRun();
