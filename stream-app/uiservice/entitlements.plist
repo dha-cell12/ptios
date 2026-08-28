@@ -4,10 +4,8 @@
 <dict>
 	<key>platform-application</key>
 	<true/>
-	<key>com.apple.developer.team-identifier</key>
-	<string>StreamCtl</string>
 	<key>application-identifier</key>
-	<string>StreamCtl.com.tlinkauto.streamcontrol.uiservice</string>
+	<string>com.tlinkauto.streamcontrol.uiservice</string>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>StreamCtl.com.tlinkauto.streamcontrol</string>
@@ -44,6 +42,14 @@
 	<true/>
 	<key>com.apple.springboard.appbackgroundstyle</key>
 	<true/>
+	<key>com.apple.QuartzCore.displayable-context</key>
+	<true/>
+	<key>com.apple.QuartzCore.secure-mode</key>
+	<true/>
+	<key>com.apple.QuartzCore.system-layers</key>
+	<true/>
+	<key>com.apple.private.IOSurface.protected-access</key>
+	<true/>
 	<key>com.apple.private.extension-host</key>
 	<true/>
 	<key>com.apple.developer.networking.HotspotHelper</key>
@@ -61,6 +67,8 @@
 		<string>com.apple.frontboard.workspace-service</string>
 		<string>com.apple.springboard.services</string>
 		<string>com.apple.springboardservices.secure</string>
+		<string>com.apple.UIKit.statusbarserver</string>
+		<string>com.apple.springboard.SBRendererService</string>
 	</array>
 </dict>
 </plist>

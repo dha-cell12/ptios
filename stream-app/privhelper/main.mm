@@ -505,7 +505,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=17"] &&
+           [probe containsString:@"version=18"] &&
            [probe containsString:@"launch_mode=UIKitPluginHostedFrontBoardLocalKeyWindow"] &&
            [probe containsString:@"plugin_complete=1"] &&
            [probe containsString:@"foreground_scene_setup_succeeded=1"] &&

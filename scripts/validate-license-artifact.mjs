@@ -153,8 +153,8 @@ assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volum
 assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clipboardd lacks the background toast UI-service route");
 assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
 assert.ok(clipboarddBinary.includes("uiservice plugin spawn"), "clipboardd lacks hosted-plugin UI-service launch");
-assert.ok(uiServiceBinary.includes("uiservice_ready;;version=17"), "TLinkUIService lacks v17 readiness evidence");
-assert.ok(uiServiceBinary.includes("xxtouch_local_window_with_guarded_key_registration"), "TLinkUIService lacks the guarded local hosted-window renderer");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=18"), "TLinkUIService lacks v18 readiness evidence");
+assert.ok(uiServiceBinary.includes("xxtouch_display_entitlement_aligned_local_window"), "TLinkUIService lacks the XXTouch-aligned display-entitlement renderer");
 assert.ok(uiServiceBinary.includes("window_scene_attachment_intentionally_disabled"), "TLinkUIService lacks local-window runtime diagnostics");
 assert.ok(uiServiceBinary.includes("plugin_hosted_ready"), "TLinkUIService lacks hosted-plugin lifecycle evidence");
 assert.ok(uiServiceBinary.includes("__completeAndRunAsPlugin"), "TLinkUIService lacks BackBoard plugin completion evidence");
@@ -165,10 +165,12 @@ assert.ok(uiServiceBinary.includes("/var/mobile/Library/TLinkauto/runtime/uiserv
 assert.equal(plistValue(uiServiceInfoXML, "CFBundleIdentifier"), "com.tlinkauto.streamcontrol.uiservice", "TLinkUIService has the wrong bundle identifier");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationShowsViewsWhileLocked"), true, "TLinkUIService lacks lock-screen UI permission");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationExitsOnSuspend"), false, "TLinkUIService suspend policy is missing");
+assert.equal(plistValue(uiServiceInfoXML, "UIRequiresFullScreen"), true, "TLinkUIService full-screen hosting policy is missing");
+assert.ok(!uiServiceInfoXML.includes("<key>LSUIElement</key>"), "TLinkUIService must not be packaged as an LSUIElement agent");
 assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationSystemWindowsSecureKey"), true, "TLinkUIService lacks the system secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "NSPrincipalClass"), "TLinkUIServiceApplication", "TLinkUIService lacks the hosted UIApplication principal class");
-assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "17", "TLinkUIService bundle version is stale");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "18", "TLinkUIService bundle version is stale");
 assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
@@ -227,7 +229,16 @@ assert.ok(
     uiServiceEntitlements.includes("allow-vpn") &&
     uiServiceEntitlements.includes("com.apple.springboard.launchapplications") &&
     uiServiceEntitlements.includes("com.apple.runningboard.assertions.frontboard") &&
-    uiServiceEntitlements.includes("com.apple.backboardd.hostCanRequireTouchesFromHostedContent"),
+    uiServiceEntitlements.includes("com.apple.backboardd.hostCanRequireTouchesFromHostedContent") &&
+    uiServiceEntitlements.includes("com.apple.QuartzCore.displayable-context") &&
+    uiServiceEntitlements.includes("com.apple.QuartzCore.secure-mode") &&
+    uiServiceEntitlements.includes("com.apple.QuartzCore.system-layers") &&
+    uiServiceEntitlements.includes("com.apple.private.IOSurface.protected-access") &&
+    uiServiceEntitlements.includes("com.apple.UIKit.statusbarserver") &&
+    uiServiceEntitlements.includes("com.apple.springboard.SBRendererService") &&
+    uiServiceEntitlements.includes("<key>application-identifier</key>") &&
+    uiServiceEntitlements.includes("com.tlinkauto.streamcontrol.uiservice") &&
+    !uiServiceEntitlements.includes("com.apple.developer.team-identifier"),
   "TLinkUIService is missing its TrollStore background UI entitlement set",
 );
 
