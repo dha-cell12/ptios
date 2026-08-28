@@ -153,9 +153,9 @@ assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volum
 assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clipboardd lacks the background toast UI-service route");
 assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
 assert.ok(clipboarddBinary.includes("uiservice plugin spawn"), "clipboardd lacks hosted-plugin UI-service launch");
-assert.ok(uiServiceBinary.includes("uiservice_ready;;version=15"), "TLinkUIService lacks v15 readiness evidence");
-assert.ok(uiServiceBinary.includes("binder_uirootwindow_catextlayer_with_key_host_fallback"), "TLinkUIService lacks the binder-root toast renderer");
-assert.ok(uiServiceBinary.includes("binder_root_window_context_id"), "TLinkUIService lacks binder-root runtime diagnostics");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=16"), "TLinkUIService lacks v16 readiness evidence");
+assert.ok(uiServiceBinary.includes("xxtouch_local_key_window_direct_view_no_scene_attachment"), "TLinkUIService lacks the local hosted-window toast renderer");
+assert.ok(uiServiceBinary.includes("window_scene_attachment_intentionally_disabled"), "TLinkUIService lacks local-window runtime diagnostics");
 assert.ok(uiServiceBinary.includes("plugin_hosted_ready"), "TLinkUIService lacks hosted-plugin lifecycle evidence");
 assert.ok(uiServiceBinary.includes("__completeAndRunAsPlugin"), "TLinkUIService lacks BackBoard plugin completion evidence");
 assert.ok(uiServiceBinary.includes("createSceneWithDefinition:initialParameters:"), "TLinkUIService lacks FrontBoard scene creation evidence");
@@ -168,7 +168,7 @@ assert.equal(plistValue(uiServiceInfoXML, "UIApplicationExitsOnSuspend"), false,
 assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationSystemWindowsSecureKey"), true, "TLinkUIService lacks the system secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "NSPrincipalClass"), "TLinkUIServiceApplication", "TLinkUIService lacks the hosted UIApplication principal class");
-assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "15", "TLinkUIService bundle version is stale");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "16", "TLinkUIService bundle version is stale");
 assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });
