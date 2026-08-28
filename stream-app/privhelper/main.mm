@@ -505,7 +505,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=5"] &&
+           [probe containsString:@"version=6"] &&
            [probe containsString:@"launch_mode=UIApplicationMain"] &&
            [probe containsString:@";;uid=501;;"] &&
            [probe containsString:@";;euid=501;;"] &&
@@ -684,6 +684,35 @@ static BOOL TLinkHelperStreamdPathAllowed(NSString *streamdPath)
     return [normalized hasSuffix:@"/StreamControl.app/streamd"];
 }
 
+static void TLinkSpawnAuxiliaryEnsure(NSString *streamdPath, BOOL replaceExisting)
+{
+    NSString *helperPath = [[streamdPath stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"privhelper"];
+    if (![helperPath hasSuffix:@"/StreamControl.app/privhelper"] ||
+        ![[NSFileManager defaultManager] isExecutableFileAtPath:helperPath]) {
+        TLinkHelperLog([NSString stringWithFormat:
+            @"ensure-streamd: auxiliary helper unavailable path=%@", helperPath ?: @""]);
+        return;
+    }
+
+    char *arg0 = strdup([helperPath fileSystemRepresentation]);
+    char *arg1 = strdup("--ensure-auxiliaries");
+    char *arg2 = strdup([streamdPath fileSystemRepresentation]);
+    char *arg3 = replaceExisting ? strdup("--replace") : NULL;
+    if (!arg0 || !arg1 || !arg2 || (replaceExisting && !arg3)) {
+        free(arg0); free(arg1); free(arg2); free(arg3);
+        TLinkHelperLog(@"ensure-streamd: auxiliary argv alloc failed");
+        return;
+    }
+    char *const argv[] = { arg0, arg1, arg2, arg3, NULL };
+    pid_t pid = -1;
+    int rc = posix_spawn(&pid, arg0, NULL, NULL, argv, environ);
+    free(arg0); free(arg1); free(arg2); free(arg3);
+    TLinkHelperLog([NSString stringWithFormat:
+        @"ensure-streamd: core_ready_auxiliary_ensure_spawned pid=%d rc=%d replace=%d",
+        pid, rc, replaceExisting ? 1 : 0]);
+}
+
 static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
 {
     NSString *normalized = TLinkHelperNormalizedPath(streamdPath);
@@ -696,31 +725,24 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
         return 41;
     }
 
-    int clipboardExit = TLinkEnsureClipboardd(normalized, replaceExisting);
-    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: clipboardd exit=%d replace=%d",
-                    clipboardExit, replaceExisting ? 1 : 0]);
-
-    int uiServiceExit = 0;
-    if (replaceExisting) {
-        // Restart streamd must not wait for a UIKit application lifecycle.
-        // clipboardd launches the UI service on demand for the next toast.
+    NSString *uiProbe = TLinkHelperSendLoopbackLine(@"ping\n", 6017, 1);
+    if (replaceExisting || !TLinkUIServiceProbeIsCurrent(uiProbe)) {
+        // Release an old, unresponsive, or explicitly replaced transparent UI
+        // service before core recovery. v6 is launched on demand and self-exits.
         TLinkHelperKillProcessNamed("TLinkUIService");
         [[NSFileManager defaultManager] removeItemAtPath:
             @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle" error:nil];
-        TLinkHelperLog(@"ensure-streamd: uiservice deferred_on_replace; clipboardd will launch on demand");
-    } else {
-        uiServiceExit = TLinkEnsureUIService(normalized, NO);
-        TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: uiservice exit=%d replace=0",
-                        uiServiceExit]);
+        TLinkHelperLog([NSString stringWithFormat:
+            @"ensure-streamd: uiservice reset_and_deferred replace=%d probe=%@",
+            replaceExisting ? 1 : 0,
+            [uiProbe stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+                ?: @"<none>"]);
     }
-
-    int vpnagentExit = TLinkEnsureVPNAgent(normalized, replaceExisting);
-    TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: vpnagent exit=%d replace=%d",
-                    vpnagentExit, replaceExisting ? 1 : 0]);
 
     NSString *before = TLinkHelperSendLocalTaskLine(@"97\n", 1);
     if (before.length > 0 && !replaceExisting) {
         TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: already responding %@", [before stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+        TLinkSpawnAuxiliaryEnsure(normalized, NO);
         return 0;
     }
 
@@ -762,6 +784,7 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
         NSString *probe = TLinkHelperSendLocalTaskLine(@"97\n", 1);
         if (probe.length > 0) {
             TLinkHelperLog([NSString stringWithFormat:@"ensure-streamd: probe ok attempt=%d %@", i + 1, [probe stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]);
+            TLinkSpawnAuxiliaryEnsure(normalized, replaceExisting);
             return 0;
         }
     }
@@ -1052,7 +1075,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=9 scope=ensure-streamd,ensure-clipboardd,ensure-uiservice-mobile,ensure-vpnagent-mobile,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
+            TLinkHelperLog(@"privhelper version=9 scope=ensure-streamd,ensure-auxiliaries,ensure-clipboardd,ensure-uiservice-mobile,ensure-vpnagent-mobile,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
             return 0;
         }
 
@@ -1063,6 +1086,26 @@ int main(int argc, char *argv[])
                 if (strcmp(argv[i], "--replace") == 0) replaceExisting = YES;
             }
             return TLinkEnsureStreamd(streamdPath, replaceExisting);
+        }
+
+        if (argc >= 3 && strcmp(argv[1], "--ensure-auxiliaries") == 0) {
+            NSString *streamdPath = [NSString stringWithUTF8String:argv[2]] ?: @"";
+            NSString *normalized = TLinkHelperNormalizedPath(streamdPath);
+            if (!TLinkHelperStreamdPathAllowed(normalized)) {
+                TLinkHelperLog([NSString stringWithFormat:
+                    @"ensure-auxiliaries: refused streamd path=%@", streamdPath]);
+                return 60;
+            }
+            BOOL replaceExisting = NO;
+            for (int i = 3; i < argc; i++) {
+                if (strcmp(argv[i], "--replace") == 0) replaceExisting = YES;
+            }
+            int clipboardExit = TLinkEnsureClipboardd(normalized, replaceExisting);
+            int vpnagentExit = TLinkEnsureVPNAgent(normalized, replaceExisting);
+            TLinkHelperLog([NSString stringWithFormat:
+                @"ensure-auxiliaries: clipboardd=%d vpnagent=%d replace=%d core_unblocked=1",
+                clipboardExit, vpnagentExit, replaceExisting ? 1 : 0]);
+            return clipboardExit != 0 ? clipboardExit : vpnagentExit;
         }
 
         if (argc >= 3 && strcmp(argv[1], "--ensure-vpnagent") == 0) {
@@ -1121,7 +1164,7 @@ int main(int argc, char *argv[])
             return TLinkRespring();
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --ensure-vpnagent /path/to/streamd | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
+        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --ensure-auxiliaries /path/to/streamd [--replace] | --ensure-vpnagent /path/to/streamd | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
         return 64;
     }
 }

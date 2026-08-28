@@ -103,7 +103,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @5,
+        @"version": @6,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -252,6 +252,15 @@ static void TLinkShowToast(NSDictionary *payload)
             TLinkWriteUIServiceDiagnostics();
         }];
     }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)((duration + 0.8) * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (generation != sTLinkToastGeneration) return;
+        sTLinkLastResult = @"toast_complete_service_exit";
+        TLinkUIServiceLog(@"toast complete; exiting ephemeral foreground service");
+        TLinkWriteUIServiceDiagnostics();
+        exit(0);
+    });
 }
 
 static NSString *TLinkReadLine(int client)
@@ -273,7 +282,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=5;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIApplicationMain_restore_frontmost;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;passthrough=1;;secure=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;restore_bundle=%@;;restore_result=%@;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=6;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIApplicationMain_restore_frontmost_ephemeral;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;passthrough=1;;secure=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;restore_bundle=%@;;restore_result=%@;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 sTLinkWindowReady ? 1 : 0, TLinkToastWindowContextID(), sTLinkToastWindow.windowLevel,
@@ -478,6 +487,14 @@ static void TLinkScheduleRestorePreviousApplication(NSTimeInterval delay)
     // Allow clipboardd enough time to connect and submit the first toast. If
     // no toast arrives, this timer still releases invisible foreground safely.
     TLinkScheduleRestorePreviousApplication(2.5);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (sTLinkToastCount > 0) return;
+        sTLinkLastResult = @"no_toast_service_exit";
+        TLinkUIServiceLog(@"no toast received; exiting invisible foreground service");
+        TLinkWriteUIServiceDiagnostics();
+        exit(0);
+    });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3500 * NSEC_PER_MSEC)),
                    dispatch_get_main_queue(), ^{
         TLinkUIServiceLog([NSString stringWithFormat:@"UIApplicationMain settled state=%ld context_id=%u hidden=%d key=%d",
