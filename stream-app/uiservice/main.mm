@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #import <objc/message.h>
+#import <objc/runtime.h>
 
 typedef void (*TLinkUIApplicationInitializeFn)(void);
 typedef void (*TLinkUIApplicationInstantiateSingletonFn)(Class);
@@ -40,6 +41,8 @@ static id sTLinkPresentationBinder = nil;
 static NSTimer *sTLinkForegroundSceneTimer = nil;
 static BOOL sTLinkForegroundSceneSetupAttempted = NO;
 static BOOL sTLinkForegroundSceneSetupSucceeded = NO;
+static UIWindowScene *sTLinkDiscoveredWindowScene = nil;
+static NSString *sTLinkSceneDiscoverySource = @"none";
 
 @interface TLinkUIServiceApplication : UIApplication @end
 
@@ -91,6 +94,7 @@ static void TLinkStartServerIfNecessary(void);
 static void TLinkRefreshHostedWindow(void);
 static BOOL TLinkSetupForegroundPresentationBinder(void);
 static void TLinkAssertForegroundScene(void);
+static UIWindowScene *TLinkDiscoverHostedWindowScene(void);
 
 static BOOL TLinkForegroundSceneIsForeground(void)
 {
@@ -129,10 +133,13 @@ static NSInteger TLinkWindowSceneActivationState(UIWindow *window)
 
 static void TLinkAttachToastWindowToHostScene(void)
 {
-    if (!sTLinkToastWindow || !sTLinkHostWindow) return;
+    if (!sTLinkHostWindow) return;
     if (@available(iOS 13.0, *)) {
-        UIWindowScene *hostScene = sTLinkHostWindow.windowScene;
-        if (hostScene && sTLinkToastWindow.windowScene != hostScene) {
+        UIWindowScene *hostScene = sTLinkHostWindow.windowScene ?: TLinkDiscoverHostedWindowScene();
+        if (hostScene && sTLinkHostWindow.windowScene != hostScene) {
+            sTLinkHostWindow.windowScene = hostScene;
+        }
+        if (hostScene && sTLinkToastWindow && sTLinkToastWindow.windowScene != hostScene) {
             sTLinkToastWindow.windowScene = hostScene;
         }
     }
@@ -160,7 +167,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @11,
+        @"version": @12,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -180,6 +187,10 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"foreground_scene_created": @(sTLinkForegroundScene != nil),
         @"foreground_scene_is_foreground": @(TLinkForegroundSceneIsForeground()),
         @"presentation_binder_created": @(sTLinkPresentationBinder != nil),
+        @"scene_discovery_source": sTLinkSceneDiscoverySource ?: @"none",
+        @"scene_discovery_succeeded": @(sTLinkDiscoveredWindowScene != nil),
+        @"connected_scene_count": @(UIApplication.sharedApplication.connectedScenes.count),
+        @"application_window_count": @(UIApplication.sharedApplication.windows.count),
         @"window_level": @(sTLinkToastWindow.windowLevel),
         @"requested_window_level": @20000099.9,
         @"window_context_id": @(TLinkWindowContextID(sTLinkToastWindow)),
@@ -240,6 +251,7 @@ static void TLinkPrepareHostWindow(void)
 static void TLinkPrepareToastWindow(void)
 {
     if (sTLinkToastWindow) return;
+    TLinkAttachToastWindowToHostScene();
     if (@available(iOS 13.0, *)) {
         UIWindowScene *hostScene = sTLinkHostWindow.windowScene;
         if (hostScene) {
@@ -279,6 +291,7 @@ static void TLinkRefreshHostedWindow(void)
 static void TLinkShowToast(NSDictionary *payload)
 {
     TLinkAssertForegroundScene();
+    TLinkAttachToastWindowToHostScene();
     TLinkPrepareToastWindow();
     TLinkAttachToastWindowToHostScene();
     NSString *message = [payload[@"message"] isKindOfClass:NSString.class] ? payload[@"message"] : @"";
@@ -384,7 +397,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=11;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=12;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,
@@ -403,6 +416,8 @@ static NSString *TLinkHandleLine(NSString *line)
                 sTLinkForegroundScene ? 1 : 0,
                 TLinkForegroundSceneIsForeground() ? 1 : 0,
                 sTLinkPresentationBinder ? 1 : 0,
+                sTLinkDiscoveredWindowScene ? 1 : 0,
+                sTLinkSceneDiscoverySource ?: @"none",
                 (unsigned long)sTLinkRequestCount,
                 (unsigned long)sTLinkInvalidRequestCount, (unsigned long)sTLinkToastCount,
                 (long)sTLinkLastPosition, sTLinkLastResult ?: @"unknown"];
@@ -521,6 +536,11 @@ static void TLinkStartServerIfNecessary(void)
 - (void)refreshForegroundSceneForIdleSetting
 {
     if (!TLinkForegroundSceneIsForeground()) TLinkAssertForegroundScene();
+    TLinkAttachToastWindowToHostScene();
+    if (TLinkWindowHasScene(sTLinkHostWindow)) {
+        [sTLinkHostWindow makeKeyAndVisible];
+        TLinkRefreshHostedWindow();
+    }
 }
 
 @end
@@ -531,6 +551,134 @@ static id TLinkSendObject(id target, NSString *selectorName)
     return target && [target respondsToSelector:selector]
         ? ((id (*)(id, SEL))objc_msgSend)(target, selector)
         : nil;
+}
+
+static UIWindowScene *TLinkWindowSceneFromObjectGraph(id value,
+                                                       NSInteger depth,
+                                                       NSMutableSet<NSValue *> *visited)
+{
+    if (!value || depth < 0 || visited.count >= 256) return nil;
+    if ([value isKindOfClass:UIWindowScene.class]) return (UIWindowScene *)value;
+    if ([value isKindOfClass:UIWindow.class]) return ((UIWindow *)value).windowScene;
+
+    NSValue *identity = [NSValue valueWithPointer:(__bridge const void *)value];
+    if ([visited containsObject:identity]) return nil;
+    [visited addObject:identity];
+
+    if ([value isKindOfClass:NSDictionary.class]) {
+        for (id child in [(NSDictionary *)value allValues]) {
+            UIWindowScene *scene = TLinkWindowSceneFromObjectGraph(child, depth - 1, visited);
+            if (scene) return scene;
+        }
+        return nil;
+    }
+    if ([value isKindOfClass:NSArray.class] || [value isKindOfClass:NSSet.class] ||
+        [value isKindOfClass:NSOrderedSet.class]) {
+        for (id child in value) {
+            UIWindowScene *scene = TLinkWindowSceneFromObjectGraph(child, depth - 1, visited);
+            if (scene) return scene;
+        }
+        return nil;
+    }
+    if (depth == 0) return nil;
+
+    NSString *className = NSStringFromClass([value class]);
+    BOOL mayOwnScene = [className containsString:@"Binder"] ||
+                       [className containsString:@"Presentation"] ||
+                       [className containsString:@"StateMachine"] ||
+                       [className containsString:@"Scene"] ||
+                       [className containsString:@"RootWindow"] ||
+                       [className hasPrefix:@"FB"] || [className hasPrefix:@"_UI"];
+    if (!mayOwnScene) return nil;
+
+    for (Class current = object_getClass(value); current; current = class_getSuperclass(current)) {
+        unsigned int count = 0;
+        Ivar *ivars = class_copyIvarList(current, &count);
+        for (unsigned int index = 0; index < count; index++) {
+            const char *type = ivar_getTypeEncoding(ivars[index]);
+            if (!type || type[0] != '@') continue;
+            id child = object_getIvar(value, ivars[index]);
+            UIWindowScene *scene = TLinkWindowSceneFromObjectGraph(child, depth - 1, visited);
+            if (scene) {
+                free(ivars);
+                return scene;
+            }
+        }
+        free(ivars);
+    }
+    return nil;
+}
+
+static UIWindowScene *TLinkDiscoverHostedWindowScene(void)
+{
+    if (@available(iOS 13.0, *)) {
+        if (sTLinkDiscoveredWindowScene) return sTLinkDiscoveredWindowScene;
+        UIApplication *application = UIApplication.sharedApplication;
+        for (UIScene *scene in application.connectedScenes) {
+            if ([scene isKindOfClass:UIWindowScene.class]) {
+                sTLinkDiscoveredWindowScene = (UIWindowScene *)scene;
+                sTLinkSceneDiscoverySource = @"UIApplication.connectedScenes";
+                return sTLinkDiscoveredWindowScene;
+            }
+        }
+        for (UIWindow *window in application.windows) {
+            if (window.windowScene) {
+                sTLinkDiscoveredWindowScene = window.windowScene;
+                sTLinkSceneDiscoverySource = @"UIApplication.windows";
+                return sTLinkDiscoveredWindowScene;
+            }
+        }
+
+        NSArray<NSString *> *applicationSelectors = @[
+            @"_findUISceneForLegacyInterfaceOrientation", @"_allScenes",
+            @"_connectedScenes", @"windowScenes", @"_windowScenes"
+        ];
+        for (NSString *selectorName in applicationSelectors) {
+            id candidate = TLinkSendObject(application, selectorName);
+            UIWindowScene *scene = TLinkWindowSceneFromObjectGraph(
+                candidate, 3, [NSMutableSet set]);
+            if (scene) {
+                sTLinkDiscoveredWindowScene = scene;
+                sTLinkSceneDiscoverySource = [@"UIApplication." stringByAppendingString:selectorName];
+                return scene;
+            }
+        }
+
+        NSArray *roots = @[
+            sTLinkPresentationBinder ?: NSNull.null,
+            sTLinkForegroundScene ?: NSNull.null,
+        ];
+        NSArray<NSString *> *keys = @[
+            @"windowScene", @"_windowScene", @"hostingWindow", @"_hostingWindow",
+            @"rootWindow", @"_rootWindow", @"window", @"_window",
+            @"stateMachine", @"_stateMachine", @"presentationWindow", @"_presentationWindow"
+        ];
+        for (id root in roots) {
+            if (root == NSNull.null) continue;
+            for (NSString *key in keys) {
+                @try {
+                    id candidate = [root valueForKey:key];
+                    UIWindowScene *scene = TLinkWindowSceneFromObjectGraph(
+                        candidate, 4, [NSMutableSet set]);
+                    if (scene) {
+                        sTLinkDiscoveredWindowScene = scene;
+                        sTLinkSceneDiscoverySource = [NSString stringWithFormat:@"%@.%@",
+                            NSStringFromClass([root class]), key];
+                        return scene;
+                    }
+                } @catch (__unused NSException *exception) {}
+            }
+            UIWindowScene *scene = TLinkWindowSceneFromObjectGraph(
+                root, 6, [NSMutableSet set]);
+            if (scene) {
+                sTLinkDiscoveredWindowScene = scene;
+                sTLinkSceneDiscoverySource = [NSString stringWithFormat:@"%@.object_graph",
+                    NSStringFromClass([root class])];
+                return scene;
+            }
+        }
+    }
+    return nil;
 }
 
 static BOOL TLinkSetupForegroundPresentationBinder(void)
