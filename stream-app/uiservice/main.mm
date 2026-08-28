@@ -21,6 +21,7 @@ static NSString *const kTLinkUIServiceRestoreBundlePath = @"/var/mobile/Library/
 static NSString *sTLinkLastResult = @"starting";
 static NSString *sTLinkRestoreBundle = @"";
 static NSString *sTLinkRestoreResult = @"pending";
+static BOOL sTLinkRestoreStarted = NO;
 static NSUInteger sTLinkToastCount = 0;
 static BOOL sTLinkWindowReady = NO;
 static BOOL sTLinkToastSecure = YES;
@@ -67,6 +68,7 @@ static UIViewController *sTLinkRootController = nil;
 
 static void TLinkPrepareToastWindow(void);
 static void TLinkStartServerIfNecessary(void);
+static void TLinkScheduleRestorePreviousApplication(NSTimeInterval delay);
 
 static uint32_t TLinkToastWindowContextID(void)
 {
@@ -101,7 +103,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @4,
+        @"version": @5,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -231,6 +233,9 @@ static void TLinkShowToast(NSDictionary *payload)
         TLinkToastWindowContextID(), sTLinkToastWindow.hidden ? 1 : 0,
         sTLinkToastWindow.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
+    // Keep the compositor context in foreground until the first real toast has
+    // been attached. The restore timer started at launch is only a fail-safe.
+    TLinkScheduleRestorePreviousApplication(0.25);
 
     [UIView animateWithDuration:0.18 animations:^{
         bubble.alpha = 1.0;
@@ -268,7 +273,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=4;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIApplicationMain_restore_frontmost;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;passthrough=1;;secure=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;restore_bundle=%@;;restore_result=%@;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=5;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIApplicationMain_restore_frontmost;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;passthrough=1;;secure=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;restore_bundle=%@;;restore_result=%@;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 sTLinkWindowReady ? 1 : 0, TLinkToastWindowContextID(), sTLinkToastWindow.windowLevel,
@@ -379,6 +384,8 @@ static NSString *TLinkUIServiceCopyFrontmostBundle(void)
 
 static void TLinkRestorePreviousApplication(void)
 {
+    if (sTLinkRestoreStarted) return;
+    sTLinkRestoreStarted = YES;
     NSString *raw = [NSString stringWithContentsOfFile:kTLinkUIServiceRestoreBundlePath
                                                encoding:NSUTF8StringEncoding
                                                   error:nil];
@@ -444,6 +451,14 @@ static void TLinkRestorePreviousApplication(void)
     });
 }
 
+static void TLinkScheduleRestorePreviousApplication(NSTimeInterval delay)
+{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0.0, delay) * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        TLinkRestorePreviousApplication();
+    });
+}
+
 @implementation TLinkUIServiceDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
@@ -460,11 +475,10 @@ static void TLinkRestorePreviousApplication(void)
         (long)application.applicationState, TLinkToastWindowContextID(),
         self.window.hidden ? 1 : 0, self.window.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(350 * NSEC_PER_MSEC)),
-                   dispatch_get_main_queue(), ^{
-        TLinkRestorePreviousApplication();
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1200 * NSEC_PER_MSEC)),
+    // Allow clipboardd enough time to connect and submit the first toast. If
+    // no toast arrives, this timer still releases invisible foreground safely.
+    TLinkScheduleRestorePreviousApplication(2.5);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3500 * NSEC_PER_MSEC)),
                    dispatch_get_main_queue(), ^{
         TLinkUIServiceLog([NSString stringWithFormat:@"UIApplicationMain settled state=%ld context_id=%u hidden=%d key=%d",
             (long)application.applicationState, TLinkToastWindowContextID(),

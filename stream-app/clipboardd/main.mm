@@ -208,7 +208,6 @@ static BOOL TLinkRequestUIServiceApplicationLaunch(void)
     if (!handle) return NO;
     NSString *restoreBundle = nil;
     NSString *restorePath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle";
-    [[NSFileManager defaultManager] removeItemAtPath:restorePath error:nil];
     const char *frontmostSymbols[] = {
         "SBSCopyFrontmostApplicationDisplayIdentifier",
         "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay",
@@ -228,6 +227,7 @@ static BOOL TLinkRequestUIServiceApplicationLaunch(void)
     }
     if (restoreBundle.length > 0 &&
         ![restoreBundle isEqualToString:@"com.tlinkauto.streamcontrol.uiservice"]) {
+        [[NSFileManager defaultManager] removeItemAtPath:restorePath error:nil];
         [restoreBundle writeToFile:restorePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
         chmod([restorePath fileSystemRepresentation], 0644);
     }
@@ -268,13 +268,13 @@ static NSString *TLinkSendUIServiceLine(NSString *line)
 {
     int client = TLinkConnectUIService();
     if (client < 0 && TLinkRequestUIServiceApplicationLaunch()) {
-        for (int attempt = 0; attempt < 4 && client < 0; attempt++) {
+        for (int attempt = 0; attempt < 16 && client < 0; attempt++) {
             usleep(150000);
             client = TLinkConnectUIService();
         }
     }
     if (client < 0 && TLinkRespawnUIService()) {
-        for (int attempt = 0; attempt < 4 && client < 0; attempt++) {
+        for (int attempt = 0; attempt < 8 && client < 0; attempt++) {
             usleep(150000);
             client = TLinkConnectUIService();
         }
@@ -305,6 +305,43 @@ static NSString *TLinkSendUIServiceToast(NSDictionary *payload)
     if (json.length == 0) return @"uiservice_json_failed";
     NSString *encoded = [json base64EncodedStringWithOptions:0];
     return TLinkSendUIServiceLine([NSString stringWithFormat:@"1;;%@\n", encoded ?: @""]);
+}
+
+static BOOL TLinkUIServiceResponseSucceeded(NSString *response)
+{
+    return [response isEqualToString:@"0"] || [response hasPrefix:@"0;;"];
+}
+
+static dispatch_queue_t TLinkUIServiceRetryQueue(void)
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = dispatch_queue_create("com.tlinkauto.clipboardd.uiservice-retry", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+static void TLinkRetryUIServiceToast(NSDictionary *payload)
+{
+    NSDictionary *retryPayload = [payload copy];
+    dispatch_async(TLinkUIServiceRetryQueue(), ^{
+        for (int attempt = 1; attempt <= 4; attempt++) {
+            usleep(350000);
+            NSString *response = TLinkSendUIServiceToast(retryPayload);
+            if (TLinkUIServiceResponseSucceeded(response)) {
+                sTLinkLastBackgroundVisualResult = @"uiservice_window_toast_retry_delivered";
+                TLinkClipboardLog([NSString stringWithFormat:
+                    @"background toast retry delivered attempt=%d response=%@", attempt, response]);
+                return;
+            }
+            TLinkClipboardLog([NSString stringWithFormat:
+                @"background toast retry pending attempt=%d response=%@", attempt,
+                response ?: @"<nil>"]);
+        }
+        sTLinkLastBackgroundVisualResult = @"uiservice_window_toast_retry_exhausted";
+        TLinkClipboardLog(@"background toast retry exhausted; alert fallback intentionally suppressed");
+    });
 }
 
 static BOOL TLinkIsScriptBundleAtPath(NSString *path)
@@ -907,16 +944,19 @@ static NSString *TLinkHandleBackgroundUIBridge(NSArray<NSString *> *parts)
         if (requestedPosition < 0 || requestedPosition > 2) requestedPosition = 2;
         sTLinkToastLastPosition = requestedPosition;
         NSString *uiServiceResponse = TLinkSendUIServiceToast(payload);
-        if ([uiServiceResponse isEqualToString:@"0"] || [uiServiceResponse hasPrefix:@"0;;"]) {
+        if (TLinkUIServiceResponseSucceeded(uiServiceResponse)) {
             sTLinkLastBackgroundVisualResult = @"uiservice_window_toast_queued";
             TLinkClipboardLog([NSString stringWithFormat:@"background toast forwarded to TLinkUIService response=%@", uiServiceResponse]);
             return [NSString stringWithFormat:@"0;;background_visual_uiservice_queued;;toast;;requested_position=%ld;;effective_position=%ld;;passthrough=1\r\n",
                     (long)requestedPosition, (long)requestedPosition];
         }
-        TLinkClipboardLog([NSString stringWithFormat:@"TLinkUIService unavailable; CFUserNotification fallback response=%@", uiServiceResponse ?: @"<nil>"]);
-        TLinkScheduleCFUserNotification(payload, @"uidaemon_window_not_compositor_hosted");
-        return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;toast;;requested_position=%ld;;effective_position=center;;limited_on_trollstore\r\n",
-                (long)requestedPosition];
+        sTLinkLastBackgroundVisualResult = @"uiservice_window_toast_retry_queued";
+        TLinkClipboardLog([NSString stringWithFormat:
+            @"TLinkUIService not ready; native toast retry queued response=%@",
+            uiServiceResponse ?: @"<nil>"]);
+        TLinkRetryUIServiceToast(payload);
+        return [NSString stringWithFormat:@"0;;background_visual_uiservice_retry_queued;;toast;;requested_position=%ld;;effective_position=%ld;;passthrough=1\r\n",
+                (long)requestedPosition, (long)requestedPosition];
     }
     TLinkScheduleCFUserNotification(payload, @"v14_background_visual");
     return [NSString stringWithFormat:@"0;;background_visual_cfusernotification_queued;;%@\r\n", kind];
@@ -997,7 +1037,7 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
         UIApplicationState systemState = [application isKindOfClass:[TLinkClipboardApplication class]]
             ? [(TLinkClipboardApplication *)application tlinkSystemApplicationState]
             : state;
-        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=15;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;volume_hid_listener=%d;;volume_listener_state=%@;;volume_popup_enabled=%d;;volume_up_events=%lu;;volume_double_clicks=%lu;;volume_menu_visible=%d;;volume_last_action=%@;;volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback;;background_visual_mode=uiservice_positioned_toast_cfusernotification_fallback;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=uiservice_or_center_fallback;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
+        return [NSString stringWithFormat:@"0;;clipboardd_ready;;version=16;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;state=%ld;;system_state=%ld;;write_verified=%d;;background_entitlement=1;;background_ui_bridge=1;;license_gate=1;;volume_hid_listener=%d;;volume_listener_state=%@;;volume_popup_enabled=%d;;volume_up_events=%lu;;volume_double_clicks=%lu;;volume_menu_visible=%d;;volume_last_action=%@;;volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback;;background_visual_mode=uiservice_positioned_toast_native_retry;;toast_overlay_visible=0;;toast_requested_position=%ld;;toast_effective_position=uiservice_native;;notification_center=%@;;main_bundle=%@;;notification_auth=%ld;;app_notification_auth=%ld;;background_visual_last=%@;;keep_awake_requested=%d;;idle_timer_disabled=%d\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)state, (long)systemState,

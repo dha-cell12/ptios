@@ -145,7 +145,7 @@ assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifier"), "boot wid
 assert.ok(widgetBinary.includes("LSApplicationWorkspace"), "boot widget lacks the LaunchServices fallback");
 assert.ok(widgetBinary.includes("/var/mobile/Library/TLinkauto/runtime/widget_boot_wake.plist"), "boot widget lacks wake diagnostics");
 assert.ok(widgetBinary.includes("com.tlinkauto.streamcontrol"), "boot widget lacks the StreamControl host identifier");
-assert.ok(clipboarddBinary.includes("clipboardd_ready;;version=15"), "clipboardd does not expose service v15");
+assert.ok(clipboarddBinary.includes("clipboardd_ready;;version=16"), "clipboardd does not expose service v16");
 assert.ok(clipboarddBinary.includes("registered_keyboard_page_12_usage_233"), "clipboardd lacks the direct IOHID Volume Up listener");
 assert.ok(clipboarddBinary.includes("Volume Up was pressed twice."), "clipboardd lacks the volume action menu");
 assert.ok(clipboarddBinary.includes("volume_menu_backend=cfusernotification_primary_secure_uiwindow_fallback"), "clipboardd lacks the system-alert volume menu backend");
@@ -154,7 +154,7 @@ assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clip
 assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
 assert.ok(clipboarddBinary.includes("SBSLaunchApplicationWithIdentifier"), "clipboardd lacks compositor-aware UI-service launch");
 assert.ok(clipboarddBinary.includes("uiservice_restore_bundle"), "clipboardd lacks foreground-restore handoff");
-assert.ok(uiServiceBinary.includes("uiservice_ready;;version=4"), "TLinkUIService lacks v4 readiness evidence");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=5"), "TLinkUIService lacks v5 readiness evidence");
 assert.ok(uiServiceBinary.includes("UIApplicationMain_did_finish_launching"), "TLinkUIService lacks UIApplicationMain lifecycle evidence");
 assert.ok(uiServiceBinary.includes("restore_frontmost"), "TLinkUIService lacks foreground-restore evidence");
 assert.ok(uiServiceBinary.includes("window_ready_passthrough"), "TLinkUIService lacks pass-through window evidence");
@@ -163,7 +163,7 @@ assert.equal(plistValue(uiServiceInfoXML, "CFBundleIdentifier"), "com.tlinkauto.
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationShowsViewsWhileLocked"), true, "TLinkUIService lacks lock-screen UI permission");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationExitsOnSuspend"), false, "TLinkUIService suspend policy is missing");
 assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
-assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "4", "TLinkUIService bundle version is stale");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "5", "TLinkUIService bundle version is stale");
 assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

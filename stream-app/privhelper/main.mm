@@ -451,7 +451,7 @@ static void TLinkHelperKillClipboardd(void)
 
 static BOOL TLinkClipboarddProbeIsCurrent(NSString *probe)
 {
-    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=15"];
+    return [probe hasPrefix:@"0;;clipboardd_ready"] && [probe containsString:@"version=16"];
 }
 
 static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
@@ -505,7 +505,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=4"] &&
+           [probe containsString:@"version=5"] &&
            [probe containsString:@"launch_mode=UIApplicationMain"] &&
            [probe containsString:@";;uid=501;;"] &&
            [probe containsString:@";;euid=501;;"] &&

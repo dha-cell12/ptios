@@ -4662,7 +4662,7 @@ static void TLinkUpdateClipboardDaemonVerification(NSData *diagnosticResponse)
 {
     NSString *diagnostic = TLinkResponseStringFromData(diagnosticResponse);
     sTLinkClipboardDaemonWriteVerified =
-        [diagnostic containsString:@"version=15"] &&
+        [diagnostic containsString:@"version=16"] &&
         [diagnostic containsString:@"background_entitlement=1"] &&
         [diagnostic containsString:@"write_verified=1"];
 }
@@ -6019,7 +6019,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"backgroundVisualNotifications": @(YES),
         @"backgroundVisualCFUserNotification": @(YES),
         @"backgroundPositionedToastOverlay": @(YES),
-        @"backgroundToastUIService": @"TLinkUIService.app_port_6017_uimain_context_v4_restore_frontmost",
+        @"backgroundToastUIService": @"TLinkUIService.app_port_6017_uimain_context_v5_native_retry",
         @"backgroundToastFixedCenter": @(YES),
         @"clipboardMode": @"background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback",
         @"keyboardHIDPaste": @(YES),
