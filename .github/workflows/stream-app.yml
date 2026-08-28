@@ -140,7 +140,7 @@ jobs:
 
       - name: Sanity check StreamControl sources
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           test -f stream-app/Makefile
           test -f stream-app/app/Makefile
           test -f stream-app/streamd/Makefile
@@ -392,6 +392,8 @@ jobs:
           grep -q 'runPrivhelperKillStreamdLocked' stream-app/app/StreamSupervisor.mm
           grep -q 'refusing to spawn because tcp/6000 is still occupied' stream-app/app/StreamSupervisor.mm
           grep -q -- '--ensure-streamd' stream-app/privhelper/main.mm
+          grep -q -- '--ensure-auxiliaries' stream-app/privhelper/main.mm
+          grep -q 'core_ready_auxiliary_ensure_spawned' stream-app/privhelper/main.mm
           grep -q 'privhelper version=9' stream-app/privhelper/main.mm
           grep -q 'TLinkHelperRequireLicense' stream-app/privhelper/main.mm
           grep -q '../../shared/TLinkLicenseVerifier.mm' stream-app/privhelper/Makefile
@@ -422,6 +424,8 @@ jobs:
           grep -q 'SBSLaunchApplicationWithIdentifier' stream-app/clipboardd/main.mm
           grep -q 'com.apple.springboard.launchapplications' stream-app/clipboardd/entitlements.plist
           grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
+          grep -q 'uiservice_ready;;version=6' stream-app/uiservice/main.mm
+          grep -q 'toast complete; exiting ephemeral foreground service' stream-app/uiservice/main.mm
           grep -q 'return nil;' stream-app/uiservice/main.mm
           grep -q 'UIApplicationShowsViewsWhileLocked' stream-app/uiservice/Info.plist
           grep -q 'com.apple.private.extension-host' stream-app/uiservice/entitlements.plist
@@ -726,7 +730,7 @@ jobs:
           grep -q 'Rapid Tap Center' stream-app/app/SettingsViewController.mm
           grep -q 'Stop Tap Macro' stream-app/app/SettingsViewController.mm
           grep -q 'Hardware Key Home' stream-app/app/SettingsViewController.mm
-          grep -q 'Service Mode: helper ensure streamd' stream-app/app/SettingsViewController.mm
+          grep -q 'Service Mode: streamd-first' stream-app/app/SettingsViewController.mm
           grep -q 'Legacy Stop Script' stream-app/app/SettingsViewController.mm
           grep -q 'Update Cache' stream-app/app/SettingsViewController.mm
           grep -q 'TLinkVisualFeedbackNeedsPoll' stream-app/app/SettingsViewController.mm
