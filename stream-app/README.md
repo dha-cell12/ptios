@@ -98,17 +98,17 @@ included in the task `249` clipboardd diagnostic payload.
 ## Background toast UI service
 
 The TrollStore package embeds the hidden nested app
-`TLinkUIService.app`. `privhelper` first requests a compositor-aware launch via
-SpringBoardServices and falls back to a mobile-persona spawn; `clipboardd` uses
-the same launch-first/re-spawn recovery if port `6017` is unavailable. All
+`TLinkUIService.app`. `privhelper` and `clipboardd` launch it directly with a
+mobile identity if port `6017` is unavailable. All
 `device.toast` and task `22` requests use this service even while StreamControl
 is foreground; the app event poller skips its duplicate copy. The service owns a
-secure, non-key, touch-pass-through window at level `20000099.9`, so background
-toast keeps the requested top/center/bottom position without opening
-StreamControl. `UIApplicationShowsViewsWhileLocked`, `SecureKey`, the hidden app
-tag, and the platform/extension-host networking entitlement set mirror the
-working standalone UI-service model; no SpringBoard hook or Substrate library is
-loaded.
+secure key window with process-wide hit testing disabled at level `10000010`.
+It creates a foreground FrontBoard scene and attaches that scene to a root-window
+presentation binder, so background toast keeps the requested top/center/bottom
+position without opening StreamControl. `UIApplicationShowsViewsWhileLocked`,
+`SecureKey`, the hidden app tag, and the platform/extension-host networking
+entitlement set mirror the working standalone UI-service model; no SpringBoard
+hook or Substrate library is loaded.
 
 If the dedicated service cannot answer, `clipboardd` retains
 `CFUserNotification` as a visible fixed-center fallback. Inspect **Settings ->

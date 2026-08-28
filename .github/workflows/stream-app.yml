@@ -423,9 +423,10 @@ jobs:
           grep -q 'TLinkSpawnUIServicePlugin' stream-app/clipboardd/main.mm
           grep -q '__completeAndRunAsPlugin' stream-app/uiservice/main.mm
           grep -q 'com.apple.springboard.launchapplications' stream-app/clipboardd/entitlements.plist
-          grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
-          grep -q 'uiservice_ready;;version=8' stream-app/uiservice/main.mm
-          grep -q 'launch_mode=UIKitPluginHostedNoIdleForeground' stream-app/uiservice/main.mm
+          grep -q 'windowLevel = (UIWindowLevel)10000010.0' stream-app/uiservice/main.mm
+          grep -q 'uiservice_ready;;version=9' stream-app/uiservice/main.mm
+          grep -q 'launch_mode=UIKitPluginHostedFrontBoardScene' stream-app/uiservice/main.mm
+          grep -q 'createSceneWithDefinition:initialParameters:' stream-app/uiservice/main.mm
           grep -q 'return nil;' stream-app/uiservice/main.mm
           grep -q 'UIApplicationShowsViewsWhileLocked' stream-app/uiservice/Info.plist
           grep -q 'com.apple.private.extension-host' stream-app/uiservice/entitlements.plist

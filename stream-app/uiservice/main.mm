@@ -34,21 +34,20 @@ static BOOL sTLinkBKSDisplayServicesStartAvailable = NO;
 static BOOL sTLinkUIApplicationInitializeAvailable = NO;
 static BOOL sTLinkUIApplicationInstantiateAvailable = NO;
 static BOOL sTLinkPluginCompletionAvailable = NO;
-static id sTLinkForegroundAssertion = nil;
-static BOOL sTLinkForegroundAssertionCreated = NO;
-static BOOL sTLinkForegroundAssertionAcquired = NO;
+static id sTLinkForegroundScene = nil;
+static id sTLinkForegroundSceneSettings = nil;
+static id sTLinkPresentationBinder = nil;
+static NSTimer *sTLinkForegroundSceneTimer = nil;
+static BOOL sTLinkForegroundSceneSetupAttempted = NO;
+static BOOL sTLinkForegroundSceneSetupSucceeded = NO;
 
-@interface TLinkUIServiceApplication : UIApplication
-- (UIApplicationState)tlinkSystemApplicationState;
-@end
+@interface TLinkUIServiceApplication : UIApplication @end
 
-@implementation TLinkUIServiceApplication
-- (UIApplicationState)applicationState { return UIApplicationStateActive; }
-- (UIApplicationState)tlinkSystemApplicationState { return [super applicationState]; }
-@end
+@implementation TLinkUIServiceApplication @end
 
 @interface TLinkUIServiceDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic, strong) UIWindow *window;
+- (void)refreshForegroundSceneForIdleSetting;
 @end
 
 @interface TLinkPassthroughToastWindow : UIWindow
@@ -68,9 +67,8 @@ static BOOL sTLinkForegroundAssertionAcquired = NO;
     return NO;
 }
 - (BOOL)_isSecure { return YES; }
-- (BOOL)_isSystemWindow { return YES; }
 - (BOOL)_shouldCreateContextAsSecure { return YES; }
-- (BOOL)canBecomeKeyWindow { return NO; }
+- (BOOL)_ignoresHitTest { return YES; }
 @end
 
 static TLinkPassthroughToastWindow *sTLinkToastWindow = nil;
@@ -79,21 +77,15 @@ static UIViewController *sTLinkRootController = nil;
 static void TLinkPrepareToastWindow(void);
 static void TLinkStartServerIfNecessary(void);
 static void TLinkRefreshHostedWindow(void);
+static BOOL TLinkSetupForegroundPresentationBinder(void);
+static void TLinkAssertForegroundScene(void);
 
-static BOOL TLinkForegroundAssertionIsValid(void)
+static BOOL TLinkForegroundSceneIsForeground(void)
 {
-    SEL valid = NSSelectorFromString(@"valid");
-    return sTLinkForegroundAssertion && [sTLinkForegroundAssertion respondsToSelector:valid]
-        ? ((BOOL (*)(id, SEL))objc_msgSend)(sTLinkForegroundAssertion, valid)
+    SEL selector = NSSelectorFromString(@"isForeground");
+    return sTLinkForegroundSceneSettings && [sTLinkForegroundSceneSettings respondsToSelector:selector]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(sTLinkForegroundSceneSettings, selector)
         : NO;
-}
-
-static UIApplicationState TLinkSystemApplicationState(void)
-{
-    UIApplication *application = UIApplication.sharedApplication;
-    return [application isKindOfClass:TLinkUIServiceApplication.class]
-        ? [(TLinkUIServiceApplication *)application tlinkSystemApplicationState]
-        : (application ? application.applicationState : (UIApplicationState)-1);
 }
 
 static uint32_t TLinkToastWindowContextID(void)
@@ -129,7 +121,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @8,
+        @"version": @9,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -137,25 +129,26 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"egid": @(getegid()),
         @"mobile_identity": @(geteuid() == 501 && getegid() == 501),
         @"window_ready": @(sTLinkWindowReady),
-        @"launch_mode": @"UIKitPluginHosted",
+        @"launch_mode": @"UIKitPluginHostedFrontBoardScene",
         @"bootstrap_gs_initialize": @(sTLinkGSInitializeAvailable),
         @"bootstrap_gs_event_initialize": @(sTLinkGSEventInitializeAvailable),
         @"bootstrap_bks_display_services": @(sTLinkBKSDisplayServicesStartAvailable),
         @"bootstrap_uiapplication_initialize": @(sTLinkUIApplicationInitializeAvailable),
         @"bootstrap_uiapplication_instantiate": @(sTLinkUIApplicationInstantiateAvailable),
         @"bootstrap_complete_as_plugin": @(sTLinkPluginCompletionAvailable),
-        @"foreground_assertion_created": @(sTLinkForegroundAssertionCreated),
-        @"foreground_assertion_acquired": @(sTLinkForegroundAssertionAcquired),
-        @"foreground_assertion_valid": @(TLinkForegroundAssertionIsValid()),
+        @"foreground_scene_setup_attempted": @(sTLinkForegroundSceneSetupAttempted),
+        @"foreground_scene_setup_succeeded": @(sTLinkForegroundSceneSetupSucceeded),
+        @"foreground_scene_created": @(sTLinkForegroundScene != nil),
+        @"foreground_scene_is_foreground": @(TLinkForegroundSceneIsForeground()),
+        @"presentation_binder_created": @(sTLinkPresentationBinder != nil),
         @"window_level": @(sTLinkToastWindow.windowLevel),
-        @"requested_window_level": @20000099.9,
+        @"requested_window_level": @10000010.0,
         @"window_context_id": @(TLinkToastWindowContextID()),
         @"window_hidden": @(sTLinkToastWindow.hidden),
         @"window_key": @(sTLinkToastWindow.isKeyWindow),
         @"window_width": @(CGRectGetWidth(sTLinkToastWindow.bounds)),
         @"window_height": @(CGRectGetHeight(sTLinkToastWindow.bounds)),
         @"application_state": @(UIApplication.sharedApplication ? UIApplication.sharedApplication.applicationState : -1),
-        @"system_application_state": @(TLinkSystemApplicationState()),
         @"secure": @(sTLinkToastSecure),
         @"last_position": @(sTLinkLastPosition),
         @"toast_count": @(sTLinkToastCount),
@@ -187,7 +180,7 @@ static void TLinkPrepareToastWindow(void)
 {
     if (sTLinkToastWindow) return;
     sTLinkToastWindow = [[TLinkPassthroughToastWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    sTLinkToastWindow.windowLevel = (UIWindowLevel)20000099.9;
+    sTLinkToastWindow.windowLevel = (UIWindowLevel)10000010.0;
     sTLinkToastWindow.backgroundColor = UIColor.clearColor;
     sTLinkToastWindow.opaque = NO;
     sTLinkToastWindow.userInteractionEnabled = NO;
@@ -205,8 +198,6 @@ static void TLinkPrepareToastWindow(void)
 static void TLinkRefreshHostedWindow(void)
 {
     if (!sTLinkToastWindow) return;
-    sTLinkToastWindow.hidden = YES;
-    sTLinkToastWindow.hidden = NO;
     [sTLinkToastWindow setNeedsLayout];
     [sTLinkRootController.view setNeedsLayout];
     [sTLinkRootController.view setNeedsDisplay];
@@ -216,6 +207,7 @@ static void TLinkRefreshHostedWindow(void)
 static void TLinkShowToast(NSDictionary *payload)
 {
     TLinkPrepareToastWindow();
+    TLinkAssertForegroundScene();
     NSString *message = [payload[@"message"] isKindOfClass:NSString.class] ? payload[@"message"] : @"";
     if (message.length == 0) return;
     NSTimeInterval duration = [payload[@"duration"] doubleValue];
@@ -275,10 +267,10 @@ static void TLinkShowToast(NSDictionary *payload)
     sTLinkToastBubble = bubble;
     sTLinkToastCount += 1;
     sTLinkLastResult = [NSString stringWithFormat:@"toast_visible_position_%ld", (long)position];
-    TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d app_state=%ld system_state=%ld assertion_valid=%d context_id=%u hidden=%d key=%d",
+    TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d app_state=%ld scene_foreground=%d binder=%d context_id=%u hidden=%d key=%d",
         (unsigned long)sTLinkToastCount, (long)position, duration, sTLinkToastSecure ? 1 : 0,
         (long)UIApplication.sharedApplication.applicationState,
-        (long)TLinkSystemApplicationState(), TLinkForegroundAssertionIsValid() ? 1 : 0,
+        TLinkForegroundSceneIsForeground() ? 1 : 0, sTLinkPresentationBinder ? 1 : 0,
         TLinkToastWindowContextID(), sTLinkToastWindow.hidden ? 1 : 0,
         sTLinkToastWindow.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
@@ -319,17 +311,18 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=8;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedNoIdleForeground;;application_state=%ld;;system_application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;system_window=1;;passthrough=1;;secure=%d;;plugin_complete=%d;;foreground_assertion_created=%d;;foreground_assertion_acquired=%d;;foreground_assertion_valid=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=9;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardScene;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_level=%.1f;;requested_window_level=10000010.0;;window_hidden=%d;;window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,
-                (long)TLinkSystemApplicationState(),
                 sTLinkWindowReady ? 1 : 0, TLinkToastWindowContextID(), sTLinkToastWindow.windowLevel,
                 sTLinkToastWindow.hidden ? 1 : 0, sTLinkToastWindow.isKeyWindow ? 1 : 0,
                 sTLinkToastSecure ? 1 : 0, sTLinkPluginCompletionAvailable ? 1 : 0,
-                sTLinkForegroundAssertionCreated ? 1 : 0,
-                sTLinkForegroundAssertionAcquired ? 1 : 0,
-                TLinkForegroundAssertionIsValid() ? 1 : 0,
+                sTLinkForegroundSceneSetupAttempted ? 1 : 0,
+                sTLinkForegroundSceneSetupSucceeded ? 1 : 0,
+                sTLinkForegroundScene ? 1 : 0,
+                TLinkForegroundSceneIsForeground() ? 1 : 0,
+                sTLinkPresentationBinder ? 1 : 0,
                 (unsigned long)sTLinkRequestCount,
                 (unsigned long)sTLinkInvalidRequestCount, (unsigned long)sTLinkToastCount,
                 (long)sTLinkLastPosition, sTLinkLastResult ?: @"unknown"];
@@ -407,11 +400,24 @@ static void TLinkStartServerIfNecessary(void)
     (void)launchOptions;
     TLinkPrepareToastWindow();
     self.window = sTLinkToastWindow;
+    self.window.hidden = NO;
+    [self.window makeKeyAndVisible];
+    BOOL sceneReady = TLinkSetupForegroundPresentationBinder();
+    TLinkAssertForegroundScene();
+    if (!sTLinkForegroundSceneTimer) {
+        sTLinkForegroundSceneTimer = [NSTimer scheduledTimerWithTimeInterval:2.0
+                                                                    target:self
+                                                                  selector:@selector(refreshForegroundSceneForIdleSetting)
+                                                                  userInfo:nil
+                                                                   repeats:YES];
+    }
     TLinkStartServerIfNecessary();
     sTLinkLastResult = @"plugin_delegate_did_finish_launching";
-    TLinkUIServiceLog([NSString stringWithFormat:@"plugin delegate ready bundle=%@ class=%@ state=%ld context_id=%u hidden=%d key=%d",
+    TLinkUIServiceLog([NSString stringWithFormat:@"plugin delegate ready bundle=%@ class=%@ state=%ld scene_ready=%d scene_foreground=%d binder=%d context_id=%u hidden=%d key=%d",
         NSBundle.mainBundle.bundleIdentifier, NSStringFromClass(application.class),
-        (long)application.applicationState, TLinkToastWindowContextID(),
+        (long)application.applicationState, sceneReady ? 1 : 0,
+        TLinkForegroundSceneIsForeground() ? 1 : 0,
+        sTLinkPresentationBinder ? 1 : 0, TLinkToastWindowContextID(),
         self.window.hidden ? 1 : 0, self.window.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
     return YES;
@@ -419,61 +425,158 @@ static void TLinkStartServerIfNecessary(void)
 
 - (void)applicationDidBecomeActive:(UIApplication *)application
 {
+    TLinkAssertForegroundScene();
     TLinkUIServiceLog([NSString stringWithFormat:@"applicationDidBecomeActive state=%ld context_id=%u",
         (long)application.applicationState, TLinkToastWindowContextID()]);
     TLinkWriteUIServiceDiagnostics();
 }
 
-- (void)applicationDidEnterBackground:(UIApplication *)application
+- (void)refreshForegroundSceneForIdleSetting
 {
-    TLinkUIServiceLog([NSString stringWithFormat:@"applicationDidEnterBackground state=%ld context_id=%u",
-        (long)application.applicationState, TLinkToastWindowContextID()]);
-    TLinkWriteUIServiceDiagnostics();
+    if (!TLinkForegroundSceneIsForeground()) TLinkAssertForegroundScene();
 }
 
 @end
 
-static void TLinkAcquireForegroundAssertion(void)
+static id TLinkSendObject(id target, NSString *selectorName)
 {
-    if (sTLinkForegroundAssertion) return;
-    dlopen("/System/Library/PrivateFrameworks/AssertionServices.framework/AssertionServices",
+    SEL selector = NSSelectorFromString(selectorName);
+    return target && [target respondsToSelector:selector]
+        ? ((id (*)(id, SEL))objc_msgSend)(target, selector)
+        : nil;
+}
+
+static BOOL TLinkSetupForegroundPresentationBinder(void)
+{
+    if (sTLinkForegroundSceneSetupAttempted) return sTLinkForegroundSceneSetupSucceeded;
+    sTLinkForegroundSceneSetupAttempted = YES;
+    dlopen("/System/Library/PrivateFrameworks/FrontBoard.framework/FrontBoard",
            RTLD_LAZY | RTLD_GLOBAL);
-    Class assertionClass = NSClassFromString(@"BKSProcessAssertion");
-    SEL initializer = NSSelectorFromString(@"initWithPID:flags:reason:name:withHandler:");
-    if (!assertionClass || ![assertionClass instancesRespondToSelector:initializer]) {
-        TLinkUIServiceLog([NSString stringWithFormat:
-            @"foreground assertion unavailable class=%d selector=%d",
-            assertionClass ? 1 : 0,
-            assertionClass && [assertionClass instancesRespondToSelector:initializer] ? 1 : 0]);
-        return;
+    dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices",
+           RTLD_LAZY | RTLD_GLOBAL);
+    dlopen("/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore",
+           RTLD_LAZY | RTLD_GLOBAL);
+
+    Class definitionClass = NSClassFromString(@"FBSMutableSceneDefinition");
+    Class identityClass = NSClassFromString(@"FBSSceneIdentity");
+    Class clientIdentityClass = NSClassFromString(@"FBSSceneClientIdentity");
+    Class specificationClass = NSClassFromString(@"UIApplicationSceneSpecification");
+    Class parametersClass = NSClassFromString(@"FBSMutableSceneParameters");
+    Class settingsClass = NSClassFromString(@"UIMutableApplicationSceneSettings");
+    Class clientSettingsClass = NSClassFromString(@"UIMutableApplicationSceneClientSettings");
+    Class sceneManagerClass = NSClassFromString(@"FBSceneManager");
+    Class binderClass = NSClassFromString(@"UIRootWindowScenePresentationBinder");
+    NSArray *requiredClasses = @[
+        definitionClass ?: NSNull.null, identityClass ?: NSNull.null,
+        clientIdentityClass ?: NSNull.null, specificationClass ?: NSNull.null,
+        parametersClass ?: NSNull.null, settingsClass ?: NSNull.null,
+        clientSettingsClass ?: NSNull.null, sceneManagerClass ?: NSNull.null,
+        binderClass ?: NSNull.null,
+    ];
+    if ([requiredClasses containsObject:NSNull.null]) {
+        sTLinkLastResult = @"frontboard_scene_class_missing";
+        TLinkUIServiceLog([NSString stringWithFormat:@"foreground scene class missing availability=%@",
+            [requiredClasses valueForKey:@"description"]]);
+        TLinkWriteUIServiceDiagnostics();
+        return NO;
     }
 
-    // AssertionServices SPI values used by hosted system UI services:
-    // PreventTaskSuspend | PreventTaskThrottleDown | AllowIdleSleep |
-    // WantsForegroundResourcePriority, with BackgroundUI reason.
-    const uint32_t flags = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3);
-    const uint32_t reason = 7;
-    id allocation = ((id (*)(id, SEL))objc_msgSend)(assertionClass, @selector(alloc));
-    id handler = [^(BOOL acquired) {
-        sTLinkForegroundAssertionAcquired = acquired;
-        TLinkUIServiceLog([NSString stringWithFormat:
-            @"foreground assertion acquisition acquired=%d valid=%d system_state=%ld",
-            acquired ? 1 : 0, TLinkForegroundAssertionIsValid() ? 1 : 0,
-            (long)TLinkSystemApplicationState()]);
-        TLinkWriteUIServiceDiagnostics();
-        if (acquired) {
-            dispatch_async(dispatch_get_main_queue(), ^{ TLinkRefreshHostedWindow(); });
+    @try {
+        UIScreen *screen = UIScreen.mainScreen;
+        id displayConfiguration = TLinkSendObject(screen, @"displayConfiguration");
+        id definition = TLinkSendObject(definitionClass, @"definition");
+        NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier ?: @"com.tlinkauto.streamcontrol.uiservice";
+        NSString *sceneIdentifier = [bundleIdentifier stringByAppendingString:@".foreground"];
+        id identity = ((id (*)(id, SEL, id))objc_msgSend)(
+            identityClass, NSSelectorFromString(@"identityForIdentifier:"), sceneIdentifier);
+        id clientIdentity = TLinkSendObject(clientIdentityClass, @"localIdentity");
+        id specification = TLinkSendObject(specificationClass, @"specification");
+        ((void (*)(id, SEL, id))objc_msgSend)(definition, NSSelectorFromString(@"setIdentity:"), identity);
+        ((void (*)(id, SEL, id))objc_msgSend)(definition, NSSelectorFromString(@"setClientIdentity:"), clientIdentity);
+        ((void (*)(id, SEL, id))objc_msgSend)(definition, NSSelectorFromString(@"setSpecification:"), specification);
+
+        id definitionSpecification = TLinkSendObject(definition, @"specification");
+        id parameters = ((id (*)(id, SEL, id))objc_msgSend)(
+            parametersClass, NSSelectorFromString(@"parametersForSpecification:"), definitionSpecification);
+        id settings = TLinkSendObject(settingsClass, @"new");
+        ((void (*)(id, SEL, id))objc_msgSend)(settings, NSSelectorFromString(@"setDisplayConfiguration:"), displayConfiguration);
+        SEL referenceBoundsSelector = NSSelectorFromString(@"_referenceBounds");
+        CGRect referenceBounds = [screen respondsToSelector:referenceBoundsSelector]
+            ? ((CGRect (*)(id, SEL))objc_msgSend)(screen, referenceBoundsSelector)
+            : screen.bounds;
+        ((void (*)(id, SEL, CGRect))objc_msgSend)(settings, NSSelectorFromString(@"setFrame:"), referenceBounds);
+        ((void (*)(id, SEL, double))objc_msgSend)(settings, NSSelectorFromString(@"setLevel:"), 1.0);
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(settings, NSSelectorFromString(@"setForeground:"), YES);
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(settings, NSSelectorFromString(@"setInterfaceOrientation:"), 1);
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(settings, NSSelectorFromString(@"setDeviceOrientationEventsEnabled:"), NO);
+        SEL peripherySelector = NSSelectorFromString(@"_displayPeripheryInsets");
+        if ([screen respondsToSelector:peripherySelector] &&
+            [settings respondsToSelector:NSSelectorFromString(@"setSafeAreaInsetsPortrait:")]) {
+            UIEdgeInsets insets = ((UIEdgeInsets (*)(id, SEL))objc_msgSend)(screen, peripherySelector);
+            ((void (*)(id, SEL, UIEdgeInsets))objc_msgSend)(
+                settings, NSSelectorFromString(@"setSafeAreaInsetsPortrait:"), insets);
         }
-    } copy];
-    sTLinkForegroundAssertion =
-        ((id (*)(id, SEL, pid_t, uint32_t, uint32_t, id, id))objc_msgSend)(
-            allocation, initializer, getpid(), flags, reason,
-            @"TLinkUIService no_idle_foreground", handler);
-    sTLinkForegroundAssertionCreated = sTLinkForegroundAssertion != nil;
-    TLinkUIServiceLog([NSString stringWithFormat:
-        @"foreground assertion requested created=%d valid=%d flags=0x%x reason=%u",
-        sTLinkForegroundAssertionCreated ? 1 : 0,
-        TLinkForegroundAssertionIsValid() ? 1 : 0, flags, reason]);
+        id ignoreReasons = TLinkSendObject(settings, @"ignoreOcclusionReasons");
+        if ([ignoreReasons respondsToSelector:@selector(addObject:)]) {
+            [ignoreReasons addObject:@"SystemApp"];
+        }
+        ((void (*)(id, SEL, id))objc_msgSend)(parameters, NSSelectorFromString(@"setSettings:"), settings);
+
+        id clientSettings = TLinkSendObject(clientSettingsClass, @"new");
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(clientSettings, NSSelectorFromString(@"setInterfaceOrientation:"), 1);
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(clientSettings, NSSelectorFromString(@"setStatusBarStyle:"), 0);
+        ((void (*)(id, SEL, id))objc_msgSend)(parameters, NSSelectorFromString(@"setClientSettings:"), clientSettings);
+
+        id sceneManager = TLinkSendObject(sceneManagerClass, @"sharedInstance");
+        id scene = ((id (*)(id, SEL, id, id))objc_msgSend)(
+            sceneManager, NSSelectorFromString(@"createSceneWithDefinition:initialParameters:"),
+            definition, parameters);
+        id binderAllocation = ((id (*)(id, SEL))objc_msgSend)(binderClass, @selector(alloc));
+        id binder = ((id (*)(id, SEL, NSInteger, id))objc_msgSend)(
+            binderAllocation, NSSelectorFromString(@"initWithPriority:displayConfiguration:"),
+            0, displayConfiguration);
+        if (binder && scene) {
+            ((void (*)(id, SEL, id))objc_msgSend)(binder, NSSelectorFromString(@"addScene:"), scene);
+        }
+        sTLinkForegroundSceneSettings = settings;
+        sTLinkForegroundScene = scene;
+        sTLinkPresentationBinder = binder;
+        sTLinkForegroundSceneSetupSucceeded = scene && binder && TLinkForegroundSceneIsForeground();
+        sTLinkLastResult = sTLinkForegroundSceneSetupSucceeded
+            ? @"frontboard_scene_ready"
+            : @"frontboard_scene_incomplete";
+        TLinkUIServiceLog([NSString stringWithFormat:
+            @"foreground scene setup success=%d scene=%d binder=%d foreground=%d identifier=%@ frame=%.1fx%.1f",
+            sTLinkForegroundSceneSetupSucceeded ? 1 : 0, scene ? 1 : 0, binder ? 1 : 0,
+            TLinkForegroundSceneIsForeground() ? 1 : 0, sceneIdentifier,
+            CGRectGetWidth(referenceBounds), CGRectGetHeight(referenceBounds)]);
+    } @catch (NSException *exception) {
+        sTLinkForegroundSceneSetupSucceeded = NO;
+        sTLinkLastResult = @"frontboard_scene_exception";
+        TLinkUIServiceLog([NSString stringWithFormat:@"foreground scene exception=%@",
+            exception.reason ?: exception.name]);
+    }
+    TLinkWriteUIServiceDiagnostics();
+    return sTLinkForegroundSceneSetupSucceeded;
+}
+
+static void TLinkAssertForegroundScene(void)
+{
+    if (!sTLinkForegroundScene || !sTLinkForegroundSceneSettings) return;
+    @try {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(
+            sTLinkForegroundSceneSettings, NSSelectorFromString(@"setForeground:"), YES);
+        ((void (*)(id, SEL, id, id, id))objc_msgSend)(
+            sTLinkForegroundScene,
+            NSSelectorFromString(@"updateSettings:withTransitionContext:completion:"),
+            sTLinkForegroundSceneSettings, nil, nil);
+        TLinkRefreshHostedWindow();
+    } @catch (NSException *exception) {
+        sTLinkLastResult = @"frontboard_scene_update_exception";
+        TLinkUIServiceLog([NSString stringWithFormat:@"foreground scene update exception=%@",
+            exception.reason ?: exception.name]);
+        TLinkWriteUIServiceDiagnostics();
+    }
 }
 
 static BOOL TLinkInitializeUIKitPlugin(void)
@@ -532,7 +635,6 @@ static BOOL TLinkInitializeUIKitPlugin(void)
     if (!delegate) delegate = [[TLinkUIServiceDelegate alloc] init];
     application.delegate = delegate;
     application.idleTimerDisabled = YES;
-    TLinkAcquireForegroundAssertion();
     SEL accessibilityInit = NSSelectorFromString(@"_accessibilityInit");
     if ([application respondsToSelector:accessibilityInit]) {
         ((void (*)(id, SEL))objc_msgSend)(application, accessibilityInit);
@@ -558,19 +660,24 @@ static BOOL TLinkInitializeUIKitPlugin(void)
 
     TLinkPrepareToastWindow();
     delegate.window = sTLinkToastWindow;
+    if (!sTLinkForegroundSceneSetupSucceeded) {
+        [delegate.window makeKeyAndVisible];
+        TLinkSetupForegroundPresentationBinder();
+        TLinkAssertForegroundScene();
+    }
     TLinkStartServerIfNecessary();
     sTLinkLastResult = @"plugin_hosted_ready";
     TLinkUIServiceLog([NSString stringWithFormat:
-        @"plugin hosted ready bundle=%@ class=%@ state=%ld system_state=%ld gs=%d gsevent=%d bks=%d initialize=%d instantiate=%d complete=1 assertion_created=%d assertion_acquired=%d assertion_valid=%d context_id=%u hidden=%d key=%d",
+        @"plugin hosted ready bundle=%@ class=%@ state=%ld gs=%d gsevent=%d bks=%d initialize=%d instantiate=%d complete=1 scene_ready=%d scene_foreground=%d binder=%d context_id=%u hidden=%d key=%d",
         NSBundle.mainBundle.bundleIdentifier, NSStringFromClass(application.class),
-        (long)application.applicationState, (long)TLinkSystemApplicationState(),
+        (long)application.applicationState,
         sTLinkGSInitializeAvailable ? 1 : 0, sTLinkGSEventInitializeAvailable ? 1 : 0,
         sTLinkBKSDisplayServicesStartAvailable ? 1 : 0,
         sTLinkUIApplicationInitializeAvailable ? 1 : 0,
         sTLinkUIApplicationInstantiateAvailable ? 1 : 0,
-        sTLinkForegroundAssertionCreated ? 1 : 0,
-        sTLinkForegroundAssertionAcquired ? 1 : 0,
-        TLinkForegroundAssertionIsValid() ? 1 : 0,
+        sTLinkForegroundSceneSetupSucceeded ? 1 : 0,
+        TLinkForegroundSceneIsForeground() ? 1 : 0,
+        sTLinkPresentationBinder ? 1 : 0,
         TLinkToastWindowContextID(), sTLinkToastWindow.hidden ? 1 : 0,
         sTLinkToastWindow.isKeyWindow ? 1 : 0]);
     TLinkWriteUIServiceDiagnostics();
@@ -592,7 +699,7 @@ int main(int argc, char *argv[])
             chown([runtime fileSystemRepresentation], 501, 501);
             if (setgid(501) != 0 || setuid(501) != 0) return 74;
         }
-        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIKitPluginHostedNoIdleForeground uid=%d euid=%d gid=%d egid=%d",
+        TLinkUIServiceLog([NSString stringWithFormat:@"starting launch_mode=UIKitPluginHostedFrontBoardScene uid=%d euid=%d gid=%d egid=%d",
             getuid(), geteuid(), getgid(), getegid()]);
         if (!TLinkInitializeUIKitPlugin()) return 75;
         CFRunLoopRun();
