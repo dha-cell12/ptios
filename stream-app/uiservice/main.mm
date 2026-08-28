@@ -99,6 +99,7 @@ static BOOL TLinkSetupForegroundPresentationBinder(void);
 static void TLinkAssertForegroundScene(void);
 static UIWindowScene *TLinkDiscoverHostedWindowScene(void);
 static void TLinkPresentLocalHostWindow(void);
+static void TLinkHidePresentationWindowsIfIdle(NSUInteger generation);
 
 static BOOL TLinkForegroundSceneIsForeground(void)
 {
@@ -183,12 +184,20 @@ static void TLinkPresentLocalHostWindow(void)
     [sTLinkHostWindow makeKeyAndVisible];
 }
 
+static void TLinkHidePresentationWindowsIfIdle(NSUInteger generation)
+{
+    if (generation != sTLinkToastGeneration) return;
+    if (sTLinkToastBubble || sTLinkToastTextLayer || sTLinkHostTextLayer) return;
+    sTLinkToastWindow.hidden = YES;
+    sTLinkHostWindow.hidden = YES;
+}
+
 static void TLinkWriteUIServiceDiagnostics(void)
 {
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @18,
+        @"version": @19,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -216,7 +225,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"toast_window_context_zero": @(TLinkWindowContextID(sTLinkToastWindow) == 0),
         @"application_key_window_matches_host": @(TLinkCurrentApplicationKeyWindow() == sTLinkHostWindow),
         @"display_entitlement_contract_declared": @YES,
-        @"renderer_mach_services_declared": @YES,
+        @"passthrough_transparency_enforced": @YES,
         @"connected_scene_count": @(UIApplication.sharedApplication.connectedScenes.count),
         @"application_window_count": @(UIApplication.sharedApplication.windows.count),
         @"window_level": @(sTLinkToastWindow.windowLevel),
@@ -239,7 +248,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"application_state": @(UIApplication.sharedApplication ? UIApplication.sharedApplication.applicationState : -1),
         @"secure": @(sTLinkToastSecure),
         @"window_secure_at_creation": @(sTLinkToastWindowSecureAtCreation),
-        @"render_mode": @"xxtouch_display_entitlement_aligned_local_window",
+        @"render_mode": @"xxtouch_displayable_context_passthrough_window",
         @"last_position": @(sTLinkLastPosition),
         @"toast_count": @(sTLinkToastCount),
         @"request_count": @(sTLinkRequestCount),
@@ -273,8 +282,11 @@ static void TLinkPrepareHostWindow(void)
     sTLinkHostWindow.windowLevel = (UIWindowLevel)10000010.0;
     sTLinkHostWindow.backgroundColor = UIColor.clearColor;
     sTLinkHostWindow.opaque = NO;
+    sTLinkHostWindow.layer.opaque = NO;
     sTLinkHostController = [[UIViewController alloc] init];
     sTLinkHostController.view.backgroundColor = UIColor.clearColor;
+    sTLinkHostController.view.opaque = NO;
+    sTLinkHostController.view.layer.opaque = NO;
     sTLinkHostWindow.rootViewController = sTLinkHostController;
     sTLinkHostWindow.hidden = NO;
 }
@@ -287,9 +299,12 @@ static void TLinkPrepareToastWindow(void)
     sTLinkToastWindow.windowLevel = (UIWindowLevel)20000099.9;
     sTLinkToastWindow.backgroundColor = UIColor.clearColor;
     sTLinkToastWindow.opaque = NO;
+    sTLinkToastWindow.layer.opaque = NO;
     sTLinkToastWindow.userInteractionEnabled = NO;
     sTLinkRootController = [[UIViewController alloc] init];
     sTLinkRootController.view.backgroundColor = UIColor.clearColor;
+    sTLinkRootController.view.opaque = NO;
+    sTLinkRootController.view.layer.opaque = NO;
     sTLinkRootController.view.userInteractionEnabled = NO;
     sTLinkToastWindow.rootViewController = sTLinkRootController;
     TLinkSetSecureForToast(sTLinkToastSecure);
@@ -333,7 +348,11 @@ static void TLinkShowToast(NSDictionary *payload)
     TLinkPrepareToastWindow();
     [sTLinkHostWindow makeKeyAndVisible];
     NSString *message = [payload[@"message"] isKindOfClass:NSString.class] ? payload[@"message"] : @"";
-    if (message.length == 0) return;
+    if (message.length == 0) {
+        TLinkHidePresentationWindowsIfIdle(sTLinkToastGeneration);
+        return;
+    }
+    sTLinkToastWindow.hidden = NO;
     NSTimeInterval duration = [payload[@"duration"] doubleValue];
     if (duration <= 0.0) duration = 2.0;
     if (duration > 30.0) duration = 30.0;
@@ -443,6 +462,7 @@ static void TLinkShowToast(NSDictionary *payload)
         sTLinkToastBubble = nil;
         sTLinkToastTextLayer = nil;
         sTLinkHostTextLayer = nil;
+        TLinkHidePresentationWindowsIfIdle(generation);
         sTLinkLastResult = @"toast_hidden";
         TLinkWriteUIServiceDiagnostics();
         TLinkRefreshHostedWindow();
@@ -468,7 +488,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=18;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardLocalKeyWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_display_entitlement_aligned_local_window;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=19;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardLocalKeyWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_displayable_context_passthrough_window;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,
@@ -568,6 +588,11 @@ static void TLinkStartServerIfNecessary(void)
     self.window = sTLinkHostWindow;
     self.window.hidden = NO;
     TLinkPresentLocalHostWindow();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        TLinkHidePresentationWindowsIfIdle(sTLinkToastGeneration);
+        TLinkWriteUIServiceDiagnostics();
+    });
     BOOL sceneReady = TLinkSetupForegroundPresentationBinder();
     TLinkAssertForegroundScene();
     // Creating the binder switches UIKit to scene-level key-window routing.
@@ -608,7 +633,8 @@ static void TLinkStartServerIfNecessary(void)
 {
     if (!TLinkForegroundSceneIsForeground()) TLinkAssertForegroundScene();
     TLinkAttachToastWindowToHostScene();
-    if (TLinkWindowHasScene(sTLinkHostWindow)) {
+    if (TLinkWindowHasScene(sTLinkHostWindow) &&
+        (sTLinkToastBubble || sTLinkToastTextLayer || sTLinkHostTextLayer)) {
         TLinkPresentLocalHostWindow();
         TLinkRefreshHostedWindow();
     }
@@ -972,6 +998,11 @@ static BOOL TLinkInitializeUIKitPlugin(void)
         TLinkAssertForegroundScene();
     }
     TLinkPresentLocalHostWindow();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        TLinkHidePresentationWindowsIfIdle(sTLinkToastGeneration);
+        TLinkWriteUIServiceDiagnostics();
+    });
     TLinkAttachToastWindowToHostScene();
     TLinkRefreshHostedWindow();
     TLinkStartServerIfNecessary();
