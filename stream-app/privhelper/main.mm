@@ -505,11 +505,14 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=21"] &&
-           [probe containsString:@"launch_mode=UIKitPluginHostedCompactFrontBoardScene"] &&
+           [probe containsString:@"version=22"] &&
+           [probe containsString:@"launch_mode=UIKitPluginSBSAccessibilityContextHosting"] &&
            [probe containsString:@"plugin_complete=1"] &&
-           [probe containsString:@"fullscreen_scene_disabled=1"] &&
-           [probe containsString:@"compact_scene_enabled=1"] &&
+           [probe containsString:@"window_scene_attachment_enabled=0"] &&
+           [probe containsString:@"system_window_override_installed=1"] &&
+           [probe containsString:@"window_level_hook_installed=1"] &&
+           [probe containsString:@"accessibility_hosting_controller_available=1"] &&
+           [probe containsString:@"host_window_registered=1"] &&
            [probe containsString:@"host_window_ready=1"] &&
            [probe containsString:@";;uid=501;;"] &&
            [probe containsString:@";;euid=501;;"];

@@ -153,16 +153,20 @@ assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volum
 assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clipboardd lacks the background toast UI-service route");
 assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
 assert.ok(clipboarddBinary.includes("uiservice plugin spawn"), "clipboardd lacks hosted-plugin UI-service launch");
-assert.ok(uiServiceBinary.includes("uiservice_ready;;version=21"), "TLinkUIService lacks v21 readiness evidence");
-assert.ok(uiServiceBinary.includes("xxtouch_compact_frontboard_scene_attached_windows"), "TLinkUIService lacks the compact attached-scene renderer");
-assert.ok(uiServiceBinary.includes("fullscreen_scene_disabled=1"), "TLinkUIService does not disable the black-screen full-screen scene path");
-assert.ok(uiServiceBinary.includes("compact_scene_enabled=1"), "TLinkUIService lacks compact scene hosting evidence");
-assert.ok(uiServiceBinary.includes("window_scene_attachment_enabled"), "TLinkUIService lacks attached compact-scene diagnostics");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=22"), "TLinkUIService lacks v22 readiness evidence");
+assert.ok(uiServiceBinary.includes("xxtouch_sbs_accessibility_context_registration"), "TLinkUIService lacks SBS accessibility context hosting");
+assert.ok(uiServiceBinary.includes("window_scene_attachment_enabled=0"), "TLinkUIService does not disable the black-screen UIWindowScene path");
+assert.ok(uiServiceBinary.includes("SBSAccessibilityWindowHostingController"), "TLinkUIService lacks the accessibility window hosting controller");
+assert.ok(uiServiceBinary.includes("registerWindowWithContextID:atLevel:"), "TLinkUIService lacks CA context registration");
+assert.ok(uiServiceBinary.includes("unregisterWindowWithContextID:"), "TLinkUIService lacks CA context cleanup");
+assert.ok(uiServiceBinary.includes("system_window_override_installed"), "TLinkUIService lacks system-window diagnostics");
+assert.ok(uiServiceBinary.includes("window_level_hook_installed"), "TLinkUIService lacks window-level hook diagnostics");
+assert.ok(uiServiceBinary.includes("toast_rejected_no_compositor_hosting"), "TLinkUIService does not fail closed when compositor hosting is unavailable");
 assert.ok(uiServiceBinary.includes("plugin_hosted_ready"), "TLinkUIService lacks hosted-plugin lifecycle evidence");
 assert.ok(uiServiceBinary.includes("__completeAndRunAsPlugin"), "TLinkUIService lacks BackBoard plugin completion evidence");
-assert.ok(uiServiceBinary.includes("createSceneWithDefinition:initialParameters:"), "TLinkUIService lacks compact FrontBoard scene creation evidence");
-assert.ok(uiServiceBinary.includes("UIRootWindowScenePresentationBinder"), "TLinkUIService lacks compact presentation binder evidence");
-assert.ok(uiServiceBinary.includes("window_ready_passthrough"), "TLinkUIService lacks pass-through window evidence");
+assert.ok(!uiServiceBinary.includes("createSceneWithDefinition:initialParameters:"), "TLinkUIService still contains the black-screen synthetic scene path");
+assert.ok(!uiServiceBinary.includes("UIRootWindowScenePresentationBinder"), "TLinkUIService still contains a synthetic scene binder");
+assert.ok(uiServiceBinary.includes("window_ready_accessibility_hosted"), "TLinkUIService lacks hosted-window readiness evidence");
 assert.ok(uiServiceBinary.includes("/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist"), "TLinkUIService lacks diagnostics");
 assert.equal(plistValue(uiServiceInfoXML, "CFBundleIdentifier"), "com.tlinkauto.streamcontrol.uiservice", "TLinkUIService has the wrong bundle identifier");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationShowsViewsWhileLocked"), true, "TLinkUIService lacks lock-screen UI permission");
@@ -172,7 +176,7 @@ assert.ok(!uiServiceInfoXML.includes("<key>UIRequiresFullScreen</key>"), "TLinkU
 assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationSystemWindowsSecureKey"), true, "TLinkUIService lacks the system secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "NSPrincipalClass"), "TLinkUIServiceApplication", "TLinkUIService lacks the hosted UIApplication principal class");
-assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "21", "TLinkUIService bundle version is stale");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "22", "TLinkUIService bundle version is stale");
 assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

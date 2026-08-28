@@ -425,8 +425,9 @@ jobs:
           grep -q 'com.apple.springboard.launchapplications' stream-app/clipboardd/entitlements.plist
           grep -q 'windowLevel = (UIWindowLevel)10000010.0' stream-app/uiservice/main.mm
           grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
-          grep -q 'uiservice_ready;;version=21' stream-app/uiservice/main.mm
-          grep -q 'launch_mode=UIKitPluginHostedCompactFrontBoardScene' stream-app/uiservice/main.mm
+          grep -q 'uiservice_ready;;version=22' stream-app/uiservice/main.mm
+          grep -q 'launch_mode=UIKitPluginSBSAccessibilityContextHosting' stream-app/uiservice/main.mm
+          grep -q 'registerWindowWithContextID:atLevel:' stream-app/uiservice/main.mm
           grep -q 'return nil;' stream-app/uiservice/main.mm
           grep -q 'UIApplicationShowsViewsWhileLocked' stream-app/uiservice/Info.plist
           grep -q 'com.apple.private.extension-host' stream-app/uiservice/entitlements.plist
