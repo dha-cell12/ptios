@@ -61,6 +61,7 @@ assert.match(helper, /TLinkHelperOpenBundleWithSBS\(@"com\.tlinkauto\.streamcont
 assert.match(helper, /posix_spawnattr_set_persona_uid_np\(&attr, 501\)/);
 assert.match(helper, /TLinkHelperSendLoopbackLine\(@"ping\\n", 6017/);
 assert.match(helper, /uiservice deferred_on_replace/);
+assert.match(helper, /#include <sys\/stat\.h>/);
 assert.match(clipboardd, /TLinkSendUIServiceToast\(payload\)/);
 assert.match(clipboardd, /TLinkRespawnUIService/);
 assert.match(clipboardd, /SBSLaunchApplicationWithIdentifier/);
