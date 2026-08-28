@@ -102,8 +102,9 @@ The TrollStore package embeds the hidden nested app
 mobile identity if port `6017` is unavailable. All
 `device.toast` and task `22` requests use this service even while StreamControl
 is foreground; the app event poller skips its duplicate copy. The service owns a
-secure pass-through host window at level `10000010` and a separate non-key toast
-overlay created lazily at level `20000099.9`, matching the two-window XXTUIService structure.
+secure pass-through host window at effective alert level `2001` and a separate
+non-key toast overlay at `2002`. The key host also receives a direct Core Animation
+toast layer, while the second window remains a fallback.
 It creates a foreground FrontBoard scene and attaches that scene to a root-window
 presentation binder, so background toast keeps the requested top/center/bottom
 position without opening StreamControl. `UIApplicationShowsViewsWhileLocked`,

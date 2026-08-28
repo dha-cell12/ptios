@@ -423,9 +423,9 @@ jobs:
           grep -q 'TLinkSpawnUIServicePlugin' stream-app/clipboardd/main.mm
           grep -q '__completeAndRunAsPlugin' stream-app/uiservice/main.mm
           grep -q 'com.apple.springboard.launchapplications' stream-app/clipboardd/entitlements.plist
-          grep -q 'windowLevel = (UIWindowLevel)10000010.0' stream-app/uiservice/main.mm
-          grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
-          grep -q 'uiservice_ready;;version=13' stream-app/uiservice/main.mm
+          grep -q 'windowLevel = UIWindowLevelAlert + 1.0' stream-app/uiservice/main.mm
+          grep -q 'windowLevel = UIWindowLevelAlert + 2.0' stream-app/uiservice/main.mm
+          grep -q 'uiservice_ready;;version=14' stream-app/uiservice/main.mm
           grep -q 'launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow' stream-app/uiservice/main.mm
           grep -q 'createSceneWithDefinition:initialParameters:' stream-app/uiservice/main.mm
           grep -q 'return nil;' stream-app/uiservice/main.mm

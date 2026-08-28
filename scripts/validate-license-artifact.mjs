@@ -153,7 +153,7 @@ assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volum
 assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clipboardd lacks the background toast UI-service route");
 assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
 assert.ok(clipboarddBinary.includes("uiservice plugin spawn"), "clipboardd lacks hosted-plugin UI-service launch");
-assert.ok(uiServiceBinary.includes("uiservice_ready;;version=13"), "TLinkUIService lacks v13 readiness evidence");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=14"), "TLinkUIService lacks v14 readiness evidence");
 assert.ok(uiServiceBinary.includes("plugin_hosted_ready"), "TLinkUIService lacks hosted-plugin lifecycle evidence");
 assert.ok(uiServiceBinary.includes("__completeAndRunAsPlugin"), "TLinkUIService lacks BackBoard plugin completion evidence");
 assert.ok(uiServiceBinary.includes("createSceneWithDefinition:initialParameters:"), "TLinkUIService lacks FrontBoard scene creation evidence");
@@ -166,7 +166,7 @@ assert.equal(plistValue(uiServiceInfoXML, "UIApplicationExitsOnSuspend"), false,
 assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationSystemWindowsSecureKey"), true, "TLinkUIService lacks the system secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "NSPrincipalClass"), "TLinkUIServiceApplication", "TLinkUIService lacks the hosted UIApplication principal class");
-assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "13", "TLinkUIService bundle version is stale");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "14", "TLinkUIService bundle version is stale");
 assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

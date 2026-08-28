@@ -30,6 +30,7 @@ static NSUInteger sTLinkInvalidRequestCount = 0;
 static BOOL sTLinkServerStarted = NO;
 static UIView *sTLinkToastBubble = nil;
 static CATextLayer *sTLinkToastTextLayer = nil;
+static CATextLayer *sTLinkHostTextLayer = nil;
 static NSUInteger sTLinkToastGeneration = 0;
 static BOOL sTLinkGSInitializeAvailable = NO;
 static BOOL sTLinkGSEventInitializeAvailable = NO;
@@ -169,7 +170,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSDictionary *status = @{
-        @"version": @13,
+        @"version": @14,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -194,7 +195,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"connected_scene_count": @(UIApplication.sharedApplication.connectedScenes.count),
         @"application_window_count": @(UIApplication.sharedApplication.windows.count),
         @"window_level": @(sTLinkToastWindow.windowLevel),
-        @"requested_window_level": @20000099.9,
+        @"requested_window_level": @(UIWindowLevelAlert + 2.0),
         @"window_context_id": @(TLinkWindowContextID(sTLinkToastWindow)),
         @"window_scene_attached": @(TLinkWindowHasScene(sTLinkToastWindow)),
         @"window_scene_activation_state": @(TLinkWindowSceneActivationState(sTLinkToastWindow)),
@@ -212,7 +213,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"application_state": @(UIApplication.sharedApplication ? UIApplication.sharedApplication.applicationState : -1),
         @"secure": @(sTLinkToastSecure),
         @"window_secure_at_creation": @(sTLinkToastWindowSecureAtCreation),
-        @"render_mode": @"direct_uiview_and_catextlayer_no_animation",
+        @"render_mode": @"key_host_catextlayer_with_secondary_window_fallback",
         @"last_position": @(sTLinkLastPosition),
         @"toast_count": @(sTLinkToastCount),
         @"request_count": @(sTLinkRequestCount),
@@ -243,7 +244,7 @@ static void TLinkPrepareHostWindow(void)
 {
     if (sTLinkHostWindow) return;
     sTLinkHostWindow = [[TLinkPassthroughHostWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    sTLinkHostWindow.windowLevel = (UIWindowLevel)10000010.0;
+    sTLinkHostWindow.windowLevel = UIWindowLevelAlert + 1.0;
     sTLinkHostWindow.backgroundColor = UIColor.clearColor;
     sTLinkHostWindow.opaque = NO;
     sTLinkHostController = [[UIViewController alloc] init];
@@ -267,7 +268,7 @@ static void TLinkPrepareToastWindow(void)
         sTLinkToastWindow = [[TLinkPassthroughToastWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     }
     sTLinkToastWindowSecureAtCreation = sTLinkToastSecure;
-    sTLinkToastWindow.windowLevel = (UIWindowLevel)20000099.9;
+    sTLinkToastWindow.windowLevel = UIWindowLevelAlert + 2.0;
     sTLinkToastWindow.backgroundColor = UIColor.clearColor;
     sTLinkToastWindow.opaque = NO;
     sTLinkToastWindow.userInteractionEnabled = NO;
@@ -302,8 +303,10 @@ static void TLinkShowToast(NSDictionary *payload)
     if (sTLinkToastWindow && sTLinkToastWindowSecureAtCreation != sTLinkToastSecure) {
         [sTLinkToastBubble removeFromSuperview];
         [sTLinkToastTextLayer removeFromSuperlayer];
+        [sTLinkHostTextLayer removeFromSuperlayer];
         sTLinkToastBubble = nil;
         sTLinkToastTextLayer = nil;
+        sTLinkHostTextLayer = nil;
         sTLinkToastWindow.hidden = YES;
         sTLinkToastWindow.rootViewController = nil;
         sTLinkToastWindow = nil;
@@ -333,8 +336,10 @@ static void TLinkShowToast(NSDictionary *payload)
     [sTLinkToastBubble.layer removeAllAnimations];
     [sTLinkToastBubble removeFromSuperview];
     [sTLinkToastTextLayer removeFromSuperlayer];
+    [sTLinkHostTextLayer removeFromSuperlayer];
     sTLinkToastBubble = nil;
     sTLinkToastTextLayer = nil;
+    sTLinkHostTextLayer = nil;
     NSUInteger generation = ++sTLinkToastGeneration;
 
     CGRect bounds = sTLinkToastWindow.bounds;
@@ -387,8 +392,21 @@ static void TLinkShowToast(NSDictionary *payload)
     textLayer.contentsScale = UIScreen.mainScreen.scale;
     textLayer.zPosition = 1000.0;
     [sTLinkToastWindow.layer addSublayer:textLayer];
+    CATextLayer *hostTextLayer = [CATextLayer layer];
+    hostTextLayer.frame = bubble.frame;
+    hostTextLayer.string = message;
+    hostTextLayer.fontSize = fontSize;
+    hostTextLayer.foregroundColor = UIColor.whiteColor.CGColor;
+    hostTextLayer.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.86].CGColor;
+    hostTextLayer.alignmentMode = kCAAlignmentCenter;
+    hostTextLayer.wrapped = YES;
+    hostTextLayer.cornerRadius = 10.0;
+    hostTextLayer.contentsScale = UIScreen.mainScreen.scale;
+    hostTextLayer.zPosition = 2000.0;
+    [sTLinkHostWindow.layer addSublayer:hostTextLayer];
     sTLinkToastBubble = bubble;
     sTLinkToastTextLayer = textLayer;
+    sTLinkHostTextLayer = hostTextLayer;
     sTLinkToastCount += 1;
     sTLinkLastResult = [NSString stringWithFormat:@"toast_visible_position_%ld", (long)position];
     TLinkUIServiceLog([NSString stringWithFormat:@"toast visible count=%lu position=%ld duration=%.2f secure=%d app_state=%ld scene_foreground=%d binder=%d context_id=%u hidden=%d key=%d",
@@ -404,8 +422,10 @@ static void TLinkShowToast(NSDictionary *payload)
         if (generation != sTLinkToastGeneration) return;
         [bubble removeFromSuperview];
         [textLayer removeFromSuperlayer];
+        [hostTextLayer removeFromSuperlayer];
         sTLinkToastBubble = nil;
         sTLinkToastTextLayer = nil;
+        sTLinkHostTextLayer = nil;
         sTLinkLastResult = @"toast_hidden";
         TLinkWriteUIServiceDiagnostics();
         TLinkRefreshHostedWindow();
@@ -431,7 +451,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=13;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=direct_uiview_and_catextlayer_no_animation;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=14;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=%d;;window_scene_activation_state=%ld;;window_level=%.1f;;requested_window_level=2002.0;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=%d;;host_window_scene_activation_state=%ld;;host_window_level=%.1f;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=key_host_catextlayer_with_secondary_window_fallback;;plugin_complete=%d;;foreground_scene_setup_attempted=%d;;foreground_scene_setup_succeeded=%d;;foreground_scene_created=%d;;foreground_scene_is_foreground=%d;;presentation_binder_created=%d;;scene_discovery_succeeded=%d;;scene_discovery_source=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,
