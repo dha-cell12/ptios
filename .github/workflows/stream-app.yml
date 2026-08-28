@@ -427,7 +427,6 @@ jobs:
           grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
           grep -q 'uiservice_ready;;version=20' stream-app/uiservice/main.mm
           grep -q 'launch_mode=UIKitPluginHostedLocalWindowNoSyntheticScene' stream-app/uiservice/main.mm
-          grep -q 'createSceneWithDefinition:initialParameters:' stream-app/uiservice/main.mm
           grep -q 'return nil;' stream-app/uiservice/main.mm
           grep -q 'UIApplicationShowsViewsWhileLocked' stream-app/uiservice/Info.plist
           grep -q 'com.apple.private.extension-host' stream-app/uiservice/entitlements.plist

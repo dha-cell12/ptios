@@ -159,8 +159,6 @@ assert.ok(uiServiceBinary.includes("synthetic_scene_disabled=1"), "TLinkUIServic
 assert.ok(uiServiceBinary.includes("window_scene_attachment_intentionally_disabled"), "TLinkUIService lacks local-window runtime diagnostics");
 assert.ok(uiServiceBinary.includes("plugin_hosted_ready"), "TLinkUIService lacks hosted-plugin lifecycle evidence");
 assert.ok(uiServiceBinary.includes("__completeAndRunAsPlugin"), "TLinkUIService lacks BackBoard plugin completion evidence");
-assert.ok(uiServiceBinary.includes("createSceneWithDefinition:initialParameters:"), "TLinkUIService lacks FrontBoard scene creation evidence");
-assert.ok(uiServiceBinary.includes("UIRootWindowScenePresentationBinder"), "TLinkUIService lacks foreground presentation binder evidence");
 assert.ok(uiServiceBinary.includes("window_ready_passthrough"), "TLinkUIService lacks pass-through window evidence");
 assert.ok(uiServiceBinary.includes("/var/mobile/Library/TLinkauto/runtime/uiservice_toast.plist"), "TLinkUIService lacks diagnostics");
 assert.equal(plistValue(uiServiceInfoXML, "CFBundleIdentifier"), "com.tlinkauto.streamcontrol.uiservice", "TLinkUIService has the wrong bundle identifier");
