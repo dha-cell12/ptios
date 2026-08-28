@@ -941,7 +941,9 @@ static NSString *TLinkClipboardHandleBodyForCurrentEUID(NSString *body)
                 @"duration": @3,
                 @"position": @0,
                 @"fontSize": @16,
-                @"allow_screenshot": @NO,
+                // Task 2412 is the non-secure compositor baseline. Production
+                // device.toast continues to honor its allow_screenshot option.
+                @"allow_screenshot": @YES,
             });
             return ([response isEqualToString:@"0"] || [response hasPrefix:@"0;;"])
                 ? [NSString stringWithFormat:@"0;;uiservice_toast_test_queued;;%@\r\n", response]

@@ -505,7 +505,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=12"] &&
+           [probe containsString:@"version=13"] &&
            [probe containsString:@"launch_mode=UIKitPluginHostedFrontBoardSceneTwoWindow"] &&
            [probe containsString:@"plugin_complete=1"] &&
            [probe containsString:@"foreground_scene_setup_succeeded=1"] &&
@@ -712,7 +712,7 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
     NSString *uiProbe = TLinkHelperSendLoopbackLine(@"ping\n", 6017, 1);
     if (replaceExisting || !TLinkUIServiceProbeIsCurrent(uiProbe)) {
         // Release an old, unresponsive, or explicitly replaced hosted UI
-        // service before core recovery. v12 is relaunched by the detached
+        // service before core recovery. v13 is relaunched by the detached
         // auxiliary ensure or on demand by clipboardd.
         TLinkHelperKillProcessNamed("TLinkUIService");
         TLinkHelperLog([NSString stringWithFormat:
