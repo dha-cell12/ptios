@@ -21,8 +21,9 @@ param(
     [string]$Notes = "",
     [string]$DeviceLogPath = "",
     [switch]$RunVision,
-    [ValidateSet("app_cpu", "worker_cpu")]
+    [ValidateSet("app_cpu", "worker_cpu", "xxt_compat")]
     [string]$VisionProfile = "app_cpu",
+    [switch]$ClearVisionDebugLog,
     [switch]$SkipTesseract,
     [string]$OutputDirectory = ""
 )
@@ -107,6 +108,27 @@ function Get-TLinkSuccessParts {
     return @(([string]$Probe.response).Split(@(";;"), [StringSplitOptions]::None) | Select-Object -Skip 1)
 }
 
+function Add-TLinkVisionDebugText {
+    param([object]$Probe)
+    if (-not $Probe.ok -or [string]::IsNullOrWhiteSpace([string]$Probe.response)) {
+        return
+    }
+    $parts = @(([string]$Probe.response).Split(@(";;"), [StringSplitOptions]::None))
+    if ($parts.Count -lt 3 -or $parts[1] -ne "vision_debug_base64") {
+        return
+    }
+    try {
+        $Probe["decoded_log"] = if ([string]::IsNullOrEmpty($parts[2])) {
+            ""
+        } else {
+            [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($parts[2]))
+        }
+    }
+    catch {
+        $Probe["decode_error"] = $_.Exception.Message
+    }
+}
+
 $metadata = [ordered]@{
     schema_version = 1
     captured_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
@@ -161,14 +183,21 @@ if (-not $SkipTesseract) {
 }
 
 if ($RunVision) {
+    if ($ClearVisionDebugLog) {
+        $probes.task27_debug_clear = Invoke-TLinkTask -Task "274"
+    }
+    $probes.task27_debug_before = Invoke-TLinkTask -Task "273"
+    Add-TLinkVisionDebugText -Probe $probes.task27_debug_before
     $rect = "$RegionX,,$RegionY,,$RegionWidth,,$RegionHeight"
     $visionTask = "271;;$rect;;;;0.03125;;$RecognitionLevel;;$VisionLanguages;;0;;;;$VisionProfile"
     $probes.task27_vision = Invoke-TLinkTask -Task $visionTask
+    $probes.task27_debug_after = Invoke-TLinkTask -Task "273"
+    Add-TLinkVisionDebugText -Probe $probes.task27_debug_after
 }
 else {
     $probes.task27_vision = [ordered]@{
         skipped = $true
-        reason = "Vision CPU-only is experimental. Re-run with -RunVision on a disposable/test device."
+        reason = "Vision is experimental. Re-run with -RunVision on a disposable/test device."
     }
 }
 $probes.task97_postflight = Invoke-TLinkTask -Task "97"
@@ -196,5 +225,5 @@ if ($null -ne $copiedLog) {
     Write-Host "Device log copied to $copiedLog"
 }
 if (-not $RunVision) {
-    Write-Host "Vision probe was skipped. Use -RunVision -VisionProfile app_cpu or worker_cpu only on a test device."
+    Write-Host "Vision probe was skipped. Use -RunVision -VisionProfile xxt_compat on a test device to exercise the XXTouch-compatible canary."
 }

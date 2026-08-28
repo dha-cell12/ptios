@@ -10,6 +10,9 @@ Device testing on an A9/iOS 15.8.8 device failed the promotion gate:
 watchdog. Further Vision work is deferred until newer hardware is available.
 See `docs/ocr-p1-device-findings.md` for the complete evidence and retest plan.
 
+P2 now adds a separate opt-in `xxt_compat` profile without changing these P1
+profiles. See `docs/ocr-p2-xxt-compat.md`; task `91` remains the default.
+
 ## Profiles
 
 Task `27` subtask `1` accepts one optional ninth body field:

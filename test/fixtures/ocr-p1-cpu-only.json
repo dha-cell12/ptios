@@ -6,17 +6,22 @@
   "defaultProfile": "app_cpu",
   "allowedProfiles": [
     "app_cpu",
-    "worker_cpu"
+    "worker_cpu",
+    "xxt_compat"
   ],
   "legacyRequest": "271;;0,,0,,640,,320;;;;0.03125;;0;;en-US;;0;;\r\n",
   "appCPURequest": "271;;0,,0,,640,,320;;;;0.03125;;0;;en-US;;0;;;;app_cpu\r\n",
   "workerCPURequest": "271;;0,,0,,640,,320;;;;0.03125;;0;;en-US;;0;;;;worker_cpu\r\n",
+  "xxtCompatRequest": "271;;0,,0,,320,,160;;;;0.03125;;1;;en-US;;0;;;;xxt_compat\r\n",
   "requiredCapabilityFields": {
     "visionOCRState": "experimental",
-    "visionOCRProfiles": "app_cpu_default,worker_cpu_opt_in",
-    "visionOCRRoute": "profile_selected_worker_or_app_6011",
+    "visionOCRProfiles": "app_cpu_default,worker_cpu_opt_in,xxt_compat_opt_in",
+    "visionOCRRoute": "profile_selected_worker_or_app_6011_or_direct_cgimage",
     "visionOCRFallback": "none",
     "visionOCRCPUOnly": "1",
+    "visionOCRXXTCompat": "1",
+    "visionOCRXXTCompatInput": "cgimage_direct",
+    "visionOCRXXTCompatCompute": "automatic",
     "visionOCRDefaultProfile": "app_cpu",
     "ocrDefaultEngine": "tesseract",
     "ocrEngineSelector": "none",
