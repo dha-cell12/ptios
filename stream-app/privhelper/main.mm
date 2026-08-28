@@ -505,8 +505,9 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=6"] &&
-           [probe containsString:@"launch_mode=UIApplicationMain"] &&
+           [probe containsString:@"version=7"] &&
+           [probe containsString:@"launch_mode=UIKitPluginHosted"] &&
+           [probe containsString:@"plugin_complete=1"] &&
            [probe containsString:@";;uid=501;;"] &&
            [probe containsString:@";;euid=501;;"] &&
            [probe containsString:@"window_ready=1"];
@@ -530,26 +531,7 @@ static int TLinkEnsureUIService(NSString *streamdPath, BOOL replaceExisting)
     }
 
     TLinkHelperKillProcessNamed("TLinkUIService");
-    NSString *restorePath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle";
-    [@"com.tlinkauto.streamcontrol" writeToFile:restorePath
-                                      atomically:YES
-                                        encoding:NSUTF8StringEncoding
-                                           error:nil];
-    chmod([restorePath fileSystemRepresentation], 0644);
-    chown([restorePath fileSystemRepresentation], 501, 501);
-    int sbsRc = INT_MIN;
-    if (TLinkHelperOpenBundleWithSBS(@"com.tlinkauto.streamcontrol.uiservice", &sbsRc)) {
-        for (int i = 0; i < 8; i++) {
-            usleep(250000);
-            probe = TLinkHelperSendLoopbackLine(@"ping\n", 6017, 1);
-            if (TLinkUIServiceProbeIsCurrent(probe)) {
-                TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: SpringBoardServices probe ok %@",
-                    [probe stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]]);
-                return 0;
-            }
-        }
-    }
-    TLinkHelperLog([NSString stringWithFormat:@"ensure-uiservice: SpringBoardServices unavailable rc=%d; using mobile persona spawn", sbsRc]);
+    TLinkHelperLog(@"ensure-uiservice: starting hosted UIKit plugin with mobile persona");
 
     const char *path = [servicePath fileSystemRepresentation];
     char *arg0 = strdup(path);
@@ -727,11 +709,10 @@ static int TLinkEnsureStreamd(NSString *streamdPath, BOOL replaceExisting)
 
     NSString *uiProbe = TLinkHelperSendLoopbackLine(@"ping\n", 6017, 1);
     if (replaceExisting || !TLinkUIServiceProbeIsCurrent(uiProbe)) {
-        // Release an old, unresponsive, or explicitly replaced transparent UI
-        // service before core recovery. v6 is launched on demand and self-exits.
+        // Release an old, unresponsive, or explicitly replaced hosted UI
+        // service before core recovery. v7 is relaunched by the detached
+        // auxiliary ensure or on demand by clipboardd.
         TLinkHelperKillProcessNamed("TLinkUIService");
-        [[NSFileManager defaultManager] removeItemAtPath:
-            @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle" error:nil];
         TLinkHelperLog([NSString stringWithFormat:
             @"ensure-streamd: uiservice reset_and_deferred replace=%d probe=%@",
             replaceExisting ? 1 : 0,

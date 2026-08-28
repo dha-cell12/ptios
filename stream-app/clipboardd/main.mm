@@ -20,8 +20,6 @@
 typedef void (*TLinkUIApplicationInitializeFn)(void);
 typedef void (*TLinkUIApplicationInstantiateSingletonFn)(Class);
 typedef void (*TLinkUIKitBootstrapFn)(void);
-typedef int (*TLinkSBSLaunchApplicationFn)(CFStringRef identifier, Boolean suspended);
-typedef CFStringRef (*TLinkSBSCopyFrontmostApplicationFn)(void);
 extern char **environ;
 typedef SInt32 (*TLinkCFUserNotificationDisplayNoticeFn)(CFTimeInterval,
                                                           CFOptionFlags,
@@ -201,51 +199,13 @@ static int TLinkConnectUIService(void)
     return client;
 }
 
-static BOOL TLinkRequestUIServiceApplicationLaunch(void)
-{
-    void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
-                          RTLD_LAZY | RTLD_GLOBAL);
-    if (!handle) return NO;
-    NSString *restoreBundle = nil;
-    NSString *restorePath = @"/var/mobile/Library/TLinkauto/runtime/uiservice_restore_bundle";
-    const char *frontmostSymbols[] = {
-        "SBSCopyFrontmostApplicationDisplayIdentifier",
-        "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay",
-        "SBSGetMostElevatedApplicationBundleIdentifier",
-        "SBSGetMostElevatedApplicationDisplayIdentifier",
-    };
-    for (NSUInteger index = 0; index < sizeof(frontmostSymbols) / sizeof(frontmostSymbols[0]); index++) {
-        TLinkSBSCopyFrontmostApplicationFn copyFrontmost =
-            (TLinkSBSCopyFrontmostApplicationFn)dlsym(handle, frontmostSymbols[index]);
-        if (!copyFrontmost) continue;
-        CFStringRef value = copyFrontmost();
-        if (value) {
-            restoreBundle = [(__bridge NSString *)value copy];
-            if (strncmp(frontmostSymbols[index], "SBSCopy", 7) == 0) CFRelease(value);
-        }
-        if (restoreBundle.length > 0) break;
-    }
-    if (restoreBundle.length > 0 &&
-        ![restoreBundle isEqualToString:@"com.tlinkauto.streamcontrol.uiservice"]) {
-        [[NSFileManager defaultManager] removeItemAtPath:restorePath error:nil];
-        [restoreBundle writeToFile:restorePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-        chmod([restorePath fileSystemRepresentation], 0644);
-    }
-    TLinkSBSLaunchApplicationFn launch =
-        (TLinkSBSLaunchApplicationFn)dlsym(handle, "SBSLaunchApplicationWithIdentifier");
-    int rc = launch ? launch(CFSTR("com.tlinkauto.streamcontrol.uiservice"), false) : -1;
-    TLinkClipboardLog([NSString stringWithFormat:@"uiservice SBS launch rc=%d restore_bundle=%@",
-        rc, restoreBundle ?: @"<none>"]);
-    return rc == 0;
-}
-
-static BOOL TLinkRespawnUIService(void)
+static BOOL TLinkSpawnUIServicePlugin(void)
 {
     NSString *servicePath = [NSBundle.mainBundle.bundlePath
         stringByAppendingPathComponent:@"TLinkUIService.app/TLinkUIService"];
     if (![servicePath hasSuffix:@"/StreamControl.app/TLinkUIService.app/TLinkUIService"] ||
         ![NSFileManager.defaultManager isExecutableFileAtPath:servicePath]) {
-        TLinkClipboardLog([NSString stringWithFormat:@"uiservice respawn refused path=%@", servicePath ?: @""]);
+        TLinkClipboardLog([NSString stringWithFormat:@"uiservice plugin spawn refused path=%@", servicePath ?: @""]);
         return NO;
     }
     const char *path = [servicePath fileSystemRepresentation];
@@ -259,7 +219,7 @@ static BOOL TLinkRespawnUIService(void)
     pid_t pid = -1;
     int rc = posix_spawn(&pid, path, NULL, NULL, argv, environ);
     free(arg0); free(arg1);
-    TLinkClipboardLog([NSString stringWithFormat:@"uiservice respawn rc=%d pid=%d uid=%d euid=%d",
+    TLinkClipboardLog([NSString stringWithFormat:@"uiservice plugin spawn rc=%d pid=%d uid=%d euid=%d",
         rc, pid, getuid(), geteuid()]);
     return rc == 0 && pid > 0;
 }
@@ -267,14 +227,8 @@ static BOOL TLinkRespawnUIService(void)
 static NSString *TLinkSendUIServiceLine(NSString *line)
 {
     int client = TLinkConnectUIService();
-    if (client < 0 && TLinkRequestUIServiceApplicationLaunch()) {
-        for (int attempt = 0; attempt < 16 && client < 0; attempt++) {
-            usleep(150000);
-            client = TLinkConnectUIService();
-        }
-    }
-    if (client < 0 && TLinkRespawnUIService()) {
-        for (int attempt = 0; attempt < 8 && client < 0; attempt++) {
+    if (client < 0 && TLinkSpawnUIServicePlugin()) {
+        for (int attempt = 0; attempt < 20 && client < 0; attempt++) {
             usleep(150000);
             client = TLinkConnectUIService();
         }

@@ -420,12 +420,12 @@ jobs:
           grep -q 'CFUserNotificationDisplayNotice' stream-app/clipboardd/main.mm
           grep -q 'CFUserNotificationDisplayAlert' stream-app/clipboardd/main.mm
           grep -q 'TLinkSendUIServiceToast' stream-app/clipboardd/main.mm
-          grep -q 'TLinkRespawnUIService' stream-app/clipboardd/main.mm
-          grep -q 'SBSLaunchApplicationWithIdentifier' stream-app/clipboardd/main.mm
+          grep -q 'TLinkSpawnUIServicePlugin' stream-app/clipboardd/main.mm
+          grep -q '__completeAndRunAsPlugin' stream-app/uiservice/main.mm
           grep -q 'com.apple.springboard.launchapplications' stream-app/clipboardd/entitlements.plist
           grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
-          grep -q 'uiservice_ready;;version=6' stream-app/uiservice/main.mm
-          grep -q 'toast complete; exiting ephemeral foreground service' stream-app/uiservice/main.mm
+          grep -q 'uiservice_ready;;version=7' stream-app/uiservice/main.mm
+          grep -q 'launch_mode=UIKitPluginHosted' stream-app/uiservice/main.mm
           grep -q 'return nil;' stream-app/uiservice/main.mm
           grep -q 'UIApplicationShowsViewsWhileLocked' stream-app/uiservice/Info.plist
           grep -q 'com.apple.private.extension-host' stream-app/uiservice/entitlements.plist

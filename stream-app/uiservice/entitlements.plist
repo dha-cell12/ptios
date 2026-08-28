@@ -22,11 +22,27 @@
 	<true/>
 	<key>com.apple.backboard.client</key>
 	<true/>
+	<key>com.apple.backboardd.global-pointer-event-routing</key>
+	<true/>
+	<key>com.apple.backboardd.touchDeliveryObservation</key>
+	<true/>
+	<key>com.apple.backboardd.hostCanRequireTouchesFromHostedContent</key>
+	<true/>
 	<key>com.apple.backboardd.launchapplications</key>
 	<true/>
 	<key>com.apple.frontboard.launchapplications</key>
 	<true/>
+	<key>com.apple.frontboard.shutdown</key>
+	<true/>
+	<key>com.apple.frontboard.systemappservices</key>
+	<true/>
+	<key>com.apple.runningboard.assertions.frontboard</key>
+	<true/>
 	<key>com.apple.springboard.launchapplications</key>
+	<true/>
+	<key>com.apple.springboard.accessibility-window-hosting</key>
+	<true/>
+	<key>com.apple.springboard.appbackgroundstyle</key>
 	<true/>
 	<key>com.apple.private.extension-host</key>
 	<true/>
