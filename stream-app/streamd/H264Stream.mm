@@ -52,7 +52,9 @@ static NSString *zx_profileName(const ZXH264Profile *profile) {
 }
 
 NSDictionary *TLinkH264AdaptiveStreamingStatus(void) {
-    return TLinkAdaptiveStreamingStatus(@"trollstore");
+    NSMutableDictionary *status = [TLinkAdaptiveStreamingStatus(@"trollstore") mutableCopy];
+    status[@"capture_pipeline"] = SCCapturePipelineStatus();
+    return status;
 }
 
 // Profiles:
@@ -567,12 +569,19 @@ static void H264OutputCallback(void *outputCallbackRefCon,
 
 static VTCompressionSessionRef createEncoder(const ZXH264Profile *profile) {
     VTCompressionSessionRef s = NULL;
+    NSDictionary *sourceAttributes = @{
+        (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA),
+        (__bridge NSString *)kCVPixelBufferWidthKey: @(profile->width),
+        (__bridge NSString *)kCVPixelBufferHeightKey: @(profile->height),
+        (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey: @{},
+        (__bridge NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey: @YES,
+    };
     OSStatus st = VTCompressionSessionCreate(kCFAllocatorDefault,
                                              profile->width,
                                              profile->height,
                                              kCMVideoCodecType_H264,
                                              NULL,
-                                             NULL,
+                                             (__bridge CFDictionaryRef)sourceAttributes,
                                              NULL,
                                              H264OutputCallback,
                                              NULL,
@@ -603,6 +612,33 @@ static VTCompressionSessionRef createEncoder(const ZXH264Profile *profile) {
     return s;
 }
 
+static CVPixelBufferRef createEncoderPixelBuffer(VTCompressionSessionRef encoder,
+                                                  const ZXH264Profile *profile) {
+    CVPixelBufferRef pixelBuffer = NULL;
+    CVPixelBufferPoolRef pool = encoder ? VTCompressionSessionGetPixelBufferPool(encoder) : NULL;
+    if (pool) {
+        CVReturn poolResult = CVPixelBufferPoolCreatePixelBuffer(
+            kCFAllocatorDefault, pool, &pixelBuffer);
+        if (poolResult == kCVReturnSuccess && pixelBuffer) return pixelBuffer;
+        if (pixelBuffer) {
+            CVPixelBufferRelease(pixelBuffer);
+            pixelBuffer = NULL;
+        }
+    }
+
+    NSDictionary *attributes = @{
+        (__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey: @{},
+        (__bridge NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey: @YES,
+    };
+    CVReturn result = CVPixelBufferCreate(kCFAllocatorDefault,
+                                          profile->width,
+                                          profile->height,
+                                          kCVPixelFormatType_32BGRA,
+                                          (__bridge CFDictionaryRef)attributes,
+                                          &pixelBuffer);
+    return result == kCVReturnSuccess ? pixelBuffer : NULL;
+}
+
 #pragma mark - Stream loop
 
 static void sendTables(int fd, uint8_t *patCC, uint8_t *pmtCC) {
@@ -619,8 +655,6 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         // Declare everything early to avoid goto / jump init problems
         VTCompressionSessionRef enc = NULL;
         CVPixelBufferRef pb = NULL;
-        CGColorSpaceRef cs = NULL;
-        CGContextRef cg = NULL;
 
         uint8_t patCC = 0, pmtCC = 0, vidCC = 0;
         int64_t frame = 0;
@@ -633,6 +667,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         CFAbsoluteTime nextLicenseCheck = CFAbsoluteTimeGetCurrent() + 5.0;
         NSString *endReason = @"client_closed";
         int encoderRecoveryCount = 0;
+        int consecutiveSuccessfulFrames = 0;
         bool forceNextKeyframe = true;
 
         bool running = true;
@@ -641,18 +676,8 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         if (!enc) { running = false; endReason = @"encoder_create_failed"; }
 
         if (running) {
-             CVReturn cr = CVPixelBufferCreate(kCFAllocatorDefault,
-                                               profile->width,
-                                               profile->height,
-                                               kCVPixelFormatType_32BGRA,
-                                               NULL,
-                                               &pb);
-            if (cr != kCVReturnSuccess || !pb) running = false;
-        }
-
-        if (running) {
-            cs = CGColorSpaceCreateDeviceRGB();
-            if (!cs) running = false;
+            pb = createEncoderPixelBuffer(enc, profile);
+            if (!pb) { running = false; endReason = @"pixel_buffer_create_failed"; }
         }
 
         if (running && !profile->rawAnnexB) {
@@ -707,27 +732,19 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 CFAbsoluteTime frameStart = CFAbsoluteTimeGetCurrent();
                 uint64_t captureStartUs = zx_now_us();
-                CGImageRef img = SCCreateScreenShotCGImage();
-                if (!img) { running = false; endReason = @"capture_failed"; break; }
-
-                CVPixelBufferLockBaseAddress(pb, 0);
-
-                if (!cg) {
-                    cg = CGBitmapContextCreate(CVPixelBufferGetBaseAddress(pb),
-                                               profile->width,
-                                               profile->height,
-                                               8,
-                                               CVPixelBufferGetBytesPerRow(pb),
-                                               cs,
-                                               kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+                if (!SCCaptureScreenIntoPixelBuffer(pb)) {
+                    // Rebuild cached surfaces and the accelerator once before
+                    // ending the stream. The CoreGraphics fallback is already
+                    // attempted inside SCCaptureScreenIntoPixelBuffer().
+                    SCResetCapturePipeline();
+                    if (!SCCaptureScreenIntoPixelBuffer(pb)) {
+                        running = false;
+                        endReason = @"capture_pipeline_failed";
+                        break;
+                    }
+                    TLinkAdaptiveStreamingRecordRecovery(
+                        @"trollstore", profile->port, @"capture_pipeline_reset", YES);
                 }
-
-                if (cg) {
-                    CGContextDrawImage(cg, CGRectMake(0, 0, profile->width, profile->height), img);
-                }
-
-                CVPixelBufferUnlockBaseAddress(pb, 0);
-                CGImageRelease(img);
                 uint64_t captureDoneUs = zx_now_us();
 
                 FrameCtx *f = acquireFrameCtx();
@@ -762,6 +779,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 if (opts) CFRelease(opts);
 
                 if (st != noErr) {
+                    consecutiveSuccessfulFrames = 0;
                     releaseFrameCtx(f);
                     if (encoderRecoveryCount < 3) {
                         encoderRecoveryCount++;
@@ -780,6 +798,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 forceNextKeyframe = false;
 
                 if (dispatch_semaphore_wait(f->sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC))) != 0) {
+                    consecutiveSuccessfulFrames = 0;
                     bool frameReleased = false;
                     if (encoderRecoveryCount < 3) {
                         encoderRecoveryCount++;
@@ -870,6 +889,14 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     break;
                 }
 
+                consecutiveSuccessfulFrames++;
+                if (consecutiveSuccessfulFrames >= 300 && encoderRecoveryCount != 0) {
+                    encoderRecoveryCount = 0;
+                    consecutiveSuccessfulFrames = 0;
+                    TLinkAdaptiveStreamingRecordRecovery(
+                        @"trollstore", profile->port, @"encoder_recovery_budget_reset", YES);
+                }
+
                 frame++;
                 // Never exceed desiredFPS (thermal throttle).
                 if (currentFPS > desiredFPS) {
@@ -892,8 +919,6 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
             }
         }
 
-        if (cg) CGContextRelease(cg);
-        if (cs) CGColorSpaceRelease(cs);
         if (pb) CVPixelBufferRelease(pb);
 
         if (enc) {

@@ -49,6 +49,12 @@ adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6
 adaptiveStreamingDeviceValidated=0
 ```
 
+TrollStore H.264 capture now uses the additive Stream Capture Pipeline v2.
+Its IOSurface-pool/GPU-scale diagnostics are nested under task `60`
+`adaptive_streaming.capture_pipeline`; see
+`docs/stream-capture-pipeline-v2.md`. The adaptive-streaming v1 wire contract
+and existing ports remain unchanged.
+
 ## Test thiết bị
 
 ```powershell

@@ -6107,6 +6107,13 @@ static NSData *TLinkHandleHelloStatus(void)
         @"zoomDiagnostics": TLinkZoomDiagnosticsDictionary(),
         @"capture": @(YES),
         @"captureMode": @"detached_iosurface_bitmap",
+        @"streamCapturePipeline": @"iosurface_pool_gpu_scale_v2",
+        @"streamCapturePreferredBackend": @"iosurface_accelerator",
+        @"streamCaptureFallback": @"coregraphics_v1",
+        @"streamCaptureSourcePool": @2,
+        @"streamCaptureTarget": @"encoder_iosurface_pixel_buffer",
+        @"streamCaptureDiagnostics": @"task60_adaptive_streaming_capture_pipeline",
+        @"streamCaptureDeviceValidated": @(NO),
         @"screenshotAlbum": @(YES),
         @"screenshotAlbumMode": @"photos_framework_tlinkauto_album",
         @"h264": @(YES),
@@ -8700,6 +8707,14 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0"];
+        cap = [cap stringByAppendingString:@" streamCapturePipeline=iosurface_pool_gpu_scale_v2"
+                                               @" streamCapturePreferredBackend=iosurface_accelerator"
+                                               @" streamCaptureFallback=coregraphics_v1"
+                                               @" streamCaptureSourcePool=2"
+                                               @" streamCaptureTarget=encoder_iosurface_pixel_buffer"
+                                               @" streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline"
+                                               @" streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames"
+                                               @" streamCaptureDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];

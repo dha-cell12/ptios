@@ -54,6 +54,11 @@ TrollStore runtime.
   hysteresis, and performs bounded encoder/client recovery. Existing H264
   ports and ZXH2 framing are unchanged. Device promotion remains pending; see
   `docs/adaptive-streaming-self-healing-v1.md`.
+- Stream Capture Pipeline v2 reuses a two-entry full-resolution IOSurface pool
+  and GPU-scales into the IOSurface-backed VideoToolbox input buffer. The old
+  CoreGraphics copy remains an automatic fallback, while task `60` reports
+  backend counters and capture/scale timing. Device promotion remains pending;
+  see `docs/stream-capture-pipeline-v2.md`.
 - Screenshot album: task `29` action `2` saves to the `TLinkauto` Photos album; action `3` removes assets from that album only. Grant Photos permission from `StreamControl > Settings > Photo Access` first.
 - Image/color/frame: `21`, `23`, `28`, `47-49`, `66-70`.
 - OCR: task `91` uses true Tesseract static libs and `/var/mobile/Library/TLinkauto/tessdata/*.traineddata`.

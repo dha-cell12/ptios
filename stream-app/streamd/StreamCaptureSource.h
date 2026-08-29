@@ -2,6 +2,8 @@
 #define STREAM_CAPTURE_SOURCE_H
 
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreVideo/CoreVideo.h>
+#import <Foundation/Foundation.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -11,6 +13,21 @@ extern "C" {
 // CARenderServerRenderDisplay + IOSurface path proven by CaptureCore.
 // Caller owns the returned image and must CGImageRelease().
 CGImageRef SCCreateScreenShotCGImage(void);
+
+// Capture the current display into an encoder-sized BGRA pixel buffer.
+// The preferred path reuses a small full-resolution IOSurface pool and asks
+// IOSurfaceAccelerator to scale directly into the IOSurface backing `buffer`.
+// A CoreGraphics copy is retained as a fail-safe for devices where either the
+// accelerator or an IOSurface-backed CVPixelBuffer is unavailable.
+BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef buffer);
+
+// Runtime diagnostics are included in task 60 under
+// adaptive_streaming.capture_pipeline.
+NSDictionary *SCCapturePipelineStatus(void);
+
+// Release cached IOSurfaces/accelerator after a persistent capture failure.
+// The next capture lazily rebuilds the pipeline.
+void SCResetCapturePipeline(void);
 
 #ifdef __cplusplus
 }
