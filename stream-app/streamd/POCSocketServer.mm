@@ -4811,7 +4811,7 @@ static CGImageRef TLinkCreateCompactBGRAImageForVision(CGImageRef source, NSStri
                                                  8,
                                                  bytesPerRow,
                                                  colorSpace,
-                                                 kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst);
+                                                 kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
     CGColorSpaceRelease(colorSpace);
     if (!context) {
         if (error) *error = @"vision_compact_context_create_failed";
@@ -6216,7 +6216,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrVisionCPUOnly": @(YES),
         @"ocrVisionXXTCompat": @(YES),
         @"ocrVisionXXTCompatInput": @"cgimage_direct",
-        @"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_stride_width_x4",
+        @"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4",
         @"ocrVisionXXTCompatCompute": @"automatic",
         @"ocrVisionDebugLog": kTLinkVisionOCRDebugLogPath,
         @"ocrVisionFallback": @"none",
@@ -8807,7 +8807,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" visionOCRCPUOnly=1"
                                                @" visionOCRXXTCompat=1"
                                                @" visionOCRXXTCompatInput=cgimage_direct"
-                                               @" visionOCRXXTCompatPixelLayout=compact_bgra8888_stride_width_x4"
+                                               @" visionOCRXXTCompatPixelLayout=compact_bgra8888_premultiplied_first_stride_width_x4"
                                                @" visionOCRXXTCompatCompute=automatic"
                                                @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"

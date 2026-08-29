@@ -6,8 +6,9 @@ P2 adds the opt-in task `27` profile `xxt_compat`. It intentionally mirrors
 the Apple OCR path recovered from XXTouch's `libxxtouch.so`:
 
 - construct `VNRecognizeTextRequest` with plain `init`;
-- redraw the cropped image into compact BGRA8888 (`bytesPerRow = width * 4`)
-  and pass that `CGImage` directly to `VNImageRequestHandler`;
+- redraw the cropped image into compact BGRA8888 premultiplied-first
+  (`bytesPerRow = width * 4`, `bitmapInfo = 0x2002`) and pass that `CGImage`
+  directly to `VNImageRequestHandler`;
 - call `performRequests:error:` synchronously;
 - leave compute-device selection to Vision (no `usesCPUOnly`);
 - default to `en-US` when no language was supplied.
@@ -110,8 +111,8 @@ Task `273` returns the last 64 KiB of
 The debug log records both `source_image` and `request_setup`. A cropped
 CoreGraphics image may retain the full-screen stride. For example, the first
 device probe reported width `320` with `bpr=4992` and then crashed in Vision.
-The normalized `request_setup` entry must report `bpr=1280`; otherwise the
-compact BGRA conversion is not active.
+The normalized `request_setup` entry must report `bpr=1280 bitmapInfo=0x2002`;
+otherwise the XXTouch-compatible compact BGRA conversion is not active.
 
 For a successful Fast request, repeat it 20 times before trying Accurate. A
 promotion requires bounded execution, a successful task `97` after every

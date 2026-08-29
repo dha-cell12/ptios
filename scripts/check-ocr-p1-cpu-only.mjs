@@ -58,7 +58,7 @@ assert.match(server, /isEqualToString:@"worker_cpu"[\s\S]*?isEqualToString:@"xxt
 assert.match(server, /vision_profile_app_cpu[\s\S]*?return TLinkRunAppSideVisionOCR/);
 assert.match(server, /vision_profile_worker_cpu[\s\S]*?VNRecognizeTextRequest/);
 assert.match(server, /profile isEqualToString:@"xxt_compat"[\s\S]*?initWithCGImage:inputImage[\s\S]*?VNRecognizeTextRequest alloc\] init\]/);
-assert.match(server, /TLinkCreateCompactBGRAImageForVision[\s\S]*?width \* 4[\s\S]*?kCGBitmapByteOrder32Little \| kCGImageAlphaNoneSkipFirst/);
+assert.match(server, /TLinkCreateCompactBGRAImageForVision[\s\S]*?width \* 4[\s\S]*?kCGBitmapByteOrder32Little \| kCGImageAlphaPremultipliedFirst/);
 assert.match(server, /source_image[\s\S]*?TLinkCreateCompactBGRAImageForVision[\s\S]*?request_setup/);
 assert.match(server, /vision_xxt_compat_perform_requests[\s\S]*?performRequests:@\[request\] error:&visionErr/);
 assert.doesNotMatch(server.match(/if \(\[profile isEqualToString:@"xxt_compat"\]\)[\s\S]*?return TLinkSuccess/)[0], /TLinkConfigureVisionRequestCPUOnly/);
@@ -74,7 +74,7 @@ assert.match(server, /@"ocrVisionState": @"experimental"/);
 assert.match(server, /@"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_opt_in"/);
 assert.match(server, /@"ocrVisionCPUOnly": @\(YES\)/);
 assert.match(server, /@"ocrVisionXXTCompat": @\(YES\)/);
-assert.match(server, /@"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_stride_width_x4"/);
+assert.match(server, /@"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4"/);
 assert.match(app, /TLinkConfigureVisionRequestCPUOnly/);
 assert.match(app, /supportedComputeStageDevicesAndReturnError/);
 assert.match(app, /setComputeDevice:cpuDevice forComputeStage:stage/);
