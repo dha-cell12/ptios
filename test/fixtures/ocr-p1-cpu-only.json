@@ -27,6 +27,8 @@
     "visionOCRXXTCompatForegroundRequired": "1",
     "visionOCRAppWatchdogMs": "15000",
     "visionOCRAppBridgeProtocol": "2",
+    "visionOCRPixelBufferProbe": "bgra_420f_memory_iosurface_opengles_metal_v1",
+    "visionOCRGraphicsEntitlements": "iosurface_ioaccel_agx_v1",
     "visionOCRDefaultProfile": "app_cpu",
     "ocrDefaultEngine": "tesseract",
     "ocrEngineSelector": "none",

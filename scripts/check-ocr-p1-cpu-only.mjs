@@ -33,6 +33,7 @@ const [
   app,
   serverMakefile,
   appMakefile,
+  appEntitlements,
   collector,
   p1Doc,
   p2Doc,
@@ -44,6 +45,7 @@ const [
   read("stream-app/app/AppDelegate.mm"),
   read("stream-app/streamd/Makefile"),
   read("stream-app/app/Makefile"),
+  read("stream-app/app/entitlements.plist"),
   read("scripts/Collect-TLinkOCRBaseline.ps1"),
   read("docs/ocr-p1-cpu-only.md"),
   read("docs/ocr-p2-xxt-compat.md"),
@@ -76,6 +78,8 @@ assert.match(server, /@"ocrVisionXXTCompatHost": @"foreground_app_6011"/);
 assert.match(server, /@"ocrVisionXXTCompatForegroundRequired": @\(YES\)/);
 assert.match(server, /@"ocrVisionAppWatchdogMs": @15000/);
 assert.match(server, /@"ocrVisionAppBridgeProtocol": @2/);
+assert.match(server, /@"ocrVisionPixelBufferProbe": @"bgra_420f_memory_iosurface_opengles_metal_v1"/);
+assert.match(server, /@"ocrVisionGraphicsEntitlements": @"iosurface_ioaccel_agx_v1"/);
 assert.match(app, /TLinkConfigureVisionRequestCPUOnly/);
 assert.match(app, /supportedComputeStageDevicesAndReturnError/);
 assert.match(app, /setComputeDevice:cpuDevice forComputeStage:stage/);
@@ -88,11 +92,31 @@ assert.match(app, /app_ocr_busy previous_request_in_flight/);
 assert.match(app, /app_ocr_timeout timeout_ms=15000/);
 assert.match(app, /com\.tlinkauto\.streamcontrol\.vision-ocr/);
 assert.match(app, /host=foreground_app_6011/);
+assert.match(app, /TLinkProbeVisionPixelBuffer/);
+assert.match(app, /kCVPixelFormatType_420YpCbCr8BiPlanarFullRange/);
+assert.match(app, /phase:@"app_pixelbuffer_probe"/);
 
 assert.match(serverMakefile, /streamd_FRAMEWORKS = .* Vision CoreML /);
 assert.match(appMakefile, /StreamControl_FRAMEWORKS = .* Vision CoreML /);
+assert.match(appMakefile, /StreamControl_FRAMEWORKS = .* CoreVideo /);
 assert.match(server, /#import <CoreML\/CoreML\.h>/);
 assert.match(app, /#import <CoreML\/CoreML\.h>/);
+assert.match(app, /#import <CoreVideo\/CoreVideo\.h>/);
+
+for (const entitlement of [
+  "com.apple.QuartzCore.displayable-context",
+  "com.apple.private.IOSurface.protected-access",
+  "com.apple.security.exception.iokit-user-client-class",
+  "com.apple.security.iokit-user-client-class",
+  "IOSurfaceRootUserClient",
+  "IOSurfaceAcceleratorClient",
+  "IOAccelContext2",
+  "AGXCommandQueue",
+  "AGXDeviceUserClient",
+  "AGXGLContext",
+]) {
+  assert.ok(appEntitlements.includes(entitlement), `StreamControl OCR graphics entitlement missing ${entitlement}`);
+}
 
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
   assert.ok(server.includes(`${key}=${value}`), `task 97 is missing ${key}=${value}`);

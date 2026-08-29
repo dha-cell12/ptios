@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <Vision/Vision.h>
 #import <CoreML/CoreML.h>
+#import <CoreVideo/CoreVideo.h>
 #import <ImageIO/ImageIO.h>
 #import <UserNotifications/UserNotifications.h>
 #include <arpa/inet.h>
@@ -36,6 +37,29 @@ static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 static NSString *const kTLinkVisionCPUErrorDomain = @"com.tlinkauto.vision.cpu";
 static NSString *const kTLinkVisionOCRDebugLogPath = @"/var/mobile/Library/TLinkauto/runtime/vision-ocr-debug.log";
+
+static CVReturn TLinkProbeVisionPixelBuffer(size_t width,
+                                            size_t height,
+                                            OSType pixelFormat,
+                                            BOOL useIOSurface,
+                                            BOOL requireOpenGLES,
+                                            BOOL requireMetal)
+{
+    NSMutableDictionary *attributes = [NSMutableDictionary dictionary];
+    if (useIOSurface) attributes[(id)kCVPixelBufferIOSurfacePropertiesKey] = @{};
+    if (requireOpenGLES) attributes[(id)kCVPixelBufferOpenGLESCompatibilityKey] = @YES;
+    if (requireMetal) attributes[(id)kCVPixelBufferMetalCompatibilityKey] = @YES;
+
+    CVPixelBufferRef buffer = NULL;
+    CVReturn result = CVPixelBufferCreate(kCFAllocatorDefault,
+                                          width,
+                                          height,
+                                          pixelFormat,
+                                          attributes.count > 0 ? (__bridge CFDictionaryRef)attributes : NULL,
+                                          &buffer);
+    if (buffer) CVPixelBufferRelease(buffer);
+    return result;
+}
 
 static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **outError)
 {
@@ -655,6 +679,48 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
                                  (unsigned long)CGImageGetBitmapInfo(rgbImage),
                                  levelValue];
         [self appendVisionOCRDebugProfile:profile phase:@"app_request_setup" detail:imageDetail];
+
+        size_t probeWidth = CGImageGetWidth(rgbImage);
+        size_t probeHeight = CGImageGetHeight(rgbImage);
+        CVReturn bgraMemory = TLinkProbeVisionPixelBuffer(probeWidth,
+                                                          probeHeight,
+                                                          kCVPixelFormatType_32BGRA,
+                                                          NO,
+                                                          NO,
+                                                          NO);
+        CVReturn yuvMemory = TLinkProbeVisionPixelBuffer(probeWidth,
+                                                         probeHeight,
+                                                         kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                                         NO,
+                                                         NO,
+                                                         NO);
+        CVReturn yuvIOSurface = TLinkProbeVisionPixelBuffer(probeWidth,
+                                                            probeHeight,
+                                                            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                                            YES,
+                                                            NO,
+                                                            NO);
+        CVReturn yuvOpenGLES = TLinkProbeVisionPixelBuffer(probeWidth,
+                                                           probeHeight,
+                                                           kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                                           YES,
+                                                           YES,
+                                                           NO);
+        CVReturn yuvMetal = TLinkProbeVisionPixelBuffer(probeWidth,
+                                                        probeHeight,
+                                                        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                                        YES,
+                                                        NO,
+                                                        YES);
+        NSString *probeDetail = [NSString stringWithFormat:@"width=%zu height=%zu bgra_memory=%d 420f_memory=%d 420f_iosurface=%d 420f_opengles=%d 420f_metal=%d",
+                                 probeWidth,
+                                 probeHeight,
+                                 (int)bgraMemory,
+                                 (int)yuvMemory,
+                                 (int)yuvIOSurface,
+                                 (int)yuvOpenGLES,
+                                 (int)yuvMetal];
+        [self appendVisionOCRDebugProfile:profile phase:@"app_pixelbuffer_probe" detail:probeDetail];
         [self appendVisionOCRDebugProfile:profile phase:@"app_perform_begin" detail:imageDetail];
         CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
         BOOL ok = [self performTextRecognitionWithImage:rgbImage
@@ -688,6 +754,10 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
                                                elapsedMs,
                                                firstError,
                                                visionError.localizedDescription ?: @"unknown"]];
+            if ([profile isEqualToString:@"xxt_compat"]) {
+                return [NSString stringWithFormat:@"-1;;app_ocr_failed profile=xxt_compat error=%@\r\n",
+                        visionError.localizedDescription ?: firstError];
+            }
             return [NSString stringWithFormat:@"-1;;app_ocr_failed first=%@ retry=%@\r\n",
                     firstError,
                     visionError.localizedDescription ?: @"unknown"];

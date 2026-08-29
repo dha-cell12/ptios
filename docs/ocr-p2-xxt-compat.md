@@ -26,6 +26,14 @@ BGRA `0x2002`, uses a plain request with automatic compute selection, and runs
 it on a dedicated serial queue. Concurrent requests return `app_ocr_busy`; a
 15-second watchdog returns a bounded timeout.
 
+The 2026-08-29 21:17 device probe proved that the request reached an active
+mobile app (`uid=501`, `state=0`) with the correct compact layout, but Core
+Video returned `Could not create buffer with format '420f' (-6662)`. The next
+build therefore adds only the focused IOSurface/IOAccel/AGX user clients seen
+in the working XXTouch entitlement set. Before Vision, it probes BGRA and
+`420f` allocation in memory, IOSurface, OpenGLES-compatible, and
+Metal-compatible modes and records every `CVReturn` value.
+
 ## First Device Test
 
 Use a small region and Fast recognition for the first request after installing
@@ -118,6 +126,9 @@ without changing task `27`'s public wire format.
 | `app_ocr_requires_foreground` | Open StreamControl and keep it active during the probe. |
 | `app_ocr_timeout timeout_ms=15000` | Vision blocked; restart StreamControl before retrying. |
 | `app_ocr_busy` | A previous Vision operation is still running in the app queue. |
+| `app_pixelbuffer_probe` with every value `0` | Core Video allocation is available; continue interpreting the Vision phase. |
+| `420f_memory=-6662` | Basic YUV allocation failed before IOSurface/GPU compatibility is involved. |
+| `420f_memory=0` but `420f_iosurface`, `420f_opengles`, or `420f_metal` is nonzero | The failing boundary is the corresponding IOSurface/graphics compatibility path. |
 | No `app_request_setup` | The request did not reach the new app bridge or the installed binary is stale. |
 | Task `97` lacks `visionOCRXXTCompat=1` | The new `streamd` is not the process currently serving port `6000`; restart it from the app. |
 
