@@ -6113,7 +6113,14 @@ static NSData *TLinkHandleHelloStatus(void)
         @"streamCaptureSourcePool": @2,
         @"streamCaptureTarget": @"encoder_iosurface_pixel_buffer",
         @"streamCaptureDiagnostics": @"task60_adaptive_streaming_capture_pipeline",
-        @"streamCaptureDeviceValidated": @(NO),
+        @"streamCaptureBenchmark": @"task93_legacy_vs_accelerated_v2",
+        @"streamCaptureDeviceValidated": @(YES),
+        @"streamControlTask": @93,
+        @"streamControlSchema": @"stream_control_v2",
+        @"streamControlActions": @[@"force_keyframe", @"set_capture_mode", @"status"],
+        @"streamRTCPFeedback": @"pli_fir_to_task93_v1",
+        @"streamRTCHealthFeedback": @"task94_rtc_bridge_v1",
+        @"streamRTPTimestamp": @"zxh2_capture_start_delta_v1",
         @"screenshotAlbum": @(YES),
         @"screenshotAlbumMode": @"photos_framework_tlinkauto_album",
         @"h264": @(YES),
@@ -8307,7 +8314,7 @@ static const TLinkLicenseTaskPolicyEntry kTLinkLicenseTaskPolicy[] = {
     {66, "automation"}, {67, "automation"}, {68, "automation"},
     {69, "automation"}, {70, "automation"}, {71, "shell"},
     {72, "admin"}, {73, "script"}, {74, "admin"},
-    {90, "automation"}, {91, "automation"}, {94, "stream"}, {95, "automation"}, {98, "automation"},
+    {90, "automation"}, {91, "automation"}, {93, "stream"}, {94, "stream"}, {95, "automation"}, {98, "automation"},
 };
 
 static NSString *TLinkLicenseFeatureForTask(int taskType)
@@ -8660,6 +8667,14 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleTesseractOCRCompat(body);
     }
 
+    if (taskType == 93) {
+        NSString *controlError = nil;
+        NSDictionary *result = TLinkH264HandleStreamControl(body, &controlError);
+        if (controlError.length > 0) return TLinkError(controlError);
+        NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+        return json.length > 0 ? TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"") : TLinkError(@"stream_control_json_failed");
+    }
+
     if (taskType == 94) {
         NSString *feedbackError = nil;
         NSDictionary *accepted = TLinkAdaptiveStreamingSubmitFeedback(@"trollstore", body, &feedbackError);
@@ -8693,7 +8708,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=23"];
         cap = [cap stringByAppendingFormat:@" licenseBuildMode=%@", TLinkLicenseBuildMode()];
         cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,90"];
-        cap = [cap stringByReplacingOccurrencesOfString:@"90,91,96" withString:@"90,91,94,95,96"];
+        cap = [cap stringByReplacingOccurrencesOfString:@"90,91,96" withString:@"90,91,93,94,95,96"];
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
         cap = [cap stringByAppendingString:@" respring=privhelper_validated_springboard_signal"];
@@ -8713,8 +8728,15 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" streamCaptureSourcePool=2"
                                                @" streamCaptureTarget=encoder_iosurface_pixel_buffer"
                                                @" streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline"
+                                               @" streamCaptureBenchmark=task93_legacy_vs_accelerated_v2"
                                                @" streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames"
-                                               @" streamCaptureDeviceValidated=0"];
+                                               @" streamCaptureDeviceValidated=1"];
+        cap = [cap stringByAppendingString:@" streamControlTask=93"
+                                               @" streamControlSchema=stream_control_v2"
+                                               @" streamControlActions=force_keyframe,set_capture_mode,status"
+                                               @" streamRTCPFeedback=pli_fir_to_task93_v1"
+                                               @" streamRTCHealthFeedback=task94_rtc_bridge_v1"
+                                               @" streamRTPTimestamp=zxh2_capture_start_delta_v1"];
         cap = [cap stringByAppendingString:@" securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];

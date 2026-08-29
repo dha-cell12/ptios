@@ -57,7 +57,8 @@ static BOOL TLinkReadExactly(int fd, void *buffer, size_t length)
 - (instancetype)initWithBaseURL:(NSString *)baseURL
                            token:(NSString *)token
                         deviceId:(NSString *)deviceId
-                        streamId:(NSString *)streamId;
+                        streamId:(NSString *)streamId
+                         profile:(NSString *)profile;
 - (void)start;
 - (void)stop;
 @end
@@ -67,6 +68,7 @@ static BOOL TLinkReadExactly(int fd, void *buffer, size_t length)
     NSString *_token;
     NSString *_deviceId;
     NSString *_streamId;
+    NSString *_profile;
     NSURLSession *_session;
     NSURLSessionWebSocketTask *_task;
     dispatch_semaphore_t _sendSlots;
@@ -78,6 +80,7 @@ static BOOL TLinkReadExactly(int fd, void *buffer, size_t length)
                            token:(NSString *)token
                         deviceId:(NSString *)deviceId
                         streamId:(NSString *)streamId
+                         profile:(NSString *)profile
 {
     self = [super init];
     if (self) {
@@ -85,6 +88,7 @@ static BOOL TLinkReadExactly(int fd, void *buffer, size_t length)
         _token = [token copy];
         _deviceId = [deviceId copy];
         _streamId = [streamId copy];
+        _profile = [[profile ?: @"wan" lowercaseString] copy];
         _sendSlots = dispatch_semaphore_create(2);
         _socketFd = -1;
     }
@@ -155,7 +159,8 @@ didCompleteWithError:(NSError *)error
     struct sockaddr_in address;
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
-    address.sin_port = htons(7006);
+    uint16_t streamPort = [_profile isEqualToString:@"lan"] ? 7003 : 7006;
+    address.sin_port = htons(streamPort);
     inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
     if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
         close(fd);
@@ -442,12 +447,14 @@ didCompleteWithError:(NSError *)error
     }
     if ([type isEqualToString:@"video_start"]) {
         NSString *streamId = [message[@"stream_id"] isKindOfClass:[NSString class]] ? message[@"stream_id"] : @"";
+        NSString *profile = [message[@"profile"] isKindOfClass:[NSString class]] ? message[@"profile"] : @"wan";
         if (streamId.length == 0) return;
         [_videoPumps[streamId] stop];
         TLinkRemoteVideoPump *pump = [[TLinkRemoteVideoPump alloc] initWithBaseURL:_baseURL
                                                                             token:_token
                                                                          deviceId:_deviceId
-                                                                         streamId:streamId];
+                                                                         streamId:streamId
+                                                                          profile:profile];
         _videoPumps[streamId] = pump;
         [pump start];
         [self writeDiagnostics];

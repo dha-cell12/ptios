@@ -78,7 +78,7 @@ assert.match(trollServer, /TLinkLicenseFeatureAllowed\(@"automation"/);
 assert.match(trollServer, /ctx\.writeStream = NULL/);
 assert.match(trollServer, /taskType == 95/);
 assert.match(trollServer, /POCTaskTypeFromBuffer\(line\) == 95/);
-assert.match(trollServer, /90,91,94,95,96/);
+assert.match(trollServer, /90,91,93,94,95,96/);
 assert.match(rootTask, /@"event_channel": TLinkEventChannelStatus\(\)/);
 assert.match(trollServer, /@"event_channel": TLinkEventChannelStatus\(\)/);
 assert.match(runHistory, /TLinkEventChannelPublish\(runtime/);

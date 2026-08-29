@@ -34,7 +34,7 @@ foreach ($marker in @(
     "streamCaptureSourcePool=2",
     "streamCaptureTarget=encoder_iosurface_pixel_buffer",
     "streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline",
-    "streamCaptureDeviceValidated=0"
+    "streamCaptureDeviceValidated=1"
 )) {
     if ($capability -notlike "*$marker*") { throw "Task 97 missing '$marker'" }
 }

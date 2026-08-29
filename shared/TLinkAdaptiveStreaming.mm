@@ -142,6 +142,11 @@ NSDictionary *TLinkAdaptiveStreamingSubmitFeedback(NSString *runtime,
         return @{};
     }
     uint64_t now = TLinkAdaptiveNowMs();
+    NSString *source = [input[@"source"] isKindOfClass:[NSString class]] ? input[@"source"] : @"";
+    if (![source isEqualToString:@"rtc_bridge_v1"] &&
+        ![source isEqualToString:@"webtango_zxh2_v1"]) {
+        source = @"webtango_zxh2_v1";
+    }
     NSDictionary *feedback = @{
         @"schema": @"stream_feedback_v1", @"received_at_ms": @(now), @"port": @(port),
         @"fps": @(TLinkAdaptiveNumber(input[@"fps"], 0, 0, 120)),
@@ -150,7 +155,7 @@ NSDictionary *TLinkAdaptiveStreamingSubmitFeedback(NSString *runtime,
         @"dropped": @(TLinkAdaptiveNumber(input[@"dropped"], 0, 0, 1000000000)),
         @"total_approx_ms": @(TLinkAdaptiveNumber(input[@"total_approx_ms"], 0, 0, 60000)),
         @"stalled": @([input[@"stalled"] boolValue]),
-        @"source": @"webtango_zxh2_v1",
+        @"source": source,
     };
     @synchronized (TLinkAdaptiveProcessLock()) {
         int fd = TLinkAdaptiveAcquireLock();

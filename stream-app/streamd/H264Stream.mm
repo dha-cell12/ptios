@@ -43,6 +43,8 @@ typedef struct {
     bool rawAnnexB;
 } ZXH264Profile;
 
+static NSDictionary *zx_rtcControlStatus(void);
+
 static NSString *zx_profileName(const ZXH264Profile *profile) {
     switch (profile->port) {
         case 7001: return @"fast"; case 7002: return @"eco"; case 7003: return @"raw";
@@ -54,6 +56,7 @@ static NSString *zx_profileName(const ZXH264Profile *profile) {
 NSDictionary *TLinkH264AdaptiveStreamingStatus(void) {
     NSMutableDictionary *status = [TLinkAdaptiveStreamingStatus(@"trollstore") mutableCopy];
     status[@"capture_pipeline"] = SCCapturePipelineStatus();
+    status[@"rtc_control"] = zx_rtcControlStatus();
     return status;
 }
 
@@ -180,6 +183,92 @@ static const uint16_t kTSProgramNumber = 1;
 
 // only one viewer
 static _Atomic int gActiveClientFd = -1;
+static _Atomic uint32_t gForceKeyframeMask = 0;
+static _Atomic uint64_t gForceKeyframeRequestCount = 0;
+static _Atomic uint64_t gForceKeyframeAppliedCount = 0;
+static os_unfair_lock gRTCControlLock = OS_UNFAIR_LOCK_INIT;
+static int gLastForceKeyframePort = 0;
+static NSString *gLastForceKeyframeSource = @"none";
+static uint64_t gLastForceKeyframeAtMs = 0;
+
+static uint32_t zx_portMask(int port) {
+    if (port < 7001 || port > 7006) return 0;
+    return (uint32_t)1u << (uint32_t)(port - 7001);
+}
+
+static void zx_requestKeyframe(int port, NSString *source) {
+    uint32_t mask = zx_portMask(port);
+    if (mask == 0) return;
+    atomic_fetch_or(&gForceKeyframeMask, mask);
+    atomic_fetch_add(&gForceKeyframeRequestCount, 1);
+    os_unfair_lock_lock(&gRTCControlLock);
+    gLastForceKeyframePort = port;
+    gLastForceKeyframeSource = [source.length > 0 ? source : @"unknown" copy];
+    gLastForceKeyframeAtMs = (uint64_t)(NSDate.date.timeIntervalSince1970 * 1000.0);
+    os_unfair_lock_unlock(&gRTCControlLock);
+}
+
+static NSDictionary *zx_rtcControlStatus(void) {
+    os_unfair_lock_lock(&gRTCControlLock);
+    NSDictionary *status = @{
+        @"schema": @"stream_control_v2",
+        @"force_keyframe_requests": @(atomic_load(&gForceKeyframeRequestCount)),
+        @"force_keyframe_applied": @(atomic_load(&gForceKeyframeAppliedCount)),
+        @"pending_port_mask": @(atomic_load(&gForceKeyframeMask)),
+        @"last_force_keyframe_port": @(gLastForceKeyframePort),
+        @"last_force_keyframe_source": gLastForceKeyframeSource ?: @"none",
+        @"last_force_keyframe_at_ms": @(gLastForceKeyframeAtMs),
+    };
+    os_unfair_lock_unlock(&gRTCControlLock);
+    return status;
+}
+
+NSDictionary *TLinkH264HandleStreamControl(NSString *base64Body, NSString **error) {
+    if (base64Body.length == 0 || base64Body.length > 32768) {
+        if (error) *error = @"stream_control_invalid";
+        return @{};
+    }
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:base64Body options:0];
+    NSDictionary *input = data.length <= 16384
+        ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]
+        : nil;
+    if (![input isKindOfClass:[NSDictionary class]] ||
+        ![input[@"schema"] isEqualToString:@"stream_control_v2"]) {
+        if (error) *error = @"stream_control_schema_invalid";
+        return @{};
+    }
+    NSString *action = [input[@"action"] isKindOfClass:[NSString class]]
+        ? [input[@"action"] lowercaseString]
+        : @"";
+    if ([action isEqualToString:@"force_keyframe"]) {
+        NSInteger port = [input[@"port"] integerValue];
+        if (port < 7001 || port > 7006) {
+            if (error) *error = @"stream_control_port_invalid";
+            return @{};
+        }
+        NSString *source = [input[@"source"] isKindOfClass:[NSString class]]
+            ? input[@"source"]
+            : @"rtc_bridge";
+        zx_requestKeyframe((int)port, [source substringToIndex:MIN(source.length, 64)]);
+    } else if ([action isEqualToString:@"set_capture_mode"]) {
+        NSString *mode = [input[@"mode"] isKindOfClass:[NSString class]] ? input[@"mode"] : @"";
+        if (!SCSetCapturePipelineMode(mode, [input[@"reset_metrics"] boolValue])) {
+            if (error) *error = @"stream_capture_mode_invalid";
+            return @{};
+        }
+    } else if (![action isEqualToString:@"status"]) {
+        if (error) *error = @"stream_control_action_invalid";
+        return @{};
+    }
+
+    return @{
+        @"schema": @"stream_control_v2",
+        @"state": @"ok",
+        @"action": action,
+        @"capture_pipeline": SCCapturePipelineStatus(),
+        @"rtc_control": zx_rtcControlStatus(),
+    };
+}
 
 #pragma mark - Utils
 
@@ -760,6 +849,12 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 // Force keyframe on first frame
                 CFMutableDictionaryRef opts = NULL;
+                uint32_t portMask = zx_portMask(profile->port);
+                uint32_t requestedMask = atomic_fetch_and(&gForceKeyframeMask, ~portMask);
+                if ((requestedMask & portMask) != 0) {
+                    forceNextKeyframe = true;
+                    atomic_fetch_add(&gForceKeyframeAppliedCount, 1);
+                }
                 if (frame == 0 || forceNextKeyframe) {
                     opts = CFDictionaryCreateMutable(kCFAllocatorDefault, 1,
                                                      &kCFTypeDictionaryKeyCallBacks,

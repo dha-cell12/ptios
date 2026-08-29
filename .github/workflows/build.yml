@@ -46,6 +46,7 @@ jobs:
           node scripts/check-event-channel-v1.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
+          node scripts/check-stream-rtc-control-v2.mjs
           node scripts/check-secure-pairing-p0.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs

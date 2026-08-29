@@ -25,6 +25,12 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef buffer);
 // adaptive_streaming.capture_pipeline.
 NSDictionary *SCCapturePipelineStatus(void);
 
+// Runtime A/B control used by licensed task 93. Supported values are
+// `auto`, `accelerated`, and `legacy`. Auto and accelerated both prefer the
+// IOSurface accelerator and retain the compatibility fallback; legacy forces
+// the historical CoreGraphics copy path for an apples-to-apples benchmark.
+BOOL SCSetCapturePipelineMode(NSString *mode, BOOL resetMetrics);
+
 // Release cached IOSurfaces/accelerator after a persistent capture failure.
 // The next capture lazily rebuilds the pipeline.
 void SCResetCapturePipeline(void);

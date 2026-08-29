@@ -11,6 +11,9 @@
 #import <math.h>
 #import <dlfcn.h>
 
+#include <algorithm>
+#include <string.h>
+
 typedef struct __IOSurface *IOSurfaceRef;
 typedef struct __IOSurfaceAccelerator *IOSurfaceAcceleratorRef;
 
@@ -45,14 +48,22 @@ static SCIOSurfaceAcceleratorCreateFn sSCAcceleratorCreate = NULL;
 static SCIOSurfaceAcceleratorTransferSurfaceFn sSCAcceleratorTransfer = NULL;
 static NSString *sSCActiveBackend = @"not_started";
 static NSString *sSCLastResult = @"not_started";
+static NSString *sSCRequestedMode = @"auto";
 static uint64_t sSCCaptureCount = 0;
 static uint64_t sSCAcceleratedCount = 0;
 static uint64_t sSCFallbackCount = 0;
+static uint64_t sSCLegacyCount = 0;
 static uint64_t sSCFailureCount = 0;
 static uint64_t sSCLastCaptureUs = 0;
 static uint64_t sSCLastScaleUs = 0;
 static uint64_t sSCLastTotalUs = 0;
 static int sSCLastTransferResult = 0;
+static const NSUInteger kSCMetricWindowSize = 256;
+static uint64_t sSCCaptureSamples[kSCMetricWindowSize] = {0};
+static uint64_t sSCScaleSamples[kSCMetricWindowSize] = {0};
+static uint64_t sSCTotalSamples[kSCMetricWindowSize] = {0};
+static NSUInteger sSCMetricSampleCount = 0;
+static NSUInteger sSCMetricSampleIndex = 0;
 
 static void SCResolveSurfaceAcceleratorSymbols(void)
 {
@@ -84,6 +95,56 @@ static uint64_t SCMonotonicMicroseconds(void)
     uint64_t ticks = mach_continuous_time();
     __uint128_t nanos = (__uint128_t)ticks * timebase.numer / timebase.denom;
     return (uint64_t)(nanos / 1000);
+}
+
+static void SCResetMetricsLocked(void)
+{
+    sSCCaptureCount = 0;
+    sSCAcceleratedCount = 0;
+    sSCFallbackCount = 0;
+    sSCLegacyCount = 0;
+    sSCFailureCount = 0;
+    sSCLastCaptureUs = 0;
+    sSCLastScaleUs = 0;
+    sSCLastTotalUs = 0;
+    sSCLastTransferResult = 0;
+    memset(sSCCaptureSamples, 0, sizeof(sSCCaptureSamples));
+    memset(sSCScaleSamples, 0, sizeof(sSCScaleSamples));
+    memset(sSCTotalSamples, 0, sizeof(sSCTotalSamples));
+    sSCMetricSampleCount = 0;
+    sSCMetricSampleIndex = 0;
+}
+
+static void SCRecordMetricsLocked(uint64_t captureUs, uint64_t scaleUs, uint64_t totalUs)
+{
+    sSCCaptureSamples[sSCMetricSampleIndex] = captureUs;
+    sSCScaleSamples[sSCMetricSampleIndex] = scaleUs;
+    sSCTotalSamples[sSCMetricSampleIndex] = totalUs;
+    sSCMetricSampleIndex = (sSCMetricSampleIndex + 1) % kSCMetricWindowSize;
+    if (sSCMetricSampleCount < kSCMetricWindowSize) sSCMetricSampleCount++;
+}
+
+static NSDictionary *SCMetricSummaryLocked(const uint64_t *values)
+{
+    if (sSCMetricSampleCount == 0) {
+        return @{ @"count": @0, @"average_us": @0, @"p50_us": @0, @"p95_us": @0, @"max_us": @0 };
+    }
+    uint64_t sorted[kSCMetricWindowSize] = {0};
+    __uint128_t total = 0;
+    for (NSUInteger index = 0; index < sSCMetricSampleCount; index++) {
+        sorted[index] = values[index];
+        total += values[index];
+    }
+    std::sort(sorted, sorted + sSCMetricSampleCount);
+    NSUInteger p50Index = (sSCMetricSampleCount - 1) * 50 / 100;
+    NSUInteger p95Index = (sSCMetricSampleCount - 1) * 95 / 100;
+    return @{
+        @"count": @(sSCMetricSampleCount),
+        @"average_us": @((uint64_t)(total / sSCMetricSampleCount)),
+        @"p50_us": @(sorted[p50Index]),
+        @"p95_us": @(sorted[p95Index]),
+        @"max_us": @(sorted[sSCMetricSampleCount - 1]),
+    };
 }
 
 static int SCRoundUp(int value, int multiple)
@@ -181,9 +242,8 @@ static BOOL SCEnsureSurfaceAcceleratorLocked(void)
     return YES;
 }
 
-static BOOL SCCopySurfaceWithCoreGraphics(IOSurfaceRef source, CVPixelBufferRef target)
+static BOOL SCCopyCGImageWithCoreGraphics(CGImageRef image, CVPixelBufferRef target)
 {
-    CGImageRef image = UICreateCGImageFromIOSurface(source);
     if (!image) return NO;
 
     BOOL succeeded = NO;
@@ -210,6 +270,14 @@ static BOOL SCCopySurfaceWithCoreGraphics(IOSurfaceRef source, CVPixelBufferRef 
         if (colorSpace) CGColorSpaceRelease(colorSpace);
         CVPixelBufferUnlockBaseAddress(target, 0);
     }
+    return succeeded;
+}
+
+static BOOL SCCopySurfaceWithCoreGraphics(IOSurfaceRef source, CVPixelBufferRef target)
+{
+    CGImageRef image = UICreateCGImageFromIOSurface(source);
+    if (!image) return NO;
+    BOOL succeeded = SCCopyCGImageWithCoreGraphics(image, target);
     CGImageRelease(image);
     return succeeded;
 }
@@ -220,6 +288,31 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
 
     uint64_t totalStartedUs = SCMonotonicMicroseconds();
     os_unfair_lock_lock(&sSCCaptureLock);
+
+    BOOL forceLegacy = [sSCRequestedMode isEqualToString:@"legacy"];
+    if (forceLegacy) {
+        uint64_t captureStartedUs = SCMonotonicMicroseconds();
+        CGImageRef image = SCCreateScreenShotCGImage();
+        sSCLastCaptureUs = SCMonotonicMicroseconds() - captureStartedUs;
+        uint64_t scaleStartedUs = SCMonotonicMicroseconds();
+        BOOL succeeded = image && SCCopyCGImageWithCoreGraphics(image, target);
+        sSCLastScaleUs = SCMonotonicMicroseconds() - scaleStartedUs;
+        if (image) CGImageRelease(image);
+        sSCCaptureCount++;
+        if (succeeded) {
+            sSCLegacyCount++;
+            sSCActiveBackend = @"coregraphics_legacy_per_frame_surface";
+            sSCLastResult = @"legacy";
+        } else {
+            sSCFailureCount++;
+            sSCActiveBackend = @"failed";
+            sSCLastResult = @"legacy_capture_copy_failed";
+        }
+        sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
+        SCRecordMetricsLocked(sSCLastCaptureUs, sSCLastScaleUs, sSCLastTotalUs);
+        os_unfair_lock_unlock(&sSCCaptureLock);
+        return succeeded;
+    }
 
     int sourceWidth = 0;
     int sourceHeight = 0;
@@ -278,6 +371,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         sSCLastResult = @"capture_copy_failed";
     }
     sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
+    SCRecordMetricsLocked(sSCLastCaptureUs, sSCLastScaleUs, sSCLastTotalUs);
     os_unfair_lock_unlock(&sSCCaptureLock);
     return succeeded;
 }
@@ -285,8 +379,12 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
 NSDictionary *SCCapturePipelineStatus(void)
 {
     os_unfair_lock_lock(&sSCCaptureLock);
+    NSDictionary *captureMetrics = SCMetricSummaryLocked(sSCCaptureSamples);
+    NSDictionary *scaleMetrics = SCMetricSummaryLocked(sSCScaleSamples);
+    NSDictionary *totalMetrics = SCMetricSummaryLocked(sSCTotalSamples);
     NSDictionary *status = @{
         @"schema": @"capture_pipeline_v2",
+        @"requested_mode": sSCRequestedMode ?: @"auto",
         @"preferred_backend": @"iosurface_accelerator",
         @"active_backend": sSCActiveBackend ?: @"unknown",
         @"fallback_backend": @"coregraphics",
@@ -296,6 +394,7 @@ NSDictionary *SCCapturePipelineStatus(void)
         @"capture_count": @(sSCCaptureCount),
         @"accelerated_count": @(sSCAcceleratedCount),
         @"fallback_count": @(sSCFallbackCount),
+        @"legacy_count": @(sSCLegacyCount),
         @"failure_count": @(sSCFailureCount),
         @"last_capture_us": @(sSCLastCaptureUs),
         @"last_scale_us": @(sSCLastScaleUs),
@@ -303,9 +402,30 @@ NSDictionary *SCCapturePipelineStatus(void)
         @"last_transfer_result": @(sSCLastTransferResult),
         @"accelerator_symbols_available": @(sSCAcceleratorCreate != NULL && sSCAcceleratorTransfer != NULL),
         @"last_result": sSCLastResult ?: @"unknown",
+        @"capture_metrics": captureMetrics,
+        @"scale_metrics": scaleMetrics,
+        @"total_metrics": totalMetrics,
     };
     os_unfair_lock_unlock(&sSCCaptureLock);
     return status;
+}
+
+BOOL SCSetCapturePipelineMode(NSString *mode, BOOL resetMetrics)
+{
+    NSString *normalized = [[mode ?: @"" lowercaseString]
+        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (![normalized isEqualToString:@"auto"] &&
+        ![normalized isEqualToString:@"accelerated"] &&
+        ![normalized isEqualToString:@"legacy"]) {
+        return NO;
+    }
+    os_unfair_lock_lock(&sSCCaptureLock);
+    sSCRequestedMode = [normalized copy];
+    sSCActiveBackend = @"mode_changed";
+    sSCLastResult = [@"mode_" stringByAppendingString:normalized];
+    if (resetMetrics) SCResetMetricsLocked();
+    os_unfair_lock_unlock(&sSCCaptureLock);
+    return YES;
 }
 
 void SCResetCapturePipeline(void)

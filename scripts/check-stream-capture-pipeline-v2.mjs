@@ -20,6 +20,7 @@ const [header, capture, h264, server, makefile, doc, deviceTest, buildWorkflow, 
 assert.match(header, /SCCaptureScreenIntoPixelBuffer/);
 assert.match(header, /SCCapturePipelineStatus/);
 assert.match(header, /SCResetCapturePipeline/);
+assert.match(header, /SCSetCapturePipelineMode/);
 
 assert.match(capture, /kSCCaptureSurfacePoolSize = 2/);
 assert.match(capture, /IOSurfaceAcceleratorCreate/);
@@ -30,6 +31,8 @@ assert.match(capture, /@"capture_pipeline_v2"/);
 assert.match(capture, /@"accelerated_count"/);
 assert.match(capture, /@"fallback_count"/);
 assert.match(capture, /@"last_total_us"/);
+assert.match(capture, /coregraphics_legacy_per_frame_surface/);
+assert.match(capture, /@"total_metrics"/);
 
 assert.match(h264, /kCVPixelBufferIOSurfacePropertiesKey/);
 assert.match(h264, /VTCompressionSessionGetPixelBufferPool/);
@@ -48,8 +51,9 @@ for (const marker of [
   "streamCaptureSourcePool=2",
   "streamCaptureTarget=encoder_iosurface_pixel_buffer",
   "streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline",
+  "streamCaptureBenchmark=task93_legacy_vs_accelerated_v2",
   "streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames",
-  "streamCaptureDeviceValidated=0",
+  "streamCaptureDeviceValidated=1",
 ]) {
   assert.ok(server.includes(marker), `task 97 missing ${marker}`);
   assert.ok(doc.includes(marker), `documentation missing ${marker}`);

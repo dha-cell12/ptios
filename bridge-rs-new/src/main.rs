@@ -4,9 +4,12 @@ use std::{
     collections::HashMap,
     env,
     future::IntoFuture,
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use auto_launch::AutoLaunchBuilder;
@@ -20,10 +23,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes as MediaBytes;
 use futures_util::{SinkExt, StreamExt};
-use http::{header, HeaderValue, Method, StatusCode};
 use http::HeaderMap;
+use http::{header, HeaderValue, Method, StatusCode};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -31,7 +35,10 @@ use tao::event_loop::EventLoopBuilder;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{tcp::OwnedReadHalf, tcp::OwnedWriteHalf, TcpStream},
-    sync::{mpsc::{channel, Sender}, oneshot, Mutex},
+    sync::{
+        mpsc::{channel, Sender},
+        oneshot, Mutex,
+    },
 };
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
@@ -48,25 +55,32 @@ mod remote_ios;
 mod workspace;
 
 use ios_lan_scanner::IosLanScanner;
-use ios_provider::{HelloStatusPayload, IosDevice, IosDeviceInfo, IosProvider, ScriptStatus, TLinkauto};
+use ios_provider::{
+    HelloStatusPayload, IosDevice, IosDeviceInfo, IosProvider, ScriptStatus, TLinkauto,
+};
 use registry::DeviceRegistry;
 use remote_ios::{RemoteControlHello, RemoteControlInbound, RemoteIosHub, RemoteIosSession};
 use workspace::{FileQuery, Workspace, WriteFileRequest};
 
 use webrtc::{
-    api::{interceptor_registry::register_default_interceptors, media_engine::{MediaEngine, MIME_TYPE_H264}, APIBuilder},
+    api::{
+        interceptor_registry::register_default_interceptors,
+        media_engine::{MediaEngine, MIME_TYPE_H264},
+        APIBuilder,
+    },
     ice_transport::{
-        ice_connection_state::RTCIceConnectionState,
-        ice_credential_type::RTCIceCredentialType,
+        ice_connection_state::RTCIceConnectionState, ice_credential_type::RTCIceCredentialType,
         ice_server::RTCIceServer,
     },
     interceptor::registry::Registry,
     media::Sample,
     peer_connection::{
-        configuration::RTCConfiguration,
+        configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
         policy::ice_transport_policy::RTCIceTransportPolicy,
-        peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription,
+    },
+    rtcp::payload_feedbacks::{
+        full_intra_request::FullIntraRequest, picture_loss_indication::PictureLossIndication,
     },
     rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
     track::track_local::{track_local_static_sample::TrackLocalStaticSample, TrackLocal},
@@ -156,7 +170,10 @@ impl TLinkautoControlHub {
         let (command_tx, command_rx) = channel::<TLinkautoCommand>(128);
         let (touch_tx, touch_rx) = channel::<Vec<u8>>(128);
         tokio::spawn(tlinkauto_control_worker(ip, command_rx, touch_rx));
-        Arc::new(Self { command_tx, touch_tx })
+        Arc::new(Self {
+            command_tx,
+            touch_tx,
+        })
     }
 
     async fn send_touch(&self, bytes: Vec<u8>) -> Result<(), ()> {
@@ -165,7 +182,10 @@ impl TLinkautoControlHub {
 
     async fn send_request(&self, bytes: Vec<u8>) -> Result<Vec<u8>, ()> {
         let (response_tx, response_rx) = oneshot::channel();
-        self.command_tx.send(TLinkautoCommand { bytes, response_tx }).await.map_err(|_| ())?;
+        self.command_tx
+            .send(TLinkautoCommand { bytes, response_tx })
+            .await
+            .map_err(|_| ())?;
         response_rx.await.map_err(|_| ())?
     }
 }
@@ -189,6 +209,162 @@ struct IosRtcOfferResponse {
 enum IosRtcSource {
     Lan { ip: String },
     Remote { session: Arc<RemoteIosSession> },
+}
+
+#[derive(Clone)]
+enum RtcControlTarget {
+    Lan { ip: String },
+    Remote { session: Arc<RemoteIosSession> },
+}
+
+impl From<&IosRtcSource> for RtcControlTarget {
+    fn from(source: &IosRtcSource) -> Self {
+        match source {
+            IosRtcSource::Lan { ip } => Self::Lan { ip: ip.clone() },
+            IosRtcSource::Remote { session } => Self::Remote {
+                session: Arc::clone(session),
+            },
+        }
+    }
+}
+
+#[derive(Default)]
+struct RtcBridgeMetrics {
+    frames: AtomicU64,
+    bytes: AtomicU64,
+    source_timestamp_fallbacks: AtomicU64,
+    last_device_pipeline_us: AtomicU64,
+    last_frame_at_ms: AtomicU64,
+    pli_requests: AtomicU64,
+    fir_requests: AtomicU64,
+}
+
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+async fn send_lan_tlink_task(ip: &str, line: &[u8]) -> Result<Vec<u8>, ()> {
+    let address = format!("{ip}:6000");
+    let mut stream = tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(address))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+    let _ = stream.set_nodelay(true);
+    tokio::time::timeout(Duration::from_secs(2), stream.write_all(line))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+    let mut response = Vec::with_capacity(256);
+    let mut byte = [0u8; 1];
+    loop {
+        let count = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte))
+            .await
+            .map_err(|_| ())?
+            .map_err(|_| ())?;
+        if count == 0 {
+            return Err(());
+        }
+        response.push(byte[0]);
+        if byte[0] == b'\n' {
+            return Ok(response);
+        }
+        if response.len() > 64 * 1024 {
+            return Err(());
+        }
+    }
+}
+
+async fn send_rtc_task(target: &RtcControlTarget, line: Vec<u8>) -> Result<Vec<u8>, ()> {
+    match target {
+        RtcControlTarget::Lan { ip } => send_lan_tlink_task(ip, &line).await,
+        RtcControlTarget::Remote { session } => session.send_request(line).await,
+    }
+}
+
+fn task_line(task: u32, value: &serde_json::Value) -> Vec<u8> {
+    let encoded = general_purpose::STANDARD.encode(serde_json::to_vec(value).unwrap_or_default());
+    format!("{task}{encoded}\r\n").into_bytes()
+}
+
+async fn request_source_keyframe(target: &RtcControlTarget, port: u16, reason: &str) {
+    let request = serde_json::json!({
+        "schema": "stream_control_v2",
+        "action": "force_keyframe",
+        "port": port,
+        "source": reason,
+    });
+    let _ = send_rtc_task(target, task_line(93, &request)).await;
+}
+
+#[cfg(test)]
+fn rtcp_keyframe_requests(packet: &[u8]) -> (u64, u64) {
+    let mut offset = 0usize;
+    let mut pli = 0u64;
+    let mut fir = 0u64;
+    while offset + 4 <= packet.len() {
+        let version = packet[offset] >> 6;
+        let fmt = packet[offset] & 0x1f;
+        let packet_type = packet[offset + 1];
+        let words = u16::from_be_bytes([packet[offset + 2], packet[offset + 3]]) as usize + 1;
+        let packet_len = words.saturating_mul(4);
+        if version != 2 || packet_len < 4 || offset + packet_len > packet.len() {
+            break;
+        }
+        if packet_type == 206 && fmt == 1 {
+            pli += 1;
+        }
+        if packet_type == 206 && fmt == 4 {
+            fir += 1;
+        }
+        offset += packet_len;
+    }
+    (pli, fir)
+}
+
+async fn rtc_feedback_loop(
+    target: RtcControlTarget,
+    metrics: Arc<RtcBridgeMetrics>,
+    cancel: CancellationToken,
+    port: u16,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    let mut previous_frames = 0u64;
+    let mut previous_bytes = 0u64;
+    let mut previous_timestamp_fallbacks = 0u64;
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = interval.tick() => {
+                let frames = metrics.frames.load(Ordering::Relaxed);
+                let bytes = metrics.bytes.load(Ordering::Relaxed);
+                let frame_delta = frames.saturating_sub(previous_frames);
+                let byte_delta = bytes.saturating_sub(previous_bytes);
+                let timestamp_fallbacks = metrics.source_timestamp_fallbacks.load(Ordering::Relaxed);
+                let timestamp_fallback_delta = timestamp_fallbacks.saturating_sub(previous_timestamp_fallbacks);
+                previous_frames = frames;
+                previous_bytes = bytes;
+                previous_timestamp_fallbacks = timestamp_fallbacks;
+                let last_frame_at = metrics.last_frame_at_ms.load(Ordering::Relaxed);
+                let stalled = frames > 0 && unix_now_ms().saturating_sub(last_frame_at) >= 3000;
+                let feedback = serde_json::json!({
+                    "schema": "stream_feedback_v1",
+                    "source": "rtc_bridge_v1",
+                    "port": port,
+                    "fps": frame_delta,
+                    "kbps": byte_delta.saturating_mul(8) / 1000,
+                    "decode_queue": 0,
+                    "dropped": timestamp_fallback_delta,
+                    "total_approx_ms": metrics.last_device_pipeline_us.load(Ordering::Relaxed) as f64 / 1000.0,
+                    "stalled": stalled,
+                });
+                let _ = send_rtc_task(&target, task_line(94, &feedback)).await;
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -278,9 +454,18 @@ struct RtcIceService {
 
 fn with_cors_headers(mut response: Response) -> Response {
     let headers = response.headers_mut();
-    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET,POST,OPTIONS"));
-    headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("*"));
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET,POST,OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
     response
 }
 
@@ -298,7 +483,9 @@ impl RtcIceService {
             .and_then(|v| v.parse().ok())
             .unwrap_or(300);
         let fallback_stun_urls = env::var("RTC_STUN_URLS")
-            .unwrap_or_else(|_| "stun:stun.cloudflare.com:3478,stun:stun.cloudflare.com:53".to_string())
+            .unwrap_or_else(|_| {
+                "stun:stun.cloudflare.com:3478,stun:stun.cloudflare.com:53".to_string()
+            })
             .split(',')
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -461,28 +648,48 @@ async fn list_workspace_files(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<impl IntoResponse, Response> {
-    state.workspace.list(query).await.map(Json).map_err(|error| error.into_response())
+    state
+        .workspace
+        .list(query)
+        .await
+        .map(Json)
+        .map_err(|error| error.into_response())
 }
 
 async fn read_workspace_file(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<impl IntoResponse, Response> {
-    state.workspace.read_file(query).await.map(Json).map_err(|error| error.into_response())
+    state
+        .workspace
+        .read_file(query)
+        .await
+        .map(Json)
+        .map_err(|error| error.into_response())
 }
 
 async fn write_workspace_file(
     State(state): State<AppState>,
     Json(request): Json<WriteFileRequest>,
 ) -> Result<impl IntoResponse, Response> {
-    state.workspace.write_file(request).await.map(Json).map_err(|error| error.into_response())
+    state
+        .workspace
+        .write_file(request)
+        .await
+        .map(Json)
+        .map_err(|error| error.into_response())
 }
 
 async fn delete_workspace_file(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<impl IntoResponse, Response> {
-    state.workspace.delete_path(query).await.map(Json).map_err(|error| error.into_response())
+    state
+        .workspace
+        .delete_path(query)
+        .await
+        .map(Json)
+        .map_err(|error| error.into_response())
 }
 
 async fn ios_stream_handler(
@@ -490,11 +697,9 @@ async fn ios_stream_handler(
     Path(id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, Response> {
-    let device = state
-        .registry
-        .get_ios_device(&id)
-        .await
-        .ok_or_else(|| with_cors_headers((StatusCode::NOT_FOUND, "device not found").into_response()))?;
+    let device = state.registry.get_ios_device(&id).await.ok_or_else(|| {
+        with_cors_headers((StatusCode::NOT_FOUND, "device not found").into_response())
+    })?;
 
     Ok(ws.on_upgrade(move |socket| handle_ios_stream(socket, device.ip, 7001)))
 }
@@ -562,14 +767,16 @@ async fn ios_rtc_offer_handler(
         device.transport, device.ip
     );
     let source = if device.transport == "remote_wss" {
-        let session = state
-            .remote_ios
-            .get(&id)
-            .await
-            .ok_or_else(|| with_cors_headers((StatusCode::BAD_GATEWAY, "remote device session unavailable").into_response()))?;
+        let session = state.remote_ios.get(&id).await.ok_or_else(|| {
+            with_cors_headers(
+                (StatusCode::BAD_GATEWAY, "remote device session unavailable").into_response(),
+            )
+        })?;
         IosRtcSource::Remote { session }
     } else {
-        IosRtcSource::Lan { ip: device.ip.clone() }
+        IosRtcSource::Lan {
+            ip: device.ip.clone(),
+        }
     };
 
     let rtc_cancel = CancellationToken::new();
@@ -606,11 +813,17 @@ async fn ios_rtc_offer_handler(
             if let Some(cancel) = state.rtc_sessions.lock().await.remove(&id) {
                 cancel.cancel();
             }
-            return Err(with_cors_headers((StatusCode::BAD_GATEWAY, e).into_response()));
+            return Err(with_cors_headers(
+                (StatusCode::BAD_GATEWAY, e).into_response(),
+            ));
         }
     };
 
-    Ok(Json(IosRtcOfferResponse { sdp: answer, profile, port }))
+    Ok(Json(IosRtcOfferResponse {
+        sdp: answer,
+        profile,
+        port,
+    }))
 }
 
 async fn rtc_config_handler(
@@ -691,7 +904,10 @@ async fn handle_remote_ios_control(mut socket: WebSocket, state: AppState) {
     let (mut ws_writer, mut ws_reader) = socket.split();
     let (outgoing_tx, mut outgoing_rx) = channel::<Message>(128);
     let session = RemoteIosSession::new(normalized_device_id.clone(), outgoing_tx);
-    state.remote_ios.insert(registry_id.clone(), Arc::clone(&session)).await;
+    state
+        .remote_ios
+        .insert(registry_id.clone(), Arc::clone(&session))
+        .await;
     state
         .registry
         .upsert_remote_ios_device(IosDevice {
@@ -812,9 +1028,7 @@ fn select_ios_rtc_profile(ip: &str, requested: Option<&str>) -> (String, u16) {
 
 fn is_lan_candidate_ip(ip: &str) -> bool {
     match ip.parse::<IpAddr>() {
-        Ok(IpAddr::V4(v4)) => {
-            v4.is_private() || v4.is_loopback() || v4.is_link_local()
-        }
+        Ok(IpAddr::V4(v4)) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
         Ok(IpAddr::V6(v6)) => {
             let first = v6.segments()[0];
             v6.is_loopback() || (first & 0xffc0) == 0xfe80
@@ -869,32 +1083,96 @@ async fn create_ios_rtc_answer(
         .await
         .map_err(|e| format!("add video track: {e}"))?;
 
+    let control_target = RtcControlTarget::from(&source);
+    let rtc_metrics = Arc::new(RtcBridgeMetrics::default());
+    let rtcp_target = control_target.clone();
+    let rtcp_metrics = Arc::clone(&rtc_metrics);
+    let rtcp_cancel = rtc_cancel.clone();
     tokio::spawn(async move {
         let mut rtcp_buf = vec![0u8; 1500];
-        while rtp_sender.read(&mut rtcp_buf).await.is_ok() {}
+        let mut last_keyframe_request = Instant::now() - Duration::from_secs(1);
+        loop {
+            let result = tokio::select! {
+                _ = rtcp_cancel.cancelled() => break,
+                result = rtp_sender.read(&mut rtcp_buf) => result,
+            };
+            let Ok((packets, _)) = result else {
+                break;
+            };
+            let pli = packets
+                .iter()
+                .filter(|packet| {
+                    packet
+                        .as_any()
+                        .downcast_ref::<PictureLossIndication>()
+                        .is_some()
+                })
+                .count() as u64;
+            let fir = packets
+                .iter()
+                .filter(|packet| packet.as_any().downcast_ref::<FullIntraRequest>().is_some())
+                .count() as u64;
+            if pli > 0 {
+                rtcp_metrics.pli_requests.fetch_add(pli, Ordering::Relaxed);
+            }
+            if fir > 0 {
+                rtcp_metrics.fir_requests.fetch_add(fir, Ordering::Relaxed);
+            }
+            if (pli > 0 || fir > 0) && last_keyframe_request.elapsed() >= Duration::from_millis(250)
+            {
+                last_keyframe_request = Instant::now();
+                request_source_keyframe(
+                    &rtcp_target,
+                    port,
+                    if fir > 0 { "rtc_fir" } else { "rtc_pli" },
+                )
+                .await;
+            }
+        }
     });
 
+    tokio::spawn(rtc_feedback_loop(
+        control_target,
+        Arc::clone(&rtc_metrics),
+        rtc_cancel.clone(),
+        port,
+    ));
+
     let cancel_for_peer_state = rtc_cancel.clone();
-    peer_connection.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
-        let cancel = cancel_for_peer_state.clone();
-        Box::pin(async move {
-            println!("[ios-rtc] peer state {state}");
-            if matches!(state, RTCPeerConnectionState::Disconnected | RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed) {
-                cancel.cancel();
-            }
-        })
-    }));
+    peer_connection.on_peer_connection_state_change(Box::new(
+        move |state: RTCPeerConnectionState| {
+            let cancel = cancel_for_peer_state.clone();
+            Box::pin(async move {
+                println!("[ios-rtc] peer state {state}");
+                if matches!(
+                    state,
+                    RTCPeerConnectionState::Disconnected
+                        | RTCPeerConnectionState::Failed
+                        | RTCPeerConnectionState::Closed
+                ) {
+                    cancel.cancel();
+                }
+            })
+        },
+    ));
 
     let cancel_for_ice_state = rtc_cancel.clone();
-    peer_connection.on_ice_connection_state_change(Box::new(move |state: RTCIceConnectionState| {
-        let cancel = cancel_for_ice_state.clone();
-        Box::pin(async move {
-            println!("[ios-rtc] ice state {state}");
-            if matches!(state, RTCIceConnectionState::Disconnected | RTCIceConnectionState::Failed | RTCIceConnectionState::Closed) {
-                cancel.cancel();
-            }
-        })
-    }));
+    peer_connection.on_ice_connection_state_change(Box::new(
+        move |state: RTCIceConnectionState| {
+            let cancel = cancel_for_ice_state.clone();
+            Box::pin(async move {
+                println!("[ios-rtc] ice state {state}");
+                if matches!(
+                    state,
+                    RTCIceConnectionState::Disconnected
+                        | RTCIceConnectionState::Failed
+                        | RTCIceConnectionState::Closed
+                ) {
+                    cancel.cancel();
+                }
+            })
+        },
+    ));
 
     peer_connection
         .set_remote_description(offer)
@@ -925,6 +1203,7 @@ async fn create_ios_rtc_answer(
         rtc_cancel,
         port,
         profile,
+        rtc_metrics,
     ));
 
     Ok(local_desc)
@@ -938,10 +1217,20 @@ async fn stream_ios_h264_to_rtc(
     cancel: CancellationToken,
     port: u16,
     profile: String,
+    metrics: Arc<RtcBridgeMetrics>,
 ) {
     match source {
         IosRtcSource::Lan { ip } => {
-            stream_ios_h264_to_rtc_lan(ip, peer_connection, video_track, cancel, port, profile).await;
+            stream_ios_h264_to_rtc_lan(
+                ip,
+                peer_connection,
+                video_track,
+                cancel,
+                port,
+                profile,
+                metrics,
+            )
+            .await;
         }
         IosRtcSource::Remote { session } => {
             stream_ios_h264_to_rtc_remote(
@@ -950,7 +1239,9 @@ async fn stream_ios_h264_to_rtc(
                 peer_connection,
                 video_track,
                 cancel,
+                port,
                 profile,
+                metrics,
             )
             .await;
         }
@@ -964,10 +1255,12 @@ async fn stream_ios_h264_to_rtc_lan(
     cancel: CancellationToken,
     port: u16,
     profile: String,
+    metrics: Arc<RtcBridgeMetrics>,
 ) {
     let addr = format!("{}:{}", ip, port);
     println!("[ios-rtc] open tcp {addr} profile={profile}");
-    let stream = match tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr)).await {
+    let stream = match tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr)).await
+    {
         Ok(Ok(stream)) => stream,
         _ => {
             println!("[ios-rtc] tcp connect failed");
@@ -977,7 +1270,7 @@ async fn stream_ios_h264_to_rtc_lan(
     };
     let _ = stream.set_nodelay(true);
     let mut reader = stream;
-    let mut last_frame_at: Option<Instant> = None;
+    let mut last_source_timestamp_us: Option<u64> = None;
     let mut sample_duration_us = rtc_initial_sample_duration_us(&profile);
 
     loop {
@@ -995,15 +1288,13 @@ async fn stream_ios_h264_to_rtc_lan(
             continue;
         }
 
-        let now = Instant::now();
-        if let Some(last) = last_frame_at {
-            let observed_us = now.duration_since(last).as_micros() as f64;
-            // Track real source pacing smoothly. During TLinkauto input, capture can dip below
-            // 30fps; fixed 30fps RTP timestamps make the browser grow its jitter buffer.
-            let bounded_us = observed_us.clamp(30_000.0, 60_000.0);
-            sample_duration_us = (sample_duration_us * 0.80) + (bounded_us * 0.20);
-        }
-        last_frame_at = Some(now);
+        sample_duration_us = rtc_source_sample_duration_us(
+            frame.timestamp_us,
+            &mut last_source_timestamp_us,
+            sample_duration_us,
+            &metrics,
+        );
+        record_rtc_frame_metrics(&metrics, &frame);
 
         if video_track
             .write_sample(&Sample {
@@ -1029,21 +1320,26 @@ async fn stream_ios_h264_to_rtc_remote(
     peer_connection: Arc<webrtc::peer_connection::RTCPeerConnection>,
     video_track: Arc<TrackLocalStaticSample>,
     cancel: CancellationToken,
+    port: u16,
     profile: String,
+    metrics: Arc<RtcBridgeMetrics>,
 ) {
     let (stream_id, mut receiver) = match remote_ios.open_video(&session, &profile).await {
         Ok(value) => value,
         Err(_) => {
-            println!("[ios-rtc] remote video start failed device={}", session.device_id);
+            println!(
+                "[ios-rtc] remote video start failed device={}",
+                session.device_id
+            );
             let _ = peer_connection.close().await;
             return;
         }
     };
     println!(
-        "[ios-rtc] remote video requested device={} stream={} profile={}",
-        session.device_id, stream_id, profile
+        "[ios-rtc] remote video requested device={} stream={} profile={} port={}",
+        session.device_id, stream_id, profile, port
     );
-    let mut last_frame_at: Option<Instant> = None;
+    let mut last_source_timestamp_us: Option<u64> = None;
     let mut sample_duration_us = rtc_initial_sample_duration_us(&profile);
 
     loop {
@@ -1051,7 +1347,9 @@ async fn stream_ios_h264_to_rtc_remote(
             _ = cancel.cancelled() => break,
             packet = receiver.recv() => packet,
         };
-        let Some(packet) = packet else { break; };
+        let Some(packet) = packet else {
+            break;
+        };
         let frame = match parse_zxh_frame_packet(packet) {
             Ok(frame) => frame,
             Err(error) => {
@@ -1063,13 +1361,13 @@ async fn stream_ios_h264_to_rtc_remote(
             continue;
         }
 
-        let now = Instant::now();
-        if let Some(last) = last_frame_at {
-            let observed_us = now.duration_since(last).as_micros() as f64;
-            let bounded_us = observed_us.clamp(30_000.0, 80_000.0);
-            sample_duration_us = (sample_duration_us * 0.80) + (bounded_us * 0.20);
-        }
-        last_frame_at = Some(now);
+        sample_duration_us = rtc_source_sample_duration_us(
+            frame.timestamp_us,
+            &mut last_source_timestamp_us,
+            sample_duration_us,
+            &metrics,
+        );
+        record_rtc_frame_metrics(&metrics, &frame);
         if video_track
             .write_sample(&Sample {
                 data: MediaBytes::from(frame.payload),
@@ -1099,8 +1397,62 @@ fn rtc_initial_sample_duration_us(profile: &str) -> f64 {
     }
 }
 
+fn rtc_source_sample_duration_us(
+    timestamp_us: u64,
+    last_timestamp_us: &mut Option<u64>,
+    current_duration_us: f64,
+    metrics: &RtcBridgeMetrics,
+) -> f64 {
+    let previous = *last_timestamp_us;
+    if timestamp_us > 0 {
+        *last_timestamp_us = Some(timestamp_us);
+    }
+    let Some(previous) = previous else {
+        return current_duration_us;
+    };
+    let Some(observed_us) = timestamp_us.checked_sub(previous) else {
+        metrics
+            .source_timestamp_fallbacks
+            .fetch_add(1, Ordering::Relaxed);
+        return current_duration_us;
+    };
+    if !(5_000..=500_000).contains(&observed_us) {
+        metrics
+            .source_timestamp_fallbacks
+            .fetch_add(1, Ordering::Relaxed);
+        return current_duration_us;
+    }
+    let bounded_us = (observed_us as f64).clamp(8_000.0, 150_000.0);
+    (current_duration_us * 0.75) + (bounded_us * 0.25)
+}
+
+fn record_rtc_frame_metrics(metrics: &RtcBridgeMetrics, frame: &ZxhFrame) {
+    metrics.frames.fetch_add(1, Ordering::Relaxed);
+    metrics
+        .bytes
+        .fetch_add(frame.payload.len() as u64, Ordering::Relaxed);
+    metrics
+        .last_frame_at_ms
+        .store(unix_now_ms(), Ordering::Relaxed);
+    if frame.capture_done_us >= frame.capture_start_us
+        && frame.encode_done_us >= frame.capture_done_us
+        && frame.device_send_us >= frame.encode_done_us
+    {
+        let pipeline_us = frame.device_send_us - frame.capture_start_us;
+        if pipeline_us <= 10_000_000 {
+            metrics
+                .last_device_pipeline_us
+                .store(pipeline_us, Ordering::Relaxed);
+        }
+    }
+}
+
 struct ZxhFrame {
     timestamp_us: u64,
+    capture_start_us: u64,
+    capture_done_us: u64,
+    encode_done_us: u64,
+    device_send_us: u64,
     payload: Vec<u8>,
 }
 
@@ -1113,36 +1465,71 @@ async fn read_zxh_frame(reader: &mut TcpStream) -> Result<Option<ZxhFrame>, std:
     }
 
     if &magic[..3] != b"ZXH" {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "bad zxh magic"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "bad zxh magic",
+        ));
     }
 
-    let (timestamp_us, payload_len) = match magic[3] {
+    let (
+        timestamp_us,
+        capture_start_us,
+        capture_done_us,
+        encode_done_us,
+        device_send_us,
+        payload_len,
+    ) = match magic[3] {
         b'2' => {
             let mut rest = [0u8; 48];
             reader.read_exact(&mut rest).await?;
-            let ts = u64::from_be_bytes(rest[12..20].try_into().unwrap_or([0; 8]));
-            let payload_len = u32::from_be_bytes(rest[44..48].try_into().unwrap_or([0; 4])) as usize;
-            (ts, payload_len)
+            let capture_start = u64::from_be_bytes(rest[12..20].try_into().unwrap_or([0; 8]));
+            let capture_done = u64::from_be_bytes(rest[20..28].try_into().unwrap_or([0; 8]));
+            let encode_done = u64::from_be_bytes(rest[28..36].try_into().unwrap_or([0; 8]));
+            let device_send = u64::from_be_bytes(rest[36..44].try_into().unwrap_or([0; 8]));
+            let payload_len =
+                u32::from_be_bytes(rest[44..48].try_into().unwrap_or([0; 4])) as usize;
+            (
+                capture_start,
+                capture_start,
+                capture_done,
+                encode_done,
+                device_send,
+                payload_len,
+            )
         }
         b'1' => {
             let mut rest = [0u8; 16];
             reader.read_exact(&mut rest).await?;
             let ts = u64::from_be_bytes(rest[4..12].try_into().unwrap_or([0; 8]));
-            let payload_len = u32::from_be_bytes(rest[12..16].try_into().unwrap_or([0; 4])) as usize;
-            (ts, payload_len)
+            let payload_len =
+                u32::from_be_bytes(rest[12..16].try_into().unwrap_or([0; 4])) as usize;
+            (ts, 0, 0, 0, 0, payload_len)
         }
         _ => {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "bad zxh version"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "bad zxh version",
+            ));
         }
     };
 
     if payload_len == 0 || payload_len > 4 * 1024 * 1024 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "bad zxh payload len"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "bad zxh payload len",
+        ));
     }
 
     let mut payload = vec![0u8; payload_len];
     reader.read_exact(&mut payload).await?;
-    Ok(Some(ZxhFrame { timestamp_us, payload }))
+    Ok(Some(ZxhFrame {
+        timestamp_us,
+        capture_start_us,
+        capture_done_us,
+        encode_done_us,
+        device_send_us,
+        payload,
+    }))
 }
 
 async fn ios_tlinkauto_handler(
@@ -1161,7 +1548,10 @@ async fn ios_tlinkauto_handler(
     let remote_ios = Arc::clone(&state.remote_ios);
     Ok(ws.on_upgrade(move |socket| async move {
         registry.begin_ios_control();
-        println!("[ios-tlinkauto] control opened {id} transport={}", device.transport);
+        println!(
+            "[ios-tlinkauto] control opened {id} transport={}",
+            device.transport
+        );
         if device.transport == "remote_wss" {
             if let Some(session) = remote_ios.get(&id).await {
                 handle_ios_tlinkauto_remote(socket, session).await;
@@ -1169,7 +1559,11 @@ async fn ios_tlinkauto_handler(
         } else {
             let hub = {
                 let mut guard = hubs.lock().await;
-                Arc::clone(guard.entry(device.ip.clone()).or_insert_with(|| TLinkautoControlHub::new(device.ip.clone())))
+                Arc::clone(
+                    guard
+                        .entry(device.ip.clone())
+                        .or_insert_with(|| TLinkautoControlHub::new(device.ip.clone())),
+                )
             };
             handle_ios_tlinkauto(socket, hub).await;
         }
@@ -1200,6 +1594,28 @@ fn parse_zxh_frame_packet(packet: Vec<u8>) -> Result<ZxhFrame, &'static str> {
             .try_into()
             .map_err(|_| "bad_zxh_length")?,
     ) as usize;
+    let (capture_start_us, capture_done_us, encode_done_us, device_send_us) = if packet[3] == b'2' {
+        (
+            timestamp_us,
+            u64::from_be_bytes(
+                packet[24..32]
+                    .try_into()
+                    .map_err(|_| "bad_zxh_capture_done")?,
+            ),
+            u64::from_be_bytes(
+                packet[32..40]
+                    .try_into()
+                    .map_err(|_| "bad_zxh_encode_done")?,
+            ),
+            u64::from_be_bytes(
+                packet[40..48]
+                    .try_into()
+                    .map_err(|_| "bad_zxh_device_send")?,
+            ),
+        )
+    } else {
+        (0, 0, 0, 0)
+    };
     if payload_len == 0 || payload_len > 4 * 1024 * 1024 {
         return Err("bad_zxh_payload_length");
     }
@@ -1208,13 +1624,20 @@ fn parse_zxh_frame_packet(packet: Vec<u8>) -> Result<ZxhFrame, &'static str> {
     }
     Ok(ZxhFrame {
         timestamp_us,
+        capture_start_us,
+        capture_done_us,
+        encode_done_us,
+        device_send_us,
         payload: packet[header_len..].to_vec(),
     })
 }
 
 #[cfg(test)]
 mod remote_frame_tests {
-    use super::parse_zxh_frame_packet;
+    use super::{
+        parse_zxh_frame_packet, rtc_source_sample_duration_us, rtcp_keyframe_requests,
+        RtcBridgeMetrics,
+    };
 
     #[test]
     fn parses_complete_zxh2_packet() {
@@ -1223,11 +1646,18 @@ mod remote_frame_tests {
         packet[..4].copy_from_slice(b"ZXH2");
         packet[4] = 1;
         packet[16..24].copy_from_slice(&123_456u64.to_be_bytes());
+        packet[24..32].copy_from_slice(&124_456u64.to_be_bytes());
+        packet[32..40].copy_from_slice(&125_456u64.to_be_bytes());
+        packet[40..48].copy_from_slice(&126_456u64.to_be_bytes());
         packet[48..52].copy_from_slice(&(payload.len() as u32).to_be_bytes());
         packet.extend_from_slice(&payload);
 
         let frame = parse_zxh_frame_packet(packet).expect("valid ZXH2 packet");
         assert_eq!(frame.timestamp_us, 123_456);
+        assert_eq!(frame.capture_start_us, 123_456);
+        assert_eq!(frame.capture_done_us, 124_456);
+        assert_eq!(frame.encode_done_us, 125_456);
+        assert_eq!(frame.device_send_us, 126_456);
         assert_eq!(frame.payload, payload);
     }
 
@@ -1248,6 +1678,27 @@ mod remote_frame_tests {
             parse_zxh_frame_packet(oversized),
             Err("bad_zxh_payload_length")
         ));
+    }
+
+    #[test]
+    fn source_timestamp_controls_sample_duration() {
+        let metrics = RtcBridgeMetrics::default();
+        let mut last = None;
+        let first = rtc_source_sample_duration_us(1_000_000, &mut last, 33_333.0, &metrics);
+        let second = rtc_source_sample_duration_us(1_040_000, &mut last, first, &metrics);
+        assert_eq!(first, 33_333.0);
+        assert!(second > first);
+        assert!(second < 40_000.0);
+    }
+
+    #[test]
+    fn recognizes_pli_and_fir_in_compound_rtcp() {
+        let pli = [0x81, 206, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2];
+        let fir = [
+            0x84, 206, 0, 4, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 2, 1, 0, 0, 0,
+        ];
+        let packet = [pli.as_slice(), fir.as_slice()].concat();
+        assert_eq!(rtcp_keyframe_requests(&packet), (1, 1));
     }
 }
 
@@ -1291,10 +1742,16 @@ async fn tlinkauto_read_line(reader: &mut OwnedReadHalf) -> Result<Vec<u8>, ()> 
     let mut byte = [0u8; 1];
     loop {
         let n = reader.read(&mut byte).await.map_err(|_| ())?;
-        if n == 0 { return Err(()); }
+        if n == 0 {
+            return Err(());
+        }
         out.push(byte[0]);
-        if byte[0] == b'\n' { return Ok(out); }
-        if out.len() > 1024 * 1024 { return Err(()); }
+        if byte[0] == b'\n' {
+            return Ok(out);
+        }
+        if out.len() > 1024 * 1024 {
+            return Err(());
+        }
     }
 }
 
@@ -1303,7 +1760,9 @@ async fn tlinkauto_ensure_connection(
     reader: &mut Option<OwnedReadHalf>,
     writer: &mut Option<OwnedWriteHalf>,
 ) -> Result<(), ()> {
-    if reader.is_some() && writer.is_some() { return Ok(()); }
+    if reader.is_some() && writer.is_some() {
+        return Ok(());
+    }
     let stream = tlinkauto_connect(ip).await?;
     let (next_reader, next_writer) = stream.into_split();
     *reader = Some(next_reader);
@@ -1364,7 +1823,8 @@ async fn tlinkauto_control_worker(
 
 async fn handle_ios_stream(mut ws: WebSocket, ip: String, port: u16) {
     let addr = format!("{}:{}", ip, port);
-    let stream = match tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr)).await {
+    let stream = match tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr)).await
+    {
         Ok(Ok(stream)) => stream,
         _ => {
             let _ = ws.close().await;
@@ -1455,13 +1915,17 @@ async fn handle_ios_tlinkauto(mut ws: WebSocket, hub: Arc<TLinkautoControlHub>) 
         };
 
         if is_ios_tlinkauto_touch_command(&bytes) {
-            if hub.send_touch(bytes).await.is_err() { break; }
+            if hub.send_touch(bytes).await.is_err() {
+                break;
+            }
             continue;
         }
 
         match hub.send_request(bytes).await {
             Ok(response) => {
-                if ws.send(Message::binary(response)).await.is_err() { break; }
+                if ws.send(Message::binary(response)).await.is_err() {
+                    break;
+                }
             }
             Err(_) => break,
         }
@@ -1583,7 +2047,12 @@ async fn main() {
     let app = Router::new()
         .route("/devices", get(list_devices))
         .route("/api/files", get(list_workspace_files))
-        .route("/api/file", get(read_workspace_file).put(write_workspace_file).delete(delete_workspace_file))
+        .route(
+            "/api/file",
+            get(read_workspace_file)
+                .put(write_workspace_file)
+                .delete(delete_workspace_file),
+        )
         .route("/ios/{id}/stream", get(ios_stream_handler))
         .route("/ios/{id}/stream-eco", get(ios_stream_eco_handler))
         .route("/ios/{id}/h264", get(ios_h264_handler))
@@ -1786,7 +2255,13 @@ fn cors_layer() -> CorsLayer {
     // (e.g. https://app.example.com -> http://localhost:15037).
     // Use permissive CORS here to avoid deployment-specific origin drift.
     CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers(Any)
         .allow_origin(Any)
         .allow_private_network(true)

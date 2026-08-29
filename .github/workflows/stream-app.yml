@@ -207,6 +207,8 @@ jobs:
           test -f test/fixtures/adaptive-streaming-v1.json
           test -f scripts/check-stream-capture-pipeline-v2.mjs
           test -f scripts/Test-TLinkStreamCapturePipelineV2.ps1
+          test -f scripts/Compare-TLinkStreamCapturePipeline.ps1
+          test -f scripts/check-stream-rtc-control-v2.mjs
           test -f scripts/check-secure-pairing-p0.mjs
           test -f scripts/Test-TLinkSecurePairingPhase0.ps1
           test -f test/fixtures/secure-pairing-contract-v1.json
@@ -231,6 +233,7 @@ jobs:
           test -f docs/event-channel-v1.md
           test -f docs/adaptive-streaming-self-healing-v1.md
           test -f docs/stream-capture-pipeline-v2.md
+          test -f docs/stream-rtc-control-v2.md
           test -f docs/secure-pairing-p0-baseline.md
           test -f docs/vpn-p0-baseline.md
           test -f docs/vpn-p1-diagnostics.md
@@ -257,6 +260,7 @@ jobs:
           node scripts/check-event-channel-v1.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
+          node scripts/check-stream-rtc-control-v2.mjs
           node scripts/check-secure-pairing-p0.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
