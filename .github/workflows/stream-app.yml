@@ -646,7 +646,10 @@ jobs:
           grep -q 'ocrAppSideBridge' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocrAppRGBBridge' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocrAppAccurateRetry' stream-app/streamd/POCSocketServer.mm
-          grep -q 'TLinkRunAppSideVisionOCR' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkRunUIServiceVisionOCR' stream-app/streamd/POCSocketServer.mm
+          grep -q 'htons(6018)' stream-app/streamd/POCSocketServer.mm
+          grep -q 'uiservice_ocr_ready' stream-app/uiservice/VisionOCRService.mm
+          grep -q 'background_uiservice_6018' stream-app/uiservice/VisionOCRService.mm
           grep -q '/var/mobile/Library/TLinkauto/tmp' stream-app/streamd/POCSocketServer.mm
           grep -q 'appocr-XXXXXX' stream-app/streamd/POCSocketServer.mm
           grep -q 'fchmod(imageFd, 0644)' stream-app/streamd/POCSocketServer.mm
