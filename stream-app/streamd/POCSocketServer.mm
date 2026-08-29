@@ -4789,6 +4789,43 @@ static char sTLinkOCRWorkerOutputPath[PATH_MAX + 1] = {0};
 static char sTLinkOCRWorkerPhase[96] = "not_started";
 static NSString *const kTLinkVisionOCRDebugLogPath = @"/var/mobile/Library/TLinkauto/runtime/vision-ocr-debug.log";
 
+static CGImageRef TLinkCreateCompactBGRAImageForVision(CGImageRef source, NSString **error)
+{
+    if (!source) {
+        if (error) *error = @"vision_compact_source_missing";
+        return nil;
+    }
+
+    size_t width = CGImageGetWidth(source);
+    size_t height = CGImageGetHeight(source);
+    if (width == 0 || height == 0 || width > 12000 || height > 12000) {
+        if (error) *error = @"vision_compact_bad_dimensions";
+        return nil;
+    }
+
+    size_t bytesPerRow = width * 4;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(NULL,
+                                                 width,
+                                                 height,
+                                                 8,
+                                                 bytesPerRow,
+                                                 colorSpace,
+                                                 kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst);
+    CGColorSpaceRelease(colorSpace);
+    if (!context) {
+        if (error) *error = @"vision_compact_context_create_failed";
+        return nil;
+    }
+
+    CGContextSetBlendMode(context, kCGBlendModeCopy);
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), source);
+    CGImageRef compactImage = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    if (!compactImage && error) *error = @"vision_compact_image_create_failed";
+    return compactImage;
+}
+
 static void TLinkAppendVisionOCRDebugEvent(NSString *profile, NSString *phase, NSString *detail)
 {
     NSString *runtimeDir = [kTLinkVisionOCRDebugLogPath stringByDeletingLastPathComponent];
@@ -4990,7 +5027,23 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
 
     if ([profile isEqualToString:@"xxt_compat"]) {
         TLinkSetOCRWorkerPhase("vision_xxt_compat_request_setup");
-        CGImageRef inputImage = cropped.CGImage;
+        CGImageRef sourceImage = cropped.CGImage;
+        NSString *sourceDetail = [NSString stringWithFormat:@"width=%zu height=%zu bpc=%zu bpp=%zu bpr=%zu bitmapInfo=0x%lx",
+                                  CGImageGetWidth(sourceImage),
+                                  CGImageGetHeight(sourceImage),
+                                  CGImageGetBitsPerComponent(sourceImage),
+                                  CGImageGetBitsPerPixel(sourceImage),
+                                  CGImageGetBytesPerRow(sourceImage),
+                                  (unsigned long)CGImageGetBitmapInfo(sourceImage)];
+        TLinkAppendVisionOCRDebugEvent(profile, @"source_image", sourceDetail);
+
+        NSString *compactError = nil;
+        CGImageRef inputImage = TLinkCreateCompactBGRAImageForVision(sourceImage, &compactError);
+        if (!inputImage) {
+            TLinkAppendVisionOCRDebugEvent(profile, @"compact_failed", compactError ?: @"unknown");
+            return TLinkError([NSString stringWithFormat:@"ocr_xxt_compat_compact_failed %@",
+                                                        compactError ?: @"unknown"]);
+        }
         NSString *imageDetail = [NSString stringWithFormat:@"width=%zu height=%zu bpc=%zu bpp=%zu bpr=%zu bitmapInfo=0x%lx level=%d",
                                  CGImageGetWidth(inputImage),
                                  CGImageGetHeight(inputImage),
@@ -5028,8 +5081,10 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
                                  (long)visionErr.code,
                                  visionErr.localizedDescription ?: @"unknown"];
             TLinkAppendVisionOCRDebugEvent(profile, @"perform_failed", failure);
+            CGImageRelease(inputImage);
             return TLinkError([NSString stringWithFormat:@"ocr_xxt_compat_failed %@", failure]);
         }
+        CGImageRelease(inputImage);
 
         TLinkSetOCRWorkerPhase("vision_xxt_compat_collect_results");
         TLinkAppendVisionOCRDebugEvent(profile,
@@ -6161,6 +6216,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrVisionCPUOnly": @(YES),
         @"ocrVisionXXTCompat": @(YES),
         @"ocrVisionXXTCompatInput": @"cgimage_direct",
+        @"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_stride_width_x4",
         @"ocrVisionXXTCompatCompute": @"automatic",
         @"ocrVisionDebugLog": kTLinkVisionOCRDebugLogPath,
         @"ocrVisionFallback": @"none",
@@ -8751,6 +8807,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" visionOCRCPUOnly=1"
                                                @" visionOCRXXTCompat=1"
                                                @" visionOCRXXTCompatInput=cgimage_direct"
+                                               @" visionOCRXXTCompatPixelLayout=compact_bgra8888_stride_width_x4"
                                                @" visionOCRXXTCompatCompute=automatic"
                                                @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"

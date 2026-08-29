@@ -6,7 +6,8 @@ P2 adds the opt-in task `27` profile `xxt_compat`. It intentionally mirrors
 the Apple OCR path recovered from XXTouch's `libxxtouch.so`:
 
 - construct `VNRecognizeTextRequest` with plain `init`;
-- pass the cropped `CGImage` directly to `VNImageRequestHandler`;
+- redraw the cropped image into compact BGRA8888 (`bytesPerRow = width * 4`)
+  and pass that `CGImage` directly to `VNImageRequestHandler`;
 - call `performRequests:error:` synchronously;
 - leave compute-device selection to Vision (no `usesCPUOnly`);
 - default to `en-US` when no language was supplied.
@@ -105,6 +106,12 @@ Task `273` returns the last 64 KiB of
 | `perform_begin` plus `ocr_worker_timeout timeout_ms=20000` | Vision blocked; increasing the client timeout is not a fix. |
 | No `request_setup` | Failure occurred during capture/crop or the installed binary is stale. |
 | Task `97` lacks `visionOCRXXTCompat=1` | The new `streamd` is not the process currently serving port `6000`; restart it from the app. |
+
+The debug log records both `source_image` and `request_setup`. A cropped
+CoreGraphics image may retain the full-screen stride. For example, the first
+device probe reported width `320` with `bpr=4992` and then crashed in Vision.
+The normalized `request_setup` entry must report `bpr=1280`; otherwise the
+compact BGRA conversion is not active.
 
 For a successful Fast request, repeat it 20 times before trying Accurate. A
 promotion requires bounded execution, a successful task `97` after every
