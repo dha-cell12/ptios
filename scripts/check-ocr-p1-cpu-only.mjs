@@ -75,6 +75,8 @@ assert.match(server, /@"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_x
 assert.match(server, /@"ocrVisionCPUOnly": @\(YES\)/);
 assert.match(server, /@"ocrVisionXXTCompat": @\(YES\)/);
 assert.match(server, /@"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4"/);
+assert.match(server, /TLinkOCRWorkerPhaseHasPrefixForSignal\("vision_xxt_compat_"\)[\s\S]*?SIG_DFL[\s\S]*?sigaction[\s\S]*?kill\(getpid\(\), signalNumber\)/);
+assert.match(server, /@"ocrVisionXXTCompatCrashReport": @"reraised_signal_v1"/);
 assert.match(app, /TLinkConfigureVisionRequestCPUOnly/);
 assert.match(app, /supportedComputeStageDevicesAndReturnError/);
 assert.match(app, /setComputeDevice:cpuDevice forComputeStage:stage/);

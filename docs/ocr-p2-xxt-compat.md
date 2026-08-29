@@ -97,6 +97,12 @@ Task `273` returns the last 64 KiB of
 `/var/mobile/Library/TLinkauto/runtime/vision-ocr-debug.log` as Base64. Task
 `274` clears that file. Neither task invokes Vision.
 
+When `xxt_compat` receives a fatal signal, its worker first writes the normal
+`ocr_worker_crashed` response and then restores the default signal disposition
+and re-raises the signal. This allows iOS to create a symbolication-ready
+`streamd-*.ips` report while preserving isolation from the main port `6000`.
+Other OCR profiles retain the historical `_exit` behavior.
+
 ## Interpreting Results
 
 | Last phase or response | Meaning |
@@ -107,6 +113,12 @@ Task `273` returns the last 64 KiB of
 | `perform_begin` plus `ocr_worker_timeout timeout_ms=20000` | Vision blocked; increasing the client timeout is not a fix. |
 | No `request_setup` | Failure occurred during capture/crop or the installed binary is stale. |
 | Task `97` lacks `visionOCRXXTCompat=1` | The new `streamd` is not the process currently serving port `6000`; restart it from the app. |
+
+After a `signal=11` result, retrieve the newest `streamd-*.ips` from Settings
+→ Privacy & Security → Analytics & Improvements → Analytics Data. On a device
+with filesystem access, the same report is normally under
+`/var/mobile/Library/Logs/CrashReporter`. Keep the complete `usedImages` and
+thread backtrace sections when sharing it for analysis.
 
 The debug log records both `source_image` and `request_setup`. A cropped
 CoreGraphics image may retain the full-screen stride. For example, the first

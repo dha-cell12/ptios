@@ -4880,6 +4880,15 @@ static void TLinkSetOCRWorkerPhase(const char *phase)
     snprintf(sTLinkOCRWorkerPhase, sizeof(sTLinkOCRWorkerPhase), "%s", phase);
 }
 
+static BOOL TLinkOCRWorkerPhaseHasPrefixForSignal(const char *prefix)
+{
+    if (!prefix) return NO;
+    for (size_t i = 0; prefix[i] != '\0'; i++) {
+        if (i >= sizeof(sTLinkOCRWorkerPhase) || sTLinkOCRWorkerPhase[i] != prefix[i]) return NO;
+    }
+    return YES;
+}
+
 static void TLinkWriteIntForSignalHandler(int fd, int value)
 {
     char buf[16];
@@ -4911,6 +4920,20 @@ static void TLinkOCRWorkerSignalHandler(int signalNumber)
             const char *suffix = " port_6000_preserved\r\n";
             write(fd, suffix, TLinkSafeCStringLength(suffix, 32));
             close(fd);
+        }
+    }
+
+    // The XXTouch-compatible canary needs a native iOS crash report so the
+    // remaining process-host failure can be symbolicated. Preserve the parent
+    // response above, then restore the default disposition and re-deliver the
+    // fatal signal. Other OCR workers retain the historical bounded _exit.
+    if (TLinkOCRWorkerPhaseHasPrefixForSignal("vision_xxt_compat_")) {
+        struct sigaction defaultAction;
+        memset(&defaultAction, 0, sizeof(defaultAction));
+        defaultAction.sa_handler = SIG_DFL;
+        sigemptyset(&defaultAction.sa_mask);
+        if (sigaction(signalNumber, &defaultAction, NULL) == 0 && kill(getpid(), signalNumber) == 0) {
+            return;
         }
     }
     _exit(128 + signalNumber);
@@ -6218,6 +6241,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrVisionXXTCompatInput": @"cgimage_direct",
         @"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4",
         @"ocrVisionXXTCompatCompute": @"automatic",
+        @"ocrVisionXXTCompatCrashReport": @"reraised_signal_v1",
         @"ocrVisionDebugLog": kTLinkVisionOCRDebugLogPath,
         @"ocrVisionFallback": @"none",
         @"ocrAppSideBridge": @(YES),
@@ -8809,6 +8833,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" visionOCRXXTCompatInput=cgimage_direct"
                                                @" visionOCRXXTCompatPixelLayout=compact_bgra8888_premultiplied_first_stride_width_x4"
                                                @" visionOCRXXTCompatCompute=automatic"
+                                               @" visionOCRXXTCompatCrashReport=reraised_signal_v1"
                                                @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"
                                                @" ocrEngineSelector=none"
