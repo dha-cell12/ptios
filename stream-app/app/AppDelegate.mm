@@ -483,7 +483,10 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
     return state;
 }
 
-- (CGImageRef)newCompactBGRAImageFromImageData:(NSData *)imageData error:(NSString **)error CF_RETURNS_RETAINED
+// Keep the historical selector name because the release sanity contract and
+// older app-side bridge diagnostics use it. The returned image is normalized
+// to compact BGRA premultiplied-first (bitmapInfo 0x2002), not the old 0x2006.
+- (CGImageRef)newRGBImageFromImageData:(NSData *)imageData error:(NSString **)error CF_RETURNS_RETAINED
 {
     if (imageData.length == 0) {
         if (error) *error = @"empty_image_data";
@@ -634,7 +637,7 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
         }
 
         NSString *decodeError = nil;
-        CGImageRef rgbImage = [self newCompactBGRAImageFromImageData:imageData error:&decodeError];
+        CGImageRef rgbImage = [self newRGBImageFromImageData:imageData error:&decodeError];
         if (!rgbImage) {
             return [NSString stringWithFormat:@"-1;;app_ocr_rgb_decode_failed %@\r\n", decodeError ?: @"unknown"];
         }

@@ -80,7 +80,7 @@ assert.match(app, /TLinkConfigureVisionRequestCPUOnly/);
 assert.match(app, /supportedComputeStageDevicesAndReturnError/);
 assert.match(app, /setComputeDevice:cpuDevice forComputeStage:stage/);
 assert.match(app, /request\.usesCPUOnly = YES/);
-assert.match(app, /newCompactBGRAImageFromImageData[\s\S]*?width \* 4[\s\S]*?kCGBitmapByteOrder32Little \| kCGImageAlphaPremultipliedFirst/);
+assert.match(app, /newRGBImageFromImageData[\s\S]*?width \* 4[\s\S]*?kCGBitmapByteOrder32Little \| kCGImageAlphaPremultipliedFirst/);
 assert.match(app, /xxtCompat[\s\S]*?VNRecognizeTextRequest alloc\] init\]/);
 assert.match(app, /if \(!xxtCompat\)[\s\S]*?TLinkConfigureVisionRequestCPUOnly/);
 assert.match(app, /app_ocr_requires_foreground/);
