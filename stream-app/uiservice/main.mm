@@ -2,6 +2,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
+#import "VisionOCRService.h"
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -97,6 +98,7 @@ static UIViewController *sTLinkRootController = nil;
 static void TLinkPrepareHostWindow(void);
 static void TLinkPrepareToastWindow(void);
 static void TLinkStartServerIfNecessary(void);
+static void TLinkStartAuxiliaryServices(void);
 static void TLinkRefreshHostedWindow(void);
 static void TLinkPresentLocalHostWindow(void);
 static void TLinkHidePresentationWindowsIfIdle(NSUInteger generation);
@@ -314,8 +316,8 @@ static void TLinkWriteUIServiceDiagnostics(void)
 {
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
-    NSDictionary *status = @{
-        @"version": @22,
+    NSMutableDictionary *status = [@{
+        @"version": @23,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -379,7 +381,8 @@ static void TLinkWriteUIServiceDiagnostics(void)
         @"invalid_request_count": @(sTLinkInvalidRequestCount),
         @"last_result": sTLinkLastResult ?: @"unknown",
         @"updated_at": @([NSDate.date timeIntervalSince1970]),
-    };
+    } mutableCopy];
+    [status addEntriesFromDictionary:TLinkVisionOCRServiceDiagnostics()];
     [status writeToFile:kTLinkUIServiceDiagnosticsPath atomically:YES];
     [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone}
                                      ofItemAtPath:kTLinkUIServiceDiagnosticsPath error:nil];
@@ -603,7 +606,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=22;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginSBSAccessibilityContextHosting;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=0;;window_scene_activation_state=-1;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=0;;host_window_scene_activation_state=-1;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_sbs_accessibility_context_registration;;plugin_complete=%d;;window_server_started=%d;;status_bar_server_started=%d;;system_window_override_installed=%d;;window_level_hook_installed=%d;;accessibility_hosting_controller_available=%d;;window_scene_attachment_enabled=0;;host_window_registered=%d;;toast_window_registered=%d;;window_registration_attempts=%lu;;window_registration_successes=%lu;;window_registration_failures=%lu;;last_registered_context_id=%u;;last_hosting_error=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=23;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginSBSAccessibilityContextHosting;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=0;;window_scene_activation_state=-1;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=0;;host_window_scene_activation_state=-1;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_sbs_accessibility_context_registration;;plugin_complete=%d;;window_server_started=%d;;status_bar_server_started=%d;;system_window_override_installed=%d;;window_level_hook_installed=%d;;accessibility_hosting_controller_available=%d;;window_scene_attachment_enabled=0;;host_window_registered=%d;;toast_window_registered=%d;;window_registration_attempts=%lu;;window_registration_successes=%lu;;window_registration_failures=%lu;;last_registered_context_id=%u;;last_hosting_error=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@;;%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,
@@ -628,7 +631,8 @@ static NSString *TLinkHandleLine(NSString *line)
                 sTLinkLastHostingError ?: @"unknown",
                 (unsigned long)sTLinkRequestCount,
                 (unsigned long)sTLinkInvalidRequestCount, (unsigned long)sTLinkToastCount,
-                (long)sTLinkLastPosition, sTLinkLastResult ?: @"unknown"];
+                (long)sTLinkLastPosition, sTLinkLastResult ?: @"unknown",
+                TLinkVisionOCRServiceProbeSummary()];
     }
     sTLinkRequestCount += 1;
     if (![trimmed hasPrefix:@"1;;"]) {
@@ -696,6 +700,12 @@ static void TLinkStartServerIfNecessary(void)
     [serverThread start];
 }
 
+static void TLinkStartAuxiliaryServices(void)
+{
+    TLinkStartServerIfNecessary();
+    TLinkStartVisionOCRService();
+}
+
 @implementation TLinkUIServiceDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
@@ -705,7 +715,7 @@ static void TLinkStartServerIfNecessary(void)
     self.window = sTLinkHostWindow;
     self.window.hidden = YES;
     TLinkRefreshHostedWindow();
-    TLinkStartServerIfNecessary();
+    TLinkStartAuxiliaryServices();
     sTLinkLastResult = @"plugin_delegate_did_finish_launching";
     TLinkUIServiceLog([NSString stringWithFormat:@"plugin delegate ready bundle=%@ class=%@ state=%ld hosting_controller=%d host_registered=%d host_context_id=%u host_hidden=%d host_key=%d toast_context_id=%u toast_hidden=%d toast_key=%d",
         NSBundle.mainBundle.bundleIdentifier, NSStringFromClass(application.class),
@@ -1123,7 +1133,7 @@ static BOOL TLinkInitializeUIKitPlugin(void)
     sTLinkHostWindowRegistered = TLinkRegisterWindowContext(
         sTLinkHostWindow, sTLinkHostWindow.windowLevel);
     TLinkRefreshHostedWindow();
-    TLinkStartServerIfNecessary();
+    TLinkStartAuxiliaryServices();
     sTLinkLastResult = @"plugin_hosted_ready";
     TLinkUIServiceLog([NSString stringWithFormat:
         @"plugin hosted ready bundle=%@ class=%@ state=%ld gs=%d gsevent=%d bks=%d initialize=%d instantiate=%d complete=1 window_server=%d status_bar_server=%d system_override=%d level_hook=%d hosting_controller=%d host_registered=%d host_context_id=%u host_hidden=%d host_key=%d toast_context_id=%u toast_hidden=%d toast_key=%d",

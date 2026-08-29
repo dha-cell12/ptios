@@ -153,7 +153,9 @@ assert.ok(clipboarddBinary.includes("/var/mobile/Library/TLinkauto/runtime/volum
 assert.ok(clipboarddBinary.includes("background_visual_uiservice_queued"), "clipboardd lacks the background toast UI-service route");
 assert.ok(clipboarddBinary.includes("TLinkUIService.app/TLinkUIService"), "clipboardd lacks UI-service self-recovery");
 assert.ok(clipboarddBinary.includes("uiservice plugin spawn"), "clipboardd lacks hosted-plugin UI-service launch");
-assert.ok(uiServiceBinary.includes("uiservice_ready;;version=22"), "TLinkUIService lacks v22 readiness evidence");
+assert.ok(uiServiceBinary.includes("uiservice_ready;;version=23"), "TLinkUIService lacks v23 readiness evidence");
+assert.ok(uiServiceBinary.includes("uiservice_ocr_ready"), "TLinkUIService lacks the background Vision OCR endpoint");
+assert.ok(uiServiceBinary.includes("background_uiservice_6018"), "TLinkUIService lacks background Vision host evidence");
 assert.ok(uiServiceBinary.includes("xxtouch_sbs_accessibility_context_registration"), "TLinkUIService lacks SBS accessibility context hosting");
 assert.ok(uiServiceBinary.includes("window_scene_attachment_enabled=0"), "TLinkUIService does not disable the black-screen UIWindowScene path");
 assert.ok(uiServiceBinary.includes("SBSAccessibilityWindowHostingController"), "TLinkUIService lacks the accessibility window hosting controller");
@@ -176,7 +178,7 @@ assert.ok(!uiServiceInfoXML.includes("<key>UIRequiresFullScreen</key>"), "TLinkU
 assert.equal(plistValue(uiServiceInfoXML, "SecureKey"), true, "TLinkUIService lacks the secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "UIApplicationSystemWindowsSecureKey"), true, "TLinkUIService lacks the system secure-window bundle flag");
 assert.equal(plistValue(uiServiceInfoXML, "NSPrincipalClass"), "TLinkUIServiceApplication", "TLinkUIService lacks the hosted UIApplication principal class");
-assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "22", "TLinkUIService bundle version is stale");
+assert.equal(plistValue(uiServiceInfoXML, "CFBundleVersion"), "23", "TLinkUIService bundle version is stale");
 assert.ok(appInfoXML.includes("TLinkUIService.app/TLinkUIService"), "TSRootBinaries does not include TLinkUIService");
 
 const appEntitlements = execFileSync("ldid", ["-e", join(app, "StreamControl")], { encoding: "utf8" });

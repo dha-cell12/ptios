@@ -1,0 +1,98 @@
+﻿{
+    "metadata":  {
+                     "schema_version":  1,
+                     "qualification_version":  "foreground_fast20_accurate1_largefast1_v2",
+                     "captured_at_utc":  "2026-08-29T16:41:06.9031206+00:00",
+                     "completed_at_utc":  "2026-08-29T16:41:10.4106038+00:00",
+                     "host":  "192.168.1.244",
+                     "port":  6000,
+                     "timeout_ms":  30000,
+                     "inter_run_delay_ms":  100,
+                     "notes":  "background fail-closed expected",
+                     "expected_text":  "",
+                     "foreground_app_required":  true,
+                     "profile":  "xxt_compat"
+                 },
+    "preflight":  {
+                      "task97":  {
+                                     "at_utc":  "2026-08-29T16:41:06.9187398+00:00",
+                                     "request":  "97",
+                                     "response":  "0;;runtime=trollstore serviceVersion=23 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,90,91,94,95,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastUIService,backgroundToastFixedCenter,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,vpnControl,vpnOnDemand,shellTaskGated,clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,keyboardVisibilityControl,globalTouchIndicator,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_background_uiservice_positioned_cfusernotification_fallback toast=foreground_or_background_uiservice_positioned_with_cf_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=background_agent_ikev2_on_demand shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_clipboardd_uiservice_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB licenseBuildMode=enforced_compile_time_v1 respring=privhelper_validated_springboard_signal multiTouchRaw=legacy_task10_parent_frames zoomState=experimental zoomTask=64 zoomWire=task64_additive_zoom_v1 zoomFingerCounts=2,3 zoomBackend=legacy_multitouch_parent_frames zoomPhase=2 zoomGeometry=radial_linear_interpolation_v1 zoomValidation=preflight_bounds_v1 zoomCleanup=all_fingers_up_on_exception_v1 zoomDeviceValidated=0 zoomDiagnostics=zoom_runtime_diagnostics_v1 zoomClients=task64_python_js_webtango_v1 smartWaitState=implemented smartWaitPhase=1 smartWaitSchema=smart_wait_result_v1 smartWaitClients=rootfull_js_trollstore_js_webtango_v1 smartWaitLocators=predicate,app,color,image,text,image_gone,tap_when_visible smartWaitFrameStrategy=fresh_frame_per_attempt_release_always_template_open_once smartWaitDeviceValidated=0 runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0 eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0 adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0 securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0 vpnContractVersion=1 vpnLegacyTask=59 vpnProfileScope=tlink_owned_only vpnConfigurationTransport=local_ui_keychain_only vpnCredentialsOverTask59=forbidden vpnState=background_control vpnQuery=agent_6016_app_6015_interface_fallback vpnControl=agent_6016_with_foreground_fallback vpnBackend=nevpnmanager_ikev2_background_agent vpnBroker=vpnagent_6016_then_StreamControl_6015 vpnPhase=5 vpnBackgroundAgent=validated_mobile_process_v2 vpnOnDemand=local_ui_connect_all_networks vpnDisconnectPolicy=explicit_disconnect_disables_on_demand vpnDiagnostics=task59_action2_base64_json_v1 vpnEntitlementProbe=vpnagent_process_then_foreground_app_via_592 vpnProfileIdentifier=tlinkauto-managed-v1 licenseContractVersion=1 licensePolicyVersion=1 licenseLifecycle=foreground_bg_single_flight_backoff_v1 licenseGeneration=22 licenseGenerationSync=darwin_plus_request_check licensePolicy=explicit_table_fail_closed licenseRuntimeRecheck=h264_5s_script_1s task10LicenseDropCount=0 license=signed_lease_p256_enforced licenseState=valid licenseAccess=allowed licenseRecovery=ready licenseDeviceRepair=public_key_from_keychain serviceRecovery=replace_old_daemon_v21 tesseractInitSource=none visionOCRState=experimental visionOCRProfiles=app_cpu_default,worker_cpu_opt_in,xxt_compat_app_foreground visionOCRRoute=profile_selected_worker_or_app_6011 visionOCRFallback=none visionOCRCPUOnly=1 visionOCRXXTCompat=1 visionOCRXXTCompatInput=png_bridge_then_compact_cgimage visionOCRXXTCompatPixelLayout=compact_bgra8888_premultiplied_first_stride_width_x4 visionOCRXXTCompatCompute=automatic visionOCRXXTCompatHost=foreground_app_6011 visionOCRXXTCompatForegroundRequired=1 visionOCRAppWatchdogMs=15000 visionOCRAppBridgeProtocol=2 visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1 visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1 visionOCRAppBridgeProbe=task275_v1 visionOCRQualification=foreground_fast20_accurate1_largefast1_v2 visionOCRDefaultProfile=app_cpu ocrDefaultEngine=tesseract ocrEngineSelector=none ocrProtocolVersion=legacy_v1 ocrLegacyTasks=27,91",
+                                     "ok":  true,
+                                     "roundtrip_ms":  140.168,
+                                     "error":  null
+                                 },
+                      "required_markers":  [
+                                               "visionOCRState=experimental",
+                                               "visionOCRXXTCompat=1",
+                                               "visionOCRXXTCompatHost=foreground_app_6011",
+                                               "visionOCRXXTCompatForegroundRequired=1",
+                                               "visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1",
+                                               "visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1",
+                                               "visionOCRAppBridgeProbe=task275_v1",
+                                               "visionOCRQualification=foreground_fast20_accurate1_largefast1_v2"
+                                           ],
+                      "missing_markers":  [
+
+                                          ],
+                      "app_bridge":  {
+                                         "at_utc":  "2026-08-29T16:41:07.2038631+00:00",
+                                         "request":  "275",
+                                         "response":  "-1;;app_ocr_bridge_probe_empty_response errno=35 app_may_be_suspended",
+                                         "ok":  false,
+                                         "roundtrip_ms":  3066.685,
+                                         "error":  null
+                                     },
+                      "app_bridge_ready":  false,
+                      "passed":  false
+                  },
+    "debug_clear":  {
+                        "at_utc":  "2026-08-29T16:41:07.1192395+00:00",
+                        "request":  "274",
+                        "response":  "0;;vision_debug_cleared",
+                        "ok":  true,
+                        "roundtrip_ms":  82.846,
+                        "error":  null
+                    },
+    "fast_runs":  [
+
+                  ],
+    "accurate_case":  {
+                          "skipped":  true,
+                          "reason":  "fast_gate_not_complete"
+                      },
+    "large_fast_case":  {
+                            "skipped":  true,
+                            "reason":  "accurate_gate_not_complete"
+                        },
+    "debug_after":  {
+                        "at_utc":  "2026-08-29T16:41:10.2635825+00:00",
+                        "request":  "273",
+                        "response":  "0;;vision_debug_base64;;",
+                        "ok":  true,
+                        "roundtrip_ms":  76.726,
+                        "error":  null,
+                        "decoded_log":  ""
+                    },
+    "summary":  {
+                    "decision":  "fail_stopped_early",
+                    "automated_gate_passed":  false,
+                    "promotion_ready":  false,
+                    "promotion_blocker":  "manual text and coordinate review plus background fail-closed check",
+                    "stopped_early":  true,
+                    "stop_reason":  "app_bridge_preflight_failed",
+                    "requested_fast_runs":  20,
+                    "completed_fast_runs":  0,
+                    "executed_vision_requests":  0,
+                    "roundtrip":  null,
+                    "debug":  {
+                                  "healthy":  false,
+                                  "pixel_probe_count":  0,
+                                  "zero_pixel_probe_count":  0,
+                                  "perform_end_count":  0,
+                                  "response_ready_count":  0,
+                                  "all_pixel_buffers_zero":  false,
+                                  "failure_marker_found":  false
+                              }
+                }
+}

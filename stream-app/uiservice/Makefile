@@ -7,8 +7,8 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = TLinkUIService
 
-TLinkUIService_FILES = main.mm
-TLinkUIService_FRAMEWORKS = Foundation UIKit CoreFoundation QuartzCore
+TLinkUIService_FILES = main.mm VisionOCRService.mm
+TLinkUIService_FRAMEWORKS = Foundation UIKit CoreFoundation CoreGraphics CoreVideo QuartzCore Vision CoreML ImageIO
 TLinkUIService_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
 TLinkUIService_CCFLAGS = -std=c++14
 TLinkUIService_CODESIGN_FLAGS = -Sentitlements.plist

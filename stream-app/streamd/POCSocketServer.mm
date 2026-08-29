@@ -4718,11 +4718,11 @@ static NSString *TLinkBase64UTF8String(NSString *value)
     return [data base64EncodedStringWithOptions:0] ?: @"";
 }
 
-static NSData *TLinkProbeAppSideVisionOCRBridge(void)
+static NSData *TLinkProbeUIServiceVisionOCRBridge(void)
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_probe_socket_failed errno=%d", errno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_probe_socket_failed errno=%d", errno]);
     }
     struct timeval timeout;
     timeout.tv_sec = 3;
@@ -4733,19 +4733,19 @@ static NSData *TLinkProbeAppSideVisionOCRBridge(void)
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(6011);
+    addr.sin_port = htons(6018);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         int connectErrno = errno;
         close(sock);
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_probe_unavailable errno=%d open_StreamControl_foreground", connectErrno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_probe_unavailable errno=%d restart_TLinkUIService", connectErrno]);
     }
 
     NSData *request = [@"0\n" dataUsingEncoding:NSUTF8StringEncoding];
     if (!TLinkWriteAllToFd(sock, request.bytes, request.length)) {
         int writeErrno = errno;
         close(sock);
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_probe_write_failed errno=%d", writeErrno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_probe_write_failed errno=%d", writeErrno]);
     }
 
     errno = 0;
@@ -4753,12 +4753,12 @@ static NSData *TLinkProbeAppSideVisionOCRBridge(void)
     int readErrno = errno;
     close(sock);
     if (response.length == 0) {
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_probe_empty_response errno=%d app_may_be_suspended", readErrno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_probe_empty_response errno=%d service_may_be_stale", readErrno]);
     }
     return response;
 }
 
-static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
+static NSData *TLinkRunUIServiceVisionOCR(NSData *pngData,
                                         CGRect region,
                                         NSString *customWords,
                                         CGFloat minimumTextHeight,
@@ -4767,7 +4767,7 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
                                         BOOL languageCorrection,
                                         NSString *profile)
 {
-    if (pngData.length == 0) return TLinkError(@"app_ocr_bridge_empty_png");
+    if (pngData.length == 0) return TLinkError(@"uiservice_ocr_bridge_empty_png");
 
     NSString *tmpDir = @"/var/mobile/Library/TLinkauto/tmp";
     NSError *mkdirError = nil;
@@ -4775,7 +4775,7 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
                                    withIntermediateDirectories:YES
                                                     attributes:@{NSFilePosixPermissions: @0755}
                                                          error:&mkdirError]) {
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_tmpdir_failed %@", mkdirError.localizedDescription ?: tmpDir]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_tmpdir_failed %@", mkdirError.localizedDescription ?: tmpDir]);
     }
     chmod([tmpDir fileSystemRepresentation], 0755);
 
@@ -4783,7 +4783,7 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
     snprintf(imageTemplate, sizeof(imageTemplate), "%s", [[tmpDir stringByAppendingPathComponent:@"appocr-XXXXXX"] fileSystemRepresentation]);
     int imageFd = mkstemp(imageTemplate);
     if (imageFd < 0) {
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_temp_failed errno=%d", errno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_temp_failed errno=%d", errno]);
     }
     BOOL wroteImage = TLinkWriteAllToFd(imageFd, pngData.bytes, pngData.length);
     fchmod(imageFd, 0644);
@@ -4791,16 +4791,16 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
     chmod(imageTemplate, 0644);
     if (!wroteImage) {
         unlink(imageTemplate);
-        return TLinkError(@"app_ocr_bridge_png_write_failed");
+        return TLinkError(@"uiservice_ocr_bridge_png_write_failed");
     }
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         unlink(imageTemplate);
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_socket_failed errno=%d", errno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_socket_failed errno=%d", errno]);
     }
     struct timeval timeout;
-    // The app has its own 15-second watchdog. Leave enough time for that
+    // The UI service has its own 15-second watchdog. Leave enough time for that
     // structured response while staying below the worker's 20-second bound.
     timeout.tv_sec = 18;
     timeout.tv_usec = 0;
@@ -4810,13 +4810,13 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(6011);
+    addr.sin_port = htons(6018);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         int connectErrno = errno;
         close(sock);
         unlink(imageTemplate);
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_unavailable errno=%d open_StreamControl_foreground", connectErrno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_unavailable errno=%d restart_TLinkUIService", connectErrno]);
     }
 
     NSString *line = [NSString stringWithFormat:@"2;;%s;;%.0f;;%.0f;;%.0f;;%.0f;;%.8f;;%d;;%@;;%@;;%d;;%@\n",
@@ -4835,7 +4835,7 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
     if (!TLinkWriteAllToFd(sock, lineData.bytes, lineData.length)) {
         close(sock);
         unlink(imageTemplate);
-        return TLinkError(@"app_ocr_bridge_request_write_failed");
+        return TLinkError(@"uiservice_ocr_bridge_request_write_failed");
     }
 
     errno = 0;
@@ -4844,7 +4844,7 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
     close(sock);
     unlink(imageTemplate);
     if (response.length == 0) {
-        return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_empty_response errno=%d app_may_be_suspended", readErrno]);
+        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_empty_response errno=%d service_may_be_stale", readErrno]);
     }
     return response;
 }
@@ -4971,8 +4971,8 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
     }
 
     if (subtask == 5) {
-        TLinkSetOCRWorkerPhase("vision_app_bridge_probe");
-        return TLinkProbeAppSideVisionOCRBridge();
+        TLinkSetOCRWorkerPhase("vision_uiservice_bridge_probe");
+        return TLinkProbeUIServiceVisionOCRBridge();
     }
 
     if (subtask != 1) {
@@ -5035,11 +5035,11 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
 
     if ([profile isEqualToString:@"app_cpu"] || [profile isEqualToString:@"xxt_compat"]) {
         BOOL xxtCompat = [profile isEqualToString:@"xxt_compat"];
-        TLinkSetOCRWorkerPhase(xxtCompat ? "vision_profile_xxt_compat_app" : "vision_profile_app_cpu");
-        POCLogf("ocr: task27 profile=%s route=app_6011 cpu_only=%d foreground_required=1",
+        TLinkSetOCRWorkerPhase(xxtCompat ? "vision_profile_xxt_compat_uiservice" : "vision_profile_app_cpu_uiservice");
+        POCLogf("ocr: task27 profile=%s route=uiservice_6018 cpu_only=%d foreground_required=0",
                 [profile UTF8String],
                 xxtCompat ? 0 : 1);
-        return TLinkRunAppSideVisionOCR(visionImageData,
+        return TLinkRunUIServiceVisionOCR(visionImageData,
                                         region,
                                         parts[2],
                                         (CGFloat)[parts[3] doubleValue],
@@ -6136,20 +6136,20 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrWorkerIsolation": @(YES),
         @"ocrWorkerBreadcrumbs": @(YES),
         @"ocrVisionState": @"experimental",
-        @"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_app_foreground",
+        @"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_background_uiservice",
         @"ocrVisionCPUOnly": @(YES),
         @"ocrVisionXXTCompat": @(YES),
         @"ocrVisionXXTCompatInput": @"png_bridge_then_compact_cgimage",
         @"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4",
         @"ocrVisionXXTCompatCompute": @"automatic",
-        @"ocrVisionXXTCompatHost": @"foreground_app_6011",
-        @"ocrVisionXXTCompatForegroundRequired": @(YES),
+        @"ocrVisionXXTCompatHost": @"background_uiservice_6018",
+        @"ocrVisionXXTCompatForegroundRequired": @(NO),
         @"ocrVisionAppWatchdogMs": @15000,
         @"ocrVisionAppBridgeProtocol": @2,
         @"ocrVisionPixelBufferProbe": @"bgra_420f_memory_iosurface_opengles_metal_v1",
         @"ocrVisionGraphicsEntitlements": @"iosurface_ioaccel_agx_v1",
-        @"ocrVisionAppBridgeProbe": @"task275_v1",
-        @"ocrVisionQualification": @"foreground_fast20_accurate1_largefast1_v2",
+        @"ocrVisionAppBridgeProbe": @"task275_uiservice_v1",
+        @"ocrVisionQualification": @"background_fast20_accurate1_largefast1_v3",
         @"ocrVisionDebugLog": kTLinkVisionOCRDebugLogPath,
         @"ocrVisionFallback": @"none",
         @"ocrAppSideBridge": @(YES),
@@ -8731,24 +8731,24 @@ static NSData *TLinkHandleTaskLine(const char *line)
             licenseRecovery.count > 0 ? (licenseRecovery[@"state"] ?: @"required") : @"ready"];
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         // Keep the stable Tesseract default while exposing CPU-only and
-        // app-hosted XXTouch-compatible Vision canaries without changing task 27 bytes.
+        // UI-service-hosted XXTouch-compatible Vision canaries without changing task 27 bytes.
         cap = [cap stringByAppendingString:@" visionOCRState=experimental"
-                                               @" visionOCRProfiles=app_cpu_default,worker_cpu_opt_in,xxt_compat_app_foreground"
-                                               @" visionOCRRoute=profile_selected_worker_or_app_6011"
+                                               @" visionOCRProfiles=app_cpu_default,worker_cpu_opt_in,xxt_compat_background_uiservice"
+                                               @" visionOCRRoute=profile_selected_worker_or_uiservice_6018"
                                                @" visionOCRFallback=none"
                                                @" visionOCRCPUOnly=1"
                                                @" visionOCRXXTCompat=1"
                                                @" visionOCRXXTCompatInput=png_bridge_then_compact_cgimage"
                                                @" visionOCRXXTCompatPixelLayout=compact_bgra8888_premultiplied_first_stride_width_x4"
                                                @" visionOCRXXTCompatCompute=automatic"
-                                               @" visionOCRXXTCompatHost=foreground_app_6011"
-                                               @" visionOCRXXTCompatForegroundRequired=1"
+                                               @" visionOCRXXTCompatHost=background_uiservice_6018"
+                                               @" visionOCRXXTCompatForegroundRequired=0"
                                                @" visionOCRAppWatchdogMs=15000"
                                                @" visionOCRAppBridgeProtocol=2"
                                                @" visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1"
                                                @" visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1"
-                                               @" visionOCRAppBridgeProbe=task275_v1"
-                                               @" visionOCRQualification=foreground_fast20_accurate1_largefast1_v2"
+                                               @" visionOCRAppBridgeProbe=task275_uiservice_v1"
+                                               @" visionOCRQualification=background_fast20_accurate1_largefast1_v3"
                                                @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"
                                                @" ocrEngineSelector=none"

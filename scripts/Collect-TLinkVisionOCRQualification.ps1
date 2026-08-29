@@ -27,7 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$qualificationVersion = "foreground_fast20_accurate1_largefast1_v2"
+$qualificationVersion = "background_fast20_accurate1_largefast1_v3"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -173,11 +173,11 @@ function Get-TLinkMetricSummary {
 $requiredTask97Markers = @(
     "visionOCRState=experimental",
     "visionOCRXXTCompat=1",
-    "visionOCRXXTCompatHost=foreground_app_6011",
-    "visionOCRXXTCompatForegroundRequired=1",
+    "visionOCRXXTCompatHost=background_uiservice_6018",
+    "visionOCRXXTCompatForegroundRequired=0",
     "visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1",
     "visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1",
-    "visionOCRAppBridgeProbe=task275_v1",
+    "visionOCRAppBridgeProbe=task275_uiservice_v1",
     "visionOCRQualification=$qualificationVersion"
 )
 
@@ -190,20 +190,21 @@ foreach ($marker in $requiredTask97Markers) {
     }
 }
 $preflightReady = [bool]($preflight.ok -and $missingMarkers.Count -eq 0)
-$appBridgePreflight = Invoke-TLinkTask -Task "275"
-$appBridgeReady = [bool](
-    $appBridgePreflight.ok -and
-    ([string]$appBridgePreflight.response).IndexOf("app_ocr_ready", [StringComparison]::Ordinal) -ge 0 -and
-    ([string]$appBridgePreflight.response).IndexOf("state=0", [StringComparison]::Ordinal) -ge 0
-)
 $debugClear = Invoke-TLinkTask -Task "274"
+$serviceBridgePreflight = Invoke-TLinkTask -Task "275"
+$serviceBridgeReady = [bool](
+    $serviceBridgePreflight.ok -and
+    ([string]$serviceBridgePreflight.response).IndexOf("uiservice_ocr_ready", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("port=6018", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("scene_required=0", [StringComparison]::Ordinal) -ge 0
+)
 
 $fastRuns = [System.Collections.Generic.List[object]]::new()
-$stoppedEarly = -not $preflightReady -or -not $appBridgeReady -or -not $debugClear.ok
+$stoppedEarly = -not $preflightReady -or -not $serviceBridgeReady -or -not $debugClear.ok
 $stopReason = if (-not $preflightReady) {
     "preflight_capability_mismatch"
-} elseif (-not $appBridgeReady) {
-    "app_bridge_preflight_failed"
+} elseif (-not $serviceBridgeReady) {
+    "uiservice_bridge_preflight_failed"
 } elseif (-not $debugClear.ok) {
     "debug_clear_failed"
 } else {
@@ -250,15 +251,15 @@ $executedVisionCount = $fastRuns.Count
 if (-not $accurateCase.skipped) { $executedVisionCount++ }
 if (-not $largeFastCase.skipped) { $executedVisionCount++ }
 
-$pixelProbeCount = [regex]::Matches($debugText, "app_pixelbuffer_probe").Count
+$pixelProbeCount = [regex]::Matches($debugText, "uiservice_pixelbuffer_probe").Count
 $zeroPixelProbeCount = [regex]::Matches(
     $debugText,
-    "app_pixelbuffer_probe[^\r\n]*bgra_memory=0 420f_memory=0 420f_iosurface=0 420f_opengles=0 420f_metal=0"
+    "uiservice_pixelbuffer_probe[^\r\n]*bgra_memory=0 420f_memory=0 420f_iosurface=0 420f_opengles=0 420f_metal=0"
 ).Count
-$performEndCount = [regex]::Matches($debugText, "app_perform_end").Count
-$responseReadyCount = [regex]::Matches($debugText, "app_response_ready").Count
-$allPixelBuffersZero = $pixelProbeCount -ge $executedVisionCount -and $zeroPixelProbeCount -ge $executedVisionCount
-$debugHasFailure = $debugText -match "app_perform_failed|app_ocr_requires_foreground|app_ocr_timeout|app_ocr_busy|app_image_decode_failed"
+$performEndCount = [regex]::Matches($debugText, "uiservice_perform_end").Count
+$responseReadyCount = [regex]::Matches($debugText, "uiservice_response_ready").Count
+$allPixelBuffersZero = $executedVisionCount -gt 0 -and $pixelProbeCount -ge $executedVisionCount -and $zeroPixelProbeCount -ge $executedVisionCount
+$debugHasFailure = $debugText -match "uiservice_perform_failed|uiservice_ocr_timeout|uiservice_ocr_busy|uiservice_ocr_rgb_decode_failed|uiservice_server_bind_failed"
 $debugHealthy = [bool](
     $debugAfter.ok -and
     $executedVisionCount -gt 0 -and
@@ -270,7 +271,7 @@ $debugHealthy = [bool](
 
 $fastPassed = $fastRuns.Count -eq $FastRepeatCount -and @($fastRuns | Where-Object { -not $_.passed }).Count -eq 0
 $automatedGatePassed = [bool](
-    $preflightReady -and $appBridgeReady -and
+    $preflightReady -and $serviceBridgeReady -and
     $debugClear.ok -and
     $fastPassed -and
     -not $accurateCase.skipped -and $accurateCase.passed -and
@@ -302,16 +303,17 @@ $artifact = [ordered]@{
         inter_run_delay_ms = $InterRunDelayMs
         notes = $Notes
         expected_text = $ExpectedText
-        foreground_app_required = $true
+        foreground_app_required = $false
+        background_uiservice_required = $true
         profile = "xxt_compat"
     }
     preflight = [ordered]@{
         task97 = $preflight
         required_markers = $requiredTask97Markers
         missing_markers = $missingMarkers
-        app_bridge = $appBridgePreflight
-        app_bridge_ready = $appBridgeReady
-        passed = [bool]($preflightReady -and $appBridgeReady)
+        uiservice_bridge = $serviceBridgePreflight
+        uiservice_bridge_ready = $serviceBridgeReady
+        passed = [bool]($preflightReady -and $serviceBridgeReady)
     }
     debug_clear = $debugClear
     fast_runs = @($fastRuns)
@@ -322,7 +324,7 @@ $artifact = [ordered]@{
         decision = $decision
         automated_gate_passed = $automatedGatePassed
         promotion_ready = $false
-        promotion_blocker = "manual text and coordinate review plus background fail-closed check"
+        promotion_blocker = "manual text and coordinate review while StreamControl remains backgrounded"
         stopped_early = $stoppedEarly
         stop_reason = $stopReason
         requested_fast_runs = $FastRepeatCount
@@ -347,7 +349,7 @@ $artifact | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $jsonPath -Encod
 Write-Host "Vision OCR qualification written to $jsonPath"
 Write-Host "Decision: $decision"
 if ($automatedGatePassed) {
-    Write-Host "Automated stability gate passed. Review recognized text/coordinates and verify background fail-closed behavior before promotion."
+    Write-Host "Automated background stability gate passed. Review recognized text/coordinates while the target app remains foreground."
 } else {
     Write-Warning "Vision OCR qualification did not pass. Inspect summary, the failed case, and debug_after.decoded_log."
 }

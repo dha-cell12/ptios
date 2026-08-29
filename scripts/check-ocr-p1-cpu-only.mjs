@@ -31,9 +31,12 @@ for (const request of [fixture.appCPURequest, fixture.workerCPURequest, fixture.
 const [
   server,
   app,
+  uiService,
   serverMakefile,
   appMakefile,
+  uiServiceMakefile,
   appEntitlements,
+  uiServiceEntitlements,
   collector,
   qualification,
   p1Doc,
@@ -44,9 +47,12 @@ const [
 ] = await Promise.all([
   read("stream-app/streamd/POCSocketServer.mm"),
   read("stream-app/app/AppDelegate.mm"),
+  read("stream-app/uiservice/VisionOCRService.mm"),
   read("stream-app/streamd/Makefile"),
   read("stream-app/app/Makefile"),
+  read("stream-app/uiservice/Makefile"),
   read("stream-app/app/entitlements.plist"),
+  read("stream-app/uiservice/entitlements.plist"),
   read("scripts/Collect-TLinkOCRBaseline.ps1"),
   read("scripts/Collect-TLinkVisionOCRQualification.ps1"),
   read("docs/ocr-p1-cpu-only.md"),
@@ -59,9 +65,9 @@ const [
 assert.match(server, /parts\.count >= 9[\s\S]*?parts\[8\][\s\S]*?: @"app_cpu"/);
 assert.match(server, /isEqualToString:@"app_cpu"[\s\S]*?isEqualToString:@"worker_cpu"/);
 assert.match(server, /isEqualToString:@"worker_cpu"[\s\S]*?isEqualToString:@"xxt_compat"/);
-assert.match(server, /vision_profile_app_cpu[\s\S]*?return TLinkRunAppSideVisionOCR/);
+assert.match(server, /vision_profile_app_cpu_uiservice[\s\S]*?return TLinkRunUIServiceVisionOCR/);
 assert.match(server, /vision_profile_worker_cpu[\s\S]*?VNRecognizeTextRequest/);
-assert.match(server, /isEqualToString:@"app_cpu"\] \|\| \[profile isEqualToString:@"xxt_compat"\][\s\S]*?vision_profile_xxt_compat_app[\s\S]*?TLinkRunAppSideVisionOCR/);
+assert.match(server, /isEqualToString:@"app_cpu"\] \|\| \[profile isEqualToString:@"xxt_compat"\][\s\S]*?vision_profile_xxt_compat_uiservice[\s\S]*?TLinkRunUIServiceVisionOCR/);
 assert.match(server, /@"2;;%s;;[\s\S]*?TLinkBase64UTF8String\(customWords\)[\s\S]*?TLinkBase64UTF8String\(languages\)/);
 assert.doesNotMatch(server, /vision_xxt_compat_perform_requests/);
 assert.match(server, /vision-ocr-debug\.log/);
@@ -72,18 +78,20 @@ assert.match(server, /supportedComputeStageDevicesAndReturnError/);
 assert.match(server, /setComputeDevice:cpuDevice forComputeStage:stage/);
 assert.match(server, /request\.usesCPUOnly = YES/);
 assert.match(server, /@"ocrVisionState": @"experimental"/);
-assert.match(server, /@"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_app_foreground"/);
+assert.match(server, /@"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_background_uiservice"/);
 assert.match(server, /@"ocrVisionCPUOnly": @\(YES\)/);
 assert.match(server, /@"ocrVisionXXTCompat": @\(YES\)/);
 assert.match(server, /@"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4"/);
-assert.match(server, /@"ocrVisionXXTCompatHost": @"foreground_app_6011"/);
-assert.match(server, /@"ocrVisionXXTCompatForegroundRequired": @\(YES\)/);
+assert.match(server, /@"ocrVisionXXTCompatHost": @"background_uiservice_6018"/);
+assert.match(server, /@"ocrVisionXXTCompatForegroundRequired": @\(NO\)/);
 assert.match(server, /@"ocrVisionAppWatchdogMs": @15000/);
 assert.match(server, /@"ocrVisionAppBridgeProtocol": @2/);
 assert.match(server, /@"ocrVisionPixelBufferProbe": @"bgra_420f_memory_iosurface_opengles_metal_v1"/);
 assert.match(server, /@"ocrVisionGraphicsEntitlements": @"iosurface_ioaccel_agx_v1"/);
-assert.match(server, /@"ocrVisionAppBridgeProbe": @"task275_v1"/);
-assert.match(server, /@"ocrVisionQualification": @"foreground_fast20_accurate1_largefast1_v2"/);
+assert.match(server, /@"ocrVisionAppBridgeProbe": @"task275_uiservice_v1"/);
+assert.match(server, /@"ocrVisionQualification": @"background_fast20_accurate1_largefast1_v3"/);
+assert.match(server, /htons\(6018\)/);
+assert.match(server, /uiservice_ocr_bridge_probe_empty_response/);
 assert.match(app, /TLinkConfigureVisionRequestCPUOnly/);
 assert.match(app, /supportedComputeStageDevicesAndReturnError/);
 assert.match(app, /setComputeDevice:cpuDevice forComputeStage:stage/);
@@ -104,9 +112,24 @@ assert.match(app, /phase:@"app_bridge_ingress"/);
 assert.match(app, /app_ocr_ready/);
 assert.doesNotMatch(app, /currentApplicationStateForOCR[\s\S]{0,500}dispatch_sync\(dispatch_get_main_queue/);
 
+assert.match(uiService, /uiservice_ocr_ready/);
+assert.match(uiService, /kTLinkVisionOCRPort = 6018/);
+assert.match(uiService, /background_uiservice_6018/);
+assert.match(uiService, /TLinkVisionCreateRGBImage[\s\S]*?width \* 4[\s\S]*?kCGBitmapByteOrder32Little \| kCGImageAlphaPremultipliedFirst/);
+assert.match(uiService, /TLinkVisionConfigureCPUOnly/);
+assert.match(uiService, /supportedComputeStageDevicesAndReturnError/);
+assert.match(uiService, /setComputeDevice:cpuDevice forComputeStage:stage/);
+assert.match(uiService, /request\.usesCPUOnly = YES/);
+assert.match(uiService, /uiservice_pixelbuffer_probe/);
+assert.match(uiService, /uiservice_perform_end/);
+assert.match(uiService, /uiservice_response_ready/);
+assert.match(uiService, /scene_required=0/);
+assert.doesNotMatch(uiService, /makeKeyAndVisible|UIWindowScene|FBScene/);
+
 assert.match(serverMakefile, /streamd_FRAMEWORKS = .* Vision CoreML /);
 assert.match(appMakefile, /StreamControl_FRAMEWORKS = .* Vision CoreML /);
 assert.match(appMakefile, /StreamControl_FRAMEWORKS = .* CoreVideo /);
+assert.match(uiServiceMakefile, /TLinkUIService_FRAMEWORKS = .* CoreVideo .* Vision CoreML ImageIO/);
 assert.match(server, /#import <CoreML\/CoreML\.h>/);
 assert.match(app, /#import <CoreML\/CoreML\.h>/);
 assert.match(app, /#import <CoreVideo\/CoreVideo\.h>/);
@@ -124,6 +147,7 @@ for (const entitlement of [
   "AGXGLContext",
 ]) {
   assert.ok(appEntitlements.includes(entitlement), `StreamControl OCR graphics entitlement missing ${entitlement}`);
+  assert.ok(uiServiceEntitlements.includes(entitlement), `TLinkUIService OCR graphics entitlement missing ${entitlement}`);
 }
 
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
@@ -139,17 +163,18 @@ assert.match(collector, /Invoke-TLinkTask -Task "274"/);
 assert.match(collector, /Add-TLinkVisionDebugText/);
 assert.match(qualification, /\[int\]\$FastRepeatCount = 20/);
 assert.match(qualification, /\[ValidateRange\(20, 100\)\]/);
-assert.match(qualification, /foreground_fast20_accurate1_largefast1_v2/);
+assert.match(qualification, /background_fast20_accurate1_largefast1_v3/);
 assert.match(qualification, /Invoke-TLinkVisionCase -Name "fast_repeat" -RecognitionLevel 1/);
 assert.match(qualification, /Invoke-TLinkVisionCase -Name "accurate_small" -RecognitionLevel 0/);
 assert.match(qualification, /Invoke-TLinkVisionCase -Name "fast_large" -RecognitionLevel 1/);
 assert.match(qualification, /Invoke-TLinkTask -Task "97"/);
 assert.match(qualification, /Invoke-TLinkTask -Task "275"/);
-assert.match(qualification, /app_bridge_preflight_failed/);
+assert.match(qualification, /uiservice_bridge_preflight_failed/);
 assert.match(qualification, /missing_postflight_markers/);
 assert.match(qualification, /zero_pixel_probe_count/);
 assert.match(qualification, /Invoke-TLinkTask -Task "274"/);
 assert.match(qualification, /Invoke-TLinkTask -Task "273"/);
+assert.match(qualification, /\$debugClear = Invoke-TLinkTask -Task "274"[\s\S]*?\$serviceBridgePreflight = Invoke-TLinkTask -Task "275"/);
 assert.match(qualification, /ocr-qualification\.json/);
 assert.match(qualification, /promotion_ready = \$false/);
 assert.match(p1Doc, /app_cpu/);
@@ -166,4 +191,4 @@ assert.match(findingsDoc, /all production automation should use task `91`/i);
 assert.match(buildWorkflow, /node scripts\/check-ocr-p1-cpu-only\.mjs/);
 assert.match(trollstoreWorkflow, /node scripts\/check-ocr-p1-cpu-only\.mjs/);
 
-console.log("OCR P1/P2 Vision OK: CPU-only profiles preserved, xxt_compat foreground app host wired, legacy task 27 response preserved");
+console.log("OCR P1/P3 Vision OK: CPU-only profiles preserved, background UI-service host wired, legacy task 27 response preserved");
