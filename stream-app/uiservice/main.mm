@@ -317,7 +317,7 @@ static void TLinkWriteUIServiceDiagnostics(void)
     NSString *directory = [kTLinkUIServiceDiagnosticsPath stringByDeletingLastPathComponent];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
     NSMutableDictionary *status = [@{
-        @"version": @23,
+        @"version": @24,
         @"pid": @(getpid()),
         @"uid": @(getuid()),
         @"euid": @(geteuid()),
@@ -606,7 +606,7 @@ static NSString *TLinkHandleLine(NSString *line)
 {
     NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if ([trimmed isEqualToString:@"ping"]) {
-        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=23;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginSBSAccessibilityContextHosting;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=0;;window_scene_activation_state=-1;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=0;;host_window_scene_activation_state=-1;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_sbs_accessibility_context_registration;;plugin_complete=%d;;window_server_started=%d;;status_bar_server_started=%d;;system_window_override_installed=%d;;window_level_hook_installed=%d;;accessibility_hosting_controller_available=%d;;window_scene_attachment_enabled=0;;host_window_registered=%d;;toast_window_registered=%d;;window_registration_attempts=%lu;;window_registration_successes=%lu;;window_registration_failures=%lu;;last_registered_context_id=%u;;last_hosting_error=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@;;%@\r\n",
+        return [NSString stringWithFormat:@"0;;uiservice_ready;;version=24;;pid=%d;;uid=%d;;euid=%d;;gid=%d;;egid=%d;;mobile_identity=%d;;launch_mode=UIKitPluginSBSAccessibilityContextHosting;;application_state=%ld;;window_ready=%d;;window_context_id=%u;;window_scene_attached=0;;window_scene_activation_state=-1;;window_level=%.1f;;requested_window_level=20000099.9;;window_hidden=%d;;window_key=%d;;host_window_ready=%d;;host_window_context_id=%u;;host_window_scene_attached=0;;host_window_scene_activation_state=-1;;host_window_level=%.1f;;requested_host_window_level=10000010.0;;host_window_hidden=%d;;host_window_key=%d;;ignores_hit_test=1;;passthrough=1;;secure=%d;;render_mode=xxtouch_sbs_accessibility_context_registration;;plugin_complete=%d;;window_server_started=%d;;status_bar_server_started=%d;;system_window_override_installed=%d;;window_level_hook_installed=%d;;accessibility_hosting_controller_available=%d;;window_scene_attachment_enabled=0;;host_window_registered=%d;;toast_window_registered=%d;;window_registration_attempts=%lu;;window_registration_successes=%lu;;window_registration_failures=%lu;;last_registered_context_id=%u;;last_hosting_error=%@;;request_count=%lu;;invalid_request_count=%lu;;toast_count=%lu;;last_position=%ld;;last_result=%@;;%@\r\n",
                 getpid(), getuid(), geteuid(), getgid(), getegid(),
                 (geteuid() == 501 && getegid() == 501) ? 1 : 0,
                 (long)UIApplication.sharedApplication.applicationState,

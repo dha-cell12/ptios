@@ -425,7 +425,7 @@ jobs:
           grep -q 'com.apple.springboard.launchapplications' stream-app/clipboardd/entitlements.plist
           grep -q 'windowLevel = (UIWindowLevel)10000010.0' stream-app/uiservice/main.mm
           grep -q 'windowLevel = (UIWindowLevel)20000099.9' stream-app/uiservice/main.mm
-          grep -q 'uiservice_ready;;version=23' stream-app/uiservice/main.mm
+          grep -q 'uiservice_ready;;version=24' stream-app/uiservice/main.mm
           grep -q 'launch_mode=UIKitPluginSBSAccessibilityContextHosting' stream-app/uiservice/main.mm
           grep -q 'registerWindowWithContextID:atLevel:' stream-app/uiservice/main.mm
           grep -q 'return nil;' stream-app/uiservice/main.mm
@@ -650,9 +650,10 @@ jobs:
           grep -q 'htons(6018)' stream-app/streamd/POCSocketServer.mm
           grep -q 'uiservice_ocr_ready' stream-app/uiservice/VisionOCRService.mm
           grep -q 'background_uiservice_6018' stream-app/uiservice/VisionOCRService.mm
-          grep -q '/var/mobile/Library/TLinkauto/tmp' stream-app/streamd/POCSocketServer.mm
-          grep -q 'appocr-XXXXXX' stream-app/streamd/POCSocketServer.mm
-          grep -q 'fchmod(imageFd, 0644)' stream-app/streamd/POCSocketServer.mm
+          grep -q 'direct_streamd_to_uiservice_no_worker_v1' stream-app/streamd/POCSocketServer.mm
+          grep -q 'inline_png_bounded_32mib_v1' stream-app/streamd/POCSocketServer.mm
+          grep -q 'TLinkVisionReadExact' stream-app/uiservice/VisionOCRService.mm
+          grep -q 'transport=inline_png' stream-app/uiservice/VisionOCRService.mm
           grep -q 'startAppSideOCRServer' stream-app/app/AppDelegate.mm
           grep -q '127.0.0.1:6011' stream-app/app/AppDelegate.mm
           grep -q 'newRGBImageFromImageData' stream-app/app/AppDelegate.mm

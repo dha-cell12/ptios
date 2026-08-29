@@ -505,7 +505,7 @@ static int TLinkEnsureClipboardd(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;uiservice_ready"] &&
-           [probe containsString:@"version=23"] &&
+           [probe containsString:@"version=24"] &&
            [probe containsString:@"launch_mode=UIKitPluginSBSAccessibilityContextHosting"] &&
            [probe containsString:@"plugin_complete=1"] &&
            [probe containsString:@"window_scene_attachment_enabled=0"] &&
@@ -517,6 +517,8 @@ static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
            [probe containsString:@"vision_ocr_port=6018"] &&
            [probe containsString:@"vision_ocr_started=1"] &&
            [probe containsString:@"vision_ocr_listening=1"] &&
+           [probe containsString:@"vision_ocr_protocol=3"] &&
+           [probe containsString:@"vision_ocr_transport=inline_png"] &&
            [probe containsString:@";;uid=501;;"] &&
            [probe containsString:@";;euid=501;;"];
 }

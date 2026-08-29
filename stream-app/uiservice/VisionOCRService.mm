@@ -220,20 +220,34 @@ static BOOL TLinkVisionPerform(CGImageRef image,
     return NO;
 }
 
-static NSString *TLinkVisionPerformRequest(NSString *line)
+static NSString *TLinkVisionPerformRequest(NSString *line, NSData *inlineImageData)
 {
     NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:
         NSCharacterSet.whitespaceAndNewlineCharacterSet] componentsSeparatedByString:@";;"];
     BOOL version2Request = parts.count >= 12 && [parts[0] isEqualToString:@"2"];
-    if (!version2Request) return @"-1;;uiservice_ocr_bad_request protocol=2_required\r\n";
-
-    NSString *imagePath = parts[1];
-    if (![imagePath hasPrefix:@"/var/mobile/Library/TLinkauto/tmp/appocr-"]) {
-        return @"-1;;uiservice_ocr_path_rejected\r\n";
+    BOOL version3Request = parts.count >= 12 && [parts[0] isEqualToString:@"3"];
+    if (!version2Request && !version3Request) {
+        return @"-1;;uiservice_ocr_bad_request protocol=2_or_3_required\r\n";
     }
-    NSData *imageData = [NSData dataWithContentsOfFile:imagePath];
-    if (imageData.length == 0 || imageData.length > (32 * 1024 * 1024)) {
-        return [NSString stringWithFormat:@"-1;;uiservice_ocr_png_missing_or_too_large path=%@\r\n", imagePath];
+
+    NSData *imageData = inlineImageData;
+    if (version2Request) {
+        NSString *imagePath = parts[1];
+        if (![imagePath hasPrefix:@"/var/mobile/Library/TLinkauto/tmp/appocr-"]) {
+            return @"-1;;uiservice_ocr_path_rejected\r\n";
+        }
+        imageData = [NSData dataWithContentsOfFile:imagePath];
+        if (imageData.length == 0 || imageData.length > (32 * 1024 * 1024)) {
+            return [NSString stringWithFormat:@"-1;;uiservice_ocr_png_missing_or_too_large path=%@\r\n", imagePath];
+        }
+    } else {
+        unsigned long long declaredLength = [parts[1] longLongValue];
+        if (declaredLength == 0 || declaredLength > (32ULL * 1024ULL * 1024ULL) ||
+            imageData.length != (NSUInteger)declaredLength) {
+            return [NSString stringWithFormat:
+                @"-1;;uiservice_ocr_inline_length_mismatch declared=%llu actual=%lu\r\n",
+                declaredLength, (unsigned long)imageData.length];
+        }
     }
     if (@available(iOS 13.0, *)) {
         // Continue below. Keeping this check local makes the RPC fail closed
@@ -328,7 +342,7 @@ static NSString *TLinkVisionPerformRequest(NSString *line)
     return [NSString stringWithFormat:@"0;;%@\r\n", [output componentsJoinedByString:@";;"]];
 }
 
-static NSString *TLinkVisionHandleLine(NSString *line)
+static NSString *TLinkVisionHandleLine(NSString *line, NSData *inlineImageData)
 {
     NSString *trimmed = [line ?: @"" stringByTrimmingCharactersInSet:
         NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -336,7 +350,7 @@ static NSString *TLinkVisionHandleLine(NSString *line)
         TLinkVisionAppendDebug(@"bridge", @"uiservice_bridge_probe",
             [NSString stringWithFormat:@"app_state=%ld", (long)UIApplication.sharedApplication.applicationState]);
         return [NSString stringWithFormat:
-            @"0;;uiservice_ocr_ready;;version=1;;port=6018;;pid=%d;;uid=%d;;app_state=%ld;;scene_required=0\r\n",
+            @"0;;uiservice_ocr_ready;;version=2;;protocol=3;;transport=inline_png;;port=6018;;pid=%d;;uid=%d;;app_state=%ld;;scene_required=0\r\n",
             getpid(), getuid(), (long)UIApplication.sharedApplication.applicationState];
     }
 
@@ -349,7 +363,7 @@ static NSString *TLinkVisionHandleLine(NSString *line)
     dispatch_semaphore_t completed = dispatch_semaphore_create(0);
     dispatch_async(sTLinkVisionQueue, ^{
         @autoreleasepool {
-            response = TLinkVisionPerformRequest(line);
+            response = TLinkVisionPerformRequest(line, inlineImageData);
             @synchronized([NSProcessInfo class]) {
                 sTLinkVisionRequestInFlight = NO;
                 if ([response hasPrefix:@"0"] ) sTLinkVisionSuccessCount += 1;
@@ -384,6 +398,22 @@ static NSString *TLinkVisionReadLine(int client)
         [data appendBytes:&byte length:1];
     }
     return data.length > 0 ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+}
+
+static NSData *TLinkVisionReadExact(int client, NSUInteger expectedLength)
+{
+    if (expectedLength == 0 || expectedLength > (32 * 1024 * 1024)) return nil;
+    struct timeval timeout = {18, 0};
+    setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    NSMutableData *data = [NSMutableData dataWithLength:expectedLength];
+    uint8_t *bytes = (uint8_t *)data.mutableBytes;
+    NSUInteger received = 0;
+    while (received < expectedLength) {
+        ssize_t count = read(client, bytes + received, expectedLength - received);
+        if (count <= 0) return nil;
+        received += (NSUInteger)count;
+    }
+    return data;
 }
 
 static void TLinkVisionWriteAll(int client, NSString *response)
@@ -434,8 +464,27 @@ static void TLinkRunVisionServer(void)
 #endif
         @autoreleasepool {
             NSString *request = TLinkVisionReadLine(client);
-            TLinkVisionWriteAll(client, request.length > 0
-                ? TLinkVisionHandleLine(request) : @"-1;;uiservice_ocr_empty_request\r\n");
+            NSData *inlineImageData = nil;
+            NSString *preflightError = nil;
+            NSArray<NSString *> *headerParts = [request componentsSeparatedByString:@";;"];
+            if (headerParts.count >= 2 && [headerParts[0] isEqualToString:@"3"]) {
+                unsigned long long declaredLength = [headerParts[1] longLongValue];
+                if (declaredLength == 0 || declaredLength > (32ULL * 1024ULL * 1024ULL)) {
+                    preflightError = [NSString stringWithFormat:
+                        @"-1;;uiservice_ocr_inline_length_rejected declared=%llu\r\n", declaredLength];
+                } else {
+                    inlineImageData = TLinkVisionReadExact(client, (NSUInteger)declaredLength);
+                    if (inlineImageData.length != (NSUInteger)declaredLength) {
+                        preflightError = [NSString stringWithFormat:
+                            @"-1;;uiservice_ocr_inline_read_failed declared=%llu actual=%lu\r\n",
+                            declaredLength, (unsigned long)inlineImageData.length];
+                    }
+                }
+            }
+            NSString *response = preflightError ?: (request.length > 0
+                ? TLinkVisionHandleLine(request, inlineImageData)
+                : @"-1;;uiservice_ocr_empty_request\r\n");
+            TLinkVisionWriteAll(client, response);
             close(client);
         }
     }
@@ -462,7 +511,7 @@ NSString *TLinkVisionOCRServiceProbeSummary(void)
 {
     @synchronized([NSProcessInfo class]) {
         return [NSString stringWithFormat:
-            @"vision_ocr_port=6018;;vision_ocr_protocol=1;;vision_ocr_started=%d;;vision_ocr_listening=%d;;vision_ocr_scene_required=0;;vision_ocr_request_count=%lu;;vision_ocr_success_count=%lu;;vision_ocr_failure_count=%lu;;vision_ocr_inflight=%d;;vision_ocr_last_result=%@",
+            @"vision_ocr_port=6018;;vision_ocr_protocol=3;;vision_ocr_transport=inline_png;;vision_ocr_dispatch=direct_streamd_no_worker;;vision_ocr_inline_max_bytes=33554432;;vision_ocr_started=%d;;vision_ocr_listening=%d;;vision_ocr_scene_required=0;;vision_ocr_request_count=%lu;;vision_ocr_success_count=%lu;;vision_ocr_failure_count=%lu;;vision_ocr_inflight=%d;;vision_ocr_last_result=%@",
             sTLinkVisionServerStarted ? 1 : 0, sTLinkVisionServerListening ? 1 : 0,
             (unsigned long)sTLinkVisionRequestCount, (unsigned long)sTLinkVisionSuccessCount,
             (unsigned long)sTLinkVisionFailureCount, sTLinkVisionRequestInFlight ? 1 : 0,
@@ -475,7 +524,10 @@ NSDictionary<NSString *, id> *TLinkVisionOCRServiceDiagnostics(void)
     @synchronized([NSProcessInfo class]) {
         return @{
             @"vision_ocr_port": @(kTLinkVisionOCRPort),
-            @"vision_ocr_protocol": @1,
+            @"vision_ocr_protocol": @3,
+            @"vision_ocr_transport": @"inline_png",
+            @"vision_ocr_dispatch": @"direct_streamd_no_worker",
+            @"vision_ocr_inline_max_bytes": @33554432,
             @"vision_ocr_started": @(sTLinkVisionServerStarted),
             @"vision_ocr_listening": @(sTLinkVisionServerListening),
             @"vision_ocr_scene_required": @NO,

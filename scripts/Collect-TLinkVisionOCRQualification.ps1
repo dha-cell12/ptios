@@ -27,7 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$qualificationVersion = "background_fast20_accurate1_largefast1_v3"
+$qualificationVersion = "background_direct_inline_fast20_accurate1_largefast1_v4"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -178,6 +178,10 @@ $requiredTask97Markers = @(
     "visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1",
     "visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1",
     "visionOCRAppBridgeProbe=task275_uiservice_v1",
+    "visionOCRAppBridgeProtocol=3",
+    "visionOCRTransport=inline_png_bounded_32mib_v1",
+    "visionOCRDispatch=direct_streamd_to_uiservice_no_worker_v1",
+    "visionOCRInlineMaxBytes=33554432",
     "visionOCRQualification=$qualificationVersion"
 )
 
@@ -195,6 +199,8 @@ $serviceBridgePreflight = Invoke-TLinkTask -Task "275"
 $serviceBridgeReady = [bool](
     $serviceBridgePreflight.ok -and
     ([string]$serviceBridgePreflight.response).IndexOf("uiservice_ocr_ready", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("protocol=3", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("transport=inline_png", [StringComparison]::Ordinal) -ge 0 -and
     ([string]$serviceBridgePreflight.response).IndexOf("port=6018", [StringComparison]::Ordinal) -ge 0 -and
     ([string]$serviceBridgePreflight.response).IndexOf("scene_required=0", [StringComparison]::Ordinal) -ge 0
 )

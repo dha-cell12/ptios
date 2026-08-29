@@ -1,5 +1,8 @@
 # Vision OCR P3: background UI-service host
 
+> Historical P3 contract. P4 replaces the temporary-file/worker handoff with
+> direct inline protocol v3; see `docs/ocr-p4-direct-inline.md`.
+
 P3 removes the foreground `StreamControl.app` dependency from the opt-in
 Vision route. `streamd` still captures and crops the target screen, writes a
 bounded temporary PNG under `/var/mobile/Library/TLinkauto/tmp`, and sends the
