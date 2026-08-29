@@ -14,14 +14,22 @@ the Apple OCR path recovered from XXTouch's `libxxtouch.so`:
 - default to `en-US` when no language was supplied.
 
 The existing `app_cpu` default, opt-in `worker_cpu`, task `27` response bytes,
-and production task `91` Tesseract path are unchanged. `xxt_compat` still runs
-inside the isolated OCR worker so a Vision crash cannot terminate the main
-task server on port `6000`.
+and production task `91` Tesseract path are unchanged. Following the device
+crash report from 2026-08-29, `xxt_compat` now performs Vision in the foreground
+`StreamControl.app` process through localhost port `6011`. The isolated worker
+still captures and crops the image, but no longer calls Vision. This avoids the
+headless root worker's crash in `CI::GLContext::GLContext`.
+
+`StreamControl` must be open and active for this canary. Background requests
+return `app_ocr_requires_foreground`. The app redraws the bridged PNG as compact
+BGRA `0x2002`, uses a plain request with automatic compute selection, and runs
+it on a dedicated serial queue. Concurrent requests return `app_ocr_busy`; a
+15-second watchdog returns a bounded timeout.
 
 ## First Device Test
 
 Use a small region and Fast recognition for the first request after installing
-the build:
+the build. Open `StreamControl` and leave it visible while running the command:
 
 ```powershell
 ./scripts/Collect-TLinkOCRBaseline.ps1 `
@@ -97,34 +105,26 @@ Task `273` returns the last 64 KiB of
 `/var/mobile/Library/TLinkauto/runtime/vision-ocr-debug.log` as Base64. Task
 `274` clears that file. Neither task invokes Vision.
 
-When `xxt_compat` receives a fatal signal, its worker first writes the normal
-`ocr_worker_crashed` response and then restores the default signal disposition
-and re-raises the signal. This allows iOS to create a symbolication-ready
-`streamd-*.ips` report while preserving isolation from the main port `6000`.
-Other OCR profiles retain the historical `_exit` behavior.
+The app and worker use bridge protocol v2. It carries minimum text height,
+recognition level, custom words, languages, language correction, and profile
+without changing task `27`'s public wire format.
 
 ## Interpreting Results
 
 | Last phase or response | Meaning |
 |---|---|
-| `response_ready` and `0;;...` | Vision completed and task `27` produced a valid legacy response. |
-| `perform_failed` | Vision returned an `NSError`; retain its domain, code, and text. |
-| `perform_begin` plus `ocr_worker_crashed signal=11 phase=vision_xxt_compat_perform_requests` | Vision crashed inside `performRequests`; the main server should remain alive. |
-| `perform_begin` plus `ocr_worker_timeout timeout_ms=20000` | Vision blocked; increasing the client timeout is not a fix. |
-| No `request_setup` | Failure occurred during capture/crop or the installed binary is stale. |
+| `app_response_ready` and `0;;...` | Vision completed and task `27` produced a valid legacy response. |
+| `app_perform_failed` | Vision returned an `NSError`; retain its domain, code, and text. |
+| `app_ocr_requires_foreground` | Open StreamControl and keep it active during the probe. |
+| `app_ocr_timeout timeout_ms=15000` | Vision blocked; restart StreamControl before retrying. |
+| `app_ocr_busy` | A previous Vision operation is still running in the app queue. |
+| No `app_request_setup` | The request did not reach the new app bridge or the installed binary is stale. |
 | Task `97` lacks `visionOCRXXTCompat=1` | The new `streamd` is not the process currently serving port `6000`; restart it from the app. |
 
-After a `signal=11` result, retrieve the newest `streamd-*.ips` from Settings
-→ Privacy & Security → Analytics & Improvements → Analytics Data. On a device
-with filesystem access, the same report is normally under
-`/var/mobile/Library/Logs/CrashReporter`. Keep the complete `usedImages` and
-thread backtrace sections when sharing it for analysis.
-
-The debug log records both `source_image` and `request_setup`. A cropped
-CoreGraphics image may retain the full-screen stride. For example, the first
-device probe reported width `320` with `bpr=4992` and then crashed in Vision.
-The normalized `request_setup` entry must report `bpr=1280 bitmapInfo=0x2002`;
-otherwise the XXTouch-compatible compact BGRA conversion is not active.
+The debug log now records `host=foreground_app_6011`, app PID/UID, application
+state, and normalized layout. For a `320`-pixel image, `app_request_setup` must
+report `bpr=1280 bitmapInfo=0x2002`; otherwise the compact BGRA conversion is
+not active.
 
 For a successful Fast request, repeat it 20 times before trying Accurate. A
 promotion requires bounded execution, a successful task `97` after every
@@ -132,7 +132,6 @@ request, correct text/coordinates, and no growth of hung workers.
 
 ## Safety Boundary
 
-`xxt_compat` is a canary, not the default. Do not route normal scripts away
-from task `91` until it passes the device matrix. Do not add extra private
-entitlements based only on a Vision crash: class loading and request setup
-already prove that the framework is available.
+`xxt_compat` is a foreground canary, not the default. Do not route normal
+scripts away from task `91` until it passes the device matrix. This path does
+not claim background or lock-screen OCR support.

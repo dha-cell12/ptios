@@ -4712,7 +4712,20 @@ static NSData *TLinkRunAppSideClipboard(NSString *body)
     return TLinkRunForegroundClipboardBroker(body);
 }
 
-static NSData *TLinkRunAppSideVisionOCR(NSData *pngData, CGRect region, int levelValue)
+static NSString *TLinkBase64UTF8String(NSString *value)
+{
+    NSData *data = [(value ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
+    return [data base64EncodedStringWithOptions:0] ?: @"";
+}
+
+static NSData *TLinkRunAppSideVisionOCR(NSData *pngData,
+                                        CGRect region,
+                                        NSString *customWords,
+                                        CGFloat minimumTextHeight,
+                                        int levelValue,
+                                        NSString *languages,
+                                        BOOL languageCorrection,
+                                        NSString *profile)
 {
     if (pngData.length == 0) return TLinkError(@"app_ocr_bridge_empty_png");
 
@@ -4747,7 +4760,9 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData, CGRect region, int leve
         return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_socket_failed errno=%d", errno]);
     }
     struct timeval timeout;
-    timeout.tv_sec = 8;
+    // The app has its own 15-second watchdog. Leave enough time for that
+    // structured response while staying below the worker's 20-second bound.
+    timeout.tv_sec = 18;
     timeout.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
@@ -4764,13 +4779,18 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData, CGRect region, int leve
         return TLinkError([NSString stringWithFormat:@"app_ocr_bridge_unavailable errno=%d open_StreamControl_foreground", connectErrno]);
     }
 
-    NSString *line = [NSString stringWithFormat:@"1;;%s;;%.0f;;%.0f;;%.0f;;%.0f;;%d\n",
+    NSString *line = [NSString stringWithFormat:@"2;;%s;;%.0f;;%.0f;;%.0f;;%.0f;;%.8f;;%d;;%@;;%@;;%d;;%@\n",
                       imageTemplate,
                       region.origin.x,
                       region.origin.y,
                       region.size.width,
                       region.size.height,
-                      levelValue];
+                      minimumTextHeight,
+                      levelValue,
+                      TLinkBase64UTF8String(customWords),
+                      TLinkBase64UTF8String(languages),
+                      languageCorrection ? 1 : 0,
+                      profile ?: @"app_cpu"];
     NSData *lineData = [line dataUsingEncoding:NSUTF8StringEncoding];
     if (!TLinkWriteAllToFd(sock, lineData.bytes, lineData.length)) {
         close(sock);
@@ -4788,74 +4808,6 @@ static NSData *TLinkRunAppSideVisionOCR(NSData *pngData, CGRect region, int leve
 static char sTLinkOCRWorkerOutputPath[PATH_MAX + 1] = {0};
 static char sTLinkOCRWorkerPhase[96] = "not_started";
 static NSString *const kTLinkVisionOCRDebugLogPath = @"/var/mobile/Library/TLinkauto/runtime/vision-ocr-debug.log";
-
-static CGImageRef TLinkCreateCompactBGRAImageForVision(CGImageRef source, NSString **error)
-{
-    if (!source) {
-        if (error) *error = @"vision_compact_source_missing";
-        return nil;
-    }
-
-    size_t width = CGImageGetWidth(source);
-    size_t height = CGImageGetHeight(source);
-    if (width == 0 || height == 0 || width > 12000 || height > 12000) {
-        if (error) *error = @"vision_compact_bad_dimensions";
-        return nil;
-    }
-
-    size_t bytesPerRow = width * 4;
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreate(NULL,
-                                                 width,
-                                                 height,
-                                                 8,
-                                                 bytesPerRow,
-                                                 colorSpace,
-                                                 kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
-    CGColorSpaceRelease(colorSpace);
-    if (!context) {
-        if (error) *error = @"vision_compact_context_create_failed";
-        return nil;
-    }
-
-    CGContextSetBlendMode(context, kCGBlendModeCopy);
-    CGContextDrawImage(context, CGRectMake(0, 0, width, height), source);
-    CGImageRef compactImage = CGBitmapContextCreateImage(context);
-    CGContextRelease(context);
-    if (!compactImage && error) *error = @"vision_compact_image_create_failed";
-    return compactImage;
-}
-
-static void TLinkAppendVisionOCRDebugEvent(NSString *profile, NSString *phase, NSString *detail)
-{
-    NSString *runtimeDir = [kTLinkVisionOCRDebugLogPath stringByDeletingLastPathComponent];
-    [[NSFileManager defaultManager] createDirectoryAtPath:runtimeDir
-                              withIntermediateDirectories:YES
-                                               attributes:@{NSFilePosixPermissions: @0755}
-                                                    error:nil];
-
-    NSString *safeProfile = profile.length > 0 ? profile : @"unknown";
-    NSString *safePhase = phase.length > 0 ? phase : @"unknown";
-    NSString *safeDetail = [[detail ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@" "]
-                            stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
-    NSString *line = [NSString stringWithFormat:@"%.6f pid=%d profile=%@ phase=%@ %@\n",
-                      CFAbsoluteTimeGetCurrent(),
-                      getpid(),
-                      safeProfile,
-                      safePhase,
-                      safeDetail];
-    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-    int fd = open([kTLinkVisionOCRDebugLogPath fileSystemRepresentation],
-                  O_WRONLY | O_CREAT | O_APPEND,
-                  0644);
-    if (fd < 0) return;
-    struct stat logStat;
-    if (fstat(fd, &logStat) == 0 && logStat.st_size > (1024 * 1024)) {
-        ftruncate(fd, 0);
-    }
-    TLinkWriteAllToFd(fd, data.bytes, data.length);
-    close(fd);
-}
 
 static size_t TLinkSafeCStringLength(const char *value, size_t maxLen)
 {
@@ -4878,15 +4830,6 @@ static void TLinkSetOCRWorkerPhase(const char *phase)
 {
     if (!phase) phase = "unknown";
     snprintf(sTLinkOCRWorkerPhase, sizeof(sTLinkOCRWorkerPhase), "%s", phase);
-}
-
-static BOOL TLinkOCRWorkerPhaseHasPrefixForSignal(const char *prefix)
-{
-    if (!prefix) return NO;
-    for (size_t i = 0; prefix[i] != '\0'; i++) {
-        if (i >= sizeof(sTLinkOCRWorkerPhase) || sTLinkOCRWorkerPhase[i] != prefix[i]) return NO;
-    }
-    return YES;
 }
 
 static void TLinkWriteIntForSignalHandler(int fd, int value)
@@ -4923,19 +4866,6 @@ static void TLinkOCRWorkerSignalHandler(int signalNumber)
         }
     }
 
-    // The XXTouch-compatible canary needs a native iOS crash report so the
-    // remaining process-host failure can be symbolicated. Preserve the parent
-    // response above, then restore the default disposition and re-deliver the
-    // fatal signal. Other OCR workers retain the historical bounded _exit.
-    if (TLinkOCRWorkerPhaseHasPrefixForSignal("vision_xxt_compat_")) {
-        struct sigaction defaultAction;
-        memset(&defaultAction, 0, sizeof(defaultAction));
-        defaultAction.sa_handler = SIG_DFL;
-        sigemptyset(&defaultAction.sa_mask);
-        if (sigaction(signalNumber, &defaultAction, NULL) == 0 && kill(getpid(), signalNumber) == 0) {
-            return;
-        }
-    }
     _exit(128 + signalNumber);
 }
 
@@ -5048,104 +4978,26 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
         return TLinkError(err);
     }
 
-    if ([profile isEqualToString:@"xxt_compat"]) {
-        TLinkSetOCRWorkerPhase("vision_xxt_compat_request_setup");
-        CGImageRef sourceImage = cropped.CGImage;
-        NSString *sourceDetail = [NSString stringWithFormat:@"width=%zu height=%zu bpc=%zu bpp=%zu bpr=%zu bitmapInfo=0x%lx",
-                                  CGImageGetWidth(sourceImage),
-                                  CGImageGetHeight(sourceImage),
-                                  CGImageGetBitsPerComponent(sourceImage),
-                                  CGImageGetBitsPerPixel(sourceImage),
-                                  CGImageGetBytesPerRow(sourceImage),
-                                  (unsigned long)CGImageGetBitmapInfo(sourceImage)];
-        TLinkAppendVisionOCRDebugEvent(profile, @"source_image", sourceDetail);
-
-        NSString *compactError = nil;
-        CGImageRef inputImage = TLinkCreateCompactBGRAImageForVision(sourceImage, &compactError);
-        if (!inputImage) {
-            TLinkAppendVisionOCRDebugEvent(profile, @"compact_failed", compactError ?: @"unknown");
-            return TLinkError([NSString stringWithFormat:@"ocr_xxt_compat_compact_failed %@",
-                                                        compactError ?: @"unknown"]);
-        }
-        NSString *imageDetail = [NSString stringWithFormat:@"width=%zu height=%zu bpc=%zu bpp=%zu bpr=%zu bitmapInfo=0x%lx level=%d",
-                                 CGImageGetWidth(inputImage),
-                                 CGImageGetHeight(inputImage),
-                                 CGImageGetBitsPerComponent(inputImage),
-                                 CGImageGetBitsPerPixel(inputImage),
-                                 CGImageGetBytesPerRow(inputImage),
-                                 (unsigned long)CGImageGetBitmapInfo(inputImage),
-                                 [parts[4] intValue]];
-        TLinkAppendVisionOCRDebugEvent(profile, @"request_setup", imageDetail);
-        POCLogf("ocr: task27 profile=xxt_compat route=isolated_worker cgimage_direct=1 cpu_only=0 %s",
-                [imageDetail UTF8String]);
-
-        // Match XXTouch's Apple OCR path: a plain request, direct CGImage input,
-        // synchronous performRequests, and Vision's default compute selection.
-        VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:inputImage
-                                                                                options:@{}];
-        VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] init];
-        request.recognitionLevel = TLinkVisionOCRLevelFromValue([parts[4] intValue]);
-        NSArray<NSString *> *customWords = TLinkSplitNonEmpty(parts[2], @",,");
-        if (customWords.count > 0) request.customWords = customWords;
-        NSArray<NSString *> *languages = TLinkSplitNonEmpty(parts[5], @",,");
-        request.recognitionLanguages = languages.count > 0 ? languages : @[@"en-US"];
-        request.usesLanguageCorrection = [parts[6] intValue] != 0;
-
-        NSError *visionErr = nil;
-        TLinkSetOCRWorkerPhase("vision_xxt_compat_perform_requests");
-        TLinkAppendVisionOCRDebugEvent(profile, @"perform_begin", imageDetail);
-        CFAbsoluteTime performStartedAt = CFAbsoluteTimeGetCurrent();
-        BOOL performed = [handler performRequests:@[request] error:&visionErr];
-        double performMs = (CFAbsoluteTimeGetCurrent() - performStartedAt) * 1000.0;
-        if (!performed) {
-            NSString *failure = [NSString stringWithFormat:@"elapsed_ms=%.3f domain=%@ code=%ld error=%@",
-                                 performMs,
-                                 visionErr.domain ?: @"none",
-                                 (long)visionErr.code,
-                                 visionErr.localizedDescription ?: @"unknown"];
-            TLinkAppendVisionOCRDebugEvent(profile, @"perform_failed", failure);
-            CGImageRelease(inputImage);
-            return TLinkError([NSString stringWithFormat:@"ocr_xxt_compat_failed %@", failure]);
-        }
-        CGImageRelease(inputImage);
-
-        TLinkSetOCRWorkerPhase("vision_xxt_compat_collect_results");
-        TLinkAppendVisionOCRDebugEvent(profile,
-                                       @"perform_end",
-                                       [NSString stringWithFormat:@"elapsed_ms=%.3f observations=%lu",
-                                                                  performMs,
-                                                                  (unsigned long)request.results.count]);
-        CGSize regionSize = region.size;
-        NSMutableArray<NSString *> *output = [NSMutableArray array];
-        for (VNRecognizedTextObservation *observation in request.results) {
-            if (![observation isKindOfClass:[VNRecognizedTextObservation class]]) continue;
-            VNRecognizedText *candidate = [[observation topCandidates:1] firstObject];
-            if (!candidate.string.length) continue;
-            CGRect bb = observation.boundingBox;
-            int x = (int)llround(region.origin.x + bb.origin.x * regionSize.width);
-            int y = (int)llround(region.origin.y + (1.0 - bb.origin.y - bb.size.height) * regionSize.height);
-            int w = (int)llround(bb.size.width * regionSize.width);
-            int h = (int)llround(bb.size.height * regionSize.height);
-            [output addObject:[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d",
-                               TLinkSanitizeOCRText(candidate.string), x, y, w, h]];
-        }
-        TLinkAppendVisionOCRDebugEvent(profile,
-                                       @"response_ready",
-                                       [NSString stringWithFormat:@"results=%lu", (unsigned long)output.count]);
-        return TLinkSuccess([output componentsJoinedByString:@";;"]);
-    }
-
     TLinkSetOCRWorkerPhase("vision_png_encode");
     NSData *visionImageData = UIImagePNGRepresentation(cropped);
     if (visionImageData.length == 0) {
         return TLinkError(@"ocr_png_encode_failed");
     }
 
-    if ([profile isEqualToString:@"app_cpu"]) {
-        int bridgeLevelValue = [parts[4] intValue];
-        TLinkSetOCRWorkerPhase("vision_profile_app_cpu");
-        POCLogf("ocr: task27 profile=app_cpu route=app_6011 cpu_only=1");
-        return TLinkRunAppSideVisionOCR(visionImageData, region, bridgeLevelValue);
+    if ([profile isEqualToString:@"app_cpu"] || [profile isEqualToString:@"xxt_compat"]) {
+        BOOL xxtCompat = [profile isEqualToString:@"xxt_compat"];
+        TLinkSetOCRWorkerPhase(xxtCompat ? "vision_profile_xxt_compat_app" : "vision_profile_app_cpu");
+        POCLogf("ocr: task27 profile=%s route=app_6011 cpu_only=%d foreground_required=1",
+                [profile UTF8String],
+                xxtCompat ? 0 : 1);
+        return TLinkRunAppSideVisionOCR(visionImageData,
+                                        region,
+                                        parts[2],
+                                        (CGFloat)[parts[3] doubleValue],
+                                        [parts[4] intValue],
+                                        parts[5],
+                                        [parts[6] intValue] != 0,
+                                        profile);
     }
 
     TLinkSetOCRWorkerPhase("vision_profile_worker_cpu");
@@ -6235,13 +6087,16 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrWorkerIsolation": @(YES),
         @"ocrWorkerBreadcrumbs": @(YES),
         @"ocrVisionState": @"experimental",
-        @"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_opt_in",
+        @"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_app_foreground",
         @"ocrVisionCPUOnly": @(YES),
         @"ocrVisionXXTCompat": @(YES),
-        @"ocrVisionXXTCompatInput": @"cgimage_direct",
+        @"ocrVisionXXTCompatInput": @"png_bridge_then_compact_cgimage",
         @"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4",
         @"ocrVisionXXTCompatCompute": @"automatic",
-        @"ocrVisionXXTCompatCrashReport": @"reraised_signal_v1",
+        @"ocrVisionXXTCompatHost": @"foreground_app_6011",
+        @"ocrVisionXXTCompatForegroundRequired": @(YES),
+        @"ocrVisionAppWatchdogMs": @15000,
+        @"ocrVisionAppBridgeProtocol": @2,
         @"ocrVisionDebugLog": kTLinkVisionOCRDebugLogPath,
         @"ocrVisionFallback": @"none",
         @"ocrAppSideBridge": @(YES),
@@ -8823,17 +8678,20 @@ static NSData *TLinkHandleTaskLine(const char *line)
             licenseRecovery.count > 0 ? (licenseRecovery[@"state"] ?: @"required") : @"ready"];
         cap = [cap stringByAppendingFormat:@" tesseractInitSource=%@", sTLinkLastTesseractInitSource ?: @"none"];
         // Keep the stable Tesseract default while exposing CPU-only and
-        // XXTouch-compatible Vision canaries without changing task 27 bytes.
+        // app-hosted XXTouch-compatible Vision canaries without changing task 27 bytes.
         cap = [cap stringByAppendingString:@" visionOCRState=experimental"
-                                               @" visionOCRProfiles=app_cpu_default,worker_cpu_opt_in,xxt_compat_opt_in"
-                                               @" visionOCRRoute=profile_selected_worker_or_app_6011_or_direct_cgimage"
+                                               @" visionOCRProfiles=app_cpu_default,worker_cpu_opt_in,xxt_compat_app_foreground"
+                                               @" visionOCRRoute=profile_selected_worker_or_app_6011"
                                                @" visionOCRFallback=none"
                                                @" visionOCRCPUOnly=1"
                                                @" visionOCRXXTCompat=1"
-                                               @" visionOCRXXTCompatInput=cgimage_direct"
+                                               @" visionOCRXXTCompatInput=png_bridge_then_compact_cgimage"
                                                @" visionOCRXXTCompatPixelLayout=compact_bgra8888_premultiplied_first_stride_width_x4"
                                                @" visionOCRXXTCompatCompute=automatic"
-                                               @" visionOCRXXTCompatCrashReport=reraised_signal_v1"
+                                               @" visionOCRXXTCompatHost=foreground_app_6011"
+                                               @" visionOCRXXTCompatForegroundRequired=1"
+                                               @" visionOCRAppWatchdogMs=15000"
+                                               @" visionOCRAppBridgeProtocol=2"
                                                @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"
                                                @" ocrEngineSelector=none"

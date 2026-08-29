@@ -7,10 +7,12 @@
 #import <UserNotifications/UserNotifications.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #import "ScriptsViewController.h"
 #import "SettingsViewController.h"
@@ -33,6 +35,7 @@
 static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/TLinkauto/runtime/app_foreground_heartbeat";
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 static NSString *const kTLinkVisionCPUErrorDomain = @"com.tlinkauto.vision.cpu";
+static NSString *const kTLinkVisionOCRDebugLogPath = @"/var/mobile/Library/TLinkauto/runtime/vision-ocr-debug.log";
 
 static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **outError)
 {
@@ -96,6 +99,8 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 @property(nonatomic, strong) SCBackgroundServiceScheduler *backgroundServiceScheduler;
 @property(nonatomic, strong) SCLicenseLifecycleCoordinator *licenseLifecycleCoordinator;
 @property(nonatomic, assign) BOOL ocrServerStarted;
+@property(nonatomic, assign) BOOL ocrRequestInFlight;
+@property(nonatomic, strong) dispatch_queue_t ocrVisionQueue;
 @property(nonatomic, assign) BOOL clipboardServerStarted;
 @end
 
@@ -110,6 +115,7 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
     self.backgroundServiceScheduler = [[SCBackgroundServiceScheduler alloc]
         initWithSupervisor:self.serviceSupervisor
         licenseCoordinator:self.licenseLifecycleCoordinator];
+    self.ocrVisionQueue = dispatch_queue_create("com.tlinkauto.streamcontrol.vision-ocr", DISPATCH_QUEUE_SERIAL);
     [self.backgroundServiceScheduler registerTasks];
 
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
@@ -432,7 +438,52 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
     return safe ?: @"";
 }
 
-- (CGImageRef)newRGBImageFromImageData:(NSData *)imageData error:(NSString **)error CF_RETURNS_RETAINED
+- (void)appendVisionOCRDebugProfile:(NSString *)profile phase:(NSString *)phase detail:(NSString *)detail
+{
+    NSString *runtimeDir = [kTLinkVisionOCRDebugLogPath stringByDeletingLastPathComponent];
+    [[NSFileManager defaultManager] createDirectoryAtPath:runtimeDir
+                              withIntermediateDirectories:YES
+                                               attributes:@{NSFilePosixPermissions: @0755}
+                                                    error:nil];
+    NSString *safeDetail = [[detail ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@" "]
+                            stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    NSString *line = [NSString stringWithFormat:@"%.6f pid=%d uid=%d profile=%@ host=foreground_app_6011 phase=%@ %@\n",
+                      CFAbsoluteTimeGetCurrent(),
+                      getpid(),
+                      getuid(),
+                      profile.length > 0 ? profile : @"unknown",
+                      phase.length > 0 ? phase : @"unknown",
+                      safeDetail];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    @synchronized([SCAppDelegate class]) {
+        int fd = open([kTLinkVisionOCRDebugLogPath fileSystemRepresentation], O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd < 0) return;
+        struct stat logStat;
+        if (fstat(fd, &logStat) == 0 && logStat.st_size > (1024 * 1024)) ftruncate(fd, 0);
+        const uint8_t *bytes = (const uint8_t *)data.bytes;
+        NSUInteger remaining = data.length;
+        while (remaining > 0) {
+            ssize_t written = write(fd, bytes, remaining);
+            if (written <= 0) break;
+            bytes += written;
+            remaining -= (NSUInteger)written;
+        }
+        close(fd);
+    }
+}
+
+- (UIApplicationState)currentApplicationStateForOCR
+{
+    __block UIApplicationState state = UIApplicationStateInactive;
+    void (^readState)(void) = ^{
+        state = [UIApplication sharedApplication].applicationState;
+    };
+    if ([NSThread isMainThread]) readState();
+    else dispatch_sync(dispatch_get_main_queue(), readState);
+    return state;
+}
+
+- (CGImageRef)newCompactBGRAImageFromImageData:(NSData *)imageData error:(NSString **)error CF_RETURNS_RETAINED
 {
     if (imageData.length == 0) {
         if (error) *error = @"empty_image_data";
@@ -467,11 +518,11 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
                                                  8,
                                                  bytesPerRow,
                                                  colorSpace,
-                                                 kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst);
+                                                 kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
     CGColorSpaceRelease(colorSpace);
     if (!context) {
         CGImageRelease(decoded);
-        if (error) *error = @"rgb_context_create_failed";
+        if (error) *error = @"compact_bgra_context_create_failed";
         return nil;
     }
 
@@ -485,24 +536,39 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 }
 
 - (BOOL)performTextRecognitionWithImage:(CGImageRef)image
+                                profile:(NSString *)profile
                                   level:(VNRequestTextRecognitionLevel)level
+                      minimumTextHeight:(CGFloat)minimumTextHeight
+                            customWords:(NSArray<NSString *> *)customWords
+                              languages:(NSArray<NSString *> *)languages
+                     languageCorrection:(BOOL)languageCorrection
                                 request:(VNRecognizeTextRequest **)outRequest
                                   error:(NSError **)outError
 {
     if (!image) return NO;
-    VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
-        (void)finishedRequest;
-        (void)error;
-    }];
+    BOOL xxtCompat = [profile isEqualToString:@"xxt_compat"];
+    VNRecognizeTextRequest *request = xxtCompat
+        ? [[VNRecognizeTextRequest alloc] init]
+        : [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *finishedRequest, NSError *error) {
+              (void)finishedRequest;
+              (void)error;
+          }];
     request.recognitionLevel = level;
-    request.usesLanguageCorrection = NO;
+    if (minimumTextHeight > 0.0) request.minimumTextHeight = minimumTextHeight;
+    if (customWords.count > 0) request.customWords = customWords;
+    request.recognitionLanguages = languages.count > 0 ? languages : @[@"en-US"];
+    request.usesLanguageCorrection = languageCorrection;
 
-    NSError *cpuError = nil;
-    if (!TLinkConfigureVisionRequestCPUOnly(request, &cpuError)) {
-        if (outError) *outError = cpuError;
-        return NO;
+    if (!xxtCompat) {
+        NSError *cpuError = nil;
+        if (!TLinkConfigureVisionRequestCPUOnly(request, &cpuError)) {
+            if (outError) *outError = cpuError;
+            return NO;
+        }
     }
-    NSLog(@"[StreamControl] Vision OCR profile=app_cpu CPU-only request configured");
+    NSLog(@"[StreamControl] Vision OCR profile=%@ host=foreground_app CPU-only=%d request configured",
+          profile,
+          xxtCompat ? 0 : 1);
 
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:image
                                                                         orientation:kCGImagePropertyOrientationUp
@@ -517,7 +583,23 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
     return NO;
 }
 
-- (NSString *)performAppSideOCRRequestLine:(NSString *)line
+- (NSString *)decodedBase64UTF8Field:(NSString *)field
+{
+    if (field.length == 0) return @"";
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:field options:0];
+    return data ? ([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"") : @"";
+}
+
+- (NSArray<NSString *> *)nonEmptyOCRValues:(NSString *)value
+{
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+    for (NSString *item in [value ?: @"" componentsSeparatedByString:@",,"]) {
+        if (item.length > 0) [result addObject:item];
+    }
+    return result;
+}
+
+- (NSString *)performAppSideOCRRequestLineUnbounded:(NSString *)line
 {
     NSString *licenseError = nil;
     if (!TLinkLicenseFeatureAllowed(@"automation", &licenseError)) {
@@ -527,7 +609,9 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
                 licenseError ?: status[@"error"] ?: @"license_required"];
     }
     NSArray<NSString *> *parts = [[line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@";;"];
-    if (parts.count < 7 || ![parts[0] isEqualToString:@"1"]) return @"-1;;app_ocr_bad_request\r\n";
+    BOOL legacyRequest = parts.count >= 7 && [parts[0] isEqualToString:@"1"];
+    BOOL version2Request = parts.count >= 12 && [parts[0] isEqualToString:@"2"];
+    if (!legacyRequest && !version2Request) return @"-1;;app_ocr_bad_request\r\n";
     NSString *imagePath = parts[1];
     NSData *imageData = [NSData dataWithContentsOfFile:imagePath];
     if (imageData.length == 0) {
@@ -539,10 +623,18 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
         CGFloat originY = [parts[3] doubleValue];
         CGFloat regionW = MAX(1.0, [parts[4] doubleValue]);
         CGFloat regionH = MAX(1.0, [parts[5] doubleValue]);
-        int levelValue = [parts[6] intValue];
+        CGFloat minimumTextHeight = version2Request ? (CGFloat)[parts[6] doubleValue] : 0.0;
+        int levelValue = version2Request ? [parts[7] intValue] : [parts[6] intValue];
+        NSString *customWordsValue = version2Request ? [self decodedBase64UTF8Field:parts[8]] : @"";
+        NSString *languagesValue = version2Request ? [self decodedBase64UTF8Field:parts[9]] : @"en-US";
+        BOOL languageCorrection = version2Request ? [parts[10] intValue] != 0 : NO;
+        NSString *profile = version2Request ? [parts[11] lowercaseString] : @"app_cpu";
+        if (![profile isEqualToString:@"app_cpu"] && ![profile isEqualToString:@"xxt_compat"]) {
+            return [NSString stringWithFormat:@"-1;;app_ocr_bad_profile %@\r\n", profile ?: @""];
+        }
 
         NSString *decodeError = nil;
-        CGImageRef rgbImage = [self newRGBImageFromImageData:imageData error:&decodeError];
+        CGImageRef rgbImage = [self newCompactBGRAImageFromImageData:imageData error:&decodeError];
         if (!rgbImage) {
             return [NSString stringWithFormat:@"-1;;app_ocr_rgb_decode_failed %@\r\n", decodeError ?: @"unknown"];
         }
@@ -550,24 +642,58 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
         VNRequestTextRecognitionLevel requestedLevel = levelValue == 1 ? VNRequestTextRecognitionLevelFast : VNRequestTextRecognitionLevelAccurate;
         VNRecognizeTextRequest *request = nil;
         NSError *visionError = nil;
+        NSString *imageDetail = [NSString stringWithFormat:@"state=%ld width=%zu height=%zu bpc=%zu bpp=%zu bpr=%zu bitmapInfo=0x%lx level=%d",
+                                 (long)[self currentApplicationStateForOCR],
+                                 CGImageGetWidth(rgbImage),
+                                 CGImageGetHeight(rgbImage),
+                                 CGImageGetBitsPerComponent(rgbImage),
+                                 CGImageGetBitsPerPixel(rgbImage),
+                                 CGImageGetBytesPerRow(rgbImage),
+                                 (unsigned long)CGImageGetBitmapInfo(rgbImage),
+                                 levelValue];
+        [self appendVisionOCRDebugProfile:profile phase:@"app_request_setup" detail:imageDetail];
+        [self appendVisionOCRDebugProfile:profile phase:@"app_perform_begin" detail:imageDetail];
+        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
         BOOL ok = [self performTextRecognitionWithImage:rgbImage
+                                                profile:profile
                                                   level:requestedLevel
+                                      minimumTextHeight:minimumTextHeight
+                                            customWords:[self nonEmptyOCRValues:customWordsValue]
+                                              languages:[self nonEmptyOCRValues:languagesValue]
+                                     languageCorrection:languageCorrection
                                                 request:&request
                                                   error:&visionError];
         NSString *firstError = visionError.localizedDescription ?: @"unknown";
-        if (!ok && requestedLevel == VNRequestTextRecognitionLevelFast) {
+        if (!ok && [profile isEqualToString:@"app_cpu"] && requestedLevel == VNRequestTextRecognitionLevelFast) {
             visionError = nil;
             ok = [self performTextRecognitionWithImage:rgbImage
+                                               profile:profile
                                                  level:VNRequestTextRecognitionLevelAccurate
+                                     minimumTextHeight:minimumTextHeight
+                                           customWords:[self nonEmptyOCRValues:customWordsValue]
+                                             languages:[self nonEmptyOCRValues:languagesValue]
+                                    languageCorrection:languageCorrection
                                                request:&request
                                                  error:&visionError];
         }
+        double elapsedMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000.0;
         CGImageRelease(rgbImage);
         if (!ok) {
+            [self appendVisionOCRDebugProfile:profile
+                                        phase:@"app_perform_failed"
+                                       detail:[NSString stringWithFormat:@"elapsed_ms=%.3f first=%@ retry=%@",
+                                               elapsedMs,
+                                               firstError,
+                                               visionError.localizedDescription ?: @"unknown"]];
             return [NSString stringWithFormat:@"-1;;app_ocr_failed first=%@ retry=%@\r\n",
                     firstError,
                     visionError.localizedDescription ?: @"unknown"];
         }
+        [self appendVisionOCRDebugProfile:profile
+                                    phase:@"app_perform_end"
+                                   detail:[NSString stringWithFormat:@"elapsed_ms=%.3f observations=%lu",
+                                           elapsedMs,
+                                           (unsigned long)request.results.count]];
 
         NSMutableArray<NSString *> *output = [NSMutableArray array];
         for (VNRecognizedTextObservation *observation in request.results) {
@@ -582,10 +708,50 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
             [output addObject:[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d",
                                [self protocolSafeOCRText:candidate.string], x, y, w, h]];
         }
+        [self appendVisionOCRDebugProfile:profile
+                                    phase:@"app_response_ready"
+                                   detail:[NSString stringWithFormat:@"results=%lu", (unsigned long)output.count]];
         return [NSString stringWithFormat:@"0;;%@\r\n", [output componentsJoinedByString:@";;"]];
     }
 
     return @"-1;;app_ocr_requires_ios13\r\n";
+}
+
+- (NSString *)performAppSideOCRRequestLine:(NSString *)line
+{
+    UIApplicationState state = [self currentApplicationStateForOCR];
+    if (state != UIApplicationStateActive) {
+        [self appendVisionOCRDebugProfile:@"unknown"
+                                    phase:@"app_rejected_background"
+                                   detail:[NSString stringWithFormat:@"state=%ld", (long)state]];
+        return [NSString stringWithFormat:@"-1;;app_ocr_requires_foreground state=%ld open_StreamControl\r\n",
+                                          (long)state];
+    }
+
+    @synchronized(self) {
+        if (self.ocrRequestInFlight) return @"-1;;app_ocr_busy previous_request_in_flight\r\n";
+        self.ocrRequestInFlight = YES;
+    }
+
+    __block NSString *response = nil;
+    dispatch_semaphore_t completed = dispatch_semaphore_create(0);
+    dispatch_async(self.ocrVisionQueue, ^{
+        @autoreleasepool {
+            response = [self performAppSideOCRRequestLineUnbounded:line];
+            @synchronized(self) {
+                self.ocrRequestInFlight = NO;
+            }
+            dispatch_semaphore_signal(completed);
+        }
+    });
+
+    long waitResult = dispatch_semaphore_wait(completed,
+                                               dispatch_time(DISPATCH_TIME_NOW, 15LL * NSEC_PER_SEC));
+    if (waitResult != 0) {
+        [self appendVisionOCRDebugProfile:@"unknown" phase:@"app_watchdog_timeout" detail:@"timeout_ms=15000"];
+        return @"-1;;app_ocr_timeout timeout_ms=15000 restart_StreamControl_before_retry\r\n";
+    }
+    return response ?: @"-1;;app_ocr_empty_response\r\n";
 }
 
 - (void)startAppSideClipboardServer
@@ -694,7 +860,7 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 {
     NSMutableData *data = [NSMutableData data];
     char ch = 0;
-    while (data.length < 16384) {
+    while (data.length < 65536) {
         ssize_t n = read(client, &ch, 1);
         if (n <= 0) break;
         if (ch == '\n') break;
