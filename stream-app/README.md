@@ -33,7 +33,7 @@ spawn qua `spawnRoot` + `persona-mgmt`, KHÔNG ảnh hưởng `streamd`.
 | stream/H264Stream | `pccontrol/H264Stream.xm` |
 | transport/SocketServer | `poc-trollstore/POCSocketServer.mm` + tách cổng stream |
 
-## Cổng
+## Cổng Port
 
 | Cổng | Dùng cho |
 |------|----------|
