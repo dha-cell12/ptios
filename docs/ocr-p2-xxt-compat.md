@@ -141,6 +141,34 @@ For a successful Fast request, repeat it 20 times before trying Accurate. A
 promotion requires bounded execution, a successful task `97` after every
 request, correct text/coordinates, and no growth of hung workers.
 
+## Qualification Harness
+
+After the first Fast canary succeeds, keep StreamControl visible and run the
+bounded qualification matrix:
+
+```powershell
+./scripts/Collect-TLinkVisionOCRQualification.ps1 `
+  -HostIP "192.168.1.244" `
+  -TimeoutMs 30000 `
+  -FastRepeatCount 20 `
+  -VisionLanguages en-US `
+  -ExpectedText "TrollStore" `
+  -Notes "foreground qualification after successful canary"
+```
+
+The harness clears the Vision debug log, executes 20 Fast requests at
+`320x160`, one Accurate request at `320x160`, and one Fast request at
+`640x320`. It sends task `97` after every Vision request and stops at the first
+failed request, failed postflight, or expected-text mismatch. The result is
+written to `ocr-qualification-<timestamp>/ocr-qualification.json` with
+round-trip percentiles and debug-marker counts.
+
+`summary.automated_gate_passed=true` proves only the foreground stability
+matrix. Before promotion, manually review returned text/coordinates and put
+StreamControl in the background for one separate request; that request must
+fail closed with `app_ocr_requires_foreground`. The harness therefore keeps
+`summary.promotion_ready=false` by design.
+
 ## Safety Boundary
 
 `xxt_compat` is a foreground canary, not the default. Do not route normal

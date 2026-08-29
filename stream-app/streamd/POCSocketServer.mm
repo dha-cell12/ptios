@@ -6099,6 +6099,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrVisionAppBridgeProtocol": @2,
         @"ocrVisionPixelBufferProbe": @"bgra_420f_memory_iosurface_opengles_metal_v1",
         @"ocrVisionGraphicsEntitlements": @"iosurface_ioaccel_agx_v1",
+        @"ocrVisionQualification": @"foreground_fast20_accurate1_largefast1_v1",
         @"ocrVisionDebugLog": kTLinkVisionOCRDebugLogPath,
         @"ocrVisionFallback": @"none",
         @"ocrAppSideBridge": @(YES),
@@ -8696,6 +8697,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" visionOCRAppBridgeProtocol=2"
                                                @" visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1"
                                                @" visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1"
+                                               @" visionOCRQualification=foreground_fast20_accurate1_largefast1_v1"
                                                @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"
                                                @" ocrEngineSelector=none"

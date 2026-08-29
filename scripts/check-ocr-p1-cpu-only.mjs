@@ -35,6 +35,7 @@ const [
   appMakefile,
   appEntitlements,
   collector,
+  qualification,
   p1Doc,
   p2Doc,
   findingsDoc,
@@ -47,6 +48,7 @@ const [
   read("stream-app/app/Makefile"),
   read("stream-app/app/entitlements.plist"),
   read("scripts/Collect-TLinkOCRBaseline.ps1"),
+  read("scripts/Collect-TLinkVisionOCRQualification.ps1"),
   read("docs/ocr-p1-cpu-only.md"),
   read("docs/ocr-p2-xxt-compat.md"),
   read("docs/ocr-p1-device-findings.md"),
@@ -80,6 +82,7 @@ assert.match(server, /@"ocrVisionAppWatchdogMs": @15000/);
 assert.match(server, /@"ocrVisionAppBridgeProtocol": @2/);
 assert.match(server, /@"ocrVisionPixelBufferProbe": @"bgra_420f_memory_iosurface_opengles_metal_v1"/);
 assert.match(server, /@"ocrVisionGraphicsEntitlements": @"iosurface_ioaccel_agx_v1"/);
+assert.match(server, /@"ocrVisionQualification": @"foreground_fast20_accurate1_largefast1_v1"/);
 assert.match(app, /TLinkConfigureVisionRequestCPUOnly/);
 assert.match(app, /supportedComputeStageDevicesAndReturnError/);
 assert.match(app, /setComputeDevice:cpuDevice forComputeStage:stage/);
@@ -129,11 +132,26 @@ assert.match(collector, /vision_profile = \$VisionProfile/);
 assert.match(collector, /Invoke-TLinkTask -Task "273"/);
 assert.match(collector, /Invoke-TLinkTask -Task "274"/);
 assert.match(collector, /Add-TLinkVisionDebugText/);
+assert.match(qualification, /\[int\]\$FastRepeatCount = 20/);
+assert.match(qualification, /\[ValidateRange\(20, 100\)\]/);
+assert.match(qualification, /foreground_fast20_accurate1_largefast1_v1/);
+assert.match(qualification, /Invoke-TLinkVisionCase -Name "fast_repeat" -RecognitionLevel 1/);
+assert.match(qualification, /Invoke-TLinkVisionCase -Name "accurate_small" -RecognitionLevel 0/);
+assert.match(qualification, /Invoke-TLinkVisionCase -Name "fast_large" -RecognitionLevel 1/);
+assert.match(qualification, /Invoke-TLinkTask -Task "97"/);
+assert.match(qualification, /missing_postflight_markers/);
+assert.match(qualification, /zero_pixel_probe_count/);
+assert.match(qualification, /Invoke-TLinkTask -Task "274"/);
+assert.match(qualification, /Invoke-TLinkTask -Task "273"/);
+assert.match(qualification, /ocr-qualification\.json/);
+assert.match(qualification, /promotion_ready = \$false/);
 assert.match(p1Doc, /app_cpu/);
 assert.match(p1Doc, /worker_cpu/);
 assert.match(p2Doc, /xxt_compat/);
 assert.match(p2Doc, /vision-ocr-debug\.log/);
 assert.match(p2Doc, /VisionLanguages en-US/);
+assert.match(p2Doc, /Collect-TLinkVisionOCRQualification\.ps1/);
+assert.match(p2Doc, /20 Fast requests/);
 assert.match(findingsDoc, /\*\*Deferred on 2026-07-31\.\*\*/);
 assert.match(findingsDoc, /signal=11 phase=vision_perform_requests/);
 assert.match(findingsDoc, /Fast pipeline remained blocked for at least twenty seconds/i);
