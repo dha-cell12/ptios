@@ -126,6 +126,7 @@ without changing task `27`'s public wire format.
 | `app_ocr_requires_foreground` | Open StreamControl and keep it active during the probe. |
 | `app_ocr_timeout timeout_ms=15000` | Vision blocked; restart StreamControl before retrying. |
 | `app_ocr_busy` | A previous Vision operation is still running in the app queue. |
+| Task `275` returns `app_ocr_bridge_probe_empty_response` | Port `6011` exists but the app is not servicing it; unlock the device, open StreamControl, and keep it visible. |
 | `app_pixelbuffer_probe` with every value `0` | Core Video allocation is available; continue interpreting the Vision phase. |
 | `420f_memory=-6662` | Basic YUV allocation failed before IOSurface/GPU compatibility is involved. |
 | `420f_memory=0` but `420f_iosurface`, `420f_opengles`, or `420f_metal` is nonzero | The failing boundary is the corresponding IOSurface/graphics compatibility path. |
@@ -158,7 +159,10 @@ bounded qualification matrix:
 
 The harness clears the Vision debug log, executes 20 Fast requests at
 `320x160`, one Accurate request at `320x160`, and one Fast request at
-`640x320`. It sends task `97` after every Vision request and stops at the first
+`640x320`. Before the matrix, task `275` requires a live response from the
+foreground app-side bridge on port `6011`; this distinguishes an active app
+from a suspended process that merely retains a listening socket. It sends task
+`97` after every Vision request and stops at the first
 failed request, failed postflight, or expected-text mismatch. The result is
 written to `ocr-qualification-<timestamp>/ocr-qualification.json` with
 round-trip percentiles and debug-marker counts.

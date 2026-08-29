@@ -27,7 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$qualificationVersion = "foreground_fast20_accurate1_largefast1_v1"
+$qualificationVersion = "foreground_fast20_accurate1_largefast1_v2"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -177,6 +177,7 @@ $requiredTask97Markers = @(
     "visionOCRXXTCompatForegroundRequired=1",
     "visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1",
     "visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1",
+    "visionOCRAppBridgeProbe=task275_v1",
     "visionOCRQualification=$qualificationVersion"
 )
 
@@ -189,11 +190,25 @@ foreach ($marker in $requiredTask97Markers) {
     }
 }
 $preflightReady = [bool]($preflight.ok -and $missingMarkers.Count -eq 0)
+$appBridgePreflight = Invoke-TLinkTask -Task "275"
+$appBridgeReady = [bool](
+    $appBridgePreflight.ok -and
+    ([string]$appBridgePreflight.response).IndexOf("app_ocr_ready", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$appBridgePreflight.response).IndexOf("state=0", [StringComparison]::Ordinal) -ge 0
+)
 $debugClear = Invoke-TLinkTask -Task "274"
 
 $fastRuns = [System.Collections.Generic.List[object]]::new()
-$stoppedEarly = -not $preflightReady -or -not $debugClear.ok
-$stopReason = if (-not $preflightReady) { "preflight_capability_mismatch" } elseif (-not $debugClear.ok) { "debug_clear_failed" } else { $null }
+$stoppedEarly = -not $preflightReady -or -not $appBridgeReady -or -not $debugClear.ok
+$stopReason = if (-not $preflightReady) {
+    "preflight_capability_mismatch"
+} elseif (-not $appBridgeReady) {
+    "app_bridge_preflight_failed"
+} elseif (-not $debugClear.ok) {
+    "debug_clear_failed"
+} else {
+    $null
+}
 
 if (-not $stoppedEarly) {
     for ($iteration = 1; $iteration -le $FastRepeatCount; $iteration++) {
@@ -255,7 +270,7 @@ $debugHealthy = [bool](
 
 $fastPassed = $fastRuns.Count -eq $FastRepeatCount -and @($fastRuns | Where-Object { -not $_.passed }).Count -eq 0
 $automatedGatePassed = [bool](
-    $preflightReady -and
+    $preflightReady -and $appBridgeReady -and
     $debugClear.ok -and
     $fastPassed -and
     -not $accurateCase.skipped -and $accurateCase.passed -and
@@ -294,7 +309,9 @@ $artifact = [ordered]@{
         task97 = $preflight
         required_markers = $requiredTask97Markers
         missing_markers = $missingMarkers
-        passed = $preflightReady
+        app_bridge = $appBridgePreflight
+        app_bridge_ready = $appBridgeReady
+        passed = [bool]($preflightReady -and $appBridgeReady)
     }
     debug_clear = $debugClear
     fast_runs = @($fastRuns)

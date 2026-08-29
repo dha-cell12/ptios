@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <atomic>
 #import "ScriptsViewController.h"
 #import "SettingsViewController.h"
 #import "DashboardViewController.h"
@@ -37,6 +38,7 @@ static NSString *const kTLinkAppForegroundHeartbeatPath = @"/var/mobile/Library/
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
 static NSString *const kTLinkVisionCPUErrorDomain = @"com.tlinkauto.vision.cpu";
 static NSString *const kTLinkVisionOCRDebugLogPath = @"/var/mobile/Library/TLinkauto/runtime/vision-ocr-debug.log";
+static std::atomic<NSInteger> sTLinkOCRApplicationState((NSInteger)UIApplicationStateInactive);
 
 static CVReturn TLinkProbeVisionPixelBuffer(size_t width,
                                             size_t height,
@@ -133,6 +135,7 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
     (void)launchOptions;
+    sTLinkOCRApplicationState.store((NSInteger)application.applicationState, std::memory_order_relaxed);
 
     self.serviceSupervisor = [[SCStreamSupervisor alloc] init];
     self.licenseLifecycleCoordinator = [SCLicenseLifecycleCoordinator sharedCoordinator];
@@ -203,6 +206,7 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 - (void)applicationDidBecomeActive:(UIApplication *)application
 {
     (void)application;
+    sTLinkOCRApplicationState.store((NSInteger)UIApplicationStateActive, std::memory_order_relaxed);
     [self ensureStreamServiceForReason:@"active" background:NO];
     [self.licenseLifecycleCoordinator handleApplicationDidBecomeActive];
     [self startAppSideOCRServer];
@@ -224,6 +228,7 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 - (void)applicationWillResignActive:(UIApplication *)application
 {
     (void)application;
+    sTLinkOCRApplicationState.store((NSInteger)UIApplicationStateInactive, std::memory_order_relaxed);
     [UIApplication sharedApplication].idleTimerDisabled = NO;
     [self stopVisualFeedbackMonitor];
 }
@@ -231,8 +236,15 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 - (void)applicationDidEnterBackground:(UIApplication *)application
 {
     (void)application;
+    sTLinkOCRApplicationState.store((NSInteger)UIApplicationStateBackground, std::memory_order_relaxed);
     [self ensureStreamServiceForReason:@"background" background:YES];
     [self.backgroundServiceScheduler scheduleRecoveryTasksForReason:@"app_background"];
+}
+
+- (void)applicationWillEnterForeground:(UIApplication *)application
+{
+    (void)application;
+    sTLinkOCRApplicationState.store((NSInteger)UIApplicationStateInactive, std::memory_order_relaxed);
 }
 
 - (void)ensureStreamServiceForReason:(NSString *)reason background:(BOOL)background
@@ -498,13 +510,10 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 
 - (UIApplicationState)currentApplicationStateForOCR
 {
-    __block UIApplicationState state = UIApplicationStateInactive;
-    void (^readState)(void) = ^{
-        state = [UIApplication sharedApplication].applicationState;
-    };
-    if ([NSThread isMainThread]) readState();
-    else dispatch_sync(dispatch_get_main_queue(), readState);
-    return state;
+    // The OCR socket runs off-main. A synchronous hop to the main queue can
+    // block before the first breadcrumb is written. Lifecycle callbacks keep
+    // this fail-closed cache current without depending on main-queue latency.
+    return (UIApplicationState)sTLinkOCRApplicationState.load(std::memory_order_relaxed);
 }
 
 // Keep the historical selector name because the release sanity contract and
@@ -793,6 +802,19 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 - (NSString *)performAppSideOCRRequestLine:(NSString *)line
 {
     UIApplicationState state = [self currentApplicationStateForOCR];
+    NSString *trimmed = [line ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([trimmed isEqualToString:@"0"]) {
+        [self appendVisionOCRDebugProfile:@"bridge"
+                                    phase:@"app_bridge_probe"
+                                   detail:[NSString stringWithFormat:@"state=%ld", (long)state]];
+        if (state != UIApplicationStateActive) {
+            return [NSString stringWithFormat:@"-1;;app_ocr_not_foreground state=%ld open_StreamControl\r\n", (long)state];
+        }
+        return [NSString stringWithFormat:@"0;;app_ocr_ready;;state=%ld;;pid=%d;;uid=%d\r\n",
+                                          (long)state,
+                                          getpid(),
+                                          getuid()];
+    }
     if (state != UIApplicationStateActive) {
         [self appendVisionOCRDebugProfile:@"unknown"
                                     phase:@"app_rejected_background"
@@ -947,6 +969,11 @@ static BOOL TLinkConfigureVisionRequestCPUOnly(VNRequest *request, NSError **out
 {
     @autoreleasepool {
         NSString *line = [self readLineFromSocket:client];
+        [self appendVisionOCRDebugProfile:@"bridge"
+                                    phase:@"app_bridge_ingress"
+                                   detail:[NSString stringWithFormat:@"bytes=%lu state=%ld",
+                                           (unsigned long)[line lengthOfBytesUsingEncoding:NSUTF8StringEncoding],
+                                           (long)[self currentApplicationStateForOCR]]];
         NSString *response = line.length > 0 ? [self performAppSideOCRRequestLine:line] : @"-1;;app_ocr_empty_request\r\n";
         [self writeString:response toSocket:client];
         close(client);
