@@ -1,0 +1,111 @@
+﻿{
+    "schema":  "stream_capture_comparison_v1",
+    "host":  "192.168.1.244",
+    "stream_port":  7003,
+    "sample_seconds":  10,
+    "legacy":  {
+                   "mode":  "legacy",
+                   "elapsed_seconds":  10.001,
+                   "bytes_read":  815109,
+                   "frames_per_second":  23.097,
+                   "pipeline":  {
+                                    "capture_metrics":  {
+                                                            "p95_us":  17644,
+                                                            "count":  231,
+                                                            "average_us":  17190,
+                                                            "p50_us":  17135,
+                                                            "max_us":  21652
+                                                        },
+                                    "preferred_backend":  "iosurface_accelerator",
+                                    "scale_metrics":  {
+                                                          "p95_us":  21182,
+                                                          "count":  231,
+                                                          "average_us":  20175,
+                                                          "p50_us":  19955,
+                                                          "max_us":  26230
+                                                      },
+                                    "capture_count":  231,
+                                    "last_scale_us":  20110,
+                                    "active_backend":  "coregraphics_legacy_per_frame_surface",
+                                    "last_transfer_result":  0,
+                                    "last_total_us":  37332,
+                                    "total_metrics":  {
+                                                          "p95_us":  38949,
+                                                          "count":  231,
+                                                          "average_us":  37691,
+                                                          "p50_us":  37493,
+                                                          "max_us":  43779
+                                                      },
+                                    "last_result":  "legacy",
+                                    "fallback_count":  0,
+                                    "accelerator_symbols_available":  false,
+                                    "schema":  "capture_pipeline_v2",
+                                    "fallback_backend":  "coregraphics",
+                                    "source_width":  0,
+                                    "legacy_count":  231,
+                                    "last_capture_us":  16875,
+                                    "failure_count":  0,
+                                    "accelerated_count":  0,
+                                    "source_pool_size":  2,
+                                    "requested_mode":  "legacy",
+                                    "source_height":  0
+                                }
+               },
+    "v2":  {
+               "mode":  "accelerated",
+               "elapsed_seconds":  10.229,
+               "bytes_read":  791119,
+               "frames_per_second":  27.96,
+               "pipeline":  {
+                                "capture_metrics":  {
+                                                        "p95_us":  12357,
+                                                        "count":  256,
+                                                        "average_us":  7431,
+                                                        "p50_us":  8184,
+                                                        "max_us":  13594
+                                                    },
+                                "preferred_backend":  "iosurface_accelerator",
+                                "scale_metrics":  {
+                                                      "p95_us":  13914,
+                                                      "count":  256,
+                                                      "average_us":  12875,
+                                                      "p50_us":  12845,
+                                                      "max_us":  14104
+                                                  },
+                                "capture_count":  286,
+                                "last_scale_us":  12220,
+                                "active_backend":  "iosurface_accelerator",
+                                "last_transfer_result":  0,
+                                "last_total_us":  20704,
+                                "total_metrics":  {
+                                                      "p95_us":  23813,
+                                                      "count":  256,
+                                                      "average_us":  20342,
+                                                      "p50_us":  20847,
+                                                      "max_us":  24822
+                                                  },
+                                "last_result":  "accelerated",
+                                "fallback_count":  0,
+                                "accelerator_symbols_available":  true,
+                                "schema":  "capture_pipeline_v2",
+                                "fallback_backend":  "coregraphics",
+                                "source_width":  1242,
+                                "legacy_count":  0,
+                                "last_capture_us":  8451,
+                                "failure_count":  0,
+                                "accelerated_count":  286,
+                                "source_pool_size":  2,
+                                "requested_mode":  "accelerated",
+                                "source_height":  2208
+                            }
+           },
+    "improvement_percent":  {
+                                "capture_average":  56.77,
+                                "scale_average":  36.18,
+                                "total_average":  46.03,
+                                "total_p50":  44.4,
+                                "total_p95":  38.86,
+                                "frame_rate_gain":  21.05
+                            },
+    "decision":  "pass_comparable"
+}

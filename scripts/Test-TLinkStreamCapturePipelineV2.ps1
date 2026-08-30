@@ -26,6 +26,14 @@ function ConvertFrom-TLinkCaptureJson([string]$Raw) {
     [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($base64)) | ConvertFrom-Json
 }
 
+function Invoke-TLinkStreamControl([string]$Action, [hashtable]$Arguments = @{}) {
+    $request = @{ schema = "stream_control_v2"; action = $Action }
+    foreach ($key in $Arguments.Keys) { $request[$key] = $Arguments[$key] }
+    $json = $request | ConvertTo-Json -Compress
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+    ConvertFrom-TLinkCaptureJson (Invoke-TLinkCaptureTask "93$encoded")
+}
+
 $capability = Invoke-TLinkCaptureTask "97" 5000
 foreach ($marker in @(
     "streamCapturePipeline=iosurface_pool_gpu_scale_v2",
@@ -34,10 +42,17 @@ foreach ($marker in @(
     "streamCaptureSourcePool=2",
     "streamCaptureTarget=encoder_iosurface_pixel_buffer",
     "streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline",
+    "streamCaptureSynchronization=accelerator_runloop_cpu_coherence_seed_v1",
+    "streamCaptureIntegrityDeviceValidated=0",
     "streamCaptureDeviceValidated=1"
 )) {
     if ($capability -notlike "*$marker*") { throw "Task 97 missing '$marker'" }
 }
+
+# Qualification must not inherit a previous diagnostic `legacy` selection or
+# stale counters. The installed runtime remains in auto after the test.
+$null = Invoke-TLinkStreamControl "set_capture_mode" @{ mode = "auto"; reset_metrics = $true }
+Start-Sleep -Milliseconds 250
 
 $bytesRead = 0L
 $streamClient = [Net.Sockets.TcpClient]::new()
@@ -71,10 +86,17 @@ if ($pipeline.schema -ne "capture_pipeline_v2") {
 if ([int64]$pipeline.capture_count -le 0) { throw "Capture pipeline did not produce a frame" }
 if ($bytesRead -le 0) { throw "Stream port $StreamPort returned no encoded bytes" }
 
-$decision = if ([int64]$pipeline.accelerated_count -gt 0) {
-    "pass_accelerated"
+$decision = if (
+    [int64]$pipeline.accelerated_count -gt 0 -and
+    [int64]$pipeline.coherence_barrier_count -ge [int64]$pipeline.accelerated_count -and
+    [int64]$pipeline.coherence_barrier_failure_count -eq 0 -and
+    [int64]$pipeline.source_seed_mismatch_count -eq 0 -and
+    [int64]$pipeline.integrity_fallback_count -eq 0 -and
+    [bool]$pipeline.accelerator_run_loop_attached
+) {
+    "pass_accelerated_synchronized"
 } elseif ([int64]$pipeline.fallback_count -gt 0 -and [int64]$pipeline.failure_count -eq 0) {
-    "pass_coregraphics_fallback"
+    "pass_safe_coregraphics_fallback"
 } else {
     "fail_capture_pipeline"
 }
@@ -90,11 +112,18 @@ $decision = if ([int64]$pipeline.accelerated_count -gt 0) {
     accelerated_count = $pipeline.accelerated_count
     fallback_count = $pipeline.fallback_count
     failure_count = $pipeline.failure_count
+    coherence_barrier_count = $pipeline.coherence_barrier_count
+    coherence_barrier_failure_count = $pipeline.coherence_barrier_failure_count
+    source_seed_mismatch_count = $pipeline.source_seed_mismatch_count
+    destination_seed_unchanged_count = $pipeline.destination_seed_unchanged_count
+    integrity_fallback_count = $pipeline.integrity_fallback_count
+    accelerator_run_loop_attached = $pipeline.accelerator_run_loop_attached
     source_size = "$($pipeline.source_width)x$($pipeline.source_height)"
     last_capture_us = $pipeline.last_capture_us
     last_scale_us = $pipeline.last_scale_us
     last_total_us = $pipeline.last_total_us
     last_transfer_result = $pipeline.last_transfer_result
+    last_coherence_barrier_result = $pipeline.last_coherence_barrier_result
     last_result = $pipeline.last_result
 } | Format-List
 

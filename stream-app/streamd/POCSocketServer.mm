@@ -6114,6 +6114,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"streamCaptureTarget": @"encoder_iosurface_pixel_buffer",
         @"streamCaptureDiagnostics": @"task60_adaptive_streaming_capture_pipeline",
         @"streamCaptureBenchmark": @"task93_legacy_vs_accelerated_v2",
+        @"streamCaptureSynchronization": @"accelerator_runloop_cpu_coherence_seed_v1",
+        @"streamCaptureIntegrityDeviceValidated": @(NO),
         @"streamCaptureDeviceValidated": @(YES),
         @"streamControlTask": @93,
         @"streamControlSchema": @"stream_control_v2",
@@ -8729,7 +8731,9 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" streamCaptureTarget=encoder_iosurface_pixel_buffer"
                                                @" streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline"
                                                @" streamCaptureBenchmark=task93_legacy_vs_accelerated_v2"
+                                               @" streamCaptureSynchronization=accelerator_runloop_cpu_coherence_seed_v1"
                                                @" streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames"
+                                               @" streamCaptureIntegrityDeviceValidated=0"
                                                @" streamCaptureDeviceValidated=1"];
         cap = [cap stringByAppendingString:@" streamControlTask=93"
                                                @" streamControlSchema=stream_control_v2"

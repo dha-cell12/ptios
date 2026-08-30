@@ -1,8 +1,10 @@
 # Stream Capture Pipeline v2
 
-Status: implemented and accelerated-path validated on the TrollStore `streamd`
-H.264 runtime (287/287 accelerated frames, zero fallback/failure in the initial
-10-second device run).
+Status: synchronized accelerator path implemented. The original performance
+path produced 287/287 API-successful accelerated frames, but a later visual
+qualification found horizontal tearing in both Fast and RTC while forced
+legacy capture remained clean. The synchronized integrity revision therefore
+remains device-validation pending.
 
 Pipeline v2 removes `CGImage -> CGContextDrawImage` from the normal H.264
 frame path. It retains that path only as a bounded compatibility fallback.
@@ -11,6 +13,8 @@ frame path. It retains that path only as a bounded compatibility fallback.
 CARenderServerRenderDisplay
   -> reusable two-entry full-resolution BGRA IOSurface pool
   -> IOSurfaceAcceleratorTransferSurface
+  -> accelerator main-run-loop source + CPU read coherence barrier
+  -> source/destination seed telemetry and per-frame integrity fallback
   -> IOSurface-backed CVPixelBuffer from the VideoToolbox pool
   -> VTCompressionSession
 ```
@@ -21,13 +25,23 @@ FrontBoard scene, direct WebRTC stack or SpringBoard injection.
 
 ## Runtime fallback and recovery
 
-When `CVPixelBufferGetIOSurface`, `IOSurfaceAcceleratorCreate`, or the surface
-transfer is unavailable, the already-captured source IOSurface is drawn into
-the target buffer with CoreGraphics. A failed accelerated transfer therefore
-does not terminate an otherwise compatible device stream.
-The two private accelerator entry points are resolved with `dlsym`, so an SDK
-stub that does not export them cannot turn the optimization into a link-time
-build failure.
+When `CVPixelBufferGetIOSurface`, `IOSurfaceAcceleratorCreate`, the accelerator
+run-loop source, surface transfer, post-transfer coherence barrier, or source
+seed stability is unavailable, the already-captured source IOSurface is drawn
+into the target buffer with CoreGraphics. A failed or integrity-unsafe
+accelerated transfer therefore does not reach VideoToolbox and does not
+terminate an otherwise compatible device stream.
+The private accelerator and alignment entry points are resolved with `dlsym`,
+so an SDK stub that does not export them cannot turn the optimization into a
+link-time build failure.
+
+`IOSurfaceAcceleratorGetRunLoopSource` is also resolved dynamically and added
+to the main run loop before the first transfer, matching the initialization
+contract observed in the reference XXTouch runtime. Because
+`IOSurfaceAcceleratorTransferSurface` has no public synchronous completion
+contract, the destination pixel buffer is read-locked and sampled after each
+successful transfer. This bounded coherence barrier finishes before the same
+buffer is submitted to VideoToolbox.
 
 If both paths fail, H.264 resets the cached IOSurface/accelerator state and
 retries once. The existing three-attempt encoder recovery budget is reset only
@@ -44,14 +58,17 @@ streamCaptureSourcePool=2
 streamCaptureTarget=encoder_iosurface_pixel_buffer
 streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline
 streamCaptureBenchmark=task93_legacy_vs_accelerated_v2
+streamCaptureSynchronization=accelerator_runloop_cpu_coherence_seed_v1
 streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames
+streamCaptureIntegrityDeviceValidated=0
 streamCaptureDeviceValidated=1
 ```
 
 Task `60` returns live diagnostics under
 `adaptive_streaming.capture_pipeline`, including the active backend, capture,
 accelerated, fallback and failure counters, source dimensions, transfer result,
-the most recent capture/scale/total processing times, and bounded
+coherence-barrier counts/results, seed changes, integrity fallback count,
+run-loop attachment, the most recent capture/scale/total processing times, and bounded
 average/p50/p95/max windows in microseconds.
 
 Task `93` provides licensed runtime control for device qualification. Its
@@ -73,15 +90,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -DrainSeconds 10
 ```
 
-`pass_accelerated` is the intended result. `pass_coregraphics_fallback` keeps
-functional compatibility but means the device did not use the optimized GPU
-path. For accelerated promotion, verify a sustained 10-minute run with:
+`pass_accelerated_synchronized` is the intended result.
+`pass_safe_coregraphics_fallback` keeps functional compatibility but means the
+device could not prove the optimized GPU frame safe. For accelerated promotion,
+verify a sustained 10-minute run with:
+
+The qualification script explicitly selects `auto` and resets capture metrics,
+so it is safe to run after a manual `legacy` tearing-isolation test.
 
 - `accelerated_count` increasing and `fallback_count/failure_count` remaining
   zero;
+- `coherence_barrier_count >= accelerated_count`, zero barrier failures, zero
+  source seed mismatches and zero integrity fallbacks;
+- `accelerator_run_loop_attached=true`;
 - `last_total_us` normally below 70% of the selected profile frame budget;
-- no black frames across orientation changes, app backgrounding and target-app
-  transitions;
+- no horizontal tearing or black frames in both Fast and RTC across orientation
+  changes, app backgrounding and target-app transitions;
 - no unbounded memory growth or serious/critical thermal state.
 
 If the result is fallback, collect task `60` and the streamd log. A non-zero

@@ -17,8 +17,10 @@ CGImageRef SCCreateScreenShotCGImage(void);
 // Capture the current display into an encoder-sized BGRA pixel buffer.
 // The preferred path reuses a small full-resolution IOSurface pool and asks
 // IOSurfaceAccelerator to scale directly into the IOSurface backing `buffer`.
-// A CoreGraphics copy is retained as a fail-safe for devices where either the
-// accelerator or an IOSurface-backed CVPixelBuffer is unavailable.
+// The accelerator run-loop source and a read coherence barrier must complete,
+// and the source seed must remain stable, before the buffer is handed to
+// VideoToolbox. A CoreGraphics copy is retained as a per-frame fail-safe for
+// unavailable or integrity-unsafe accelerated transfers.
 BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef buffer);
 
 // Runtime diagnostics are included in task 60 under

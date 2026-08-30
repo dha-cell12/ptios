@@ -25,11 +25,21 @@ assert.match(header, /SCSetCapturePipelineMode/);
 assert.match(capture, /kSCCaptureSurfacePoolSize = 2/);
 assert.match(capture, /IOSurfaceAcceleratorCreate/);
 assert.match(capture, /IOSurfaceAcceleratorTransferSurface/);
+assert.match(capture, /IOSurfaceAcceleratorGetRunLoopSource/);
+assert.match(capture, /CFRunLoopAddSource/);
 assert.match(capture, /CVPixelBufferGetIOSurface/);
+assert.match(capture, /SCWaitForPixelBufferCoherence/);
+assert.match(capture, /kCVPixelBufferLock_ReadOnly/);
+assert.match(capture, /IOSurfaceGetSeed/);
 assert.match(capture, /SCCopySurfaceWithCoreGraphics/);
 assert.match(capture, /@"capture_pipeline_v2"/);
 assert.match(capture, /@"accelerated_count"/);
 assert.match(capture, /@"fallback_count"/);
+assert.match(capture, /@"coherence_barrier_count"/);
+assert.match(capture, /@"coherence_barrier_failure_count"/);
+assert.match(capture, /@"source_seed_mismatch_count"/);
+assert.match(capture, /@"integrity_fallback_count"/);
+assert.match(capture, /@"accelerator_run_loop_attached"/);
 assert.match(capture, /@"last_total_us"/);
 assert.match(capture, /coregraphics_legacy_per_frame_surface/);
 assert.match(capture, /@"total_metrics"/);
@@ -52,7 +62,9 @@ for (const marker of [
   "streamCaptureTarget=encoder_iosurface_pixel_buffer",
   "streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline",
   "streamCaptureBenchmark=task93_legacy_vs_accelerated_v2",
+  "streamCaptureSynchronization=accelerator_runloop_cpu_coherence_seed_v1",
   "streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames",
+  "streamCaptureIntegrityDeviceValidated=0",
   "streamCaptureDeviceValidated=1",
 ]) {
   assert.ok(server.includes(marker), `task 97 missing ${marker}`);
@@ -62,7 +74,11 @@ for (const marker of [
 assert.match(deviceTest, /capture_pipeline/);
 assert.match(deviceTest, /accelerated_count/);
 assert.match(deviceTest, /fallback_count/);
+assert.match(deviceTest, /coherence_barrier_count/);
+assert.match(deviceTest, /coherence_barrier_failure_count/);
+assert.match(deviceTest, /source_seed_mismatch_count/);
+assert.match(deviceTest, /integrity_fallback_count/);
 assert.match(buildWorkflow, /check-stream-capture-pipeline-v2\.mjs/);
 assert.match(trollWorkflow, /check-stream-capture-pipeline-v2\.mjs/);
 
-console.log("Stream Capture Pipeline v2 OK: pooled IOSurface capture, GPU scale, encoder-backed target, fallback and diagnostics wired");
+console.log("Stream Capture Pipeline v2 OK: synchronized IOSurface accelerator, coherence/seed integrity fallback and diagnostics wired");

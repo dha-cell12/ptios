@@ -128,6 +128,11 @@ $comparison = [ordered]@{
         [int64]$legacyPipeline.legacy_count -eq [int64]$legacyPipeline.capture_count -and
         [int64]$v2Pipeline.accelerated_count -gt 0 -and
         [int64]$v2Pipeline.accelerated_count -eq [int64]$v2Pipeline.capture_count -and
+        [int64]$v2Pipeline.coherence_barrier_count -ge [int64]$v2Pipeline.accelerated_count -and
+        [int64]$v2Pipeline.coherence_barrier_failure_count -eq 0 -and
+        [int64]$v2Pipeline.source_seed_mismatch_count -eq 0 -and
+        [int64]$v2Pipeline.integrity_fallback_count -eq 0 -and
+        [bool]$v2Pipeline.accelerator_run_loop_attached -and
         [int64]$legacyPipeline.fallback_count -eq 0 -and
         [int64]$v2Pipeline.fallback_count -eq 0 -and
         [int64]$legacyPipeline.failure_count -eq 0 -and
@@ -149,6 +154,9 @@ $comparison | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $outputPath -E
     v2_total_average_us = $v2Pipeline.total_metrics.average_us
     total_average_improvement_percent = $comparison.improvement_percent.total_average
     total_p95_improvement_percent = $comparison.improvement_percent.total_p95
+    v2_coherence_barrier_count = $v2Pipeline.coherence_barrier_count
+    v2_integrity_fallback_count = $v2Pipeline.integrity_fallback_count
+    v2_accelerator_run_loop_attached = $v2Pipeline.accelerator_run_loop_attached
     output = $outputPath
 } | Format-List
 

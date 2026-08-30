@@ -23,6 +23,7 @@ kern_return_t IOSurfaceLock(IOSurfaceRef buffer, uint32_t options, uint32_t *see
 kern_return_t IOSurfaceUnlock(IOSurfaceRef buffer, uint32_t options, uint32_t *seed);
 size_t IOSurfaceGetWidth(IOSurfaceRef buffer);
 size_t IOSurfaceGetHeight(IOSurfaceRef buffer);
+uint32_t IOSurfaceGetSeed(IOSurfaceRef buffer);
 IOSurfaceRef CVPixelBufferGetIOSurface(CVPixelBufferRef pixelBuffer);
 CGImageRef UICreateCGImageFromIOSurface(IOSurfaceRef surface);
 void CARenderServerRenderDisplay(kern_return_t a, CFStringRef b, IOSurfaceRef surface, int x, int y);
@@ -36,8 +37,11 @@ typedef kern_return_t (*SCIOSurfaceAcceleratorTransferSurfaceFn)(IOSurfaceAccele
                                                                  IOSurfaceRef destination,
                                                                  CFDictionaryRef options,
                                                                  void *completion);
+typedef CFRunLoopSourceRef (*SCIOSurfaceAcceleratorGetRunLoopSourceFn)(IOSurfaceAcceleratorRef accelerator);
+typedef size_t (*SCIOSurfaceAlignPropertyFn)(CFStringRef property, size_t value);
 
 static const NSUInteger kSCCaptureSurfacePoolSize = 2;
+static const uint32_t kSCIOSurfaceLockReadOnly = 1;
 static os_unfair_lock sSCCaptureLock = OS_UNFAIR_LOCK_INIT;
 static IOSurfaceRef sSCCaptureSurfaces[kSCCaptureSurfacePoolSize] = { NULL, NULL };
 static NSUInteger sSCCaptureSurfaceIndex = 0;
@@ -46,6 +50,10 @@ static int sSCCaptureHeight = 0;
 static IOSurfaceAcceleratorRef sSCSurfaceAccelerator = NULL;
 static SCIOSurfaceAcceleratorCreateFn sSCAcceleratorCreate = NULL;
 static SCIOSurfaceAcceleratorTransferSurfaceFn sSCAcceleratorTransfer = NULL;
+static SCIOSurfaceAcceleratorGetRunLoopSourceFn sSCAcceleratorGetRunLoopSource = NULL;
+static SCIOSurfaceAlignPropertyFn sSCIOSurfaceAlignProperty = NULL;
+static CFRunLoopSourceRef sSCAcceleratorRunLoopSource = NULL;
+static BOOL sSCAcceleratorRunLoopAttached = NO;
 static NSString *sSCActiveBackend = @"not_started";
 static NSString *sSCLastResult = @"not_started";
 static NSString *sSCRequestedMode = @"auto";
@@ -54,10 +62,20 @@ static uint64_t sSCAcceleratedCount = 0;
 static uint64_t sSCFallbackCount = 0;
 static uint64_t sSCLegacyCount = 0;
 static uint64_t sSCFailureCount = 0;
+static uint64_t sSCCoherenceBarrierCount = 0;
+static uint64_t sSCCoherenceBarrierFailureCount = 0;
+static uint64_t sSCSourceSeedMismatchCount = 0;
+static uint64_t sSCDestinationSeedUnchangedCount = 0;
+static uint64_t sSCIntegrityFallbackCount = 0;
 static uint64_t sSCLastCaptureUs = 0;
 static uint64_t sSCLastScaleUs = 0;
 static uint64_t sSCLastTotalUs = 0;
 static int sSCLastTransferResult = 0;
+static int sSCLastCoherenceBarrierResult = 0;
+static uint32_t sSCLastSourceSeedBefore = 0;
+static uint32_t sSCLastSourceSeedAfter = 0;
+static uint32_t sSCLastDestinationSeedBefore = 0;
+static uint32_t sSCLastDestinationSeedAfter = 0;
 static const NSUInteger kSCMetricWindowSize = 256;
 static uint64_t sSCCaptureSamples[kSCMetricWindowSize] = {0};
 static uint64_t sSCScaleSamples[kSCMetricWindowSize] = {0};
@@ -71,17 +89,24 @@ static void SCResolveSurfaceAcceleratorSymbols(void)
     dispatch_once(&onceToken, ^{
         void *createSymbol = dlsym(RTLD_DEFAULT, "IOSurfaceAcceleratorCreate");
         void *transferSymbol = dlsym(RTLD_DEFAULT, "IOSurfaceAcceleratorTransferSurface");
-        if (!createSymbol || !transferSymbol) {
+        void *runLoopSourceSymbol = dlsym(RTLD_DEFAULT, "IOSurfaceAcceleratorGetRunLoopSource");
+        void *alignPropertySymbol = dlsym(RTLD_DEFAULT, "IOSurfaceAlignProperty");
+        if (!createSymbol || !transferSymbol || !runLoopSourceSymbol || !alignPropertySymbol) {
             void *framework = dlopen(
                 "/System/Library/Frameworks/IOSurface.framework/IOSurface",
                 RTLD_LAZY | RTLD_LOCAL);
             if (framework) {
                 createSymbol = dlsym(framework, "IOSurfaceAcceleratorCreate");
                 transferSymbol = dlsym(framework, "IOSurfaceAcceleratorTransferSurface");
+                runLoopSourceSymbol = dlsym(framework, "IOSurfaceAcceleratorGetRunLoopSource");
+                alignPropertySymbol = dlsym(framework, "IOSurfaceAlignProperty");
             }
         }
         sSCAcceleratorCreate = (SCIOSurfaceAcceleratorCreateFn)createSymbol;
         sSCAcceleratorTransfer = (SCIOSurfaceAcceleratorTransferSurfaceFn)transferSymbol;
+        sSCAcceleratorGetRunLoopSource =
+            (SCIOSurfaceAcceleratorGetRunLoopSourceFn)runLoopSourceSymbol;
+        sSCIOSurfaceAlignProperty = (SCIOSurfaceAlignPropertyFn)alignPropertySymbol;
     });
 }
 
@@ -104,10 +129,20 @@ static void SCResetMetricsLocked(void)
     sSCFallbackCount = 0;
     sSCLegacyCount = 0;
     sSCFailureCount = 0;
+    sSCCoherenceBarrierCount = 0;
+    sSCCoherenceBarrierFailureCount = 0;
+    sSCSourceSeedMismatchCount = 0;
+    sSCDestinationSeedUnchangedCount = 0;
+    sSCIntegrityFallbackCount = 0;
     sSCLastCaptureUs = 0;
     sSCLastScaleUs = 0;
     sSCLastTotalUs = 0;
     sSCLastTransferResult = 0;
+    sSCLastCoherenceBarrierResult = 0;
+    sSCLastSourceSeedBefore = 0;
+    sSCLastSourceSeedAfter = 0;
+    sSCLastDestinationSeedBefore = 0;
+    sSCLastDestinationSeedAfter = 0;
     memset(sSCCaptureSamples, 0, sizeof(sSCCaptureSamples));
     memset(sSCScaleSamples, 0, sizeof(sSCScaleSamples));
     memset(sSCTotalSamples, 0, sizeof(sSCTotalSamples));
@@ -183,11 +218,19 @@ static BOOL SCDisplayPixelSize(int *outWidth, int *outHeight)
 
 static IOSurfaceRef SCCreateBGRAIOSurface(int width, int height)
 {
-    int bytesPerRow = SCRoundUp(width * 4, 32);
+    SCResolveSurfaceAcceleratorSymbols();
+    size_t minimumBytesPerRow = (size_t)width * 4;
+    size_t alignedBytesPerRow = sSCIOSurfaceAlignProperty
+        ? sSCIOSurfaceAlignProperty(CFSTR("IOSurfaceBytesPerRow"), minimumBytesPerRow)
+        : (size_t)SCRoundUp((int)minimumBytesPerRow, 128);
+    if (alignedBytesPerRow < minimumBytesPerRow) {
+        alignedBytesPerRow = (size_t)SCRoundUp((int)minimumBytesPerRow, 128);
+    }
+    size_t allocSize = alignedBytesPerRow * (size_t)height;
     NSMutableDictionary *properties = [@{
-        @"IOSurfaceAllocSize": @(bytesPerRow * height),
+        @"IOSurfaceAllocSize": @(allocSize),
         @"IOSurfaceBytesPerElement": @4,
-        @"IOSurfaceBytesPerRow": @(bytesPerRow),
+        @"IOSurfaceBytesPerRow": @(alignedBytesPerRow),
         @"IOSurfaceWidth": @(width),
         @"IOSurfaceHeight": @(height),
         @"IOSurfacePixelFormat": @(1111970369), // 'BGRA'
@@ -226,9 +269,9 @@ static BOOL SCEnsureCaptureSurfacesLocked(int width, int height)
 
 static BOOL SCEnsureSurfaceAcceleratorLocked(void)
 {
-    if (sSCSurfaceAccelerator) return YES;
+    if (sSCSurfaceAccelerator && sSCAcceleratorRunLoopAttached) return YES;
     SCResolveSurfaceAcceleratorSymbols();
-    if (!sSCAcceleratorCreate || !sSCAcceleratorTransfer) {
+    if (!sSCAcceleratorCreate || !sSCAcceleratorTransfer || !sSCAcceleratorGetRunLoopSource) {
         sSCLastTransferResult = KERN_FAILURE;
         return NO;
     }
@@ -238,7 +281,56 @@ static BOOL SCEnsureSurfaceAcceleratorLocked(void)
         sSCLastTransferResult = result;
         return NO;
     }
+
+    CFRunLoopSourceRef runLoopSource = sSCAcceleratorGetRunLoopSource(accelerator);
+    if (!runLoopSource) {
+        sSCLastTransferResult = KERN_FAILURE;
+        CFRelease((CFTypeRef)accelerator);
+        return NO;
+    }
+
+    CFRunLoopRef mainRunLoop = CFRunLoopGetMain();
+    CFRunLoopAddSource(mainRunLoop, runLoopSource, kCFRunLoopDefaultMode);
+    CFRunLoopWakeUp(mainRunLoop);
     sSCSurfaceAccelerator = accelerator;
+    sSCAcceleratorRunLoopSource = runLoopSource;
+    sSCAcceleratorRunLoopAttached = YES;
+    return YES;
+}
+
+static BOOL SCWaitForPixelBufferCoherence(CVPixelBufferRef target)
+{
+    CVReturn lockResult = CVPixelBufferLockBaseAddress(target, kCVPixelBufferLock_ReadOnly);
+    sSCLastCoherenceBarrierResult = (int)lockResult;
+    if (lockResult != kCVReturnSuccess) {
+        sSCCoherenceBarrierFailureCount++;
+        return NO;
+    }
+
+    // TransferSurface is a private GPU path without a public synchronous
+    // completion contract. A bounded CPU read after the transfer forces Core
+    // Video/IOSurface cache coherence before VideoToolbox consumes the same
+    // buffer. Touch three rows so an implementation cannot elide the mapping.
+    volatile uint8_t observed = 0;
+    const uint8_t *base = (const uint8_t *)CVPixelBufferGetBaseAddress(target);
+    size_t height = CVPixelBufferGetHeight(target);
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(target);
+    BOOL mapped = base && height > 0 && bytesPerRow > 0;
+    if (mapped) {
+        observed ^= base[0];
+        observed ^= base[(height / 2) * bytesPerRow];
+        observed ^= base[(height - 1) * bytesPerRow];
+    }
+    (void)observed;
+
+    CVReturn unlockResult = CVPixelBufferUnlockBaseAddress(target, kCVPixelBufferLock_ReadOnly);
+    sSCLastCoherenceBarrierResult = (int)unlockResult;
+    if (!mapped || unlockResult != kCVReturnSuccess) {
+        if (!mapped) sSCLastCoherenceBarrierResult = -1;
+        sSCCoherenceBarrierFailureCount++;
+        return NO;
+    }
+    sSCCoherenceBarrierCount++;
     return YES;
 }
 
@@ -333,23 +425,50 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
     IOSurfaceLock(source, 0, NULL);
     CARenderServerRenderDisplay(0, CFSTR("LCD"), source, 0, 0);
     sSCLastCaptureUs = SCMonotonicMicroseconds() - captureStartedUs;
+    sSCLastSourceSeedBefore = IOSurfaceGetSeed(source);
 
     BOOL succeeded = NO;
+    NSString *fallbackReason = @"accelerator_unavailable";
     IOSurfaceRef destination = CVPixelBufferGetIOSurface(target);
     if (destination && SCEnsureSurfaceAcceleratorLocked()) {
         uint64_t scaleStartedUs = SCMonotonicMicroseconds();
+        sSCLastDestinationSeedBefore = IOSurfaceGetSeed(destination);
         IOSurfaceLock(destination, 0, NULL);
         kern_return_t transfer = sSCAcceleratorTransfer(
             sSCSurfaceAccelerator, source, destination, NULL, NULL);
         IOSurfaceUnlock(destination, 0, NULL);
+        BOOL coherent = NO;
+        if (transfer == KERN_SUCCESS) {
+            coherent = SCWaitForPixelBufferCoherence(target);
+        }
+        sSCLastSourceSeedAfter = IOSurfaceGetSeed(source);
+        sSCLastDestinationSeedAfter = IOSurfaceGetSeed(destination);
         sSCLastScaleUs = SCMonotonicMicroseconds() - scaleStartedUs;
         sSCLastTransferResult = transfer;
-        if (transfer == KERN_SUCCESS) {
+
+        BOOL sourceStable = sSCLastSourceSeedBefore == sSCLastSourceSeedAfter;
+        if (!sourceStable) {
+            sSCSourceSeedMismatchCount++;
+        }
+        if (sSCLastDestinationSeedBefore == sSCLastDestinationSeedAfter) {
+            // An unchanged seed is useful telemetry but is not independently a
+            // correctness failure: two consecutive static frames are valid.
+            sSCDestinationSeedUnchangedCount++;
+        }
+
+        if (transfer == KERN_SUCCESS && coherent && sourceStable) {
             succeeded = YES;
             sSCAcceleratedCount++;
-            sSCActiveBackend = @"iosurface_accelerator";
-            sSCLastResult = @"accelerated";
+            sSCActiveBackend = @"iosurface_accelerator_synchronized";
+            sSCLastResult = @"accelerated_synchronized";
+        } else if (transfer == KERN_SUCCESS) {
+            sSCIntegrityFallbackCount++;
+            fallbackReason = coherent ? @"source_seed_changed" : @"coherence_barrier_failed";
+        } else {
+            fallbackReason = @"accelerator_transfer_failed";
         }
+    } else if (!destination) {
+        fallbackReason = @"destination_not_iosurface_backed";
     }
 
     if (!succeeded) {
@@ -359,7 +478,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         if (succeeded) {
             sSCFallbackCount++;
             sSCActiveBackend = @"coregraphics_fallback";
-            sSCLastResult = @"fallback";
+            sSCLastResult = [@"fallback_after_" stringByAppendingString:fallbackReason];
         }
     }
 
@@ -396,11 +515,25 @@ NSDictionary *SCCapturePipelineStatus(void)
         @"fallback_count": @(sSCFallbackCount),
         @"legacy_count": @(sSCLegacyCount),
         @"failure_count": @(sSCFailureCount),
+        @"coherence_barrier_count": @(sSCCoherenceBarrierCount),
+        @"coherence_barrier_failure_count": @(sSCCoherenceBarrierFailureCount),
+        @"source_seed_mismatch_count": @(sSCSourceSeedMismatchCount),
+        @"destination_seed_unchanged_count": @(sSCDestinationSeedUnchangedCount),
+        @"integrity_fallback_count": @(sSCIntegrityFallbackCount),
         @"last_capture_us": @(sSCLastCaptureUs),
         @"last_scale_us": @(sSCLastScaleUs),
         @"last_total_us": @(sSCLastTotalUs),
         @"last_transfer_result": @(sSCLastTransferResult),
-        @"accelerator_symbols_available": @(sSCAcceleratorCreate != NULL && sSCAcceleratorTransfer != NULL),
+        @"last_coherence_barrier_result": @(sSCLastCoherenceBarrierResult),
+        @"last_source_seed_before": @(sSCLastSourceSeedBefore),
+        @"last_source_seed_after": @(sSCLastSourceSeedAfter),
+        @"last_destination_seed_before": @(sSCLastDestinationSeedBefore),
+        @"last_destination_seed_after": @(sSCLastDestinationSeedAfter),
+        @"accelerator_symbols_available": @(
+            sSCAcceleratorCreate != NULL &&
+            sSCAcceleratorTransfer != NULL &&
+            sSCAcceleratorGetRunLoopSource != NULL),
+        @"accelerator_run_loop_attached": @(sSCAcceleratorRunLoopAttached),
         @"last_result": sSCLastResult ?: @"unknown",
         @"capture_metrics": captureMetrics,
         @"scale_metrics": scaleMetrics,
@@ -432,6 +565,12 @@ void SCResetCapturePipeline(void)
 {
     os_unfair_lock_lock(&sSCCaptureLock);
     SCReleaseCaptureSurfacesLocked();
+    if (sSCAcceleratorRunLoopSource && sSCAcceleratorRunLoopAttached) {
+        CFRunLoopRemoveSource(
+            CFRunLoopGetMain(), sSCAcceleratorRunLoopSource, kCFRunLoopDefaultMode);
+    }
+    sSCAcceleratorRunLoopSource = NULL;
+    sSCAcceleratorRunLoopAttached = NO;
     if (sSCSurfaceAccelerator) {
         CFRelease((CFTypeRef)sSCSurfaceAccelerator);
         sSCSurfaceAccelerator = NULL;
