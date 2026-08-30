@@ -16,12 +16,10 @@ CGImageRef SCCreateScreenShotCGImage(void);
 
 // Capture the current display into an encoder-sized BGRA pixel buffer.
 // The preferred path reuses a small full-resolution IOSurface pool and asks
-// Auto mode uses pooled IOSurface capture plus public Accelerate/vImage scaling
-// directly into `buffer`; this is the production-safe path. The private
-// IOSurfaceAccelerator staging path remains available only through explicit
-// `accelerated` diagnostic mode because device validation found visual tearing
-// despite successful transfer/synchronization counters. CoreGraphics remains
-// the per-frame fail-safe.
+// Auto mode uses a fresh full-resolution IOSurface and materializes it through
+// UICreateCGImageFromIOSurface + CGContextDrawImage before encoding. This is
+// the only production-safe path proven by device tests. The private pooled
+// accelerator staging path remains explicit diagnostic mode only.
 BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef buffer);
 
 // Runtime diagnostics are included in task 60 under
@@ -29,7 +27,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef buffer);
 NSDictionary *SCCapturePipelineStatus(void);
 
 // Runtime A/B control used by licensed task 93. Supported values are
-// `auto`, `accelerated`, and `legacy`. Auto selects pooled vImage scaling;
+// `auto`, `accelerated`, and `legacy`. Auto selects fresh snapshot scaling;
 // accelerated explicitly opts into the visually unsafe private accelerator for
 // diagnosis; legacy forces the historical CoreGraphics path for comparison.
 BOOL SCSetCapturePipelineMode(NSString *mode, BOOL resetMetrics);

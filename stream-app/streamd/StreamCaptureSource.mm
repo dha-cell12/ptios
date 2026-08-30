@@ -4,7 +4,6 @@
 #import <UIKit/UIKit.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <CoreVideo/CoreVideo.h>
-#import <Accelerate/Accelerate.h>
 #import <mach/kern_return.h>
 #import <mach/mach_time.h>
 #import <os/lock.h>
@@ -77,8 +76,8 @@ static uint64_t sSCIntegrityFallbackCount = 0;
 static uint64_t sSCStagedCopyCount = 0;
 static uint64_t sSCStagingAllocationCount = 0;
 static uint64_t sSCStagingCopyFailureCount = 0;
-static uint64_t sSCSafeScaleCount = 0;
-static uint64_t sSCSafeScaleFailureCount = 0;
+static uint64_t sSCSafeCopyCount = 0;
+static uint64_t sSCSafeCopyFailureCount = 0;
 static uint64_t sSCLastCaptureUs = 0;
 static uint64_t sSCLastScaleUs = 0;
 static uint64_t sSCLastTotalUs = 0;
@@ -92,7 +91,6 @@ static int sSCLastStagingWidth = 0;
 static int sSCLastStagingHeight = 0;
 static size_t sSCLastStagingBytesPerRow = 0;
 static size_t sSCLastTargetBytesPerRow = 0;
-static vImage_Error sSCLastSafeScaleResult = kvImageNoError;
 static const NSUInteger kSCMetricWindowSize = 256;
 static uint64_t sSCCaptureSamples[kSCMetricWindowSize] = {0};
 static uint64_t sSCScaleSamples[kSCMetricWindowSize] = {0};
@@ -154,8 +152,8 @@ static void SCResetMetricsLocked(void)
     sSCStagedCopyCount = 0;
     sSCStagingAllocationCount = 0;
     sSCStagingCopyFailureCount = 0;
-    sSCSafeScaleCount = 0;
-    sSCSafeScaleFailureCount = 0;
+    sSCSafeCopyCount = 0;
+    sSCSafeCopyFailureCount = 0;
     sSCLastCaptureUs = 0;
     sSCLastScaleUs = 0;
     sSCLastTotalUs = 0;
@@ -169,7 +167,6 @@ static void SCResetMetricsLocked(void)
     sSCLastStagingHeight = 0;
     sSCLastStagingBytesPerRow = 0;
     sSCLastTargetBytesPerRow = 0;
-    sSCLastSafeScaleResult = kvImageNoError;
     memset(sSCCaptureSamples, 0, sizeof(sSCCaptureSamples));
     memset(sSCScaleSamples, 0, sizeof(sSCScaleSamples));
     memset(sSCTotalSamples, 0, sizeof(sSCTotalSamples));
@@ -369,67 +366,6 @@ static BOOL SCEnsureSurfaceAcceleratorLocked(void)
     return YES;
 }
 
-static BOOL SCScaleSurfaceWithVImage(IOSurfaceRef source, CVPixelBufferRef target)
-{
-    if (!source || !target ||
-        CVPixelBufferGetPixelFormatType(target) != kCVPixelFormatType_32BGRA) {
-        sSCLastSafeScaleResult = kvImageInvalidParameter;
-        sSCSafeScaleFailureCount++;
-        return NO;
-    }
-
-    CVReturn targetLockResult = CVPixelBufferLockBaseAddress(target, 0);
-    if (targetLockResult != kCVReturnSuccess) {
-        sSCLastSafeScaleResult = (vImage_Error)targetLockResult;
-        sSCSafeScaleFailureCount++;
-        return NO;
-    }
-
-    void *sourceBase = IOSurfaceGetBaseAddress(source);
-    void *targetBase = CVPixelBufferGetBaseAddress(target);
-    size_t sourceWidth = IOSurfaceGetWidth(source);
-    size_t sourceHeight = IOSurfaceGetHeight(source);
-    size_t sourceBytesPerRow = IOSurfaceGetBytesPerRow(source);
-    size_t targetWidth = CVPixelBufferGetWidth(target);
-    size_t targetHeight = CVPixelBufferGetHeight(target);
-    size_t targetBytesPerRow = CVPixelBufferGetBytesPerRow(target);
-    BOOL validLayout = sourceBase && targetBase &&
-        sourceWidth > 0 && sourceHeight > 0 &&
-        targetWidth > 0 && targetHeight > 0 &&
-        sourceBytesPerRow >= sourceWidth * 4 &&
-        targetBytesPerRow >= targetWidth * 4;
-
-    vImage_Error scaleResult = kvImageInvalidParameter;
-    if (validLayout) {
-        vImage_Buffer sourceBuffer = {
-            sourceBase, sourceHeight, sourceWidth, sourceBytesPerRow
-        };
-        vImage_Buffer targetBuffer = {
-            targetBase, targetHeight, targetWidth, targetBytesPerRow
-        };
-        // ARGB8888 scaling is channel-order agnostic: BGRA pixels remain BGRA
-        // because vImage resamples each of the four byte channels independently.
-        scaleResult = vImageScale_ARGB8888(
-            &sourceBuffer, &targetBuffer, NULL, kvImageNoFlags);
-    }
-
-    CVReturn targetUnlockResult = CVPixelBufferUnlockBaseAddress(target, 0);
-    sSCLastSafeScaleResult = scaleResult;
-    sSCLastTargetBytesPerRow = targetBytesPerRow;
-    if (!validLayout ||
-        scaleResult != kvImageNoError ||
-        targetUnlockResult != kCVReturnSuccess) {
-        if (targetUnlockResult != kCVReturnSuccess) {
-            sSCLastSafeScaleResult = (vImage_Error)targetUnlockResult;
-        }
-        sSCSafeScaleFailureCount++;
-        return NO;
-    }
-
-    sSCSafeScaleCount++;
-    return YES;
-}
-
 static BOOL SCCopyStagingSurfaceToPixelBuffer(IOSurfaceRef staging, CVPixelBufferRef target)
 {
     if (!staging || !target) return NO;
@@ -531,15 +467,6 @@ static BOOL SCCopyCGImageWithCoreGraphics(CGImageRef image, CVPixelBufferRef tar
     return succeeded;
 }
 
-static BOOL SCCopySurfaceWithCoreGraphics(IOSurfaceRef source, CVPixelBufferRef target)
-{
-    CGImageRef image = UICreateCGImageFromIOSurface(source);
-    if (!image) return NO;
-    BOOL succeeded = SCCopyCGImageWithCoreGraphics(image, target);
-    CGImageRelease(image);
-    return succeeded;
-}
-
 BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
 {
     if (!target || CVPixelBufferGetPixelFormatType(target) != kCVPixelFormatType_32BGRA) return NO;
@@ -552,6 +479,10 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         uint64_t captureStartedUs = SCMonotonicMicroseconds();
         CGImageRef image = SCCreateScreenShotCGImage();
         sSCLastCaptureUs = SCMonotonicMicroseconds() - captureStartedUs;
+        if (image) {
+            sSCCaptureWidth = (int)CGImageGetWidth(image);
+            sSCCaptureHeight = (int)CGImageGetHeight(image);
+        }
         uint64_t scaleStartedUs = SCMonotonicMicroseconds();
         BOOL succeeded = image && SCCopyCGImageWithCoreGraphics(image, target);
         sSCLastScaleUs = SCMonotonicMicroseconds() - scaleStartedUs;
@@ -565,6 +496,41 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
             sSCFailureCount++;
             sSCActiveBackend = @"failed";
             sSCLastResult = @"legacy_capture_copy_failed";
+        }
+        sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
+        SCRecordMetricsLocked(sSCLastCaptureUs, sSCLastScaleUs, sSCLastTotalUs);
+        os_unfair_lock_unlock(&sSCCaptureLock);
+        return succeeded;
+    }
+
+    BOOL forcePrivateAccelerator = [sSCRequestedMode isEqualToString:@"accelerated"];
+    if (!forcePrivateAccelerator) {
+        // Device qualification proved that a freshly allocated render surface,
+        // followed by UICreateCGImageFromIOSurface + CGContextDrawImage, is the
+        // only path that consistently materializes every compositor layer.
+        // Do not reuse a source IOSurface here: CARenderServerRenderDisplay may
+        // return while layer tiles still reference the previous surface epoch.
+        uint64_t captureStartedUs = SCMonotonicMicroseconds();
+        CGImageRef image = SCCreateScreenShotCGImage();
+        sSCLastCaptureUs = SCMonotonicMicroseconds() - captureStartedUs;
+        if (image) {
+            sSCCaptureWidth = (int)CGImageGetWidth(image);
+            sSCCaptureHeight = (int)CGImageGetHeight(image);
+        }
+        uint64_t scaleStartedUs = SCMonotonicMicroseconds();
+        BOOL succeeded = image && SCCopyCGImageWithCoreGraphics(image, target);
+        sSCLastScaleUs = SCMonotonicMicroseconds() - scaleStartedUs;
+        if (image) CGImageRelease(image);
+        sSCCaptureCount++;
+        if (succeeded) {
+            sSCSafeCopyCount++;
+            sSCActiveBackend = @"coregraphics_fresh_surface_safe";
+            sSCLastResult = @"fresh_surface_snapshot_safe";
+        } else {
+            sSCSafeCopyFailureCount++;
+            sSCFailureCount++;
+            sSCActiveBackend = @"failed";
+            sSCLastResult = @"fresh_surface_snapshot_failed";
         }
         sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
         SCRecordMetricsLocked(sSCLastCaptureUs, sSCLastScaleUs, sSCLastTotalUs);
@@ -594,23 +560,11 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
     sSCLastSourceSeedBefore = IOSurfaceGetSeed(source);
 
     BOOL succeeded = NO;
-    NSString *fallbackReason = @"vimage_scale_failed";
-    BOOL forcePrivateAccelerator = [sSCRequestedMode isEqualToString:@"accelerated"];
-    if (!forcePrivateAccelerator) {
-        uint64_t scaleStartedUs = SCMonotonicMicroseconds();
-        succeeded = SCScaleSurfaceWithVImage(source, target);
-        sSCLastScaleUs = SCMonotonicMicroseconds() - scaleStartedUs;
-        sSCLastSourceSeedAfter = IOSurfaceGetSeed(source);
-        if (succeeded) {
-            sSCActiveBackend = @"vimage_pooled_safe";
-            sSCLastResult = @"vimage_safe";
-        }
-    } else {
-        fallbackReason = @"accelerator_unavailable";
-        int targetWidth = (int)CVPixelBufferGetWidth(target);
-        int targetHeight = (int)CVPixelBufferGetHeight(target);
-        IOSurfaceRef staging = SCStagingSurfaceLocked(targetWidth, targetHeight);
-        if (staging && SCEnsureSurfaceAcceleratorLocked()) {
+    NSString *fallbackReason = @"accelerator_unavailable";
+    int targetWidth = (int)CVPixelBufferGetWidth(target);
+    int targetHeight = (int)CVPixelBufferGetHeight(target);
+    IOSurfaceRef staging = SCStagingSurfaceLocked(targetWidth, targetHeight);
+    if (staging && SCEnsureSurfaceAcceleratorLocked()) {
             uint64_t scaleStartedUs = SCMonotonicMicroseconds();
             sSCLastDestinationSeedBefore = IOSurfaceGetSeed(staging);
             kern_return_t transfer = KERN_FAILURE;
@@ -653,14 +607,15 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
             } else {
                 fallbackReason = @"accelerator_transfer_failed";
             }
-        } else if (!staging) {
-            fallbackReason = @"staging_surface_unavailable";
-        }
+    } else if (!staging) {
+        fallbackReason = @"staging_surface_unavailable";
     }
 
     if (!succeeded) {
         uint64_t fallbackStartedUs = SCMonotonicMicroseconds();
-        succeeded = SCCopySurfaceWithCoreGraphics(source, target);
+        CGImageRef retryImage = SCCreateScreenShotCGImage();
+        succeeded = retryImage && SCCopyCGImageWithCoreGraphics(retryImage, target);
+        if (retryImage) CGImageRelease(retryImage);
         sSCLastScaleUs = SCMonotonicMicroseconds() - fallbackStartedUs;
         if (succeeded) {
             sSCFallbackCount++;
@@ -691,7 +646,7 @@ NSDictionary *SCCapturePipelineStatus(void)
     NSDictionary *status = @{
         @"schema": @"capture_pipeline_v2",
         @"requested_mode": sSCRequestedMode ?: @"auto",
-        @"preferred_backend": @"vimage_pooled_safe",
+        @"preferred_backend": @"coregraphics_fresh_surface_safe",
         @"active_backend": sSCActiveBackend ?: @"unknown",
         @"fallback_backend": @"coregraphics",
         @"private_accelerator_policy": @"unsafe_opt_in_only",
@@ -714,8 +669,8 @@ NSDictionary *SCCapturePipelineStatus(void)
         @"staged_copy_count": @(sSCStagedCopyCount),
         @"staging_allocation_count": @(sSCStagingAllocationCount),
         @"staging_copy_failure_count": @(sSCStagingCopyFailureCount),
-        @"safe_scale_count": @(sSCSafeScaleCount),
-        @"safe_scale_failure_count": @(sSCSafeScaleFailureCount),
+        @"safe_copy_count": @(sSCSafeCopyCount),
+        @"safe_copy_failure_count": @(sSCSafeCopyFailureCount),
         @"last_capture_us": @(sSCLastCaptureUs),
         @"last_scale_us": @(sSCLastScaleUs),
         @"last_total_us": @(sSCLastTotalUs),
@@ -729,7 +684,6 @@ NSDictionary *SCCapturePipelineStatus(void)
         @"last_staging_height": @(sSCLastStagingHeight),
         @"last_staging_bytes_per_row": @(sSCLastStagingBytesPerRow),
         @"last_target_bytes_per_row": @(sSCLastTargetBytesPerRow),
-        @"last_safe_scale_result": @(sSCLastSafeScaleResult),
         @"accelerator_symbols_available": @(
             sSCAcceleratorCreate != NULL &&
             sSCAcceleratorTransfer != NULL &&

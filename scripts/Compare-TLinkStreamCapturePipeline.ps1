@@ -126,10 +126,10 @@ $comparison = [ordered]@{
     decision = if (
         [int64]$legacyPipeline.legacy_count -gt 0 -and
         [int64]$legacyPipeline.legacy_count -eq [int64]$legacyPipeline.capture_count -and
-        [int64]$v2Pipeline.safe_scale_count -gt 0 -and
-        [int64]$v2Pipeline.safe_scale_count -eq [int64]$v2Pipeline.capture_count -and
-        [int64]$v2Pipeline.safe_scale_failure_count -eq 0 -and
-        $v2Pipeline.active_backend -eq "vimage_pooled_safe" -and
+        [int64]$v2Pipeline.safe_copy_count -gt 0 -and
+        [int64]$v2Pipeline.safe_copy_count -eq [int64]$v2Pipeline.capture_count -and
+        [int64]$v2Pipeline.safe_copy_failure_count -eq 0 -and
+        $v2Pipeline.active_backend -eq "coregraphics_fresh_surface_safe" -and
         [int64]$legacyPipeline.fallback_count -eq 0 -and
         [int64]$v2Pipeline.fallback_count -eq 0 -and
         [int64]$legacyPipeline.failure_count -eq 0 -and
@@ -151,9 +151,8 @@ $comparison | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $outputPath -E
     v2_total_average_us = $v2Pipeline.total_metrics.average_us
     total_average_improvement_percent = $comparison.improvement_percent.total_average
     total_p95_improvement_percent = $comparison.improvement_percent.total_p95
-    v2_safe_scale_count = $v2Pipeline.safe_scale_count
-    v2_safe_scale_failure_count = $v2Pipeline.safe_scale_failure_count
-    v2_last_safe_scale_result = $v2Pipeline.last_safe_scale_result
+    v2_safe_copy_count = $v2Pipeline.safe_copy_count
+    v2_safe_copy_failure_count = $v2Pipeline.safe_copy_failure_count
     output = $outputPath
 } | Format-List
 
