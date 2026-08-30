@@ -40,9 +40,11 @@ foreach ($marker in @(
     "streamCapturePreferredBackend=iosurface_accelerator",
     "streamCaptureFallback=coregraphics_v1",
     "streamCaptureSourcePool=2",
+    "streamCaptureStagingCache=4",
     "streamCaptureTarget=encoder_iosurface_pixel_buffer",
+    "streamCaptureAcceleratorTarget=explicit_bgra_staging_surface",
     "streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline",
-    "streamCaptureSynchronization=accelerator_runloop_cpu_coherence_seed_v1",
+    "streamCaptureSynchronization=accelerator_runloop_staged_stride_copy_seed_v2",
     "streamCaptureIntegrityDeviceValidated=0",
     "streamCaptureDeviceValidated=1"
 )) {
@@ -92,9 +94,12 @@ $decision = if (
     [int64]$pipeline.coherence_barrier_failure_count -eq 0 -and
     [int64]$pipeline.source_seed_mismatch_count -eq 0 -and
     [int64]$pipeline.integrity_fallback_count -eq 0 -and
+    [int64]$pipeline.staged_copy_count -ge [int64]$pipeline.accelerated_count -and
+    [int64]$pipeline.staging_copy_failure_count -eq 0 -and
+    -not [bool]$pipeline.direct_encoder_surface_transfer -and
     [bool]$pipeline.accelerator_run_loop_attached
 ) {
-    "pass_accelerated_synchronized"
+    "pass_accelerated_staged"
 } elseif ([int64]$pipeline.fallback_count -gt 0 -and [int64]$pipeline.failure_count -eq 0) {
     "pass_safe_coregraphics_fallback"
 } else {
@@ -117,6 +122,10 @@ $decision = if (
     source_seed_mismatch_count = $pipeline.source_seed_mismatch_count
     destination_seed_unchanged_count = $pipeline.destination_seed_unchanged_count
     integrity_fallback_count = $pipeline.integrity_fallback_count
+    staged_copy_count = $pipeline.staged_copy_count
+    staging_allocation_count = $pipeline.staging_allocation_count
+    staging_copy_failure_count = $pipeline.staging_copy_failure_count
+    direct_encoder_surface_transfer = $pipeline.direct_encoder_surface_transfer
     accelerator_run_loop_attached = $pipeline.accelerator_run_loop_attached
     source_size = "$($pipeline.source_width)x$($pipeline.source_height)"
     last_capture_us = $pipeline.last_capture_us
@@ -124,6 +133,9 @@ $decision = if (
     last_total_us = $pipeline.last_total_us
     last_transfer_result = $pipeline.last_transfer_result
     last_coherence_barrier_result = $pipeline.last_coherence_barrier_result
+    last_staging_size = "$($pipeline.last_staging_width)x$($pipeline.last_staging_height)"
+    last_staging_bytes_per_row = $pipeline.last_staging_bytes_per_row
+    last_target_bytes_per_row = $pipeline.last_target_bytes_per_row
     last_result = $pipeline.last_result
 } | Format-List
 

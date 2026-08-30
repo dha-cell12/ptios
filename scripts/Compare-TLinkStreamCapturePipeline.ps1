@@ -132,6 +132,9 @@ $comparison = [ordered]@{
         [int64]$v2Pipeline.coherence_barrier_failure_count -eq 0 -and
         [int64]$v2Pipeline.source_seed_mismatch_count -eq 0 -and
         [int64]$v2Pipeline.integrity_fallback_count -eq 0 -and
+        [int64]$v2Pipeline.staged_copy_count -ge [int64]$v2Pipeline.accelerated_count -and
+        [int64]$v2Pipeline.staging_copy_failure_count -eq 0 -and
+        -not [bool]$v2Pipeline.direct_encoder_surface_transfer -and
         [bool]$v2Pipeline.accelerator_run_loop_attached -and
         [int64]$legacyPipeline.fallback_count -eq 0 -and
         [int64]$v2Pipeline.fallback_count -eq 0 -and
@@ -156,6 +159,8 @@ $comparison | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $outputPath -E
     total_p95_improvement_percent = $comparison.improvement_percent.total_p95
     v2_coherence_barrier_count = $v2Pipeline.coherence_barrier_count
     v2_integrity_fallback_count = $v2Pipeline.integrity_fallback_count
+    v2_staged_copy_count = $v2Pipeline.staged_copy_count
+    v2_staging_copy_failure_count = $v2Pipeline.staging_copy_failure_count
     v2_accelerator_run_loop_attached = $v2Pipeline.accelerator_run_loop_attached
     output = $outputPath
 } | Format-List

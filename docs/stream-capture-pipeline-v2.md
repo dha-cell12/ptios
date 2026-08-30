@@ -1,10 +1,11 @@
 # Stream Capture Pipeline v2
 
-Status: synchronized accelerator path implemented. The original performance
+Status: staged accelerator path implemented. The original performance
 path produced 287/287 API-successful accelerated frames, but a later visual
 qualification found horizontal tearing in both Fast and RTC while forced
-legacy capture remained clean. The synchronized integrity revision therefore
-remains device-validation pending.
+legacy capture remained clean. A run-loop/coherence-only revision was also
+visually rejected. The current revision prevents the accelerator from writing
+directly into VideoToolbox pool memory and remains device-validation pending.
 
 Pipeline v2 removes `CGImage -> CGContextDrawImage` from the normal H.264
 frame path. It retains that path only as a bounded compatibility fallback.
@@ -13,9 +14,10 @@ frame path. It retains that path only as a bounded compatibility fallback.
 CARenderServerRenderDisplay
   -> reusable two-entry full-resolution BGRA IOSurface pool
   -> IOSurfaceAcceleratorTransferSurface
-  -> accelerator main-run-loop source + CPU read coherence barrier
+  -> reusable explicit BGRA staging IOSurface (four-size cache)
+  -> accelerator main-run-loop source + read lock
+  -> bytes-per-row-aware copy into the VideoToolbox pixel buffer
   -> source/destination seed telemetry and per-frame integrity fallback
-  -> IOSurface-backed CVPixelBuffer from the VideoToolbox pool
   -> VTCompressionSession
 ```
 
@@ -25,9 +27,9 @@ FrontBoard scene, direct WebRTC stack or SpringBoard injection.
 
 ## Runtime fallback and recovery
 
-When `CVPixelBufferGetIOSurface`, `IOSurfaceAcceleratorCreate`, the accelerator
-run-loop source, surface transfer, post-transfer coherence barrier, or source
-seed stability is unavailable, the already-captured source IOSurface is drawn
+When staging allocation, `IOSurfaceAcceleratorCreate`, the accelerator run-loop
+source, surface transfer, staged read lock/row copy, or source seed stability
+is unavailable, the already-captured source IOSurface is drawn
 into the target buffer with CoreGraphics. A failed or integrity-unsafe
 accelerated transfer therefore does not reach VideoToolbox and does not
 terminate an otherwise compatible device stream.
@@ -37,11 +39,10 @@ link-time build failure.
 
 `IOSurfaceAcceleratorGetRunLoopSource` is also resolved dynamically and added
 to the main run loop before the first transfer, matching the initialization
-contract observed in the reference XXTouch runtime. Because
-`IOSurfaceAcceleratorTransferSurface` has no public synchronous completion
-contract, the destination pixel buffer is read-locked and sampled after each
-successful transfer. This bounded coherence barrier finishes before the same
-buffer is submitted to VideoToolbox.
+contract observed in the reference XXTouch runtime. The accelerator writes only
+to an explicit linear BGRA staging IOSurface. That surface is then read-locked,
+and each visible row is copied using the independent source and target strides.
+The VideoToolbox pool allocation is never passed to the private accelerator.
 
 If both paths fail, H.264 resets the cached IOSurface/accelerator state and
 retries once. The existing three-attempt encoder recovery budget is reset only
@@ -55,10 +56,12 @@ streamCapturePipeline=iosurface_pool_gpu_scale_v2
 streamCapturePreferredBackend=iosurface_accelerator
 streamCaptureFallback=coregraphics_v1
 streamCaptureSourcePool=2
+streamCaptureStagingCache=4
 streamCaptureTarget=encoder_iosurface_pixel_buffer
+streamCaptureAcceleratorTarget=explicit_bgra_staging_surface
 streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline
 streamCaptureBenchmark=task93_legacy_vs_accelerated_v2
-streamCaptureSynchronization=accelerator_runloop_cpu_coherence_seed_v1
+streamCaptureSynchronization=accelerator_runloop_staged_stride_copy_seed_v2
 streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames
 streamCaptureIntegrityDeviceValidated=0
 streamCaptureDeviceValidated=1
@@ -68,7 +71,8 @@ Task `60` returns live diagnostics under
 `adaptive_streaming.capture_pipeline`, including the active backend, capture,
 accelerated, fallback and failure counters, source dimensions, transfer result,
 coherence-barrier counts/results, seed changes, integrity fallback count,
-run-loop attachment, the most recent capture/scale/total processing times, and bounded
+staged-copy/allocation/failure counts, source/target bytes per row, run-loop
+attachment, the most recent capture/scale/total processing times, and bounded
 average/p50/p95/max windows in microseconds.
 
 Task `93` provides licensed runtime control for device qualification. Its
@@ -90,7 +94,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -DrainSeconds 10
 ```
 
-`pass_accelerated_synchronized` is the intended result.
+`pass_accelerated_staged` is the intended result.
 `pass_safe_coregraphics_fallback` keeps functional compatibility but means the
 device could not prove the optimized GPU frame safe. For accelerated promotion,
 verify a sustained 10-minute run with:
@@ -102,6 +106,8 @@ so it is safe to run after a manual `legacy` tearing-isolation test.
   zero;
 - `coherence_barrier_count >= accelerated_count`, zero barrier failures, zero
   source seed mismatches and zero integrity fallbacks;
+- `staged_copy_count >= accelerated_count`, zero staging-copy failures, and
+  `direct_encoder_surface_transfer=false`;
 - `accelerator_run_loop_attached=true`;
 - `last_total_us` normally below 70% of the selected profile frame budget;
 - no horizontal tearing or black frames in both Fast and RTC across orientation
@@ -109,9 +115,10 @@ so it is safe to run after a manual `legacy` tearing-isolation test.
 - no unbounded memory growth or serious/critical thermal state.
 
 If the result is fallback, collect task `60` and the streamd log. A non-zero
-`last_transfer_result` identifies accelerator creation/transfer failure; a
-zero result with fallback usually means the encoder pixel buffer was not
-IOSurface-backed.
+`last_transfer_result` identifies accelerator creation/transfer failure. A zero
+result with fallback points to staging allocation/layout, row-copy coherence,
+or seed validation; compare `last_staging_bytes_per_row` with
+`last_target_bytes_per_row`.
 
 ## Legacy versus v2 measurement
 

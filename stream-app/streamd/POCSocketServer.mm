@@ -6111,10 +6111,12 @@ static NSData *TLinkHandleHelloStatus(void)
         @"streamCapturePreferredBackend": @"iosurface_accelerator",
         @"streamCaptureFallback": @"coregraphics_v1",
         @"streamCaptureSourcePool": @2,
+        @"streamCaptureStagingCache": @4,
         @"streamCaptureTarget": @"encoder_iosurface_pixel_buffer",
+        @"streamCaptureAcceleratorTarget": @"explicit_bgra_staging_surface",
         @"streamCaptureDiagnostics": @"task60_adaptive_streaming_capture_pipeline",
         @"streamCaptureBenchmark": @"task93_legacy_vs_accelerated_v2",
-        @"streamCaptureSynchronization": @"accelerator_runloop_cpu_coherence_seed_v1",
+        @"streamCaptureSynchronization": @"accelerator_runloop_staged_stride_copy_seed_v2",
         @"streamCaptureIntegrityDeviceValidated": @(NO),
         @"streamCaptureDeviceValidated": @(YES),
         @"streamControlTask": @93,
@@ -8728,10 +8730,12 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" streamCapturePreferredBackend=iosurface_accelerator"
                                                @" streamCaptureFallback=coregraphics_v1"
                                                @" streamCaptureSourcePool=2"
+                                               @" streamCaptureStagingCache=4"
                                                @" streamCaptureTarget=encoder_iosurface_pixel_buffer"
+                                               @" streamCaptureAcceleratorTarget=explicit_bgra_staging_surface"
                                                @" streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline"
                                                @" streamCaptureBenchmark=task93_legacy_vs_accelerated_v2"
-                                               @" streamCaptureSynchronization=accelerator_runloop_cpu_coherence_seed_v1"
+                                               @" streamCaptureSynchronization=accelerator_runloop_staged_stride_copy_seed_v2"
                                                @" streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames"
                                                @" streamCaptureIntegrityDeviceValidated=0"
                                                @" streamCaptureDeviceValidated=1"];
