@@ -6108,7 +6108,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"capture": @(YES),
         @"captureMode": @"detached_iosurface_bitmap",
         @"streamCapturePipeline": @"iosurface_pool_gpu_scale_v2",
-        @"streamCapturePreferredBackend": @"iosurface_accelerator",
+        @"streamCapturePreferredBackend": @"vimage_pooled_safe",
+        @"streamCaptureAcceleratorPolicy": @"unsafe_opt_in_only",
         @"streamCaptureFallback": @"coregraphics_v1",
         @"streamCaptureSourcePool": @2,
         @"streamCaptureStagingCache": @4,
@@ -6116,7 +6117,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"streamCaptureAcceleratorTarget": @"explicit_bgra_staging_surface",
         @"streamCaptureDiagnostics": @"task60_adaptive_streaming_capture_pipeline",
         @"streamCaptureBenchmark": @"task93_legacy_vs_accelerated_v2",
-        @"streamCaptureSynchronization": @"accelerator_runloop_staged_stride_copy_seed_v2",
+        @"streamCaptureSynchronization": @"pooled_iosurface_vimage_stride_v3",
         @"streamCaptureIntegrityDeviceValidated": @(NO),
         @"streamCaptureDeviceValidated": @(YES),
         @"streamControlTask": @93,
@@ -8727,7 +8728,8 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" streamCapturePipeline=iosurface_pool_gpu_scale_v2"
-                                               @" streamCapturePreferredBackend=iosurface_accelerator"
+                                               @" streamCapturePreferredBackend=vimage_pooled_safe"
+                                               @" streamCaptureAcceleratorPolicy=unsafe_opt_in_only"
                                                @" streamCaptureFallback=coregraphics_v1"
                                                @" streamCaptureSourcePool=2"
                                                @" streamCaptureStagingCache=4"
@@ -8735,7 +8737,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
                                                @" streamCaptureAcceleratorTarget=explicit_bgra_staging_surface"
                                                @" streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline"
                                                @" streamCaptureBenchmark=task93_legacy_vs_accelerated_v2"
-                                               @" streamCaptureSynchronization=accelerator_runloop_staged_stride_copy_seed_v2"
+                                               @" streamCaptureSynchronization=pooled_iosurface_vimage_stride_v3"
                                                @" streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames"
                                                @" streamCaptureIntegrityDeviceValidated=0"
                                                @" streamCaptureDeviceValidated=1"];

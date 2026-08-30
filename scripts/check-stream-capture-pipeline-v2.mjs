@@ -23,6 +23,10 @@ assert.match(header, /SCResetCapturePipeline/);
 assert.match(header, /SCSetCapturePipelineMode/);
 
 assert.match(capture, /kSCCaptureSurfacePoolSize = 2/);
+assert.match(capture, /#import <Accelerate\/Accelerate\.h>/);
+assert.match(capture, /SCScaleSurfaceWithVImage/);
+assert.match(capture, /vImageScale_ARGB8888/);
+assert.match(capture, /@"vimage_pooled_safe"/);
 assert.match(capture, /IOSurfaceAcceleratorCreate/);
 assert.match(capture, /IOSurfaceAcceleratorTransferSurface/);
 assert.match(capture, /IOSurfaceAcceleratorGetRunLoopSource/);
@@ -45,6 +49,8 @@ assert.match(capture, /@"integrity_fallback_count"/);
 assert.match(capture, /@"staged_copy_count"/);
 assert.match(capture, /@"staging_copy_failure_count"/);
 assert.match(capture, /@"direct_encoder_surface_transfer"/);
+assert.match(capture, /@"safe_scale_count"/);
+assert.match(capture, /@"safe_scale_failure_count"/);
 assert.match(capture, /@"accelerator_run_loop_attached"/);
 assert.match(capture, /@"last_total_us"/);
 assert.match(capture, /coregraphics_legacy_per_frame_surface/);
@@ -62,7 +68,8 @@ assert.doesNotMatch(h264, /SCCreateScreenShotCGImage\(\)/);
 assert.match(makefile, /IOSurface/);
 for (const marker of [
   "streamCapturePipeline=iosurface_pool_gpu_scale_v2",
-  "streamCapturePreferredBackend=iosurface_accelerator",
+  "streamCapturePreferredBackend=vimage_pooled_safe",
+  "streamCaptureAcceleratorPolicy=unsafe_opt_in_only",
   "streamCaptureFallback=coregraphics_v1",
   "streamCaptureSourcePool=2",
   "streamCaptureStagingCache=4",
@@ -70,7 +77,7 @@ for (const marker of [
   "streamCaptureAcceleratorTarget=explicit_bgra_staging_surface",
   "streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline",
   "streamCaptureBenchmark=task93_legacy_vs_accelerated_v2",
-  "streamCaptureSynchronization=accelerator_runloop_staged_stride_copy_seed_v2",
+  "streamCaptureSynchronization=pooled_iosurface_vimage_stride_v3",
   "streamCaptureRecovery=capture_reset_once_encoder_budget_reset_300_frames",
   "streamCaptureIntegrityDeviceValidated=0",
   "streamCaptureDeviceValidated=1",
@@ -88,9 +95,12 @@ assert.match(deviceTest, /source_seed_mismatch_count/);
 assert.match(deviceTest, /integrity_fallback_count/);
 assert.match(deviceTest, /staged_copy_count/);
 assert.match(deviceTest, /staging_copy_failure_count/);
-assert.match(deviceTest, /pass_accelerated_staged/);
+assert.match(deviceTest, /safe_scale_count/);
+assert.match(deviceTest, /safe_scale_failure_count/);
+assert.match(deviceTest, /pass_vimage_safe/);
 assert.match(deviceTest, /direct_encoder_surface_transfer/);
+assert.match(makefile, /Accelerate/);
 assert.match(buildWorkflow, /check-stream-capture-pipeline-v2\.mjs/);
 assert.match(trollWorkflow, /check-stream-capture-pipeline-v2\.mjs/);
 
-console.log("Stream Capture Pipeline v2 OK: staged IOSurface accelerator, stride-safe encoder copy and integrity fallback wired");
+console.log("Stream Capture Pipeline v2 OK: pooled vImage safe backend, private accelerator opt-in and fallback diagnostics wired");

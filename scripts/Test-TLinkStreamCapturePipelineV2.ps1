@@ -37,14 +37,15 @@ function Invoke-TLinkStreamControl([string]$Action, [hashtable]$Arguments = @{})
 $capability = Invoke-TLinkCaptureTask "97" 5000
 foreach ($marker in @(
     "streamCapturePipeline=iosurface_pool_gpu_scale_v2",
-    "streamCapturePreferredBackend=iosurface_accelerator",
+    "streamCapturePreferredBackend=vimage_pooled_safe",
+    "streamCaptureAcceleratorPolicy=unsafe_opt_in_only",
     "streamCaptureFallback=coregraphics_v1",
     "streamCaptureSourcePool=2",
     "streamCaptureStagingCache=4",
     "streamCaptureTarget=encoder_iosurface_pixel_buffer",
     "streamCaptureAcceleratorTarget=explicit_bgra_staging_surface",
     "streamCaptureDiagnostics=task60_adaptive_streaming_capture_pipeline",
-    "streamCaptureSynchronization=accelerator_runloop_staged_stride_copy_seed_v2",
+    "streamCaptureSynchronization=pooled_iosurface_vimage_stride_v3",
     "streamCaptureIntegrityDeviceValidated=0",
     "streamCaptureDeviceValidated=1"
 )) {
@@ -89,17 +90,14 @@ if ([int64]$pipeline.capture_count -le 0) { throw "Capture pipeline did not prod
 if ($bytesRead -le 0) { throw "Stream port $StreamPort returned no encoded bytes" }
 
 $decision = if (
-    [int64]$pipeline.accelerated_count -gt 0 -and
-    [int64]$pipeline.coherence_barrier_count -ge [int64]$pipeline.accelerated_count -and
-    [int64]$pipeline.coherence_barrier_failure_count -eq 0 -and
-    [int64]$pipeline.source_seed_mismatch_count -eq 0 -and
-    [int64]$pipeline.integrity_fallback_count -eq 0 -and
-    [int64]$pipeline.staged_copy_count -ge [int64]$pipeline.accelerated_count -and
-    [int64]$pipeline.staging_copy_failure_count -eq 0 -and
-    -not [bool]$pipeline.direct_encoder_surface_transfer -and
-    [bool]$pipeline.accelerator_run_loop_attached
+    [int64]$pipeline.safe_scale_count -gt 0 -and
+    [int64]$pipeline.safe_scale_count -eq [int64]$pipeline.capture_count -and
+    [int64]$pipeline.safe_scale_failure_count -eq 0 -and
+    [int64]$pipeline.fallback_count -eq 0 -and
+    [int64]$pipeline.failure_count -eq 0 -and
+    $pipeline.active_backend -eq "vimage_pooled_safe"
 ) {
-    "pass_accelerated_staged"
+    "pass_vimage_safe"
 } elseif ([int64]$pipeline.fallback_count -gt 0 -and [int64]$pipeline.failure_count -eq 0) {
     "pass_safe_coregraphics_fallback"
 } else {
@@ -125,6 +123,9 @@ $decision = if (
     staged_copy_count = $pipeline.staged_copy_count
     staging_allocation_count = $pipeline.staging_allocation_count
     staging_copy_failure_count = $pipeline.staging_copy_failure_count
+    safe_scale_count = $pipeline.safe_scale_count
+    safe_scale_failure_count = $pipeline.safe_scale_failure_count
+    last_safe_scale_result = $pipeline.last_safe_scale_result
     direct_encoder_surface_transfer = $pipeline.direct_encoder_surface_transfer
     accelerator_run_loop_attached = $pipeline.accelerator_run_loop_attached
     source_size = "$($pipeline.source_width)x$($pipeline.source_height)"
