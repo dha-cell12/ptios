@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <math.h>
 #include <netinet/in.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -29,6 +30,7 @@ static NSUInteger sTLinkVisionSuccessCount = 0;
 static NSUInteger sTLinkVisionFailureCount = 0;
 static NSString *sTLinkVisionLastResult = @"not_started";
 static dispatch_queue_t sTLinkVisionQueue = nil;
+static NSString *sTLinkVisionPixelBufferProbeSummary = @"not_run";
 
 static void TLinkVisionAppendDebug(NSString *profile, NSString *phase, NSString *detail)
 {
@@ -77,6 +79,25 @@ static CVReturn TLinkVisionProbePixelBuffer(size_t width,
         attributes.count > 0 ? (__bridge CFDictionaryRef)attributes : NULL, &buffer);
     if (buffer) CVPixelBufferRelease(buffer);
     return result;
+}
+
+static void TLinkVisionRunPixelBufferProbeOnce(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        const size_t width = 640;
+        const size_t height = 360;
+        CVReturn bgraMemory = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_32BGRA, NO, NO, NO);
+        CVReturn yuvMemory = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, NO, NO, NO);
+        CVReturn yuvIOSurface = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, YES, NO, NO);
+        CVReturn yuvOpenGLES = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, YES, YES, NO);
+        CVReturn yuvMetal = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, YES, NO, YES);
+        sTLinkVisionPixelBufferProbeSummary = [NSString stringWithFormat:
+            @"width=%zu height=%zu bgra_memory=%d 420f_memory=%d 420f_iosurface=%d 420f_opengles=%d 420f_metal=%d",
+            width, height, (int)bgraMemory, (int)yuvMemory, (int)yuvIOSurface,
+            (int)yuvOpenGLES, (int)yuvMetal];
+        TLinkVisionAppendDebug(@"startup", @"uiservice_pixelbuffer_probe", sTLinkVisionPixelBufferProbeSummary);
+    });
 }
 
 static BOOL TLinkVisionConfigureCPUOnly(VNRequest *request, NSError **outError)
@@ -186,6 +207,35 @@ static CGImageRef TLinkVisionCreateRGBImage(NSData *imageData, NSString **error)
     return rgbImage;
 }
 
+static CGImageRef TLinkVisionCreateRGBAImage(NSData *imageData,
+                                              size_t width,
+                                              size_t height,
+                                              size_t bytesPerRow,
+                                              NSString **error) CF_RETURNS_RETAINED
+{
+    if (width == 0 || height == 0 || width > 12000 || height > 12000 ||
+        bytesPerRow < width * 4 || height > SIZE_MAX / bytesPerRow ||
+        imageData.length != height * bytesPerRow) {
+        if (error) *error = @"raw_rgba_bad_dimensions_or_length";
+        return nil;
+    }
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)imageData);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    if (!provider || !colorSpace) {
+        if (provider) CGDataProviderRelease(provider);
+        if (colorSpace) CGColorSpaceRelease(colorSpace);
+        if (error) *error = @"raw_rgba_provider_create_failed";
+        return nil;
+    }
+    CGImageRef image = CGImageCreate(width, height, 8, 32, bytesPerRow, colorSpace,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big,
+        provider, NULL, false, kCGRenderingIntentDefault);
+    CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+    if (!image && error) *error = @"raw_rgba_image_create_failed";
+    return image;
+}
+
 static BOOL TLinkVisionPerform(CGImageRef image,
                                NSString *profile,
                                VNRequestTextRecognitionLevel level,
@@ -226,8 +276,9 @@ static NSString *TLinkVisionPerformRequest(NSString *line, NSData *inlineImageDa
         NSCharacterSet.whitespaceAndNewlineCharacterSet] componentsSeparatedByString:@";;"];
     BOOL version2Request = parts.count >= 12 && [parts[0] isEqualToString:@"2"];
     BOOL version3Request = parts.count >= 12 && [parts[0] isEqualToString:@"3"];
-    if (!version2Request && !version3Request) {
-        return @"-1;;uiservice_ocr_bad_request protocol=2_or_3_required\r\n";
+    BOOL version4Request = parts.count >= 15 && [parts[0] isEqualToString:@"4"];
+    if (!version2Request && !version3Request && !version4Request) {
+        return @"-1;;uiservice_ocr_bad_request protocol=2_or_3_or_4_required\r\n";
     }
 
     NSData *imageData = inlineImageData;
@@ -256,22 +307,29 @@ static NSString *TLinkVisionPerformRequest(NSString *line, NSData *inlineImageDa
         return @"-1;;uiservice_ocr_requires_ios13\r\n";
     }
 
-    CGFloat originX = [parts[2] doubleValue];
-    CGFloat originY = [parts[3] doubleValue];
-    CGFloat regionW = MAX(1.0, [parts[4] doubleValue]);
-    CGFloat regionH = MAX(1.0, [parts[5] doubleValue]);
-    CGFloat minimumTextHeight = (CGFloat)[parts[6] doubleValue];
-    int levelValue = [parts[7] intValue];
-    NSString *customWords = TLinkVisionDecodeBase64(parts[8]);
-    NSString *languages = TLinkVisionDecodeBase64(parts[9]);
-    BOOL languageCorrection = [parts[10] intValue] != 0;
-    NSString *profile = [parts[11] lowercaseString];
+    NSUInteger metadataOffset = version4Request ? 5 : 2;
+    CGFloat originX = [parts[metadataOffset] doubleValue];
+    CGFloat originY = [parts[metadataOffset + 1] doubleValue];
+    CGFloat regionW = MAX(1.0, [parts[metadataOffset + 2] doubleValue]);
+    CGFloat regionH = MAX(1.0, [parts[metadataOffset + 3] doubleValue]);
+    CGFloat minimumTextHeight = (CGFloat)[parts[metadataOffset + 4] doubleValue];
+    int levelValue = [parts[metadataOffset + 5] intValue];
+    NSString *customWords = TLinkVisionDecodeBase64(parts[metadataOffset + 6]);
+    NSString *languages = TLinkVisionDecodeBase64(parts[metadataOffset + 7]);
+    BOOL languageCorrection = [parts[metadataOffset + 8] intValue] != 0;
+    NSString *profile = [parts[metadataOffset + 9] lowercaseString];
     if (![profile isEqualToString:@"app_cpu"] && ![profile isEqualToString:@"xxt_compat"]) {
         return [NSString stringWithFormat:@"-1;;uiservice_ocr_bad_profile %@\r\n", profile ?: @""];
     }
 
     NSString *decodeError = nil;
-    CGImageRef rgbImage = TLinkVisionCreateRGBImage(imageData, &decodeError);
+    CGImageRef rgbImage = version4Request
+        ? TLinkVisionCreateRGBAImage(imageData,
+                                     (size_t)[parts[2] unsignedLongLongValue],
+                                     (size_t)[parts[3] unsignedLongLongValue],
+                                     (size_t)[parts[4] unsignedLongLongValue],
+                                     &decodeError)
+        : TLinkVisionCreateRGBImage(imageData, &decodeError);
     if (!rgbImage) {
         return [NSString stringWithFormat:@"-1;;uiservice_ocr_rgb_decode_failed %@\r\n",
                                           decodeError ?: @"unknown"];
@@ -284,21 +342,6 @@ static NSString *TLinkVisionPerformRequest(NSString *line, NSData *inlineImageDa
         CGImageGetHeight(rgbImage), CGImageGetBitsPerComponent(rgbImage),
         CGImageGetBitsPerPixel(rgbImage), CGImageGetBytesPerRow(rgbImage),
         (unsigned long)CGImageGetBitmapInfo(rgbImage), levelValue];
-    TLinkVisionAppendDebug(profile, @"uiservice_request_setup", imageDetail);
-
-    size_t width = CGImageGetWidth(rgbImage);
-    size_t height = CGImageGetHeight(rgbImage);
-    CVReturn bgraMemory = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_32BGRA, NO, NO, NO);
-    CVReturn yuvMemory = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, NO, NO, NO);
-    CVReturn yuvIOSurface = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, YES, NO, NO);
-    CVReturn yuvOpenGLES = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, YES, YES, NO);
-    CVReturn yuvMetal = TLinkVisionProbePixelBuffer(width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, YES, NO, YES);
-    TLinkVisionAppendDebug(profile, @"uiservice_pixelbuffer_probe", [NSString stringWithFormat:
-        @"width=%zu height=%zu bgra_memory=%d 420f_memory=%d 420f_iosurface=%d 420f_opengles=%d 420f_metal=%d",
-        width, height, (int)bgraMemory, (int)yuvMemory, (int)yuvIOSurface,
-        (int)yuvOpenGLES, (int)yuvMetal]);
-    TLinkVisionAppendDebug(profile, @"uiservice_perform_begin", imageDetail);
-
     VNRecognizeTextRequest *request = nil;
     NSError *visionError = nil;
     CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
@@ -321,9 +364,6 @@ static NSString *TLinkVisionPerformRequest(NSString *line, NSData *inlineImageDa
         return [NSString stringWithFormat:@"-1;;uiservice_ocr_failed profile=%@ error=%@\r\n",
             profile, visionError.localizedDescription ?: firstError];
     }
-    TLinkVisionAppendDebug(profile, @"uiservice_perform_end", [NSString stringWithFormat:
-        @"elapsed_ms=%.3f observations=%lu", elapsedMs, (unsigned long)request.results.count]);
-
     NSMutableArray<NSString *> *output = [NSMutableArray array];
     for (VNRecognizedTextObservation *observation in request.results) {
         if (![observation isKindOfClass:[VNRecognizedTextObservation class]]) continue;
@@ -337,8 +377,9 @@ static NSString *TLinkVisionPerformRequest(NSString *line, NSData *inlineImageDa
         [output addObject:[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d",
             TLinkVisionSafeText(candidate.string), x, y, w, h]];
     }
-    TLinkVisionAppendDebug(profile, @"uiservice_response_ready",
-        [NSString stringWithFormat:@"results=%lu", (unsigned long)output.count]);
+    TLinkVisionAppendDebug(profile, @"uiservice_perform_end",
+        [NSString stringWithFormat:@"elapsed_ms=%.3f observations=%lu uiservice_response_ready results=%lu %@",
+         elapsedMs, (unsigned long)request.results.count, (unsigned long)output.count, imageDetail]);
     return [NSString stringWithFormat:@"0;;%@\r\n", [output componentsJoinedByString:@";;"]];
 }
 
@@ -350,7 +391,7 @@ static NSString *TLinkVisionHandleLine(NSString *line, NSData *inlineImageData)
         TLinkVisionAppendDebug(@"bridge", @"uiservice_bridge_probe",
             [NSString stringWithFormat:@"app_state=%ld", (long)UIApplication.sharedApplication.applicationState]);
         return [NSString stringWithFormat:
-            @"0;;uiservice_ocr_ready;;version=2;;protocol=3;;transport=inline_png;;port=6018;;pid=%d;;uid=%d;;app_state=%ld;;scene_required=0\r\n",
+            @"0;;uiservice_ocr_ready;;version=3;;protocol=4;;transport=inline_rgba8888;;fallback_protocol=3;;fallback_transport=inline_png;;pixelbuffer_probe=startup_once;;port=6018;;pid=%d;;uid=%d;;app_state=%ld;;scene_required=0\r\n",
             getpid(), getuid(), (long)UIApplication.sharedApplication.applicationState];
     }
 
@@ -467,7 +508,8 @@ static void TLinkRunVisionServer(void)
             NSData *inlineImageData = nil;
             NSString *preflightError = nil;
             NSArray<NSString *> *headerParts = [request componentsSeparatedByString:@";;"];
-            if (headerParts.count >= 2 && [headerParts[0] isEqualToString:@"3"]) {
+            if (headerParts.count >= 2 &&
+                ([headerParts[0] isEqualToString:@"3"] || [headerParts[0] isEqualToString:@"4"])) {
                 unsigned long long declaredLength = [headerParts[1] longLongValue];
                 if (declaredLength == 0 || declaredLength > (32ULL * 1024ULL * 1024ULL)) {
                     preflightError = [NSString stringWithFormat:
@@ -497,6 +539,7 @@ static void TLinkRunVisionServer(void)
 
 void TLinkStartVisionOCRService(void)
 {
+    TLinkVisionRunPixelBufferProbeOnce();
     @synchronized([NSProcessInfo class]) {
         if (sTLinkVisionServerStarted) return;
         sTLinkVisionServerStarted = YES;
@@ -511,7 +554,7 @@ NSString *TLinkVisionOCRServiceProbeSummary(void)
 {
     @synchronized([NSProcessInfo class]) {
         return [NSString stringWithFormat:
-            @"vision_ocr_port=6018;;vision_ocr_protocol=3;;vision_ocr_transport=inline_png;;vision_ocr_dispatch=direct_streamd_no_worker;;vision_ocr_inline_max_bytes=33554432;;vision_ocr_started=%d;;vision_ocr_listening=%d;;vision_ocr_scene_required=0;;vision_ocr_request_count=%lu;;vision_ocr_success_count=%lu;;vision_ocr_failure_count=%lu;;vision_ocr_inflight=%d;;vision_ocr_last_result=%@",
+            @"vision_ocr_port=6018;;vision_ocr_protocol=4;;vision_ocr_transport=inline_rgba8888;;vision_ocr_fallback_protocol=3;;vision_ocr_fallback_transport=inline_png;;vision_ocr_pixelbuffer_probe=startup_once;;vision_ocr_dispatch=direct_streamd_no_worker;;vision_ocr_inline_max_bytes=33554432;;vision_ocr_started=%d;;vision_ocr_listening=%d;;vision_ocr_scene_required=0;;vision_ocr_request_count=%lu;;vision_ocr_success_count=%lu;;vision_ocr_failure_count=%lu;;vision_ocr_inflight=%d;;vision_ocr_last_result=%@",
             sTLinkVisionServerStarted ? 1 : 0, sTLinkVisionServerListening ? 1 : 0,
             (unsigned long)sTLinkVisionRequestCount, (unsigned long)sTLinkVisionSuccessCount,
             (unsigned long)sTLinkVisionFailureCount, sTLinkVisionRequestInFlight ? 1 : 0,
@@ -524,8 +567,11 @@ NSDictionary<NSString *, id> *TLinkVisionOCRServiceDiagnostics(void)
     @synchronized([NSProcessInfo class]) {
         return @{
             @"vision_ocr_port": @(kTLinkVisionOCRPort),
-            @"vision_ocr_protocol": @3,
-            @"vision_ocr_transport": @"inline_png",
+            @"vision_ocr_protocol": @4,
+            @"vision_ocr_transport": @"inline_rgba8888",
+            @"vision_ocr_fallback_protocol": @3,
+            @"vision_ocr_fallback_transport": @"inline_png",
+            @"vision_ocr_pixelbuffer_probe": sTLinkVisionPixelBufferProbeSummary ?: @"unknown",
             @"vision_ocr_dispatch": @"direct_streamd_no_worker",
             @"vision_ocr_inline_max_bytes": @33554432,
             @"vision_ocr_started": @(sTLinkVisionServerStarted),

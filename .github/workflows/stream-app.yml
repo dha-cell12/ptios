@@ -206,6 +206,7 @@ jobs:
           test -f scripts/Test-TLinkAdaptiveStreamingV1.ps1
           test -f test/fixtures/adaptive-streaming-v1.json
           test -f scripts/check-stream-capture-pipeline-v2.mjs
+          test -f scripts/check-capture-image-optimization-v1.mjs
           test -f scripts/Test-TLinkStreamCapturePipelineV2.ps1
           test -f scripts/Compare-TLinkStreamCapturePipeline.ps1
           test -f scripts/check-stream-rtc-control-v2.mjs
@@ -248,6 +249,7 @@ jobs:
           node scripts/check-license-recovery.mjs
           node scripts/check-ocr-p0-baseline.mjs
           node scripts/check-ocr-p1-cpu-only.mjs
+          node scripts/check-capture-image-optimization-v1.mjs
           node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-zoom-p1-multitouch.mjs
           node scripts/check-zoom-p2-observability.mjs
@@ -659,9 +661,10 @@ jobs:
           grep -q 'uiservice_ocr_ready' stream-app/uiservice/VisionOCRService.mm
           grep -q 'background_uiservice_6018' stream-app/uiservice/VisionOCRService.mm
           grep -q 'direct_streamd_to_uiservice_no_worker_v1' stream-app/streamd/POCSocketServer.mm
-          grep -q 'inline_png_bounded_32mib_v1' stream-app/streamd/POCSocketServer.mm
+          grep -q 'inline_rgba8888_bounded_32mib_v2' stream-app/streamd/POCSocketServer.mm
           grep -q 'TLinkVisionReadExact' stream-app/uiservice/VisionOCRService.mm
-          grep -q 'transport=inline_png' stream-app/uiservice/VisionOCRService.mm
+          grep -q 'transport=inline_rgba8888' stream-app/uiservice/VisionOCRService.mm
+          grep -q 'fallback_transport=inline_png' stream-app/uiservice/VisionOCRService.mm
           grep -q 'startAppSideOCRServer' stream-app/app/AppDelegate.mm
           grep -q '127.0.0.1:6011' stream-app/app/AppDelegate.mm
           grep -q 'newRGBImageFromImageData' stream-app/app/AppDelegate.mm
@@ -682,6 +685,11 @@ jobs:
           grep -q 'vision-ocr-worker' stream-app/streamd/main.mm
           grep -q 'tesseract-ocr-worker' stream-app/streamd/main.mm
           grep -q 'copyImageDetachedFromIOSurface' stream-app/streamd/CaptureCore.mm
+          grep -q 'runProductionCapture' stream-app/streamd/CaptureCore.mm
+          grep -q 'production_capture_ready' stream-app/streamd/CaptureCore.mm
+          grep -q 'TLinkScaleRGBAData' stream-app/streamd/POCSocketServer.mm
+          grep -q 'vImageScale_ARGB8888' stream-app/streamd/POCSocketServer.mm
+          grep -q 'multiscale_vimage_rgba_v2' stream-app/streamd/POCSocketServer.mm
           grep -q 'ocr_worker_crashed' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_vision_fallback_exception' stream-app/streamd/POCSocketServer.mm
           grep -q 'tesseract_region_too_large' stream-app/streamd/POCSocketServer.mm

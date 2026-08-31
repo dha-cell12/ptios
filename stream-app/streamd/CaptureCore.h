@@ -17,6 +17,10 @@ typedef NS_ENUM(NSInteger, CaptureResult) {
 @interface CaptureOutcome : NSObject
 @property(nonatomic, assign) CaptureResult result;
 @property(nonatomic, strong, nullable) UIImage *image;
+@property(nonatomic, strong, nullable) NSData *rgbaData;
+@property(nonatomic, assign) int width;
+@property(nonatomic, assign) int height;
+@property(nonatomic, assign) int bytesPerRow;
 @property(nonatomic, copy) NSString *diagnostics; // human-readable step log
 @property(nonatomic, copy, nullable) NSString *pngPath; // where PNG was written, if any
 @end
@@ -28,6 +32,11 @@ typedef NS_ENUM(NSInteger, CaptureResult) {
 //   -> UICreateCGImageFromIOSurface -> classify pixels -> write PNG.
 // Safe to call repeatedly. Never throws; failures are reported in the outcome.
 + (CaptureOutcome *)runCaptureProbe;
+
+// Production capture path. It preserves the device-qualified fresh IOSurface
+// snapshot, but materializes pixels exactly once and performs no entitlement
+// scan, diagnostic PNG write, or second full-frame classification draw.
++ (CaptureOutcome *)runProductionCapture;
 
 @end
 

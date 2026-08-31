@@ -138,7 +138,8 @@ assert.ok(streamdBinary.includes("vpnState=background_control"), "streamd lacks 
 assert.ok(streamdBinary.includes("vpnBackgroundAgent=validated_mobile_process_v2"), "streamd lacks validated VPN agent evidence");
 assert.ok(streamdBinary.includes("vpnagent_6016_then_StreamControl_6015"), "streamd lacks VPN P5 routing evidence");
 assert.ok(streamdBinary.includes("direct_streamd_to_uiservice_no_worker_v1"), "streamd lacks direct Vision OCR dispatch evidence");
-assert.ok(streamdBinary.includes("inline_png_bounded_32mib_v1"), "streamd lacks bounded inline Vision OCR transport evidence");
+assert.ok(streamdBinary.includes("inline_rgba8888_bounded_32mib_v2"), "streamd lacks bounded raw Vision OCR transport evidence");
+assert.ok(streamdBinary.includes("protocol3_inline_png_compat_only"), "streamd lacks Vision OCR compatibility fallback evidence");
 assert.ok(vpnagentBinary.includes("vpnagent_ready version=2 phase=5"), "vpnagent lacks P5 readiness evidence");
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
@@ -158,8 +159,9 @@ assert.ok(clipboarddBinary.includes("uiservice plugin spawn"), "clipboardd lacks
 assert.ok(uiServiceBinary.includes("uiservice_ready;;version=24"), "TLinkUIService lacks v24 readiness evidence");
 assert.ok(uiServiceBinary.includes("uiservice_ocr_ready"), "TLinkUIService lacks the background Vision OCR endpoint");
 assert.ok(uiServiceBinary.includes("background_uiservice_6018"), "TLinkUIService lacks background Vision host evidence");
-assert.ok(uiServiceBinary.includes("protocol=3"), "TLinkUIService lacks Vision OCR protocol v3");
-assert.ok(uiServiceBinary.includes("transport=inline_png"), "TLinkUIService lacks inline Vision OCR transport");
+assert.ok(uiServiceBinary.includes("protocol=4"), "TLinkUIService lacks Vision OCR protocol v4");
+assert.ok(uiServiceBinary.includes("transport=inline_rgba8888"), "TLinkUIService lacks raw inline Vision OCR transport");
+assert.ok(uiServiceBinary.includes("fallback_protocol=3"), "TLinkUIService lacks Vision OCR v3 fallback");
 assert.ok(uiServiceBinary.includes("vision_ocr_inline_max_bytes=33554432"), "TLinkUIService lacks the inline OCR size bound");
 assert.ok(uiServiceBinary.includes("xxtouch_sbs_accessibility_context_registration"), "TLinkUIService lacks SBS accessibility context hosting");
 assert.ok(uiServiceBinary.includes("window_scene_attachment_enabled=0"), "TLinkUIService does not disable the black-screen UIWindowScene path");

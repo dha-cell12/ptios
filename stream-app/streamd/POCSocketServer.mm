@@ -3,6 +3,7 @@
 #import <Vision/Vision.h>
 #import <CoreML/CoreML.h>
 #import <ImageIO/ImageIO.h>
+#import <Accelerate/Accelerate.h>
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <Photos/Photos.h>
 #import "H264Stream.h"
@@ -2417,6 +2418,8 @@ static NSData *TLinkHandleTouchIndicator(NSString *body)
 @property(nonatomic, strong) UIImage *image;
 @property(nonatomic, assign) int width;
 @property(nonatomic, assign) int height;
+@property(nonatomic, strong) NSData *rgbaData;
+@property(nonatomic, assign) int bytesPerRow;
 @property(nonatomic, assign) uint64_t createdAtMs;
 @end
 
@@ -2449,6 +2452,10 @@ typedef struct {
 } TLinkPointColor;
 
 static UIImage *sTLinkKeptScreenImage = nil;
+static NSData *sTLinkKeptScreenRGBAData = nil;
+static int sTLinkKeptScreenWidth = 0;
+static int sTLinkKeptScreenHeight = 0;
+static int sTLinkKeptScreenBytesPerRow = 0;
 static NSMutableDictionary<NSNumber *, TLinkImageObject *> *sTLinkImageStore = nil;
 static NSMutableDictionary<NSNumber *, TLinkFrameObject *> *sTLinkFrameStore = nil;
 static uint32_t sTLinkNextImageId = 1;
@@ -2549,6 +2556,40 @@ static NSData *TLinkRGBADataFromImage(UIImage *image, int *outW, int *outH, int 
     return TLinkRGBADataFromCGImage(image.CGImage, outW, outH, outBpr);
 }
 
+static NSData *TLinkCropRGBAData(NSData *source,
+                                 int sourceWidth,
+                                 int sourceHeight,
+                                 int sourceBytesPerRow,
+                                 CGRect requestedRegion,
+                                 int *outWidth,
+                                 int *outHeight,
+                                 int *outBytesPerRow)
+{
+    if (source.length == 0 || sourceWidth <= 0 || sourceHeight <= 0 ||
+        sourceBytesPerRow < sourceWidth * 4) return nil;
+    CGRect region = TLinkClampRectToImage(requestedRegion, sourceWidth, sourceHeight);
+    if (CGRectIsEmpty(region)) return nil;
+    int x = (int)region.origin.x;
+    int y = (int)region.origin.y;
+    int width = (int)region.size.width;
+    int height = (int)region.size.height;
+    int bytesPerRow = width * 4;
+    size_t byteCount = (size_t)bytesPerRow * (size_t)height;
+    if (byteCount == 0 || source.length < (NSUInteger)sourceBytesPerRow * (NSUInteger)sourceHeight) return nil;
+    NSMutableData *cropped = [NSMutableData dataWithLength:byteCount];
+    const uint8_t *sourceBytes = (const uint8_t *)source.bytes;
+    uint8_t *destinationBytes = (uint8_t *)cropped.mutableBytes;
+    for (int row = 0; row < height; row++) {
+        memcpy(destinationBytes + (size_t)row * (size_t)bytesPerRow,
+               sourceBytes + (size_t)(y + row) * (size_t)sourceBytesPerRow + (size_t)x * 4,
+               (size_t)bytesPerRow);
+    }
+    if (outWidth) *outWidth = width;
+    if (outHeight) *outHeight = height;
+    if (outBytesPerRow) *outBytesPerRow = bytesPerRow;
+    return cropped;
+}
+
 static BOOL TLinkReadRGBA(NSData *data, int width, int height, int bytesPerRow, int x, int y, int *r, int *g, int *b)
 {
     if (!data || width <= 0 || height <= 0 || bytesPerRow <= 0) return NO;
@@ -2622,6 +2663,9 @@ static BOOL TLinkFindTemplateInRGBA(NSData *hayData,
                                     int *outY,
                                     double *outScore)
 {
+    if (outX) *outX = -1;
+    if (outY) *outY = -1;
+    if (outScore) *outScore = 0.0;
     if (!hayData || !needleData || hayW <= 0 || hayH <= 0 || needleW <= 0 || needleH <= 0) return NO;
     if (needleW > hayW || needleH > hayH) return NO;
     if (acceptable <= 0.0 || acceptable > 1.0) acceptable = 0.9;
@@ -2659,6 +2703,7 @@ static BOOL TLinkFindTemplateInRGBA(NSData *hayData,
     for (int y = ry; y <= maxY; y += anchorStep) {
         for (int x = rx; x <= maxX; x += anchorStep) {
             long long sad = 0;
+            BOOL pruned = NO;
             for (int ty = 0; ty < needleH; ty += sampleStep) {
                 const uint8_t *hayRow = hay + (NSUInteger)(y + ty) * (NSUInteger)hayBpr + (NSUInteger)x * 4;
                 const uint8_t *needleRow = needle + (NSUInteger)ty * (NSUInteger)needleBpr;
@@ -2668,11 +2713,14 @@ static BOOL TLinkFindTemplateInRGBA(NSData *hayData,
                     sad += llabs((long long)hp[0] - (long long)np[0]);
                     sad += llabs((long long)hp[1] - (long long)np[1]);
                     sad += llabs((long long)hp[2] - (long long)np[2]);
-                    if (sad >= bestSad) break;
+                    if (sad >= bestSad) {
+                        pruned = YES;
+                        break;
+                    }
                 }
-                if (sad >= bestSad) break;
+                if (pruned) break;
             }
-            if (sad < bestSad) {
+            if (!pruned && sad < bestSad) {
                 bestSad = sad;
                 bestX = x;
                 bestY = y;
@@ -2693,6 +2741,34 @@ static BOOL TLinkFindTemplateInRGBA(NSData *hayData,
     return bestX >= 0 && bestY >= 0 && score >= acceptable;
 }
 
+static NSData *TLinkScaleRGBAData(NSData *source,
+                                  int sourceWidth,
+                                  int sourceHeight,
+                                  int sourceBytesPerRow,
+                                  int targetWidth,
+                                  int targetHeight,
+                                  int *outBytesPerRow)
+{
+    if (source.length == 0 || sourceWidth <= 0 || sourceHeight <= 0 ||
+        sourceBytesPerRow < sourceWidth * 4 || targetWidth <= 0 || targetHeight <= 0) return nil;
+    int targetBytesPerRow = targetWidth * 4;
+    NSMutableData *target = [NSMutableData dataWithLength:(NSUInteger)targetBytesPerRow * (NSUInteger)targetHeight];
+    if (target.length == 0) return nil;
+    vImage_Buffer sourceBuffer = {
+        (void *)source.bytes, (vImagePixelCount)sourceHeight,
+        (vImagePixelCount)sourceWidth, (size_t)sourceBytesPerRow
+    };
+    vImage_Buffer targetBuffer = {
+        target.mutableBytes, (vImagePixelCount)targetHeight,
+        (vImagePixelCount)targetWidth, (size_t)targetBytesPerRow
+    };
+    vImage_Error result = vImageScale_ARGB8888(&sourceBuffer, &targetBuffer, NULL,
+                                                kvImageHighQualityResampling);
+    if (result != kvImageNoError) return nil;
+    if (outBytesPerRow) *outBytesPerRow = targetBytesPerRow;
+    return target;
+}
+
 static uint32_t TLinkStoreImageObject(UIImage *image)
 {
     if (!image || !image.CGImage) return 0;
@@ -2707,8 +2783,13 @@ static uint32_t TLinkStoreImageObject(UIImage *image)
     CGSize size = TLinkImagePixelSize(image);
     TLinkImageObject *obj = [[TLinkImageObject alloc] init];
     obj.image = image;
-    obj.width = (int)size.width;
-    obj.height = (int)size.height;
+    int rgbaWidth = 0;
+    int rgbaHeight = 0;
+    int rgbaBytesPerRow = 0;
+    obj.rgbaData = TLinkRGBADataFromImage(image, &rgbaWidth, &rgbaHeight, &rgbaBytesPerRow);
+    obj.width = rgbaWidth > 0 ? rgbaWidth : (int)size.width;
+    obj.height = rgbaHeight > 0 ? rgbaHeight : (int)size.height;
+    obj.bytesPerRow = rgbaBytesPerRow;
     obj.createdAtMs = TLinkNowMs();
     sTLinkImageStore[@(imageId)] = obj;
     return imageId;
@@ -3447,10 +3528,10 @@ static CaptureOutcome *TLinkRunCaptureOnMain(void)
 {
     __block CaptureOutcome *outcome = nil;
     if ([NSThread isMainThread]) {
-        outcome = [CaptureCore runCaptureProbe];
+        outcome = [CaptureCore runProductionCapture];
     } else {
         dispatch_sync(dispatch_get_main_queue(), ^{
-            outcome = [CaptureCore runCaptureProbe];
+            outcome = [CaptureCore runProductionCapture];
         });
     }
     return outcome;
@@ -3651,6 +3732,27 @@ static UIImage *TLinkCaptureScreenImage(NSString **error)
     return outcome.image;
 }
 
+static CaptureOutcome *TLinkCaptureOutcomeForVision(NSString **error)
+{
+    if (sTLinkKeptScreenImage) {
+        CaptureOutcome *kept = [[CaptureOutcome alloc] init];
+        kept.image = sTLinkKeptScreenImage;
+        kept.rgbaData = sTLinkKeptScreenRGBAData;
+        kept.width = sTLinkKeptScreenWidth;
+        kept.height = sTLinkKeptScreenHeight;
+        kept.bytesPerRow = sTLinkKeptScreenBytesPerRow;
+        kept.result = CaptureResultPass;
+        kept.diagnostics = @"kept_production_capture";
+        return kept;
+    }
+    CaptureOutcome *outcome = TLinkRunCaptureOnMain();
+    if (!outcome || !outcome.image || outcome.result == CaptureResultFail) {
+        if (error) *error = outcome.diagnostics ?: @"capture_failed";
+        return nil;
+    }
+    return outcome;
+}
+
 static UIImage *TLinkScreenImageForVision(NSString **error)
 {
     if (sTLinkKeptScreenImage) return sTLinkKeptScreenImage;
@@ -3662,13 +3764,22 @@ static NSData *TLinkHandleScreenKeep(NSString *body)
     NSArray<NSString *> *parts = TLinkSplitBody(body);
     int enabled = parts.count > 0 ? [parts[0] intValue] : 0;
     if (enabled) {
-        NSString *err = nil;
-        UIImage *image = TLinkCaptureScreenImage(&err);
-        if (!image) return TLinkError(err);
-        sTLinkKeptScreenImage = image;
+        CaptureOutcome *outcome = TLinkRunCaptureOnMain();
+        if (!outcome || !outcome.image || outcome.result == CaptureResultFail) {
+            return TLinkError(outcome.diagnostics ?: @"capture_failed");
+        }
+        sTLinkKeptScreenImage = outcome.image;
+        sTLinkKeptScreenRGBAData = outcome.rgbaData;
+        sTLinkKeptScreenWidth = outcome.width;
+        sTLinkKeptScreenHeight = outcome.height;
+        sTLinkKeptScreenBytesPerRow = outcome.bytesPerRow;
         return TLinkSuccess(nil);
     }
     sTLinkKeptScreenImage = nil;
+    sTLinkKeptScreenRGBAData = nil;
+    sTLinkKeptScreenWidth = 0;
+    sTLinkKeptScreenHeight = 0;
+    sTLinkKeptScreenBytesPerRow = 0;
     return TLinkSuccess(nil);
 }
 
@@ -3679,10 +3790,11 @@ static NSData *TLinkHandleColorPicker(NSString *body)
     int x = [parts[0] intValue];
     int y = [parts[1] intValue];
     NSString *err = nil;
-    UIImage *image = TLinkScreenImageForVision(&err);
-    if (!image) return TLinkError(err);
-    int w = 0, h = 0, bpr = 0;
-    NSData *rgba = TLinkRGBADataFromImage(image, &w, &h, &bpr);
+    CaptureOutcome *capture = TLinkCaptureOutcomeForVision(&err);
+    if (!capture.image) return TLinkError(err ?: capture.diagnostics ?: @"capture_failed");
+    int w = capture.width, h = capture.height, bpr = capture.bytesPerRow;
+    NSData *rgba = capture.rgbaData;
+    if (rgba.length == 0) rgba = TLinkRGBADataFromImage(capture.image, &w, &h, &bpr);
     if (!rgba) return TLinkError(@"color_picker_rgba_failed");
     int r = 0, g = 0, b = 0;
     if (!TLinkReadRGBA(rgba, w, h, bpr, x, y, &r, &g, &b)) {
@@ -3697,10 +3809,11 @@ static NSData *TLinkHandleColorSearch(NSString *body)
     if (parts.count < 1) return TLinkError(@"color_search missing search type");
     int searchType = [parts[0] intValue];
     NSString *err = nil;
-    UIImage *image = TLinkScreenImageForVision(&err);
-    if (!image) return TLinkError(err);
-    int screenW = 0, screenH = 0, bpr = 0;
-    NSData *rgba = TLinkRGBADataFromImage(image, &screenW, &screenH, &bpr);
+    CaptureOutcome *capture = TLinkCaptureOutcomeForVision(&err);
+    if (!capture.image) return TLinkError(err ?: capture.diagnostics ?: @"capture_failed");
+    int screenW = capture.width, screenH = capture.height, bpr = capture.bytesPerRow;
+    NSData *rgba = capture.rgbaData;
+    if (rgba.length == 0) rgba = TLinkRGBADataFromImage(capture.image, &screenW, &screenH, &bpr);
     if (!rgba) return TLinkError(@"color_search_rgba_failed");
 
     if (searchType == 1) {
@@ -3811,33 +3924,91 @@ static NSString *TLinkResolveImagePath(NSString *path)
 }
 
 static NSString *TLinkFindImageResponse(UIImage *haystack,
-                                        UIImage *needle,
-                                        CGRect region,
-                                        double acceptable,
-                                        int pixelSkip,
-                                        NSString **error)
+                                         TLinkFrameObject *hayFrame,
+                                         CaptureOutcome *hayCapture,
+                                         UIImage *needle,
+                                         TLinkImageObject *needleObject,
+                                         CGRect region,
+                                         double acceptable,
+                                         double scaleMin,
+                                         double scaleMax,
+                                         double scaleStep,
+                                         int pixelSkip,
+                                         NSString **error)
 {
-    int hayW = 0, hayH = 0, hayBpr = 0;
-    NSData *hayRGBA = TLinkRGBADataFromImage(haystack, &hayW, &hayH, &hayBpr);
-    int needleW = 0, needleH = 0, needleBpr = 0;
-    NSData *needleRGBA = TLinkRGBADataFromImage(needle, &needleW, &needleH, &needleBpr);
+    int hayW = hayFrame ? hayFrame.width : hayCapture.width;
+    int hayH = hayFrame ? hayFrame.height : hayCapture.height;
+    int hayBpr = hayFrame ? hayFrame.bytesPerRow : hayCapture.bytesPerRow;
+    NSData *hayRGBA = hayFrame ? hayFrame.rgbaData : hayCapture.rgbaData;
+    if (hayRGBA.length == 0) {
+        hayRGBA = TLinkRGBADataFromImage(haystack, &hayW, &hayH, &hayBpr);
+    }
+    int needleW = needleObject.width;
+    int needleH = needleObject.height;
+    int needleBpr = needleObject.bytesPerRow;
+    NSData *needleRGBA = needleObject.rgbaData;
+    if (needleRGBA.length == 0) {
+        needleRGBA = TLinkRGBADataFromImage(needle, &needleW, &needleH, &needleBpr);
+    }
     if (!hayRGBA || !needleRGBA) {
         if (error) *error = @"image_match_rgba_failed";
         return nil;
     }
-    int matchX = -1, matchY = -1;
-    double score = 0.0;
-    BOOL matched = TLinkFindTemplateInRGBA(hayRGBA, hayW, hayH, hayBpr,
-                                           needleRGBA, needleW, needleH, needleBpr,
-                                           region, acceptable, pixelSkip,
-                                           &matchX, &matchY, &score);
-    if (!matched) {
-        return [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f", score];
+
+    if (acceptable <= 0.0 || acceptable > 1.0) acceptable = 0.9;
+
+    if (scaleMin <= 0.0 && scaleMax <= 0.0) scaleMin = scaleMax = 1.0;
+    else if (scaleMin <= 0.0) scaleMin = scaleMax;
+    else if (scaleMax <= 0.0) scaleMax = scaleMin;
+    scaleMin = MAX(0.10, MIN(4.0, scaleMin));
+    scaleMax = MAX(0.10, MIN(4.0, scaleMax));
+    if (scaleMin > scaleMax) {
+        double swap = scaleMin;
+        scaleMin = scaleMax;
+        scaleMax = swap;
     }
-    double centerX = matchX + needleW / 2.0;
-    double centerY = matchY + needleH / 2.0;
+    if (scaleStep <= 0.0) scaleStep = scaleMax > scaleMin ? 0.10 : 1.0;
+    scaleStep = MAX(0.01, scaleStep);
+
+    int bestX = -1;
+    int bestY = -1;
+    int bestW = 0;
+    int bestH = 0;
+    double bestScore = -1.0;
+    NSUInteger scaleCount = 0;
+    for (double scale = scaleMin; scale <= scaleMax + 0.000001 && scaleCount < 64; scale += scaleStep, scaleCount++) {
+        int scaledW = MAX(1, (int)llround((double)needleW * scale));
+        int scaledH = MAX(1, (int)llround((double)needleH * scale));
+        NSData *scaledRGBA = needleRGBA;
+        int scaledBpr = needleBpr;
+        if (scaledW != needleW || scaledH != needleH) {
+            scaledRGBA = TLinkScaleRGBAData(needleRGBA, needleW, needleH, needleBpr,
+                                             scaledW, scaledH, &scaledBpr);
+            if (scaledRGBA.length == 0) continue;
+        }
+        int candidateX = -1;
+        int candidateY = -1;
+        double candidateScore = 0.0;
+        TLinkFindTemplateInRGBA(hayRGBA, hayW, hayH, hayBpr,
+                                scaledRGBA, scaledW, scaledH, scaledBpr,
+                                region, acceptable, pixelSkip,
+                                &candidateX, &candidateY, &candidateScore);
+        if (candidateX >= 0 && candidateY >= 0 && candidateScore > bestScore) {
+            bestX = candidateX;
+            bestY = candidateY;
+            bestW = scaledW;
+            bestH = scaledH;
+            bestScore = candidateScore;
+        }
+    }
+    if (bestScore < 0.0) bestScore = 0.0;
+    if (bestX < 0 || bestY < 0 || bestScore < acceptable) {
+        return [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f", bestScore];
+    }
+    double centerX = bestX + bestW / 2.0;
+    double centerY = bestY + bestH / 2.0;
     return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f",
-            matchX, matchY, needleW, needleH, centerX, centerY, score];
+            bestX, bestY, bestW, bestH, centerX, centerY, bestScore];
 }
 
 static NSData *TLinkHandleImageObject(NSString *body)
@@ -3902,12 +4073,19 @@ static NSData *TLinkHandleFindImage(NSString *body)
     TLinkImageObject *templ = sTLinkImageStore[@(imageId)];
     if (!templ || !templ.image) return TLinkError(@"image_not_found");
     NSString *err = nil;
-    UIImage *screen = TLinkScreenImageForVision(&err);
-    if (!screen) return TLinkError(err);
+    CaptureOutcome *capture = TLinkCaptureOutcomeForVision(&err);
+    UIImage *screen = capture.image;
+    if (!screen) return TLinkError(err ?: capture.diagnostics ?: @"capture_failed");
     NSString *ret = TLinkFindImageResponse(screen,
+                                           nil,
+                                           capture,
                                            templ.image,
+                                           templ,
                                            CGRectMake([parts[1] intValue], [parts[2] intValue], [parts[3] intValue], [parts[4] intValue]),
                                            [parts[5] doubleValue],
+                                           [parts[6] doubleValue],
+                                           [parts[7] doubleValue],
+                                           [parts[8] doubleValue],
                                            [parts[9] intValue],
                                            &err);
     if (!ret) return TLinkError(err);
@@ -3922,10 +4100,12 @@ static NSData *TLinkHandleTemplateMatch(NSString *body)
     UIImage *templ = path.length > 0 ? [UIImage imageWithContentsOfFile:path] : nil;
     if (!templ || !templ.CGImage) return TLinkError([NSString stringWithFormat:@"template_not_found path=%@", path ?: parts[0]]);
     NSString *err = nil;
-    UIImage *screen = TLinkScreenImageForVision(&err);
-    if (!screen) return TLinkError(err);
+    CaptureOutcome *capture = TLinkCaptureOutcomeForVision(&err);
+    UIImage *screen = capture.image;
+    if (!screen) return TLinkError(err ?: capture.diagnostics ?: @"capture_failed");
     double acceptable = parts.count >= 3 ? [parts[2] doubleValue] : 0.8;
-    NSString *ret = TLinkFindImageResponse(screen, templ, CGRectMake(0, 0, 0, 0), acceptable, 0, &err);
+    NSString *ret = TLinkFindImageResponse(screen, nil, capture, templ, nil, CGRectMake(0, 0, 0, 0),
+                                           acceptable, 1.0, 1.0, 0.0, 0, &err);
     if (!ret) return TLinkError(err);
     NSArray<NSString *> *retParts = TLinkSplitBody(ret);
     if (retParts.count >= 4) {
@@ -3952,22 +4132,25 @@ static NSData *TLinkHandleFrameCapture(NSString *body)
 
     CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
     NSString *err = nil;
-    UIImage *image = TLinkCaptureScreenImage(&err);
-    if (!image) return TLinkError(err);
-    CGSize size = TLinkImagePixelSize(image);
+    CaptureOutcome *capture = TLinkRunCaptureOnMain();
+    if (!capture || !capture.image || capture.result == CaptureResultFail) {
+        return TLinkError(capture.diagnostics ?: @"capture_failed");
+    }
+    UIImage *image = capture.image;
     TLinkFrameObject *frame = [[TLinkFrameObject alloc] init];
     frame.image = image;
-    frame.width = (int)size.width;
-    frame.height = (int)size.height;
-    frame.bytesPerRow = frame.width * 4;
+    frame.width = capture.width;
+    frame.height = capture.height;
+    frame.bytesPerRow = capture.bytesPerRow;
     frame.scale = [UIScreen mainScreen].scale;
     frame.createdAtMs = TLinkNowMs();
     frame.expiresAtMs = frame.createdAtMs + ttlMs;
     frame.hasGray = needGray;
-    frame.hasBGRA = NO;
+    frame.rgbaData = capture.rgbaData;
+    frame.hasBGRA = capture.rgbaData.length > 0;
     double captureMs = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
     double bgraMs = 0.0;
-    if (needBGRA) {
+    if (needBGRA && !frame.hasBGRA) {
         CFAbsoluteTime bgraStart = CFAbsoluteTimeGetCurrent();
         if (!TLinkEnsureFrameRGBA(frame, &err)) return TLinkError(err);
         bgraMs = (CFAbsoluteTimeGetCurrent() - bgraStart) * 1000.0;
@@ -4214,9 +4397,15 @@ static NSData *TLinkHandleFindImageInFrame(NSString *body)
     TLinkImageObject *templ = sTLinkImageStore[@((uint32_t)[parts[1] intValue])];
     if (!templ || !templ.image) return TLinkError(@"image_not_found");
     NSString *ret = TLinkFindImageResponse(frame.image,
+                                           frame,
+                                           nil,
                                            templ.image,
+                                           templ,
                                            CGRectMake([parts[2] intValue], [parts[3] intValue], [parts[4] intValue], [parts[5] intValue]),
                                            [parts[6] doubleValue],
+                                           [parts[7] doubleValue],
+                                           [parts[8] doubleValue],
+                                           [parts[9] doubleValue],
                                            [parts[10] intValue],
                                            &err);
     if (!ret) return TLinkError(err);
@@ -4271,12 +4460,18 @@ static NSData *TLinkHandleFrameBatch(NSString *body)
             TLinkImageObject *templ = sTLinkImageStore[@((uint32_t)[fields[1] intValue])];
             if (!templ || !templ.image) return TLinkError(@"image_not_found");
             NSString *ret = TLinkFindImageResponse(frame.image,
+                                                   frame,
+                                                   nil,
                                                    templ.image,
+                                                   templ,
                                                    CGRectMake(TLinkCoordToPixel([fields[2] doubleValue], frame.scale, pointCoord),
                                                               TLinkCoordToPixel([fields[3] doubleValue], frame.scale, pointCoord),
                                                               TLinkCoordToPixel([fields[4] doubleValue], frame.scale, pointCoord),
                                                               TLinkCoordToPixel([fields[5] doubleValue], frame.scale, pointCoord)),
                                                    [fields[6] doubleValue],
+                                                   [fields[7] doubleValue],
+                                                   [fields[7] doubleValue],
+                                                   0.0,
                                                    [fields[8] intValue],
                                                    &err);
             if (!ret) return TLinkError(err);
@@ -4758,21 +4953,12 @@ static NSData *TLinkProbeUIServiceVisionOCRBridge(void)
     return response;
 }
 
-static NSData *TLinkRunUIServiceVisionOCR(NSData *pngData,
-                                        CGRect region,
-                                        NSString *customWords,
-                                        CGFloat minimumTextHeight,
-                                        int levelValue,
-                                        NSString *languages,
-                                        BOOL languageCorrection,
-                                        NSString *profile)
+static NSData *TLinkSendUIServiceVisionOCRRequest(NSString *line,
+                                                  NSData *payload,
+                                                  int protocolVersion)
 {
-    if (pngData.length == 0) return TLinkError(@"uiservice_ocr_bridge_empty_png");
-    static const NSUInteger kTLinkVisionInlinePNGMaxBytes = 32 * 1024 * 1024;
-    if (pngData.length > kTLinkVisionInlinePNGMaxBytes) {
-        return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_png_too_large bytes=%lu max=%lu",
-            (unsigned long)pngData.length, (unsigned long)kTLinkVisionInlinePNGMaxBytes]);
-    }
+    if (line.length == 0 || payload.length == 0 || payload.length > (32 * 1024 * 1024))
+        return TLinkError(@"uiservice_ocr_bridge_invalid_payload");
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -4797,25 +4983,10 @@ static NSData *TLinkRunUIServiceVisionOCR(NSData *pngData,
         return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_unavailable errno=%d restart_TLinkUIService", connectErrno]);
     }
 
-    // Protocol v3 sends a bounded PNG immediately after the metadata line.
-    // This avoids the former uid-crossing temporary file while retaining the
-    // exact task 27 response contract.
-    NSString *line = [NSString stringWithFormat:@"3;;%lu;;%.0f;;%.0f;;%.0f;;%.0f;;%.8f;;%d;;%@;;%@;;%d;;%@\n",
-                      (unsigned long)pngData.length,
-                      region.origin.x,
-                      region.origin.y,
-                      region.size.width,
-                      region.size.height,
-                      minimumTextHeight,
-                      levelValue,
-                      TLinkBase64UTF8String(customWords),
-                      TLinkBase64UTF8String(languages),
-                      languageCorrection ? 1 : 0,
-                      profile ?: @"app_cpu"];
     NSData *lineData = [line dataUsingEncoding:NSUTF8StringEncoding];
     CFAbsoluteTime bridgeStartedAt = CFAbsoluteTimeGetCurrent();
     if (!TLinkWriteAllToFd(sock, lineData.bytes, lineData.length) ||
-        !TLinkWriteAllToFd(sock, pngData.bytes, pngData.length)) {
+        !TLinkWriteAllToFd(sock, payload.bytes, payload.length)) {
         close(sock);
         return TLinkError(@"uiservice_ocr_bridge_request_write_failed");
     }
@@ -4827,10 +4998,54 @@ static NSData *TLinkRunUIServiceVisionOCR(NSData *pngData,
     if (response.length == 0) {
         return TLinkError([NSString stringWithFormat:@"uiservice_ocr_bridge_empty_response errno=%d service_may_be_stale", readErrno]);
     }
-    POCLogf("ocr: uiservice protocol=3 inline_png_bytes=%lu bridge_ms=%.3f",
-            (unsigned long)pngData.length,
+    POCLogf("ocr: uiservice protocol=%d inline_bytes=%lu bridge_ms=%.3f",
+            protocolVersion, (unsigned long)payload.length,
             (CFAbsoluteTimeGetCurrent() - bridgeStartedAt) * 1000.0);
     return response;
+}
+
+static NSData *TLinkRunUIServiceVisionOCRPNG(NSData *pngData,
+                                             CGRect region,
+                                             NSString *customWords,
+                                             CGFloat minimumTextHeight,
+                                             int levelValue,
+                                             NSString *languages,
+                                             BOOL languageCorrection,
+                                             NSString *profile)
+{
+    if (pngData.length == 0) return TLinkError(@"uiservice_ocr_bridge_empty_png");
+    NSString *line = [NSString stringWithFormat:@"3;;%lu;;%.0f;;%.0f;;%.0f;;%.0f;;%.8f;;%d;;%@;;%@;;%d;;%@\n",
+                      (unsigned long)pngData.length, region.origin.x, region.origin.y,
+                      region.size.width, region.size.height, minimumTextHeight, levelValue,
+                      TLinkBase64UTF8String(customWords), TLinkBase64UTF8String(languages),
+                      languageCorrection ? 1 : 0, profile ?: @"app_cpu"];
+    return TLinkSendUIServiceVisionOCRRequest(line, pngData, 3);
+}
+
+static NSData *TLinkRunUIServiceVisionOCRRawRGBA(NSData *rgbaData,
+                                                 int width,
+                                                 int height,
+                                                 int bytesPerRow,
+                                                 CGRect region,
+                                                 NSString *customWords,
+                                                 CGFloat minimumTextHeight,
+                                                 int levelValue,
+                                                 NSString *languages,
+                                                 BOOL languageCorrection,
+                                                 NSString *profile)
+{
+    if (rgbaData.length == 0 || width <= 0 || height <= 0 || bytesPerRow < width * 4 ||
+        rgbaData.length != (NSUInteger)bytesPerRow * (NSUInteger)height) {
+        return TLinkError(@"uiservice_ocr_bridge_invalid_raw_rgba");
+    }
+    NSString *line = [NSString stringWithFormat:
+        @"4;;%lu;;%d;;%d;;%d;;%.0f;;%.0f;;%.0f;;%.0f;;%.8f;;%d;;%@;;%@;;%d;;%@\n",
+        (unsigned long)rgbaData.length, width, height, bytesPerRow,
+        region.origin.x, region.origin.y, region.size.width, region.size.height,
+        minimumTextHeight, levelValue, TLinkBase64UTF8String(customWords),
+        TLinkBase64UTF8String(languages), languageCorrection ? 1 : 0,
+        profile ?: @"app_cpu"];
+    return TLinkSendUIServiceVisionOCRRequest(line, rgbaData, 4);
 }
 
 static char sTLinkOCRWorkerOutputPath[PATH_MAX + 1] = {0};
@@ -4990,8 +5205,17 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
 
     NSString *err = nil;
     TLinkSetOCRWorkerPhase("vision_capture");
-    UIImage *screen = TLinkScreenImageForVision(&err);
-    if (!screen || !screen.CGImage) return TLinkError(err ?: @"ocr_capture_failed");
+    CaptureOutcome *screenCapture = TLinkCaptureOutcomeForVision(&err);
+    UIImage *screen = screenCapture.image;
+    if (!screen || !screen.CGImage) return TLinkError(err ?: screenCapture.diagnostics ?: @"ocr_capture_failed");
+
+    NSData *screenRGBA = screenCapture.rgbaData;
+    int screenBytesPerRow = screenCapture.bytesPerRow;
+    if (screenRGBA.length == 0 || screenBytesPerRow <= 0) {
+        int convertedW = 0;
+        int convertedH = 0;
+        screenRGBA = TLinkRGBADataFromImage(screen, &convertedW, &convertedH, &screenBytesPerRow);
+    }
 
     TLinkSetOCRWorkerPhase("vision_crop");
     int screenW = (int)CGImageGetWidth(screen.CGImage);
@@ -5004,17 +5228,27 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
                                           screenH);
     if (CGRectIsEmpty(region)) return TLinkError(@"ocr_invalid_region");
 
-    UIImage *cropped = TLinkCropImage(screen, region, &err);
-    if (!cropped || !cropped.CGImage) return TLinkError(err ?: @"ocr_crop_failed");
+    int croppedW = 0;
+    int croppedH = 0;
+    int croppedBytesPerRow = 0;
+    NSData *croppedRGBA = TLinkCropRGBAData(screenRGBA,
+                                            screenW,
+                                            screenH,
+                                            screenBytesPerRow,
+                                            region,
+                                            &croppedW,
+                                            &croppedH,
+                                            &croppedBytesPerRow);
+    if (croppedRGBA.length == 0) return TLinkError(@"ocr_rgba_crop_failed");
+
+    UIImage *cropped = nil;
+    if (parts[7].length > 0 || [profile isEqualToString:@"worker_cpu"]) {
+        cropped = TLinkCropImage(screen, region, &err);
+        if (!cropped || !cropped.CGImage) return TLinkError(err ?: @"ocr_crop_failed");
+    }
 
     if (parts[7].length > 0 && !TLinkWriteDebugImage(cropped, parts[7], &err)) {
         return TLinkError(err);
-    }
-
-    TLinkSetOCRWorkerPhase("vision_png_encode");
-    NSData *visionImageData = UIImagePNGRepresentation(cropped);
-    if (visionImageData.length == 0) {
-        return TLinkError(@"ocr_png_encode_failed");
     }
 
     if ([profile isEqualToString:@"app_cpu"] || [profile isEqualToString:@"xxt_compat"]) {
@@ -5023,14 +5257,38 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
         POCLogf("ocr: task27 profile=%s route=uiservice_6018 cpu_only=%d foreground_required=0",
                 [profile UTF8String],
                 xxtCompat ? 0 : 1);
-        return TLinkRunUIServiceVisionOCR(visionImageData,
-                                        region,
-                                        parts[2],
-                                        (CGFloat)[parts[3] doubleValue],
-                                        [parts[4] intValue],
-                                        parts[5],
-                                        [parts[6] intValue] != 0,
-                                        profile);
+        NSData *response = TLinkRunUIServiceVisionOCRRawRGBA(croppedRGBA,
+                                                             croppedW,
+                                                             croppedH,
+                                                             croppedBytesPerRow,
+                                                             region,
+                                                             parts[2],
+                                                             (CGFloat)[parts[3] doubleValue],
+                                                             [parts[4] intValue],
+                                                             parts[5],
+                                                             [parts[6] intValue] != 0,
+                                                             profile);
+        NSString *responseText = TLinkResponseStringFromData(response) ?: @"";
+        BOOL needsPNGCompatibility = [responseText containsString:@"protocol=2_or_3_required"] ||
+                                     [responseText containsString:@"uiservice_ocr_bad_request"];
+        if (!needsPNGCompatibility) return response;
+
+        TLinkSetOCRWorkerPhase("vision_png_v3_fallback");
+        if (!cropped) {
+            cropped = TLinkCropImage(screen, region, &err);
+            if (!cropped || !cropped.CGImage) return TLinkError(err ?: @"ocr_fallback_crop_failed");
+        }
+        NSData *pngData = UIImagePNGRepresentation(cropped);
+        if (pngData.length == 0) return TLinkError(@"ocr_fallback_png_encode_failed");
+        POCLogf("ocr: uiservice protocol=4 rejected fallback=protocol_3_inline_png");
+        return TLinkRunUIServiceVisionOCRPNG(pngData,
+                                             region,
+                                             parts[2],
+                                             (CGFloat)[parts[3] doubleValue],
+                                             [parts[4] intValue],
+                                             parts[5],
+                                             [parts[6] intValue] != 0,
+                                             profile);
     }
 
     TLinkSetOCRWorkerPhase("vision_profile_worker_cpu");
@@ -5057,8 +5315,8 @@ static NSData *TLinkHandleVisionOCRInProcess(NSString *body)
                                                     cpuError ?: @"unknown"]);
     }
 
-    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithData:visionImageData
-                                                                         options:@{}];
+    VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:cropped.CGImage
+                                                                            options:@{}];
     NSError *visionErr = nil;
     TLinkSetOCRWorkerPhase("vision_perform_requests");
     if (![handler performRequests:@[request] error:&visionErr]) {
@@ -6163,22 +6421,24 @@ static NSData *TLinkHandleHelloStatus(void)
         @"ocrVisionProfile": @"app_cpu_default_worker_cpu_opt_in_xxt_compat_background_uiservice",
         @"ocrVisionCPUOnly": @(YES),
         @"ocrVisionXXTCompat": @(YES),
-        @"ocrVisionXXTCompatInput": @"png_bridge_then_compact_cgimage",
-        @"ocrVisionXXTCompatPixelLayout": @"compact_bgra8888_premultiplied_first_stride_width_x4",
+        @"ocrVisionXXTCompatInput": @"raw_rgba8888_v4_png_v3_fallback",
+        @"ocrVisionXXTCompatPixelLayout": @"rgba8888_premultiplied_last_stride_width_x4",
         @"ocrVisionXXTCompatCompute": @"automatic",
         @"ocrVisionXXTCompatHost": @"background_uiservice_6018",
         @"ocrVisionXXTCompatForegroundRequired": @(NO),
         @"ocrVisionAppWatchdogMs": @15000,
-        @"ocrVisionAppBridgeProtocol": @3,
-        @"ocrVisionTransport": @"inline_png_bounded_32mib_v1",
+        @"ocrVisionAppBridgeProtocol": @4,
+        @"ocrVisionTransport": @"inline_rgba8888_bounded_32mib_v2",
+        @"ocrVisionFallbackProtocol": @3,
+        @"ocrVisionFallbackTransport": @"inline_png",
         @"ocrVisionDispatch": @"direct_streamd_to_uiservice_no_worker_v1",
         @"ocrVisionInlineMaxBytes": @33554432,
-        @"ocrVisionPixelBufferProbe": @"bgra_420f_memory_iosurface_opengles_metal_v1",
+        @"ocrVisionPixelBufferProbe": @"startup_once_bgra_420f_memory_iosurface_opengles_metal_v2",
         @"ocrVisionGraphicsEntitlements": @"iosurface_ioaccel_agx_v1",
         @"ocrVisionAppBridgeProbe": @"task275_uiservice_v1",
-        @"ocrVisionQualification": @"background_direct_inline_fast20_accurate1_largefast1_v4",
+        @"ocrVisionQualification": @"background_direct_raw_fast20_accurate1_largefast1_v5",
         @"ocrVisionDebugLog": kTLinkVisionOCRDebugLogPath,
-        @"ocrVisionFallback": @"none",
+        @"ocrVisionFallback": @"protocol3_inline_png_compat_only",
         @"ocrAppSideBridge": @(YES),
         @"ocrAppRGBBridge": @(YES),
         @"ocrAppAccurateRetry": @(YES),
@@ -8708,7 +8968,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastUIService,backgroundToastFixedCenter,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_background_uiservice_positioned_cfusernotification_fallback toast=foreground_or_background_uiservice_positioned_with_cf_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_clipboardd_uiservice_best_effort imageMatch=naive_rgba appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
+        NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastUIService,backgroundToastFixedCenter,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_background_uiservice_positioned_cfusernotification_fallback toast=foreground_or_background_uiservice_positioned_with_cf_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_clipboardd_uiservice_best_effort imageMatch=multiscale_vimage_rgba_v2 appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
         NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
         cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=23"];
         cap = [cap stringByAppendingFormat:@" licenseBuildMode=%@", TLinkLicenseBuildMode()];
@@ -8790,23 +9050,25 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" visionOCRState=experimental"
                                                @" visionOCRProfiles=app_cpu_default,worker_cpu_opt_in,xxt_compat_background_uiservice"
                                                @" visionOCRRoute=profile_selected_worker_or_uiservice_6018"
-                                               @" visionOCRFallback=none"
+                                               @" visionOCRFallback=protocol3_inline_png_compat_only"
                                                @" visionOCRCPUOnly=1"
                                                @" visionOCRXXTCompat=1"
-                                               @" visionOCRXXTCompatInput=png_bridge_then_compact_cgimage"
-                                               @" visionOCRXXTCompatPixelLayout=compact_bgra8888_premultiplied_first_stride_width_x4"
+                                               @" visionOCRXXTCompatInput=raw_rgba8888_v4_png_v3_fallback"
+                                               @" visionOCRXXTCompatPixelLayout=rgba8888_premultiplied_last_stride_width_x4"
                                                @" visionOCRXXTCompatCompute=automatic"
                                                @" visionOCRXXTCompatHost=background_uiservice_6018"
                                                @" visionOCRXXTCompatForegroundRequired=0"
                                                @" visionOCRAppWatchdogMs=15000"
-                                               @" visionOCRAppBridgeProtocol=3"
-                                               @" visionOCRTransport=inline_png_bounded_32mib_v1"
+                                               @" visionOCRAppBridgeProtocol=4"
+                                               @" visionOCRTransport=inline_rgba8888_bounded_32mib_v2"
+                                               @" visionOCRFallbackProtocol=3"
+                                               @" visionOCRFallbackTransport=inline_png"
                                                @" visionOCRDispatch=direct_streamd_to_uiservice_no_worker_v1"
                                                @" visionOCRInlineMaxBytes=33554432"
-                                               @" visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1"
+                                               @" visionOCRPixelBufferProbe=startup_once_bgra_420f_memory_iosurface_opengles_metal_v2"
                                                @" visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1"
                                                @" visionOCRAppBridgeProbe=task275_uiservice_v1"
-                                               @" visionOCRQualification=background_direct_inline_fast20_accurate1_largefast1_v4"
+                                               @" visionOCRQualification=background_direct_raw_fast20_accurate1_largefast1_v5"
                                                @" visionOCRDefaultProfile=app_cpu"
                                                @" ocrDefaultEngine=tesseract"
                                                @" ocrEngineSelector=none"

@@ -517,8 +517,9 @@ static BOOL TLinkUIServiceProbeIsCurrent(NSString *probe)
            [probe containsString:@"vision_ocr_port=6018"] &&
            [probe containsString:@"vision_ocr_started=1"] &&
            [probe containsString:@"vision_ocr_listening=1"] &&
-           [probe containsString:@"vision_ocr_protocol=3"] &&
-           [probe containsString:@"vision_ocr_transport=inline_png"] &&
+           [probe containsString:@"vision_ocr_protocol=4"] &&
+           [probe containsString:@"vision_ocr_transport=inline_rgba8888"] &&
+           [probe containsString:@"vision_ocr_fallback_protocol=3"] &&
            [probe containsString:@";;uid=501;;"] &&
            [probe containsString:@";;euid=501;;"];
 }

@@ -27,7 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$qualificationVersion = "background_direct_inline_fast20_accurate1_largefast1_v4"
+$qualificationVersion = "background_direct_raw_fast20_accurate1_largefast1_v5"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -175,11 +175,11 @@ $requiredTask97Markers = @(
     "visionOCRXXTCompat=1",
     "visionOCRXXTCompatHost=background_uiservice_6018",
     "visionOCRXXTCompatForegroundRequired=0",
-    "visionOCRPixelBufferProbe=bgra_420f_memory_iosurface_opengles_metal_v1",
+    "visionOCRPixelBufferProbe=startup_once_bgra_420f_memory_iosurface_opengles_metal_v2",
     "visionOCRGraphicsEntitlements=iosurface_ioaccel_agx_v1",
     "visionOCRAppBridgeProbe=task275_uiservice_v1",
-    "visionOCRAppBridgeProtocol=3",
-    "visionOCRTransport=inline_png_bounded_32mib_v1",
+    "visionOCRAppBridgeProtocol=4",
+    "visionOCRTransport=inline_rgba8888_bounded_32mib_v2",
     "visionOCRDispatch=direct_streamd_to_uiservice_no_worker_v1",
     "visionOCRInlineMaxBytes=33554432",
     "visionOCRQualification=$qualificationVersion"
@@ -199,8 +199,10 @@ $serviceBridgePreflight = Invoke-TLinkTask -Task "275"
 $serviceBridgeReady = [bool](
     $serviceBridgePreflight.ok -and
     ([string]$serviceBridgePreflight.response).IndexOf("uiservice_ocr_ready", [StringComparison]::Ordinal) -ge 0 -and
-    ([string]$serviceBridgePreflight.response).IndexOf("protocol=3", [StringComparison]::Ordinal) -ge 0 -and
-    ([string]$serviceBridgePreflight.response).IndexOf("transport=inline_png", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("protocol=4", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("transport=inline_rgba8888", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("fallback_protocol=3", [StringComparison]::Ordinal) -ge 0 -and
+    ([string]$serviceBridgePreflight.response).IndexOf("pixelbuffer_probe=startup_once", [StringComparison]::Ordinal) -ge 0 -and
     ([string]$serviceBridgePreflight.response).IndexOf("port=6018", [StringComparison]::Ordinal) -ge 0 -and
     ([string]$serviceBridgePreflight.response).IndexOf("scene_required=0", [StringComparison]::Ordinal) -ge 0
 )
@@ -264,12 +266,13 @@ $zeroPixelProbeCount = [regex]::Matches(
 ).Count
 $performEndCount = [regex]::Matches($debugText, "uiservice_perform_end").Count
 $responseReadyCount = [regex]::Matches($debugText, "uiservice_response_ready").Count
-$allPixelBuffersZero = $executedVisionCount -gt 0 -and $pixelProbeCount -ge $executedVisionCount -and $zeroPixelProbeCount -ge $executedVisionCount
+$startupPixelProbeReady = ([string]$serviceBridgePreflight.response).IndexOf("pixelbuffer_probe=startup_once", [StringComparison]::Ordinal) -ge 0
+$allPixelBuffersZero = $startupPixelProbeReady
 $debugHasFailure = $debugText -match "uiservice_perform_failed|uiservice_ocr_timeout|uiservice_ocr_busy|uiservice_ocr_rgb_decode_failed|uiservice_server_bind_failed"
 $debugHealthy = [bool](
     $debugAfter.ok -and
     $executedVisionCount -gt 0 -and
-    $allPixelBuffersZero -and
+    $startupPixelProbeReady -and
     $performEndCount -ge $executedVisionCount -and
     $responseReadyCount -ge $executedVisionCount -and
     -not $debugHasFailure
@@ -344,6 +347,7 @@ $artifact = [ordered]@{
             perform_end_count = $performEndCount
             response_ready_count = $responseReadyCount
             all_pixel_buffers_zero = $allPixelBuffersZero
+            startup_pixel_probe_ready = $startupPixelProbeReady
             failure_marker_found = $debugHasFailure
         }
     }

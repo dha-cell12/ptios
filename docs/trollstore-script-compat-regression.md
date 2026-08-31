@@ -28,7 +28,7 @@ Expected markers:
 - `scriptAppAPI`
 - `smartWaitState=implemented`
 - `smartWaitSchema=smart_wait_result_v1`
-- `imageMatch=naive_rgba`
+- `imageMatch=multiscale_vimage_rgba_v2`
 - `ocr=tesseract_true_static_libs_memory_fallback`
 
 ## UI Smoke

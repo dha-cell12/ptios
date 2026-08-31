@@ -38,6 +38,7 @@ jobs:
           node scripts/check-rootfull-license-authority.mjs
           node scripts/check-ocr-p0-baseline.mjs
           node scripts/check-ocr-p1-cpu-only.mjs
+          node scripts/check-capture-image-optimization-v1.mjs
           node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-zoom-p1-multitouch.mjs
           node scripts/check-zoom-p2-observability.mjs
