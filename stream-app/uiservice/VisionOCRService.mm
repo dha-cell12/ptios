@@ -164,6 +164,13 @@ static NSArray<NSString *> *TLinkVisionNonEmptyValues(NSString *value)
     return result;
 }
 
+static size_t TLinkVisionParseSizeField(NSString *value)
+{
+    long long parsed = [value longLongValue];
+    if (parsed <= 0 || (unsigned long long)parsed > (unsigned long long)SIZE_MAX) return 0;
+    return (size_t)parsed;
+}
+
 static CGImageRef TLinkVisionCreateRGBImage(NSData *imageData, NSString **error) CF_RETURNS_RETAINED
 {
     if (imageData.length == 0) {
@@ -325,9 +332,9 @@ static NSString *TLinkVisionPerformRequest(NSString *line, NSData *inlineImageDa
     NSString *decodeError = nil;
     CGImageRef rgbImage = version4Request
         ? TLinkVisionCreateRGBAImage(imageData,
-                                     (size_t)[parts[2] unsignedLongLongValue],
-                                     (size_t)[parts[3] unsignedLongLongValue],
-                                     (size_t)[parts[4] unsignedLongLongValue],
+                                     TLinkVisionParseSizeField(parts[2]),
+                                     TLinkVisionParseSizeField(parts[3]),
+                                     TLinkVisionParseSizeField(parts[4]),
                                      &decodeError)
         : TLinkVisionCreateRGBImage(imageData, &decodeError);
     if (!rgbImage) {
