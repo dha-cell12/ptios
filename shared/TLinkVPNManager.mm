@@ -3,6 +3,10 @@
 #import <NetworkExtension/NetworkExtension.h>
 #import <Security/Security.h>
 #import <arpa/inet.h>
+#import <objc/message.h>
+#include <dlfcn.h>
+#include <stdint.h>
+#include <unistd.h>
 
 static NSString *const kTLinkVPNDescription =
     @"TLinkauto Managed VPN (tlinkauto-managed-v1)";
@@ -12,6 +16,10 @@ static NSString *const kTLinkVPNKeychainAccount = @"password";
 #if TLINK_VPN_TROLLSTORE_RUNTIME
 static NSString *const kTLinkVPNKeychainAccessGroup =
     @"StreamCtl.com.tlinkauto.streamcontrol";
+static NSString *const kTLinkVPNPrivateMarkerPath =
+    @"/var/mobile/Library/TLinkauto/config/vpn-private-owned.plist";
+static NSString *const kTLinkVPNPrivateNamePrefix =
+    @"TLinkauto Private VPN (tlinkauto-private-v1) ";
 #else
 static NSString *const kTLinkVPNKeychainAccessGroup =
     @"com.tlinkauto.tlinkauto";
@@ -97,6 +105,8 @@ static NSDictionary *TLinkVPNStatusFields(NEVPNManager *manager)
         @"connection_status": TLinkVPNStatusName(connectionStatus),
         @"connected": @(owned && connectionStatus == NEVPNStatusConnected),
         @"profile_identifier": @"tlinkauto-managed-v1",
+        @"profile_name": kTLinkVPNDescription,
+        @"backend": @"nevpnmanager_ikev2",
     };
 }
 
@@ -104,6 +114,503 @@ static NSDictionary *TLinkVPNStatusResult(NEVPNManager *manager)
 {
     return TLinkVPNResult(true, @"ok", TLinkVPNStatusFields(manager));
 }
+
+#if TLINK_VPN_TROLLSTORE_RUNTIME
+static dispatch_queue_t TLinkVPNPrivateQueue(void)
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = dispatch_queue_create(
+            "com.tlinkauto.vpn.private-compatibility",
+            DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+static id TLinkVPNPrivateSendId(id target, SEL selector)
+{
+    if (!target || !selector || ![target respondsToSelector:selector]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(target, selector);
+}
+
+static BOOL TLinkVPNPrivateSendBool(id target, SEL selector)
+{
+    if (!target || !selector || ![target respondsToSelector:selector]) return NO;
+    return ((BOOL (*)(id, SEL))objc_msgSend)(target, selector);
+}
+
+static NSString *TLinkVPNPrivateIdentifierString(id identifier)
+{
+    if ([identifier isKindOfClass:[NSString class]]) return identifier;
+    if ([identifier respondsToSelector:@selector(UUIDString)]) {
+        id value = TLinkVPNPrivateSendId(identifier, @selector(UUIDString));
+        return [value isKindOfClass:[NSString class]] ? value : @"";
+    }
+    return @"";
+}
+
+static id TLinkVPNPrivateStore(NSString **failure)
+{
+    NSString *bundlePath =
+        @"/System/Library/PreferenceBundles/VPNPreferences.bundle";
+    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+    NSError *loadError = nil;
+    if (!bundle || (!bundle.loaded &&
+        ![bundle loadAndReturnError:&loadError])) {
+        if (failure) {
+            *failure = [NSString stringWithFormat:
+                @"vpn_private_bundle_load_failed %@",
+                loadError.localizedDescription ?: @"bundle_missing"];
+        }
+        return nil;
+    }
+
+    Class storeClass = NSClassFromString(@"VPNConnectionStore");
+    SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
+    id store = TLinkVPNPrivateSendId((id)storeClass, sharedSelector);
+    if (!store && failure) *failure = @"vpn_private_store_unavailable";
+    return store;
+}
+
+static NSString *TLinkVPNPrivateServiceIdentifier(id service)
+{
+    typedef CFStringRef (*SCNetworkServiceGetServiceIDFn)(CFTypeRef service);
+    static SCNetworkServiceGetServiceIDFn function = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        function = (SCNetworkServiceGetServiceIDFn)dlsym(
+            RTLD_DEFAULT, "SCNetworkServiceGetServiceID");
+        if (!function) {
+            void *handle = dlopen(
+                "/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration",
+                RTLD_LAZY | RTLD_LOCAL);
+            if (handle) {
+                function = (SCNetworkServiceGetServiceIDFn)dlsym(
+                    handle, "SCNetworkServiceGetServiceID");
+            }
+        }
+    });
+    if (!function || !service) return @"";
+    CFStringRef identifier = function((__bridge CFTypeRef)service);
+    return [(__bridge NSString *)identifier isKindOfClass:[NSString class]]
+        ? (__bridge NSString *)identifier : @"";
+}
+
+static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store)
+{
+    id rawConfigurations = TLinkVPNPrivateSendId(
+        store, NSSelectorFromString(@"configurations"));
+    NSMutableArray<NSDictionary *> *records = [NSMutableArray array];
+    if ([rawConfigurations conformsToProtocol:@protocol(NSFastEnumeration)]) {
+        for (id configuration in rawConfigurations) {
+            id rawName = TLinkVPNPrivateSendId(configuration, @selector(name));
+            id rawIdentifier = TLinkVPNPrivateSendId(
+                configuration, @selector(identifier));
+            NSString *name = [rawName isKindOfClass:[NSString class]]
+                ? rawName : @"";
+            NSString *identifier =
+                TLinkVPNPrivateIdentifierString(rawIdentifier);
+            if (name.length == 0 || identifier.length == 0) continue;
+            [records addObject:@{
+                @"name": name,
+                @"identifier": identifier,
+                @"raw_identifier": rawIdentifier,
+            }];
+        }
+    }
+    if (records.count > 0) return records;
+
+    Class storeClass = [store class];
+    id names = TLinkVPNPrivateSendId(
+        (id)storeClass,
+        NSSelectorFromString(@"createAllVPNByUserDefinedNamesDictionary"));
+    if ([names isKindOfClass:[NSDictionary class]]) {
+        [(NSDictionary *)names enumerateKeysAndObjectsUsingBlock:
+            ^(id rawName, id service, BOOL *stop) {
+            (void)stop;
+            NSString *name = [rawName isKindOfClass:[NSString class]]
+                ? rawName : @"";
+            NSString *identifier =
+                TLinkVPNPrivateServiceIdentifier(service);
+            if (name.length == 0 || identifier.length == 0) return;
+            [records addObject:@{
+                @"name": name,
+                @"identifier": identifier,
+                @"raw_identifier": identifier,
+            }];
+        }];
+    }
+    return records;
+}
+
+static NSDictionary *TLinkVPNPrivateFindConfiguration(
+    id store,
+    NSString *name,
+    NSString *identifier)
+{
+    for (NSDictionary *record in
+         TLinkVPNPrivateConfigurationRecords(store)) {
+        BOOL nameMatches = name.length > 0 &&
+            [record[@"name"] isEqualToString:name];
+        BOOL identifierMatches = identifier.length > 0 &&
+            [record[@"identifier"] isEqualToString:identifier];
+        if ((name.length == 0 || nameMatches) &&
+            (identifier.length == 0 || identifierMatches)) {
+            return record;
+        }
+    }
+    return nil;
+}
+
+static NSDictionary *TLinkVPNPrivateLoadMarker(void)
+{
+    NSDictionary *marker = [NSDictionary
+        dictionaryWithContentsOfFile:kTLinkVPNPrivateMarkerPath];
+    if (![marker isKindOfClass:[NSDictionary class]] ||
+        [marker[@"version"] integerValue] != 1 ||
+        ![marker[@"backend"] isEqualToString:
+            @"vpnconnectionstore_private"] ||
+        ![marker[@"name"] isKindOfClass:[NSString class]] ||
+        ![marker[@"name"] hasPrefix:kTLinkVPNPrivateNamePrefix] ||
+        ![marker[@"identifier"] isKindOfClass:[NSString class]] ||
+        [marker[@"identifier"] length] == 0) {
+        return nil;
+    }
+    return marker;
+}
+
+static BOOL TLinkVPNPrivateWriteMarker(
+    NSDictionary *record,
+    NSString **failure)
+{
+    NSString *directory =
+        [kTLinkVPNPrivateMarkerPath stringByDeletingLastPathComponent];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSError *directoryError = nil;
+    if (![fm createDirectoryAtPath:directory
+       withIntermediateDirectories:YES
+                        attributes:@{NSFilePosixPermissions: @0700}
+                             error:&directoryError]) {
+        if (failure) *failure = [NSString stringWithFormat:
+            @"vpn_private_marker_directory_failed %@",
+            directoryError.localizedDescription ?: @"unknown"];
+        return NO;
+    }
+
+    NSDictionary *marker = @{
+        @"version": @1,
+        @"backend": @"vpnconnectionstore_private",
+        @"name": record[@"name"] ?: @"",
+        @"identifier": record[@"identifier"] ?: @"",
+        @"selected_by_tlink": @1,
+        @"updated_at": @([[NSDate date] timeIntervalSince1970]),
+    };
+    if (![marker writeToFile:kTLinkVPNPrivateMarkerPath atomically:YES]) {
+        if (failure) *failure = @"vpn_private_marker_write_failed";
+        return NO;
+    }
+    NSError *attributeError = nil;
+    if (![fm setAttributes:@{NSFilePosixPermissions: @0600}
+                    ofItemAtPath:kTLinkVPNPrivateMarkerPath
+                           error:&attributeError]) {
+        [fm removeItemAtPath:kTLinkVPNPrivateMarkerPath error:nil];
+        if (failure) *failure = [NSString stringWithFormat:
+            @"vpn_private_marker_permissions_failed %@",
+            attributeError.localizedDescription ?: @"unknown"];
+        return NO;
+    }
+    return YES;
+}
+
+static BOOL TLinkVPNPrivateSelectConfiguration(
+    id store,
+    NSDictionary *record)
+{
+    id identifier = record[@"raw_identifier"] ?: record[@"identifier"];
+    SEL selector = NSSelectorFromString(@"setActiveVPNID:");
+    if ([store respondsToSelector:selector]) {
+        ((void (*)(id, SEL, id))objc_msgSend)(store, selector, identifier);
+        if ([identifier respondsToSelector:@selector(UUIDString)]) {
+            ((void (*)(id, SEL, id))objc_msgSend)(
+                store, selector,
+                TLinkVPNPrivateIdentifierString(identifier));
+        }
+        return YES;
+    }
+    selector = NSSelectorFromString(@"setActiveVPNID:withGrade:");
+    if ([store respondsToSelector:selector]) {
+        ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(
+            store, selector, identifier, 0);
+        if ([identifier respondsToSelector:@selector(UUIDString)]) {
+            ((void (*)(id, SEL, id, NSInteger))objc_msgSend)(
+                store, selector,
+                TLinkVPNPrivateIdentifierString(identifier), 0);
+        }
+        return YES;
+    }
+    return NO;
+}
+
+static id TLinkVPNPrivateCurrentConnection(id store)
+{
+    SEL selector = NSSelectorFromString(@"currentConnection");
+    if ([store respondsToSelector:selector]) {
+        return TLinkVPNPrivateSendId(store, selector);
+    }
+    selector = NSSelectorFromString(@"currentConnectionWithGrade:");
+    if ([store respondsToSelector:selector]) {
+        return ((id (*)(id, SEL, NSInteger))objc_msgSend)(
+            store, selector, 0);
+    }
+    return nil;
+}
+
+static NSString *TLinkVPNPrivateConnectionStatus(id connection)
+{
+    if (!connection) return @"invalid";
+    if (TLinkVPNPrivateSendBool(
+            connection, NSSelectorFromString(@"connected"))) {
+        return @"connected";
+    }
+    if (TLinkVPNPrivateSendBool(
+            connection, NSSelectorFromString(@"disconnected"))) {
+        return @"disconnected";
+    }
+    id rawText = TLinkVPNPrivateSendId(
+        connection, NSSelectorFromString(@"statusText"));
+    NSString *text = [rawText isKindOfClass:[NSString class]]
+        ? [rawText lowercaseString] : @"";
+    if ([text containsString:@"disconnecting"]) return @"disconnecting";
+    if ([text containsString:@"connecting"]) return @"connecting";
+    if ([text containsString:@"connected"]) return @"connected";
+    if ([text containsString:@"disconnect"]) return @"disconnected";
+    return text.length > 0 ? text : @"unknown";
+}
+
+static NSDictionary *TLinkVPNPrivateStatusFields(
+    NSDictionary *marker,
+    NSString *status)
+{
+    BOOL connected = [status isEqualToString:@"connected"];
+    return @{
+        @"profile_owned": @1,
+        @"configured": @1,
+        @"enabled": @1,
+        @"on_demand_enabled": @0,
+        @"on_demand_rule_count": @0,
+        @"on_demand_mode": @"unsupported_private_backend",
+        @"connection_status": status ?: @"unknown",
+        @"connected": @(connected),
+        @"profile_identifier": marker[@"identifier"] ?: @"",
+        @"profile_name": marker[@"name"] ?: @"",
+        @"backend": @"vpnconnectionstore_private",
+    };
+}
+
+static NSDictionary *TLinkVPNPrivateReadStatusSync(void)
+{
+    NSDictionary *marker = TLinkVPNPrivateLoadMarker();
+    if (!marker) {
+        return TLinkVPNResult(false, @"vpn_not_configured",
+            @{@"private_backend_available": @1});
+    }
+    NSString *failure = nil;
+    id store = TLinkVPNPrivateStore(&failure);
+    if (!store) return TLinkVPNResult(false,
+        failure ?: @"vpn_private_store_unavailable", nil);
+    NSDictionary *record = TLinkVPNPrivateFindConfiguration(
+        store, marker[@"name"], marker[@"identifier"]);
+    if (!record) return TLinkVPNResult(false,
+        @"vpn_private_owned_profile_missing", nil);
+    id connection = [marker[@"selected_by_tlink"] boolValue]
+        ? TLinkVPNPrivateCurrentConnection(store) : nil;
+    return TLinkVPNResult(true, @"ok",
+        TLinkVPNPrivateStatusFields(
+            marker, TLinkVPNPrivateConnectionStatus(connection)));
+}
+
+static BOOL TLinkVPNPrivateDeleteConfiguration(
+    id store,
+    NSDictionary *record)
+{
+    id identifier = record[@"raw_identifier"] ?: record[@"identifier"];
+    SEL selector = NSSelectorFromString(@"deleteVPNWithServiceID:");
+    if ([store respondsToSelector:selector]) {
+        BOOL deleted = ((BOOL (*)(id, SEL, id))objc_msgSend)(
+            store, selector, identifier);
+        if (!deleted && [identifier respondsToSelector:@selector(UUIDString)]) {
+            deleted = ((BOOL (*)(id, SEL, id))objc_msgSend)(
+                store, selector,
+                TLinkVPNPrivateIdentifierString(identifier));
+        }
+        return deleted;
+    }
+    selector = NSSelectorFromString(@"deleteVPNWithServiceID:withGrade:");
+    if ([store respondsToSelector:selector]) {
+        BOOL deleted = ((BOOL (*)(id, SEL, id, NSInteger))objc_msgSend)(
+            store, selector, identifier, 0);
+        if (!deleted && [identifier respondsToSelector:@selector(UUIDString)]) {
+            deleted = ((BOOL (*)(id, SEL, id, NSInteger))objc_msgSend)(
+                store, selector,
+                TLinkVPNPrivateIdentifierString(identifier), 0);
+        }
+        return deleted;
+    }
+    return NO;
+}
+
+static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
+    NSString *server,
+    NSString *remote,
+    NSString *user,
+    NSString *password)
+{
+    NSString *failure = nil;
+    id store = TLinkVPNPrivateStore(&failure);
+    if (!store) return TLinkVPNResult(false,
+        failure ?: @"vpn_private_store_unavailable",
+        @{@"private_backend_available": @0});
+
+    SEL createSelector = NSSelectorFromString(@"createVPNWithOptions:");
+    Class storeClass = [store class];
+    BOOL canList =
+        [store respondsToSelector:NSSelectorFromString(@"configurations")] ||
+        [storeClass respondsToSelector:NSSelectorFromString(
+            @"createAllVPNByUserDefinedNamesDictionary")];
+    if (![store respondsToSelector:createSelector] || !canList) {
+        return TLinkVPNResult(false,
+            @"vpn_private_required_selectors_missing",
+            @{@"private_backend_available": @0});
+    }
+
+    NSDictionary *oldMarker = TLinkVPNPrivateLoadMarker();
+    NSString *profileName = [kTLinkVPNPrivateNamePrefix
+        stringByAppendingString:[[NSUUID UUID] UUIDString]];
+    NSDictionary *options = @{
+        @"VPNType": @"IKEv2",
+        @"VPNGrade": @0,
+        @"dispName": profileName,
+        @"name": profileName,
+        @"server": server,
+        @"serverAddress": server,
+        @"username": user,
+        @"password": password,
+        @"VPNLocalIdentifier": user,
+        @"VPNRemoteIdentifier": remote,
+        @"VPNRemotedentifier": remote,
+        @"eapType": @1,
+        @"authType": @1,
+        @"encrypLevel": @1,
+        @"VPNSendAllTraffic": @1,
+        @"group": @"",
+        @"secret": @"",
+        @"securID": @0,
+    };
+    uintptr_t created = ((uintptr_t (*)(id, SEL, id))objc_msgSend)(
+        store, createSelector, options);
+    if (created == 0) {
+        return TLinkVPNResult(false, @"vpn_private_create_failed",
+            @{@"private_backend_available": @1});
+    }
+
+    NSDictionary *newRecord = TLinkVPNPrivateFindConfiguration(
+        store, profileName, @"");
+    if (!newRecord) {
+        return TLinkVPNResult(false,
+            @"vpn_private_create_verification_failed",
+            @{@"private_backend_available": @1});
+    }
+    if (!TLinkVPNPrivateSelectConfiguration(store, newRecord) ||
+        !TLinkVPNPrivateCurrentConnection(store)) {
+        TLinkVPNPrivateDeleteConfiguration(store, newRecord);
+        return TLinkVPNResult(false,
+            @"vpn_private_select_verification_failed",
+            @{@"private_backend_available": @1});
+    }
+    if (!TLinkVPNPrivateWriteMarker(newRecord, &failure)) {
+        TLinkVPNPrivateDeleteConfiguration(store, newRecord);
+        return TLinkVPNResult(false,
+            failure ?: @"vpn_private_marker_write_failed",
+            @{@"private_backend_available": @1});
+    }
+
+    BOOL oldProfileRemoved = NO;
+    if (oldMarker &&
+        ![oldMarker[@"identifier"] isEqualToString:newRecord[@"identifier"]]) {
+        NSDictionary *oldRecord = TLinkVPNPrivateFindConfiguration(
+            store, oldMarker[@"name"], oldMarker[@"identifier"]);
+        if (oldRecord &&
+            [oldRecord[@"name"] hasPrefix:kTLinkVPNPrivateNamePrefix]) {
+            oldProfileRemoved =
+                TLinkVPNPrivateDeleteConfiguration(store, oldRecord);
+        }
+    }
+    NSMutableDictionary *fields = [[TLinkVPNPrivateStatusFields(
+        @{ @"name": newRecord[@"name"],
+           @"identifier": newRecord[@"identifier"] },
+        @"disconnected") mutableCopy];
+    fields[@"private_backend_available"] = @1;
+    fields[@"old_owned_profile_removed"] = @(oldProfileRemoved);
+    fields[@"mutating_api_exercised"] = @1;
+    return TLinkVPNResult(true, @"vpn_private_profile_saved", fields);
+}
+
+static NSDictionary *TLinkVPNPrivateSetConnectedSync(
+    BOOL connected,
+    NSTimeInterval timeout)
+{
+    NSDictionary *marker = TLinkVPNPrivateLoadMarker();
+    if (!marker) return TLinkVPNResult(false,
+        @"vpn_not_configured", nil);
+    NSString *failure = nil;
+    id store = TLinkVPNPrivateStore(&failure);
+    if (!store) return TLinkVPNResult(false,
+        failure ?: @"vpn_private_store_unavailable", nil);
+    NSDictionary *record = TLinkVPNPrivateFindConfiguration(
+        store, marker[@"name"], marker[@"identifier"]);
+    if (!record) return TLinkVPNResult(false,
+        @"vpn_private_owned_profile_missing", nil);
+    if (!TLinkVPNPrivateSelectConfiguration(store, record)) {
+        return TLinkVPNResult(false,
+            @"vpn_private_select_failed", nil);
+    }
+    id connection = TLinkVPNPrivateCurrentConnection(store);
+    if (!connection) return TLinkVPNResult(false,
+        @"vpn_private_connection_unavailable", nil);
+
+    NSString *status = TLinkVPNPrivateConnectionStatus(connection);
+    NSString *target = connected ? @"connected" : @"disconnected";
+    if ([status isEqualToString:target]) {
+        return TLinkVPNResult(true,
+            connected ? @"vpn_connected" : @"vpn_disconnected",
+            TLinkVPNPrivateStatusFields(marker, status));
+    }
+
+    SEL action = NSSelectorFromString(connected ? @"connect" : @"disconnect");
+    if (![connection respondsToSelector:action]) {
+        return TLinkVPNResult(false,
+            @"vpn_private_connection_action_missing", nil);
+    }
+    ((void (*)(id, SEL))objc_msgSend)(connection, action);
+
+    NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] +
+        MIN(MAX(timeout, 5.0), 30.0);
+    do {
+        usleep(100000);
+        connection = TLinkVPNPrivateCurrentConnection(store);
+        status = TLinkVPNPrivateConnectionStatus(connection);
+        if ([status isEqualToString:target]) {
+            return TLinkVPNResult(true,
+                connected ? @"vpn_connected" : @"vpn_disconnected",
+                TLinkVPNPrivateStatusFields(marker, status));
+        }
+    } while ([NSDate timeIntervalSinceReferenceDate] < deadline);
+
+    return TLinkVPNResult(false, @"vpn_private_transition_timeout",
+        TLinkVPNPrivateStatusFields(marker, status));
+}
+#endif
 
 static NSData *TLinkVPNStorePassword(
     NSString *password,
@@ -170,6 +677,33 @@ void TLinkVPNReadManagerStatus(TLinkVPNResultCompletion completion)
     dispatch_async(dispatch_get_main_queue(), ^{
         NEVPNManager *manager = [NEVPNManager sharedManager];
         [manager loadFromPreferencesWithCompletionHandler:^(NSError *error) {
+            if (!error && TLinkVPNManagerIsOwned(manager)) {
+                TLinkVPNComplete(completion, TLinkVPNStatusResult(manager));
+                return;
+            }
+#if TLINK_VPN_TROLLSTORE_RUNTIME
+            dispatch_async(TLinkVPNPrivateQueue(), ^{
+                NSDictionary *privateStatus =
+                    TLinkVPNPrivateReadStatusSync();
+                if ([privateStatus[@"ok"] boolValue]) {
+                    TLinkVPNComplete(completion, privateStatus);
+                    return;
+                }
+                if (error) {
+                    TLinkVPNComplete(completion, TLinkVPNResult(false,
+                        @"vpn_load_preferences_failed",
+                        @{
+                            @"native_error":
+                                error.localizedDescription ?: @"",
+                            @"private_error":
+                                privateStatus[@"code"] ?: @"unknown",
+                        }));
+                    return;
+                }
+                TLinkVPNComplete(completion,
+                    TLinkVPNStatusResult(manager));
+            });
+#else
             if (error) {
                 TLinkVPNComplete(completion, TLinkVPNResult(false,
                     @"vpn_load_preferences_failed",
@@ -177,6 +711,7 @@ void TLinkVPNReadManagerStatus(TLinkVPNResultCompletion completion)
                 return;
             }
             TLinkVPNComplete(completion, TLinkVPNStatusResult(manager));
+#endif
         }];
     });
 }
@@ -220,7 +755,8 @@ void TLinkVPNConfigureIKEv2(
         return;
     }
 
-    dispatch_async(dispatch_get_main_queue(), ^{
+    void (^configureWithNEVPNManager)(void) = ^{
+      dispatch_async(dispatch_get_main_queue(), ^{
         NEVPNManager *manager = [NEVPNManager sharedManager];
         [manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
             if (loadError) {
@@ -284,7 +820,25 @@ void TLinkVPNConfigureIKEv2(
                 }];
             }];
         }];
+      });
+    };
+
+#if TLINK_VPN_TROLLSTORE_RUNTIME
+    dispatch_async(TLinkVPNPrivateQueue(), ^{
+        NSDictionary *privateResult =
+            TLinkVPNPrivateConfigureIKEv2Sync(
+                server, remote, user, password);
+        if ([privateResult[@"private_backend_available"] boolValue]) {
+            // Do not surprise the user with an iOS confirmation sheet after
+            // the compatible private backend was actually available.
+            TLinkVPNComplete(completion, privateResult);
+            return;
+        }
+        configureWithNEVPNManager();
     });
+#else
+    configureWithNEVPNManager();
+#endif
 }
 
 void TLinkVPNSetOnDemandEnabled(
@@ -301,8 +855,22 @@ void TLinkVPNSetOnDemandEnabled(
                 return;
             }
             if (!TLinkVPNManagerIsOwned(manager)) {
+#if TLINK_VPN_TROLLSTORE_RUNTIME
+                dispatch_async(TLinkVPNPrivateQueue(), ^{
+                    NSDictionary *privateStatus =
+                        TLinkVPNPrivateReadStatusSync();
+                    TLinkVPNComplete(completion,
+                        [privateStatus[@"ok"] boolValue]
+                            ? TLinkVPNResult(false,
+                                @"vpn_private_on_demand_unsupported",
+                                privateStatus)
+                            : TLinkVPNResult(false,
+                                @"vpn_not_configured", nil));
+                });
+#else
                 TLinkVPNComplete(completion,
                     TLinkVPNResult(false, @"vpn_not_configured", nil));
+#endif
                 return;
             }
 
@@ -356,15 +924,37 @@ void TLinkVPNSetConnected(
     dispatch_async(dispatch_get_main_queue(), ^{
         NEVPNManager *manager = [NEVPNManager sharedManager];
         [manager loadFromPreferencesWithCompletionHandler:^(NSError *loadError) {
-            if (loadError) {
-                TLinkVPNComplete(completion, TLinkVPNResult(false,
-                    @"vpn_load_preferences_failed",
-                    @{@"native_error": loadError.localizedDescription ?: @""}));
-                return;
-            }
-            if (!TLinkVPNManagerIsOwned(manager)) {
+            if (loadError || !TLinkVPNManagerIsOwned(manager)) {
+#if TLINK_VPN_TROLLSTORE_RUNTIME
+                dispatch_async(TLinkVPNPrivateQueue(), ^{
+                    NSDictionary *privateResult =
+                        TLinkVPNPrivateSetConnectedSync(
+                            connected, boundedTimeout);
+                    if (loadError &&
+                        [privateResult[@"code"] isEqualToString:
+                            @"vpn_not_configured"]) {
+                        TLinkVPNComplete(completion, TLinkVPNResult(false,
+                            @"vpn_load_preferences_failed",
+                            @{
+                                @"native_error":
+                                    loadError.localizedDescription ?: @"",
+                                @"private_error":
+                                    privateResult[@"code"] ?: @"unknown",
+                            }));
+                        return;
+                    }
+                    TLinkVPNComplete(completion, privateResult);
+                });
+#else
                 TLinkVPNComplete(completion,
-                    TLinkVPNResult(false, @"vpn_not_configured", nil));
+                    loadError
+                        ? TLinkVPNResult(false,
+                            @"vpn_load_preferences_failed",
+                            @{@"native_error":
+                                loadError.localizedDescription ?: @""})
+                        : TLinkVPNResult(false,
+                            @"vpn_not_configured", nil));
+#endif
                 return;
             }
             if (!manager.enabled) {

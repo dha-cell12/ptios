@@ -6594,13 +6594,13 @@ static NSData *TLinkHandleHelloStatus(void)
         @"vpnState": @"background_control",
         @"vpnQuery": @"agent_6016_app_6015_interface_fallback",
         @"vpnControl": @"agent_6016_with_foreground_fallback",
-        @"vpnBackend": @"nevpnmanager_ikev2_background_agent",
+        @"vpnBackend": @"hybrid_nevpnmanager_vpnconnectionstore_private",
         @"vpnBroker": @"vpnagent_6016_then_StreamControl_6015",
         @"vpnProfileScope": @"tlink_owned_only",
         @"vpnConfigurationTransport": @"local_ui_keychain_only",
         @"vpnCredentialsOverTask59": @(NO),
         @"vpnPhase": @5,
-        @"vpnBackgroundAgent": @"validated_mobile_process_v2",
+        @"vpnBackgroundAgent": @"candidate_mobile_process_v3_private_compat",
         @"vpnOnDemand": @"local_ui_connect_all_networks",
         @"vpnDisconnectPolicy": @"explicit_disconnect_disables_on_demand",
         @"vpnDiagnostics": @"task59_action2_base64_json_v1",
@@ -8136,7 +8136,7 @@ static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
         @"background_control",
         @"agent_6016_app_6015_interface_fallback",
         @"agent_6016_with_foreground_fallback",
-        @"nevpnmanager_ikev2_background_agent",
+        @"hybrid_nevpnmanager_vpnconnectionstore_private",
         @"vpnagent_6016_then_StreamControl_6015",
         effectiveConnected) mutableCopy];
     diagnostics[@"phase"] = @5;
@@ -9063,9 +9063,9 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByReplacingOccurrencesOfString:@"vpnQuery,shellTaskGated"
                                              withString:@"vpnQuery,vpnControl,vpnOnDemand,shellTaskGated"];
         cap = [cap stringByAppendingString:@" vpnState=background_control vpnQuery=agent_6016_app_6015_interface_fallback"];
-        cap = [cap stringByAppendingString:@" vpnControl=agent_6016_with_foreground_fallback vpnBackend=nevpnmanager_ikev2_background_agent"];
+        cap = [cap stringByAppendingString:@" vpnControl=agent_6016_with_foreground_fallback vpnBackend=hybrid_nevpnmanager_vpnconnectionstore_private"];
         cap = [cap stringByAppendingString:@" vpnBroker=vpnagent_6016_then_StreamControl_6015"];
-        cap = [cap stringByAppendingString:@" vpnPhase=5 vpnBackgroundAgent=validated_mobile_process_v2"];
+        cap = [cap stringByAppendingString:@" vpnPhase=5 vpnBackgroundAgent=candidate_mobile_process_v3_private_compat"];
         cap = [cap stringByAppendingString:@" vpnOnDemand=local_ui_connect_all_networks"];
         cap = [cap stringByAppendingString:@" vpnDisconnectPolicy=explicit_disconnect_disables_on_demand"];
         cap = [cap stringByAppendingString:@" vpnDiagnostics=task59_action2_base64_json_v1"];

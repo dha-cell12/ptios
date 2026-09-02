@@ -254,7 +254,7 @@
     [defaults setObject:remote forKey:@"TLinkVPNRemoteIdentifier"];
     [defaults setObject:username forKey:@"TLinkVPNUsername"];
 
-    self.statusLabel.text = @"Saving profile; approve the iOS VPN prompt if shown…";
+    self.statusLabel.text = @"Saving TLink-owned profile with the private no-consent backend…";
     TLinkVPNConfigureIKEv2(
         server,
         remote,

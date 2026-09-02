@@ -135,6 +135,8 @@ static NSDictionary *TLinkVPNPrivateCompatibilityProbe(BOOL allowVPN)
             @"store_class_available": @0,
             @"shared_store_available": @0,
             @"create_profile_selector": @0,
+            @"list_profiles_selector": @0,
+            @"delete_profile_selector": @0,
             @"select_profile_selector": @0,
             @"connection_selector": @0,
             @"candidate_ready": @0,
@@ -164,6 +166,17 @@ static NSDictionary *TLinkVPNPrivateCompatibilityProbe(BOOL allowVPN)
         BOOL createProfile = store &&
             [store respondsToSelector:
                 NSSelectorFromString(@"createVPNWithOptions:")];
+        BOOL listProfiles = store &&
+            ([store respondsToSelector:
+                NSSelectorFromString(@"configurations")] ||
+             [storeClass respondsToSelector:
+                NSSelectorFromString(
+                    @"createAllVPNByUserDefinedNamesDictionary")]);
+        BOOL deleteProfile = store &&
+            ([store respondsToSelector:
+                NSSelectorFromString(@"deleteVPNWithServiceID:")] ||
+             [store respondsToSelector:
+                NSSelectorFromString(@"deleteVPNWithServiceID:withGrade:")]);
         BOOL selectProfile = store &&
             ([store respondsToSelector:NSSelectorFromString(@"setActiveVPNID:")] ||
              [store respondsToSelector:
@@ -181,12 +194,16 @@ static NSDictionary *TLinkVPNPrivateCompatibilityProbe(BOOL allowVPN)
             @"store_class_available": @(storeClass != Nil),
             @"shared_store_available": @(store != nil),
             @"create_profile_selector": @(createProfile),
+            @"list_profiles_selector": @(listProfiles),
+            @"delete_profile_selector": @(deleteProfile),
             @"select_profile_selector": @(selectProfile),
             @"connection_selector": @(connection),
             @"candidate_ready":
-                @(bundleLoaded && store && createProfile &&
+                @(bundleLoaded && store && createProfile && listProfiles &&
                   selectProfile && connection),
-            @"mutating_api_exercised": @0,
+            @"mutating_api_exercised": @([[NSFileManager defaultManager]
+                fileExistsAtPath:
+                    @"/var/mobile/Library/TLinkauto/config/vpn-private-owned.plist"]),
             @"probe_skipped": @"",
             @"load_error": loadError.localizedDescription ?: @"",
         };

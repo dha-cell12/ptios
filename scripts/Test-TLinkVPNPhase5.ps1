@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$HostIP,
     [int]$Port = 6000,
+    [switch]$RequirePrivateProfile,
     [switch]$RunConnect,
     [switch]$RunDisconnect
 )
@@ -51,6 +52,7 @@ $capability = Invoke-TLinkVPNTask -Task "97"
 if ($capability -notlike "0;;*" -or
     $capability -notlike "*vpnPhase=5*" -or
     $capability -notlike "*vpnState=background_control*" -or
+    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v3_private_compat*" -or
     $capability -notlike "*vpnBroker=vpnagent_6016_then_StreamControl_6015*") {
     throw "Task 97 does not report TrollStore VPN P5: $capability"
 }
@@ -64,11 +66,18 @@ Assert-Equal $diagnostics.state "background_control" "state"
 Assert-Equal $diagnostics.diagnostics_source "background_vpnagent" "diagnostics source"
 Assert-Equal ([bool]$diagnostics.broker_ready) $true "background agent readiness"
 Assert-Equal ([bool]$diagnostics.entitlements.allow_vpn) $true "allow-vpn entitlement"
-Assert-Equal $diagnostics.agent_version 2 "vpnagent version"
+Assert-Equal $diagnostics.agent_version 3 "vpnagent version"
 Assert-Equal $diagnostics.process_uid 501 "vpnagent uid"
 Assert-Equal $diagnostics.process_euid 501 "vpnagent euid"
 Assert-Equal $diagnostics.process_gid 501 "vpnagent gid"
 Assert-Equal $diagnostics.process_egid 501 "vpnagent egid"
+Assert-Equal ([bool]$diagnostics.private_compatibility.candidate_ready) $true "private VPN candidate"
+
+if ($RequirePrivateProfile) {
+    Assert-Equal ([bool]$diagnostics.private_compatibility.mutating_api_exercised) $true "private profile marker"
+    Assert-Equal ([bool]$diagnostics.manager_status.configured) $true "private profile configured"
+    Assert-Equal $diagnostics.manager_status.backend "vpnconnectionstore_private" "private manager backend"
+}
 
 $query = Invoke-TLinkVPNTask -Task "590"
 if ($query -notin @("0;;0", "0;;1")) { throw "VPN query failed: $query" }
@@ -106,6 +115,9 @@ if ($RunConnect -or $RunDisconnect) {
     private_candidate_ready = $diagnostics.private_compatibility.candidate_ready
     private_mutating_api_exercised = $diagnostics.private_compatibility.mutating_api_exercised
     private_load_error = $diagnostics.private_compatibility.load_error
+    manager_backend = $diagnostics.manager_status.backend
+    profile_identifier = $diagnostics.manager_status.profile_identifier
+    private_profile_required = [bool]$RequirePrivateProfile
     connect_test_run = [bool]$RunConnect
     disconnect_test_run = [bool]$RunDisconnect
 } | Format-List
