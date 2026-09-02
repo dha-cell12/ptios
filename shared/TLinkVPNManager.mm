@@ -546,7 +546,7 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
                 TLinkVPNPrivateDeleteConfiguration(store, oldRecord);
         }
     }
-    NSMutableDictionary *fields = [[TLinkVPNPrivateStatusFields(
+    NSMutableDictionary *fields = [TLinkVPNPrivateStatusFields(
         @{ @"name": newRecord[@"name"],
            @"identifier": newRecord[@"identifier"] },
         @"disconnected") mutableCopy];
