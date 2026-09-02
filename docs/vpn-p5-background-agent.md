@@ -43,6 +43,22 @@ An explicit disconnect retains the P4 rule: disable on-demand before stopping
 the tunnel. Existing request and response shapes for `590`, `591;;0`,
 `591;;1`, and `592` remain unchanged.
 
+## XXTouch compatibility comparison
+
+XXTouch's `vpnconf` module loads the private
+`/System/Library/PreferenceBundles/VPNPreferences.bundle`, obtains
+`VPNConnectionStore.sharedInstance`, creates profiles with
+`createVPNWithOptions:`, selects them with `setActiveVPNID:` (or the graded
+variant), and drives the current connection directly. That explains why its
+profile bootstrap can avoid the normal `NEVPNManager` confirmation UI.
+
+TLink keeps the validated `NEVPNManager` backend as the active path because it
+has deterministic ownership, Keychain, and foreign-profile boundaries. Phase 5
+diagnostics now perform a non-mutating compatibility probe for the exact
+XXTouch selectors. `Test-TLinkVPNPhase5.ps1` reports `private_candidate_ready`
+and the individual selector results; `private_mutating_api_exercised` must stay
+false until a device-qualified, TLink-owned profile creation path is promoted.
+
 ## Capability contract
 
 Task 97 reports:

@@ -207,6 +207,7 @@ jobs:
           test -f test/fixtures/adaptive-streaming-v1.json
           test -f scripts/check-stream-capture-pipeline-v2.mjs
           test -f scripts/check-capture-image-optimization-v1.mjs
+          test -f scripts/Test-TLinkPhotoAutomation.ps1
           test -f scripts/Test-TLinkStreamCapturePipelineV2.ps1
           test -f scripts/Compare-TLinkStreamCapturePipeline.ps1
           test -f scripts/check-stream-rtc-control-v2.mjs

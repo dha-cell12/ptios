@@ -98,6 +98,14 @@ if ($RunConnect -or $RunDisconnect) {
     process_gid = $diagnostics.process_gid
     initial_connection_status = $initialConnectionStatus
     connection_status = $diagnostics.manager_status.connection_status
+    private_bundle_loaded = $diagnostics.private_compatibility.bundle_loaded
+    private_store_available = $diagnostics.private_compatibility.shared_store_available
+    private_create_selector = $diagnostics.private_compatibility.create_profile_selector
+    private_select_selector = $diagnostics.private_compatibility.select_profile_selector
+    private_connection_selector = $diagnostics.private_compatibility.connection_selector
+    private_candidate_ready = $diagnostics.private_compatibility.candidate_ready
+    private_mutating_api_exercised = $diagnostics.private_compatibility.mutating_api_exercised
+    private_load_error = $diagnostics.private_compatibility.load_error
     connect_test_run = [bool]$RunConnect
     disconnect_test_run = [bool]$RunDisconnect
 } | Format-List

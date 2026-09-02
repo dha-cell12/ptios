@@ -59,6 +59,15 @@
 extern "C" int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 extern char **environ;
 
+typedef struct __SecTask *SecTaskRef;
+extern "C" {
+SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator);
+CFTypeRef SecTaskCopyValueForEntitlement(
+    SecTaskRef task,
+    CFStringRef entitlement,
+    CFErrorRef *error);
+}
+
 static BOOL TLinkVPNInterfaceActive(void);
 static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
     NSNumber *effectiveConnected,
@@ -3539,6 +3548,35 @@ static CaptureOutcome *TLinkRunCaptureOnMain(void)
 
 static NSString *const kTLinkPhotoAlbumName = @"TLinkauto";
 
+static BOOL TLinkPrivatePhotoAccessEntitled(void)
+{
+    SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+    if (!task) return NO;
+
+    CFErrorRef entitlementError = NULL;
+    CFTypeRef rawValue = SecTaskCopyValueForEntitlement(
+        task,
+        CFSTR("com.apple.private.tcc.allow"),
+        &entitlementError);
+    CFRelease(task);
+
+    BOOL hasPhotos = NO;
+    BOOL hasPhotosAdd = NO;
+    if (rawValue) {
+        id value = (__bridge id)rawValue;
+        NSArray *values = [value isKindOfClass:[NSArray class]]
+            ? (NSArray *)value
+            : ([value isKindOfClass:[NSString class]] ? @[value] : @[]);
+        hasPhotos = [values containsObject:@"kTCCServiceAll"] ||
+                    [values containsObject:@"kTCCServicePhotos"];
+        hasPhotosAdd = [values containsObject:@"kTCCServiceAll"] ||
+                       [values containsObject:@"kTCCServicePhotosAdd"];
+        CFRelease(rawValue);
+    }
+    if (entitlementError) CFRelease(entitlementError);
+    return hasPhotos && hasPhotosAdd;
+}
+
 static NSString *TLinkPhotoAuthorizationStatusName(PHAuthorizationStatus status)
 {
     switch (status) {
@@ -3558,6 +3596,12 @@ static BOOL TLinkPhotoLibraryAuthorized(NSString **error)
         return NO;
     }
 
+    // XXTouch does not ask TCC interactively: its UI service carries the
+    // Photos and PhotosAdd private TCC grants. TrollStore preserves the same
+    // focused grants for streamd, which owns the album operation. Keep the
+    // public authorization path as a fail-safe for stripped entitlements.
+    if (TLinkPrivatePhotoAccessEntitled()) return YES;
+
     PHAuthorizationStatus status = PHAuthorizationStatusNotDetermined;
     if (@available(iOS 14.0, *)) {
         status = [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelReadWrite];
@@ -3571,7 +3615,7 @@ static BOOL TLinkPhotoLibraryAuthorized(NSString **error)
     if (error) {
         NSString *name = TLinkPhotoAuthorizationStatusName(status);
         if (status == PHAuthorizationStatusNotDetermined) {
-            *error = [NSString stringWithFormat:@"photo_permission_not_determined status=%@ open StreamControl.app Settings > Photo Access first", name];
+            *error = [NSString stringWithFormat:@"photo_permission_not_determined status=%@ private_tcc_entitlement_missing open StreamControl.app Settings > Photo Access", name];
         } else {
             *error = [NSString stringWithFormat:@"photo_permission_unavailable status=%@ grant Photos access in iOS Settings", name];
         }

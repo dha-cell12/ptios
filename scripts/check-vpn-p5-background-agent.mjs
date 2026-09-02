@@ -55,6 +55,12 @@ assert.match(entitlements, /StreamCtl\.com\.tlinkauto\.streamcontrol/);
 assert.doesNotMatch(entitlements, /packet-tunnel-provider/);
 assert.match(agentMakefile, /TLINK_VPN_TROLLSTORE_RUNTIME=1/);
 assert.match(agentMakefile, /NetworkExtension/);
+const diagnosticsSource = await read("shared/TLinkVPNDiagnostics.mm");
+assert.match(
+  diagnosticsSource,
+  /VPNPreferences\.bundle[\s\S]*VPNConnectionStore[\s\S]*createVPNWithOptions:[\s\S]*setActiveVPNID:/,
+);
+assert.match(diagnosticsSource, /mutating_api_exercised[^\n]*@0/);
 
 assert.match(aggregate, /vpnagent/);
 assert.match(aggregate, /ldid -Svpnagent\/entitlements\.plist/);
@@ -89,6 +95,8 @@ assert.match(artifact, /vpn_profile_bootstrap: "local_ui_keychain_once"/);
 assert.match(device, /background_vpnagent/);
 assert.match(device, /agent_version 2/);
 assert.match(device, /process_uid/);
+assert.match(device, /private_candidate_ready/);
+assert.match(device, /private_mutating_api_exercised/);
 assert.match(device, /vpnPhase=5/);
 assert.match(device, /initial_connection_status/);
 assert.match(doc, /foreground/i);

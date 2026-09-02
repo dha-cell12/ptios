@@ -219,6 +219,17 @@ assert.ok(
     appEntitlements.includes("StreamCtl.com.tlinkauto.streamcontrol"),
   "StreamControl is missing the TrollStore VPN Keychain group",
 );
+for (const [name, entitlements] of [
+  ["StreamControl", appEntitlements],
+  ["streamd", streamdEntitlements],
+]) {
+  assert.ok(
+    entitlements.includes("com.apple.private.tcc.allow") &&
+      entitlements.includes("kTCCServicePhotos") &&
+      entitlements.includes("kTCCServicePhotosAdd"),
+    `${name} is missing the signed zero-touch Photos TCC services`,
+  );
+}
 assert.ok(
   !streamdEntitlements.includes("com.apple.developer.networking.vpn.api") &&
     !streamdEntitlements.includes("com.apple.developer.networking.networkextension"),

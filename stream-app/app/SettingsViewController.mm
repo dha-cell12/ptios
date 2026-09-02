@@ -9,6 +9,37 @@
 #import <Photos/Photos.h>
 #import <UserNotifications/UserNotifications.h>
 
+typedef struct __SecTask *SecTaskRef;
+extern "C" {
+SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator);
+CFTypeRef SecTaskCopyValueForEntitlement(
+    SecTaskRef task,
+    CFStringRef entitlement,
+    CFErrorRef *error);
+}
+
+static BOOL TLinkAppHasAutomaticPhotoAccess(void)
+{
+    SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+    if (!task) return NO;
+    CFTypeRef rawValue = SecTaskCopyValueForEntitlement(
+        task,
+        CFSTR("com.apple.private.tcc.allow"),
+        NULL);
+    CFRelease(task);
+    if (!rawValue) return NO;
+    id value = (__bridge id)rawValue;
+    NSArray *values = [value isKindOfClass:[NSArray class]]
+        ? (NSArray *)value
+        : ([value isKindOfClass:[NSString class]] ? @[value] : @[]);
+    BOOL ready = ([values containsObject:@"kTCCServiceAll"] ||
+                  [values containsObject:@"kTCCServicePhotos"]) &&
+                 ([values containsObject:@"kTCCServiceAll"] ||
+                  [values containsObject:@"kTCCServicePhotosAdd"]);
+    CFRelease(rawValue);
+    return ready;
+}
+
 static NSString *const kTLinkSettingsConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/config.plist";
 static NSString *const kTLinkScriptPlayConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/script_play_settings.plist";
 static NSString *const kTLinkAppNotificationAuthorizationPath = @"/var/mobile/Library/TLinkauto/runtime/app_notification_authorization";
@@ -55,7 +86,7 @@ static NSString *const kTLinkUIServiceDiagnosticsPath = @"/var/mobile/Library/TL
         _sections = @[
             @[@"Capability Probe", @"Hello Status", @"Script Status", @"Capture Probe", @"Native Tap Center", @"Color Pick Center", @"Color Search Smoke", @"Frame Capture", @"OCR Languages", @"App Info Self", @"Frontmost App", @"List Bundles", @"Open Preferences", @"Open Settings URL", @"Toast Overlay", @"Alert Box", @"Dialog Overlay", @"Clear Dialog", @"Touch Indicator On", @"Touch Indicator Off", @"Keep Awake On", @"Keep Awake Off", @"Set Auto Launch", @"List Auto Launch", @"Set Timer Demo", @"Remove Timer Demo", @"Legacy Stop Script", @"Update Cache", @"Start Touch Recording", @"Stop Touch Recording", @"Rapid Tap Center", @"Stop Tap Macro", @"Hardware Key Home", @"Wi-Fi Status", @"Bluetooth Status", @"Airplane Status", @"Cellular Status", @"VPN Status", @"Photo Access", @"Export Diagnostics", @"Notification Access", @"Background Service Status", @"Remote Bridge Status", @"Widget Boot Wake Status", @"Volume Trigger Status", @"Show Volume Menu Test", @"Toast UI Service Status", @"Show Background Toast Test"],
             runtimeSettings,
-            @[@"Color/Image/Frame: active", @"Screenshot Album: Photos access required", @"Vision OCR: background UI-service direct inline canary; Tesseract stable", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background UI service", @"Toast: SBS accessibility-hosted window contexts", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: streamd-first + detached auxiliaries + clipboardd v16 + UI service v24", @"Volume Trigger: direct IOHID + system alert fallback", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: not required for volume trigger", @"Privhelper: open_kill_restart_ensure_respring"],
+            @[@"Color/Image/Frame: active", @"Screenshot Album: automatic TrollStore Photos TCC with public fallback", @"Vision OCR: background UI-service direct inline canary; Tesseract stable", @"Script Runtime: javascriptcore_mvp", @"Script Files: shared openFile handles", @"Scheduler: streamd_lite + autolaunch", @"Background Start: BGTaskScheduler best effort", @"Touch Recording: iohid raw replay", @"Tap Macro: bounded async native tap", @"Hardware Key: hid keyboard event", @"Connectivity: best effort private framework", @"VPN: app-side IKEv2 + on-demand", @"Shell: gated local sh", @"Visual Feedback: foreground overlay + background UI service", @"Toast: SBS accessibility-hosted window contexts", @"Dialog: background CFUserNotification alert", @"Touch Indicator: foreground only", @"Keep Awake: daemon best effort", @"Service Mode: streamd-first + detached auxiliaries + clipboardd v16 + UI service v24", @"Volume Trigger: direct IOHID + system alert fallback", @"App/Process: helper launch/kill/url/respring", @"Keyboard: background clipboard + HID paste/edit", @"Activator: not required for volume trigger", @"Privhelper: open_kill_restart_ensure_respring"],
         ];
     } else {
         // Grouped like iOS Settings: Appearance · Account · Connectivity · Service · Runtime · Danger
@@ -386,6 +417,10 @@ static NSString *const kTLinkUIServiceDiagnosticsPath = @"/var/mobile/Library/TL
 
 - (void)requestPhotoAccess
 {
+    if (TLinkAppHasAutomaticPhotoAccess()) {
+        _resultView.text = @"Photos access: automatic (TrollStore private TCC: Photos + PhotosAdd). No manual approval is required.";
+        return;
+    }
     _resultView.text = @"Requesting Photos access...";
     void (^handler)(PHAuthorizationStatus) = ^(PHAuthorizationStatus status) {
         dispatch_async(dispatch_get_main_queue(), ^{

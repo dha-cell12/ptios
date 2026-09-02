@@ -4,6 +4,7 @@
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <stdint.h>
+#import <objc/message.h>
 
 typedef struct __SecTask *SecTaskRef;
 
@@ -120,6 +121,79 @@ static NSDictionary *TLinkVPNFrameworkProbe(void)
     };
 }
 
+static NSDictionary *TLinkVPNPrivateCompatibilityProbe(BOOL allowVPN)
+{
+    NSString *bundlePath =
+        @"/System/Library/PreferenceBundles/VPNPreferences.bundle";
+    if (!allowVPN) {
+        return @{
+            @"source": @"xxtouch_vpnconnectionstore_compatibility_probe",
+            @"bundle_path": bundlePath,
+            @"bundle_present": @([[NSFileManager defaultManager]
+                fileExistsAtPath:bundlePath]),
+            @"bundle_loaded": @0,
+            @"store_class_available": @0,
+            @"shared_store_available": @0,
+            @"create_profile_selector": @0,
+            @"select_profile_selector": @0,
+            @"connection_selector": @0,
+            @"candidate_ready": @0,
+            @"mutating_api_exercised": @0,
+            @"probe_skipped": @"allow_vpn_entitlement_missing",
+            @"load_error": @"",
+        };
+    }
+
+    static dispatch_once_t onceToken;
+    static NSDictionary *probe = nil;
+    dispatch_once(&onceToken, ^{
+        NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+        NSError *loadError = nil;
+        BOOL bundlePresent = bundle != nil;
+        BOOL bundleLoaded = bundlePresent &&
+            (bundle.loaded || [bundle loadAndReturnError:&loadError]);
+        Class storeClass = NSClassFromString(@"VPNConnectionStore");
+        BOOL sharedStore = storeClass &&
+            [storeClass respondsToSelector:NSSelectorFromString(@"sharedInstance")];
+        id store = nil;
+        if (sharedStore) {
+            store = ((id (*)(id, SEL))objc_msgSend)(
+                (id)storeClass,
+                NSSelectorFromString(@"sharedInstance"));
+        }
+        BOOL createProfile = store &&
+            [store respondsToSelector:
+                NSSelectorFromString(@"createVPNWithOptions:")];
+        BOOL selectProfile = store &&
+            ([store respondsToSelector:NSSelectorFromString(@"setActiveVPNID:")] ||
+             [store respondsToSelector:
+                 NSSelectorFromString(@"setActiveVPNID:withGrade:")]);
+        BOOL connection = store &&
+            ([store respondsToSelector:NSSelectorFromString(@"currentConnection")] ||
+             [store respondsToSelector:
+                 NSSelectorFromString(@"currentConnectionWithGrade:")]);
+
+        probe = @{
+            @"source": @"xxtouch_vpnconnectionstore_compatibility_probe",
+            @"bundle_path": bundlePath,
+            @"bundle_present": @(bundlePresent),
+            @"bundle_loaded": @(bundleLoaded),
+            @"store_class_available": @(storeClass != Nil),
+            @"shared_store_available": @(store != nil),
+            @"create_profile_selector": @(createProfile),
+            @"select_profile_selector": @(selectProfile),
+            @"connection_selector": @(connection),
+            @"candidate_ready":
+                @(bundleLoaded && store && createProfile &&
+                  selectProfile && connection),
+            @"mutating_api_exercised": @0,
+            @"probe_skipped": @"",
+            @"load_error": loadError.localizedDescription ?: @"",
+        };
+    });
+    return probe;
+}
+
 NSDictionary *TLinkVPNDiagnosticsSnapshot(
     NSString *runtime,
     NSString *state,
@@ -132,6 +206,8 @@ NSDictionary *TLinkVPNDiagnosticsSnapshot(
     NSDictionary *entitlements = TLinkVPNEntitlementProbe();
     NSDictionary *framework = TLinkVPNFrameworkProbe();
     BOOL allowVPN = [entitlements[@"allow_vpn"] boolValue];
+    NSDictionary *privateCompatibility =
+        TLinkVPNPrivateCompatibilityProbe(allowVPN);
     BOOL managerAvailable = [framework[@"manager_class_available"] boolValue];
     NSString *preflight = (allowVPN && managerAvailable)
         ? @"candidate_unverified"
@@ -163,6 +239,7 @@ NSDictionary *TLinkVPNDiagnosticsSnapshot(
         @"entitlement_probe_scope": @"current_process_only",
         @"entitlements": entitlements,
         @"network_extension": framework,
+        @"private_compatibility": privateCompatibility,
         @"control_preflight": preflight,
         @"generated_at_ms": @(generatedAtMs),
     };

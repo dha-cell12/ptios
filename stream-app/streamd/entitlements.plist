@@ -23,6 +23,17 @@
 	<false/>
 
 	<!-- ================================================================ -->
+	<!-- Photos automation: match the focused XXTUIService TCC grants.     -->
+	<!-- streamd owns task 29 album create/save/clear, so granting these   -->
+	<!-- here removes the foreground app permission bootstrap.             -->
+	<!-- ================================================================ -->
+	<key>com.apple.private.tcc.allow</key>
+	<array>
+		<string>kTCCServicePhotos</string>
+		<string>kTCCServicePhotosAdd</string>
+	</array>
+
+	<!-- ================================================================ -->
 	<!-- Group A: SCREEN CAPTURE (proven in poc-stream on iOS 15.8.8)       -->
 	<!-- ================================================================ -->
 	<key>com.apple.QuartzCore.global-capture</key>

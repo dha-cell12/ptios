@@ -5,12 +5,16 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFile(resolve(root, path), "utf8");
-const [captureHeader, capture, server, visionService, makefile] = await Promise.all([
+const [captureHeader, capture, server, visionService, makefile, appEntitlements, streamdEntitlements, settings, photoTest] = await Promise.all([
   read("stream-app/streamd/CaptureCore.h"),
   read("stream-app/streamd/CaptureCore.mm"),
   read("stream-app/streamd/POCSocketServer.mm"),
   read("stream-app/uiservice/VisionOCRService.mm"),
   read("stream-app/streamd/Makefile"),
+  read("stream-app/app/entitlements.plist"),
+  read("stream-app/streamd/entitlements.plist"),
+  read("stream-app/app/SettingsViewController.mm"),
+  read("scripts/Test-TLinkPhotoAutomation.ps1"),
 ]);
 
 assert.match(captureHeader, /runProductionCapture/);
@@ -49,4 +53,16 @@ assert.match(server, /TLinkFrameObject \*hayFrame[\s\S]*?hayFrame\.rgbaData/);
 assert.match(server, /imageMatch=multiscale_vimage_rgba_v2/);
 assert.match(makefile, /Accelerate/);
 
-console.log("Capture/image optimization v1 OK: production RGBA capture, raw OCR v4, and cached multi-scale vImage matching wired");
+for (const entitlements of [appEntitlements, streamdEntitlements]) {
+  assert.match(entitlements, /com\.apple\.private\.tcc\.allow/);
+  assert.match(entitlements, /kTCCServicePhotos/);
+  assert.match(entitlements, /kTCCServicePhotosAdd/);
+}
+assert.match(server, /TLinkPrivatePhotoAccessEntitled/);
+assert.match(server, /private_tcc_entitlement_missing/);
+assert.match(settings, /TLinkAppHasAutomaticPhotoAccess/);
+assert.match(settings, /No manual approval is required/);
+assert.match(photoTest, /291;;\$deviceImagePath/);
+assert.match(photoTest, /292;;\$deviceImagePath/);
+
+console.log("Capture/image optimization v1 OK: RGBA capture, raw OCR v4, vImage matching, and zero-touch Photos TCC wired");
