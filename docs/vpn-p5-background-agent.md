@@ -74,7 +74,7 @@ vpnControl=agent_6016_with_foreground_fallback
 vpnBackend=hybrid_nevpnmanager_vpnconnectionstore_private
 vpnBroker=vpnagent_6016_then_StreamControl_6015
 vpnPhase=5
-vpnBackgroundAgent=candidate_mobile_process_v3_private_compat
+vpnBackgroundAgent=candidate_mobile_process_v4_private_crash_safe
 ```
 
 Task 592 is authoritative only when

@@ -488,7 +488,11 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     NSString *profileName = [kTLinkVPNPrivateNamePrefix
         stringByAppendingString:[[NSUUID UUID] UUIDString]];
     NSDictionary *options = @{
-        @"VPNType": @"IKEv2",
+        // XXTouch translates the public string "IKEv2" through its private
+        // compatibility table before invoking VPNConnectionStore. The raw
+        // selector expects the resulting NSNumber value (IKEv2 = 4), not the
+        // source string; passing NSString can trigger an internal exception.
+        @"VPNType": @4,
         @"VPNGrade": @0,
         @"dispName": profileName,
         @"name": profileName,
@@ -610,6 +614,32 @@ static NSDictionary *TLinkVPNPrivateSetConnectedSync(
     return TLinkVPNResult(false, @"vpn_private_transition_timeout",
         TLinkVPNPrivateStatusFields(marker, status));
 }
+
+static NSDictionary *TLinkVPNPrivateRunSafely(
+    NSString *operation,
+    NSDictionary *(^work)(void))
+{
+    @try {
+        NSDictionary *result = work ? work() : nil;
+        return result ?: TLinkVPNResult(false,
+            @"vpn_private_empty_result",
+            @{@"private_backend_available": @1});
+    } @catch (NSException *exception) {
+        NSString *safeOperation = operation.length > 0
+            ? operation : @"operation";
+        NSString *code = [NSString stringWithFormat:
+            @"vpn_private_%@_exception", safeOperation];
+        NSLog(@"[TLinkVPN] private %@ exception %@: %@",
+              safeOperation,
+              exception.name ?: @"NSException",
+              exception.reason ?: @"unknown");
+        return TLinkVPNResult(false, code, @{
+            @"private_backend_available": @1,
+            @"exception_name": exception.name ?: @"NSException",
+            @"native_error": exception.reason ?: @"unknown",
+        });
+    }
+}
 #endif
 
 static NSData *TLinkVPNStorePassword(
@@ -684,7 +714,9 @@ void TLinkVPNReadManagerStatus(TLinkVPNResultCompletion completion)
 #if TLINK_VPN_TROLLSTORE_RUNTIME
             dispatch_async(TLinkVPNPrivateQueue(), ^{
                 NSDictionary *privateStatus =
-                    TLinkVPNPrivateReadStatusSync();
+                    TLinkVPNPrivateRunSafely(@"status", ^{
+                        return TLinkVPNPrivateReadStatusSync();
+                    });
                 if ([privateStatus[@"ok"] boolValue]) {
                     TLinkVPNComplete(completion, privateStatus);
                     return;
@@ -824,10 +856,12 @@ void TLinkVPNConfigureIKEv2(
     };
 
 #if TLINK_VPN_TROLLSTORE_RUNTIME
-    dispatch_async(TLinkVPNPrivateQueue(), ^{
+    void (^configureWithPrivateBackend)(void) = ^{
         NSDictionary *privateResult =
-            TLinkVPNPrivateConfigureIKEv2Sync(
-                server, remote, user, password);
+            TLinkVPNPrivateRunSafely(@"configure", ^{
+                return TLinkVPNPrivateConfigureIKEv2Sync(
+                    server, remote, user, password);
+            });
         if ([privateResult[@"private_backend_available"] boolValue]) {
             // Do not surprise the user with an iOS confirmation sheet after
             // the compatible private backend was actually available.
@@ -835,7 +869,16 @@ void TLinkVPNConfigureIKEv2(
             return;
         }
         configureWithNEVPNManager();
-    });
+    };
+    // VPNPreferences classes are UIKit/Preferences objects. Mutating them on
+    // their owning main thread avoids the assertion seen when Save Profile was
+    // dispatched to the background compatibility queue.
+    if ([NSThread isMainThread]) {
+        configureWithPrivateBackend();
+    } else {
+        dispatch_async(dispatch_get_main_queue(),
+            configureWithPrivateBackend);
+    }
 #else
     configureWithNEVPNManager();
 #endif
@@ -858,7 +901,9 @@ void TLinkVPNSetOnDemandEnabled(
 #if TLINK_VPN_TROLLSTORE_RUNTIME
                 dispatch_async(TLinkVPNPrivateQueue(), ^{
                     NSDictionary *privateStatus =
-                        TLinkVPNPrivateReadStatusSync();
+                        TLinkVPNPrivateRunSafely(@"status", ^{
+                            return TLinkVPNPrivateReadStatusSync();
+                        });
                     TLinkVPNComplete(completion,
                         [privateStatus[@"ok"] boolValue]
                             ? TLinkVPNResult(false,
@@ -928,8 +973,10 @@ void TLinkVPNSetConnected(
 #if TLINK_VPN_TROLLSTORE_RUNTIME
                 dispatch_async(TLinkVPNPrivateQueue(), ^{
                     NSDictionary *privateResult =
-                        TLinkVPNPrivateSetConnectedSync(
-                            connected, boundedTimeout);
+                        TLinkVPNPrivateRunSafely(@"connection", ^{
+                            return TLinkVPNPrivateSetConnectedSync(
+                                connected, boundedTimeout);
+                        });
                     if (loadError &&
                         [privateResult[@"code"] isEqualToString:
                             @"vpn_not_configured"]) {

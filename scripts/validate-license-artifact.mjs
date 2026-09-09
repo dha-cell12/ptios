@@ -135,12 +135,12 @@ assert.ok(appBinary.includes("vpn_on_demand_enabled"), "StreamControl lacks VPN 
 assert.ok(appBinary.includes("Auto-Reconnect (On Demand)"), "StreamControl lacks VPN P4 local UI evidence");
 assert.ok(streamdBinary.includes("vpnPhase=5"), "streamd lacks VPN P5 capability evidence");
 assert.ok(streamdBinary.includes("vpnState=background_control"), "streamd lacks promoted VPN P5 state evidence");
-assert.ok(streamdBinary.includes("vpnBackgroundAgent=candidate_mobile_process_v3_private_compat"), "streamd lacks VPN private compatibility candidate evidence");
+assert.ok(streamdBinary.includes("vpnBackgroundAgent=candidate_mobile_process_v4_private_crash_safe"), "streamd lacks VPN private crash-safe candidate evidence");
 assert.ok(streamdBinary.includes("vpnagent_6016_then_StreamControl_6015"), "streamd lacks VPN P5 routing evidence");
 assert.ok(streamdBinary.includes("direct_streamd_to_uiservice_no_worker_v1"), "streamd lacks direct Vision OCR dispatch evidence");
 assert.ok(streamdBinary.includes("inline_rgba8888_bounded_32mib_v2"), "streamd lacks bounded raw Vision OCR transport evidence");
 assert.ok(streamdBinary.includes("protocol3_inline_png_compat_only"), "streamd lacks Vision OCR compatibility fallback evidence");
-assert.ok(vpnagentBinary.includes("vpnagent_ready version=3 phase=5"), "vpnagent lacks P5 readiness evidence");
+assert.ok(vpnagentBinary.includes("vpnagent_ready version=4 phase=5"), "vpnagent lacks P5 readiness evidence");
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
 assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions"), "boot widget lacks the SpringBoardServices wake path");
@@ -301,7 +301,7 @@ const manifest = {
   service_version: 23,
   vpn_phase: 5,
   vpn_state: "background_control",
-  vpn_agent_version: 3,
+  vpn_agent_version: 4,
   vpn_profile_bootstrap: "private_no_consent_with_ne_fallback",
   config: {
     endpoint: expected.LicenseEndpoint,
