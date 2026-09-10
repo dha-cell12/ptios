@@ -9,7 +9,7 @@
     "port": 6016,
     "personaUid": 501,
     "personaGid": 501,
-    "version": 6,
+    "version": 7,
     "commands": ["ping", "query", "connect", "disconnect", "diagnostics"]
   },
   "routing": {
@@ -22,17 +22,17 @@
     "vpnState": "background_control",
     "vpnQuery": "agent_6016_app_6015_interface_fallback",
     "vpnControl": "agent_6016_with_foreground_fallback",
-    "vpnBackend": "nevpnmanager_profile_private_compat_control",
+    "vpnBackend": "ikev2_nevpnmanager_legacy_private_no_consent",
     "vpnBroker": "vpnagent_6016_then_StreamControl_6015",
     "vpnPhase": "5",
-    "vpnBackgroundAgent": "candidate_mobile_process_v6_ne_profile_restore"
+    "vpnBackgroundAgent": "candidate_mobile_process_v7_dual_profile_control"
   },
   "promotionEvidence": {
     "backgroundDiagnostics": true,
     "backgroundConnect": true,
-    "agentVersion": 6,
+    "agentVersion": 7,
     "mobileIdentity": true,
-    "privateProfileMutation": false,
+    "privateProfileMutation": true,
     "firstRunLocalProfileBootstrapRequired": true
   },
   "security": {

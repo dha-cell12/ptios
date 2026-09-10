@@ -114,23 +114,23 @@ TrollStore runtime.
   `privhelper` starts it with the mobile persona (UID/GID 501), and task 59
   tries it before the existing foreground app broker. It carries the same
   app identity, VPN entitlement, and Keychain group but accepts no profile or
-  credential input. Device evidence promoted the state to `background_control`:
-  agent v6 runs with UID/GID 501. Profile creation uses the previously
-  validated `NEVPNManager` path; the private store remains only for strict
-  marker-owned migration cleanup and compatibility control. The background
-  connect/query broker is preserved; see
+  credential input. Device evidence promoted the state to `background_control`.
+  Agent v7 keeps the validated `NEVPNManager` path for IKEv2 and adds the
+  XXTouch-compatible private `VPNConnectionStore` path for PPTP/L2TP/IPSec.
+  Legacy creation is no-confirm, exact marker-owned, and does not replace the
+  installed IKEv2 profile. The background connect/query broker is preserved; see
   `docs/vpn-p5-background-agent.md`.
 
 ## Deferred Or Limited
 
 - Keychain clearing remains deferred because arbitrary target keychain access groups require separate entitlement handling.
-- VPN P5 still requires local IKEv2 credential entry after a fresh install or
-  lost profile. Save Profile uses the native `NEVPNManager` backend and can
-  show the one-time iOS VPN approval prompt. Afterward fresh task `591`
-  requests use the mobile
-  `vpnagent` without keeping the app foreground. A force-quit, reboot, deleted
-  profile, or stripped entitlement can require reopening StreamControl or
-  using the foreground/manual Settings fallback.
+- VPN P5 still requires local credential entry after a fresh install or lost
+  profile. IKEv2 uses native `NEVPNManager` and can show the one-time iOS VPN
+  approval prompt. PPTP/L2TP/IPSec use the private no-confirm backend, but its
+  availability depends on the device's private `VPNPreferences` implementation
+  and those legacy protocols may be unavailable on newer iOS versions. Once a
+  profile is saved, task `591` uses mobile `vpnagent` without keeping the app
+  foreground. Private legacy profiles do not support TLink Auto-Reconnect.
 - Vision OCR CPU-only remains experimental for the former `420f`/worker crash issue documented in `plan.md`; task `91` Tesseract remains the stable fallback. P1 keeps the CPU-only profiles, P2 established compact BGRA, and P3 proved that `TLinkUIService.app:6018` runs Vision while StreamControl is backgrounded. P4 keeps Vision isolated there but routes `app_cpu`/`xxt_compat` directly from streamd and sends the bounded PNG inline with protocol v3, removing per-request worker spawn and disk handoff. `worker_cpu` remains isolated. The OCR endpoint creates no scene or window; the black-screen FrontBoard path remains disabled and toast stays on port `6017`. Task `275` probes protocol/transport and task `273/274` reads/clears debug. `Collect-TLinkVisionOCRQualification.ps1` runs 20 Fast + 1 Accurate + 1 large Fast with task `97` postflight. See `docs/ocr-p3-background-uiservice.md` and `docs/ocr-p4-direct-inline.md`.
 - Activator/Siri equivalents remain `limited_on_trollstore`.
 - Full SpringBoard injection remains absent. Foreground and background toast use `TLinkUIService.app` with bounded native retry, while explicit alert/dialog requests continue through system alerts. Dialog results are not bridged back to the original synchronous task, and the touch indicator remains foreground-only.

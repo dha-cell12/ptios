@@ -9,6 +9,14 @@ FOUNDATION_EXPORT void TLinkVPNConfigureIKEv2(
     NSString *username,
     NSString *password,
     TLinkVPNResultCompletion completion);
+FOUNDATION_EXPORT void TLinkVPNConfigureLegacyPrivate(
+    NSString *protocolType,
+    NSString *serverAddress,
+    NSString *username,
+    NSString *password,
+    NSString *sharedSecret,
+    NSString *groupName,
+    TLinkVPNResultCompletion completion);
 FOUNDATION_EXPORT void TLinkVPNReadManagerStatus(
     TLinkVPNResultCompletion completion);
 FOUNDATION_EXPORT void TLinkVPNSetOnDemandEnabled(

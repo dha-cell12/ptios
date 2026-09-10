@@ -2,69 +2,67 @@
 
 ## Outcome
 
-P5 removes the normal foreground requirement from TrollStore task 59 by
-introducing a dedicated `vpnagent` on loopback port `6016`. The
-agent is embedded in `StreamControl.app`, signed with the app's `allow-vpn`
-entitlement and Keychain access group, and spawned by `privhelper` with the
-mobile persona (UID/GID 501). It is deliberately excluded from
-`TSRootBinaries`; agent v6 also drops root privileges itself and refuses to
-serve unless real/effective UID and GID are all 501.
+Task 59 uses the dedicated mobile-persona `vpnagent` on loopback port `6016`.
+Agent v7 supports two profile backends without sending credentials over task 59:
 
 ```text
-task 59 -> streamd -> vpnagent:6016 -> NEVPNManager
+task 59 -> streamd -> vpnagent:6016 -> selected TLink profile
+                                             | IKEv2 -> NEVPNManager
+                                             + PPTP/L2TP/IPSec -> VPNConnectionStore
                          |
                          + failure -> StreamControl foreground broker:6015
 query final fallback ----------------> utun/ipsec/ppp interface probe
 ```
 
-The foreground broker remains available as a compatibility fallback. Rootfull
-continues to use `tlinkauto-vpnd:6014` and is not changed by P5.
+The agent is embedded in `StreamControl.app`, signed with the focused VPN and
+SystemConfiguration entitlements, and spawned by `privhelper` as UID/GID 501.
+It is excluded from `TSRootBinaries`; it also drops root privileges itself and
+refuses to serve unless its real and effective UID/GID are all 501. Rootfull
+continues to use `tlinkauto-vpnd:6014`.
 
-If the agent socket disappears, streamd invokes the narrow
-`privhelper --ensure-vpnagent` recovery command, respawns the agent as mobile,
-and retries the original command once before using the foreground fallback.
+If the agent socket disappears, streamd invokes
+`privhelper --ensure-vpnagent`, retries once, and then uses the foreground
+broker fallback.
+
+## Profile backends
+
+IKEv2 keeps the already-qualified public `NEVPNManager` implementation. Its
+password is stored in ThisDeviceOnly Keychain and iOS may request approval the
+first time the profile is saved. Auto-Reconnect/On Demand remains available.
+
+PPTP, L2TP, and IPSec mirror XXTouch's documented `vpnconf.create` contract:
+they load `VPNPreferences.bundle`, call
+`VPNConnectionStore.createVPNWithOptions:`, and select the returned service
+with `setActiveVPNID:` or its graded variant. This path does not show the iOS
+VPN approval sheet. Password and shared secret are passed directly to the
+system store and are never persisted in TLink preferences.
+
+The private options preserve the XXTouch defaults: string protocol names on
+modern stores, numeric values `L2TP=0`, `PPTP=1`, and `IPSec=2` on older stores,
+PPTP authentication type 0, other types authentication type 1, encryption
+level 1, send-all-traffic enabled, and optional group. IKEv2 is deliberately
+excluded from the private constructor.
+
+Only the exact private service ID/name/type stored in TLink's mode-0600 marker
+is controlled or deleted. Saving IKEv2 removes that marker-owned legacy
+profile. Saving a legacy profile leaves the working native IKEv2 profile
+installed but makes the private marker authoritative for status and task 59.
+Switching profile types requires the current tunnel to be disconnected.
+
+The private legacy backend does not expose On Demand and returns
+`vpn_private_on_demand_unsupported`. Explicit IKEv2 disconnect still disables
+On Demand before stopping the tunnel.
 
 ## Boundary and safety
 
 The loopback protocol accepts only `ping`, `query`, `connect`, `disconnect`,
 and `diagnostics`. Profile configuration and credentials remain local to the
-StreamControl VPN settings screen and Keychain; neither task 59 nor vpnagent
-accepts them. The agent is licensed through the existing `automation` feature.
-It receives `allow-vpn`, but never receives a Packet Tunnel Provider
-entitlement.
-
-First-run credentials intentionally remain local to the Managed VPN screen and
-Keychain. **Save Profile** uses `NEVPNManager`, restoring the native IKEv2
-construction path already proven on the target TrollStore device and iOS
-version. Before saving, TLink removes only a marker-owned profile left by the
-former private constructor. Task 59 still queries, connects, and disconnects
-the resulting profile through vpnagent while StreamControl remains
-backgrounded. Missing bootstrap returns `vpn_not_configured` by design.
-
-An explicit disconnect retains the P4 rule: disable on-demand before stopping
-the tunnel. Existing request and response shapes for `590`, `591;;0`,
-`591;;1`, and `592` remain unchanged.
-
-## XXTouch compatibility comparison
-
-XXTouch's `vpnconf` module loads the private
-`/System/Library/PreferenceBundles/VPNPreferences.bundle`, obtains
-`VPNConnectionStore.sharedInstance`, creates profiles with
-`createVPNWithOptions:`, selects them with `setActiveVPNID:` (or the graded
-variant), and drives the current connection directly. That explains why its
-profile bootstrap can avoid the normal `NEVPNManager` confirmation UI.
-
-The verified XXTouch artifact also carries `preferences.plist`
-`SCPreferences-write-access`, `SCDynamicStore-write-access`, and
-`com.apple.managedconfiguration.profiled-access`. TLink now carries this
-focused commit set in the app and vpnagent, without copying XXTouch's unrelated
-MDM, telephony, app-installation, or root-management entitlements.
-
-TLink keeps the private API only for compatibility probing, legacy control,
-and migration cleanup. Only the exact ID/name stored in the mode-0600 marker
-may be removed; foreign profiles are never deleted by a broad name match. New
-profiles are no longer constructed from an undocumented private options
-dictionary.
+Managed VPN screen; neither task 59 nor vpnagent accepts them. The agent is
+licensed through the existing `automation` feature and never receives a
+Packet Tunnel Provider entitlement. Existing wire shapes for tasks `590`,
+`591;;0`, `591;;1`, and `592` remain unchanged.
+When neither owned backend is configured, control fails closed with
+`vpn_not_configured`.
 
 ## Capability contract
 
@@ -74,58 +72,61 @@ Task 97 reports:
 vpnState=background_control
 vpnQuery=agent_6016_app_6015_interface_fallback
 vpnControl=agent_6016_with_foreground_fallback
-vpnBackend=nevpnmanager_profile_private_compat_control
+vpnBackend=ikev2_nevpnmanager_legacy_private_no_consent
 vpnBroker=vpnagent_6016_then_StreamControl_6015
 vpnPhase=5
-vpnBackgroundAgent=candidate_mobile_process_v6_ne_profile_restore
+vpnBackgroundAgent=candidate_mobile_process_v7_dual_profile_control
 ```
 
 Task 592 is authoritative only when
 `diagnostics_source=background_vpnagent`, `broker_ready=true`, and
-`process_uid=501`. A streamd fallback snapshot reports both agent and
-foreground-broker errors and must not be treated as proof that background
+`process_uid=501`. A streamd fallback snapshot is not proof that background
 control works.
 
-The state is promoted to `background_control` from device evidence: agent v6
-reported `background_vpnagent`, `broker_ready=true`, UID/EUID/GID/EGID 501,
-and task `591;;1` plus the connected task `590` check succeeded while
-StreamControl remained backgrounded.
+## IKEv2 device validation
 
-## Device validation
-
-Install the P5 TrollStore build, launch StreamControl once so the supervisor
-starts the services, then return to the Home Screen or foreground another app.
-Run the non-destructive check:
+Install the TrollStore build and launch StreamControl once. In Managed VPN,
+select IKEv2, enter the values, tap **Save IKEv2 Profile**, and accept the iOS
+approval sheet if presented. Then background StreamControl:
 
 ```powershell
 $iphoneIP = "192.168.1.244"
-./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP
-```
-
-Open Managed VPN once, enter the IKEv2 values, and tap **Save Profile**. Accept
-the native iOS VPN approval sheet if the device presents it. Return to the Home
-Screen, then verify that vpnagent v6 sees the managed profile:
-
-```powershell
 ./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP -RequireManagedProfile
-```
-
-Expected fields include `manager_backend=nevpnmanager_ikev2`,
-`configured=True`, and a non-empty `profile_identifier`.
-
-With a valid locally saved IKEv2 profile, test background connect:
-
-```powershell
 ./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP -RequireManagedProfile -RunConnect
 ```
 
-Test disconnect separately. This also disables P4 Auto-Reconnect by policy:
+Expected evidence includes `agent_version=7`,
+`manager_backend=nevpnmanager_ikev2`, `profile_type=IKEv2`, and a connected
+task 590 query.
+
+## L2TP no-confirm device validation
+
+Disconnect the active IKEv2 tunnel. In Managed VPN, select L2TP and enter its
+server, username, password, and shared secret. Group is optional. Tap
+**Save L2TP Profile**. No iOS approval sheet should appear.
+
+Validate creation first:
+
+```powershell
+./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP `
+  -RequirePrivateProfile -ExpectedPrivateType L2TP
+```
+
+Then keep StreamControl backgrounded and validate the actual transition:
+
+```powershell
+./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP `
+  -RequirePrivateProfile -ExpectedPrivateType L2TP -RunConnect
+```
+
+Expected evidence includes `manager_backend=vpnconnectionstore_private`,
+`profile_type=L2TP`, `private_mutating_api_exercised=True`, and
+`connection_status=connected`. Also verify the system VPN icon and actual
+egress IP/DNS; a successful control response alone cannot prove traffic is
+tunneled.
+
+Disconnect separately when the side effect is acceptable:
 
 ```powershell
 ./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP -RunDisconnect
 ```
-
-P5 was promoted after the background agent identity/readiness and live connect
-path passed. Release acceptance should continue to verify real egress IP/DNS
-through the VPN and run the explicit disconnect test when its on-demand reset
-side effect is acceptable.

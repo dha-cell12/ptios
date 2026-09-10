@@ -238,14 +238,19 @@ static NSDictionary *TLinkVPNPrivateCompatibilityProbe(BOOL allowVPN)
             @"candidate_ready":
                 @(bundleLoaded && store && createProfile && listProfiles &&
                   selectProfile && connection),
-            @"mutating_api_exercised": @([[NSFileManager defaultManager]
-                fileExistsAtPath:
-                    @"/var/mobile/Library/TLinkauto/config/vpn-private-owned.plist"]),
+            @"mutating_api_exercised": @0,
             @"probe_skipped": @"",
             @"load_error": loadError.localizedDescription ?: @"",
         };
     });
-    return probe;
+    // Selector availability is stable for the process lifetime, but the
+    // ownership marker is created after the user saves a legacy profile. Do
+    // not freeze that evidence on vpnagent's first diagnostics request.
+    NSMutableDictionary *current = [probe mutableCopy];
+    current[@"mutating_api_exercised"] = @([[NSFileManager defaultManager]
+        fileExistsAtPath:
+            @"/var/mobile/Library/TLinkauto/config/vpn-private-owned.plist"]);
+    return current;
 }
 
 NSDictionary *TLinkVPNDiagnosticsSnapshot(
