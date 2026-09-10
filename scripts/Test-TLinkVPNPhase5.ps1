@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$HostIP,
     [int]$Port = 6000,
+    [switch]$RequireManagedProfile,
     [switch]$RequirePrivateProfile,
     [switch]$RunConnect,
     [switch]$RunDisconnect
@@ -52,7 +53,7 @@ $capability = Invoke-TLinkVPNTask -Task "97"
 if ($capability -notlike "0;;*" -or
     $capability -notlike "*vpnPhase=5*" -or
     $capability -notlike "*vpnState=background_control*" -or
-    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v5_private_profile_commit*" -or
+    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v6_ne_profile_restore*" -or
     $capability -notlike "*vpnBroker=vpnagent_6016_then_StreamControl_6015*") {
     throw "Task 97 does not report TrollStore VPN P5: $capability"
 }
@@ -69,17 +70,20 @@ Assert-Equal ([bool]$diagnostics.entitlements.allow_vpn) $true "allow-vpn entitl
 Assert-Equal ([bool]$diagnostics.entitlements.scpreferences_write_access) $true "SCPreferences write entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.scdynamicstore_write_access) $true "SCDynamicStore write entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.profiled_access) $true "profiled access entitlement"
-Assert-Equal $diagnostics.agent_version 5 "vpnagent version"
+Assert-Equal $diagnostics.agent_version 6 "vpnagent version"
 Assert-Equal $diagnostics.process_uid 501 "vpnagent uid"
 Assert-Equal $diagnostics.process_euid 501 "vpnagent euid"
 Assert-Equal $diagnostics.process_gid 501 "vpnagent gid"
 Assert-Equal $diagnostics.process_egid 501 "vpnagent egid"
 Assert-Equal ([bool]$diagnostics.private_compatibility.candidate_ready) $true "private VPN candidate"
 
+$requireProfile = [bool]($RequireManagedProfile -or $RequirePrivateProfile)
 if ($RequirePrivateProfile) {
-    Assert-Equal ([bool]$diagnostics.private_compatibility.mutating_api_exercised) $true "private profile marker"
-    Assert-Equal ([bool]$diagnostics.manager_status.configured) $true "private profile configured"
-    Assert-Equal $diagnostics.manager_status.backend "vpnconnectionstore_private" "private manager backend"
+    Write-Warning "-RequirePrivateProfile is deprecated; validating the restored managed NEVPN profile instead."
+}
+if ($requireProfile) {
+    Assert-Equal ([bool]$diagnostics.manager_status.configured) $true "managed profile configured"
+    Assert-Equal $diagnostics.manager_status.backend "nevpnmanager_ikev2" "managed profile backend"
 }
 
 $query = Invoke-TLinkVPNTask -Task "590"
@@ -123,6 +127,7 @@ if ($RunConnect -or $RunDisconnect) {
     private_load_error = $diagnostics.private_compatibility.load_error
     manager_backend = $diagnostics.manager_status.backend
     profile_identifier = $diagnostics.manager_status.profile_identifier
+    managed_profile_required = $requireProfile
     private_profile_required = [bool]$RequirePrivateProfile
     connect_test_run = [bool]$RunConnect
     disconnect_test_run = [bool]$RunDisconnect

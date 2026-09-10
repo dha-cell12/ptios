@@ -463,6 +463,52 @@ static BOOL TLinkVPNPrivateDeleteConfiguration(
     return NO;
 }
 
+static NSDictionary *TLinkVPNPrivateRemoveOwnedProfileSync(void)
+{
+    NSDictionary *marker = TLinkVPNPrivateLoadMarker();
+    if (!marker) {
+        return TLinkVPNResult(true, @"vpn_private_cleanup_not_needed", nil);
+    }
+
+    NSString *failure = nil;
+    id store = TLinkVPNPrivateStore(&failure);
+    if (!store) {
+        return TLinkVPNResult(false,
+            failure ?: @"vpn_private_store_unavailable", nil);
+    }
+    NSDictionary *record = TLinkVPNPrivateFindConfiguration(
+        store, marker[@"name"], marker[@"identifier"]);
+    if (record && !TLinkVPNPrivateDeleteConfiguration(store, record)) {
+        return TLinkVPNResult(false,
+            @"vpn_private_cleanup_delete_failed", @{
+                @"profile_identifier": marker[@"identifier"] ?: @"",
+            });
+    }
+
+    NSError *removeError = nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:kTLinkVPNPrivateMarkerPath] &&
+        ![fm removeItemAtPath:kTLinkVPNPrivateMarkerPath
+                        error:&removeError]) {
+        return TLinkVPNResult(false,
+            @"vpn_private_cleanup_marker_failed", @{
+                @"native_error": removeError.localizedDescription ?: @"unknown",
+            });
+    }
+
+    // Let VPNPreferences publish the deletion before NEVPNManager reloads
+    // preferences. This migration runs on the owning main thread.
+    if ([NSThread isMainThread]) {
+        [[NSRunLoop currentRunLoop] runUntilDate:
+            [NSDate dateWithTimeIntervalSinceNow:0.1]];
+    } else {
+        usleep(100000);
+    }
+    return TLinkVPNResult(true, @"vpn_private_profile_removed", @{
+        @"removed": @(record != nil),
+    });
+}
+
 static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     NSString *server,
     NSString *remote,
@@ -931,28 +977,29 @@ void TLinkVPNConfigureIKEv2(
     };
 
 #if TLINK_VPN_TROLLSTORE_RUNTIME
-    void (^configureWithPrivateBackend)(void) = ^{
-        NSDictionary *privateResult =
-            TLinkVPNPrivateRunSafely(@"configure", ^{
-                return TLinkVPNPrivateConfigureIKEv2Sync(
-                    server, effectiveRemote, user, password);
+    void (^configureWithKnownGoodBackend)(void) = ^{
+        // Builds before P5 used NEVPNManager on this same TrollStore runtime
+        // and produced a native IKEv2 profile that Settings could connect.
+        // The private VPNConnectionStore constructor can return success while
+        // leaving a visible but unusable SCNetworkService. Remove only the
+        // marker-owned private profile, then restore the proven native path.
+        NSDictionary *cleanupResult =
+            TLinkVPNPrivateRunSafely(@"cleanup", ^{
+                return TLinkVPNPrivateRemoveOwnedProfileSync();
             });
-        if ([privateResult[@"private_backend_available"] boolValue]) {
-            // Do not surprise the user with an iOS confirmation sheet after
-            // the compatible private backend was actually available.
-            TLinkVPNComplete(completion, privateResult);
+        if (![cleanupResult[@"ok"] boolValue]) {
+            TLinkVPNComplete(completion, cleanupResult);
             return;
         }
         configureWithNEVPNManager();
     };
-    // VPNPreferences classes are UIKit/Preferences objects. Mutating them on
-    // their owning main thread avoids the assertion seen when Save Profile was
-    // dispatched to the background compatibility queue.
+    // VPNPreferences cleanup belongs to the main thread. NEVPNManager itself
+    // also completes on this run loop.
     if ([NSThread isMainThread]) {
-        configureWithPrivateBackend();
+        configureWithKnownGoodBackend();
     } else {
         dispatch_async(dispatch_get_main_queue(),
-            configureWithPrivateBackend);
+            configureWithKnownGoodBackend);
     }
 #else
     configureWithNEVPNManager();

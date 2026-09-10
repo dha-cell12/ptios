@@ -51,7 +51,7 @@ static NSDictionary *TLinkVPNAgentPreflight(void)
         @"background_control",
         @"agent_6016_app_6015_interface_fallback",
         @"agent_6016_with_foreground_fallback",
-        @"hybrid_nevpnmanager_vpnconnectionstore_private",
+        @"nevpnmanager_profile_private_compat_control",
         @"vpnagent_6016_then_StreamControl_6015",
         nil);
 }
@@ -84,7 +84,7 @@ static NSString *TLinkVPNAgentDiagnosticsResponse(void)
         ? @"blocked_missing_entitlement_or_framework"
         : (managerAvailable ? @"background_manager_ready" : @"manager_api_failed");
     diagnostics[@"diagnostics_source"] = @"background_vpnagent";
-    diagnostics[@"agent_version"] = @5;
+    diagnostics[@"agent_version"] = @6;
     diagnostics[@"process_uid"] = @((int)getuid());
     diagnostics[@"process_euid"] = @((int)geteuid());
     diagnostics[@"process_gid"] = @((int)getgid());
@@ -133,7 +133,7 @@ static NSString *TLinkVPNAgentResponse(NSString *command)
         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([clean isEqualToString:@"ping"]) {
         return [NSString stringWithFormat:
-            @"0;;vpnagent_ready version=5 phase=5 uid=%d euid=%d gid=%d egid=%d\r\n",
+            @"0;;vpnagent_ready version=6 phase=5 uid=%d euid=%d gid=%d egid=%d\r\n",
             getuid(), geteuid(), getgid(), getegid()];
     }
     if ([clean isEqualToString:@"diagnostics"]) {
@@ -261,7 +261,7 @@ int main(int argc, char **argv)
     @autoreleasepool {
         signal(SIGPIPE, SIG_IGN);
         if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-            printf("vpnagent version=5 phase=5 port=6016 persona=mobile private_vpnconnectionstore=1 crash_safe=1 profile_commit_entitlements=1\n");
+            printf("vpnagent version=6 phase=5 port=6016 persona=mobile nevpn_profile=1 private_compat_control=1 crash_safe=1\n");
             return 0;
         }
         if (argc <= 1 || strcmp(argv[1], "--daemon") != 0) {

@@ -115,18 +115,19 @@ TrollStore runtime.
   tries it before the existing foreground app broker. It carries the same
   app identity, VPN entitlement, and Keychain group but accepts no profile or
   credential input. Device evidence promoted the state to `background_control`:
-  agent v3 runs with UID/GID 501 and adds the verified, TLink-owned
-  `VPNConnectionStore` path while preserving the validated background
-  connect/query broker; see
+  agent v6 runs with UID/GID 501. Profile creation uses the previously
+  validated `NEVPNManager` path; the private store remains only for strict
+  marker-owned migration cleanup and compatibility control. The background
+  connect/query broker is preserved; see
   `docs/vpn-p5-background-agent.md`.
 
 ## Deferred Or Limited
 
 - Keychain clearing remains deferred because arbitrary target keychain access groups require separate entitlement handling.
 - VPN P5 still requires local IKEv2 credential entry after a fresh install or
-  lost profile. On compatible TrollStore devices, Save Profile uses the
-  private no-consent backend and does not show the iOS VPN approval prompt.
-  Afterward fresh task `591` requests use the mobile
+  lost profile. Save Profile uses the native `NEVPNManager` backend and can
+  show the one-time iOS VPN approval prompt. Afterward fresh task `591`
+  requests use the mobile
   `vpnagent` without keeping the app foreground. A force-quit, reboot, deleted
   profile, or stripped entitlement can require reopening StreamControl or
   using the foreground/manual Settings fallback.
