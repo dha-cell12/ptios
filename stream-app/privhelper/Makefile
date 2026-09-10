@@ -12,9 +12,9 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = privhelper
 
-privhelper_FILES = main.mm ../../shared/TLinkLicenseVerifier.mm
-privhelper_FRAMEWORKS = Foundation Security
-privhelper_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c
+privhelper_FILES = main.mm ../../shared/TLinkLicenseVerifier.mm ../../shared/TLinkVPNManager.mm
+privhelper_FRAMEWORKS = Foundation Security NetworkExtension
+privhelper_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -DTLINK_VPN_TROLLSTORE_RUNTIME=1
 privhelper_CCFLAGS = -std=c++14
 ifeq ($(TLINK_LICENSE_FORCE_ENFORCEMENT),1)
 privhelper_CFLAGS += -DTLINK_LICENSE_FORCE_ENFORCEMENT=1

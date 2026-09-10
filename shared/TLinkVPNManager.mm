@@ -5,8 +5,28 @@
 #import <arpa/inet.h>
 #import <objc/message.h>
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <spawn.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+#if TLINK_VPN_TROLLSTORE_RUNTIME
+extern char **environ;
+#ifndef POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE
+#define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
+#endif
+extern "C" {
+int posix_spawnattr_set_persona_np(
+    posix_spawnattr_t *attr, uid_t persona_id, uint32_t flags);
+int posix_spawnattr_set_persona_uid_np(posix_spawnattr_t *attr, uid_t uid);
+int posix_spawnattr_set_persona_gid_np(posix_spawnattr_t *attr, uid_t gid);
+}
+#endif
 
 static NSString *const kTLinkVPNDescription =
     @"TLinkauto Managed VPN (tlinkauto-managed-v1)";
@@ -18,6 +38,8 @@ static NSString *const kTLinkVPNKeychainAccessGroup =
     @"StreamCtl.com.tlinkauto.streamcontrol";
 static NSString *const kTLinkVPNPrivateMarkerPath =
     @"/var/mobile/Library/TLinkauto/config/vpn-private-owned.plist";
+static NSString *const kTLinkVPNPrivateRequestDirectory =
+    @"/var/mobile/Library/TLinkauto/tmp/vpn-private-requests";
 static NSString *const kTLinkVPNPrivateNamePrefix =
     @"TLinkauto Private VPN (tlinkauto-private-v1) ";
 #else
@@ -133,6 +155,10 @@ static dispatch_queue_t TLinkVPNPrivateQueue(void)
     });
     return queue;
 }
+
+static NSDictionary *TLinkVPNPrivateRunSafely(
+    NSString *operation,
+    NSDictionary *(^work)(void));
 
 static id TLinkVPNPrivateSendId(id target, SEL selector)
 {
@@ -307,6 +333,10 @@ static BOOL TLinkVPNPrivateWriteMarker(
             directoryError.localizedDescription ?: @"unknown"];
         return NO;
     }
+    if (geteuid() == 0) {
+        chmod(directory.fileSystemRepresentation, 0700);
+        chown(directory.fileSystemRepresentation, 501, 501);
+    }
 
     NSDictionary *marker = @{
         @"version": @1,
@@ -314,7 +344,8 @@ static BOOL TLinkVPNPrivateWriteMarker(
         @"name": record[@"name"] ?: @"",
         @"identifier": record[@"identifier"] ?: @"",
         @"profile_type": protocolType ?: @"",
-        @"approval_path": @"private_store_direct_no_nevpnmanager",
+        @"approval_path":
+            @"privhelper_root_private_store_no_nevpnmanager",
         @"selected_by_tlink": @1,
         @"updated_at": @([[NSDate date] timeIntervalSince1970]),
     };
@@ -330,6 +361,13 @@ static BOOL TLinkVPNPrivateWriteMarker(
         if (failure) *failure = [NSString stringWithFormat:
             @"vpn_private_marker_permissions_failed %@",
             attributeError.localizedDescription ?: @"unknown"];
+        return NO;
+    }
+    if (geteuid() == 0 &&
+        chown(kTLinkVPNPrivateMarkerPath.fileSystemRepresentation,
+              501, 501) != 0) {
+        [fm removeItemAtPath:kTLinkVPNPrivateMarkerPath error:nil];
+        if (failure) *failure = @"vpn_private_marker_owner_failed";
         return NO;
     }
     return YES;
@@ -662,7 +700,10 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
     NSString *verificationMode = @"none";
     NSUInteger verificationAttempts = 0;
     NSUInteger observedRecordCount = beforeRecords.count;
-    for (NSUInteger attempt = 0; attempt < 20 && !newRecord; attempt++) {
+    const NSUInteger maximumVerificationAttempts = 50;
+    for (NSUInteger attempt = 0;
+         attempt < maximumVerificationAttempts && !newRecord;
+         attempt++) {
         verificationAttempts = attempt + 1;
         NSArray<NSDictionary *> *afterRecords =
             TLinkVPNPrivateConfigurationRecords(store);
@@ -692,7 +733,7 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
                 verificationMode = @"single_identifier_delta";
             }
         }
-        if (!newRecord && attempt + 1 < 20) {
+        if (!newRecord && attempt + 1 < maximumVerificationAttempts) {
             if ([NSThread isMainThread]) {
                 // createVPNWithOptions: publishes its new SCNetworkService via
                 // work delivered to the main run loop. Sleeping here prevents
@@ -756,8 +797,244 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
     fields[@"store_schema"] = modernStore ? @"modern" : @"legacy";
     fields[@"old_owned_profile_removed"] = @(oldProfileRemoved);
     fields[@"mutating_api_exercised"] = @1;
-    fields[@"approval_path"] = @"private_store_direct_no_nevpnmanager";
+    fields[@"approval_path"] =
+        @"privhelper_root_private_store_no_nevpnmanager";
     return TLinkVPNResult(true, @"vpn_private_profile_saved", fields);
+}
+
+NSDictionary *TLinkVPNConfigureLegacyPrivateSynchronouslyForHelper(
+    NSString *protocolType,
+    NSString *serverAddress,
+    NSString *username,
+    NSString *password,
+    NSString *sharedSecret,
+    NSString *groupName)
+{
+    if (geteuid() != 0) {
+        return TLinkVPNResult(false, @"vpn_private_root_helper_required", @{
+            @"executor_uid": @(geteuid()),
+        });
+    }
+
+    NSDictionary *(^work)(void) = ^NSDictionary *{
+        NSDictionary *oldMarker = TLinkVPNPrivateLoadMarker();
+        if (oldMarker) {
+            NSDictionary *privateStatus = TLinkVPNPrivateReadStatusSync();
+            if (![privateStatus[@"ok"] boolValue]) {
+                if ([privateStatus[@"code"] isEqualToString:
+                        @"vpn_private_owned_profile_missing"]) {
+                    NSDictionary *cleanup =
+                        TLinkVPNPrivateRemoveOwnedProfileSync();
+                    if (![cleanup[@"ok"] boolValue]) return cleanup;
+                } else {
+                    return privateStatus;
+                }
+            } else {
+                NSString *connection =
+                    [privateStatus[@"connection_status"]
+                        isKindOfClass:[NSString class]]
+                    ? privateStatus[@"connection_status"] : @"unknown";
+                if (![connection isEqualToString:@"disconnected"] &&
+                    ![connection isEqualToString:@"invalid"]) {
+                    return TLinkVPNResult(false,
+                        @"vpn_profile_switch_requires_disconnect",
+                        privateStatus);
+                }
+            }
+        }
+
+        NSDictionary *preflight =
+            TLinkVPNPrivateEnsureNoActiveConnectionSync();
+        if (![preflight[@"ok"] boolValue]) return preflight;
+        return TLinkVPNPrivateConfigureLegacySync(
+            protocolType, serverAddress, username, password,
+            sharedSecret ?: @"", groupName ?: @"");
+    };
+
+    NSDictionary *raw = TLinkVPNPrivateRunSafely(
+        @"configure_legacy_helper", work);
+    NSMutableDictionary *result = [raw mutableCopy];
+    result[@"executor_uid"] = @(geteuid());
+    result[@"executor_gid"] = @(getegid());
+    result[@"execution_process"] = @"privhelper_tsrootbinary";
+    if ([result[@"ok"] boolValue]) {
+        result[@"approval_path"] =
+            @"privhelper_root_private_store_no_nevpnmanager";
+    }
+    return result;
+}
+
+static BOOL TLinkVPNWriteAll(int fd, NSData *data)
+{
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    size_t remaining = data.length;
+    while (remaining > 0) {
+        ssize_t wrote = write(fd, bytes, remaining);
+        if (wrote < 0 && errno == EINTR) continue;
+        if (wrote <= 0) return NO;
+        bytes += wrote;
+        remaining -= (size_t)wrote;
+    }
+    return YES;
+}
+
+static NSDictionary *TLinkVPNRunLegacyRootHelperSync(
+    NSString *protocolType,
+    NSString *serverAddress,
+    NSString *username,
+    NSString *password,
+    NSString *sharedSecret,
+    NSString *groupName)
+{
+    NSString *helperPath = [[[NSBundle mainBundle] bundlePath]
+        stringByAppendingPathComponent:@"privhelper"];
+    if (![helperPath hasSuffix:@"/StreamControl.app/privhelper"] ||
+        ![[NSFileManager defaultManager]
+            isExecutableFileAtPath:helperPath]) {
+        return TLinkVPNResult(false, @"vpn_private_helper_missing", nil);
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSError *directoryError = nil;
+    if (![fm createDirectoryAtPath:kTLinkVPNPrivateRequestDirectory
+       withIntermediateDirectories:YES
+                        attributes:@{NSFilePosixPermissions: @0700}
+                             error:&directoryError]) {
+        return TLinkVPNResult(false,
+            @"vpn_private_request_directory_failed", @{
+                @"native_error":
+                    directoryError.localizedDescription ?: @"unknown",
+            });
+    }
+    chmod(kTLinkVPNPrivateRequestDirectory.fileSystemRepresentation, 0700);
+    struct stat directoryStat = {};
+    if (lstat(kTLinkVPNPrivateRequestDirectory.fileSystemRepresentation,
+              &directoryStat) != 0 ||
+        !S_ISDIR(directoryStat.st_mode) ||
+        directoryStat.st_uid != geteuid() ||
+        (directoryStat.st_mode & 077) != 0) {
+        return TLinkVPNResult(false,
+            @"vpn_private_request_directory_unsafe", nil);
+    }
+
+    NSString *requestID = [[NSUUID UUID] UUIDString];
+    NSString *requestPath = [kTLinkVPNPrivateRequestDirectory
+        stringByAppendingPathComponent:[NSString stringWithFormat:
+            @"vpnconf-%@.plist", requestID]];
+    NSString *resultPath = [requestPath stringByAppendingString:@".result"];
+    NSDictionary *request = @{
+        @"version": @1,
+        @"request_id": requestID,
+        @"protocol_type": protocolType ?: @"",
+        @"server": serverAddress ?: @"",
+        @"username": username ?: @"",
+        @"password": password ?: @"",
+        @"shared_secret": sharedSecret ?: @"",
+        @"group_name": groupName ?: @"",
+        @"created_at": @([[NSDate date] timeIntervalSince1970]),
+    };
+    NSError *serializeError = nil;
+    NSData *requestData = [NSPropertyListSerialization
+        dataWithPropertyList:request
+                     format:NSPropertyListBinaryFormat_v1_0
+                    options:0
+                      error:&serializeError];
+    if (!requestData || requestData.length > 16384) {
+        return TLinkVPNResult(false,
+            @"vpn_private_request_serialize_failed", @{
+                @"native_error":
+                    serializeError.localizedDescription ?: @"unknown",
+            });
+    }
+
+    int requestFd = open(requestPath.fileSystemRepresentation,
+        O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    if (requestFd < 0) {
+        return TLinkVPNResult(false,
+            @"vpn_private_request_create_failed", @{
+                @"native_errno": @(errno),
+            });
+    }
+    BOOL requestWritten = TLinkVPNWriteAll(requestFd, requestData);
+    if (requestWritten) requestWritten = fsync(requestFd) == 0;
+    close(requestFd);
+    if (!requestWritten) {
+        [fm removeItemAtPath:requestPath error:nil];
+        return TLinkVPNResult(false,
+            @"vpn_private_request_write_failed", nil);
+    }
+
+    const char *cpath = helperPath.fileSystemRepresentation;
+    char *arg0 = strdup(cpath);
+    char *arg1 = strdup("--configure-legacy-vpn");
+    char *arg2 = strdup(requestPath.fileSystemRepresentation);
+    if (!arg0 || !arg1 || !arg2) {
+        free(arg0); free(arg1); free(arg2);
+        [fm removeItemAtPath:requestPath error:nil];
+        return TLinkVPNResult(false,
+            @"vpn_private_helper_argv_failed", nil);
+    }
+    char *const argv[] = {arg0, arg1, arg2, NULL};
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    int persona = posix_spawnattr_set_persona_np(
+        &attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+    int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 0);
+    int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 0);
+    pid_t pid = -1;
+    int spawnResult = posix_spawn(
+        &pid, cpath, NULL, &attr, argv, environ);
+    posix_spawnattr_destroy(&attr);
+    free(arg0); free(arg1); free(arg2);
+    if (spawnResult != 0) {
+        [fm removeItemAtPath:requestPath error:nil];
+        return TLinkVPNResult(false,
+            @"vpn_private_helper_spawn_failed", @{
+                @"spawn_result": @(spawnResult),
+                @"persona_result": @(persona),
+                @"persona_uid_result": @(personaUid),
+                @"persona_gid_result": @(personaGid),
+            });
+    }
+
+    int status = 0;
+    pid_t waited = -1;
+    do {
+        waited = waitpid(pid, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    [fm removeItemAtPath:requestPath error:nil];
+
+    struct stat resultStat = {};
+    NSDictionary *result = nil;
+    if (lstat(resultPath.fileSystemRepresentation, &resultStat) == 0 &&
+        S_ISREG(resultStat.st_mode) &&
+        resultStat.st_uid == 501 &&
+        (resultStat.st_mode & 077) == 0 &&
+        resultStat.st_size > 0 && resultStat.st_size <= 65536) {
+        NSDictionary *candidate = [NSDictionary
+            dictionaryWithContentsOfFile:resultPath];
+        if ([candidate isKindOfClass:[NSDictionary class]] &&
+            [candidate[@"request_id"] isEqualToString:requestID] &&
+            [candidate[@"version"] integerValue] == 1) {
+            result = candidate;
+        }
+    }
+    [fm removeItemAtPath:resultPath error:nil];
+    if (!result) {
+        return TLinkVPNResult(false,
+            @"vpn_private_helper_result_missing", @{
+                @"helper_exit": @(
+                    waited == pid && WIFEXITED(status)
+                        ? WEXITSTATUS(status) : -1),
+                @"helper_wait": @(waited),
+            });
+    }
+    NSMutableDictionary *clean = [result mutableCopy];
+    [clean removeObjectForKey:@"request_id"];
+    [clean removeObjectForKey:@"version"];
+    clean[@"helper_exit"] = @(
+        waited == pid && WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+    return clean;
 }
 
 static NSDictionary *TLinkVPNPrivateSetConnectedSync(
@@ -1006,62 +1283,14 @@ void TLinkVPNConfigureLegacyPrivate(
     }
 
 #if TLINK_VPN_TROLLSTORE_RUNTIME
-    void (^createPrivateProfile)(void) = ^{
-        TLinkVPNComplete(completion,
-            TLinkVPNPrivateRunSafely(@"configure_legacy", ^{
-                return TLinkVPNPrivateConfigureLegacySync(
-                    type, server, user, password, secret, group);
-            }));
-    };
-    dispatch_async(dispatch_get_main_queue(), ^{
-        // Keep the known-good IKEv2 profile installed, but do not replace an
-        // active marker-owned legacy tunnel.
-        if (TLinkVPNPrivateLoadMarker()) {
-            NSDictionary *privateStatus =
-                TLinkVPNPrivateRunSafely(@"status", ^{
-                    return TLinkVPNPrivateReadStatusSync();
-                });
-            if (![privateStatus[@"ok"] boolValue]) {
-                if ([privateStatus[@"code"] isEqualToString:
-                        @"vpn_private_owned_profile_missing"]) {
-                    NSDictionary *cleanup =
-                        TLinkVPNPrivateRunSafely(@"cleanup", ^{
-                            return TLinkVPNPrivateRemoveOwnedProfileSync();
-                        });
-                    if (![cleanup[@"ok"] boolValue]) {
-                        TLinkVPNComplete(completion, cleanup);
-                        return;
-                    }
-                } else {
-                    TLinkVPNComplete(completion, privateStatus);
-                    return;
-                }
-            } else {
-                NSString *privateConnection =
-                    [privateStatus[@"connection_status"]
-                        isKindOfClass:[NSString class]]
-                    ? privateStatus[@"connection_status"] : @"unknown";
-                if (![privateConnection isEqualToString:@"disconnected"] &&
-                    ![privateConnection isEqualToString:@"invalid"]) {
-                    TLinkVPNComplete(completion, TLinkVPNResult(false,
-                        @"vpn_profile_switch_requires_disconnect",
-                        privateStatus));
-                    return;
-                }
-            }
-        }
-        // Do not load or save NEVPNManager here. Even an incidental public
-        // manager save can invoke the system "Add VPN Configurations" sheet.
-        // XXTouch's legacy path talks only to VPNConnectionStore.
-        NSDictionary *switchPreflight =
-            TLinkVPNPrivateRunSafely(@"switch_preflight", ^{
-                return TLinkVPNPrivateEnsureNoActiveConnectionSync();
-            });
-        if (![switchPreflight[@"ok"] boolValue]) {
-            TLinkVPNComplete(completion, switchPreflight);
-            return;
-        }
-        createPrivateProfile();
+    // VPNConnectionStore called from UIApplication still routes through the
+    // system consent sheet. XXTouch executes vpnconf.create from its root
+    // automation process, so mirror that process boundary. This queue keeps
+    // waitpid and private-store publication work away from the UI thread.
+    dispatch_async(TLinkVPNPrivateQueue(), ^{
+        NSDictionary *result = TLinkVPNRunLegacyRootHelperSync(
+            type, server, user, password, secret, group);
+        TLinkVPNComplete(completion, result);
     });
 #else
     TLinkVPNComplete(completion, TLinkVPNResult(false,

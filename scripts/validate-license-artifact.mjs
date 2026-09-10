@@ -112,6 +112,7 @@ const appBinary = (await readFile(join(app, "StreamControl"))).toString("latin1"
 const streamdBinary = (await readFile(join(app, "streamd"))).toString("latin1");
 const clipboarddBinary = (await readFile(join(app, "clipboardd"))).toString("latin1");
 const vpnagentBinary = (await readFile(join(app, "vpnagent"))).toString("latin1");
+const privhelperBinary = (await readFile(join(app, "privhelper"))).toString("latin1");
 const uiServicePath = join(app, "TLinkUIService.app", "TLinkUIService");
 const uiServiceInfoPath = join(app, "TLinkUIService.app", "Info.plist");
 const uiServiceBytes = await readFile(uiServicePath);
@@ -143,6 +144,9 @@ assert.ok(streamdBinary.includes("protocol3_inline_png_compat_only"), "streamd l
 assert.ok(vpnagentBinary.includes("vpnagent_ready version=8 phase=5"), "vpnagent lacks P5 readiness evidence");
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
+assert.ok(privhelperBinary.includes("privhelper version=10"), "privhelper lacks v10 readiness evidence");
+assert.ok(privhelperBinary.includes("configure-legacy-vpn"), "privhelper lacks root legacy VPN creation evidence");
+assert.ok(privhelperBinary.includes("privhelper_root_private_store_no_nevpnmanager"), "privhelper lacks private VPN approval-path evidence");
 assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions"), "boot widget lacks the SpringBoardServices wake path");
 assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifier"), "boot widget lacks the simple SpringBoardServices fallback");
 assert.ok(widgetBinary.includes("LSApplicationWorkspace"), "boot widget lacks the LaunchServices fallback");
@@ -322,7 +326,7 @@ const manifest = {
   vpn_phase: 5,
   vpn_state: "background_control",
   vpn_agent_version: 8,
-  vpn_profile_bootstrap: "ikev2_nevpnmanager_legacy_private_no_consent",
+  vpn_profile_bootstrap: "ikev2_nevpnmanager_legacy_privhelper_root_no_consent",
   config: {
     endpoint: expected.LicenseEndpoint,
     key_id: expected.LicenseKeyID,

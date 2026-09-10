@@ -17,6 +17,16 @@ FOUNDATION_EXPORT void TLinkVPNConfigureLegacyPrivate(
     NSString *sharedSecret,
     NSString *groupName,
     TLinkVPNResultCompletion completion);
+// Narrow synchronous entry point used only by the embedded TSRootBinary.
+// The foreground app must use TLinkVPNConfigureLegacyPrivate so credentials
+// are transported through the protected one-shot request file.
+FOUNDATION_EXPORT NSDictionary *TLinkVPNConfigureLegacyPrivateSynchronouslyForHelper(
+    NSString *protocolType,
+    NSString *serverAddress,
+    NSString *username,
+    NSString *password,
+    NSString *sharedSecret,
+    NSString *groupName);
 FOUNDATION_EXPORT void TLinkVPNReadManagerStatus(
     TLinkVPNResultCompletion completion);
 FOUNDATION_EXPORT void TLinkVPNSetOnDemandEnabled(

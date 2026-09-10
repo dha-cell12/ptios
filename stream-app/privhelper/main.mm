@@ -1,9 +1,12 @@
 #import <Foundation/Foundation.h>
 #import "../../shared/TLinkLicenseVerifier.h"
+#import "../../shared/TLinkVPNManager.h"
 
 #include <errno.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <spawn.h>
 #include <signal.h>
 #include <stdint.h>
@@ -83,6 +86,196 @@ static int TLinkHelperRequireLicense(NSString *feature, NSString *command)
                     status[@"state"] ?: @"invalid",
                     licenseError ?: status[@"error"] ?: @"license_required"]);
     return 90;
+}
+
+static NSString *const kTLinkHelperVPNRequestDirectory =
+    @"/var/mobile/Library/TLinkauto/tmp/vpn-private-requests";
+
+static NSDictionary *TLinkHelperVPNFailure(NSString *code,
+                                           NSDictionary *extra)
+{
+    NSMutableDictionary *result = extra
+        ? [extra mutableCopy] : [NSMutableDictionary dictionary];
+    result[@"ok"] = @0;
+    result[@"code"] = code ?: @"vpn_private_helper_failed";
+    return result;
+}
+
+static BOOL TLinkHelperWriteAll(int fd, NSData *data)
+{
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    size_t remaining = data.length;
+    while (remaining > 0) {
+        ssize_t wrote = write(fd, bytes, remaining);
+        if (wrote < 0 && errno == EINTR) continue;
+        if (wrote <= 0) return NO;
+        bytes += wrote;
+        remaining -= (size_t)wrote;
+    }
+    return YES;
+}
+
+static BOOL TLinkHelperVPNRequestPathAllowed(NSString *requestPath,
+                                             NSString **requestID)
+{
+    struct stat directoryStat = {};
+    if (lstat(kTLinkHelperVPNRequestDirectory.fileSystemRepresentation,
+              &directoryStat) != 0 ||
+        !S_ISDIR(directoryStat.st_mode) ||
+        directoryStat.st_uid != 501 ||
+        (directoryStat.st_mode & 077) != 0) {
+        return NO;
+    }
+    if (requestPath.length == 0 ||
+        ![requestPath isEqualToString:requestPath.stringByStandardizingPath] ||
+        ![[requestPath stringByDeletingLastPathComponent]
+            isEqualToString:kTLinkHelperVPNRequestDirectory]) {
+        return NO;
+    }
+    NSString *name = requestPath.lastPathComponent;
+    if (![name hasPrefix:@"vpnconf-"] || ![name hasSuffix:@".plist"]) {
+        return NO;
+    }
+    NSRange tokenRange = NSMakeRange(
+        @"vpnconf-".length,
+        name.length - @"vpnconf-".length - @".plist".length);
+    if ((NSInteger)tokenRange.length <= 0) return NO;
+    NSString *token = [name substringWithRange:tokenRange];
+    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:token];
+    if (!uuid || ![uuid.UUIDString isEqualToString:token]) return NO;
+    if (requestID) *requestID = token;
+    return YES;
+}
+
+static BOOL TLinkHelperWriteVPNResult(NSString *resultPath,
+                                      NSString *requestID,
+                                      NSDictionary *rawResult)
+{
+    NSMutableDictionary *result = rawResult
+        ? [rawResult mutableCopy] : [NSMutableDictionary dictionary];
+    result[@"version"] = @1;
+    result[@"request_id"] = requestID ?: @"";
+    NSError *error = nil;
+    NSData *data = [NSPropertyListSerialization
+        dataWithPropertyList:result
+                     format:NSPropertyListBinaryFormat_v1_0
+                    options:0
+                      error:&error];
+    if (!data || data.length > 65536) return NO;
+
+    int fd = open(resultPath.fileSystemRepresentation,
+        O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    if (fd < 0) return NO;
+    BOOL ok = fchmod(fd, 0600) == 0 &&
+              fchown(fd, 501, 501) == 0 &&
+              TLinkHelperWriteAll(fd, data) &&
+              fsync(fd) == 0;
+    close(fd);
+    if (!ok) unlink(resultPath.fileSystemRepresentation);
+    return ok;
+}
+
+static int TLinkHelperConfigureLegacyVPN(NSString *requestPath)
+{
+    NSString *requestID = nil;
+    if (!TLinkHelperVPNRequestPathAllowed(requestPath, &requestID)) {
+        TLinkHelperLog(@"configure-legacy-vpn: refused request path");
+        return 70;
+    }
+    NSString *resultPath = [requestPath stringByAppendingString:@".result"];
+    unlink(resultPath.fileSystemRepresentation);
+
+    int (^finish)(NSDictionary *, int) =
+        ^int(NSDictionary *result, int exitCode) {
+            BOOL wrote = TLinkHelperWriteVPNResult(
+                resultPath, requestID, result);
+            TLinkHelperLog([NSString stringWithFormat:
+                @"configure-legacy-vpn: request=%@ code=%@ ok=%d result_written=%d exit=%d uid=%d",
+                requestID,
+                result[@"code"] ?: @"unknown",
+                [result[@"ok"] boolValue] ? 1 : 0,
+                wrote ? 1 : 0,
+                exitCode,
+                geteuid()]);
+            return wrote ? exitCode : 74;
+        };
+
+    if (geteuid() != 0 || getegid() != 0) {
+        NSDictionary *failure = TLinkHelperVPNFailure(
+            @"vpn_private_root_helper_required", @{
+                @"executor_uid": @(geteuid()),
+                @"executor_gid": @(getegid()),
+            });
+        return finish(failure, 71);
+    }
+
+    struct stat requestStat = {};
+    int fd = open(requestPath.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0 || fstat(fd, &requestStat) != 0 ||
+        !S_ISREG(requestStat.st_mode) || requestStat.st_uid != 501 ||
+        (requestStat.st_mode & 077) != 0 || requestStat.st_nlink != 1 ||
+        requestStat.st_size <= 0 || requestStat.st_size > 16384) {
+        if (fd >= 0) close(fd);
+        unlink(requestPath.fileSystemRepresentation);
+        NSDictionary *failure = TLinkHelperVPNFailure(
+            @"vpn_private_request_validation_failed", nil);
+        return finish(failure, 72);
+    }
+
+    NSMutableData *requestData = [NSMutableData data];
+    uint8_t buffer[4096];
+    BOOL readOK = YES;
+    while (requestData.length < (NSUInteger)requestStat.st_size) {
+        ssize_t got = read(fd, buffer, sizeof(buffer));
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) { readOK = NO; break; }
+        [requestData appendBytes:buffer length:(NSUInteger)got];
+    }
+    close(fd);
+    // Credentials live only in memory after this point, even if the private
+    // store takes several seconds to publish its service.
+    unlink(requestPath.fileSystemRepresentation);
+
+    NSError *parseError = nil;
+    NSDictionary *request = readOK
+        ? [NSPropertyListSerialization propertyListWithData:requestData
+                                                    options:0
+                                                     format:nil
+                                                      error:&parseError]
+        : nil;
+    BOOL requestValid = [request isKindOfClass:[NSDictionary class]] &&
+        [request[@"version"] integerValue] == 1 &&
+        [request[@"request_id"] isEqualToString:requestID] &&
+        [request[@"protocol_type"] isKindOfClass:[NSString class]] &&
+        [request[@"server"] isKindOfClass:[NSString class]] &&
+        [request[@"username"] isKindOfClass:[NSString class]] &&
+        [request[@"password"] isKindOfClass:[NSString class]] &&
+        [request[@"shared_secret"] isKindOfClass:[NSString class]] &&
+        [request[@"group_name"] isKindOfClass:[NSString class]] &&
+        fabs([request[@"created_at"] doubleValue] -
+             [[NSDate date] timeIntervalSince1970]) <= 120.0;
+    if (!requestValid) {
+        NSDictionary *failure = TLinkHelperVPNFailure(
+            @"vpn_private_request_invalid", @{
+                @"native_error": parseError.localizedDescription ?: @"",
+            });
+        return finish(failure, 73);
+    }
+
+    int licenseExit = TLinkHelperRequireLicense(
+        @"automation", @"configure-legacy-vpn");
+    if (licenseExit != 0) {
+        NSDictionary *failure = TLinkHelperVPNFailure(
+            @"license_required", nil);
+        return finish(failure, licenseExit);
+    }
+
+    NSDictionary *result =
+        TLinkVPNConfigureLegacyPrivateSynchronouslyForHelper(
+            request[@"protocol_type"], request[@"server"],
+            request[@"username"], request[@"password"],
+            request[@"shared_secret"], request[@"group_name"]);
+    return finish(result, [result[@"ok"] boolValue] ? 0 : 75);
 }
 
 static BOOL TLinkProcessIsStreamd(struct kinfo_proc *proc)
@@ -1067,7 +1260,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=9 scope=ensure-streamd,ensure-auxiliaries,ensure-clipboardd,ensure-uiservice-mobile,ensure-vpnagent-mobile,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
+            TLinkHelperLog(@"privhelper version=10 scope=ensure-streamd,ensure-auxiliaries,ensure-clipboardd,ensure-uiservice-mobile,ensure-vpnagent-mobile,configure-legacy-vpn-root,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
             return 0;
         }
 
@@ -1109,6 +1302,13 @@ int main(int argc, char *argv[])
                 return 59;
             }
             return TLinkEnsureVPNAgent(normalized, NO);
+        }
+
+        if (argc == 3 &&
+            strcmp(argv[1], "--configure-legacy-vpn") == 0) {
+            NSString *requestPath =
+                [NSString stringWithUTF8String:argv[2]] ?: @"";
+            return TLinkHelperConfigureLegacyVPN(requestPath);
         }
 
         if (argc >= 2 && strcmp(argv[1], "--kill-streamd") == 0) {
@@ -1156,7 +1356,7 @@ int main(int argc, char *argv[])
             return TLinkRespring();
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --ensure-auxiliaries /path/to/streamd [--replace] | --ensure-vpnagent /path/to/streamd | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
+        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --ensure-auxiliaries /path/to/streamd [--replace] | --ensure-vpnagent /path/to/streamd | --configure-legacy-vpn /var/mobile/Library/TLinkauto/tmp/vpn-private-requests/vpnconf-UUID.plist | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
         return 64;
     }
 }

@@ -99,7 +99,7 @@ if ($RequireManagedProfile) {
 if ($RequirePrivateProfile) {
     Assert-Equal ([bool]$diagnostics.manager_status.configured) $true "private legacy profile configured"
     Assert-Equal $diagnostics.manager_status.backend "vpnconnectionstore_private" "private profile backend"
-    Assert-Equal $diagnostics.manager_status.approval_path "private_store_direct_no_nevpnmanager" "private approval path"
+    Assert-Equal $diagnostics.manager_status.approval_path "privhelper_root_private_store_no_nevpnmanager" "private approval path"
     Assert-Equal ([bool]$diagnostics.private_compatibility.mutating_api_exercised) $true "private marker mutation evidence"
     if ($ExpectedPrivateType) {
         Assert-Equal $diagnostics.manager_status.profile_type $ExpectedPrivateType "private profile type"

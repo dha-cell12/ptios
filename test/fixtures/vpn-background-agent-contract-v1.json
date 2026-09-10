@@ -39,6 +39,8 @@
     "loopbackOnly": true,
     "credentialsOverAgent": false,
     "credentialsOverTask59": false,
+    "legacyProfileExecutor": "privhelper_tsrootbinary",
+    "credentialTransport": "uid501_mode0600_one_shot_file",
     "packetTunnelProvider": false,
     "licenseFeature": "automation"
   }

@@ -33,9 +33,15 @@ first time the profile is saved. Auto-Reconnect/On Demand remains available.
 PPTP, L2TP, and IPSec mirror XXTouch's documented `vpnconf.create` contract:
 they load `VPNPreferences.bundle`, call
 `VPNConnectionStore.createVPNWithOptions:`, and select the returned service
-with `setActiveVPNID:` or its graded variant. This path does not show the iOS
-VPN approval sheet. Password and shared secret are passed directly to the
-system store and are never persisted in TLink preferences.
+with `setActiveVPNID:` or its graded variant. The private mutation now runs in
+the embedded `privhelper` TSRootBinary instead of the foreground
+`UIApplication`, matching XXTouch's daemon process boundary and avoiding the
+public iOS VPN approval path. Password and shared secret cross that boundary
+only in a randomly named, mode-0600, UID-501 one-shot plist. The helper accepts
+only that exact directory/name/owner/mode, unlinks the request immediately
+after reading it, and returns a credential-free result plist owned by UID 501.
+Credentials are never placed in argv, task 59, the vpnagent socket, logs, or
+TLink preferences.
 
 The private options preserve the XXTouch defaults: string protocol names on
 modern stores, numeric values `L2TP=0`, `PPTP=1`, and `IPSec=2` on older stores,
@@ -123,6 +129,7 @@ Then keep StreamControl backgrounded and validate the actual transition:
 
 Expected evidence includes `manager_backend=vpnconnectionstore_private`,
 `profile_type=L2TP`, `private_mutating_api_exercised=True`, and
+`approval_path=privhelper_root_private_store_no_nevpnmanager`,
 `connection_status=connected`. Also verify the system VPN icon and actual
 egress IP/DNS; a successful control response alone cannot prove traffic is
 tunneled.
