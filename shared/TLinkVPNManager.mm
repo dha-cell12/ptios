@@ -219,8 +219,6 @@ static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store)
             }];
         }
     }
-    if (records.count > 0) return records;
-
     Class storeClass = [store class];
     id names = TLinkVPNPrivateSendId(
         (id)storeClass,
@@ -234,6 +232,11 @@ static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store)
             NSString *identifier =
                 TLinkVPNPrivateServiceIdentifier(service);
             if (name.length == 0 || identifier.length == 0) return;
+            for (NSDictionary *existing in records) {
+                if ([existing[@"identifier"] isEqualToString:identifier]) {
+                    return;
+                }
+            }
             [records addObject:@{
                 @"name": name,
                 @"identifier": identifier,
@@ -485,6 +488,13 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     }
 
     NSDictionary *oldMarker = TLinkVPNPrivateLoadMarker();
+    NSArray<NSDictionary *> *beforeRecords =
+        TLinkVPNPrivateConfigurationRecords(store);
+    NSMutableSet<NSString *> *beforeIdentifiers = [NSMutableSet set];
+    for (NSDictionary *record in beforeRecords) {
+        NSString *identifier = record[@"identifier"];
+        if (identifier.length > 0) [beforeIdentifiers addObject:identifier];
+    }
     NSString *profileName = [kTLinkVPNPrivateNamePrefix
         stringByAppendingString:[[NSUUID UUID] UUIDString]];
     NSDictionary *options = @{
@@ -518,12 +528,52 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
             @{@"private_backend_available": @1});
     }
 
-    NSDictionary *newRecord = TLinkVPNPrivateFindConfiguration(
-        store, profileName, @"");
+    NSDictionary *newRecord = nil;
+    NSString *verificationMode = @"none";
+    NSUInteger verificationAttempts = 0;
+    NSUInteger observedRecordCount = beforeRecords.count;
+    for (NSUInteger attempt = 0; attempt < 10 && !newRecord; attempt++) {
+        verificationAttempts = attempt + 1;
+        NSArray<NSDictionary *> *afterRecords =
+            TLinkVPNPrivateConfigurationRecords(store);
+        observedRecordCount = afterRecords.count;
+
+        for (NSDictionary *record in afterRecords) {
+            if ([record[@"name"] isEqualToString:profileName]) {
+                newRecord = record;
+                verificationMode = @"exact_name";
+                break;
+            }
+        }
+        if (!newRecord) {
+            NSMutableArray<NSDictionary *> *delta = [NSMutableArray array];
+            for (NSDictionary *record in afterRecords) {
+                NSString *identifier = record[@"identifier"];
+                if (identifier.length > 0 &&
+                    ![beforeIdentifiers containsObject:identifier]) {
+                    [delta addObject:record];
+                }
+            }
+            // The create call is serialized and uniquely named. Accept one
+            // newly appearing service ID even if iOS normalizes its display
+            // name; never claim ownership when the delta is ambiguous.
+            if (delta.count == 1) {
+                newRecord = delta.firstObject;
+                verificationMode = @"single_identifier_delta";
+            }
+        }
+        if (!newRecord && attempt + 1 < 10) usleep(100000);
+    }
     if (!newRecord) {
         return TLinkVPNResult(false,
             @"vpn_private_create_verification_failed",
-            @{@"private_backend_available": @1});
+            @{
+                @"private_backend_available": @1,
+                @"verification_attempts": @(verificationAttempts),
+                @"profiles_before": @(beforeRecords.count),
+                @"profiles_observed": @(observedRecordCount),
+                @"native_error": @"create returned success but no unique new VPN service became visible",
+            });
     }
     if (!TLinkVPNPrivateSelectConfiguration(store, newRecord) ||
         !TLinkVPNPrivateCurrentConnection(store)) {
@@ -555,6 +605,8 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
            @"identifier": newRecord[@"identifier"] },
         @"disconnected") mutableCopy];
     fields[@"private_backend_available"] = @1;
+    fields[@"verification_mode"] = verificationMode;
+    fields[@"verification_attempts"] = @(verificationAttempts);
     fields[@"old_owned_profile_removed"] = @(oldProfileRemoved);
     fields[@"mutating_api_exercised"] = @1;
     return TLinkVPNResult(true, @"vpn_private_profile_saved", fields);
