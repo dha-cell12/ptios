@@ -27,6 +27,14 @@
 	<true/>
 	<key>com.apple.managedconfiguration.profiled-access</key>
 	<true/>
+	<!-- VPNConnectionStore legacy profile creation, matching the focused
+	     preference/profile privileges exercised by XXTouch. -->
+	<key>com.apple.managedconfiguration.mdmd-access</key>
+	<true/>
+	<key>user-preference-read</key>
+	<true/>
+	<key>user-preference-write</key>
+	<true/>
 	<key>com.apple.private.security.no-container</key>
 	<true/>
 	<key>com.apple.private.security.no-sandbox</key>

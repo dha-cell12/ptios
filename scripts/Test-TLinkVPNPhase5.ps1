@@ -62,7 +62,7 @@ $capability = Invoke-TLinkVPNTask -Task "97"
 if ($capability -notlike "0;;*" -or
     $capability -notlike "*vpnPhase=5*" -or
     $capability -notlike "*vpnState=background_control*" -or
-    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v7_dual_profile_control*" -or
+    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v8_legacy_direct_store*" -or
     $capability -notlike "*vpnBroker=vpnagent_6016_then_StreamControl_6015*") {
     throw "Task 97 does not report TrollStore VPN P5: $capability"
 }
@@ -79,7 +79,10 @@ Assert-Equal ([bool]$diagnostics.entitlements.allow_vpn) $true "allow-vpn entitl
 Assert-Equal ([bool]$diagnostics.entitlements.scpreferences_write_access) $true "SCPreferences write entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.scdynamicstore_write_access) $true "SCDynamicStore write entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.profiled_access) $true "profiled access entitlement"
-Assert-Equal $diagnostics.agent_version 7 "vpnagent version"
+Assert-Equal ([bool]$diagnostics.entitlements.mdmd_access) $true "mdmd access entitlement"
+Assert-Equal ([bool]$diagnostics.entitlements.user_preference_read) $true "user-preference-read entitlement"
+Assert-Equal ([bool]$diagnostics.entitlements.user_preference_write) $true "user-preference-write entitlement"
+Assert-Equal $diagnostics.agent_version 8 "vpnagent version"
 Assert-Equal $diagnostics.process_uid 501 "vpnagent uid"
 Assert-Equal $diagnostics.process_euid 501 "vpnagent euid"
 Assert-Equal $diagnostics.process_gid 501 "vpnagent gid"
@@ -91,10 +94,12 @@ if ($RequireManagedProfile) {
     Assert-Equal ([bool]$diagnostics.manager_status.configured) $true "IKEv2 profile configured"
     Assert-Equal $diagnostics.manager_status.backend "nevpnmanager_ikev2" "managed profile backend"
     Assert-Equal $diagnostics.manager_status.profile_type "IKEv2" "managed profile type"
+    Assert-Equal $diagnostics.manager_status.approval_path "nevpnmanager_public" "managed approval path"
 }
 if ($RequirePrivateProfile) {
     Assert-Equal ([bool]$diagnostics.manager_status.configured) $true "private legacy profile configured"
     Assert-Equal $diagnostics.manager_status.backend "vpnconnectionstore_private" "private profile backend"
+    Assert-Equal $diagnostics.manager_status.approval_path "private_store_direct_no_nevpnmanager" "private approval path"
     Assert-Equal ([bool]$diagnostics.private_compatibility.mutating_api_exercised) $true "private marker mutation evidence"
     if ($ExpectedPrivateType) {
         Assert-Equal $diagnostics.manager_status.profile_type $ExpectedPrivateType "private profile type"
@@ -138,10 +143,14 @@ if ($RunConnect -or $RunDisconnect) {
     scpreferences_write_access = $diagnostics.entitlements.scpreferences_write_access
     scdynamicstore_write_access = $diagnostics.entitlements.scdynamicstore_write_access
     profiled_access = $diagnostics.entitlements.profiled_access
+    mdmd_access = $diagnostics.entitlements.mdmd_access
+    user_preference_read = $diagnostics.entitlements.user_preference_read
+    user_preference_write = $diagnostics.entitlements.user_preference_write
     private_mutating_api_exercised = $diagnostics.private_compatibility.mutating_api_exercised
     private_load_error = $diagnostics.private_compatibility.load_error
     manager_backend = $diagnostics.manager_status.backend
     profile_type = $diagnostics.manager_status.profile_type
+    approval_path = $diagnostics.manager_status.approval_path
     profile_identifier = $diagnostics.manager_status.profile_identifier
     managed_profile_required = [bool]$RequireManagedProfile
     private_profile_required = [bool]$RequirePrivateProfile

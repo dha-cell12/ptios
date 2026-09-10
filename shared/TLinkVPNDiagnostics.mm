@@ -30,6 +30,12 @@ static NSString *const kTLinkSCDynamicStoreWriteEntitlement =
     @"com.apple.SystemConfiguration.SCDynamicStore-write-access";
 static NSString *const kTLinkProfiledAccessEntitlement =
     @"com.apple.managedconfiguration.profiled-access";
+static NSString *const kTLinkMDMDAccessEntitlement =
+    @"com.apple.managedconfiguration.mdmd-access";
+static NSString *const kTLinkUserPreferenceReadEntitlement =
+    @"user-preference-read";
+static NSString *const kTLinkUserPreferenceWriteEntitlement =
+    @"user-preference-write";
 NSString *TLinkVPNManagedProfileIdentifier(void)
 {
     return kTLinkVPNProfileIdentifier;
@@ -71,6 +77,9 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
             @"scpreferences_write_access": @0,
             @"scdynamicstore_write_access": @0,
             @"profiled_access": @0,
+            @"mdmd_access": @0,
+            @"user_preference_read": @0,
+            @"user_preference_write": @0,
         };
     }
 
@@ -104,6 +113,18 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
     CFTypeRef profiledValue = SecTaskCopyValueForEntitlement(
         task, (__bridge CFStringRef)kTLinkProfiledAccessEntitlement,
         &profiledError);
+    CFErrorRef mdmdError = NULL;
+    CFTypeRef mdmdValue = SecTaskCopyValueForEntitlement(
+        task, (__bridge CFStringRef)kTLinkMDMDAccessEntitlement,
+        &mdmdError);
+    CFErrorRef preferenceReadError = NULL;
+    CFTypeRef preferenceReadValue = SecTaskCopyValueForEntitlement(
+        task, (__bridge CFStringRef)kTLinkUserPreferenceReadEntitlement,
+        &preferenceReadError);
+    CFErrorRef preferenceWriteError = NULL;
+    CFTypeRef preferenceWriteValue = SecTaskCopyValueForEntitlement(
+        task, (__bridge CFStringRef)kTLinkUserPreferenceWriteEntitlement,
+        &preferenceWriteError);
 
     NSDictionary *probe = @{
         @"probe_source": @"sec_task_current_process",
@@ -123,6 +144,15 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
         @"profiled_access":
             @([TLinkVPNNormalizedEntitlementValues(profiledValue)
                 containsObject:@"true"]),
+        @"mdmd_access":
+            @([TLinkVPNNormalizedEntitlementValues(mdmdValue)
+                containsObject:@"true"]),
+        @"user_preference_read":
+            @([TLinkVPNNormalizedEntitlementValues(preferenceReadValue)
+                containsObject:@"true"]),
+        @"user_preference_write":
+            @([TLinkVPNNormalizedEntitlementValues(preferenceWriteValue)
+                containsObject:@"true"]),
     };
 
     if (vpnValue) CFRelease(vpnValue);
@@ -135,6 +165,12 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
     if (dynamicStoreError) CFRelease(dynamicStoreError);
     if (profiledValue) CFRelease(profiledValue);
     if (profiledError) CFRelease(profiledError);
+    if (mdmdValue) CFRelease(mdmdValue);
+    if (mdmdError) CFRelease(mdmdError);
+    if (preferenceReadValue) CFRelease(preferenceReadValue);
+    if (preferenceReadError) CFRelease(preferenceReadError);
+    if (preferenceWriteValue) CFRelease(preferenceWriteValue);
+    if (preferenceWriteError) CFRelease(preferenceWriteError);
     CFRelease(task);
     return probe;
 }

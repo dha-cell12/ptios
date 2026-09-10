@@ -3,7 +3,7 @@
 ## Outcome
 
 Task 59 uses the dedicated mobile-persona `vpnagent` on loopback port `6016`.
-Agent v7 supports two profile backends without sending credentials over task 59:
+Agent v8 supports two profile backends without sending credentials over task 59:
 
 ```text
 task 59 -> streamd -> vpnagent:6016 -> selected TLink profile
@@ -50,7 +50,9 @@ installed but makes the private marker authoritative for status and task 59.
 Switching profile types requires the current tunnel to be disconnected.
 
 The private legacy backend does not expose On Demand and returns
-`vpn_private_on_demand_unsupported`. Explicit IKEv2 disconnect still disables
+`vpn_private_on_demand_unsupported`. Saving a legacy profile never loads or
+saves `NEVPNManager`; this keeps the direct private path from invoking the
+public API approval flow. Explicit IKEv2 disconnect still disables
 On Demand before stopping the tunnel.
 
 ## Boundary and safety
@@ -75,7 +77,7 @@ vpnControl=agent_6016_with_foreground_fallback
 vpnBackend=ikev2_nevpnmanager_legacy_private_no_consent
 vpnBroker=vpnagent_6016_then_StreamControl_6015
 vpnPhase=5
-vpnBackgroundAgent=candidate_mobile_process_v7_dual_profile_control
+vpnBackgroundAgent=candidate_mobile_process_v8_legacy_direct_store
 ```
 
 Task 592 is authoritative only when
@@ -95,14 +97,14 @@ $iphoneIP = "192.168.1.244"
 ./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP -RequireManagedProfile -RunConnect
 ```
 
-Expected evidence includes `agent_version=7`,
+Expected evidence includes `agent_version=8`,
 `manager_backend=nevpnmanager_ikev2`, `profile_type=IKEv2`, and a connected
 task 590 query.
 
 ## L2TP no-confirm device validation
 
 Disconnect the active IKEv2 tunnel. In Managed VPN, select L2TP and enter its
-server, username, password, and shared secret. Group is optional. Tap
+server, username, and password. Shared secret and Group are optional. Tap
 **Save L2TP Profile**. No iOS approval sheet should appear.
 
 Validate creation first:

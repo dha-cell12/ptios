@@ -112,6 +112,7 @@ static NSDictionary *TLinkVPNStatusFields(NEVPNManager *manager)
         @"profile_name": kTLinkVPNDescription,
         @"profile_type": @"IKEv2",
         @"backend": @"nevpnmanager_ikev2",
+        @"approval_path": @"nevpnmanager_public",
     };
 }
 
@@ -313,6 +314,7 @@ static BOOL TLinkVPNPrivateWriteMarker(
         @"name": record[@"name"] ?: @"",
         @"identifier": record[@"identifier"] ?: @"",
         @"profile_type": protocolType ?: @"",
+        @"approval_path": @"private_store_direct_no_nevpnmanager",
         @"selected_by_tlink": @1,
         @"updated_at": @([[NSDate date] timeIntervalSince1970]),
     };
@@ -398,6 +400,27 @@ static NSString *TLinkVPNPrivateConnectionStatus(id connection)
     return text.length > 0 ? text : @"unknown";
 }
 
+static NSDictionary *TLinkVPNPrivateEnsureNoActiveConnectionSync(void)
+{
+    NSString *failure = nil;
+    id store = TLinkVPNPrivateStore(&failure);
+    if (!store) {
+        return TLinkVPNResult(false,
+            failure ?: @"vpn_private_store_unavailable", nil);
+    }
+    NSString *status = TLinkVPNPrivateConnectionStatus(
+        TLinkVPNPrivateCurrentConnection(store));
+    BOOL busy = [status isEqualToString:@"connected"] ||
+                [status isEqualToString:@"connecting"] ||
+                [status isEqualToString:@"disconnecting"] ||
+                [status isEqualToString:@"reasserting"];
+    return TLinkVPNResult(!busy,
+        busy ? @"vpn_profile_switch_requires_disconnect" : @"ok", @{
+            @"connection_status": status ?: @"unknown",
+            @"preflight_backend": @"vpnconnectionstore_private",
+        });
+}
+
 static NSDictionary *TLinkVPNPrivateStatusFields(
     NSDictionary *marker,
     NSString *status)
@@ -416,6 +439,8 @@ static NSDictionary *TLinkVPNPrivateStatusFields(
         @"profile_name": marker[@"name"] ?: @"",
         @"profile_type": marker[@"profile_type"] ?: @"legacy",
         @"backend": @"vpnconnectionstore_private",
+        @"approval_path": marker[@"approval_path"]
+            ?: @"private_store_direct_no_nevpnmanager",
     };
 }
 
@@ -731,6 +756,7 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
     fields[@"store_schema"] = modernStore ? @"modern" : @"legacy";
     fields[@"old_owned_profile_removed"] = @(oldProfileRemoved);
     fields[@"mutating_api_exercised"] = @1;
+    fields[@"approval_path"] = @"private_store_direct_no_nevpnmanager";
     return TLinkVPNResult(true, @"vpn_private_profile_saved", fields);
 }
 
@@ -973,13 +999,6 @@ void TLinkVPNConfigureLegacyPrivate(
             TLinkVPNResult(false, @"vpn_configuration_incomplete", nil));
         return;
     }
-    if (![type isEqualToString:@"PPTP"] && secret.length == 0) {
-        TLinkVPNComplete(completion, TLinkVPNResult(false,
-            @"vpn_shared_secret_required", @{
-                @"profile_type": type,
-            }));
-        return;
-    }
     if (TLinkVPNServerIsLoopback(server)) {
         TLinkVPNComplete(completion,
             TLinkVPNResult(false, @"vpn_server_loopback_not_allowed", nil));
@@ -995,8 +1014,8 @@ void TLinkVPNConfigureLegacyPrivate(
             }));
     };
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Keep the known-good IKEv2 profile installed, but prevent an active
-        // tunnel or on-demand rule from racing the selected legacy profile.
+        // Keep the known-good IKEv2 profile installed, but do not replace an
+        // active marker-owned legacy tunnel.
         if (TLinkVPNPrivateLoadMarker()) {
             NSDictionary *privateStatus =
                 TLinkVPNPrivateRunSafely(@"status", ^{
@@ -1031,43 +1050,18 @@ void TLinkVPNConfigureLegacyPrivate(
                 }
             }
         }
-        NEVPNManager *manager = [NEVPNManager sharedManager];
-        [manager loadFromPreferencesWithCompletionHandler:^(NSError *error) {
-            if (error) {
-                TLinkVPNComplete(completion, TLinkVPNResult(false,
-                    @"vpn_load_preferences_failed",
-                    @{@"native_error": error.localizedDescription ?: @""}));
-                return;
-            }
-            if (TLinkVPNManagerIsOwned(manager)) {
-                NEVPNStatus status = manager.connection.status;
-                if (status != NEVPNStatusDisconnected &&
-                    status != NEVPNStatusInvalid) {
-                    TLinkVPNComplete(completion, TLinkVPNResult(false,
-                        @"vpn_profile_switch_requires_disconnect",
-                        TLinkVPNStatusFields(manager)));
-                    return;
-                }
-                if (manager.onDemandEnabled) {
-                    manager.onDemandEnabled = false;
-                    manager.onDemandRules = @[];
-                    [manager saveToPreferencesWithCompletionHandler:
-                        ^(NSError *saveError) {
-                        if (saveError) {
-                            TLinkVPNComplete(completion, TLinkVPNResult(false,
-                                @"vpn_on_demand_save_failed", @{
-                                    @"native_error":
-                                        saveError.localizedDescription ?: @"",
-                                }));
-                            return;
-                        }
-                        createPrivateProfile();
-                    }];
-                    return;
-                }
-            }
-            createPrivateProfile();
-        }];
+        // Do not load or save NEVPNManager here. Even an incidental public
+        // manager save can invoke the system "Add VPN Configurations" sheet.
+        // XXTouch's legacy path talks only to VPNConnectionStore.
+        NSDictionary *switchPreflight =
+            TLinkVPNPrivateRunSafely(@"switch_preflight", ^{
+                return TLinkVPNPrivateEnsureNoActiveConnectionSync();
+            });
+        if (![switchPreflight[@"ok"] boolValue]) {
+            TLinkVPNComplete(completion, switchPreflight);
+            return;
+        }
+        createPrivateProfile();
     });
 #else
     TLinkVPNComplete(completion, TLinkVPNResult(false,

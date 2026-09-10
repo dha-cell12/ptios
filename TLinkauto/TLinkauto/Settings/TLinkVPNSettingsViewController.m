@@ -175,7 +175,7 @@
     self.usernameField = [self fieldWithPlaceholder:@"Username" secure:NO];
     self.passwordField = [self fieldWithPlaceholder:@"Password" secure:YES];
     self.sharedSecretField =
-        [self fieldWithPlaceholder:@"Shared secret" secure:YES];
+        [self fieldWithPlaceholder:@"Shared secret (optional)" secure:YES];
     self.groupField =
         [self fieldWithPlaceholder:@"Group (optional)" secure:NO];
     [self loadNonSecretFieldsForProtocol:self.activeProtocolType];
@@ -316,6 +316,8 @@
             isKindOfClass:[NSString class]] ? result[@"profile_type"] : @"";
         NSString *backend = [result[@"backend"] isKindOfClass:[NSString class]]
             ? result[@"backend"] : @"unknown";
+        NSString *approvalPath = [result[@"approval_path"]
+            isKindOfClass:[NSString class]] ? result[@"approval_path"] : @"unknown";
         if (onDemand) {
             [self.onDemandSwitch setOn:onDemand.boolValue animated:YES];
         }
@@ -329,10 +331,11 @@
                 @"\nNative error: %@", nativeError];
         }
         self.statusLabel.text = [NSString stringWithFormat:
-            @"Code: %@\nType: %@\nBackend: %@\nConfigured: %@\nEnabled: %@\nAuto-Reconnect: %@\nConnection: %@%@",
+            @"Code: %@\nType: %@\nBackend: %@\nApproval path: %@\nConfigured: %@\nEnabled: %@\nAuto-Reconnect: %@\nConnection: %@%@",
             code,
             profileType.length > 0 ? profileType : [self selectedProtocolType],
             backend,
+            approvalPath,
             [result[@"configured"] boolValue] ? @"yes" : @"no",
             [result[@"enabled"] boolValue] ? @"yes" : @"no",
             onDemand.boolValue ? @"on" : @"off",

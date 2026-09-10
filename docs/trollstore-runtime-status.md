@@ -115,7 +115,7 @@ TrollStore runtime.
   tries it before the existing foreground app broker. It carries the same
   app identity, VPN entitlement, and Keychain group but accepts no profile or
   credential input. Device evidence promoted the state to `background_control`.
-  Agent v7 keeps the validated `NEVPNManager` path for IKEv2 and adds the
+  Agent v8 keeps the validated `NEVPNManager` path for IKEv2 and adds the
   XXTouch-compatible private `VPNConnectionStore` path for PPTP/L2TP/IPSec.
   Legacy creation is no-confirm, exact marker-owned, and does not replace the
   installed IKEv2 profile. The background connect/query broker is preserved; see
