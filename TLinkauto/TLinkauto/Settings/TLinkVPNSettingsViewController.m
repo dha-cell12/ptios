@@ -49,7 +49,7 @@
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     self.serverField = [self fieldWithPlaceholder:@"IKEv2 server address" secure:NO];
     self.remoteIdentifierField =
-        [self fieldWithPlaceholder:@"Remote identifier (defaults to server)" secure:NO];
+        [self fieldWithPlaceholder:@"Remote identifier (optional)" secure:NO];
     self.usernameField = [self fieldWithPlaceholder:@"Username" secure:NO];
     self.passwordField = [self fieldWithPlaceholder:@"Password" secure:YES];
     self.serverField.text = [defaults stringForKey:@"TLinkVPNServerAddress"] ?: @"";

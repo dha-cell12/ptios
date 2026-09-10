@@ -477,10 +477,11 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
 
     SEL createSelector = NSSelectorFromString(@"createVPNWithOptions:");
     Class storeClass = [store class];
+    BOOL modernStore = [storeClass respondsToSelector:NSSelectorFromString(
+        @"createAllVPNByUserDefinedNamesDictionary")];
     BOOL canList =
         [store respondsToSelector:NSSelectorFromString(@"configurations")] ||
-        [storeClass respondsToSelector:NSSelectorFromString(
-            @"createAllVPNByUserDefinedNamesDictionary")];
+        modernStore;
     if (![store respondsToSelector:createSelector] || !canList) {
         return TLinkVPNResult(false,
             @"vpn_private_required_selectors_missing",
@@ -497,38 +498,40 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     }
     NSString *profileName = [kTLinkVPNPrivateNamePrefix
         stringByAppendingString:[[NSUUID UUID] UUIDString]];
-    NSDictionary *options = @{
+    NSMutableDictionary *options = [@{
         // XXTouch translates the public string "IKEv2" through its private
         // compatibility table before invoking VPNConnectionStore. The raw
         // selector expects the resulting NSNumber value (IKEv2 = 4), not the
         // source string; passing NSString can trigger an internal exception.
         @"VPNType": @4,
-        @"VPNGrade": @0,
         @"dispName": profileName,
-        @"name": profileName,
         @"server": server,
-        @"serverAddress": server,
         // VPNConnectionStore's XXTouch-compatible schema names the EAP
-        // account field "authorization". Keep "username" only as a
-        // cross-version alias; authorization is the field consumed by the
-        // private profile builder.
+        // account field "authorization".
         @"authorization": user,
-        @"username": user,
         @"password": password,
-        // Local ID is independent from the EAP username and is optional.
-        // The previous implementation incorrectly forced it to username,
-        // which makes otherwise valid username/password profiles fail IKE.
-        @"VPNLocalIdentifier": @"",
-        @"VPNRemoteIdentifier": remote,
-        @"VPNRemotedentifier": remote,
-        @"eapType": @1,
         @"authType": @1,
         @"encrypLevel": @1,
         @"VPNSendAllTraffic": @1,
         @"group": @"",
         @"secret": @"",
         @"securID": @0,
-    };
+    } mutableCopy];
+    // On current iOS the XXTouch wrapper forwards Local/Remote identifiers
+    // only when the caller supplied them. Omitting the keys is materially
+    // different from forcing an empty string or copying the username/server.
+    if (remote.length > 0) {
+        options[@"VPNRemoteIdentifier"] = remote;
+    }
+    if (!modernStore) {
+        // Match the compatibility defaults used by XXTouch only on older
+        // VPNConnectionStore implementations.
+        options[@"VPNGrade"] = @0;
+        options[@"VPNLocalIdentifier"] = @"";
+        options[@"VPNRemoteIdentifier"] = remote ?: @"";
+        options[@"VPNRemotedentifier"] = remote ?: @"";
+        options[@"eapType"] = @1;
+    }
     uintptr_t created = ((uintptr_t (*)(id, SEL, id))objc_msgSend)(
         store, createSelector, options);
     if (created == 0) {
@@ -626,6 +629,9 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     fields[@"private_backend_available"] = @1;
     fields[@"verification_mode"] = verificationMode;
     fields[@"verification_attempts"] = @(verificationAttempts);
+    fields[@"remote_identifier_mode"] = remote.length > 0
+        ? @"explicit" : @"system_default";
+    fields[@"store_schema"] = modernStore ? @"modern" : @"legacy";
     fields[@"old_owned_profile_removed"] = @(oldProfileRemoved);
     fields[@"mutating_api_exercised"] = @1;
     return TLinkVPNResult(true, @"vpn_private_profile_saved", fields);
@@ -842,7 +848,7 @@ void TLinkVPNConfigureIKEv2(
             TLinkVPNResult(false, @"vpn_server_loopback_not_allowed", nil));
         return;
     }
-    if (remote.length == 0) remote = server;
+    NSString *effectiveRemote = remote.length > 0 ? remote : server;
 
     NSError *keychainError = nil;
     NSData *passwordReference =
@@ -877,7 +883,7 @@ void TLinkVPNConfigureIKEv2(
 
             NEVPNProtocolIKEv2 *protocol = [[NEVPNProtocolIKEv2 alloc] init];
             protocol.serverAddress = server;
-            protocol.remoteIdentifier = remote;
+            protocol.remoteIdentifier = effectiveRemote;
             protocol.username = user;
             protocol.passwordReference = passwordReference;
             protocol.authenticationMethod = NEVPNIKEAuthenticationMethodNone;
