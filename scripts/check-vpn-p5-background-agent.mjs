@@ -79,6 +79,8 @@ assert.match(diagnosticsSource, /profiled_access/);
 assert.match(manager, /TLinkVPNPrivateConfigureIKEv2Sync/);
 assert.match(manager, /createVPNWithOptions:/);
 assert.match(manager, /@"VPNType": @4/);
+assert.match(manager, /@"authorization": user/);
+assert.match(manager, /@"VPNLocalIdentifier": @""/);
 assert.match(manager, /TLinkVPNPrivateRunSafely/);
 assert.match(manager, /@catch \(NSException \*exception\)/);
 assert.match(manager, /\[NSThread isMainThread\]/);

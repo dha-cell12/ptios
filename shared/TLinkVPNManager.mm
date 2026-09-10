@@ -508,9 +508,17 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
         @"name": profileName,
         @"server": server,
         @"serverAddress": server,
+        // VPNConnectionStore's XXTouch-compatible schema names the EAP
+        // account field "authorization". Keep "username" only as a
+        // cross-version alias; authorization is the field consumed by the
+        // private profile builder.
+        @"authorization": user,
         @"username": user,
         @"password": password,
-        @"VPNLocalIdentifier": user,
+        // Local ID is independent from the EAP username and is optional.
+        // The previous implementation incorrectly forced it to username,
+        // which makes otherwise valid username/password profiles fail IKE.
+        @"VPNLocalIdentifier": @"",
         @"VPNRemoteIdentifier": remote,
         @"VPNRemotedentifier": remote,
         @"eapType": @1,
