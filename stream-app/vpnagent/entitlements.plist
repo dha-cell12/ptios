@@ -11,11 +11,14 @@
 	<key>keychain-access-groups</key>
 	<array>
 		<string>StreamCtl.com.tlinkauto.streamcontrol</string>
+		<string>com.apple.managed.vpn.shared</string>
 	</array>
 	<key>com.apple.developer.networking.vpn.api</key>
 	<array>
 		<string>allow-vpn</string>
 	</array>
+	<key>com.apple.private.networkextension.configuration</key>
+	<string>super</string>
 	<key>com.apple.SystemConfiguration.SCPreferences-write-access</key>
 	<array>
 		<string>preferences.plist</string>

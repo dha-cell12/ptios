@@ -24,6 +24,10 @@ static NSString *const kTLinkVPNAPIEntitlement =
     @"com.apple.developer.networking.vpn.api";
 static NSString *const kTLinkNetworkExtensionEntitlement =
     @"com.apple.developer.networking.networkextension";
+static NSString *const kTLinkPrivateConfigurationEntitlement =
+    @"com.apple.private.networkextension.configuration";
+static NSString *const kTLinkKeychainAccessGroupsEntitlement =
+    @"keychain-access-groups";
 static NSString *const kTLinkSCPreferencesWriteEntitlement =
     @"com.apple.SystemConfiguration.SCPreferences-write-access";
 static NSString *const kTLinkSCDynamicStoreWriteEntitlement =
@@ -74,6 +78,10 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
             @"networkextension_present": @0,
             @"networkextension_values": @[],
             @"packet_tunnel_provider": @0,
+            @"private_configuration_present": @0,
+            @"private_configuration_values": @[],
+            @"private_configuration_super": @0,
+            @"managed_vpn_keychain_access": @0,
             @"scpreferences_write_access": @0,
             @"scdynamicstore_write_access": @0,
             @"profiled_access": @0,
@@ -98,6 +106,23 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
         &networkExtensionError);
     NSArray<NSString *> *networkExtensionValues =
         TLinkVPNNormalizedEntitlementValues(networkExtensionValue);
+
+    CFErrorRef privateConfigurationError = NULL;
+    CFTypeRef privateConfigurationValue =
+        SecTaskCopyValueForEntitlement(
+            task,
+            (__bridge CFStringRef)kTLinkPrivateConfigurationEntitlement,
+            &privateConfigurationError);
+    NSArray<NSString *> *privateConfigurationValues =
+        TLinkVPNNormalizedEntitlementValues(privateConfigurationValue);
+
+    CFErrorRef keychainGroupsError = NULL;
+    CFTypeRef keychainGroupsValue = SecTaskCopyValueForEntitlement(
+        task,
+        (__bridge CFStringRef)kTLinkKeychainAccessGroupsEntitlement,
+        &keychainGroupsError);
+    NSArray<NSString *> *keychainGroups =
+        TLinkVPNNormalizedEntitlementValues(keychainGroupsValue);
 
     CFErrorRef scPreferencesError = NULL;
     CFTypeRef scPreferencesValue = SecTaskCopyValueForEntitlement(
@@ -136,6 +161,14 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
         @"networkextension_values": networkExtensionValues ?: @[],
         @"packet_tunnel_provider":
             @([networkExtensionValues containsObject:@"packet-tunnel-provider"]),
+        @"private_configuration_present":
+            @(privateConfigurationValue != NULL),
+        @"private_configuration_values":
+            privateConfigurationValues ?: @[],
+        @"private_configuration_super":
+            @([privateConfigurationValues containsObject:@"super"]),
+        @"managed_vpn_keychain_access":
+            @([keychainGroups containsObject:@"com.apple.managed.vpn.shared"]),
         @"scpreferences_write_access":
             @([scPreferencesValues containsObject:@"preferences.plist"]),
         @"scdynamicstore_write_access":
@@ -159,6 +192,10 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
     if (vpnError) CFRelease(vpnError);
     if (networkExtensionValue) CFRelease(networkExtensionValue);
     if (networkExtensionError) CFRelease(networkExtensionError);
+    if (privateConfigurationValue) CFRelease(privateConfigurationValue);
+    if (privateConfigurationError) CFRelease(privateConfigurationError);
+    if (keychainGroupsValue) CFRelease(keychainGroupsValue);
+    if (keychainGroupsError) CFRelease(keychainGroupsError);
     if (scPreferencesValue) CFRelease(scPreferencesValue);
     if (scPreferencesError) CFRelease(scPreferencesError);
     if (dynamicStoreValue) CFRelease(dynamicStoreValue);

@@ -6600,7 +6600,7 @@ static NSData *TLinkHandleHelloStatus(void)
         @"vpnConfigurationTransport": @"local_ui_keychain_only",
         @"vpnCredentialsOverTask59": @(NO),
         @"vpnPhase": @5,
-        @"vpnBackgroundAgent": @"candidate_mobile_process_v8_legacy_direct_store",
+        @"vpnBackgroundAgent": @"candidate_mobile_process_v9_super_configuration",
         @"vpnOnDemand": @"ikev2_only_local_ui_connect_all_networks",
         @"vpnDisconnectPolicy": @"explicit_disconnect_disables_on_demand",
         @"vpnDiagnostics": @"task59_action2_base64_json_v1",
@@ -9065,7 +9065,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" vpnState=background_control vpnQuery=agent_6016_app_6015_interface_fallback"];
         cap = [cap stringByAppendingString:@" vpnControl=agent_6016_with_foreground_fallback vpnBackend=ikev2_nevpnmanager_legacy_private_no_consent"];
         cap = [cap stringByAppendingString:@" vpnBroker=vpnagent_6016_then_StreamControl_6015"];
-        cap = [cap stringByAppendingString:@" vpnPhase=5 vpnBackgroundAgent=candidate_mobile_process_v8_legacy_direct_store"];
+        cap = [cap stringByAppendingString:@" vpnPhase=5 vpnBackgroundAgent=candidate_mobile_process_v9_super_configuration"];
         cap = [cap stringByAppendingString:@" vpnOnDemand=local_ui_connect_all_networks"];
         cap = [cap stringByAppendingString:@" vpnDisconnectPolicy=explicit_disconnect_disables_on_demand"];
         cap = [cap stringByAppendingString:@" vpnDiagnostics=task59_action2_base64_json_v1"];

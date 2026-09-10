@@ -82,6 +82,8 @@ Assert-Equal ([bool]$diagnostics.entitlements.profiled_access) $true "profiled a
 Assert-Equal ([bool]$diagnostics.entitlements.mdmd_access) $true "mdmd access entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.user_preference_read) $true "user-preference-read entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.user_preference_write) $true "user-preference-write entitlement"
+Assert-Equal ([bool]$diagnostics.entitlements.private_configuration_super) $true "private NetworkExtension configuration entitlement"
+Assert-Equal ([bool]$diagnostics.entitlements.managed_vpn_keychain_access) $true "managed VPN Keychain access group"
 Assert-Equal $diagnostics.agent_version 8 "vpnagent version"
 Assert-Equal $diagnostics.process_uid 501 "vpnagent uid"
 Assert-Equal $diagnostics.process_euid 501 "vpnagent euid"
@@ -146,6 +148,8 @@ if ($RunConnect -or $RunDisconnect) {
     mdmd_access = $diagnostics.entitlements.mdmd_access
     user_preference_read = $diagnostics.entitlements.user_preference_read
     user_preference_write = $diagnostics.entitlements.user_preference_write
+    private_configuration_super = $diagnostics.entitlements.private_configuration_super
+    managed_vpn_keychain_access = $diagnostics.entitlements.managed_vpn_keychain_access
     private_mutating_api_exercised = $diagnostics.private_compatibility.mutating_api_exercised
     private_load_error = $diagnostics.private_compatibility.load_error
     manager_backend = $diagnostics.manager_status.backend

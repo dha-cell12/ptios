@@ -783,7 +783,7 @@ static int TLinkEnsureUIService(NSString *streamdPath, BOOL replaceExisting)
 static BOOL TLinkVPNAgentProbeIsCurrent(NSString *probe)
 {
     return [probe hasPrefix:@"0;;vpnagent_ready"] &&
-           [probe containsString:@"version=8"] &&
+           [probe containsString:@"version=9"] &&
            [probe containsString:@"phase=5"] &&
            [probe containsString:@" uid=501 "] &&
            [probe containsString:@" euid=501 "] &&
