@@ -743,6 +743,7 @@ jobs:
           grep -q TLinkVPNConfigureLegacyPrivate shared/TLinkVPNManager.mm
           grep -q 'supported_types.*PPTP.*L2TP.*IPSec' shared/TLinkVPNManager.mm
           grep -q 'vpnconnectionstore_private' shared/TLinkVPNManager.mm
+          grep -q 'vpn_l2tp_ipsec_shared_secret_required' shared/TLinkVPNManager.mm
           grep -q 'setuid(501)' stream-app/vpnagent/main.mm
           ! grep -q 'com.apple.developer.networking.vpn.api' stream-app/streamd/entitlements.plist
           grep -q 'Wi-Fi Status' stream-app/app/SettingsViewController.mm

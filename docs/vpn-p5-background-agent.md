@@ -54,7 +54,9 @@ signing values as `private_configuration_super` and
 The private options preserve the XXTouch defaults: string protocol names on
 modern stores, numeric values `L2TP=0`, `PPTP=1`, and `IPSec=2` on older stores,
 PPTP authentication type 0, other types authentication type 1, encryption
-level 1, send-all-traffic enabled, and optional group. IKEv2 is deliberately
+level 1, send-all-traffic enabled, and optional group. L2TP on Apple platforms
+is L2TP-over-IPSec, so its machine-authentication shared secret is required
+and is distinct from the user account password. IKEv2 is deliberately
 excluded from the private constructor.
 
 Only the exact private service ID/name/type stored in TLink's mode-0600 marker
@@ -118,7 +120,7 @@ task 590 query.
 ## L2TP no-confirm device validation
 
 Disconnect the active IKEv2 tunnel. In Managed VPN, select L2TP and enter its
-server, username, and password. Shared secret and Group are optional. Tap
+server, username, password, and IPSec shared secret. Group is optional. Tap
 **Save L2TP Profile**. No iOS approval sheet should appear.
 
 Validate creation first:

@@ -117,10 +117,14 @@
     NSString *protocol = [self selectedProtocolType];
     BOOL ikev2 = [protocol isEqualToString:@"IKEv2"];
     BOOL pptp = [protocol isEqualToString:@"PPTP"];
+    BOOL l2tp = [protocol isEqualToString:@"L2TP"];
     self.serverField.placeholder = [NSString stringWithFormat:
         @"%@ server address", protocol];
     self.remoteIdentifierField.hidden = !ikev2;
     self.sharedSecretField.hidden = ikev2 || pptp;
+    self.sharedSecretField.placeholder = l2tp
+        ? @"IPSec shared secret (required)"
+        : @"Shared secret (optional)";
     self.groupField.hidden = ikev2 || pptp;
     self.onDemandRow.hidden = !ikev2;
     self.onDemandSwitch.enabled = ikev2;
@@ -132,7 +136,8 @@
            "iOS may request approval once. Auto-Reconnect is supported."
         : @"PPTP/L2TP/IPSec use the TrollStore private VPNConnectionStore "
            "compatibility path mirrored from XXTouch, so saving does not "
-           "show the iOS approval sheet. Password and shared secret are "
+           "show the iOS approval sheet. L2TP requires a separate IPSec "
+           "shared secret in addition to the account password. Secrets are "
            "passed directly to the system store and are not retained by "
            "TLink. Auto-Reconnect is unavailable for this backend.";
 }

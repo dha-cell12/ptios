@@ -1276,6 +1276,19 @@ void TLinkVPNConfigureLegacyPrivate(
             TLinkVPNResult(false, @"vpn_configuration_incomplete", nil));
         return;
     }
+    // On Apple platforms L2TP is L2TP-over-IPSec. VPNConnectionStore accepts
+    // an empty `secret` and returns success (as XXTouch reports), but the
+    // resulting profile cannot establish machine authentication and fails at
+    // connect time with "IPSec Shared Secret is missing". Do not persist a
+    // profile that is known to be unusable.
+    if ([type isEqualToString:@"L2TP"] && secret.length == 0) {
+        TLinkVPNComplete(completion, TLinkVPNResult(false,
+            @"vpn_l2tp_ipsec_shared_secret_required", @{
+                @"profile_type": @"L2TP",
+                @"machine_authentication": @"shared_secret",
+            }));
+        return;
+    }
     if (TLinkVPNServerIsLoopback(server)) {
         TLinkVPNComplete(completion,
             TLinkVPNResult(false, @"vpn_server_loopback_not_allowed", nil));
