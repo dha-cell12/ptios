@@ -24,7 +24,12 @@ static NSString *const kTLinkVPNAPIEntitlement =
     @"com.apple.developer.networking.vpn.api";
 static NSString *const kTLinkNetworkExtensionEntitlement =
     @"com.apple.developer.networking.networkextension";
-
+static NSString *const kTLinkSCPreferencesWriteEntitlement =
+    @"com.apple.SystemConfiguration.SCPreferences-write-access";
+static NSString *const kTLinkSCDynamicStoreWriteEntitlement =
+    @"com.apple.SystemConfiguration.SCDynamicStore-write-access";
+static NSString *const kTLinkProfiledAccessEntitlement =
+    @"com.apple.managedconfiguration.profiled-access";
 NSString *TLinkVPNManagedProfileIdentifier(void)
 {
     return kTLinkVPNProfileIdentifier;
@@ -63,6 +68,9 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
             @"networkextension_present": @0,
             @"networkextension_values": @[],
             @"packet_tunnel_provider": @0,
+            @"scpreferences_write_access": @0,
+            @"scdynamicstore_write_access": @0,
+            @"profiled_access": @0,
         };
     }
 
@@ -82,6 +90,21 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
     NSArray<NSString *> *networkExtensionValues =
         TLinkVPNNormalizedEntitlementValues(networkExtensionValue);
 
+    CFErrorRef scPreferencesError = NULL;
+    CFTypeRef scPreferencesValue = SecTaskCopyValueForEntitlement(
+        task, (__bridge CFStringRef)kTLinkSCPreferencesWriteEntitlement,
+        &scPreferencesError);
+    NSArray<NSString *> *scPreferencesValues =
+        TLinkVPNNormalizedEntitlementValues(scPreferencesValue);
+    CFErrorRef dynamicStoreError = NULL;
+    CFTypeRef dynamicStoreValue = SecTaskCopyValueForEntitlement(
+        task, (__bridge CFStringRef)kTLinkSCDynamicStoreWriteEntitlement,
+        &dynamicStoreError);
+    CFErrorRef profiledError = NULL;
+    CFTypeRef profiledValue = SecTaskCopyValueForEntitlement(
+        task, (__bridge CFStringRef)kTLinkProfiledAccessEntitlement,
+        &profiledError);
+
     NSDictionary *probe = @{
         @"probe_source": @"sec_task_current_process",
         @"probe_available": @1,
@@ -92,12 +115,26 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
         @"networkextension_values": networkExtensionValues ?: @[],
         @"packet_tunnel_provider":
             @([networkExtensionValues containsObject:@"packet-tunnel-provider"]),
+        @"scpreferences_write_access":
+            @([scPreferencesValues containsObject:@"preferences.plist"]),
+        @"scdynamicstore_write_access":
+            @([TLinkVPNNormalizedEntitlementValues(dynamicStoreValue)
+                containsObject:@"true"]),
+        @"profiled_access":
+            @([TLinkVPNNormalizedEntitlementValues(profiledValue)
+                containsObject:@"true"]),
     };
 
     if (vpnValue) CFRelease(vpnValue);
     if (vpnError) CFRelease(vpnError);
     if (networkExtensionValue) CFRelease(networkExtensionValue);
     if (networkExtensionError) CFRelease(networkExtensionError);
+    if (scPreferencesValue) CFRelease(scPreferencesValue);
+    if (scPreferencesError) CFRelease(scPreferencesError);
+    if (dynamicStoreValue) CFRelease(dynamicStoreValue);
+    if (dynamicStoreError) CFRelease(dynamicStoreError);
+    if (profiledValue) CFRelease(profiledValue);
+    if (profiledError) CFRelease(profiledError);
     CFRelease(task);
     return probe;
 }

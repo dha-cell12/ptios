@@ -10,6 +10,7 @@
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UISwitch *onDemandSwitch;
 @property(nonatomic, strong) UIActivityIndicatorView *transitionSpinner;
+@property(nonatomic, strong) UIButton *saveProfileButton;
 @property(nonatomic, copy) NSString *transitionAction;
 @property(nonatomic, strong) NSDate *transitionStartedAt;
 @property(nonatomic, assign) NSUInteger transitionGeneration;
@@ -88,8 +89,10 @@
         initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.transitionSpinner.hidesWhenStopped = YES;
 
+    self.saveProfileButton =
+        [self buttonWithTitle:@"Save Profile" action:@selector(saveProfile)];
     UIStackView *buttons = [[UIStackView alloc] initWithArrangedSubviews:@[
-        [self buttonWithTitle:@"Save Profile" action:@selector(saveProfile)],
+        self.saveProfileButton,
         [self buttonWithTitle:@"Connect" action:@selector(connectVPN)],
         [self buttonWithTitle:@"Disconnect" action:@selector(disconnectVPN)],
         [self buttonWithTitle:@"Refresh" action:@selector(refreshStatus)],
@@ -244,6 +247,9 @@
 
 - (void)saveProfile
 {
+    if (!self.saveProfileButton.enabled) return;
+    self.saveProfileButton.enabled = NO;
+    [self.transitionSpinner startAnimating];
     NSString *server = self.serverField.text ?: @"";
     NSString *remote = self.remoteIdentifierField.text ?: @"";
     NSString *username = self.usernameField.text ?: @"";
@@ -261,6 +267,8 @@
         username,
         password,
         ^(NSDictionary *result) {
+            self.saveProfileButton.enabled = YES;
+            [self.transitionSpinner stopAnimating];
             self.passwordField.text = @"";
             [self showResult:result title:@"VPN Profile"];
         });

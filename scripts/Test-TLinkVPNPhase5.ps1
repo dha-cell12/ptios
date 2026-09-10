@@ -52,7 +52,7 @@ $capability = Invoke-TLinkVPNTask -Task "97"
 if ($capability -notlike "0;;*" -or
     $capability -notlike "*vpnPhase=5*" -or
     $capability -notlike "*vpnState=background_control*" -or
-    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v4_private_crash_safe*" -or
+    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v5_private_profile_commit*" -or
     $capability -notlike "*vpnBroker=vpnagent_6016_then_StreamControl_6015*") {
     throw "Task 97 does not report TrollStore VPN P5: $capability"
 }
@@ -66,7 +66,10 @@ Assert-Equal $diagnostics.state "background_control" "state"
 Assert-Equal $diagnostics.diagnostics_source "background_vpnagent" "diagnostics source"
 Assert-Equal ([bool]$diagnostics.broker_ready) $true "background agent readiness"
 Assert-Equal ([bool]$diagnostics.entitlements.allow_vpn) $true "allow-vpn entitlement"
-Assert-Equal $diagnostics.agent_version 4 "vpnagent version"
+Assert-Equal ([bool]$diagnostics.entitlements.scpreferences_write_access) $true "SCPreferences write entitlement"
+Assert-Equal ([bool]$diagnostics.entitlements.scdynamicstore_write_access) $true "SCDynamicStore write entitlement"
+Assert-Equal ([bool]$diagnostics.entitlements.profiled_access) $true "profiled access entitlement"
+Assert-Equal $diagnostics.agent_version 5 "vpnagent version"
 Assert-Equal $diagnostics.process_uid 501 "vpnagent uid"
 Assert-Equal $diagnostics.process_euid 501 "vpnagent euid"
 Assert-Equal $diagnostics.process_gid 501 "vpnagent gid"
@@ -113,6 +116,9 @@ if ($RunConnect -or $RunDisconnect) {
     private_select_selector = $diagnostics.private_compatibility.select_profile_selector
     private_connection_selector = $diagnostics.private_compatibility.connection_selector
     private_candidate_ready = $diagnostics.private_compatibility.candidate_ready
+    scpreferences_write_access = $diagnostics.entitlements.scpreferences_write_access
+    scdynamicstore_write_access = $diagnostics.entitlements.scdynamicstore_write_access
+    profiled_access = $diagnostics.entitlements.profiled_access
     private_mutating_api_exercised = $diagnostics.private_compatibility.mutating_api_exercised
     private_load_error = $diagnostics.private_compatibility.load_error
     manager_backend = $diagnostics.manager_status.backend

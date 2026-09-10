@@ -55,6 +55,12 @@ XXTouch's `vpnconf` module loads the private
 variant), and drives the current connection directly. That explains why its
 profile bootstrap can avoid the normal `NEVPNManager` confirmation UI.
 
+The verified XXTouch artifact also carries `preferences.plist`
+`SCPreferences-write-access`, `SCDynamicStore-write-access`, and
+`com.apple.managedconfiguration.profiled-access`. TLink now carries this
+focused commit set in the app and vpnagent, without copying XXTouch's unrelated
+MDM, telephony, app-installation, or root-management entitlements.
+
 TLink retains the validated `NEVPNManager` backend as fallback and adds a
 strict ownership layer around the private path: each new profile has a unique
 TLink prefix, creation and selection are verified before the marker is
@@ -74,7 +80,7 @@ vpnControl=agent_6016_with_foreground_fallback
 vpnBackend=hybrid_nevpnmanager_vpnconnectionstore_private
 vpnBroker=vpnagent_6016_then_StreamControl_6015
 vpnPhase=5
-vpnBackgroundAgent=candidate_mobile_process_v4_private_crash_safe
+vpnBackgroundAgent=candidate_mobile_process_v5_private_profile_commit
 ```
 
 Task 592 is authoritative only when

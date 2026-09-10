@@ -25,12 +25,12 @@
     "vpnBackend": "hybrid_nevpnmanager_vpnconnectionstore_private",
     "vpnBroker": "vpnagent_6016_then_StreamControl_6015",
     "vpnPhase": "5",
-    "vpnBackgroundAgent": "candidate_mobile_process_v4_private_crash_safe"
+    "vpnBackgroundAgent": "candidate_mobile_process_v5_private_profile_commit"
   },
   "promotionEvidence": {
     "backgroundDiagnostics": true,
     "backgroundConnect": true,
-    "agentVersion": 4,
+    "agentVersion": 5,
     "mobileIdentity": true,
     "privateProfileMutation": false,
     "firstRunLocalProfileBootstrapRequired": true

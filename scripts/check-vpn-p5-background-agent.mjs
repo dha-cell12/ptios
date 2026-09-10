@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFile(resolve(root, path), "utf8");
 const fixture = JSON.parse(await read("test/fixtures/vpn-background-agent-contract-v1.json"));
 
-const [agent, entitlements, agentMakefile, aggregate, info, helper, supervisor, server, artifact, device, doc, manager, appEntitlements] =
+const [agent, entitlements, agentMakefile, aggregate, info, helper, supervisor, server, artifact, device, doc, manager, appEntitlements, settings] =
   await Promise.all([
     read("stream-app/vpnagent/main.mm"),
     read("stream-app/vpnagent/entitlements.plist"),
@@ -22,6 +22,7 @@ const [agent, entitlements, agentMakefile, aggregate, info, helper, supervisor, 
     read("docs/vpn-p5-background-agent.md"),
     read("shared/TLinkVPNManager.mm"),
     read("stream-app/app/entitlements.plist"),
+    read("TLinkauto/TLinkauto/Settings/TLinkVPNSettingsViewController.m"),
   ]);
 
 assert.equal(fixture.phase, 5);
@@ -31,7 +32,7 @@ assert.equal(fixture.agent.personaUid, 501);
 assert.equal(fixture.state, "background_control");
 assert.equal(fixture.promotionEvidence.backgroundDiagnostics, true);
 assert.equal(fixture.promotionEvidence.backgroundConnect, true);
-assert.equal(fixture.promotionEvidence.agentVersion, 4);
+assert.equal(fixture.promotionEvidence.agentVersion, 5);
 assert.equal(fixture.promotionEvidence.mobileIdentity, true);
 assert.equal(fixture.promotionEvidence.privateProfileMutation, false);
 assert.equal(fixture.promotionEvidence.firstRunLocalProfileBootstrapRequired, true);
@@ -39,7 +40,7 @@ assert.equal(fixture.security.credentialsOverAgent, false);
 assert.equal(fixture.security.packetTunnelProvider, false);
 
 assert.match(agent, /kTLinkVPNAgentPort = 6016/);
-assert.match(agent, /vpnagent_ready version=4 phase=5/);
+assert.match(agent, /vpnagent_ready version=5 phase=5/);
 assert.match(agent, /setgroups\(0, NULL\)/);
 assert.match(agent, /setgid\(501\)/);
 assert.match(agent, /setuid\(501\)/);
@@ -56,8 +57,12 @@ assert.match(entitlements, /com\.apple\.developer\.networking\.vpn\.api/);
 assert.match(entitlements, /allow-vpn/);
 assert.match(entitlements, /StreamCtl\.com\.tlinkauto\.streamcontrol/);
 assert.match(entitlements, /com\.apple\.SystemConfiguration\.SCPreferences-write-access/);
+assert.match(entitlements, /com\.apple\.SystemConfiguration\.SCDynamicStore-write-access/);
+assert.match(entitlements, /com\.apple\.managedconfiguration\.profiled-access/);
 assert.match(entitlements, /preferences\.plist/);
 assert.match(appEntitlements, /com\.apple\.SystemConfiguration\.SCPreferences-write-access/);
+assert.match(appEntitlements, /com\.apple\.SystemConfiguration\.SCDynamicStore-write-access/);
+assert.match(appEntitlements, /com\.apple\.managedconfiguration\.profiled-access/);
 assert.doesNotMatch(entitlements, /packet-tunnel-provider/);
 assert.match(agentMakefile, /TLINK_VPN_TROLLSTORE_RUNTIME=1/);
 assert.match(agentMakefile, /NetworkExtension/);
@@ -68,6 +73,9 @@ assert.match(
 );
 assert.match(diagnosticsSource, /vpn-private-owned\.plist/);
 assert.match(diagnosticsSource, /mutating_api_exercised/);
+assert.match(diagnosticsSource, /scpreferences_write_access/);
+assert.match(diagnosticsSource, /scdynamicstore_write_access/);
+assert.match(diagnosticsSource, /profiled_access/);
 assert.match(manager, /TLinkVPNPrivateConfigureIKEv2Sync/);
 assert.match(manager, /createVPNWithOptions:/);
 assert.match(manager, /@"VPNType": @4/);
@@ -77,6 +85,9 @@ assert.match(manager, /\[NSThread isMainThread\]/);
 assert.match(manager, /createAllVPNByUserDefinedNamesDictionary/);
 assert.match(manager, /single_identifier_delta/);
 assert.match(manager, /verification_attempts/);
+assert.match(manager, /\[\[NSRunLoop currentRunLoop\] runUntilDate:/);
+assert.match(settings, /saveProfileButton\.enabled = NO/);
+assert.match(settings, /saveProfileButton\.enabled = YES/);
 assert.match(manager, /TLinkVPNPrivateSelectConfiguration/);
 assert.match(manager, /TLinkVPNPrivateSetConnectedSync/);
 assert.match(manager, /vpn-private-owned\.plist/);
@@ -93,7 +104,7 @@ assert.match(helper, /TLinkEnsureVPNAgent/);
 assert.match(helper, /--ensure-vpnagent/);
 assert.match(helper, /posix_spawnattr_set_persona_uid_np\(&attr, 501\)/);
 assert.match(helper, /posix_spawnattr_set_persona_gid_np\(&attr, 501\)/);
-assert.match(helper, /containsString:@"version=4"/);
+assert.match(helper, /containsString:@"version=5"/);
 assert.match(helper, /containsString:@" uid=501 "/);
 assert.match(helper, /containsString:@" gid=501 "/);
 assert.match(helper, /privhelper version=9/);
@@ -114,12 +125,15 @@ assert.match(artifact, /"vpnagent"/);
 assert.match(artifact, /vpnagentEntitlements/);
 assert.match(artifact, /vpn_phase: 5/);
 assert.match(artifact, /vpn_state: "background_control"/);
-assert.match(artifact, /vpn_agent_version: 4/);
+assert.match(artifact, /vpn_agent_version: 5/);
 assert.match(artifact, /vpn_profile_bootstrap: "private_no_consent_with_ne_fallback"/);
 assert.match(device, /background_vpnagent/);
-assert.match(device, /agent_version 4/);
+assert.match(device, /agent_version 5/);
 assert.match(device, /process_uid/);
 assert.match(device, /private_candidate_ready/);
+assert.match(device, /scpreferences_write_access/);
+assert.match(device, /scdynamicstore_write_access/);
+assert.match(device, /profiled_access/);
 assert.match(device, /private_mutating_api_exercised/);
 assert.match(device, /RequirePrivateProfile/);
 assert.match(device, /vpnconnectionstore_private/);

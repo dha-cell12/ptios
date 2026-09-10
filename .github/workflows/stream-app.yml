@@ -726,8 +726,10 @@ jobs:
           grep -q 'allow-vpn' stream-app/vpnagent/entitlements.plist
           grep -q 'com.apple.SystemConfiguration.SCPreferences-write-access' stream-app/app/entitlements.plist
           grep -q 'com.apple.SystemConfiguration.SCPreferences-write-access' stream-app/vpnagent/entitlements.plist
+          grep -q 'com.apple.SystemConfiguration.SCDynamicStore-write-access' stream-app/vpnagent/entitlements.plist
+          grep -q 'com.apple.managedconfiguration.profiled-access' stream-app/vpnagent/entitlements.plist
           ! grep -q 'packet-tunnel-provider' stream-app/vpnagent/entitlements.plist
-          grep -q 'vpnagent_ready version=4 phase=5' stream-app/vpnagent/main.mm
+          grep -q 'vpnagent_ready version=5 phase=5' stream-app/vpnagent/main.mm
           grep -q 'vpnconnectionstore_private' shared/TLinkVPNManager.mm
           grep -q 'setuid(501)' stream-app/vpnagent/main.mm
           ! grep -q 'com.apple.developer.networking.vpn.api' stream-app/streamd/entitlements.plist

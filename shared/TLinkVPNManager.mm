@@ -532,7 +532,7 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     NSString *verificationMode = @"none";
     NSUInteger verificationAttempts = 0;
     NSUInteger observedRecordCount = beforeRecords.count;
-    for (NSUInteger attempt = 0; attempt < 10 && !newRecord; attempt++) {
+    for (NSUInteger attempt = 0; attempt < 20 && !newRecord; attempt++) {
         verificationAttempts = attempt + 1;
         NSArray<NSDictionary *> *afterRecords =
             TLinkVPNPrivateConfigurationRecords(store);
@@ -562,7 +562,18 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
                 verificationMode = @"single_identifier_delta";
             }
         }
-        if (!newRecord && attempt + 1 < 10) usleep(100000);
+        if (!newRecord && attempt + 1 < 20) {
+            if ([NSThread isMainThread]) {
+                // createVPNWithOptions: publishes its new SCNetworkService via
+                // work delivered to the main run loop. Sleeping here prevents
+                // that work from running and makes a successful create look
+                // invisible forever.
+                [[NSRunLoop currentRunLoop] runUntilDate:
+                    [NSDate dateWithTimeIntervalSinceNow:0.1]];
+            } else {
+                usleep(100000);
+            }
+        }
     }
     if (!newRecord) {
         return TLinkVPNResult(false,
