@@ -231,11 +231,13 @@ static NSDictionary *TLinkVPNFrameworkProbe(void)
     };
 }
 
-static NSDictionary *TLinkVPNPrivateCompatibilityProbe(BOOL allowVPN)
+static NSDictionary *TLinkVPNPrivateCompatibilityProbe(
+    BOOL allowVPN,
+    BOOL privateConfigurationSuper)
 {
     NSString *bundlePath =
         @"/System/Library/PreferenceBundles/VPNPreferences.bundle";
-    if (!allowVPN) {
+    if (!allowVPN || !privateConfigurationSuper) {
         return @{
             @"source": @"xxtouch_vpnconnectionstore_compatibility_probe",
             @"bundle_path": bundlePath,
@@ -251,7 +253,9 @@ static NSDictionary *TLinkVPNPrivateCompatibilityProbe(BOOL allowVPN)
             @"connection_selector": @0,
             @"candidate_ready": @0,
             @"mutating_api_exercised": @0,
-            @"probe_skipped": @"allow_vpn_entitlement_missing",
+            @"probe_skipped": !allowVPN
+                ? @"allow_vpn_entitlement_missing"
+                : @"private_configuration_super_entitlement_missing",
             @"load_error": @"",
         };
     }
@@ -338,10 +342,14 @@ NSDictionary *TLinkVPNDiagnosticsSnapshot(
     NSDictionary *entitlements = TLinkVPNEntitlementProbe();
     NSDictionary *framework = TLinkVPNFrameworkProbe();
     BOOL allowVPN = [entitlements[@"allow_vpn"] boolValue];
+    BOOL privateConfigurationSuper =
+        [entitlements[@"private_configuration_super"] boolValue];
     NSDictionary *privateCompatibility =
-        TLinkVPNPrivateCompatibilityProbe(allowVPN);
+        TLinkVPNPrivateCompatibilityProbe(
+            allowVPN, privateConfigurationSuper);
     BOOL managerAvailable = [framework[@"manager_class_available"] boolValue];
-    NSString *preflight = (allowVPN && managerAvailable)
+    NSString *preflight =
+        (allowVPN && privateConfigurationSuper && managerAvailable)
         ? @"candidate_unverified"
         : @"blocked_missing_entitlement_or_framework";
     uint64_t generatedAtMs =

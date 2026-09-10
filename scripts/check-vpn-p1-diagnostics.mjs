@@ -73,6 +73,8 @@ assert.match(sharedHeader, /TLinkVPNDiagnosticsBase64/);
 assert.match(sharedImplementation, /SecTaskCopyValueForEntitlement/);
 assert.match(sharedImplementation, /com\.apple\.developer\.networking\.vpn\.api/);
 assert.match(sharedImplementation, /com\.apple\.developer\.networking\.networkextension/);
+assert.match(sharedImplementation, /com\.apple\.private\.networkextension\.configuration/);
+assert.match(sharedImplementation, /com\.apple\.managed\.vpn\.shared/);
 assert.match(sharedImplementation, /NetworkExtension\.framework\/NetworkExtension/);
 assert.match(sharedImplementation, /NSClassFromString\(@"NEVPNManager"\)/);
 assert.match(sharedImplementation, /@"api_exercised": @0/);

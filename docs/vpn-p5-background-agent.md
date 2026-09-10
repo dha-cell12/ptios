@@ -43,6 +43,14 @@ after reading it, and returns a credential-free result plist owned by UID 501.
 Credentials are never placed in argv, task 59, the vpnagent socket, logs, or
 TLink preferences.
 
+The no-consent branch also carries the two values observed directly in the
+XXTouch executable: `com.apple.private.networkextension.configuration=super`
+and Keychain group `com.apple.managed.vpn.shared`. `allow-vpn` by itself is
+not sufficient: iOS deliberately routes that public capability through the
+"Add VPN Configurations" confirmation sheet. Task 592 exposes both retained
+signing values as `private_configuration_super` and
+`managed_vpn_keychain_access`.
+
 The private options preserve the XXTouch defaults: string protocol names on
 modern stores, numeric values `L2TP=0`, `PPTP=1`, and `IPSec=2` on older stores,
 PPTP authentication type 0, other types authentication type 1, encryption
@@ -83,7 +91,7 @@ vpnControl=agent_6016_with_foreground_fallback
 vpnBackend=ikev2_nevpnmanager_legacy_private_no_consent
 vpnBroker=vpnagent_6016_then_StreamControl_6015
 vpnPhase=5
-vpnBackgroundAgent=candidate_mobile_process_v8_legacy_direct_store
+vpnBackgroundAgent=candidate_mobile_process_v9_super_configuration
 ```
 
 Task 592 is authoritative only when
@@ -103,7 +111,7 @@ $iphoneIP = "192.168.1.244"
 ./scripts/Test-TLinkVPNPhase5.ps1 -HostIP $iphoneIP -RequireManagedProfile -RunConnect
 ```
 
-Expected evidence includes `agent_version=8`,
+Expected evidence includes `agent_version=9`,
 `manager_backend=nevpnmanager_ikev2`, `profile_type=IKEv2`, and a connected
 task 590 query.
 

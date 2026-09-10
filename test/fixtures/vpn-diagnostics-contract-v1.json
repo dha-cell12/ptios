@@ -26,7 +26,11 @@
     "allow_vpn",
     "networkextension_present",
     "networkextension_values",
-    "packet_tunnel_provider"
+    "packet_tunnel_provider",
+    "private_configuration_present",
+    "private_configuration_values",
+    "private_configuration_super",
+    "managed_vpn_keychain_access"
   ],
   "requiredNetworkExtensionFields": [
     "framework_loaded",

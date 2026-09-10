@@ -136,12 +136,12 @@ assert.ok(appBinary.includes("vpn_on_demand_enabled"), "StreamControl lacks VPN 
 assert.ok(appBinary.includes("Auto-Reconnect (On Demand)"), "StreamControl lacks VPN P4 local UI evidence");
 assert.ok(streamdBinary.includes("vpnPhase=5"), "streamd lacks VPN P5 capability evidence");
 assert.ok(streamdBinary.includes("vpnState=background_control"), "streamd lacks promoted VPN P5 state evidence");
-assert.ok(streamdBinary.includes("vpnBackgroundAgent=candidate_mobile_process_v8_legacy_direct_store"), "streamd lacks VPN direct legacy-store evidence");
+assert.ok(streamdBinary.includes("vpnBackgroundAgent=candidate_mobile_process_v9_super_configuration"), "streamd lacks VPN super-configuration evidence");
 assert.ok(streamdBinary.includes("vpnagent_6016_then_StreamControl_6015"), "streamd lacks VPN P5 routing evidence");
 assert.ok(streamdBinary.includes("direct_streamd_to_uiservice_no_worker_v1"), "streamd lacks direct Vision OCR dispatch evidence");
 assert.ok(streamdBinary.includes("inline_rgba8888_bounded_32mib_v2"), "streamd lacks bounded raw Vision OCR transport evidence");
 assert.ok(streamdBinary.includes("protocol3_inline_png_compat_only"), "streamd lacks Vision OCR compatibility fallback evidence");
-assert.ok(vpnagentBinary.includes("vpnagent_ready version=8 phase=5"), "vpnagent lacks P5 readiness evidence");
+assert.ok(vpnagentBinary.includes("vpnagent_ready version=9 phase=5"), "vpnagent lacks P5 readiness evidence");
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
 assert.ok(privhelperBinary.includes("privhelper version=10"), "privhelper lacks v10 readiness evidence");
@@ -197,6 +197,7 @@ const streamdEntitlements = execFileSync("ldid", ["-e", join(app, "streamd")], {
 const clipboarddEntitlements = execFileSync("ldid", ["-e", join(app, "clipboardd")], { encoding: "utf8" });
 const uiServiceEntitlements = execFileSync("ldid", ["-e", uiServicePath], { encoding: "utf8" });
 const vpnagentEntitlements = execFileSync("ldid", ["-e", join(app, "vpnagent")], { encoding: "utf8" });
+const privhelperEntitlements = execFileSync("ldid", ["-e", join(app, "privhelper")], { encoding: "utf8" });
 const widgetEntitlements = execFileSync("ldid", ["-e", widgetPath], { encoding: "utf8" });
 assert.ok(
   appEntitlements.includes("com.apple.developer.networking.vpn.api") &&
@@ -225,8 +226,14 @@ assert.ok(
 );
 assert.ok(
   vpnagentEntitlements.includes("keychain-access-groups") &&
-    vpnagentEntitlements.includes("StreamCtl.com.tlinkauto.streamcontrol"),
+    vpnagentEntitlements.includes("StreamCtl.com.tlinkauto.streamcontrol") &&
+    vpnagentEntitlements.includes("com.apple.managed.vpn.shared"),
   "vpnagent is missing the TrollStore VPN Keychain group",
+);
+assert.ok(
+  vpnagentEntitlements.includes("com.apple.private.networkextension.configuration") &&
+    vpnagentEntitlements.includes("super"),
+  "vpnagent is missing private NetworkExtension super configuration",
 );
 assert.ok(
   !vpnagentEntitlements.includes("com.apple.developer.networking.networkextension") &&
@@ -235,8 +242,20 @@ assert.ok(
 );
 assert.ok(
   appEntitlements.includes("keychain-access-groups") &&
-    appEntitlements.includes("StreamCtl.com.tlinkauto.streamcontrol"),
+    appEntitlements.includes("StreamCtl.com.tlinkauto.streamcontrol") &&
+    appEntitlements.includes("com.apple.managed.vpn.shared"),
   "StreamControl is missing the TrollStore VPN Keychain group",
+);
+assert.ok(
+  appEntitlements.includes("com.apple.private.networkextension.configuration") &&
+    appEntitlements.includes("super"),
+  "StreamControl is missing private NetworkExtension super configuration",
+);
+assert.ok(
+  privhelperEntitlements.includes("com.apple.private.networkextension.configuration") &&
+    privhelperEntitlements.includes("super") &&
+    privhelperEntitlements.includes("com.apple.managed.vpn.shared"),
+  "privhelper is missing XXTouch-compatible VPN configuration entitlements",
 );
 assert.ok(
   appEntitlements.includes("com.apple.SystemConfiguration.SCPreferences-write-access") &&
@@ -325,7 +344,7 @@ const manifest = {
   service_version: 23,
   vpn_phase: 5,
   vpn_state: "background_control",
-  vpn_agent_version: 8,
+  vpn_agent_version: 9,
   vpn_profile_bootstrap: "ikev2_nevpnmanager_legacy_privhelper_root_no_consent",
   config: {
     endpoint: expected.LicenseEndpoint,

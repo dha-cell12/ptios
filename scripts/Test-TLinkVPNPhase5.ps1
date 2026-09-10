@@ -62,7 +62,7 @@ $capability = Invoke-TLinkVPNTask -Task "97"
 if ($capability -notlike "0;;*" -or
     $capability -notlike "*vpnPhase=5*" -or
     $capability -notlike "*vpnState=background_control*" -or
-    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v8_legacy_direct_store*" -or
+    $capability -notlike "*vpnBackgroundAgent=candidate_mobile_process_v9_super_configuration*" -or
     $capability -notlike "*vpnBroker=vpnagent_6016_then_StreamControl_6015*") {
     throw "Task 97 does not report TrollStore VPN P5: $capability"
 }
@@ -84,7 +84,7 @@ Assert-Equal ([bool]$diagnostics.entitlements.user_preference_read) $true "user-
 Assert-Equal ([bool]$diagnostics.entitlements.user_preference_write) $true "user-preference-write entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.private_configuration_super) $true "private NetworkExtension configuration entitlement"
 Assert-Equal ([bool]$diagnostics.entitlements.managed_vpn_keychain_access) $true "managed VPN Keychain access group"
-Assert-Equal $diagnostics.agent_version 8 "vpnagent version"
+Assert-Equal $diagnostics.agent_version 9 "vpnagent version"
 Assert-Equal $diagnostics.process_uid 501 "vpnagent uid"
 Assert-Equal $diagnostics.process_euid 501 "vpnagent euid"
 Assert-Equal $diagnostics.process_gid 501 "vpnagent gid"

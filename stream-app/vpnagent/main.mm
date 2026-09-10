@@ -59,6 +59,8 @@ static NSDictionary *TLinkVPNAgentPreflight(void)
 static BOOL TLinkVPNAgentEntitlementReady(NSDictionary *snapshot)
 {
     return [snapshot[@"entitlements"][@"allow_vpn"] boolValue] &&
+           [snapshot[@"entitlements"][@"private_configuration_super"] boolValue] &&
+           [snapshot[@"entitlements"][@"managed_vpn_keychain_access"] boolValue] &&
            [snapshot[@"network_extension"][@"manager_class_available"] boolValue];
 }
 
