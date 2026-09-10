@@ -499,11 +499,12 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     NSString *profileName = [kTLinkVPNPrivateNamePrefix
         stringByAppendingString:[[NSUUID UUID] UUIDString]];
     NSMutableDictionary *options = [@{
-        // XXTouch translates the public string "IKEv2" through its private
-        // compatibility table before invoking VPNConnectionStore. The raw
-        // selector expects the resulting NSNumber value (IKEv2 = 4), not the
-        // source string; passing NSString can trigger an internal exception.
-        @"VPNType": @4,
+        // This deliberately follows XXTouch's version split. On current iOS,
+        // VPNConnectionStore expects the public string value. Only the older
+        // implementation (without createAllVPNByUserDefinedNamesDictionary)
+        // receives the translated numeric value IKEv2 = 4. Sending @4 to the
+        // modern store can create a visible but unusable SCNetworkService.
+        @"VPNType": modernStore ? @"IKEv2" : @4,
         @"dispName": profileName,
         @"server": server,
         // VPNConnectionStore's XXTouch-compatible schema names the EAP
