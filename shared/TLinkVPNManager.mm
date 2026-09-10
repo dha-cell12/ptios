@@ -510,6 +510,12 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
         // account field "authorization".
         @"authorization": user,
         @"password": password,
+        // Match XXTouch's documented IKEv2 example as one atomic schema:
+        // EAP authorization plus IKE local/remote identities. Earlier builds
+        // tested these separately, but never with the required authorization
+        // field present at the same time.
+        @"VPNLocalIdentifier": user,
+        @"VPNRemoteIdentifier": remote,
         @"authType": @1,
         @"encrypLevel": @1,
         @"VPNSendAllTraffic": @1,
@@ -517,18 +523,10 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
         @"secret": @"",
         @"securID": @0,
     } mutableCopy];
-    // On current iOS the XXTouch wrapper forwards Local/Remote identifiers
-    // only when the caller supplied them. Omitting the keys is materially
-    // different from forcing an empty string or copying the username/server.
-    if (remote.length > 0) {
-        options[@"VPNRemoteIdentifier"] = remote;
-    }
     if (!modernStore) {
         // Match the compatibility defaults used by XXTouch only on older
         // VPNConnectionStore implementations.
         options[@"VPNGrade"] = @0;
-        options[@"VPNLocalIdentifier"] = @"";
-        options[@"VPNRemoteIdentifier"] = remote ?: @"";
         options[@"VPNRemotedentifier"] = remote ?: @"";
         options[@"eapType"] = @1;
     }
@@ -629,8 +627,7 @@ static NSDictionary *TLinkVPNPrivateConfigureIKEv2Sync(
     fields[@"private_backend_available"] = @1;
     fields[@"verification_mode"] = verificationMode;
     fields[@"verification_attempts"] = @(verificationAttempts);
-    fields[@"remote_identifier_mode"] = remote.length > 0
-        ? @"explicit" : @"system_default";
+    fields[@"remote_identifier_mode"] = @"explicit_or_server_default";
     fields[@"store_schema"] = modernStore ? @"modern" : @"legacy";
     fields[@"old_owned_profile_removed"] = @(oldProfileRemoved);
     fields[@"mutating_api_exercised"] = @1;
@@ -937,7 +934,7 @@ void TLinkVPNConfigureIKEv2(
         NSDictionary *privateResult =
             TLinkVPNPrivateRunSafely(@"configure", ^{
                 return TLinkVPNPrivateConfigureIKEv2Sync(
-                    server, remote, user, password);
+                    server, effectiveRemote, user, password);
             });
         if ([privateResult[@"private_backend_available"] boolValue]) {
             // Do not surprise the user with an iOS confirmation sheet after
