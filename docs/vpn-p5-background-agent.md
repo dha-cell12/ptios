@@ -3,7 +3,7 @@
 ## Outcome
 
 Task 59 uses the dedicated mobile-persona `vpnagent` on loopback port `6016`.
-Agent v8 supports two profile backends without sending credentials over task 59:
+Agent v9 supports two profile backends without sending credentials over task 59:
 
 ```text
 task 59 -> streamd -> vpnagent:6016 -> selected TLink profile
@@ -40,8 +40,47 @@ public iOS VPN approval path. Password and shared secret cross that boundary
 only in a randomly named, mode-0600, UID-501 one-shot plist. The helper accepts
 only that exact directory/name/owner/mode, unlinks the request immediately
 after reading it, and returns a credential-free result plist owned by UID 501.
-Credentials are never placed in argv, task 59, the vpnagent socket, logs, or
-TLink preferences.
+Credentials are never placed in argv, task 59, the vpnagent socket, logs, Run
+History, or TLink preferences.
+
+## Auto profile creation
+
+The JavaScriptCore Auto runtime exposes an XXTouch-compatible global
+`vpnconf`. It runs in the trusted `streamd` process and invokes the same
+embedded root helper used by Managed VPN, so StreamControl does not need to be
+in the foreground. The transport accepts only streamd's root identity or the
+mobile UID, then fixes the one-shot request owner to UID/GID 501 before the
+helper validates it:
+
+```javascript
+var ok = vpnconf.create({
+  dispName: 'DemoVPN',
+  VPNType: 'L2TP', // PPTP, L2TP, IPSec, or IKEv2
+  server: 'vpn.example.com',
+  authorization: 'account',
+  password: 'password',
+  secret: 'ipsec-shared-secret', // required for L2TP
+  group: '',
+  encrypLevel: 1,
+  VPNSendAllTraffic: 1
+});
+if (!ok) console.log(vpnconf.lastResult().code);
+
+// Optional connection after a successful create:
+// device.runTask(59, '1;;1');
+```
+
+`vpnconf.create()` returns a boolean for XXTouch script compatibility.
+`vpnconf.createResult(options)` returns the credential-free diagnostic result
+directly, and `vpnconf.lastResult()` returns the previous result without
+creating another profile. IKEv2 additionally accepts `remoteIdentifier` and
+defaults it to `server`.
+
+The facade accepts only local in-process JavaScript values. It does not add a
+new task number or network command. Before invoking `privhelper`, it validates
+the type and required fields, rejects loopback servers, and rejects L2TP
+without an IPSec shared secret. The one-shot plist is unlinked by the helper
+immediately after reading it and its result contains no credential fields.
 
 The no-consent branch also carries the two values observed directly in the
 XXTouch executable: `com.apple.private.networkextension.configuration=super`
@@ -74,8 +113,9 @@ On Demand before stopping the tunnel.
 ## Boundary and safety
 
 The loopback protocol accepts only `ping`, `query`, `connect`, `disconnect`,
-and `diagnostics`. Profile configuration and credentials remain local to the
-Managed VPN screen; neither task 59 nor vpnagent accepts them. The agent is
+and `diagnostics`. Profile configuration is available only to the Managed VPN
+screen and the in-process Auto `vpnconf` facade; neither task 59 nor vpnagent
+accepts credentials. The agent is
 licensed through the existing `automation` feature and never receives a
 Packet Tunnel Provider entitlement. Existing wire shapes for tasks `590`,
 `591;;0`, `591;;1`, and `592` remain unchanged.
@@ -103,9 +143,8 @@ control works.
 
 ## IKEv2 device validation
 
-Install the TrollStore build and launch StreamControl once. In Managed VPN,
-select IKEv2, enter the values, tap **Save IKEv2 Profile**, and accept the iOS
-approval sheet if presented. Then background StreamControl:
+Install the TrollStore build and launch StreamControl once. Configure IKEv2
+from Managed VPN or `vpnconf.create`, then background StreamControl:
 
 ```powershell
 $iphoneIP = "192.168.1.244"

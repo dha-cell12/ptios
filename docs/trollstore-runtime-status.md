@@ -89,8 +89,8 @@ TrollStore runtime.
   `60/97` capability markers. The historical P0 TrollStore backend was an
   interface query heuristic; profile creation and connect/disconnect were
   unsupported in that phase. VPN
-  configuration and credentials are local-UI/Keychain only and are forbidden
-  on port `6000`. See `docs/vpn-p0-baseline.md`.
+  configuration and credentials were local-UI/Keychain only in P0 and remain
+  forbidden on port `6000`. See `docs/vpn-p0-baseline.md`.
 - VPN P1 implements read-only task `592` diagnostics as base64 JSON using the
   same shared module as rootfull. It probes the current process with
   `SecTaskCopyValueForEntitlement`, checks NetworkExtension framework/class
@@ -115,7 +115,7 @@ TrollStore runtime.
   tries it before the existing foreground app broker. It carries the same
   app identity, VPN entitlement, and Keychain group but accepts no profile or
   credential input. Device evidence promoted the state to `background_control`.
-  Agent v8 keeps the validated `NEVPNManager` path for IKEv2 and adds the
+  Agent v9 keeps the validated `NEVPNManager` path for IKEv2 and adds the
   XXTouch-compatible private `VPNConnectionStore` path for PPTP/L2TP/IPSec.
   Legacy creation is no-confirm, exact marker-owned, and does not replace the
   installed IKEv2 profile. The background connect/query broker is preserved; see
@@ -124,9 +124,13 @@ TrollStore runtime.
 ## Deferred Or Limited
 
 - Keychain clearing remains deferred because arbitrary target keychain access groups require separate entitlement handling.
-- VPN P5 still requires local credential entry after a fresh install or lost
-  profile. IKEv2 uses native `NEVPNManager` and can show the one-time iOS VPN
-  approval prompt. PPTP/L2TP/IPSec use the private no-confirm backend, but its
+- VPN P5 no longer requires manual credential entry after a fresh install:
+  local Auto scripts can call the XXTouch-compatible `vpnconf.create` facade
+  for PPTP/L2TP/IPSec/IKEv2. Credentials cross only the UID-501 mode-0600
+  one-shot request boundary to `privhelper`; they are never accepted over task
+  59 or the vpnagent socket. PPTP/L2TP/IPSec use the private no-confirm backend,
+  while IKEv2 uses native `NEVPNManager` with the retained super-configuration
+  entitlement. Private legacy backend
   availability depends on the device's private `VPNPreferences` implementation
   and those legacy protocols may be unavailable on newer iOS versions. Once a
   profile is saved, task `591` uses mobile `vpnagent` without keeping the app

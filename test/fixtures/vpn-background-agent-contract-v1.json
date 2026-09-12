@@ -33,7 +33,8 @@
     "agentVersion": 9,
     "mobileIdentity": true,
     "privateProfileMutation": true,
-    "firstRunLocalProfileBootstrapRequired": true
+    "firstRunLocalProfileBootstrapRequired": false,
+    "automationProfileBootstrap": true
   },
   "security": {
     "loopbackOnly": true,

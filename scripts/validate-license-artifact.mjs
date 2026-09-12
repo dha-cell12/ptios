@@ -144,8 +144,10 @@ assert.ok(streamdBinary.includes("protocol3_inline_png_compat_only"), "streamd l
 assert.ok(vpnagentBinary.includes("vpnagent_ready version=9 phase=5"), "vpnagent lacks P5 readiness evidence");
 assert.ok(vpnagentBinary.includes("vpnagent refuses non-mobile identity"), "vpnagent lacks fail-closed mobile identity evidence");
 assert.ok(vpnagentBinary.includes("background_vpnagent"), "vpnagent lacks P5 diagnostics evidence");
-assert.ok(privhelperBinary.includes("privhelper version=10"), "privhelper lacks v10 readiness evidence");
-assert.ok(privhelperBinary.includes("configure-legacy-vpn"), "privhelper lacks root legacy VPN creation evidence");
+assert.ok(privhelperBinary.includes("privhelper version=11"), "privhelper lacks v11 readiness evidence");
+assert.ok(privhelperBinary.includes("configure-vpn"), "privhelper lacks root VPN creation evidence");
+assert.ok(streamdBinary.includes("vpnconf.create"), "streamd lacks the Auto VPN configuration facade");
+assert.ok(streamdBinary.includes("vpnScriptConfigurationTransport=vpnconf_privhelper_mode0600_v1"), "streamd lacks secure script VPN transport evidence");
 assert.ok(privhelperBinary.includes("privhelper_root_private_store_no_nevpnmanager"), "privhelper lacks private VPN approval-path evidence");
 assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifierAndURLAndLaunchOptions"), "boot widget lacks the SpringBoardServices wake path");
 assert.ok(widgetBinary.includes("SBSLaunchApplicationWithIdentifier"), "boot widget lacks the simple SpringBoardServices fallback");

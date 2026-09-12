@@ -26,7 +26,17 @@ FOUNDATION_EXPORT NSDictionary *TLinkVPNConfigureLegacyPrivateSynchronouslyForHe
     NSString *username,
     NSString *password,
     NSString *sharedSecret,
-    NSString *groupName);
+    NSString *groupName,
+    NSString *displayName,
+    NSInteger encryptionLevel,
+    BOOL sendAllTraffic);
+// Synchronous root-helper adapter for the asynchronous NEVPNManager path.
+// The helper pumps its main run loop until the save/reload sequence completes.
+FOUNDATION_EXPORT NSDictionary *TLinkVPNConfigureIKEv2SynchronouslyForHelper(
+    NSString *serverAddress,
+    NSString *remoteIdentifier,
+    NSString *username,
+    NSString *password);
 FOUNDATION_EXPORT void TLinkVPNReadManagerStatus(
     TLinkVPNResultCompletion completion);
 FOUNDATION_EXPORT void TLinkVPNSetOnDemandEnabled(

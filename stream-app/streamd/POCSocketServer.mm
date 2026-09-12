@@ -14,6 +14,7 @@
 #import "../../shared/TLinkSmartWaitPrelude.h"
 #import "../../shared/TLinkRunHistory.h"
 #import "../../shared/TLinkVPNDiagnostics.h"
+#import "../../shared/TLinkVPNPrivateRequest.h"
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
@@ -74,6 +75,7 @@ static NSDictionary *TLinkVPNTrollStoreDiagnosticsSnapshot(
     NSString *agentError,
     NSString *brokerError);
 static CaptureOutcome *TLinkRunCaptureOnMain(void);
+static NSString *TLinkPrivhelperPath(void);
 
 // ---------------------------------------------------------------------------
 // POC socket server
@@ -2129,6 +2131,141 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         BOOL ok = [data writeToFile:path atomically:YES];
         return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(data.length)} : @{@"ok": @NO, @"path": path, @"error": @"write_json_failed"};
     };
+
+    // XXTouch-compatible local VPN profile creation. Credentials never enter
+    // task 59, a listening socket, script logs, or Run History. They cross to
+    // the root helper only in the protected one-shot request implemented by
+    // TLinkVPNPrivateRequest.
+    __block NSDictionary *lastVPNConfResult = @{
+        @"ok": @NO,
+        @"code": @"vpnconf_not_called",
+    };
+    NSDictionary *(^createVPNProfile)(JSValue *) =
+        ^NSDictionary *(JSValue *optionsValue) {
+            TLinkScriptSession *strongSession = weakSession;
+            if (TLinkScriptStopRequested(strongSession)) {
+                lastVPNConfResult = @{
+                    @"ok": @NO,
+                    @"code": @"script_stop_requested",
+                };
+                return lastVPNConfResult;
+            }
+            NSDictionary *options =
+                TLinkScriptDictionaryFromJSValue(optionsValue);
+            if (!options) {
+                lastVPNConfResult = @{
+                    @"ok": @NO,
+                    @"code": @"vpnconf_options_required",
+                };
+                return lastVPNConfResult;
+            }
+
+            NSString *requestedType = TLinkScriptStringOption(
+                options, @"VPNType",
+                TLinkScriptStringOption(options, @"type", @""));
+            NSString *profileType = nil;
+            for (NSString *candidate in @[@"PPTP", @"L2TP", @"IPSec", @"IKEv2"]) {
+                if ([requestedType caseInsensitiveCompare:candidate] ==
+                    NSOrderedSame) {
+                    profileType = candidate;
+                    break;
+                }
+            }
+            NSString *server = [TLinkScriptStringOption(
+                options, @"server", @"")
+                stringByTrimmingCharactersInSet:
+                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            NSString *username = [TLinkScriptStringOption(
+                options, @"authorization",
+                TLinkScriptStringOption(options, @"username", @""))
+                stringByTrimmingCharactersInSet:
+                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            NSString *password = TLinkScriptStringOption(
+                options, @"password", @"");
+            NSString *secret = TLinkScriptStringOption(
+                options, @"secret", @"");
+            if (!profileType) {
+                lastVPNConfResult = @{
+                    @"ok": @NO,
+                    @"code": @"vpn_private_protocol_unsupported",
+                    @"supported_types": @[@"PPTP", @"L2TP", @"IPSec", @"IKEv2"],
+                };
+                return lastVPNConfResult;
+            }
+            if (server.length == 0 || username.length == 0 ||
+                password.length == 0) {
+                lastVPNConfResult = @{
+                    @"ok": @NO,
+                    @"code": @"vpn_configuration_incomplete",
+                    @"profile_type": profileType,
+                };
+                return lastVPNConfResult;
+            }
+            NSString *lowerServer = server.lowercaseString;
+            if ([lowerServer isEqualToString:@"localhost"] ||
+                [lowerServer isEqualToString:@"127.0.0.1"] ||
+                [lowerServer isEqualToString:@"::1"] ||
+                [lowerServer isEqualToString:@"[::1]"]) {
+                lastVPNConfResult = @{
+                    @"ok": @NO,
+                    @"code": @"vpn_server_loopback_not_allowed",
+                    @"profile_type": profileType,
+                };
+                return lastVPNConfResult;
+            }
+            if ([profileType isEqualToString:@"L2TP"] &&
+                secret.length == 0) {
+                lastVPNConfResult = @{
+                    @"ok": @NO,
+                    @"code": @"vpn_l2tp_ipsec_shared_secret_required",
+                    @"profile_type": profileType,
+                };
+                return lastVPNConfResult;
+            }
+
+            NSString *remoteIdentifier = TLinkScriptStringOption(
+                options, @"remoteIdentifier",
+                TLinkScriptStringOption(options, @"VPNRemoteIdentifier",
+                    TLinkScriptStringOption(options,
+                        @"VPNRemotedentifier", server)));
+            NSDictionary *request = @{
+                @"profile_type": profileType,
+                @"server": server,
+                @"remote_identifier": remoteIdentifier.length > 0
+                    ? remoteIdentifier : server,
+                @"username": username,
+                @"password": password,
+                @"shared_secret": secret,
+                @"group_name": TLinkScriptStringOption(options, @"group", @""),
+                @"display_name": TLinkScriptStringOption(
+                    options, @"dispName", @"TLinkauto VPN"),
+                @"encryption_level": @(TLinkScriptIntOption(
+                    options, @"encrypLevel", 1)),
+                @"send_all_traffic": @(TLinkScriptIntOption(
+                    options, @"VPNSendAllTraffic", 1) != 0),
+            };
+            NSString *helperPath = TLinkPrivhelperPath();
+            lastVPNConfResult =
+                TLinkVPNRunPrivateConfigurationHelper(helperPath, request)
+                ?: @{@"ok": @NO, @"code": @"vpnconf_unknown_error"};
+            TLinkScriptAppendLog(strongSession, [NSString stringWithFormat:
+                @"vpnconf.create type=%@ code=%@ ok=%d",
+                profileType,
+                lastVPNConfResult[@"code"] ?: @"unknown",
+                [lastVPNConfResult[@"ok"] boolValue] ? 1 : 0]);
+            return lastVPNConfResult;
+        };
+    JSValue *vpnconf = [JSValue valueWithNewObjectInContext:context];
+    vpnconf[@"create"] = ^BOOL(JSValue *optionsValue) {
+        return [createVPNProfile(optionsValue)[@"ok"] boolValue];
+    };
+    vpnconf[@"createResult"] = ^NSDictionary *(JSValue *optionsValue) {
+        return createVPNProfile(optionsValue);
+    };
+    vpnconf[@"lastResult"] = ^NSDictionary *{
+        return lastVPNConfResult;
+    };
+    context[@"vpnconf"] = vpnconf;
     context[@"device"] = device;
     [context evaluateScript:TLinkSmartWaitPreludeSource()
               withSourceURL:[NSURL URLWithString:@"tlinkauto://smart-wait-v1.js"]];
@@ -6510,6 +6647,8 @@ static NSData *TLinkHandleHelloStatus(void)
         @"scriptPlaySettings": @(YES),
         @"scriptHardwareKey": @(YES),
         @"scriptTapMacro": @(YES),
+        @"scriptVPNConfiguration": @(YES),
+        @"scriptVPNConfigurationMode": @"vpnconf_create_privhelper_mode0600_v1",
         @"scriptLogClear": @(YES),
         @"smartWait": @(YES),
         @"smartWaitState": @"implemented",
@@ -9012,7 +9151,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 97) {
-        NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastUIService,backgroundToastFixedCenter,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,vpnControl,keyboardVisibilityControl,globalTouchIndicator,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_background_uiservice_positioned_cfusernotification_fallback toast=foreground_or_background_uiservice_positioned_with_cf_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=query_only_interface_probe shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_clipboardd_uiservice_best_effort imageMatch=multiscale_vimage_rgba_v2 appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
+        NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptVPNConfiguration,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastUIService,backgroundToastFixedCenter,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,keyboardVisibilityControl,globalTouchIndicator,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_background_uiservice_positioned_cfusernotification_fallback toast=foreground_or_background_uiservice_positioned_with_cf_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=script_profile_create_plus_background_agent_control shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_clipboardd_uiservice_best_effort imageMatch=multiscale_vimage_rgba_v2 appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
         NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
         cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=23"];
         cap = [cap stringByAppendingFormat:@" licenseBuildMode=%@", TLinkLicenseBuildMode()];
@@ -9054,7 +9193,9 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" vpnContractVersion=1 vpnLegacyTask=59"];
         cap = [cap stringByAppendingString:@" vpnProfileScope=tlink_owned_only"];
+        // Preserve the frozen P0 field and publish the additive Auto path.
         cap = [cap stringByAppendingString:@" vpnConfigurationTransport=local_ui_keychain_only"];
+        cap = [cap stringByAppendingString:@" vpnScriptConfigurationTransport=vpnconf_privhelper_mode0600_v1"];
         cap = [cap stringByAppendingString:@" vpnCredentialsOverTask59=forbidden"];
         cap = [cap stringByReplacingOccurrencesOfString:@"vpn=query_only_interface_probe"
                                              withString:@"vpn=background_agent_ikev2_on_demand"];

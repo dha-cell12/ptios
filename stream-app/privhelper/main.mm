@@ -115,6 +115,26 @@ static BOOL TLinkHelperWriteAll(int fd, NSData *data)
     return YES;
 }
 
+static BOOL TLinkHelperVPNServerIsLoopback(NSString *server)
+{
+    NSString *candidate = [[server
+        stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet] lowercaseString];
+    if ([candidate isEqualToString:@"localhost"]) return YES;
+    if ([candidate hasPrefix:@"["] && [candidate hasSuffix:@"]"] &&
+        candidate.length > 2) {
+        candidate = [candidate substringWithRange:
+            NSMakeRange(1, candidate.length - 2)];
+    }
+    struct in_addr ipv4 = {};
+    if (inet_pton(AF_INET, candidate.UTF8String, &ipv4) == 1) {
+        return (ntohl(ipv4.s_addr) & 0xff000000U) == 0x7f000000U;
+    }
+    struct in6_addr ipv6 = {};
+    return inet_pton(AF_INET6, candidate.UTF8String, &ipv6) == 1 &&
+        IN6_IS_ADDR_LOOPBACK(&ipv6);
+}
+
 static BOOL TLinkHelperVPNRequestPathAllowed(NSString *requestPath,
                                              NSString **requestID)
 {
@@ -149,11 +169,12 @@ static BOOL TLinkHelperVPNRequestPathAllowed(NSString *requestPath,
 
 static BOOL TLinkHelperWriteVPNResult(NSString *resultPath,
                                       NSString *requestID,
+                                      NSInteger requestVersion,
                                       NSDictionary *rawResult)
 {
     NSMutableDictionary *result = rawResult
         ? [rawResult mutableCopy] : [NSMutableDictionary dictionary];
-    result[@"version"] = @1;
+    result[@"version"] = @(requestVersion);
     result[@"request_id"] = requestID ?: @"";
     NSError *error = nil;
     NSData *data = [NSPropertyListSerialization
@@ -175,11 +196,11 @@ static BOOL TLinkHelperWriteVPNResult(NSString *resultPath,
     return ok;
 }
 
-static int TLinkHelperConfigureLegacyVPN(NSString *requestPath)
+static int TLinkHelperConfigureVPN(NSString *requestPath)
 {
     NSString *requestID = nil;
     if (!TLinkHelperVPNRequestPathAllowed(requestPath, &requestID)) {
-        TLinkHelperLog(@"configure-legacy-vpn: refused request path");
+        TLinkHelperLog(@"configure-vpn: refused request path");
         return 70;
     }
     NSString *resultPath = [requestPath stringByAppendingString:@".result"];
@@ -188,9 +209,9 @@ static int TLinkHelperConfigureLegacyVPN(NSString *requestPath)
     int (^finish)(NSDictionary *, int) =
         ^int(NSDictionary *result, int exitCode) {
             BOOL wrote = TLinkHelperWriteVPNResult(
-                resultPath, requestID, result);
+                resultPath, requestID, 2, result);
             TLinkHelperLog([NSString stringWithFormat:
-                @"configure-legacy-vpn: request=%@ code=%@ ok=%d result_written=%d exit=%d uid=%d",
+                @"configure-vpn: request=%@ code=%@ ok=%d result_written=%d exit=%d uid=%d",
                 requestID,
                 result[@"code"] ?: @"unknown",
                 [result[@"ok"] boolValue] ? 1 : 0,
@@ -243,15 +264,27 @@ static int TLinkHelperConfigureLegacyVPN(NSString *requestPath)
                                                      format:nil
                                                       error:&parseError]
         : nil;
+    NSInteger requestVersion = [request[@"version"] integerValue];
+    NSString *profileType = request[@"profile_type"];
     BOOL requestValid = [request isKindOfClass:[NSDictionary class]] &&
-        [request[@"version"] integerValue] == 1 &&
+        requestVersion == 2 &&
         [request[@"request_id"] isEqualToString:requestID] &&
-        [request[@"protocol_type"] isKindOfClass:[NSString class]] &&
+        [profileType isKindOfClass:[NSString class]] &&
         [request[@"server"] isKindOfClass:[NSString class]] &&
         [request[@"username"] isKindOfClass:[NSString class]] &&
         [request[@"password"] isKindOfClass:[NSString class]] &&
-        [request[@"shared_secret"] isKindOfClass:[NSString class]] &&
-        [request[@"group_name"] isKindOfClass:[NSString class]] &&
+        (!request[@"remote_identifier"] ||
+            [request[@"remote_identifier"] isKindOfClass:[NSString class]]) &&
+        (!request[@"shared_secret"] ||
+            [request[@"shared_secret"] isKindOfClass:[NSString class]]) &&
+        (!request[@"group_name"] ||
+            [request[@"group_name"] isKindOfClass:[NSString class]]) &&
+        (!request[@"display_name"] ||
+            [request[@"display_name"] isKindOfClass:[NSString class]]) &&
+        (!request[@"encryption_level"] ||
+            [request[@"encryption_level"] isKindOfClass:[NSNumber class]]) &&
+        (!request[@"send_all_traffic"] ||
+            [request[@"send_all_traffic"] isKindOfClass:[NSNumber class]]) &&
         fabs([request[@"created_at"] doubleValue] -
              [[NSDate date] timeIntervalSince1970]) <= 120.0;
     if (!requestValid) {
@@ -262,19 +295,58 @@ static int TLinkHelperConfigureLegacyVPN(NSString *requestPath)
         return finish(failure, 73);
     }
 
+    NSSet<NSString *> *supportedTypes = [NSSet setWithObjects:
+        @"PPTP", @"L2TP", @"IPSec", @"IKEv2", nil];
+    NSString *server = [request[@"server"]
+        stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *username = [request[@"username"]
+        stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *password = request[@"password"];
+    NSString *secret = request[@"shared_secret"] ?: @"";
+    if (![supportedTypes containsObject:profileType]) {
+        return finish(TLinkHelperVPNFailure(
+            @"vpn_private_protocol_unsupported", nil), 73);
+    }
+    if (server.length == 0 || server.length > 1024 ||
+        username.length == 0 || username.length > 1024 ||
+        password.length == 0 || password.length > 4096 ||
+        secret.length > 4096) {
+        return finish(TLinkHelperVPNFailure(
+            @"vpn_configuration_incomplete", nil), 73);
+    }
+    if (TLinkHelperVPNServerIsLoopback(server)) {
+        return finish(TLinkHelperVPNFailure(
+            @"vpn_server_loopback_not_allowed", nil), 73);
+    }
+    if ([profileType isEqualToString:@"L2TP"] && secret.length == 0) {
+        return finish(TLinkHelperVPNFailure(
+            @"vpn_l2tp_ipsec_shared_secret_required", nil), 73);
+    }
+
     int licenseExit = TLinkHelperRequireLicense(
-        @"automation", @"configure-legacy-vpn");
+        @"automation", @"configure-vpn");
     if (licenseExit != 0) {
         NSDictionary *failure = TLinkHelperVPNFailure(
             @"license_required", nil);
         return finish(failure, licenseExit);
     }
 
-    NSDictionary *result =
-        TLinkVPNConfigureLegacyPrivateSynchronouslyForHelper(
-            request[@"protocol_type"], request[@"server"],
-            request[@"username"], request[@"password"],
-            request[@"shared_secret"], request[@"group_name"]);
+    NSDictionary *result = nil;
+    if ([profileType isEqualToString:@"IKEv2"]) {
+        result = TLinkVPNConfigureIKEv2SynchronouslyForHelper(
+            server, request[@"remote_identifier"] ?: server,
+            username, password);
+    } else {
+        result = TLinkVPNConfigureLegacyPrivateSynchronouslyForHelper(
+            profileType, server, username, password,
+            secret, request[@"group_name"] ?: @"",
+            request[@"display_name"] ?: @"",
+            [request[@"encryption_level"] integerValue],
+            request[@"send_all_traffic"]
+                ? [request[@"send_all_traffic"] boolValue] : YES);
+    }
     return finish(result, [result[@"ok"] boolValue] ? 0 : 75);
 }
 
@@ -1260,7 +1332,7 @@ int main(int argc, char *argv[])
 {
     @autoreleasepool {
         if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
-            TLinkHelperLog(@"privhelper version=10 scope=ensure-streamd,ensure-auxiliaries,ensure-clipboardd,ensure-uiservice-mobile,ensure-vpnagent-mobile,configure-legacy-vpn-root,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
+            TLinkHelperLog(@"privhelper version=11 scope=ensure-streamd,ensure-auxiliaries,ensure-clipboardd,ensure-uiservice-mobile,ensure-vpnagent-mobile,configure-vpn-root,kill-streamd,open-bundle,kill-bundle,open-url,clear-data,respring,license-gate");
             return 0;
         }
 
@@ -1305,10 +1377,11 @@ int main(int argc, char *argv[])
         }
 
         if (argc == 3 &&
-            strcmp(argv[1], "--configure-legacy-vpn") == 0) {
+            (strcmp(argv[1], "--configure-vpn") == 0 ||
+             strcmp(argv[1], "--configure-legacy-vpn") == 0)) {
             NSString *requestPath =
                 [NSString stringWithUTF8String:argv[2]] ?: @"";
-            return TLinkHelperConfigureLegacyVPN(requestPath);
+            return TLinkHelperConfigureVPN(requestPath);
         }
 
         if (argc >= 2 && strcmp(argv[1], "--kill-streamd") == 0) {
@@ -1356,7 +1429,7 @@ int main(int argc, char *argv[])
             return TLinkRespring();
         }
 
-        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --ensure-auxiliaries /path/to/streamd [--replace] | --ensure-vpnagent /path/to/streamd | --configure-legacy-vpn /var/mobile/Library/TLinkauto/tmp/vpn-private-requests/vpnconf-UUID.plist | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
+        TLinkHelperLog(@"usage: privhelper --version | --ensure-streamd /path/to/streamd [--replace] | --ensure-auxiliaries /path/to/streamd [--replace] | --ensure-vpnagent /path/to/streamd | --configure-vpn /var/mobile/Library/TLinkauto/tmp/vpn-private-requests/vpnconf-UUID.plist | --kill-streamd [--except-pid pid] | --open-bundle bundle.id | --kill-bundle bundle.id | --open-url url | --clear-data bundle.id | --respring");
         return 64;
     }
 }
