@@ -7,7 +7,7 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = vpnagent
 
-vpnagent_FILES = main.mm ../../shared/TLinkVPNManager.mm ../../shared/TLinkVPNDiagnostics.mm ../../shared/TLinkLicenseVerifier.mm
+vpnagent_FILES = main.mm ../../shared/TLinkVPNManager.mm ../../shared/TLinkVPNPrivateRequest.mm ../../shared/TLinkVPNDiagnostics.mm ../../shared/TLinkLicenseVerifier.mm
 vpnagent_FRAMEWORKS = Foundation CoreFoundation NetworkExtension Security
 vpnagent_CFLAGS = -fobjc-arc -Wno-error -Wno-module-import-in-extern-c -DTLINK_VPN_TROLLSTORE_RUNTIME=1
 vpnagent_CCFLAGS = -std=c++14

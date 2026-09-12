@@ -80,6 +80,7 @@ assert.match(appEntitlements, /com\.apple\.managed\.vpn\.shared/);
 assert.doesNotMatch(entitlements, /packet-tunnel-provider/);
 assert.match(agentMakefile, /TLINK_VPN_TROLLSTORE_RUNTIME=1/);
 assert.match(agentMakefile, /NetworkExtension/);
+assert.match(agentMakefile, /TLinkVPNPrivateRequest\.mm/);
 const diagnosticsSource = await read("shared/TLinkVPNDiagnostics.mm");
 assert.match(
   diagnosticsSource,
