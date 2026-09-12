@@ -169,15 +169,32 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
     }
     char *const argv[] = {arg0, arg1, arg2, NULL};
     posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-    int persona = posix_spawnattr_set_persona_np(
-        &attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
-    int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 0);
-    int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 0);
+    posix_spawnattr_t *attrPointer = NULL;
+    int persona = 0;
+    int personaUid = 0;
+    int personaGid = 0;
+    BOOL attrInitialized = NO;
+    if (callerUID != 0) {
+        int attrResult = posix_spawnattr_init(&attr);
+        if (attrResult != 0) {
+            free(arg0); free(arg1); free(arg2);
+            [fm removeItemAtPath:requestPath error:nil];
+            return TLinkVPNRequestResult(NO,
+                @"vpn_private_helper_spawn_attribute_failed", @{
+                    @"spawn_attribute_result": @(attrResult),
+                });
+        }
+        attrInitialized = YES;
+        persona = posix_spawnattr_set_persona_np(
+            &attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+        personaUid = posix_spawnattr_set_persona_uid_np(&attr, 0);
+        personaGid = posix_spawnattr_set_persona_gid_np(&attr, 0);
+        attrPointer = &attr;
+    }
     pid_t pid = -1;
     int spawnResult = posix_spawn(
-        &pid, cpath, NULL, &attr, argv, environ);
-    posix_spawnattr_destroy(&attr);
+        &pid, cpath, NULL, attrPointer, argv, environ);
+    if (attrInitialized) posix_spawnattr_destroy(&attr);
     free(arg0); free(arg1); free(arg2);
     if (spawnResult != 0) {
         [fm removeItemAtPath:requestPath error:nil];
@@ -187,6 +204,7 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
                 @"persona_result": @(persona),
                 @"persona_uid_result": @(personaUid),
                 @"persona_gid_result": @(personaGid),
+                @"caller_uid": @(callerUID),
             });
     }
 

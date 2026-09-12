@@ -50,7 +50,8 @@ The JavaScriptCore Auto runtime exposes an XXTouch-compatible global
 embedded root helper used by Managed VPN, so StreamControl does not need to be
 in the foreground. The transport accepts only streamd's root identity or the
 mobile UID, then fixes the one-shot request owner to UID/GID 501 before the
-helper validates it:
+helper validates it. Root-hosted streamd spawns the TSRootBinary directly;
+the UID-501 app path applies a root persona to that spawn:
 
 ```javascript
 var ok = vpnconf.create({

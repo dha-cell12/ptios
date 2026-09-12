@@ -183,6 +183,9 @@ assert.match(requestTransport, /fchmod\(requestFd, 0600\)/);
 assert.match(requestTransport, /fchown\(requestFd, 501, 501\)/);
 assert.match(requestTransport, /callerUID == 501 && callerGID == 501/);
 assert.match(requestTransport, /posix_spawnattr_set_persona_uid_np\(&attr, 0\)/);
+assert.match(requestTransport, /if \(callerUID != 0\)/);
+assert.match(requestTransport, /attrPointer = NULL/);
+assert.match(requestTransport, /posix_spawn\([\s\S]*attrPointer/);
 assert.match(requestTransport, /--configure-vpn/);
 assert.doesNotMatch(requestTransport, /NSLog|printf/);
 for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
