@@ -384,6 +384,11 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 68: // TASK_FIND_IMAGE_IN_FRAME
         case 69: // TASK_COLOR_IN_FRAME
         case 70: // TASK_FRAME_BATCH
+        case 77: // TASK_UI_TREE_CAPABILITY
+        case 78: // TASK_UI_TREE_SNAPSHOT
+        case 79: // TASK_UI_TREE_FIND
+        case 80: // TASK_UI_TREE_AT
+        case 81: // TASK_UI_TREE_TAP
         case 91: // TASK_OCR_TESSERACT_REGION
         case 90: // TASK_UPDATE_CACHE
             return true;
@@ -672,6 +677,7 @@ static NSData *zx_dataFromCString(const char *cstr)
     return [NSData dataWithBytes:cstr length:strlen(cstr)];
 }
 
+#ifdef ZX_DAEMON
 static NSDictionary *zx_uiTreeDecodeBody(const char *buffer, BOOL allowEmpty, NSString **error)
 {
     NSString *body = buffer && strlen(buffer) > 2
@@ -806,6 +812,7 @@ static NSData *zx_handleUITreeTask(int taskType, const char *buffer)
     }
     return zx_uiTreeJSONResponse(finalResult);
 }
+#endif
 
 static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buffer)
 {
@@ -935,9 +942,11 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         return phase6Diagnostic;
     }
 
+#ifdef ZX_DAEMON
     if (taskType >= 77 && taskType <= 81) {
         return zx_handleUITreeTask(taskType, buffer);
     }
+#endif
 
     if (taskType == 96) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)),

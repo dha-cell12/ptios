@@ -81,10 +81,14 @@ for (const source of [rootEntitlements, trollEntitlements]) {
 
 assert.match(rootMakefile, /TLinkAccessibilityTree\.mm/);
 assert.match(rootMakefile, /tlinkautod_CODESIGN_FLAGS\s*=\s*-S\.\.\/layout\/tlinkautod-entitlements\.plist/);
+assert.match(rootMakefile, /tlinkautod_FILES\s*=[^\n]*TLinkAccessibilityTree\.mm/);
+assert.doesNotMatch(rootMakefile, /tlinkautob_FILES\s*=[^\n]*TLinkAccessibilityTree\.mm/);
 assert.match(trollMakefile, /TLinkAccessibilityTree\.mm/);
 assert.match(rootTask, /TASK_UI_TREE_CAPABILITY[\s\S]*TASK_UI_TREE_TAP/);
 assert.match(rootTask, /zx_handleUITreeTask/);
 assert.match(rootServer, /zx_handleUITreeTask/);
+assert.match(rootServer, /#ifdef ZX_DAEMON[\s\S]*static NSDictionary \*zx_uiTreeDecodeBody[\s\S]*static NSData \*zx_handleUITreeTask[\s\S]*#endif/);
+assert.match(rootServer, /case 77:[\s\S]*case 81:[\s\S]*return true;/);
 assert.match(trollServer, /TLinkHandleUITreeTask/);
 assert.match(rootServer, /finalResult\[@"tapped"\]\s*=\s*@\(true\)/);
 assert.match(rootTask, /finalResult\[@"context_changed"\]\s*=\s*@\(false\)/);
