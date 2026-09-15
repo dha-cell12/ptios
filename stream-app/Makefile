@@ -146,6 +146,7 @@ embed: streamd clipboardd uiservice vpnagent app privhelper widget
 	test -f "$$APP/CompatibilityExamples/09 Smart Wait.js"; \
 	test -f "$$APP/CompatibilityExamples/10 Failure Evidence.js"; \
 	test -f "$$APP/CompatibilityExamples/11 VPN Configuration.js"; \
+	test -f "$$APP/CompatibilityExamples/12 UI Tree.js"; \
 	echo "Embedded streamd, clipboardd, TLinkUIService.app, vpnagent, and TLinkBootWidget into $$APP"
 
 package: embed
@@ -173,6 +174,7 @@ package: embed
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/09 Smart Wait.js"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/10 Failure Evidence.js"; \
 	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/11 VPN Configuration.js"; \
+	test -f "$(PAYLOAD_DIR)/$(APP_BUNDLE)/CompatibilityExamples/12 UI Tree.js"; \
 	( cd _payload && zip -qr9 ../$(TIPA) Payload ); \
 	echo "Created $(TIPA)"
 

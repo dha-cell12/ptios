@@ -1,0 +1,7 @@
+{
+  "name": "UI Tree Smoke",
+  "entry": "main.js",
+  "runtime": "javascriptcore",
+  "apiVersion": 1,
+  "coordinateSpace": "points"
+}

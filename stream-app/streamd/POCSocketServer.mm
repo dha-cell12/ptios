@@ -15,6 +15,7 @@
 #import "../../shared/TLinkRunHistory.h"
 #import "../../shared/TLinkVPNDiagnostics.h"
 #import "../../shared/TLinkVPNPrivateRequest.h"
+#import "../../shared/TLinkAccessibilityTree.h"
 #include <string.h>
 #include <ctype.h>
 #include <dispatch/dispatch.h>
@@ -760,6 +761,28 @@ static NSString *TLinkScriptBase64Encode(NSString *value)
 {
     NSData *data = [(value ?: @"") dataUsingEncoding:NSUTF8StringEncoding];
     return data ? [data base64EncodedStringWithOptions:0] : @"";
+}
+
+static NSDictionary *TLinkScriptUITreeTaskResult(TLinkScriptSession *session,
+                                                 int task,
+                                                 NSDictionary *request)
+{
+    NSString *body = @"";
+    if (task != 77 || request.count > 0) {
+        NSData *json = [NSJSONSerialization dataWithJSONObject:request ?: @{} options:0 error:nil];
+        if (json.length == 0) return @{@"ok": @NO, @"error": @"ui_request_json_failed"};
+        body = [json base64EncodedStringWithOptions:0] ?: @"";
+    }
+    NSDictionary *transport = TLinkScriptTaskResult(session, task, body);
+    if (![transport[@"ok"] boolValue]) return transport;
+    NSArray<NSString *> *parts = TLinkScriptResultParts(transport);
+    if (parts.count < 1) return TLinkScriptResultByAdding(transport, @{@"ok": @NO, @"error": @"ui_response_missing"});
+    NSData *decoded = [[NSData alloc] initWithBase64EncodedString:parts[0] options:0];
+    id object = decoded ? [NSJSONSerialization JSONObjectWithData:decoded options:0 error:nil] : nil;
+    if (![object isKindOfClass:[NSDictionary class]]) {
+        return TLinkScriptResultByAdding(transport, @{@"ok": @NO, @"error": @"ui_response_json_invalid"});
+    }
+    return object;
 }
 
 static BOOL TLinkScriptPointFromObject(id item, double *x, double *y, int *r, int *g, int *b, BOOL requireColor)
@@ -1807,6 +1830,27 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         if (![result[@"ok"] boolValue] || parts.count < 1) return result;
         return TLinkScriptResultByAdding(result, @{@"pid": @([parts[0] intValue])});
     };
+    device[@"uiTreeCapability"] = ^NSDictionary *{
+        return TLinkScriptUITreeTaskResult(weakSession, 77, @{});
+    };
+    device[@"uiTree"] = ^NSDictionary *(JSValue *optionsValue) {
+        NSDictionary *options = TLinkScriptDictionaryFromJSValue(optionsValue) ?: @{};
+        return TLinkScriptUITreeTaskResult(weakSession, 78, options);
+    };
+    device[@"uiFind"] = ^NSDictionary *(JSValue *selectorValue) {
+        NSDictionary *selector = TLinkScriptDictionaryFromJSValue(selectorValue);
+        if (!selector) return @{@"ok": @NO, @"error": @"ui_selector_invalid"};
+        return TLinkScriptUITreeTaskResult(weakSession, 79, selector);
+    };
+    device[@"uiAt"] = ^NSDictionary *(double x, double y) {
+        if (!isfinite(x) || !isfinite(y)) return @{@"ok": @NO, @"error": @"ui_hit_test_coordinates_invalid"};
+        return TLinkScriptUITreeTaskResult(weakSession, 80, @{@"x": @(x), @"y": @(y)});
+    };
+    device[@"tapElement"] = ^NSDictionary *(JSValue *selectorValue) {
+        NSDictionary *selector = TLinkScriptDictionaryFromJSValue(selectorValue);
+        if (!selector) return @{@"ok": @NO, @"error": @"ui_selector_invalid"};
+        return TLinkScriptUITreeTaskResult(weakSession, 81, selector);
+    };
     device[@"appPaths"] = ^NSDictionary *(NSString *bundleId) {
         NSDictionary *result = TLinkScriptTaskResult(weakSession, 52, bundleId ?: @"");
         NSArray<NSString *> *parts = TLinkScriptResultParts(result);
@@ -1986,6 +2030,9 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
                 @"smartWaitAPI": @YES,
                 @"smartWaitVersion": @1,
                 @"smartWaitSchema": @"smart_wait_result_v1",
+                @"uiTreeAPI": @YES,
+                @"uiTreeSchema": @"ui_snapshot_v1",
+                @"uiTreeBackend": @"axruntime_numeric_v1",
                 @"fileHandleModes": @[@"r", @"rb", @"r+", @"rb+", @"w", @"wb", @"w+", @"wb+", @"a", @"ab", @"a+", @"ab+"],
                 @"maxOpenFiles": @(kTLinkScriptMaxOpenFiles),
                 @"maxFileTransferBytes": @(kTLinkScriptMaxFileTransferBytes),
@@ -6416,6 +6463,144 @@ static NSData *TLinkHandleFrontmostPid(void)
     return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
+static NSDictionary *TLinkUITreeFrontmostContext(void)
+{
+    NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
+    if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
+    if (bundleId.length == 0 && sTLinkLastFrontmostBundleId.length > 0) {
+        bundleId = sTLinkLastFrontmostBundleId;
+    }
+    if (bundleId.length == 0) {
+        return @{@"ok": @NO, @"error": @"ui_frontmost_bundle_unavailable"};
+    }
+    pid_t pid = TLinkResolvePidForBundleId(bundleId);
+    if (pid <= 0) {
+        return @{@"ok": @NO, @"error": @"ui_frontmost_pid_unavailable", @"bundle_id": bundleId};
+    }
+    return @{@"ok": @YES, @"bundle_id": bundleId, @"pid": @(pid)};
+}
+
+static NSDictionary *TLinkUITreeDecodeBody(NSString *body, BOOL allowEmpty, NSString **error)
+{
+    NSString *trimmed = [[body ?: @"" stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
+    if (trimmed.length == 0 && allowEmpty) return @{};
+    NSData *decoded = [[NSData alloc] initWithBase64EncodedString:trimmed
+                                                         options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    if (decoded.length == 0) {
+        if (error) *error = @"ui_request_base64_invalid";
+        return nil;
+    }
+    NSError *jsonError = nil;
+    id value = [NSJSONSerialization JSONObjectWithData:decoded options:0 error:&jsonError];
+    if (![value isKindOfClass:[NSDictionary class]]) {
+        if (error) *error = @"ui_request_json_object_required";
+        return nil;
+    }
+    return value;
+}
+
+static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
+{
+    if (![result isKindOfClass:[NSDictionary class]]) return TLinkError(@"ui_result_invalid");
+    if (!TLinkAXResultSucceeded(result)) {
+        NSString *code = [result[@"error"] isKindOfClass:[NSString class]]
+            ? result[@"error"] : @"ui_operation_failed";
+        return TLinkError(code);
+    }
+    NSError *error = nil;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:&error];
+    if (json.length == 0) return TLinkError(@"ui_result_json_failed");
+    return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
+}
+
+static BOOL TLinkUITreeContextChanged(NSDictionary *before)
+{
+    NSDictionary *after = TLinkUITreeFrontmostContext();
+    if (![after[@"ok"] boolValue]) return YES;
+    return ![before[@"bundle_id"] isEqual:after[@"bundle_id"]] ||
+           [before[@"pid"] intValue] != [after[@"pid"] intValue];
+}
+
+static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
+{
+    if (taskType == 77) {
+        NSMutableDictionary *capability = [TLinkAXCapabilitySnapshot() mutableCopy];
+        capability[@"runtime"] = @"trollstore";
+        capability[@"service"] = @"streamd";
+        capability[@"tasks"] = @[@77, @78, @79, @80, @81];
+        NSError *jsonError = nil;
+        NSData *json = [NSJSONSerialization dataWithJSONObject:capability options:0 error:&jsonError];
+        return json.length > 0
+            ? TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"")
+            : TLinkError(@"ui_capability_json_failed");
+    }
+
+    NSString *decodeError = nil;
+    NSDictionary *request = TLinkUITreeDecodeBody(body, taskType == 78, &decodeError);
+    if (!request) return TLinkError(decodeError);
+    NSDictionary *context = TLinkUITreeFrontmostContext();
+    if (![context[@"ok"] boolValue]) return TLinkError(context[@"error"] ?: @"ui_frontmost_unavailable");
+    NSString *bundleId = context[@"bundle_id"];
+    pid_t pid = [context[@"pid"] intValue];
+    NSDictionary *result = nil;
+
+    if (taskType == 78) {
+        result = TLinkAXCopySnapshot(pid, bundleId, request);
+    } else if (taskType == 79 || taskType == 81) {
+        result = TLinkAXFindElement(pid, bundleId, request);
+    } else if (taskType == 80) {
+        id xValue = request[@"x"];
+        id yValue = request[@"y"];
+        if (![xValue respondsToSelector:@selector(doubleValue)] ||
+            ![yValue respondsToSelector:@selector(doubleValue)]) {
+            return TLinkError(@"ui_hit_test_coordinates_required");
+        }
+        result = TLinkAXElementAtPoint(pid, bundleId,
+                                      CGPointMake([xValue doubleValue], [yValue doubleValue]));
+    } else {
+        return TLinkError(@"ui_task_unsupported");
+    }
+
+    if (!TLinkAXResultSucceeded(result)) return TLinkUITreeJSONResponse(result);
+    BOOL changed = TLinkUITreeContextChanged(context);
+    NSMutableDictionary *finalResult = [result mutableCopy];
+    finalResult[@"runtime"] = @"trollstore";
+    finalResult[@"context_changed"] = @(changed);
+    if (changed) {
+        finalResult[@"ok"] = @NO;
+        finalResult[@"error"] = @"ui_context_changed";
+        return TLinkUITreeJSONResponse(finalResult);
+    }
+
+    if (taskType == 81) {
+        NSDictionary *element = [finalResult[@"element"] isKindOfClass:[NSDictionary class]]
+            ? finalResult[@"element"] : @{};
+        if (![finalResult[@"found"] boolValue] || element.count == 0) {
+            return TLinkError(@"ui_element_not_found");
+        }
+        if (![element[@"enabled"] boolValue] || ![element[@"clickable"] boolValue]) {
+            return TLinkError(@"ui_element_not_clickable");
+        }
+        if (![element[@"activation_point_valid"] boolValue]) {
+            return TLinkError(@"ui_activation_point_invalid");
+        }
+        NSDictionary *point = [element[@"activation_point"] isKindOfClass:[NSDictionary class]]
+            ? element[@"activation_point"] : @{};
+        CGFloat pointScale = [UIScreen mainScreen].scale > 0.0 ? [UIScreen mainScreen].scale : 1.0;
+        NSString *tapBody = [NSString stringWithFormat:@"%.3f;;%.3f;;50;;0",
+                             [point[@"x"] doubleValue] * pointScale,
+                             [point[@"y"] doubleValue] * pointScale];
+        NSString *tapError = nil;
+        if (!TLinkHandleNativeTap(tapBody, &tapError)) {
+            return TLinkError(tapError ?: @"ui_tap_dispatch_failed");
+        }
+        finalResult[@"schema"] = @"ui_tap_v1";
+        finalResult[@"tapped"] = @YES;
+    }
+    return TLinkUITreeJSONResponse(finalResult);
+}
+
 static NSData *TLinkHandleAppPaths(NSString *body)
 {
     NSString *bundleId = TLinkCleanPayload(body);
@@ -8762,6 +8947,7 @@ static const TLinkLicenseTaskPolicyEntry kTLinkLicenseTaskPolicy[] = {
     {66, "automation"}, {67, "automation"}, {68, "automation"},
     {69, "automation"}, {70, "automation"}, {71, "shell"},
     {72, "admin"}, {73, "script"}, {74, "admin"},
+    {77, "automation"}, {78, "automation"}, {79, "automation"}, {80, "automation"}, {81, "automation"},
     {90, "automation"}, {91, "automation"}, {93, "stream"}, {94, "stream"}, {95, "automation"}, {98, "automation"},
 };
 
@@ -8827,7 +9013,11 @@ static NSData *TLinkHandleTaskLine(const char *line)
     if (!line) return TLinkError(@"empty request");
     int taskType = POCTaskTypeFromBuffer(line);
     NSString *body = TLinkBodyFromLine(line);
-    POCLogf("task-server: line='%s' task=%d", line, taskType);
+    if (taskType >= 77 && taskType <= 81) {
+        POCLogf("task-server: ui-tree task=%d payload_redacted=1", taskType);
+    } else {
+        POCLogf("task-server: line='%s' task=%d", line, taskType);
+    }
 
     if (!TLinkLicenseTaskIsExempt(taskType)) {
         NSString *feature = TLinkLicenseFeatureForTask(taskType);
@@ -9107,6 +9297,10 @@ static NSData *TLinkHandleTaskLine(const char *line)
         return TLinkHandleLicenseStatus(YES, body);
     }
 
+    if (taskType >= 77 && taskType <= 81) {
+        return TLinkHandleUITreeTask(taskType, body);
+    }
+
     if (taskType == 90) {
         return TLinkHandleUpdateCache(body);
     }
@@ -9155,7 +9349,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
         cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=23"];
         cap = [cap stringByAppendingFormat:@" licenseBuildMode=%@", TLinkLicenseBuildMode()];
-        cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,90"];
+        cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,77,78,79,80,81,90"];
         cap = [cap stringByReplacingOccurrencesOfString:@"90,91,96" withString:@"90,91,93,94,95,96"];
         cap = [cap stringByReplacingOccurrencesOfString:@"clearDataPrivhelper,gracefulShutdown"
                                              withString:@"clearDataPrivhelper,respringPrivhelper,licenseSignedLease,licenseDeviceBound,gracefulShutdown"];
@@ -9167,6 +9361,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" zoomCleanup=all_fingers_up_on_exception_v1 zoomDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" zoomDiagnostics=zoom_runtime_diagnostics_v1 zoomClients=task64_python_js_webtango_v1"];
         cap = [cap stringByAppendingString:@" smartWaitState=implemented smartWaitPhase=1 smartWaitSchema=smart_wait_result_v1 smartWaitClients=rootfull_js_trollstore_js_webtango_v1 smartWaitLocators=predicate,app,color,image,text,image_gone,tap_when_visible smartWaitFrameStrategy=fresh_frame_per_attempt_release_always_template_open_once smartWaitDeviceValidated=0"];
+        cap = [cap stringByAppendingString:@" uiTreeState=experimental uiTreeSchema=ui_snapshot_v1 uiTreeBackend=axruntime_numeric_v1 uiTreeTasks=77,78,79,80,81 uiTreeActions=capability,snapshot,find,at,tap uiTreeHierarchy=flat_v1 uiTreeDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0"];
         cap = [cap stringByAppendingString:@" adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0"];

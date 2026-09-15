@@ -179,6 +179,10 @@ Known unresolved issues / deferred investigation:
   cleanup. Task `60/97`, packaged smoke scripts, a behavioral Node checker and
   the WebTango IDE expose the feature. Device validation of real image and OCR
   locators remains pending; see `docs/smart-wait-visual-locator-v1.md`.
+- UI Tree v1 is implemented as an experimental shared AXRuntime core for
+  rootfull and TrollStore. Tasks `77`-`81`, script selectors, context-safe tap,
+  bounded waits, entitlement probes, and device qualification are wired;
+  promotion remains pending.
 - VPN P0 now freezes legacy task `59` as contract v1, reserves action `2` for
   future base64-JSON diagnostics, and reports the current rootfull `stub` and
   TrollStore `interface_probe` states through task `60/97`. No entitlement or

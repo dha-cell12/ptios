@@ -68,6 +68,11 @@ typedef NS_ENUM(int, TLinkJSRuntimeTaskCode) {
     TASK_COLOR_IN_FRAME = 69,
     TASK_FRAME_BATCH = 70,
     TASK_RUN_SHELL_V2 = 71,
+    TASK_UI_TREE_CAPABILITY = 77,
+    TASK_UI_TREE_SNAPSHOT = 78,
+    TASK_UI_TREE_FIND = 79,
+    TASK_UI_TREE_AT = 80,
+    TASK_UI_TREE_TAP = 81,
     TASK_OCR_TESSERACT_REGION = 91,
 };
 
@@ -1716,6 +1721,56 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     return [self.runtime executeNativeRequest:TLinkJSNativeMethodWriteText arguments:@[path ?: @"", text ?: @""]];
 }
 
+- (NSDictionary *)decodedUITreeTask:(int)task request:(NSDictionary *)request
+{
+    NSDictionary *safeRequest = [request isKindOfClass:[NSDictionary class]] ? request : @{};
+    NSString *payload = @"";
+    if (task != TASK_UI_TREE_CAPABILITY || safeRequest.count > 0) {
+        NSData *json = [NSJSONSerialization dataWithJSONObject:safeRequest options:0 error:nil];
+        if (json.length == 0) return @{@"ok": @NO, @"error": @"ui_request_json_failed"};
+        payload = [json base64EncodedStringWithOptions:0] ?: @"";
+    }
+    NSDictionary *transport = [self runTask:task payload:payload];
+    if (![transport[@"ok"] boolValue]) return transport;
+    NSArray *parts = [transport[@"parts"] isKindOfClass:[NSArray class]] ? transport[@"parts"] : @[];
+    if (parts.count < 2) return TLinkautoJSResultByAdding(transport, @{@"ok": @NO, @"error": @"ui_response_missing"});
+    NSData *decoded = [[NSData alloc] initWithBase64EncodedString:TLinkautoJSSafeStringPart(parts, 1) options:0];
+    id object = decoded ? [NSJSONSerialization JSONObjectWithData:decoded options:0 error:nil] : nil;
+    if (![object isKindOfClass:[NSDictionary class]]) {
+        return TLinkautoJSResultByAdding(transport, @{@"ok": @NO, @"error": @"ui_response_json_invalid"});
+    }
+    return object;
+}
+
+- (NSDictionary *)uiTreeCapability
+{
+    return [self decodedUITreeTask:TASK_UI_TREE_CAPABILITY request:@{}];
+}
+
+- (NSDictionary *)uiTree:(NSDictionary *)options
+{
+    NSDictionary *safeOptions = [options isKindOfClass:[NSDictionary class]] ? options : @{};
+    return [self decodedUITreeTask:TASK_UI_TREE_SNAPSHOT request:safeOptions];
+}
+
+- (NSDictionary *)uiFind:(NSDictionary *)selector
+{
+    if (![selector isKindOfClass:[NSDictionary class]]) return @{@"ok": @NO, @"error": @"ui_selector_invalid"};
+    return [self decodedUITreeTask:TASK_UI_TREE_FIND request:selector];
+}
+
+- (NSDictionary *)uiAt:(double)x y:(double)y
+{
+    if (!isfinite(x) || !isfinite(y)) return @{@"ok": @NO, @"error": @"ui_hit_test_coordinates_invalid"};
+    return [self decodedUITreeTask:TASK_UI_TREE_AT request:@{@"x": @(x), @"y": @(y)}];
+}
+
+- (NSDictionary *)tapElement:(NSDictionary *)selector
+{
+    if (![selector isKindOfClass:[NSDictionary class]]) return @{@"ok": @NO, @"error": @"ui_selector_invalid"};
+    return [self decodedUITreeTask:TASK_UI_TREE_TAP request:selector];
+}
+
 - (JSValue *)openFile:(NSString *)path mode:(NSString *)mode
 {
     JSContext *context = [JSContext currentContext];
@@ -1830,6 +1885,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         @"frameHandleRPC": @YES,
         @"imageHandleRPC": @YES,
         @"ocrRPC": @YES,
+        @"uiTreeAPI": @YES,
+        @"uiTreeSchema": @"ui_snapshot_v1",
+        @"uiTreeBackend": @"axruntime_numeric_v1",
         @"runtimeLocation": effectiveLocation ?: @"in-process",
         @"effectiveRuntimeLocation": effectiveLocation ?: @"in-process",
         @"helperRequested": @(requestedHelper),

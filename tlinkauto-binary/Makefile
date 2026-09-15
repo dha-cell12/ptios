@@ -9,7 +9,7 @@ TOOL_NAME = tlinkautod tlinkautob
 tlinkautod_ARCH = arm64e arm64
 tlinkautob_ARCH = arm64e arm64
 
-tlinkautod_FILES = main.mm SocketServer.mm ../pccontrol/TemplateMatch.xm ../pccontrol/TextRecognization/VKOcrManager.xm ../shared/TLinkAdaptiveStreaming.mm ../shared/TLinkEventChannel.mm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkLicenseAuthorityClient.mm ../shared/TLinkRootfullLicensePolicy.mm
+tlinkautod_FILES = main.mm SocketServer.mm ../pccontrol/TemplateMatch.xm ../pccontrol/TextRecognization/VKOcrManager.xm ../shared/TLinkAdaptiveStreaming.mm ../shared/TLinkEventChannel.mm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkLicenseAuthorityClient.mm ../shared/TLinkRootfullLicensePolicy.mm ../shared/TLinkAccessibilityTree.mm
 tlinkautob_FILES = main.mm SocketServer.mm ../shared/TLinkAdaptiveStreaming.mm ../shared/TLinkEventChannel.mm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkLicenseAuthorityClient.mm ../shared/TLinkRootfullLicensePolicy.mm
 tlinkautod_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics CoreImage Vision ImageIO AVFoundation CoreMedia CoreVideo Security
 tlinkautob_FRAMEWORKS = Foundation CoreFoundation UIKit CoreGraphics Security
@@ -22,6 +22,7 @@ tlinkautod_LDFLAGS += -F$(THEOS_PROJECT_DIR)/frameworks
 tlinkautod_CFLAGS += -I$(THEOS_PROJECT_DIR)/frameworks/opencv2.framework/Versions/A/Headers -DZX_DAEMON=1
 tlinkautod_CCFLAGS += -I$(THEOS_PROJECT_DIR)/frameworks/opencv2.framework/Versions/A/Headers -DZX_DAEMON=1
 tlinkautod_EXTRA_FRAMEWORKS = opencv2
+tlinkautod_CODESIGN_FLAGS = -S../layout/tlinkautod-entitlements.plist
 
 tlinkautob_CCFLAGS = -std=c++11
 

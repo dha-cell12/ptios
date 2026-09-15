@@ -1,0 +1,31 @@
+{
+  "phase": 1,
+  "state": "experimental",
+  "deviceValidated": false,
+  "snapshotSchema": "ui_snapshot_v1",
+  "backend": "axruntime_numeric_v1",
+  "tasks": {
+    "capability": 77,
+    "snapshot": 78,
+    "find": 79,
+    "at": 80,
+    "tap": 81
+  },
+  "limits": {
+    "defaultMaxElements": 250,
+    "hardMaxElements": 1000,
+    "defaultTimeoutMs": 1500,
+    "hardTimeoutMs": 3000
+  },
+  "selectorMatches": ["contains", "exact", "prefix"],
+  "selectorRequiresCriterion": true,
+  "scriptMethods": [
+    "uiTreeCapability",
+    "uiTree",
+    "uiFind",
+    "uiAt",
+    "tapElement",
+    "waitForElement",
+    "waitUntilElementGone"
+  ]
+}

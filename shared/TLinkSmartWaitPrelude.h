@@ -349,6 +349,47 @@ static inline NSString *TLinkSmartWaitPreludeSource(void)
     return result;
   }
 
+  function uiSelector(selector, options){
+    var out = {};
+    selector = selector || {};
+    options = options || {};
+    for (var key in selector) {
+      if (Object.prototype.hasOwnProperty.call(selector, key)) out[key] = selector[key];
+    }
+    if (out.visibleOnly == null && out.visible_only == null) out.visibleOnly = true;
+    if (options.queryTimeoutMs != null) out.timeoutMs = boundedInteger(options.queryTimeoutMs, 1000, 100, 3000);
+    if (options.maxElements != null) out.maxElements = boundedInteger(options.maxElements, 250, 1, 1000);
+    return out;
+  }
+
+  function waitForElement(selector, options){
+    if (!selector || typeof selector !== 'object') throw new Error('waitForElement requires a selector object');
+    if (typeof nativeDevice.uiFind !== 'function') throw new Error('UI tree is unavailable in this runtime');
+    var query = uiSelector(selector, options);
+    var waitOptions = visualOptions(options, 'wait_for_element');
+    var result = waitUntil(function(){
+      var current = requireOk(nativeDevice.uiFind(query), 'uiFind failed');
+      return current.found ? current : false;
+    }, waitOptions);
+    result.locator = { type: 'accessibility', selector: query };
+    return result;
+  }
+
+  function waitUntilElementGone(selector, options){
+    if (!selector || typeof selector !== 'object') throw new Error('waitUntilElementGone requires a selector object');
+    if (typeof nativeDevice.uiFind !== 'function') throw new Error('UI tree is unavailable in this runtime');
+    var query = uiSelector(selector, options);
+    var waitOptions = visualOptions(options, 'wait_until_element_gone');
+    var result = waitUntil(function(){
+      var current = requireOk(nativeDevice.uiFind(query), 'uiFind failed');
+      return current.found ? false : { gone: true, query: current };
+    }, waitOptions);
+    result.locator = { type: 'accessibility', selector: query };
+    result.gone = result.ok;
+    result.found = false;
+    return result;
+  }
+
   api.smartWaitVersion = API_VERSION;
   api.smartWaitSchema = RESULT_SCHEMA;
   api.waitUntil = waitUntil;
@@ -358,6 +399,10 @@ static inline NSString *TLinkSmartWaitPreludeSource(void)
   api.waitForText = waitForText;
   api.waitUntilGone = waitUntilGone;
   api.tapWhenVisible = tapWhenVisible;
+  api.uiTreeVersion = 1;
+  api.uiTreeSchema = 'ui_snapshot_v1';
+  api.waitForElement = waitForElement;
+  api.waitUntilElementGone = waitUntilElementGone;
   global.TLinkauto = api;
 
   var aliases = {
@@ -367,7 +412,9 @@ static inline NSString *TLinkSmartWaitPreludeSource(void)
     waitForImage: waitForImage,
     waitForText: waitForText,
     waitUntilGone: waitUntilGone,
-    tapWhenVisible: tapWhenVisible
+    tapWhenVisible: tapWhenVisible,
+    waitForElement: waitForElement,
+    waitUntilElementGone: waitUntilElementGone
   };
   for (var alias in aliases) {
     if (!Object.prototype.hasOwnProperty.call(aliases, alias)) continue;

@@ -7,6 +7,7 @@
 #include "../shared/TLinkAdaptiveStreaming.h"
 #include "../shared/TLinkLicenseVerifier.h"
 #include "../shared/TLinkRootfullLicensePolicy.h"
+#include "../shared/TLinkAccessibilityTree.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -671,6 +672,141 @@ static NSData *zx_dataFromCString(const char *cstr)
     return [NSData dataWithBytes:cstr length:strlen(cstr)];
 }
 
+static NSDictionary *zx_uiTreeDecodeBody(const char *buffer, BOOL allowEmpty, NSString **error)
+{
+    NSString *body = buffer && strlen(buffer) > 2
+        ? [NSString stringWithUTF8String:buffer + 2] : @"";
+    body = [body stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (body.length == 0 && allowEmpty) return @{};
+    NSData *decoded = [[NSData alloc] initWithBase64EncodedString:body
+                                                         options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    if (decoded.length == 0) {
+        if (error) *error = @"ui_request_base64_invalid";
+        return nil;
+    }
+    id value = [NSJSONSerialization JSONObjectWithData:decoded options:0 error:nil];
+    if (![value isKindOfClass:[NSDictionary class]]) {
+        if (error) *error = @"ui_request_json_object_required";
+        return nil;
+    }
+    return value;
+}
+
+static NSData *zx_uiTreeError(NSString *code)
+{
+    return zx_dataFromCString([[NSString stringWithFormat:@"-1;;%@\r\n",
+                                code.length > 0 ? code : @"ui_operation_failed"] UTF8String]);
+}
+
+static NSData *zx_uiTreeJSONResponse(NSDictionary *result)
+{
+    if (![result isKindOfClass:[NSDictionary class]]) return zx_uiTreeError(@"ui_result_invalid");
+    if (!TLinkAXResultSucceeded(result)) {
+        return zx_uiTreeError([result[@"error"] isKindOfClass:[NSString class]]
+                              ? result[@"error"] : @"ui_operation_failed");
+    }
+    NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+    if (json.length == 0) return zx_uiTreeError(@"ui_result_json_failed");
+    NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+    return zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String]);
+}
+
+static BOOL zx_uiTreeContextChanged(NSDictionary *before)
+{
+    NSDictionary *after = TLinkAXCopyFrontmostContext();
+    if (!TLinkAXResultSucceeded(after)) return YES;
+    return ![before[@"bundle_id"] isEqual:after[@"bundle_id"]] ||
+           [before[@"pid"] intValue] != [after[@"pid"] intValue];
+}
+
+static BOOL zx_uiTreeDispatchTap(NSDictionary *element)
+{
+    if (![element[@"enabled"] boolValue] || ![element[@"clickable"] boolValue] ||
+        ![element[@"activation_point_valid"] boolValue]) return NO;
+    NSDictionary *point = [element[@"activation_point"] isKindOfClass:[NSDictionary class]]
+        ? element[@"activation_point"] : @{};
+    CGFloat pointScale = [UIScreen mainScreen].scale > 0.0 ? [UIScreen mainScreen].scale : 1.0;
+    NSString *command = [NSString stringWithFormat:@"%s62%.3f;;%.3f;;50;;0",
+                         kTLinkautoIPCCommandTaskPrefix,
+                         [point[@"x"] doubleValue] * pointScale,
+                         [point[@"y"] doubleValue] * pointScale];
+    __block CFDataRef responseData = NULL;
+    dispatch_sync(ipcQueue(), ^{
+        responseData = sendIPCMessage([command UTF8String], true);
+    });
+    if (!responseData) return NO;
+    NSData *response = [NSData dataWithBytes:CFDataGetBytePtr(responseData)
+                                     length:(NSUInteger)CFDataGetLength(responseData)];
+    CFRelease(responseData);
+    NSString *text = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding];
+    return [text hasPrefix:@"0"];
+}
+
+static NSData *zx_handleUITreeTask(int taskType, const char *buffer)
+{
+    if (taskType == 77) {
+        NSMutableDictionary *capability = [TLinkAXCapabilitySnapshot() mutableCopy];
+        capability[@"runtime"] = @"rootfull";
+        capability[@"service"] = @"tlinkautod";
+        capability[@"tasks"] = @[@77, @78, @79, @80, @81];
+        NSData *json = [NSJSONSerialization dataWithJSONObject:capability options:0 error:nil];
+        if (json.length == 0) return zx_uiTreeError(@"ui_capability_json_failed");
+        NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+        return zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String]);
+    }
+
+    NSString *decodeError = nil;
+    NSDictionary *request = zx_uiTreeDecodeBody(buffer, taskType == 78, &decodeError);
+    if (!request) return zx_uiTreeError(decodeError);
+    NSDictionary *context = TLinkAXCopyFrontmostContext();
+    if (!TLinkAXResultSucceeded(context)) return zx_uiTreeError(context[@"error"]);
+    NSString *bundleID = context[@"bundle_id"];
+    pid_t pid = [context[@"pid"] intValue];
+    NSDictionary *result = nil;
+
+    if (taskType == 78) {
+        result = TLinkAXCopySnapshot(pid, bundleID, request);
+    } else if (taskType == 79 || taskType == 81) {
+        result = TLinkAXFindElement(pid, bundleID, request);
+    } else if (taskType == 80) {
+        id xValue = request[@"x"];
+        id yValue = request[@"y"];
+        if (![xValue respondsToSelector:@selector(doubleValue)] ||
+            ![yValue respondsToSelector:@selector(doubleValue)]) {
+            return zx_uiTreeError(@"ui_hit_test_coordinates_required");
+        }
+        result = TLinkAXElementAtPoint(pid, bundleID,
+                                      CGPointMake([xValue doubleValue], [yValue doubleValue]));
+    } else {
+        return zx_uiTreeError(@"ui_task_unsupported");
+    }
+
+    if (!TLinkAXResultSucceeded(result)) return zx_uiTreeJSONResponse(result);
+    BOOL changed = zx_uiTreeContextChanged(context);
+    NSMutableDictionary *finalResult = [result mutableCopy];
+    finalResult[@"runtime"] = @"rootfull";
+    finalResult[@"context_changed"] = @(changed);
+    if (changed) return zx_uiTreeError(@"ui_context_changed");
+
+    if (taskType == 81) {
+        NSDictionary *element = [finalResult[@"element"] isKindOfClass:[NSDictionary class]]
+            ? finalResult[@"element"] : @{};
+        if (![finalResult[@"found"] boolValue] || element.count == 0) {
+            return zx_uiTreeError(@"ui_element_not_found");
+        }
+        if (![element[@"enabled"] boolValue] || ![element[@"clickable"] boolValue]) {
+            return zx_uiTreeError(@"ui_element_not_clickable");
+        }
+        if (![element[@"activation_point_valid"] boolValue]) {
+            return zx_uiTreeError(@"ui_activation_point_invalid");
+        }
+        if (!zx_uiTreeDispatchTap(element)) return zx_uiTreeError(@"ui_tap_dispatch_failed");
+        finalResult[@"schema"] = @"ui_tap_v1";
+        finalResult[@"tapped"] = @YES;
+    }
+    return zx_uiTreeJSONResponse(finalResult);
+}
+
 static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buffer)
 {
     if (taskType == 75 || taskType == 76) {
@@ -739,7 +875,7 @@ static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buf
                 TLinkRootfullLicenseBuildMode(),
                 TLinkLicenseBuildMode()];
             capability = [capability stringByReplacingOccurrencesOfString:@" securePairingState=contract_only"
-                                                               withString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0 eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0 adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0 securePairingState=contract_only"];
+                                                               withString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0 eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0 adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0 uiTreeState=experimental uiTreeSchema=ui_snapshot_v1 uiTreeBackend=axruntime_numeric_v1 uiTreeTasks=77,78,79,80,81 uiTreeActions=capability,snapshot,find,at,tap uiTreeHierarchy=flat_v1 uiTreeDeviceValidated=0 securePairingState=contract_only"];
             return zx_dataFromCString([capability UTF8String]);
         }
         case 99:
@@ -755,7 +891,9 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         return nil;
     }
     const int taskType = getTaskTypeFromBuffer(buffer);
-    if (taskType != 10 && taskType != 61) {
+    if (taskType >= 77 && taskType <= 81) {
+        zx_logf("received UI tree task=%d payload_redacted=1", taskType);
+    } else if (taskType != 10 && taskType != 61) {
         zx_logf("received task payload: %s", buffer);
     }
 
@@ -795,6 +933,10 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
     NSData *phase6Diagnostic = zx_rootfullPhase6DiagnosticResponse(taskType, buffer);
     if (phase6Diagnostic) {
         return phase6Diagnostic;
+    }
+
+    if (taskType >= 77 && taskType <= 81) {
+        return zx_handleUITreeTask(taskType, buffer);
     }
 
     if (taskType == 96) {

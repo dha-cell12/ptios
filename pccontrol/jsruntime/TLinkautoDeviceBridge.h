@@ -76,6 +76,13 @@ JSExportAs(ocrFrame,
 - (NSDictionary *)appInfo:(NSString *)bundleId;
 - (NSDictionary *)appPid:(NSString *)bundleId;
 - (NSDictionary *)frontMostPid;
+- (NSDictionary *)uiTreeCapability;
+- (NSDictionary *)uiTree:(NSDictionary *)options;
+- (NSDictionary *)uiFind:(NSDictionary *)selector;
+JSExportAs(uiAt,
+- (NSDictionary *)uiAt:(double)x y:(double)y
+);
+- (NSDictionary *)tapElement:(NSDictionary *)selector;
 - (NSDictionary *)appPaths:(NSString *)bundleId;
 - (NSDictionary *)listBundles:(BOOL)withInfo;
 - (NSDictionary *)openUrl:(NSString *)url;

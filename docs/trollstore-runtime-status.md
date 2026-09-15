@@ -31,6 +31,11 @@ TrollStore runtime.
   fresh, always-released frame per attempt; text locators retain stable task 91
   Tesseract as the OCR engine. The implementation is present while device
   promotion remains pending; see `docs/smart-wait-visual-locator-v1.md`.
+- UI Tree v1 is experimental and adds tasks `77`-`81` plus `device.uiTree`,
+  `device.uiFind`, `device.uiAt`, `device.tapElement`, `device.waitForElement`,
+  and `device.waitUntilElementGone`. TrollStore performs bounded AXRuntime
+  snapshots in `streamd`, so StreamControl may remain backgrounded while the
+  target app is foreground. See `docs/ui-tree-v1.md`.
 - Secure Pairing P0 freezes the current unauthenticated network baseline and
   additive `ZXSP` JSON wire contract v1 for rootfull and TrollStore. It defines
   local-UI QR bootstrap, mutual P-256 identity/ephemeral proof, AES-256-GCM

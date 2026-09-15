@@ -22,6 +22,14 @@
 	<key>com.apple.private.security.container-required</key>
 	<false/>
 
+	<!-- Foreground accessibility snapshot for UI-tree automation. -->
+	<key>com.apple.private.accessibility.inspection</key>
+	<true/>
+	<key>com.apple.accessibility.api</key>
+	<true/>
+	<key>com.apple.private.accessibility.look-me-up-setup</key>
+	<true/>
+
 	<!-- ================================================================ -->
 	<!-- Photos automation: match the focused XXTUIService TCC grants.     -->
 	<!-- streamd owns task 29 album create/save/clear, so granting these   -->

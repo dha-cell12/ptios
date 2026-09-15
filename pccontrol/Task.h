@@ -85,6 +85,14 @@
 #define TASK_RUN_SHELL_V2 71
 #define TASK_CLEAR_APP_DATA 72
 
+// Accessibility UI snapshot protocol. Task 77 is read-only capability;
+// task 78-81 are licensed automation operations.
+#define TASK_UI_TREE_CAPABILITY 77
+#define TASK_UI_TREE_SNAPSHOT 78
+#define TASK_UI_TREE_FIND 79
+#define TASK_UI_TREE_AT 80
+#define TASK_UI_TREE_TAP 81
+
 // License/service diagnostics. These remain license-exempt by contract.
 #define TASK_LICENSE_STATUS 75
 #define TASK_LICENSE_RELOAD 76
