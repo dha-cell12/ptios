@@ -714,7 +714,7 @@ static NSData *zx_uiTreeJSONResponse(NSDictionary *result)
 static BOOL zx_uiTreeContextChanged(NSDictionary *before)
 {
     NSDictionary *after = TLinkAXCopyFrontmostContext();
-    if (!TLinkAXResultSucceeded(after)) return YES;
+    if (!TLinkAXResultSucceeded(after)) return true;
     return ![before[@"bundle_id"] isEqual:after[@"bundle_id"]] ||
            [before[@"pid"] intValue] != [after[@"pid"] intValue];
 }
@@ -722,7 +722,7 @@ static BOOL zx_uiTreeContextChanged(NSDictionary *before)
 static BOOL zx_uiTreeDispatchTap(NSDictionary *element)
 {
     if (![element[@"enabled"] boolValue] || ![element[@"clickable"] boolValue] ||
-        ![element[@"activation_point_valid"] boolValue]) return NO;
+        ![element[@"activation_point_valid"] boolValue]) return false;
     NSDictionary *point = [element[@"activation_point"] isKindOfClass:[NSDictionary class]]
         ? element[@"activation_point"] : @{};
     CGFloat pointScale = [UIScreen mainScreen].scale > 0.0 ? [UIScreen mainScreen].scale : 1.0;
@@ -734,7 +734,7 @@ static BOOL zx_uiTreeDispatchTap(NSDictionary *element)
     dispatch_sync(ipcQueue(), ^{
         responseData = sendIPCMessage([command UTF8String], true);
     });
-    if (!responseData) return NO;
+    if (!responseData) return false;
     NSData *response = [NSData dataWithBytes:CFDataGetBytePtr(responseData)
                                      length:(NSUInteger)CFDataGetLength(responseData)];
     CFRelease(responseData);
@@ -802,7 +802,7 @@ static NSData *zx_handleUITreeTask(int taskType, const char *buffer)
         }
         if (!zx_uiTreeDispatchTap(element)) return zx_uiTreeError(@"ui_tap_dispatch_failed");
         finalResult[@"schema"] = @"ui_tap_v1";
-        finalResult[@"tapped"] = @YES;
+        finalResult[@"tapped"] = @(true);
     }
     return zx_uiTreeJSONResponse(finalResult);
 }

@@ -718,7 +718,7 @@ static void zx_uiTreeNotifyResult(NSDictionary *result, CFWriteStreamRef stream)
 static BOOL zx_uiTreeContextChanged(NSDictionary *before)
 {
     NSDictionary *after = TLinkAXCopyFrontmostContext();
-    if (!TLinkAXResultSucceeded(after)) return YES;
+    if (!TLinkAXResultSucceeded(after)) return true;
     return ![before[@"bundle_id"] isEqual:after[@"bundle_id"]] ||
            [before[@"pid"] intValue] != [after[@"pid"] intValue];
 }
@@ -776,7 +776,7 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
     }
     NSMutableDictionary *finalResult = [result mutableCopy];
     finalResult[@"runtime"] = @"rootfull";
-    finalResult[@"context_changed"] = @NO;
+    finalResult[@"context_changed"] = @(false);
     if (taskType == TASK_UI_TREE_TAP) {
         NSDictionary *element = [finalResult[@"element"] isKindOfClass:[NSDictionary class]]
             ? finalResult[@"element"] : @{};
@@ -803,7 +803,7 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
             return;
         }
         finalResult[@"schema"] = @"ui_tap_v1";
-        finalResult[@"tapped"] = @YES;
+        finalResult[@"tapped"] = @(true);
     }
     zx_uiTreeNotifyResult(finalResult, stream);
 }

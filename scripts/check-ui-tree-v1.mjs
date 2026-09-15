@@ -86,6 +86,8 @@ assert.match(rootTask, /TASK_UI_TREE_CAPABILITY[\s\S]*TASK_UI_TREE_TAP/);
 assert.match(rootTask, /zx_handleUITreeTask/);
 assert.match(rootServer, /zx_handleUITreeTask/);
 assert.match(trollServer, /TLinkHandleUITreeTask/);
+assert.match(rootServer, /finalResult\[@"tapped"\]\s*=\s*@\(true\)/);
+assert.match(rootTask, /finalResult\[@"context_changed"\]\s*=\s*@\(false\)/);
 
 for (const task of Object.values(fixture.tasks)) {
   const automation = licensePolicy.task_features.automation.map(Number);
