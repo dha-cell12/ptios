@@ -99,11 +99,13 @@ assert.match(rootServer, /#ifdef ZX_DAEMON[\s\S]*static NSDictionary \*zx_uiTree
 assert.match(rootServer, /case 77:[\s\S]*case 81:[\s\S]*return true;/);
 assert.match(trollServer, /TLinkHandleUITreeTask/);
 assert.match(trollServer, /capability\[@"foreground_context"\]/);
-assert.match(trollServer, /capability\[@"implementation_version"\]\s*=\s*@5/);
+assert.match(trollServer, /capability\[@"implementation_version"\]\s*=\s*@6/);
 assert.match(trollServer, /shared_ax_context_fallback/);
-assert.match(trollServer, /TLinkUITreeContextByAXHitTest/);
-assert.match(trollServer, /ax_hit_test_process_scan_v1/);
+assert.match(trollServer, /TLinkUITreeContextByAXSnapshot/);
+assert.match(trollServer, /ax_snapshot_process_scan_v2/);
+assert.match(trollServer, /ax_snapshot_cache_150ms/);
 assert.match(trollServer, /ui_frontmost_ax_probe_ambiguous/);
+assert.match(trollServer, /TLinkUITreeInvalidateCachedContext/);
 assert.match(trollServer, /SBFrontmostApplicationDisplayIdentifier/);
 assert.match(trollServer, /SBSGetApplicationState/);
 assert.match(trollServer, /applicationState\(\(__bridge CFStringRef\)bundleId\) == 8/);

@@ -6636,156 +6636,177 @@ static NSArray<NSDictionary *> *TLinkRunningApplicationContexts(void)
     return contexts;
 }
 
-static NSDictionary *TLinkUITreeContextByAXHitTest(void)
+static NSDictionary *TLinkUITreeLightweightAXProbe(NSDictionary *candidate, NSString *source)
+{
+    NSString *bundleId = [candidate[@"bundle_id"] isKindOfClass:[NSString class]]
+        ? candidate[@"bundle_id"] : @"";
+    pid_t pid = [candidate[@"pid"] intValue];
+    if (bundleId.length == 0 || pid <= 0) {
+        return @{ @"ok": @NO, @"error": @"ui_frontmost_ax_probe_invalid_candidate" };
+    }
+    NSDictionary *snapshot = TLinkAXCopySnapshot(pid, bundleId, @{
+        @"max_elements": @1,
+        @"timeout_ms": @100,
+        @"visible_only": @NO,
+    });
+    if (!TLinkAXResultSucceeded(snapshot)) return snapshot;
+    return @{
+        @"ok": @YES,
+        @"bundle_id": bundleId,
+        @"pid": @(pid),
+        @"source": source ?: @"ax_snapshot_process_scan_v2",
+        @"source_count": snapshot[@"source_count"] ?: @0,
+        @"probe_duration_ms": snapshot[@"duration_ms"] ?: @0,
+    };
+}
+
+static NSDictionary *TLinkUITreeContextByAXSnapshot(void)
 {
     NSArray<NSDictionary *> *allCandidates = TLinkRunningApplicationContexts();
-    NSUInteger candidateLimit = MIN((NSUInteger)12, allCandidates.count);
+    NSUInteger candidateLimit = MIN((NSUInteger)16, allCandidates.count);
     if (candidateLimit == 0) {
         return @{
             @"ok": @NO,
             @"error": @"ui_frontmost_ax_probe_no_candidates",
-            @"diagnostic": @"ax_probe candidates=0",
+            @"diagnostic": @"ax_snapshot_probe candidates=0",
         };
     }
 
-    CGRect screen = [UIScreen mainScreen].bounds;
-    NSArray<NSValue *> *probePoints = @[
-        [NSValue valueWithCGPoint:CGPointMake(CGRectGetMidX(screen), CGRectGetMidY(screen))],
-        [NSValue valueWithCGPoint:CGPointMake(CGRectGetMinX(screen) + CGRectGetWidth(screen) * 0.25,
-                                               CGRectGetMinY(screen) + CGRectGetHeight(screen) * 0.25)],
-        [NSValue valueWithCGPoint:CGPointMake(CGRectGetMinX(screen) + CGRectGetWidth(screen) * 0.75,
-                                               CGRectGetMinY(screen) + CGRectGetHeight(screen) * 0.75)],
-    ];
-    NSMutableArray<NSMutableDictionary *> *matches = [NSMutableArray array];
+    NSMutableArray<NSDictionary *> *matches = [NSMutableArray array];
     NSString *firstError = @"";
-    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 3.5;
     NSUInteger probed = 0;
-
-    // The first pass is intentionally one point per app. Extra points are
-    // used only to break ties, keeping the fallback bounded on older devices.
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime deadline = started + 1.8;
     for (NSUInteger index = 0; index < candidateLimit; index++) {
         if (CFAbsoluteTimeGetCurrent() >= deadline) break;
-        NSDictionary *candidate = allCandidates[index];
-        pid_t pid = [candidate[@"pid"] intValue];
-        NSDictionary *hit = TLinkAXElementAtPoint(pid,
-                                                  candidate[@"bundle_id"],
-                                                  [probePoints[0] CGPointValue]);
+        NSDictionary *probe = TLinkUITreeLightweightAXProbe(allCandidates[index],
+                                                            @"ax_snapshot_process_scan_v2");
         probed++;
-        if (!TLinkAXResultSucceeded(hit) || ![hit[@"found"] boolValue]) {
-            if (firstError.length == 0 && [hit[@"error"] isKindOfClass:[NSString class]]) {
-                firstError = hit[@"error"];
-            }
-            if ([firstError isEqualToString:@"ui_screen_off"] ||
-                [firstError isEqualToString:@"ui_screen_locked"]) {
-                break;
-            }
+        if (TLinkAXResultSucceeded(probe)) {
+            [matches addObject:probe];
             continue;
         }
-        NSMutableDictionary *match = [candidate mutableCopy];
-        match[@"score"] = @1;
-        [matches addObject:match];
-    }
-
-    if (matches.count > 1) {
-        for (NSUInteger pointIndex = 1; pointIndex < probePoints.count; pointIndex++) {
-            for (NSMutableDictionary *match in matches) {
-                if (CFAbsoluteTimeGetCurrent() >= deadline) break;
-                NSDictionary *hit = TLinkAXElementAtPoint([match[@"pid"] intValue],
-                                                          match[@"bundle_id"],
-                                                          [probePoints[pointIndex] CGPointValue]);
-                if (TLinkAXResultSucceeded(hit) && [hit[@"found"] boolValue]) {
-                    match[@"score"] = @([match[@"score"] integerValue] + 1);
-                }
-            }
+        if (firstError.length == 0 && [probe[@"error"] isKindOfClass:[NSString class]]) {
+            firstError = probe[@"error"];
         }
+        if ([firstError isEqualToString:@"ui_screen_off"] ||
+            [firstError isEqualToString:@"ui_screen_locked"]) break;
     }
 
-    NSInteger bestScore = 0;
-    NSUInteger bestCount = 0;
-    NSDictionary *best = nil;
+    // SpringBoard remains alive and may expose a system AX tree while another
+    // application is foreground. Prefer a unique application match; use
+    // SpringBoard only when it is the sole successful candidate.
+    NSMutableArray<NSDictionary *> *applicationMatches = [NSMutableArray array];
     for (NSDictionary *match in matches) {
-        NSInteger score = [match[@"score"] integerValue];
-        if (score > bestScore) {
-            bestScore = score;
-            bestCount = 1;
-            best = match;
-        } else if (score == bestScore && score > 0) {
-            bestCount++;
+        if (![match[@"bundle_id"] isEqualToString:@"com.apple.springboard"]) {
+            [applicationMatches addObject:match];
         }
     }
+    NSArray<NSDictionary *> *eligibleMatches = applicationMatches.count > 0
+        ? applicationMatches : matches;
 
+    NSInteger durationMs = (NSInteger)llround((CFAbsoluteTimeGetCurrent() - started) * 1000.0);
     NSString *diagnostic = [NSString stringWithFormat:
-        @"ax_probe candidates=%lu probed=%lu matches=%lu best_score=%ld ties=%lu first_error=%@",
+        @"ax_snapshot_probe candidates=%lu probed=%lu matches=%lu eligible=%lu duration_ms=%ld first_error=%@",
         (unsigned long)allCandidates.count,
         (unsigned long)probed,
         (unsigned long)matches.count,
-        (long)bestScore,
-        (unsigned long)bestCount,
+        (unsigned long)eligibleMatches.count,
+        (long)durationMs,
         firstError ?: @""];
-    if (!best || bestScore <= 0 || bestCount != 1) {
+    if (eligibleMatches.count != 1) {
         return @{
             @"ok": @NO,
-            @"error": matches.count > 1
+            @"error": eligibleMatches.count > 1
                 ? @"ui_frontmost_ax_probe_ambiguous"
                 : @"ui_frontmost_ax_probe_no_match",
             @"diagnostic": diagnostic,
         };
     }
 
-    NSString *bundleId = best[@"bundle_id"];
-    pid_t pid = [best[@"pid"] intValue];
-    TLinkRememberFrontmost(bundleId, @"ax_hit_test_process_scan_v1", pid);
-    return @{
-        @"ok": @YES,
-        @"bundle_id": bundleId,
-        @"pid": @(pid),
-        @"source": @"ax_hit_test_process_scan_v1",
-        @"diagnostic": diagnostic,
-    };
+    NSDictionary *match = eligibleMatches.firstObject;
+    NSString *bundleId = match[@"bundle_id"];
+    pid_t pid = [match[@"pid"] intValue];
+    TLinkRememberFrontmost(bundleId, @"ax_snapshot_process_scan_v2", pid);
+    NSMutableDictionary *result = [match mutableCopy];
+    result[@"diagnostic"] = diagnostic;
+    return result;
+}
+
+static void TLinkUITreeInvalidateCachedContext(void)
+{
+    sTLinkLastFrontmostBundleId = @"";
+    sTLinkLastFrontmostSource = @"ui_tree_cache_invalidated";
+    sTLinkLastFrontmostPid = 0;
+    sTLinkLastFrontmostAtMs = 0;
 }
 
 static NSDictionary *TLinkUITreeFrontmostContext(void)
 {
+    uint64_t now = TLinkNowMs();
+    uint64_t cacheAge = (sTLinkLastFrontmostAtMs > 0 && now >= sTLinkLastFrontmostAtMs)
+        ? now - sTLinkLastFrontmostAtMs : UINT64_MAX;
+    if (sTLinkLastFrontmostBundleId.length > 0 &&
+        sTLinkLastFrontmostPid > 0 &&
+        TLinkPidIsAlive(sTLinkLastFrontmostPid)) {
+        if (cacheAge <= 150 && [sTLinkLastFrontmostSource hasPrefix:@"ax_snapshot_"]) {
+            return @{
+                @"ok": @YES,
+                @"bundle_id": sTLinkLastFrontmostBundleId,
+                @"pid": @(sTLinkLastFrontmostPid),
+                @"source": @"ax_snapshot_cache_150ms",
+                @"diagnostic": [NSString stringWithFormat:@"cache_age_ms=%llu",
+                    (unsigned long long)cacheAge],
+            };
+        }
+
+        NSDictionary *cachedProbe = TLinkUITreeLightweightAXProbe(@{
+            @"bundle_id": sTLinkLastFrontmostBundleId,
+            @"pid": @(sTLinkLastFrontmostPid),
+        }, @"ax_snapshot_cached_validation_v2");
+        if (TLinkAXResultSucceeded(cachedProbe)) {
+            TLinkRememberFrontmost(sTLinkLastFrontmostBundleId,
+                                   @"ax_snapshot_cached_validation_v2",
+                                   sTLinkLastFrontmostPid);
+            return cachedProbe;
+        }
+        TLinkUITreeInvalidateCachedContext();
+    }
+
+    NSDictionary *axProbe = TLinkUITreeContextByAXSnapshot();
+    if (TLinkAXResultSucceeded(axProbe)) return axProbe;
+
     NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
     if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
-    if (bundleId.length == 0) {
-        NSDictionary *axProbe = TLinkUITreeContextByAXHitTest();
-        if (TLinkAXResultSucceeded(axProbe)) return axProbe;
-
-        NSDictionary *fallback = TLinkAXCopyFrontmostContext();
-        if (TLinkAXResultSucceeded(fallback)) {
-            TLinkRememberFrontmost(fallback[@"bundle_id"],
-                                   @"shared_ax_context_fallback",
-                                   [fallback[@"pid"] intValue]);
-            return fallback;
+    if (bundleId.length > 0) {
+        pid_t pid = TLinkResolvePidForBundleId(bundleId);
+        if (pid > 0) {
+            return @{
+                @"ok": @YES,
+                @"bundle_id": bundleId,
+                @"pid": @(pid),
+                @"source": sTLinkLastFrontmostSource ?: @"sbs_fbs",
+                @"diagnostic": sTLinkFrontmostDiag ?: @"",
+            };
         }
-        return @{
-            @"ok": @NO,
-            @"error": @"ui_frontmost_bundle_unavailable",
-            @"source": sTLinkLastFrontmostSource ?: @"",
-            @"diagnostic": [NSString stringWithFormat:@"%@ %@",
-                sTLinkFrontmostDiag ?: @"",
-                axProbe[@"diagnostic"] ?: @""],
-            @"ax_probe_error": axProbe[@"error"] ?: @"",
-            @"fallback_error": fallback[@"error"] ?: @"",
-        };
     }
-    pid_t pid = TLinkResolvePidForBundleId(bundleId);
-    if (pid <= 0) {
-        return @{
-            @"ok": @NO,
-            @"error": @"ui_frontmost_pid_unavailable",
-            @"bundle_id": bundleId,
-            @"source": sTLinkLastFrontmostSource ?: @"",
-            @"diagnostic": sTLinkFrontmostDiag ?: @"",
-        };
+
+    NSDictionary *fallback = TLinkAXCopyFrontmostContext();
+    if (TLinkAXResultSucceeded(fallback)) {
+        TLinkRememberFrontmost(fallback[@"bundle_id"],
+                               @"shared_ax_context_fallback",
+                               [fallback[@"pid"] intValue]);
+        return fallback;
     }
     return @{
-        @"ok": @YES,
-        @"bundle_id": bundleId,
-        @"pid": @(pid),
-        @"source": sTLinkLastFrontmostSource ?: @"sbs_fbs",
-        @"diagnostic": sTLinkFrontmostDiag ?: @"",
+        @"ok": @NO,
+        @"error": @"ui_frontmost_bundle_unavailable",
+        @"source": sTLinkLastFrontmostSource ?: @"",
+        @"diagnostic": [NSString stringWithFormat:@"%@ %@",
+            sTLinkFrontmostDiag ?: @"",
+            axProbe[@"diagnostic"] ?: @""],
+        @"ax_probe_error": axProbe[@"error"] ?: @"",
+        @"fallback_error": fallback[@"error"] ?: @"",
     };
 }
 
@@ -6838,7 +6859,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         NSDictionary *foreground = TLinkUITreeFrontmostContext();
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @5;
+        capability[@"implementation_version"] = @6;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
@@ -6847,6 +6868,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"source": foreground[@"source"] ?: @"",
             @"error": foreground[@"error"] ?: @"",
             @"diagnostic": foreground[@"diagnostic"] ?: @"",
+            @"ax_probe_error": foreground[@"ax_probe_error"] ?: @"",
             @"fallback_error": foreground[@"fallback_error"] ?: @"",
         };
         NSError *jsonError = nil;
@@ -6865,21 +6887,37 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
     pid_t pid = [context[@"pid"] intValue];
     NSDictionary *result = nil;
 
-    if (taskType == 78) {
-        result = TLinkAXCopySnapshot(pid, bundleId, request);
-    } else if (taskType == 79 || taskType == 81) {
-        result = TLinkAXFindElement(pid, bundleId, request);
-    } else if (taskType == 80) {
-        id xValue = request[@"x"];
-        id yValue = request[@"y"];
-        if (![xValue respondsToSelector:@selector(doubleValue)] ||
-            ![yValue respondsToSelector:@selector(doubleValue)]) {
-            return TLinkError(@"ui_hit_test_coordinates_required");
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (taskType == 78) {
+            result = TLinkAXCopySnapshot(pid, bundleId, request);
+        } else if (taskType == 79 || taskType == 81) {
+            result = TLinkAXFindElement(pid, bundleId, request);
+        } else if (taskType == 80) {
+            id xValue = request[@"x"];
+            id yValue = request[@"y"];
+            if (![xValue respondsToSelector:@selector(doubleValue)] ||
+                ![yValue respondsToSelector:@selector(doubleValue)]) {
+                return TLinkError(@"ui_hit_test_coordinates_required");
+            }
+            result = TLinkAXElementAtPoint(pid, bundleId,
+                                          CGPointMake([xValue doubleValue], [yValue doubleValue]));
+        } else {
+            return TLinkError(@"ui_task_unsupported");
         }
-        result = TLinkAXElementAtPoint(pid, bundleId,
-                                      CGPointMake([xValue doubleValue], [yValue doubleValue]));
-    } else {
-        return TLinkError(@"ui_task_unsupported");
+
+        NSString *resultError = [result[@"error"] isKindOfClass:[NSString class]]
+            ? result[@"error"] : @"";
+        if (TLinkAXResultSucceeded(result) || attempt > 0 ||
+            ![resultError isEqualToString:@"ui_element_query_failed"]) break;
+
+        // The app may have changed between the context probe and the real
+        // query. Drop the short cache, resolve once more, then retry safely.
+        TLinkUITreeInvalidateCachedContext();
+        NSDictionary *retryContext = TLinkUITreeFrontmostContext();
+        if (![retryContext[@"ok"] boolValue]) break;
+        context = retryContext;
+        bundleId = context[@"bundle_id"];
+        pid = [context[@"pid"] intValue];
     }
 
     if (!TLinkAXResultSucceeded(result)) return TLinkUITreeJSONResponse(result);
