@@ -39,6 +39,7 @@
 #include <sys/sysctl.h>
 #include <sys/wait.h>
 #include <sys/utsname.h>
+#include <mach/mach.h>
 #include <atomic>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -5936,8 +5937,6 @@ static NSString *TLinkSBSCopyFrontmostBundleId(void)
     const char *symbols[] = {
         "SBSCopyFrontmostApplicationDisplayIdentifier",
         "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay",
-        "SBSGetMostElevatedApplicationBundleIdentifier",
-        "SBSGetMostElevatedApplicationDisplayIdentifier",
         NULL,
     };
     for (int i = 0; symbols[i] != NULL; i++) {
@@ -5953,7 +5952,68 @@ static NSString *TLinkSBSCopyFrontmostBundleId(void)
             return bundleId;
         }
     }
-    sTLinkFrontmostDiag = sawSymbol ? @"sbs_symbols_returned_nil" : @"sbs_symbols_missing";
+
+    mach_port_t (*serverPort)(void) =
+        (mach_port_t (*)(void))dlsym(handle, "SBSSpringBoardServerPort");
+    void (*legacyFrontmost)(mach_port_t, char *) =
+        (void (*)(mach_port_t, char *))dlsym(handle, "SBFrontmostApplicationDisplayIdentifier");
+    if (serverPort && legacyFrontmost) {
+        sawSymbol = YES;
+        char displayIdentifier[512] = {0};
+        @try {
+            legacyFrontmost(serverPort(), displayIdentifier);
+        } @catch (__unused NSException *exception) {
+            displayIdentifier[0] = '\0';
+        }
+        NSString *bundleId = displayIdentifier[0] != '\0'
+            ? [NSString stringWithUTF8String:displayIdentifier]
+            : nil;
+        if (bundleId.length > 0) {
+            TLinkRememberFrontmost(bundleId, @"sbs:SBFrontmostApplicationDisplayIdentifier", 0);
+            return bundleId;
+        }
+    }
+
+    uint32_t (*applicationState)(CFStringRef) =
+        (uint32_t (*)(CFStringRef))dlsym(handle, "SBSGetApplicationState");
+    if (applicationState) {
+        sawSymbol = YES;
+        if (sTLinkLastFrontmostBundleId.length > 0 &&
+            applicationState((__bridge CFStringRef)sTLinkLastFrontmostBundleId) == 8) {
+            return sTLinkLastFrontmostBundleId;
+        }
+        id workspace = TLinkApplicationWorkspace();
+        NSArray *apps = nil;
+        @try {
+            SEL allSel = NSSelectorFromString(@"allApplications");
+            SEL installedSel = NSSelectorFromString(@"allInstalledApplications");
+            if ([workspace respondsToSelector:allSel]) {
+                apps = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, allSel);
+            } else if ([workspace respondsToSelector:installedSel]) {
+                apps = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, installedSel);
+            }
+        } @catch (__unused NSException *exception) {
+            apps = nil;
+        }
+        for (id proxy in [apps isKindOfClass:[NSArray class]] ? apps : @[]) {
+            NSString *bundleId = TLinkStringForSelectorOrKey(proxy,
+                                                              @"bundleIdentifier",
+                                                              @"bundleIdentifier");
+            if (bundleId.length == 0) {
+                bundleId = TLinkStringForSelectorOrKey(proxy,
+                                                       @"applicationIdentifier",
+                                                       @"applicationIdentifier");
+            }
+            if (bundleId.length > 0 && applicationState((__bridge CFStringRef)bundleId) == 8) {
+                TLinkRememberFrontmost(bundleId, @"sbs:SBSGetApplicationState=8", 0);
+                return bundleId;
+            }
+        }
+    }
+
+    sTLinkFrontmostDiag = sawSymbol
+        ? @"sbs_copy_legacy_state_returned_empty"
+        : @"sbs_frontmost_symbols_missing";
     return nil;
 }
 
@@ -6554,7 +6614,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         NSDictionary *foreground = TLinkUITreeFrontmostContext();
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @2;
+        capability[@"implementation_version"] = @3;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),

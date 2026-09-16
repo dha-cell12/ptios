@@ -48,13 +48,13 @@ function ConvertFrom-TLinkUIResponse([string]$Raw) {
 }
 
 $capability = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask "77")
-if ($capability.implementation_version -ne 2 -or $null -eq $capability.foreground_context) {
+if ($capability.implementation_version -ne 3 -or $null -eq $capability.foreground_context) {
     [pscustomobject]@{
         host = $HostIP
         runtime = $capability.runtime
         service = $capability.service
         implementation_version = $capability.implementation_version
-        expected_implementation_version = 2
+        expected_implementation_version = 3
         foreground_context_present = ($null -ne $capability.foreground_context)
         decision = "fail_stale_streamd_restart_required"
     } | Format-List | Out-Host
