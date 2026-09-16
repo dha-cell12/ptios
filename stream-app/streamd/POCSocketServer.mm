@@ -6554,6 +6554,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         NSDictionary *foreground = TLinkUITreeFrontmostContext();
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
+        capability[@"implementation_version"] = @2;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),

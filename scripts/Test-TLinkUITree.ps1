@@ -48,6 +48,18 @@ function ConvertFrom-TLinkUIResponse([string]$Raw) {
 }
 
 $capability = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask "77")
+if ($capability.implementation_version -ne 2 -or $null -eq $capability.foreground_context) {
+    [pscustomobject]@{
+        host = $HostIP
+        runtime = $capability.runtime
+        service = $capability.service
+        implementation_version = $capability.implementation_version
+        expected_implementation_version = 2
+        foreground_context_present = ($null -ne $capability.foreground_context)
+        decision = "fail_stale_streamd_restart_required"
+    } | Format-List | Out-Host
+    throw "Installed streamd is stale. Open StreamControl > Settings > Restart streamd, then run this test again."
+}
 $snapshotRequest = @{ maxElements = $MaxElements; timeoutMs = [Math]::Min($TimeoutMs, 3000); visibleOnly = $true }
 $snapshotRaw = Invoke-TLinkUITask ("78" + (ConvertTo-TLinkUIBody $snapshotRequest))
 if ($snapshotRaw -notlike "0;;*") {
