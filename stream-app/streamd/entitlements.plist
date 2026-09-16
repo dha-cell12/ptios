@@ -29,6 +29,19 @@
 	<true/>
 	<key>com.apple.private.accessibility.look-me-up-setup</key>
 	<true/>
+	<!-- Foreground app discovery and cross-process metadata used by UI Tree. -->
+	<key>com.apple.backboard.client</key>
+	<true/>
+	<key>com.apple.frontboard.systemappservices</key>
+	<true/>
+	<key>proc_info-allow</key>
+	<true/>
+	<key>task_for_pid-allow</key>
+	<true/>
+	<key>com.apple.system-task-ports.read</key>
+	<true/>
+	<key>com.apple.private.xpc.launchd.per-user-lookup</key>
+	<true/>
 
 	<!-- ================================================================ -->
 	<!-- Photos automation: match the focused XXTUIService TCC grants.     -->

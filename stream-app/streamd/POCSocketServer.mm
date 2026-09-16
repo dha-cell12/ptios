@@ -6471,13 +6471,38 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
         bundleId = sTLinkLastFrontmostBundleId;
     }
     if (bundleId.length == 0) {
-        return @{@"ok": @NO, @"error": @"ui_frontmost_bundle_unavailable"};
+        NSDictionary *fallback = TLinkAXCopyFrontmostContext();
+        if (TLinkAXResultSucceeded(fallback)) {
+            TLinkRememberFrontmost(fallback[@"bundle_id"],
+                                   @"shared_ax_context_fallback",
+                                   [fallback[@"pid"] intValue]);
+            return fallback;
+        }
+        return @{
+            @"ok": @NO,
+            @"error": @"ui_frontmost_bundle_unavailable",
+            @"source": sTLinkLastFrontmostSource ?: @"",
+            @"diagnostic": sTLinkFrontmostDiag ?: @"",
+            @"fallback_error": fallback[@"error"] ?: @"",
+        };
     }
     pid_t pid = TLinkResolvePidForBundleId(bundleId);
     if (pid <= 0) {
-        return @{@"ok": @NO, @"error": @"ui_frontmost_pid_unavailable", @"bundle_id": bundleId};
+        return @{
+            @"ok": @NO,
+            @"error": @"ui_frontmost_pid_unavailable",
+            @"bundle_id": bundleId,
+            @"source": sTLinkLastFrontmostSource ?: @"",
+            @"diagnostic": sTLinkFrontmostDiag ?: @"",
+        };
     }
-    return @{@"ok": @YES, @"bundle_id": bundleId, @"pid": @(pid)};
+    return @{
+        @"ok": @YES,
+        @"bundle_id": bundleId,
+        @"pid": @(pid),
+        @"source": sTLinkLastFrontmostSource ?: @"sbs_fbs",
+        @"diagnostic": sTLinkFrontmostDiag ?: @"",
+    };
 }
 
 static NSDictionary *TLinkUITreeDecodeBody(NSString *body, BOOL allowEmpty, NSString **error)
@@ -6526,9 +6551,19 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
 {
     if (taskType == 77) {
         NSMutableDictionary *capability = [TLinkAXCapabilitySnapshot() mutableCopy];
+        NSDictionary *foreground = TLinkUITreeFrontmostContext();
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
+        capability[@"foreground_context"] = @{
+            @"ok": @([foreground[@"ok"] boolValue]),
+            @"bundle_id": foreground[@"bundle_id"] ?: @"",
+            @"pid": foreground[@"pid"] ?: @0,
+            @"source": foreground[@"source"] ?: @"",
+            @"error": foreground[@"error"] ?: @"",
+            @"diagnostic": foreground[@"diagnostic"] ?: @"",
+            @"fallback_error": foreground[@"fallback_error"] ?: @"",
+        };
         NSError *jsonError = nil;
         NSData *json = [NSJSONSerialization dataWithJSONObject:capability options:0 error:&jsonError];
         return json.length > 0

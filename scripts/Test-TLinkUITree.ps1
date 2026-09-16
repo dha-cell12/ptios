@@ -49,7 +49,26 @@ function ConvertFrom-TLinkUIResponse([string]$Raw) {
 
 $capability = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask "77")
 $snapshotRequest = @{ maxElements = $MaxElements; timeoutMs = [Math]::Min($TimeoutMs, 3000); visibleOnly = $true }
-$snapshot = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask ("78" + (ConvertTo-TLinkUIBody $snapshotRequest)))
+$snapshotRaw = Invoke-TLinkUITask ("78" + (ConvertTo-TLinkUIBody $snapshotRequest))
+if ($snapshotRaw -notlike "0;;*") {
+    [pscustomobject]@{
+        host = $HostIP
+        runtime = $capability.runtime
+        service = $capability.service
+        capability_state = $capability.state
+        foreground_ok = $capability.foreground_context.ok
+        foreground_bundle = $capability.foreground_context.bundle_id
+        foreground_pid = $capability.foreground_context.pid
+        foreground_source = $capability.foreground_context.source
+        foreground_error = $capability.foreground_context.error
+        foreground_diagnostic = $capability.foreground_context.diagnostic
+        foreground_fallback_error = $capability.foreground_context.fallback_error
+        snapshot_error = $snapshotRaw
+        decision = "fail_foreground_discovery"
+    } | Format-List | Out-Host
+    throw "TLink UI snapshot failed: $snapshotRaw"
+}
+$snapshot = ConvertFrom-TLinkUIResponse $snapshotRaw
 
 $selectorResult = $null
 $tapResult = $null

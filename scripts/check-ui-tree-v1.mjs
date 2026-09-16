@@ -78,6 +78,14 @@ for (const source of [rootEntitlements, trollEntitlements]) {
     "com.apple.private.accessibility.look-me-up-setup",
   ]) assert.ok(source.includes(entitlement), `entitlement missing: ${entitlement}`);
 }
+for (const entitlement of [
+  "com.apple.backboard.client",
+  "com.apple.frontboard.systemappservices",
+  "proc_info-allow",
+  "task_for_pid-allow",
+  "com.apple.system-task-ports.read",
+  "com.apple.private.xpc.launchd.per-user-lookup",
+]) assert.ok(trollEntitlements.includes(entitlement), `TrollStore foreground entitlement missing: ${entitlement}`);
 
 assert.match(rootMakefile, /TLinkAccessibilityTree\.mm/);
 assert.match(rootMakefile, /tlinkautod_CODESIGN_FLAGS\s*=\s*-S\.\.\/layout\/tlinkautod-entitlements\.plist/);
@@ -90,6 +98,8 @@ assert.match(rootServer, /zx_handleUITreeTask/);
 assert.match(rootServer, /#ifdef ZX_DAEMON[\s\S]*static NSDictionary \*zx_uiTreeDecodeBody[\s\S]*static NSData \*zx_handleUITreeTask[\s\S]*#endif/);
 assert.match(rootServer, /case 77:[\s\S]*case 81:[\s\S]*return true;/);
 assert.match(trollServer, /TLinkHandleUITreeTask/);
+assert.match(trollServer, /capability\[@"foreground_context"\]/);
+assert.match(trollServer, /shared_ax_context_fallback/);
 assert.match(rootServer, /finalResult\[@"tapped"\]\s*=\s*@\(true\)/);
 assert.match(rootTask, /finalResult\[@"context_changed"\]\s*=\s*@\(false\)/);
 
