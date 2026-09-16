@@ -99,11 +99,14 @@ assert.match(rootServer, /#ifdef ZX_DAEMON[\s\S]*static NSDictionary \*zx_uiTree
 assert.match(rootServer, /case 77:[\s\S]*case 81:[\s\S]*return true;/);
 assert.match(trollServer, /TLinkHandleUITreeTask/);
 assert.match(trollServer, /capability\[@"foreground_context"\]/);
-assert.match(trollServer, /capability\[@"implementation_version"\]\s*=\s*@3/);
+assert.match(trollServer, /capability\[@"implementation_version"\]\s*=\s*@4/);
 assert.match(trollServer, /shared_ax_context_fallback/);
 assert.match(trollServer, /SBFrontmostApplicationDisplayIdentifier/);
 assert.match(trollServer, /SBSGetApplicationState/);
 assert.match(trollServer, /applicationState\(\(__bridge CFStringRef\)bundleId\) == 8/);
+assert.match(trollServer, /SBSCopyInfoForApplicationWithProcessID/);
+assert.match(trollServer, /BKSApplicationStateAppIsFrontmost/);
+assert.match(trollServer, /SBApplicationStateDisplayIDKey/);
 assert.match(core, /SBFrontmostApplicationDisplayIdentifier/);
 assert.match(rootServer, /finalResult\[@"tapped"\]\s*=\s*@\(true\)/);
 assert.match(rootTask, /finalResult\[@"context_changed"\]\s*=\s*@\(false\)/);

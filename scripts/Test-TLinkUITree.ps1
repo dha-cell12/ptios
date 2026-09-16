@@ -48,13 +48,13 @@ function ConvertFrom-TLinkUIResponse([string]$Raw) {
 }
 
 $capability = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask "77")
-if ($capability.implementation_version -ne 3 -or $null -eq $capability.foreground_context) {
+if ($capability.implementation_version -ne 4 -or $null -eq $capability.foreground_context) {
     [pscustomobject]@{
         host = $HostIP
         runtime = $capability.runtime
         service = $capability.service
         implementation_version = $capability.implementation_version
-        expected_implementation_version = 3
+        expected_implementation_version = 4
         foreground_context_present = ($null -ne $capability.foreground_context)
         decision = "fail_stale_streamd_restart_required"
     } | Format-List | Out-Host
@@ -67,6 +67,7 @@ if ($snapshotRaw -notlike "0;;*") {
         host = $HostIP
         runtime = $capability.runtime
         service = $capability.service
+        implementation_version = $capability.implementation_version
         capability_state = $capability.state
         foreground_ok = $capability.foreground_context.ok
         foreground_bundle = $capability.foreground_context.bundle_id
@@ -102,6 +103,7 @@ if ($Text -or $Identifier -or $Role) {
     host = $HostIP
     runtime = $capability.runtime
     service = $capability.service
+    implementation_version = $capability.implementation_version
     state = $capability.state
     backend = $capability.source
     entitlement_inspection = $capability.entitlements.'com.apple.private.accessibility.inspection'

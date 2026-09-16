@@ -6011,8 +6011,49 @@ static NSString *TLinkSBSCopyFrontmostBundleId(void)
         }
     }
 
+    CFDictionaryRef (*copyProcessInfo)(pid_t) =
+        (CFDictionaryRef (*)(pid_t))dlsym(handle, "SBSCopyInfoForApplicationWithProcessID");
+    NSUInteger processInfoInspected = 0;
+    NSUInteger processInfoDictionaries = 0;
+    if (copyProcessInfo) {
+        sawSymbol = YES;
+        int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+        size_t processBytes = 0;
+        if (sysctl(mib, 4, NULL, &processBytes, NULL, 0) == 0 && processBytes > 0) {
+            processBytes += 64 * sizeof(struct kinfo_proc);
+            struct kinfo_proc *processes = (struct kinfo_proc *)calloc(1, processBytes);
+            if (processes && sysctl(mib, 4, processes, &processBytes, NULL, 0) == 0) {
+                NSUInteger processCount = processBytes / sizeof(struct kinfo_proc);
+                for (NSUInteger index = 0; index < processCount; index++) {
+                    pid_t pid = processes[index].kp_proc.p_pid;
+                    if (pid <= 0) continue;
+                    processInfoInspected++;
+                    CFDictionaryRef rawInfo = copyProcessInfo(pid);
+                    if (!rawInfo) continue;
+                    NSDictionary *info = CFBridgingRelease(rawInfo);
+                    if (![info isKindOfClass:[NSDictionary class]]) continue;
+                    processInfoDictionaries++;
+                    if (![info[@"BKSApplicationStateAppIsFrontmost"] boolValue]) continue;
+                    NSString *bundleId = [info[@"SBApplicationStateDisplayIDKey"]
+                        isKindOfClass:[NSString class]]
+                        ? info[@"SBApplicationStateDisplayIDKey"]
+                        : nil;
+                    if (bundleId.length == 0) continue;
+                    TLinkRememberFrontmost(bundleId,
+                                           @"sbs:SBSCopyInfoForApplicationWithProcessID.frontmost",
+                                           pid);
+                    free(processes);
+                    return bundleId;
+                }
+            }
+            if (processes) free(processes);
+        }
+    }
+
     sTLinkFrontmostDiag = sawSymbol
-        ? @"sbs_copy_legacy_state_returned_empty"
+        ? [NSString stringWithFormat:@"sbs_copy_legacy_state_process_info_empty inspected=%lu dictionaries=%lu",
+             (unsigned long)processInfoInspected,
+             (unsigned long)processInfoDictionaries]
         : @"sbs_frontmost_symbols_missing";
     return nil;
 }
@@ -6614,7 +6655,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         NSDictionary *foreground = TLinkUITreeFrontmostContext();
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @3;
+        capability[@"implementation_version"] = @4;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
