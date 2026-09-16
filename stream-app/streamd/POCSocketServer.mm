@@ -6564,14 +6564,194 @@ static NSData *TLinkHandleFrontmostPid(void)
     return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
+static NSArray<NSDictionary *> *TLinkRunningApplicationContexts(void)
+{
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    size_t processBytes = 0;
+    if (sysctl(mib, 4, NULL, &processBytes, NULL, 0) != 0 || processBytes == 0) return @[];
+
+    processBytes += 32 * sizeof(struct kinfo_proc);
+    struct kinfo_proc *processes = (struct kinfo_proc *)calloc(1, processBytes);
+    if (!processes) return @[];
+    if (sysctl(mib, 4, processes, &processBytes, NULL, 0) != 0) {
+        free(processes);
+        return @[];
+    }
+
+    NSMutableArray<NSDictionary *> *contexts = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    NSUInteger processCount = processBytes / sizeof(struct kinfo_proc);
+    for (NSUInteger index = 0; index < processCount; index++) {
+        pid_t pid = processes[index].kp_proc.p_pid;
+        if (pid <= 0 || pid == getpid()) continue;
+
+        char pathBuffer[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        if (proc_pidpath(pid, pathBuffer, sizeof(pathBuffer)) <= 0) continue;
+        NSString *processPath = TLinkNormalizedPath([NSString stringWithUTF8String:pathBuffer] ?: @"");
+        NSRange appMarker = [processPath rangeOfString:@".app/" options:NSBackwardsSearch];
+        if (appMarker.location == NSNotFound) continue;
+
+        NSUInteger bundlePathLength = appMarker.location + 4;
+        if (bundlePathLength >= processPath.length) continue;
+        NSString *bundlePath = [processPath substringToIndex:bundlePathLength];
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
+            [bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+        if (![info isKindOfClass:[NSDictionary class]]) continue;
+
+        NSString *bundleId = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]]
+            ? info[@"CFBundleIdentifier"]
+            : @"";
+        NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]]
+            ? info[@"CFBundleExecutable"]
+            : @"";
+        if (bundleId.length == 0 || executable.length == 0 ||
+            ![[processPath lastPathComponent] isEqualToString:executable]) {
+            continue;
+        }
+
+        // This helper owns a hidden hosted scene and is never an automation
+        // target. Probing it can otherwise hide the real foreground app.
+        if ([bundleId isEqualToString:@"com.tlinkauto.streamcontrol.uiservice"] ||
+            [bundleId isEqualToString:@"com.tlinkauto.streamcontrol.TLinkUIService"]) {
+            continue;
+        }
+
+        NSString *identity = [NSString stringWithFormat:@"%@:%d", bundleId, pid];
+        if ([seen containsObject:identity]) continue;
+        [seen addObject:identity];
+        [contexts addObject:@{
+            @"bundle_id": bundleId,
+            @"pid": @(pid),
+            @"process_path": processPath,
+        }];
+    }
+    free(processes);
+
+    [contexts sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        pid_t leftPid = [left[@"pid"] intValue];
+        pid_t rightPid = [right[@"pid"] intValue];
+        if (leftPid == rightPid) return NSOrderedSame;
+        return leftPid > rightPid ? NSOrderedAscending : NSOrderedDescending;
+    }];
+    return contexts;
+}
+
+static NSDictionary *TLinkUITreeContextByAXHitTest(void)
+{
+    NSArray<NSDictionary *> *allCandidates = TLinkRunningApplicationContexts();
+    NSUInteger candidateLimit = MIN((NSUInteger)12, allCandidates.count);
+    if (candidateLimit == 0) {
+        return @{
+            @"ok": @NO,
+            @"error": @"ui_frontmost_ax_probe_no_candidates",
+            @"diagnostic": @"ax_probe candidates=0",
+        };
+    }
+
+    CGRect screen = [UIScreen mainScreen].bounds;
+    NSArray<NSValue *> *probePoints = @[
+        [NSValue valueWithCGPoint:CGPointMake(CGRectGetMidX(screen), CGRectGetMidY(screen))],
+        [NSValue valueWithCGPoint:CGPointMake(CGRectGetMinX(screen) + CGRectGetWidth(screen) * 0.25,
+                                               CGRectGetMinY(screen) + CGRectGetHeight(screen) * 0.25)],
+        [NSValue valueWithCGPoint:CGPointMake(CGRectGetMinX(screen) + CGRectGetWidth(screen) * 0.75,
+                                               CGRectGetMinY(screen) + CGRectGetHeight(screen) * 0.75)],
+    ];
+    NSMutableArray<NSMutableDictionary *> *matches = [NSMutableArray array];
+    NSString *firstError = @"";
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 3.5;
+    NSUInteger probed = 0;
+
+    // The first pass is intentionally one point per app. Extra points are
+    // used only to break ties, keeping the fallback bounded on older devices.
+    for (NSUInteger index = 0; index < candidateLimit; index++) {
+        if (CFAbsoluteTimeGetCurrent() >= deadline) break;
+        NSDictionary *candidate = allCandidates[index];
+        pid_t pid = [candidate[@"pid"] intValue];
+        NSDictionary *hit = TLinkAXElementAtPoint(pid,
+                                                  candidate[@"bundle_id"],
+                                                  [probePoints[0] CGPointValue]);
+        probed++;
+        if (!TLinkAXResultSucceeded(hit) || ![hit[@"found"] boolValue]) {
+            if (firstError.length == 0 && [hit[@"error"] isKindOfClass:[NSString class]]) {
+                firstError = hit[@"error"];
+            }
+            if ([firstError isEqualToString:@"ui_screen_off"] ||
+                [firstError isEqualToString:@"ui_screen_locked"]) {
+                break;
+            }
+            continue;
+        }
+        NSMutableDictionary *match = [candidate mutableCopy];
+        match[@"score"] = @1;
+        [matches addObject:match];
+    }
+
+    if (matches.count > 1) {
+        for (NSUInteger pointIndex = 1; pointIndex < probePoints.count; pointIndex++) {
+            for (NSMutableDictionary *match in matches) {
+                if (CFAbsoluteTimeGetCurrent() >= deadline) break;
+                NSDictionary *hit = TLinkAXElementAtPoint([match[@"pid"] intValue],
+                                                          match[@"bundle_id"],
+                                                          [probePoints[pointIndex] CGPointValue]);
+                if (TLinkAXResultSucceeded(hit) && [hit[@"found"] boolValue]) {
+                    match[@"score"] = @([match[@"score"] integerValue] + 1);
+                }
+            }
+        }
+    }
+
+    NSInteger bestScore = 0;
+    NSUInteger bestCount = 0;
+    NSDictionary *best = nil;
+    for (NSDictionary *match in matches) {
+        NSInteger score = [match[@"score"] integerValue];
+        if (score > bestScore) {
+            bestScore = score;
+            bestCount = 1;
+            best = match;
+        } else if (score == bestScore && score > 0) {
+            bestCount++;
+        }
+    }
+
+    NSString *diagnostic = [NSString stringWithFormat:
+        @"ax_probe candidates=%lu probed=%lu matches=%lu best_score=%ld ties=%lu first_error=%@",
+        (unsigned long)allCandidates.count,
+        (unsigned long)probed,
+        (unsigned long)matches.count,
+        (long)bestScore,
+        (unsigned long)bestCount,
+        firstError ?: @""];
+    if (!best || bestScore <= 0 || bestCount != 1) {
+        return @{
+            @"ok": @NO,
+            @"error": matches.count > 1
+                ? @"ui_frontmost_ax_probe_ambiguous"
+                : @"ui_frontmost_ax_probe_no_match",
+            @"diagnostic": diagnostic,
+        };
+    }
+
+    NSString *bundleId = best[@"bundle_id"];
+    pid_t pid = [best[@"pid"] intValue];
+    TLinkRememberFrontmost(bundleId, @"ax_hit_test_process_scan_v1", pid);
+    return @{
+        @"ok": @YES,
+        @"bundle_id": bundleId,
+        @"pid": @(pid),
+        @"source": @"ax_hit_test_process_scan_v1",
+        @"diagnostic": diagnostic,
+    };
+}
+
 static NSDictionary *TLinkUITreeFrontmostContext(void)
 {
     NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
     if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
-    if (bundleId.length == 0 && sTLinkLastFrontmostBundleId.length > 0) {
-        bundleId = sTLinkLastFrontmostBundleId;
-    }
     if (bundleId.length == 0) {
+        NSDictionary *axProbe = TLinkUITreeContextByAXHitTest();
+        if (TLinkAXResultSucceeded(axProbe)) return axProbe;
+
         NSDictionary *fallback = TLinkAXCopyFrontmostContext();
         if (TLinkAXResultSucceeded(fallback)) {
             TLinkRememberFrontmost(fallback[@"bundle_id"],
@@ -6583,7 +6763,10 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
             @"ok": @NO,
             @"error": @"ui_frontmost_bundle_unavailable",
             @"source": sTLinkLastFrontmostSource ?: @"",
-            @"diagnostic": sTLinkFrontmostDiag ?: @"",
+            @"diagnostic": [NSString stringWithFormat:@"%@ %@",
+                sTLinkFrontmostDiag ?: @"",
+                axProbe[@"diagnostic"] ?: @""],
+            @"ax_probe_error": axProbe[@"error"] ?: @"",
             @"fallback_error": fallback[@"error"] ?: @"",
         };
     }
@@ -6655,7 +6838,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         NSDictionary *foreground = TLinkUITreeFrontmostContext();
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @4;
+        capability[@"implementation_version"] = @5;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
