@@ -48,13 +48,13 @@ function ConvertFrom-TLinkUIResponse([string]$Raw) {
 }
 
 $capability = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask "77")
-if ($capability.implementation_version -ne 6 -or $null -eq $capability.foreground_context) {
+if ($capability.implementation_version -ne 7 -or $null -eq $capability.foreground_context) {
     [pscustomobject]@{
         host = $HostIP
         runtime = $capability.runtime
         service = $capability.service
         implementation_version = $capability.implementation_version
-        expected_implementation_version = 6
+        expected_implementation_version = 7
         foreground_context_present = ($null -ne $capability.foreground_context)
         decision = "fail_stale_streamd_restart_required"
     } | Format-List | Out-Host
@@ -74,6 +74,8 @@ if ($snapshotRaw -notlike "0;;*") {
         foreground_pid = $capability.foreground_context.pid
         foreground_source = $capability.foreground_context.source
         foreground_error = $capability.foreground_context.error
+        foreground_state = $capability.foreground_context.state
+        foreground_resolve_duration_ms = $capability.foreground_context.resolve_duration_ms
         foreground_diagnostic = $capability.foreground_context.diagnostic
         foreground_ax_probe_error = $capability.foreground_context.ax_probe_error
         foreground_fallback_error = $capability.foreground_context.fallback_error
@@ -108,6 +110,10 @@ if ($Text -or $Identifier -or $Role) {
     state = $capability.state
     backend = $capability.source
     foreground_source = $capability.foreground_context.source
+    foreground_state = $capability.foreground_context.state
+    foreground_generation = $capability.foreground_context.generation
+    foreground_verification_count = $capability.foreground_context.verification_count
+    foreground_resolve_duration_ms = $capability.foreground_context.resolve_duration_ms
     foreground_resolve_diagnostic = $capability.foreground_context.diagnostic
     entitlement_inspection = $capability.entitlements.'com.apple.private.accessibility.inspection'
     entitlement_api = $capability.entitlements.'com.apple.accessibility.api'

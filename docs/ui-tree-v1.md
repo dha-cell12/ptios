@@ -6,7 +6,8 @@ UI Tree v1 adds a shared, private-AXRuntime accessibility snapshot to the rootfu
 
 - Rootfull TCP requests run in `tlinkautod`. Rootfull in-process scripts use the same shared core through the SpringBoard script bridge.
 - TrollStore TCP requests and scripts run in `streamd`. `StreamControl.app` may remain in the background while the target application is foreground.
-- TrollStore foreground discovery follows the verified XXTouch-compatible order: modern `SBSCopy...`, legacy `SBFrontmostApplicationDisplayIdentifier(serverPort, buffer)`, `SBSGetApplicationState == 8`, then a PID scan using `SBSCopyInfoForApplicationWithProcessID` plus `BKSApplicationStateAppIsFrontmost`. FBS display layout, the last live observation, and the shared AX/SBS process scan remain later fallbacks. Task `77` primes the route and reports a redacted `foreground_context` diagnostic.
+- TrollStore foreground discovery uses resolver v7. A task-11 launch intent is checked first; otherwise a 96-cell screen fingerprint detects material presentation changes, recent confirmed app contexts are probed before the full running-app set, and a newly selected app must pass a second AX observation. SBS/FBS and the shared AX/SBS process scan remain cold-start fallbacks only. A stale app is reported as `ui_frontmost_transition_unsettled` or `ui_frontmost_ax_probe_ambiguous`, never accepted merely because its old AX tree remains readable.
+- The accepted context carries a monotonic `generation`, `state`, `verification_count`, and resolver timing. The cache is scoped to verified state rather than an unconditional time window; task 81 still revalidates context before injecting input.
 - `TLinkUIService` is not used. UI Tree does not create a scene or window.
 
 The first contract is a flat accessibility snapshot because numeric AX attribute `3015` does not expose a proven, stable parent/child relationship. Hierarchy is deliberately reported as unavailable.
