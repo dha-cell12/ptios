@@ -5902,6 +5902,15 @@ static NSString *sTLinkUITreeExpectedBundleId = nil;
 static uint64_t sTLinkUITreeExpectedAtMs = 0;
 static NSUInteger sTLinkUITreeLaunchableBundleCount = 0;
 static NSUInteger sTLinkUITreeExcludedServiceCount = 0;
+static NSSet<NSString *> *sTLinkUITreeCachedLaunchableBundleIds = nil;
+static uint64_t sTLinkUITreeLaunchableCacheAtMs = 0;
+static NSArray<NSDictionary *> *sTLinkUITreeCachedRunningContexts = nil;
+static uint64_t sTLinkUITreeRunningContextsCacheAtMs = 0;
+static BOOL sTLinkUITreeRunningContextsDirty = YES;
+static BOOL sTLinkUITreeLegacyForegroundUnavailable = NO;
+static NSInteger sTLinkUITreeLastLaunchServicesMs = 0;
+static NSInteger sTLinkUITreeLastInventoryMs = 0;
+static NSInteger sTLinkUITreeLastFingerprintMs = 0;
 static id sTLinkFBSDisplayLayoutMonitor = nil;
 static id sTLinkFBSDisplayLayoutBlock = nil;
 static NSString *sTLinkFrontmostDiag = nil;
@@ -6465,6 +6474,7 @@ static NSData *TLinkHandleOpenApplication(NSString *body)
 {
     NSString *bundleId = TLinkCleanPayload(body);
     if (bundleId.length == 0) return TLinkError(@"open_app_missing_bundle_id");
+    sTLinkUITreeRunningContextsDirty = YES;
     sTLinkUITreeExpectedBundleId = bundleId;
     sTLinkUITreeExpectedAtMs = TLinkNowMs();
     TLinkRememberFrontmost(bundleId, @"task11:expected", -1);
@@ -6487,6 +6497,7 @@ static NSData *TLinkHandleAppKill(NSString *body)
     if (helperExit != 0) {
         return TLinkError([NSString stringWithFormat:@"kill_app_failed_or_limited_on_trollstore bundle=%@ exit=%d", bundleId, helperExit]);
     }
+    sTLinkUITreeRunningContextsDirty = YES;
     if ([sTLinkLastFrontmostBundleId isEqualToString:bundleId]) {
         sTLinkLastFrontmostBundleId = @"";
         sTLinkLastFrontmostSource = @"task31:privhelper-killed";
@@ -6508,6 +6519,7 @@ static NSData *TLinkHandleClearAppData(NSString *body)
     if (helperExit != 0) {
         return TLinkError([NSString stringWithFormat:@"clear_app_data_failed_or_refused bundle=%@ exit=%d", bundleId, helperExit]);
     }
+    sTLinkUITreeRunningContextsDirty = YES;
     if ([sTLinkLastFrontmostBundleId isEqualToString:bundleId]) {
         sTLinkLastFrontmostBundleId = @"";
         sTLinkLastFrontmostSource = @"task72:privhelper-cleared";
@@ -6577,9 +6589,21 @@ static NSData *TLinkHandleFrontmostPid(void)
 
 static NSSet<NSString *> *TLinkUITreeLaunchableBundleIds(void)
 {
+    uint64_t now = TLinkNowMs();
+    if (sTLinkUITreeCachedLaunchableBundleIds.count > 0 &&
+        sTLinkUITreeLaunchableCacheAtMs > 0 && now >= sTLinkUITreeLaunchableCacheAtMs &&
+        now - sTLinkUITreeLaunchableCacheAtMs <= 60000) {
+        sTLinkUITreeLastLaunchServicesMs = 0;
+        return sTLinkUITreeCachedLaunchableBundleIds;
+    }
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
     id workspace = TLinkApplicationWorkspace();
     SEL allApplicationsSel = NSSelectorFromString(@"allApplications");
-    if (!workspace || ![workspace respondsToSelector:allApplicationsSel]) return [NSSet set];
+    if (!workspace || ![workspace respondsToSelector:allApplicationsSel]) {
+        sTLinkUITreeLastLaunchServicesMs = (NSInteger)llround(
+            (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+        return [NSSet set];
+    }
 
     NSArray *applications = nil;
     @try {
@@ -6587,7 +6611,11 @@ static NSSet<NSString *> *TLinkUITreeLaunchableBundleIds(void)
     } @catch (__unused NSException *exception) {
         applications = nil;
     }
-    if (![applications isKindOfClass:[NSArray class]]) return [NSSet set];
+    if (![applications isKindOfClass:[NSArray class]]) {
+        sTLinkUITreeLastLaunchServicesMs = (NSInteger)llround(
+            (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+        return [NSSet set];
+    }
 
     NSMutableSet<NSString *> *bundleIds = [NSMutableSet set];
     for (id proxy in applications) {
@@ -6605,7 +6633,11 @@ static NSSet<NSString *> *TLinkUITreeLaunchableBundleIds(void)
         if (bundleId.length > 0) [bundleIds addObject:bundleId];
     }
     [bundleIds addObject:@"com.apple.springboard"];
-    return bundleIds;
+    sTLinkUITreeLastLaunchServicesMs = (NSInteger)llround(
+        (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+    sTLinkUITreeCachedLaunchableBundleIds = [bundleIds copy];
+    sTLinkUITreeLaunchableCacheAtMs = now;
+    return sTLinkUITreeCachedLaunchableBundleIds;
 }
 
 static BOOL TLinkUITreeInfoDescribesInteractiveApp(NSDictionary *info,
@@ -6643,18 +6675,38 @@ static BOOL TLinkUITreeInfoDescribesInteractiveApp(NSDictionary *info,
 
 static NSArray<NSDictionary *> *TLinkRunningApplicationContexts(void)
 {
+    uint64_t now = TLinkNowMs();
+    if (!sTLinkUITreeRunningContextsDirty &&
+        sTLinkUITreeCachedRunningContexts &&
+        sTLinkUITreeRunningContextsCacheAtMs > 0 &&
+        now >= sTLinkUITreeRunningContextsCacheAtMs &&
+        now - sTLinkUITreeRunningContextsCacheAtMs <= 750) {
+        sTLinkUITreeLastInventoryMs = 0;
+        return sTLinkUITreeCachedRunningContexts;
+    }
+    CFAbsoluteTime inventoryStarted = CFAbsoluteTimeGetCurrent();
     NSSet<NSString *> *launchableBundleIds = TLinkUITreeLaunchableBundleIds();
     sTLinkUITreeLaunchableBundleCount = launchableBundleIds.count;
     sTLinkUITreeExcludedServiceCount = 0;
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
     size_t processBytes = 0;
-    if (sysctl(mib, 4, NULL, &processBytes, NULL, 0) != 0 || processBytes == 0) return @[];
+    if (sysctl(mib, 4, NULL, &processBytes, NULL, 0) != 0 || processBytes == 0) {
+        sTLinkUITreeLastInventoryMs = (NSInteger)llround(
+            (CFAbsoluteTimeGetCurrent() - inventoryStarted) * 1000.0);
+        return @[];
+    }
 
     processBytes += 32 * sizeof(struct kinfo_proc);
     struct kinfo_proc *processes = (struct kinfo_proc *)calloc(1, processBytes);
-    if (!processes) return @[];
+    if (!processes) {
+        sTLinkUITreeLastInventoryMs = (NSInteger)llround(
+            (CFAbsoluteTimeGetCurrent() - inventoryStarted) * 1000.0);
+        return @[];
+    }
     if (sysctl(mib, 4, processes, &processBytes, NULL, 0) != 0) {
         free(processes);
+        sTLinkUITreeLastInventoryMs = (NSInteger)llround(
+            (CFAbsoluteTimeGetCurrent() - inventoryStarted) * 1000.0);
         return @[];
     }
 
@@ -6719,12 +6771,20 @@ static NSArray<NSDictionary *> *TLinkRunningApplicationContexts(void)
         if (leftPid == rightPid) return NSOrderedSame;
         return leftPid > rightPid ? NSOrderedAscending : NSOrderedDescending;
     }];
-    return contexts;
+    sTLinkUITreeLastInventoryMs = (NSInteger)llround(
+        (CFAbsoluteTimeGetCurrent() - inventoryStarted) * 1000.0);
+    sTLinkUITreeCachedRunningContexts = [contexts copy];
+    sTLinkUITreeRunningContextsCacheAtMs = now;
+    sTLinkUITreeRunningContextsDirty = NO;
+    return sTLinkUITreeCachedRunningContexts;
 }
 
 static NSData *TLinkUITreeScreenFingerprint(void)
 {
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
     CaptureOutcome *capture = TLinkRunCaptureOnMain();
+    sTLinkUITreeLastFingerprintMs = (NSInteger)llround(
+        (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
     if (!capture || !capture.image || capture.result == CaptureResultFail) return nil;
 
     int width = capture.width;
@@ -6918,48 +6978,46 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
             NSMutableDictionary *indexedProbe = [probe mutableCopy];
             indexedProbe[@"candidate_index"] = @(index);
             [matches addObject:indexedProbe];
+
+            NSString *matchBundle = indexedProbe[@"bundle_id"];
+            BOOL isSpringBoard = [matchBundle isEqualToString:@"com.apple.springboard"];
+            BOOL isPrevious = previousBundleId.length > 0 &&
+                              [matchBundle isEqualToString:previousBundleId];
+            if (!isSpringBoard && !isPrevious) {
+                usleep(40 * 1000);
+                NSDictionary *confirmation = TLinkUITreeLightweightAXProbe(
+                    indexedProbe, @"ax_snapshot_early_confirm_v4");
+                if (TLinkAXResultSucceeded(confirmation)) {
+                    NSInteger earlyDurationMs = (NSInteger)llround(
+                        (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+                    BOOL usedMRU = index < priorityCount;
+                    NSString *earlyDiagnostic = [NSString stringWithFormat:
+                        @"ax_snapshot_probe_v4 path=%@ fingerprint_ms=%ld launchservices_ms=%ld inventory_ms=%ld launchable=%lu excluded_services=%lu priority=%lu probed=%lu screen_changed=%d duration_ms=%ld selected_index=%lu selected_bundle=%@",
+                        usedMRU ? @"mru_early" : @"inventory_early",
+                        (long)sTLinkUITreeLastFingerprintMs,
+                        (long)sTLinkUITreeLastLaunchServicesMs,
+                        (long)sTLinkUITreeLastInventoryMs,
+                        (unsigned long)sTLinkUITreeLaunchableBundleCount,
+                        (unsigned long)sTLinkUITreeExcludedServiceCount,
+                        (unsigned long)priorityCount,
+                        (unsigned long)probed,
+                        screenChanged,
+                        (long)earlyDurationMs,
+                        (unsigned long)index,
+                        confirmation[@"bundle_id"] ?: @""];
+                    return TLinkUITreeCommitProbe(
+                        confirmation,
+                        usedMRU ? @"ax_snapshot_mru_stable_v4" : @"ax_snapshot_early_stable_v4",
+                        earlyDiagnostic,
+                        screenFingerprint,
+                        2);
+                }
+            }
         } else if (firstError.length == 0 && [probe[@"error"] isKindOfClass:[NSString class]]) {
             firstError = probe[@"error"];
         }
         if ([firstError isEqualToString:@"ui_screen_off"] ||
             [firstError isEqualToString:@"ui_screen_locked"]) break;
-
-        // When the presentation changed and exactly one previously confirmed
-        // non-current app is readable, confirm it immediately. Unknown apps
-        // still fall through to the complete bounded scan below.
-        if (screenChanged && priorityCount > 0 && index + 1 == priorityCount) {
-            NSMutableArray<NSDictionary *> *priorityAlternatives = [NSMutableArray array];
-            for (NSDictionary *priorityMatch in matches) {
-                NSString *matchBundle = priorityMatch[@"bundle_id"];
-                if ([matchBundle isEqualToString:@"com.apple.springboard"] ||
-                    [matchBundle isEqualToString:previousBundleId]) continue;
-                [priorityAlternatives addObject:priorityMatch];
-            }
-            if (priorityAlternatives.count == 1) {
-                NSDictionary *priorityMatch = priorityAlternatives.firstObject;
-                usleep(40 * 1000);
-                NSDictionary *confirmation = TLinkUITreeLightweightAXProbe(
-                    priorityMatch, @"ax_snapshot_mru_confirm_v3");
-                if (TLinkAXResultSucceeded(confirmation)) {
-                    NSInteger fastDurationMs = (NSInteger)llround(
-                        (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
-                    NSString *fastDiagnostic = [NSString stringWithFormat:
-                        @"ax_snapshot_probe_v3 path=mru_fast launchable=%lu excluded_services=%lu priority=%lu probed=%lu screen_changed=1 duration_ms=%ld selected_index=%@ selected_bundle=%@",
-                        (unsigned long)sTLinkUITreeLaunchableBundleCount,
-                        (unsigned long)sTLinkUITreeExcludedServiceCount,
-                        (unsigned long)priorityCount,
-                        (unsigned long)probed,
-                        (long)fastDurationMs,
-                        priorityMatch[@"candidate_index"] ?: @(-1),
-                        confirmation[@"bundle_id"] ?: @""];
-                    return TLinkUITreeCommitProbe(confirmation,
-                                                  @"ax_snapshot_mru_stable_v3",
-                                                  fastDiagnostic,
-                                                  screenFingerprint,
-                                                  2);
-                }
-            }
-        }
     }
 
     // SpringBoard remains alive and may expose a system AX tree while another
@@ -6985,7 +7043,10 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
 
     NSInteger durationMs = (NSInteger)llround((CFAbsoluteTimeGetCurrent() - started) * 1000.0);
     NSString *diagnostic = [NSString stringWithFormat:
-        @"ax_snapshot_probe_v3 launchable=%lu excluded_services=%lu candidates=%lu ordered=%lu priority=%lu probed=%lu matches=%lu eligible=%lu alternatives=%lu screen_changed=%d duration_ms=%ld first_error=%@",
+        @"ax_snapshot_probe_v4 fingerprint_ms=%ld launchservices_ms=%ld inventory_ms=%ld launchable=%lu excluded_services=%lu candidates=%lu ordered=%lu priority=%lu probed=%lu matches=%lu eligible=%lu alternatives=%lu screen_changed=%d duration_ms=%ld first_error=%@",
+        (long)sTLinkUITreeLastFingerprintMs,
+        (long)sTLinkUITreeLastLaunchServicesMs,
+        (long)sTLinkUITreeLastInventoryMs,
         (unsigned long)sTLinkUITreeLaunchableBundleCount,
         (unsigned long)sTLinkUITreeExcludedServiceCount,
         (unsigned long)allCandidates.count,
@@ -7000,6 +7061,15 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
         firstError ?: @""];
     NSArray<NSDictionary *> *selection = (screenChanged && nonPreviousMatches.count > 0)
         ? nonPreviousMatches : eligibleMatches;
+    if (screenChanged && previousBundleId.length > 0 && nonPreviousMatches.count == 0) {
+        return @{
+            @"ok": @NO,
+            @"error": @"ui_frontmost_transition_unsettled",
+            @"diagnostic": [diagnostic stringByAppendingString:
+                @" stale_previous_only=1"],
+            @"state": @"transitioning",
+        };
+    }
     if (selection.count != 1) {
         return @{
             @"ok": @NO,
@@ -7097,7 +7167,8 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
         }, @"ax_snapshot_cached_validation_v2");
         if (TLinkAXResultSucceeded(cachedProbe) && !screenChanged) {
             NSString *diagnostic = [NSString stringWithFormat:
-                @"fingerprint_stable changed_cells=%lu average_delta=%ld",
+                @"fingerprint_stable fingerprint_ms=%ld changed_cells=%lu average_delta=%ld",
+                (long)sTLinkUITreeLastFingerprintMs,
                 (unsigned long)changedCells,
                 (long)averageDelta];
             return TLinkUITreeCommitProbe(cachedProbe,
@@ -7114,6 +7185,7 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
         if (TLinkAXResultSucceeded(transitionProbe)) return transitionProbe;
         if ([transitionProbe[@"error"] isEqualToString:@"ui_frontmost_transition_unsettled"]) {
             usleep(80 * 1000);
+            sTLinkUITreeRunningContextsDirty = YES;
             transitionProbe = TLinkUITreeContextByAXSnapshot(previousBundleId,
                                                               YES,
                                                               TLinkUITreeScreenFingerprint());
@@ -7128,38 +7200,24 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
                                                             NO,
                                                             initialFingerprint);
     if (TLinkAXResultSucceeded(axProbe)) return axProbe;
+    usleep(80 * 1000);
+    axProbe = TLinkUITreeContextByAXSnapshot(previousBundleId,
+                                              NO,
+                                              TLinkUITreeScreenFingerprint());
+    if (TLinkAXResultSucceeded(axProbe)) return axProbe;
 
-    NSString *bundleId = TLinkSBSCopyFrontmostBundleId();
-    if (bundleId.length == 0) bundleId = TLinkFBSCurrentFrontmostBundleId();
-    if (bundleId.length > 0) {
-        pid_t pid = TLinkResolvePidForBundleId(bundleId);
-        if (pid > 0) {
-            return @{
-                @"ok": @YES,
-                @"bundle_id": bundleId,
-                @"pid": @(pid),
-                @"source": sTLinkLastFrontmostSource ?: @"sbs_fbs",
-                @"diagnostic": sTLinkFrontmostDiag ?: @"",
-            };
-        }
-    }
-
-    NSDictionary *fallback = TLinkAXCopyFrontmostContext();
-    if (TLinkAXResultSucceeded(fallback)) {
-        TLinkRememberFrontmost(fallback[@"bundle_id"],
-                               @"shared_ax_context_fallback",
-                               [fallback[@"pid"] intValue]);
-        return fallback;
-    }
+    // SBS/FBS have repeatedly returned empty data in the TrollStore service
+    // context. Keep them available for legacy tasks 34/51, but never put their
+    // multi-process scans on the UI-tree hot path.
+    sTLinkUITreeLegacyForegroundUnavailable = YES;
     return @{
         @"ok": @NO,
-        @"error": @"ui_frontmost_bundle_unavailable",
-        @"source": sTLinkLastFrontmostSource ?: @"",
-        @"diagnostic": [NSString stringWithFormat:@"%@ %@",
-            sTLinkFrontmostDiag ?: @"",
-            axProbe[@"diagnostic"] ?: @""],
+        @"error": axProbe[@"error"] ?: @"ui_frontmost_bundle_unavailable",
+        @"source": @"ax_snapshot_retry_exhausted_v4",
+        @"diagnostic": axProbe[@"diagnostic"] ?: @"",
         @"ax_probe_error": axProbe[@"error"] ?: @"",
-        @"fallback_error": fallback[@"error"] ?: @"",
+        @"fallback_error": @"sbs_fbs_skipped_after_ax_retry",
+        @"state": axProbe[@"state"] ?: @"unresolved",
     };
 }
 
@@ -7215,7 +7273,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             (CFAbsoluteTimeGetCurrent() - resolveStarted) * 1000.0);
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @8;
+        capability[@"implementation_version"] = @9;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
@@ -7230,6 +7288,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"verification_count": foreground[@"verification_count"] ?: @0,
             @"state": foreground[@"state"] ?: @"unresolved",
             @"resolve_duration_ms": @(resolveDurationMs),
+            @"legacy_foreground_hot_path_disabled": @(sTLinkUITreeLegacyForegroundUnavailable),
         };
         NSError *jsonError = nil;
         NSData *json = [NSJSONSerialization dataWithJSONObject:capability options:0 error:&jsonError];
@@ -7392,6 +7451,7 @@ static NSData *TLinkHandleOpenURL(NSString *body)
     if (!url) return TLinkError(@"open_url_invalid_url");
     int helperExit = TLinkRunPrivhelperOpenURL(raw);
     if (helperExit == 0) {
+        sTLinkUITreeRunningContextsDirty = YES;
         if (knownBundleId.length > 0) TLinkRememberFrontmost(knownBundleId, @"task54:privhelper", 0);
         return TLinkSuccess(@"open_url_via_privhelper");
     }
