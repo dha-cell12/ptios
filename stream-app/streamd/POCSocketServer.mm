@@ -5916,6 +5916,12 @@ static NSInteger sTLinkUITreeLastFingerprintAverageDelta = 0;
 static id sTLinkFBSDisplayLayoutMonitor = nil;
 static id sTLinkFBSDisplayLayoutBlock = nil;
 static NSString *sTLinkFrontmostDiag = nil;
+static NSString *sTLinkAXSpringBoardState = @"unprobed";
+static NSString *sTLinkAXSpringBoardError = @"";
+static NSString *sTLinkAXSpringBoardDiagnostic = @"";
+static NSInteger sTLinkAXSpringBoardLastResolveMs = 0;
+static pid_t sTLinkAXSpringBoardLastFocusedPid = 0;
+static pid_t sTLinkAXSpringBoardLastTopEventPid = 0;
 
 static pid_t TLinkResolvePidForBundleId(NSString *bundleId);
 static void TLinkRememberFrontmost(NSString *bundleId, NSString *source, pid_t pid);
@@ -6652,6 +6658,11 @@ static BOOL TLinkUITreeInfoDescribesInteractiveApp(NSDictionary *info,
     if (packageType.length > 0 && ![packageType isEqualToString:@"APPL"]) return NO;
     if ([info[@"LSBackgroundOnly"] boolValue] || [info[@"LSUIElement"] boolValue]) return NO;
 
+    // SpringBoard is a valid automation target while the home screen is
+    // frontmost. Its identifier/executable both end in "d", so it must be
+    // admitted before the generic background-daemon suffix filter below.
+    if ([bundleId isEqualToString:@"com.apple.springboard"]) return YES;
+
     id rawTags = info[@"SBAppTags"];
     NSArray *tags = [rawTags isKindOfClass:[NSArray class]] ? rawTags : @[];
     if ([tags containsObject:@"hidden"]) return NO;
@@ -6779,6 +6790,171 @@ static NSArray<NSDictionary *> *TLinkRunningApplicationContexts(void)
     sTLinkUITreeRunningContextsCacheAtMs = now;
     sTLinkUITreeRunningContextsDirty = NO;
     return sTLinkUITreeCachedRunningContexts;
+}
+
+// XXTouch avoids the expensive process-wide AX probe in its normal path by
+// asking AXSpringBoardServer for the focused process. Keep every dependency
+// runtime-resolved: this binary must continue to run on releases where the
+// private class or an individual selector is absent.
+static id TLinkAXSpringBoardServer(void)
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dlopen("/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities",
+               RTLD_NOW | RTLD_GLOBAL);
+    });
+    Class serverClass = NSClassFromString(@"AXSpringBoardServer");
+    SEL serverSelector = NSSelectorFromString(@"server");
+    if (!serverClass || ![serverClass respondsToSelector:serverSelector]) return nil;
+    @try {
+        // Do not permanently cache a nil result during early boot. The class
+        // owns the singleton and subsequent calls can recover once AX is ready.
+        return ((id (*)(Class, SEL))objc_msgSend)(serverClass, serverSelector);
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static NSDictionary *TLinkUITreeApplicationContextForPid(pid_t pid)
+{
+    if (pid <= 0 || !TLinkPidIsAlive(pid) || pid == getpid()) return nil;
+
+    char pathBuffer[PROC_PIDPATHINFO_MAXSIZE] = {0};
+    if (proc_pidpath(pid, pathBuffer, sizeof(pathBuffer)) <= 0) return nil;
+    NSString *processPath = TLinkNormalizedPath([NSString stringWithUTF8String:pathBuffer] ?: @"");
+    NSRange appMarker = [processPath rangeOfString:@".app/" options:NSBackwardsSearch];
+    if (appMarker.location == NSNotFound) return nil;
+
+    NSUInteger bundlePathLength = appMarker.location + 4;
+    if (bundlePathLength >= processPath.length) return nil;
+    NSString *bundlePath = [processPath substringToIndex:bundlePathLength];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
+        [bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+    if (![info isKindOfClass:[NSDictionary class]]) return nil;
+
+    NSString *bundleId = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]]
+        ? info[@"CFBundleIdentifier"] : @"";
+    NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]]
+        ? info[@"CFBundleExecutable"] : @"";
+    if (bundleId.length == 0 || executable.length == 0 ||
+        ![[processPath lastPathComponent] isEqualToString:executable] ||
+        !TLinkUITreeInfoDescribesInteractiveApp(info, bundleId, executable)) {
+        return nil;
+    }
+    if ([bundleId isEqualToString:@"com.tlinkauto.streamcontrol.uiservice"] ||
+        [bundleId isEqualToString:@"com.tlinkauto.streamcontrol.TLinkUIService"]) {
+        return nil;
+    }
+    return @{
+        @"bundle_id": bundleId,
+        @"pid": @(pid),
+        @"process_path": processPath,
+    };
+}
+
+static pid_t TLinkPidValueForNoArgSelector(id target, SEL selector, BOOL *available)
+{
+    if (available) *available = NO;
+    if (!target || !selector || ![target respondsToSelector:selector]) return 0;
+    if (available) *available = YES;
+
+    NSMethodSignature *signature = [target methodSignatureForSelector:selector];
+    const char *returnType = signature.methodReturnType;
+    while (returnType && strchr("rnNoORV", returnType[0])) returnType++;
+    if (returnType && returnType[0] == '@') {
+        id value = ((id (*)(id, SEL))objc_msgSend)(target, selector);
+        return [value respondsToSelector:@selector(intValue)] ? (pid_t)[value intValue] : 0;
+    }
+    if (signature.methodReturnLength > 0 &&
+        signature.methodReturnLength <= sizeof(NSInteger)) {
+        return (pid_t)((NSInteger (*)(id, SEL))objc_msgSend)(target, selector);
+    }
+    return 0;
+}
+
+static NSDictionary *TLinkUITreeAXSpringBoardContext(void)
+{
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+    id server = TLinkAXSpringBoardServer();
+    if (!server) {
+        sTLinkAXSpringBoardState = @"unavailable";
+        sTLinkAXSpringBoardError = @"ui_ax_springboard_server_unavailable";
+        sTLinkAXSpringBoardDiagnostic = @"AXSpringBoardServer/server unavailable";
+        sTLinkAXSpringBoardLastResolveMs = (NSInteger)llround(
+            (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+        return @{
+            @"ok": @(false),
+            @"error": sTLinkAXSpringBoardError,
+            @"diagnostic": sTLinkAXSpringBoardDiagnostic,
+        };
+    }
+
+    pid_t focusedPid = 0;
+    pid_t topEventPid = 0;
+    BOOL systemAppFrontmost = NO;
+    BOOL focusedSelectorAvailable = NO;
+    BOOL topEventSelectorAvailable = NO;
+    @try {
+        SEL focusedSelector = NSSelectorFromString(@"focusedAppPID");
+        focusedPid = TLinkPidValueForNoArgSelector(server,
+                                                   focusedSelector,
+                                                   &focusedSelectorAvailable);
+        SEL topEventSelector = NSSelectorFromString(@"topEventPidOverride");
+        topEventPid = TLinkPidValueForNoArgSelector(server,
+                                                    topEventSelector,
+                                                    &topEventSelectorAvailable);
+        SEL systemSelector = NSSelectorFromString(@"isSystemAppFrontmost");
+        if ([server respondsToSelector:systemSelector]) {
+            systemAppFrontmost = ((BOOL (*)(id, SEL))objc_msgSend)(server, systemSelector);
+        }
+    } @catch (__unused NSException *exception) {
+        focusedPid = 0;
+        topEventPid = 0;
+    }
+
+    sTLinkAXSpringBoardLastFocusedPid = focusedPid;
+    sTLinkAXSpringBoardLastTopEventPid = topEventPid;
+    NSDictionary *context = TLinkUITreeApplicationContextForPid(focusedPid);
+    NSString *source = @"ax_springboard_focused_pid_v1";
+    if (!context && topEventPid > 0 && topEventPid != focusedPid) {
+        context = TLinkUITreeApplicationContextForPid(topEventPid);
+        source = @"ax_springboard_top_event_pid_v1";
+    }
+    if (!context && systemAppFrontmost) {
+        pid_t springBoardPid = TLinkResolvePidForBundleId(@"com.apple.springboard");
+        context = TLinkUITreeApplicationContextForPid(springBoardPid);
+        source = @"ax_springboard_system_app_v1";
+    }
+
+    sTLinkAXSpringBoardLastResolveMs = (NSInteger)llround(
+        (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+    sTLinkAXSpringBoardDiagnostic = [NSString stringWithFormat:
+        @"ax_springboard_v1 focused_selector=%d top_event_selector=%d focused_pid=%d top_event_pid=%d system_frontmost=%d duration_ms=%ld",
+        focusedSelectorAvailable,
+        topEventSelectorAvailable,
+        focusedPid,
+        topEventPid,
+        systemAppFrontmost,
+        (long)sTLinkAXSpringBoardLastResolveMs];
+    if (!context) {
+        sTLinkAXSpringBoardState = @"unresolved";
+        sTLinkAXSpringBoardError = focusedSelectorAvailable
+            ? @"ui_ax_springboard_focused_pid_unavailable"
+            : @"ui_ax_springboard_focused_selector_unavailable";
+        return @{
+            @"ok": @(false),
+            @"error": sTLinkAXSpringBoardError,
+            @"diagnostic": sTLinkAXSpringBoardDiagnostic,
+        };
+    }
+
+    sTLinkAXSpringBoardState = @"ready";
+    sTLinkAXSpringBoardError = @"";
+    NSMutableDictionary *result = [context mutableCopy];
+    result[@"ok"] = @(true);
+    result[@"source"] = source;
+    result[@"diagnostic"] = sTLinkAXSpringBoardDiagnostic;
+    return result;
 }
 
 static NSData *TLinkUITreeScreenFingerprint(void)
@@ -6950,6 +7126,81 @@ static NSDictionary *TLinkUITreeCommitProbe(NSDictionary *probe,
     result[@"verification_count"] = @(verificationCount);
     result[@"state"] = @"stable";
     return result;
+}
+
+static NSDictionary *TLinkUITreeContextByAXSpringBoardServer(void)
+{
+    NSDictionary *direct = TLinkUITreeAXSpringBoardContext();
+    if (![direct[@"ok"] boolValue]) return direct;
+
+    NSString *bundleId = direct[@"bundle_id"];
+    pid_t pid = [direct[@"pid"] intValue];
+    BOOL contextChanged = ![bundleId isEqualToString:sTLinkUITreeAcceptedBundleId] ||
+                          pid != sTLinkUITreeAcceptedPid;
+
+    NSData *fingerprint = TLinkUITreeScreenFingerprint();
+    NSUInteger changedCells = 0;
+    NSInteger averageDelta = 0;
+    BOOL hasComparableFingerprint = fingerprint.length > 0 &&
+                                    sTLinkUITreeAcceptedScreenFingerprint.length == fingerprint.length;
+    BOOL screenChanged = hasComparableFingerprint && TLinkUITreeScreenMateriallyChanged(
+        sTLinkUITreeAcceptedScreenFingerprint,
+        fingerprint,
+        &changedCells,
+        &averageDelta);
+    sTLinkUITreeLastFingerprintChangedCells = changedCells;
+    sTLinkUITreeLastFingerprintAverageDelta = averageDelta;
+
+    NSDictionary *probe = TLinkUITreeLightweightAXProbe(direct, direct[@"source"]);
+    if (!TLinkAXResultSucceeded(probe)) {
+        sTLinkAXSpringBoardState = @"probe_failed";
+        sTLinkAXSpringBoardError = probe[@"error"] ?: @"ui_ax_springboard_probe_failed";
+        return probe;
+    }
+
+    NSInteger verificationCount = 1;
+    if (contextChanged || screenChanged) {
+        // A direct PID change is authoritative, while a changed screen with the
+        // same PID may be either animation or a not-yet-published app switch.
+        // Re-read the server after a short settling interval before committing.
+        usleep((contextChanged ? 25 : 60) * 1000);
+        NSDictionary *confirmationContext = TLinkUITreeAXSpringBoardContext();
+        if (![confirmationContext[@"ok"] boolValue] ||
+            ![confirmationContext[@"bundle_id"] isEqualToString:bundleId] ||
+            [confirmationContext[@"pid"] intValue] != pid) {
+            return @{
+                @"ok": @(false),
+                @"error": @"ui_ax_springboard_context_unsettled",
+                @"diagnostic": [NSString stringWithFormat:
+                    @"%@ first_bundle=%@ first_pid=%d confirm_bundle=%@ confirm_pid=%d",
+                    sTLinkAXSpringBoardDiagnostic ?: @"",
+                    bundleId ?: @"",
+                    pid,
+                    confirmationContext[@"bundle_id"] ?: @"",
+                    [confirmationContext[@"pid"] intValue]],
+                @"state": @"transitioning",
+            };
+        }
+        probe = TLinkUITreeLightweightAXProbe(confirmationContext,
+                                              @"ax_springboard_stable_confirm_v1");
+        if (!TLinkAXResultSucceeded(probe)) return probe;
+        verificationCount = 2;
+    }
+
+    NSString *diagnostic = [NSString stringWithFormat:
+        @"%@ fingerprint_ms=%ld changed_cells=%lu average_delta=%ld screen_changed=%d context_changed=%d verification_count=%ld",
+        direct[@"diagnostic"] ?: @"",
+        (long)sTLinkUITreeLastFingerprintMs,
+        (unsigned long)changedCells,
+        (long)averageDelta,
+        screenChanged,
+        contextChanged,
+        (long)verificationCount];
+    return TLinkUITreeCommitProbe(probe,
+                                  direct[@"source"] ?: @"ax_springboard_focused_pid_v1",
+                                  diagnostic,
+                                  fingerprint,
+                                  verificationCount);
 }
 
 static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
@@ -7165,6 +7416,12 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
         }
     }
 
+    // Fast path modelled after XXTouch: resolve the focused PID directly from
+    // AccessibilityUtilities, verify only that process, and retain the v10
+    // process scan below as a fail-closed compatibility fallback.
+    NSDictionary *axSpringBoardContext = TLinkUITreeContextByAXSpringBoardServer();
+    if (TLinkAXResultSucceeded(axSpringBoardContext)) return axSpringBoardContext;
+
     if (sTLinkUITreeAcceptedBundleId.length > 0 &&
         sTLinkUITreeAcceptedPid > 0 &&
         TLinkPidIsAlive(sTLinkUITreeAcceptedPid)) {
@@ -7280,6 +7537,11 @@ static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
 
 static BOOL TLinkUITreeContextChanged(NSDictionary *before)
 {
+    NSDictionary *direct = TLinkUITreeAXSpringBoardContext();
+    if ([direct[@"ok"] boolValue]) {
+        return ![before[@"bundle_id"] isEqual:direct[@"bundle_id"]] ||
+               [before[@"pid"] intValue] != [direct[@"pid"] intValue];
+    }
     NSDictionary *after = TLinkUITreeFrontmostContext();
     if (![after[@"ok"] boolValue]) return YES;
     return ![before[@"bundle_id"] isEqual:after[@"bundle_id"]] ||
@@ -7296,7 +7558,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             (CFAbsoluteTimeGetCurrent() - resolveStarted) * 1000.0);
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @10;
+        capability[@"implementation_version"] = @11;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
@@ -7312,6 +7574,12 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"state": foreground[@"state"] ?: @"unresolved",
             @"resolve_duration_ms": @(resolveDurationMs),
             @"legacy_foreground_hot_path_disabled": @(sTLinkUITreeLegacyForegroundUnavailable),
+            @"direct_foreground_state": sTLinkAXSpringBoardState ?: @"unprobed",
+            @"direct_foreground_error": sTLinkAXSpringBoardError ?: @"",
+            @"direct_foreground_diagnostic": sTLinkAXSpringBoardDiagnostic ?: @"",
+            @"direct_foreground_resolve_duration_ms": @(sTLinkAXSpringBoardLastResolveMs),
+            @"direct_foreground_focused_pid": @(sTLinkAXSpringBoardLastFocusedPid),
+            @"direct_foreground_top_event_pid": @(sTLinkAXSpringBoardLastTopEventPid),
         };
         NSError *jsonError = nil;
         NSData *json = [NSJSONSerialization dataWithJSONObject:capability options:0 error:&jsonError];

@@ -48,13 +48,13 @@ function ConvertFrom-TLinkUIResponse([string]$Raw) {
 }
 
 $capability = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask "77")
-if ($capability.implementation_version -ne 10 -or $null -eq $capability.foreground_context) {
+if ($capability.implementation_version -ne 11 -or $null -eq $capability.foreground_context) {
     [pscustomobject]@{
         host = $HostIP
         runtime = $capability.runtime
         service = $capability.service
         implementation_version = $capability.implementation_version
-        expected_implementation_version = 10
+        expected_implementation_version = 11
         foreground_context_present = ($null -ne $capability.foreground_context)
         decision = "fail_stale_streamd_restart_required"
     } | Format-List | Out-Host
@@ -79,6 +79,12 @@ if ($snapshotRaw -notlike "0;;*") {
         foreground_diagnostic = $capability.foreground_context.diagnostic
         foreground_ax_probe_error = $capability.foreground_context.ax_probe_error
         foreground_fallback_error = $capability.foreground_context.fallback_error
+        direct_foreground_state = $capability.foreground_context.direct_foreground_state
+        direct_foreground_error = $capability.foreground_context.direct_foreground_error
+        direct_foreground_resolve_duration_ms = $capability.foreground_context.direct_foreground_resolve_duration_ms
+        direct_foreground_focused_pid = $capability.foreground_context.direct_foreground_focused_pid
+        direct_foreground_top_event_pid = $capability.foreground_context.direct_foreground_top_event_pid
+        direct_foreground_diagnostic = $capability.foreground_context.direct_foreground_diagnostic
         snapshot_error = $snapshotRaw
         decision = "fail_foreground_discovery"
     } | Format-List | Out-Host
@@ -115,6 +121,12 @@ if ($Text -or $Identifier -or $Role) {
     foreground_verification_count = $capability.foreground_context.verification_count
     foreground_resolve_duration_ms = $capability.foreground_context.resolve_duration_ms
     foreground_resolve_diagnostic = $capability.foreground_context.diagnostic
+    direct_foreground_state = $capability.foreground_context.direct_foreground_state
+    direct_foreground_error = $capability.foreground_context.direct_foreground_error
+    direct_foreground_resolve_duration_ms = $capability.foreground_context.direct_foreground_resolve_duration_ms
+    direct_foreground_focused_pid = $capability.foreground_context.direct_foreground_focused_pid
+    direct_foreground_top_event_pid = $capability.foreground_context.direct_foreground_top_event_pid
+    direct_foreground_diagnostic = $capability.foreground_context.direct_foreground_diagnostic
     entitlement_inspection = $capability.entitlements.'com.apple.private.accessibility.inspection'
     entitlement_api = $capability.entitlements.'com.apple.accessibility.api'
     snapshot_schema = $snapshot.schema
