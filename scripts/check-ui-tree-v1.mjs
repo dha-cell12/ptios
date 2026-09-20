@@ -99,10 +99,14 @@ assert.match(rootServer, /#ifdef ZX_DAEMON[\s\S]*static NSDictionary \*zx_uiTree
 assert.match(rootServer, /case 77:[\s\S]*case 81:[\s\S]*return true;/);
 assert.match(trollServer, /TLinkHandleUITreeTask/);
 assert.match(trollServer, /capability\[@"foreground_context"\]/);
-assert.match(trollServer, /capability\[@"implementation_version"\]\s*=\s*@9/);
+assert.match(trollServer, /capability\[@"implementation_version"\]\s*=\s*@10/);
 assert.match(trollServer, /TLinkUITreeContextByAXSnapshot/);
 assert.match(trollServer, /TLinkUITreeScreenFingerprint/);
 assert.match(trollServer, /TLinkUITreeScreenMateriallyChanged/);
+assert.match(trollServer, /averageDelta\s*>=\s*10/);
+assert.match(trollServer, /changedCells\s*>=\s*20/);
+assert.match(trollServer, /allowStablePrevious/);
+assert.match(trollServer, /ax_snapshot_previous_stable_v4/);
 assert.match(trollServer, /TLinkUITreeLaunchableBundleIds/);
 assert.match(trollServer, /TLinkUITreeInfoDescribesInteractiveApp/);
 assert.match(trollServer, /com\.apple\.assistivetouchd/);
