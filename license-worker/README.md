@@ -14,6 +14,7 @@ Copy the returned database id into `wrangler.jsonc`, then initialize D1:
 
 ```bash
 npm run db:init:remote
+npx wrangler d1 migrations apply tlinkauto-license --remote
 ```
 
 Keep the D1 binding name as `DB`. The Worker also accepts the legacy
@@ -67,6 +68,29 @@ Copy the printed public `x` and `y` values into
 npm run deploy
 ```
 
+For an existing D1 database, apply pending migrations before deploying this
+Worker:
+
+```bash
+npx wrangler d1 migrations apply tlinkauto-license --remote
+```
+
+`ALLOW_LEGACY_DEVICE_PROOF` is intentionally `false`. Deploy a client that
+sends device proof v2 together with this Worker. Proof v2 signs the requested
+action as well as the lease payload, so a captured refresh proof cannot be
+replayed as a deactivation.
+
+For a staged production rollout without breaking older installed clients:
+
+1. apply the D1 migration;
+2. temporarily deploy this Worker with `ALLOW_LEGACY_DEVICE_PROOF=true`;
+3. release the rootfull and TrollStore clients with proof v2;
+4. after the supported upgrade window, set the flag back to `false` and deploy
+   the Worker again.
+
+The release-pending slot protection is active during all four steps. The
+temporary flag only preserves the legacy refresh/deactivate proof format.
+
 Create a test license:
 
 ```bash
@@ -108,15 +132,18 @@ return JSON as `{ "ok": true, ... }` on success and
 - `POST /v1/challenge`: create a five-minute, one-time activation challenge.
 - `POST /v1/activate`: consume the challenge and issue a device-bound lease.
 - `POST /v1/refresh`: require the signed lease plus a fresh device signature.
-- `POST /v1/deactivate`: require the same proof and release this device slot.
+- `POST /v1/deactivate`: require an action-bound proof and move the binding to
+  `release_pending`. The slot remains occupied until the greatest
+  `offline_until` ever issued to that device has passed.
 - `GET /v1/admin/licenses`: list licenses and aggregate status/device totals.
 - `GET /v1/admin/license?id=...`: inspect one license and its device bindings.
 - `POST /v1/admin/update`: update `status`, `max_devices`, `expires_at`, or
   `features` without editing D1 manually. Admin mutations accept either
   `license_id` or the clear `license_key`.
 - `POST /v1/admin/revoke`: revoke the license.
-- `POST /v1/admin/reset-devices`: revoke active devices and clear challenges;
-  the same proven device key may activate again afterward.
+- `POST /v1/admin/reset-devices`: move active devices to `release_pending` and
+  clear challenges. Pass `force_release: true` only when an administrator
+  explicitly accepts that the old offline lease may overlap a replacement.
 - `POST /v1/admin/revoke-device`: revoke one device binding by `license_id`
   and `device_id`.
 
@@ -125,9 +152,16 @@ Example deactivate body:
 ```json
 {
   "lease": { "version": 1, "key_id": "...", "payload": "...", "signature": "..." },
+  "proof_version": 2,
+  "action": "deactivate",
   "device_signature": "DER_ECDSA_SIGNATURE_BASE64URL"
 }
 ```
+
+New device identities are also limited by `MAX_NEW_DEVICES_PER_WINDOW` inside
+`DEVICE_CHURN_WINDOW_SECONDS`. The defaults allow three first-seen device keys
+per license in 30 days. Allocation and the active-slot check happen in one SQL
+statement so parallel activations cannot both pass `max_devices`.
 
 Example admin update:
 

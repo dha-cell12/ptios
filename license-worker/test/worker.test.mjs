@@ -35,10 +35,18 @@ class FakeStatement {
     if (this.sql === "select * from devices where id = ?") {
       return this.database.devices.get(a) || null;
     }
-    if (this.sql === "select count(*) as count from devices where license_id = ? and status = 'active'") {
+    if (this.sql === "select count(*) as count from devices where license_id = ? and (status = 'active' or (status = 'release_pending' and slot_reusable_at > ?))") {
       return {
         count: [...this.database.devices.values()].filter(
-          (row) => row.license_id === a && row.status === "active",
+          (row) => row.license_id === a &&
+            (row.status === "active" || (row.status === "release_pending" && row.slot_reusable_at > b)),
+        ).length,
+      };
+    }
+    if (this.sql === "select count(*) as count from devices where license_id = ? and created_at >= ?") {
+      return {
+        count: [...this.database.devices.values()].filter(
+          (row) => row.license_id === a && row.created_at >= b,
         ).length,
       };
     }
@@ -47,9 +55,11 @@ class FakeStatement {
         count: [...this.database.devices.values()].filter((row) => row.license_id === a).length,
       };
     }
-    if (this.sql === "select count(*) as count from devices where status = 'active'") {
+    if (this.sql === "select count(*) as count from devices where status = 'active' or (status = 'release_pending' and slot_reusable_at > ?)") {
       return {
-        count: [...this.database.devices.values()].filter((row) => row.status === "active").length,
+        count: [...this.database.devices.values()].filter(
+          (row) => row.status === "active" || (row.status === "release_pending" && row.slot_reusable_at > a),
+        ).length,
       };
     }
     if (this.sql.startsWith("select count(*) as total, sum(case when status = 'active'")) {
@@ -69,11 +79,14 @@ class FakeStatement {
   }
 
   async all() {
-    const [a, b] = this.values;
-    if (this.sql === "select id, status, max_devices, features_json, expires_at, created_at, updated_at, (select count(*) from devices where license_id = licenses.id and status = 'active') as active_devices, (select count(*) from devices where license_id = licenses.id) as total_devices from licenses order by updated_at desc limit ? offset ?") {
+    const [a, b, c] = this.values;
+    if (this.sql.startsWith("select id, status, max_devices, features_json, expires_at, created_at, updated_at, (select count(*) from devices where license_id = licenses.id and (status = 'active'")) {
+      const now = a;
+      const limit = b;
+      const offset = c;
       const results = [...this.database.licenses.values()]
         .sort((left, right) => right.updated_at - left.updated_at)
-        .slice(b, b + a)
+        .slice(offset, offset + limit)
         .map(({ id, status, max_devices, features_json, expires_at, created_at, updated_at }) => {
           const devices = [...this.database.devices.values()].filter((row) => row.license_id === id);
           return {
@@ -84,22 +97,27 @@ class FakeStatement {
             expires_at,
             created_at,
             updated_at,
-            active_devices: devices.filter((row) => row.status === "active").length,
+            active_devices: devices.filter((row) => (
+              row.status === "active" || (row.status === "release_pending" && row.slot_reusable_at > now)
+            )).length,
             total_devices: devices.length,
           };
         });
       return { success: true, results };
     }
-    if (this.sql === "select id, device_key_hash, status, created_at, last_seen_at from devices where license_id = ? order by last_seen_at desc") {
+    if (this.sql === "select id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at from devices where license_id = ? order by last_seen_at desc") {
       const results = [...this.database.devices.values()]
         .filter((row) => row.license_id === a)
         .sort((left, right) => right.last_seen_at - left.last_seen_at)
-        .map(({ id, device_key_hash, status, created_at, last_seen_at }) => ({
+        .map(({ id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at }) => ({
           id,
           device_key_hash,
           status,
           created_at,
           last_seen_at,
+          lease_offline_until,
+          slot_reusable_at,
+          deactivated_at,
         }));
       return { success: true, results };
     }
@@ -154,41 +172,97 @@ class FakeStatement {
           changes++;
         }
       }
-    } else if (this.sql.startsWith("insert into devices ")) {
-      const [id, licenseId, deviceKeyHash, publicJwk, createdAt, lastSeenAt] = v;
-      this.database.devices.set(id, {
-        id,
-        license_id: licenseId,
-        device_key_hash: deviceKeyHash,
-        public_jwk: publicJwk,
-        status: "active",
-        created_at: createdAt,
-        last_seen_at: lastSeenAt,
-      });
-      changes = 1;
+    } else if (this.sql.startsWith("insert or ignore into devices ")) {
+      const [id, licenseId, deviceKeyHash, publicJwk, createdAt, lastSeenAt,
+        occupiedLicenseId, now, maxLicenseId, churnLicenseId, windowStart, churnMaximum] = v;
+      const license = this.database.licenses.get(maxLicenseId);
+      const occupied = [...this.database.devices.values()].filter((row) => (
+        row.license_id === occupiedLicenseId &&
+        (row.status === "active" || (row.status === "release_pending" && row.slot_reusable_at > now))
+      )).length;
+      const recent = [...this.database.devices.values()].filter(
+        (row) => row.license_id === churnLicenseId && row.created_at >= windowStart,
+      ).length;
+      const duplicate = [...this.database.devices.values()].some(
+        (row) => row.license_id === licenseId && row.device_key_hash === deviceKeyHash,
+      );
+      if (!duplicate && license && occupied < license.max_devices && recent < churnMaximum) {
+        this.database.devices.set(id, {
+          id,
+          license_id: licenseId,
+          device_key_hash: deviceKeyHash,
+          public_jwk: publicJwk,
+          status: "active",
+          created_at: createdAt,
+          last_seen_at: lastSeenAt,
+          lease_offline_until: 0,
+          slot_reusable_at: 0,
+          deactivated_at: 0,
+        });
+        changes = 1;
+      }
     } else if (this.sql === "update devices set last_seen_at = ?, public_jwk = ? where id = ?") {
       changes = this.database.update(this.database.devices, v[2], {
         last_seen_at: v[0],
         public_jwk: v[1],
       });
-    } else if (this.sql === "update devices set status = 'active', public_jwk = ?, last_seen_at = ? where id = ?") {
-      changes = this.database.update(this.database.devices, v[2], {
-        status: "active",
-        public_jwk: v[0],
-        last_seen_at: v[1],
-      });
+    } else if (this.sql.startsWith("update devices set status = 'active', public_jwk = ?, last_seen_at = ?, slot_reusable_at = 0")) {
+      const [publicJwk, lastSeenAt, id, licenseId, excludedId, now, maxDevices] = v;
+      const occupiedOthers = [...this.database.devices.values()].filter((row) => (
+        row.license_id === licenseId && row.id !== excludedId &&
+        (row.status === "active" || (row.status === "release_pending" && row.slot_reusable_at > now))
+      )).length;
+      if (occupiedOthers < maxDevices) {
+        changes = this.database.update(this.database.devices, id, {
+          status: "active",
+          public_jwk: publicJwk,
+          last_seen_at: lastSeenAt,
+          slot_reusable_at: 0,
+          deactivated_at: 0,
+        });
+      }
     } else if (this.sql === "update devices set last_seen_at = ? where id = ?") {
       changes = this.database.update(this.database.devices, v[1], { last_seen_at: v[0] });
-    } else if (this.sql === "update devices set status = 'revoked', last_seen_at = ? where id = ?") {
-      changes = this.database.update(this.database.devices, v[1], {
-        status: "revoked",
+    } else if (this.sql.startsWith("update devices set lease_offline_until = case")) {
+      const row = this.database.devices.get(v[3]);
+      if (row) {
+        row.lease_offline_until = Math.max(row.lease_offline_until || 0, v[1]);
+        row.last_seen_at = v[2];
+        changes = 1;
+      }
+    } else if (this.sql === "update devices set status = 'release_pending', last_seen_at = ?, deactivated_at = ?, slot_reusable_at = ? where id = ?") {
+      changes = this.database.update(this.database.devices, v[3], {
+        status: "release_pending",
         last_seen_at: v[0],
+        deactivated_at: v[1],
+        slot_reusable_at: v[2],
       });
-    } else if (this.sql.startsWith("update devices set status = 'revoked', last_seen_at = ? where license_id = ?")) {
+    } else if (this.sql === "update devices set status = ?, last_seen_at = ?, deactivated_at = ?, slot_reusable_at = ? where id = ?") {
+      changes = this.database.update(this.database.devices, v[4], {
+        status: v[0],
+        last_seen_at: v[1],
+        deactivated_at: v[2],
+        slot_reusable_at: v[3],
+      });
+    } else if (this.sql.startsWith("update devices set status = 'revoked', last_seen_at = ?, deactivated_at = ?")) {
       for (const row of this.database.devices.values()) {
-        if (row.license_id === v[1] && row.status === "active") {
+        if (row.license_id === v[3] && (row.status === "active" || row.status === "release_pending")) {
           row.status = "revoked";
           row.last_seen_at = v[0];
+          row.deactivated_at = v[1];
+          row.slot_reusable_at = v[2];
+          changes++;
+        }
+      }
+    } else if (this.sql.startsWith("update devices set status = 'release_pending', last_seen_at = ?, deactivated_at = ?")) {
+      for (const row of this.database.devices.values()) {
+        if (row.license_id === v[5] && row.status === "active") {
+          row.status = "release_pending";
+          row.last_seen_at = v[0];
+          row.deactivated_at = v[1];
+          row.slot_reusable_at = row.lease_offline_until === 0
+            ? v[2]
+            : Math.max(row.lease_offline_until, v[4]);
           changes++;
         }
       }
@@ -245,6 +319,9 @@ async function createEnvironment() {
     ADMIN_TOKEN: "phase-test-admin",
     LEASE_SECONDS: "300",
     OFFLINE_GRACE_SECONDS: "600",
+    MAX_NEW_DEVICES_PER_WINDOW: "3",
+    DEVICE_CHURN_WINDOW_SECONDS: "2592000",
+    ALLOW_LEGACY_DEVICE_PROOF: "false",
   };
 }
 
@@ -306,9 +383,12 @@ async function activate(env, device, licenseKey = "TLINK-PHASE-0001") {
 }
 
 async function authenticatedCall(env, path, lease, privateKey) {
+  const action = path.split("/").filter(Boolean).at(-1);
   return call(env, path, {
     lease,
-    device_signature: await sign(privateKey, lease.payload),
+    proof_version: __test.DEVICE_PROOF_VERSION,
+    action,
+    device_signature: await sign(privateKey, __test.deviceProofMessage(action, lease.payload)),
   });
 }
 
@@ -321,6 +401,7 @@ test("health and request validation expose contract v1", async () => {
   const health = await call(env, "/v1/health");
   assert.equal(health.response.status, 200);
   assert.equal(health.json.license_contract_version, 1);
+  assert.equal(health.json.device_proof_version, 2);
 
   const unauthorized = await call(env, "/v1/admin/licenses", { license_key: "TLINK-TEST-0001" });
   assert.equal(unauthorized.response.status, 401);
@@ -453,7 +534,75 @@ test("activation challenge rejects bad proof, expiry and reuse", async () => {
   assert.equal(expiredResult.json.error, "invalid_or_expired_challenge");
 });
 
-test("device limit, deactivate and same-key reactivation have coherent slots", async () => {
+test("atomic slot allocation prevents two different devices from racing past max_devices", async () => {
+  const env = await createEnvironment();
+  await createLicense(env);
+  const devices = await Promise.all([createDevice(), createDevice()]);
+  const prepared = [];
+  for (const device of devices) {
+    const challenge = await call(env, "/v1/challenge", {
+      license_key: "TLINK-PHASE-0001",
+      device_public_key: device.publicJwk,
+    });
+    prepared.push({
+      license_key: "TLINK-PHASE-0001",
+      device_public_key: device.publicJwk,
+      challenge_id: challenge.json.challenge_id,
+      signature: await sign(device.pair.privateKey, challenge.json.challenge),
+    });
+  }
+  const results = await Promise.all(prepared.map((body) => call(env, "/v1/activate", body)));
+  assert.equal(results.filter((result) => result.response.status === 200).length, 1);
+  assert.equal(results.filter((result) => result.json.error === "device_limit_reached").length, 1);
+});
+
+test("parallel activation of the same device is idempotent", async () => {
+  const env = await createEnvironment();
+  await createLicense(env, { max_devices: 2 });
+  const device = await createDevice();
+  const bodies = [];
+  for (let index = 0; index < 2; index++) {
+    const challenge = await call(env, "/v1/challenge", {
+      license_key: "TLINK-PHASE-0001",
+      device_public_key: device.publicJwk,
+    });
+    bodies.push({
+      license_key: "TLINK-PHASE-0001",
+      device_public_key: device.publicJwk,
+      challenge_id: challenge.json.challenge_id,
+      signature: await sign(device.pair.privateKey, challenge.json.challenge),
+    });
+  }
+  const results = await Promise.all(bodies.map((body) => call(env, "/v1/activate", body)));
+  assert.equal(results.filter((result) => result.response.status === 200).length, 2);
+  assert.equal(env.DB.devices.size, 1);
+});
+
+test("device proof is bound to its action and new-device churn is bounded", async () => {
+  const env = await createEnvironment();
+  env.MAX_NEW_DEVICES_PER_WINDOW = "2";
+  await createLicense(env, { max_devices: 10 });
+  const first = await createDevice();
+  const firstLease = (await activate(env, first)).activation.json.lease;
+  const refreshProof = await sign(first.pair.privateKey, __test.deviceProofMessage("refresh", firstLease.payload));
+  const replayedAsDeactivate = await call(env, "/v1/deactivate", {
+    lease: firstLease,
+    proof_version: 2,
+    action: "deactivate",
+    device_signature: refreshProof,
+  });
+  assert.equal(replayedAsDeactivate.response.status, 403);
+  assert.equal(replayedAsDeactivate.json.error, "invalid_device_signature");
+
+  const second = await createDevice();
+  assert.equal((await activate(env, second)).activation.response.status, 200);
+  const third = await createDevice();
+  const blocked = (await activate(env, third)).activation;
+  assert.equal(blocked.response.status, 429);
+  assert.equal(blocked.json.error, "device_churn_limit_reached");
+});
+
+test("deactivate retains the slot until the last signed offline lease expires", async () => {
   const env = await createEnvironment();
   await createLicense(env);
   const first = await createDevice();
@@ -464,13 +613,18 @@ test("device limit, deactivate and same-key reactivation have coherent slots", a
   const secondActivation = (await activate(env, second)).activation;
   assert.equal(secondActivation.response.status, 409);
   assert.equal(secondActivation.json.error, "device_limit_reached");
-  assert.equal(secondActivation.json.recovery, "deactivate_old_device_or_admin_reset");
+  assert.equal(secondActivation.json.recovery, "wait_for_old_device_offline_lease_or_request_admin_force_release");
   assert.equal(secondActivation.json.active_devices, 1);
   assert.equal(secondActivation.json.max_devices, 1);
 
   const deactivated = await authenticatedCall(env, "/v1/deactivate", firstActivation.json.lease, first.pair.privateKey);
   assert.equal(deactivated.response.status, 200);
-  assert.equal(deactivated.json.status, "revoked");
+  assert.equal(deactivated.json.status, "release_pending");
+  assert.equal(deactivated.json.slot_reusable_at, decodeLease(firstActivation.json.lease).offline_until);
+
+  const blockedDuringOfflineLease = (await activate(env, second)).activation;
+  assert.equal(blockedDuringOfflineLease.response.status, 409);
+  assert.equal(blockedDuringOfflineLease.json.error, "device_limit_reached");
 
   const repeatedDeactivate = await authenticatedCall(env, "/v1/deactivate", firstActivation.json.lease, first.pair.privateKey);
   assert.equal(repeatedDeactivate.response.status, 403);
@@ -480,8 +634,10 @@ test("device limit, deactivate and same-key reactivation have coherent slots", a
   assert.equal(revokedRefresh.response.status, 403);
   assert.equal(revokedRefresh.json.error, "device_revoked");
 
-  const reactivated = (await activate(env, first)).activation;
-  assert.equal(reactivated.response.status, 200);
+  const firstDevice = [...env.DB.devices.values()].find((row) => row.device_key_hash === decodeLease(firstActivation.json.lease).device_key_hash);
+  firstDevice.slot_reusable_at = 1;
+  const transferred = (await activate(env, second)).activation;
+  assert.equal(transferred.response.status, 200);
 });
 
 test("reset, feature update, expiry and revoke are reflected by refresh", async () => {
@@ -583,9 +739,18 @@ test("admin dashboard and ID-based management expose no recoverable license key"
     device_id: deviceId,
   }, true);
   assert.equal(revokedDevice.response.status, 200);
-  assert.equal(revokedDevice.json.status, "revoked");
+  assert.equal(revokedDevice.json.status, "release_pending");
 
   const after = await call(env, `/v1/admin/license?id=${licenseId}`, undefined, true);
-  assert.equal(after.json.license.active_devices, 0);
-  assert.equal(after.json.devices[0].status, "revoked");
+  assert.equal(after.json.license.active_devices, 1);
+  assert.equal(after.json.devices[0].status, "release_pending");
+
+  const forced = await call(env, "/v1/admin/revoke-device", {
+    license_id: licenseId,
+    device_id: deviceId,
+    force_release: true,
+  }, true);
+  assert.equal(forced.json.status, "revoked");
+  const afterForce = await call(env, `/v1/admin/license?id=${licenseId}`, undefined, true);
+  assert.equal(afterForce.json.license.active_devices, 0);
 });

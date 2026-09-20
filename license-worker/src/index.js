@@ -4,6 +4,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const LICENSE_CONTRACT_VERSION = 1;
+const DEVICE_PROOF_VERSION = 2;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_LICENSE_KEY_LENGTH = 128;
 const ALLOWED_FEATURES = new Set(["automation", "stream", "script", "admin", "shell"]);
@@ -135,6 +136,28 @@ function validatedStatus(value, fallback = "active") {
   const status = value === undefined ? fallback : value;
   if (status !== "active" && status !== "revoked") throw new RequestError(400, "invalid_status");
   return status;
+}
+
+function validatedBoolean(value, name, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "boolean") throw new RequestError(400, `invalid_${name}`);
+  return value;
+}
+
+function deviceProofMessage(action, payload) {
+  return `tlinkauto-license-device-proof-v${DEVICE_PROOF_VERSION}\n${action}\n${payload}`;
+}
+
+function leaseDurations(env) {
+  const leaseSeconds = Math.max(300, Number(env.LEASE_SECONDS || 86400));
+  const graceSeconds = Math.max(leaseSeconds, Number(env.OFFLINE_GRACE_SECONDS || 259200));
+  return { leaseSeconds, graceSeconds };
+}
+
+function trackedOfflineUntilOrConservativeFallback(env, device, now) {
+  const tracked = Number(device.lease_offline_until || 0);
+  if (tracked > 0) return Math.max(now, tracked);
+  return now + leaseDurations(env).graceSeconds;
 }
 
 function database(env) {
@@ -338,8 +361,7 @@ function featuresFromLicense(license) {
 
 async function issueLease(env, license, device) {
   const now = Math.floor(Date.now() / 1000);
-  const leaseSeconds = Math.max(300, Number(env.LEASE_SECONDS || 86400));
-  const graceSeconds = Math.max(leaseSeconds, Number(env.OFFLINE_GRACE_SECONDS || 259200));
+  const { leaseSeconds, graceSeconds } = leaseDurations(env);
   const licenseExpiresAt = Math.max(0, Number(license.expires_at || 0));
   const requestedLeaseExpiresAt = now + leaseSeconds;
   const requestedOfflineUntil = now + graceSeconds;
@@ -349,7 +371,7 @@ async function issueLease(env, license, device) {
   const offlineUntil = licenseExpiresAt > 0
     ? Math.min(requestedOfflineUntil, licenseExpiresAt)
     : requestedOfflineUntil;
-  return signPayload(env, {
+  const payload = {
     version: 1,
     license_contract_version: LICENSE_CONTRACT_VERSION,
     product: "tlinkauto",
@@ -366,7 +388,11 @@ async function issueLease(env, license, device) {
     offline_grace_policy_seconds: graceSeconds,
     renewal_mode: "server_refresh_until_license_expiry",
     features: featuresFromLicense(license),
-  });
+  };
+  await database(env).prepare(
+    "UPDATE devices SET lease_offline_until = CASE WHEN lease_offline_until > ? THEN lease_offline_until ELSE ? END, last_seen_at = ? WHERE id = ?",
+  ).bind(offlineUntil, offlineUntil, now, device.id).run();
+  return signPayload(env, payload);
 }
 
 async function cleanupExpiredChallenges(env, now) {
@@ -413,11 +439,44 @@ async function verifyDeviceSignature(publicJwk, signature, message) {
   );
 }
 
-async function activeDeviceCount(env, licenseId) {
+async function occupiedDeviceCount(env, licenseId, now) {
   const row = await database(env).prepare(
-    "SELECT COUNT(*) AS count FROM devices WHERE license_id = ? AND status = 'active'",
-  ).bind(licenseId).first();
+    "SELECT COUNT(*) AS count FROM devices WHERE license_id = ? AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))",
+  ).bind(licenseId, now).first();
   return Number(row?.count || 0);
+}
+
+async function recentDeviceCount(env, licenseId, windowStart) {
+  const row = await database(env).prepare(
+    "SELECT COUNT(*) AS count FROM devices WHERE license_id = ? AND created_at >= ?",
+  ).bind(licenseId, windowStart).first();
+  return Number(row?.count || 0);
+}
+
+function churnPolicy(env, now) {
+  const maximum = Math.max(1, Number(env.MAX_NEW_DEVICES_PER_WINDOW || 3));
+  const windowSeconds = Math.max(3600, Number(env.DEVICE_CHURN_WINDOW_SECONDS || 2592000));
+  return { maximum, windowSeconds, windowStart: now - windowSeconds };
+}
+
+async function activationDeniedResponse(env, license, now) {
+  const occupiedDevices = await occupiedDeviceCount(env, license.id, now);
+  const maxDevices = Number(license.max_devices || 1);
+  if (occupiedDevices >= maxDevices) {
+    return errorResponse("device_limit_reached", 409, {
+      recovery: "wait_for_old_device_offline_lease_or_request_admin_force_release",
+      active_devices: occupiedDevices,
+      max_devices: maxDevices,
+    });
+  }
+  const policy = churnPolicy(env, now);
+  const recentDevices = await recentDeviceCount(env, license.id, policy.windowStart);
+  return errorResponse("device_churn_limit_reached", 429, {
+    recovery: "wait_for_device_churn_window_or_request_admin_review",
+    recent_devices: recentDevices,
+    max_new_devices: policy.maximum,
+    window_seconds: policy.windowSeconds,
+  });
 }
 
 async function handleActivate(request, env) {
@@ -453,41 +512,41 @@ async function handleActivate(request, env) {
     "SELECT * FROM devices WHERE license_id = ? AND device_key_hash = ?",
   ).bind(license.id, deviceHash).first();
   if (!device) {
-    const activeDevices = await activeDeviceCount(env, license.id);
-    const maxDevices = Number(license.max_devices || 1);
-    if (activeDevices >= maxDevices) {
-      return errorResponse("device_limit_reached", 409, {
-        recovery: "deactivate_old_device_or_admin_reset",
-        active_devices: activeDevices,
-        max_devices: maxDevices,
-      });
-    }
+    const policy = churnPolicy(env, now);
     const deviceId = crypto.randomUUID();
-    await database(env).prepare(
-      "INSERT INTO devices (id, license_id, device_key_hash, public_jwk, status, created_at, last_seen_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
-    ).bind(deviceId, license.id, deviceHash, JSON.stringify(publicJwk), now, now).run();
-    device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(deviceId).first();
+    const inserted = await database(env).prepare(
+      "INSERT OR IGNORE INTO devices (id, license_id, device_key_hash, public_jwk, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, 0, 0, 0 WHERE (SELECT COUNT(*) FROM devices WHERE license_id = ? AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) < (SELECT max_devices FROM licenses WHERE id = ?) AND (SELECT COUNT(*) FROM devices WHERE license_id = ? AND created_at >= ?) < ?",
+    ).bind(deviceId, license.id, deviceHash, JSON.stringify(publicJwk), now, now,
+      license.id, now, license.id, license.id, policy.windowStart, policy.maximum).run();
+    if (Number(inserted.meta?.changes || 0) !== 1) {
+      device = await database(env).prepare(
+        "SELECT * FROM devices WHERE license_id = ? AND device_key_hash = ?",
+      ).bind(license.id, deviceHash).first();
+      if (!device || device.status !== "active") {
+        return activationDeniedResponse(env, license, now);
+      }
+      await database(env).prepare("UPDATE devices SET last_seen_at = ?, public_jwk = ? WHERE id = ?")
+        .bind(now, JSON.stringify(publicJwk), device.id).run();
+    } else {
+      device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(deviceId).first();
+    }
   } else if (device.status === "active") {
     await database(env).prepare("UPDATE devices SET last_seen_at = ?, public_jwk = ? WHERE id = ?")
       .bind(now, JSON.stringify(publicJwk), device.id).run();
   } else {
-    const activeDevices = await activeDeviceCount(env, license.id);
     const maxDevices = Number(license.max_devices || 1);
-    if (activeDevices >= maxDevices) {
-      return errorResponse("device_limit_reached", 409, {
-        recovery: "deactivate_old_device_or_admin_reset",
-        active_devices: activeDevices,
-        max_devices: maxDevices,
-      });
+    const reactivated = await database(env).prepare(
+      "UPDATE devices SET status = 'active', public_jwk = ?, last_seen_at = ?, slot_reusable_at = 0, deactivated_at = 0 WHERE id = ? AND (SELECT COUNT(*) FROM devices WHERE license_id = ? AND id <> ? AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) < ?",
+    ).bind(JSON.stringify(publicJwk), now, device.id, license.id, device.id, now, maxDevices).run();
+    if (Number(reactivated.meta?.changes || 0) !== 1) {
+      return activationDeniedResponse(env, license, now);
     }
-    await database(env).prepare("UPDATE devices SET status = 'active', public_jwk = ?, last_seen_at = ? WHERE id = ?")
-      .bind(JSON.stringify(publicJwk), now, device.id).run();
   }
   device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(device.id).first();
   return jsonResponse({ ok: true, license_contract_version: LICENSE_CONTRACT_VERSION, lease: await issueLease(env, license, device) });
 }
 
-async function authenticatedDeviceRequest(body, env) {
+async function authenticatedDeviceRequest(body, env, expectedAction) {
   if (!body.lease || typeof body.device_signature !== "string" || body.device_signature.length > 512) {
     throw new RequestError(400, "invalid_device_request");
   }
@@ -510,14 +569,22 @@ async function authenticatedDeviceRequest(body, env) {
   } catch {
     throw new RequestError(403, "device_public_key_invalid");
   }
-  const proofValid = await verifyDeviceSignature(publicJwk, body.device_signature, body.lease.payload);
+  let proofMessage = "";
+  if (body.proof_version === DEVICE_PROOF_VERSION && body.action === expectedAction) {
+    proofMessage = deviceProofMessage(expectedAction, body.lease.payload);
+  } else if (env.ALLOW_LEGACY_DEVICE_PROOF === "true" && body.proof_version === undefined) {
+    proofMessage = body.lease.payload;
+  } else {
+    throw new RequestError(403, "device_proof_action_or_version_invalid");
+  }
+  const proofValid = await verifyDeviceSignature(publicJwk, body.device_signature, proofMessage);
   if (!proofValid) throw new RequestError(403, "invalid_device_signature");
   return { payload, license, device, now };
 }
 
 async function handleRefresh(request, env) {
   const body = await readJson(request);
-  const context = await authenticatedDeviceRequest(body, env);
+  const context = await authenticatedDeviceRequest(body, env, "refresh");
   await database(env).prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?")
     .bind(context.now, context.device.id).run();
   return jsonResponse({
@@ -529,10 +596,22 @@ async function handleRefresh(request, env) {
 
 async function handleDeactivate(request, env) {
   const body = await readJson(request);
-  const context = await authenticatedDeviceRequest(body, env);
-  await database(env).prepare("UPDATE devices SET status = 'revoked', last_seen_at = ? WHERE id = ?")
-    .bind(context.now, context.device.id).run();
-  return jsonResponse({ ok: true, license_contract_version: LICENSE_CONTRACT_VERSION, device_id: context.device.id, status: "revoked" });
+  const context = await authenticatedDeviceRequest(body, env, "deactivate");
+  const reusableAt = Math.max(
+    context.now,
+    Number(context.device.lease_offline_until || 0),
+    Number(context.payload.offline_until || 0),
+  );
+  await database(env).prepare(
+    "UPDATE devices SET status = 'release_pending', last_seen_at = ?, deactivated_at = ?, slot_reusable_at = ? WHERE id = ?",
+  ).bind(context.now, context.now, reusableAt, context.device.id).run();
+  return jsonResponse({
+    ok: true,
+    license_contract_version: LICENSE_CONTRACT_VERSION,
+    device_id: context.device.id,
+    status: "release_pending",
+    slot_reusable_at: reusableAt,
+  });
 }
 
 function requireAdmin(request, env) {
@@ -591,21 +670,21 @@ async function handleAdminListLicenses(request, env) {
   const url = new URL(request.url);
   const limit = validatedInteger(url.searchParams.get("limit"), "limit", 1, 100, 50);
   const offset = validatedInteger(url.searchParams.get("offset"), "offset", 0, 1000000, 0);
+  const now = Math.floor(Date.now() / 1000);
   const result = await database(env).prepare(
-    "SELECT id, status, max_devices, features_json, expires_at, created_at, updated_at, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id AND status = 'active') AS active_devices, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id) AS total_devices FROM licenses ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-  ).bind(limit + 1, offset).all();
+    "SELECT id, status, max_devices, features_json, expires_at, created_at, updated_at, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) AS active_devices, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id) AS total_devices FROM licenses ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+  ).bind(now, limit + 1, offset).all();
   const rows = Array.isArray(result.results) ? result.results : [];
   const visible = rows.slice(0, limit);
   const licenses = visible.map((license) => (
     adminLicenseRecord(license, license.active_devices, license.total_devices)
   ));
-  const now = Math.floor(Date.now() / 1000);
   const summaryRow = await database(env).prepare(
     "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' AND (expires_at = 0 OR expires_at > ?) THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status = 'revoked' THEN 1 ELSE 0 END) AS revoked, SUM(CASE WHEN status = 'active' AND expires_at > 0 AND expires_at <= ? THEN 1 ELSE 0 END) AS expired FROM licenses",
   ).bind(now, now).first();
   const activeDevicesRow = await database(env).prepare(
-    "SELECT COUNT(*) AS count FROM devices WHERE status = 'active'",
-  ).first();
+    "SELECT COUNT(*) AS count FROM devices WHERE status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?)",
+  ).bind(now).first();
   const summary = {
     total: Number(summaryRow?.total || 0),
     active: Number(summaryRow?.active || 0),
@@ -630,7 +709,7 @@ async function handleAdminLicenseDetail(request, env) {
   const license = await database(env).prepare("SELECT * FROM licenses WHERE id = ?").bind(id).first();
   if (!license) throw new RequestError(404, "not_found");
   const devicesResult = await database(env).prepare(
-    "SELECT id, device_key_hash, status, created_at, last_seen_at FROM devices WHERE license_id = ? ORDER BY last_seen_at DESC",
+    "SELECT id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at FROM devices WHERE license_id = ? ORDER BY last_seen_at DESC",
   ).bind(id).all();
   const devices = (Array.isArray(devicesResult.results) ? devicesResult.results : []).map((device) => ({
     id: device.id,
@@ -638,8 +717,15 @@ async function handleAdminLicenseDetail(request, env) {
     status: device.status,
     created_at: Number(device.created_at || 0),
     last_seen_at: Number(device.last_seen_at || 0),
+    lease_offline_until: Number(device.lease_offline_until || 0),
+    slot_reusable_at: Number(device.slot_reusable_at || 0),
+    deactivated_at: Number(device.deactivated_at || 0),
   }));
-  const activeDevices = devices.filter((device) => device.status === "active").length;
+  const now = Math.floor(Date.now() / 1000);
+  const activeDevices = devices.filter((device) => (
+    device.status === "active" ||
+    (device.status === "release_pending" && device.slot_reusable_at > now)
+  )).length;
   return jsonResponse({
     ok: true,
     license: adminLicenseRecord(license, activeDevices, devices.length),
@@ -655,9 +741,15 @@ async function handleAdminRevokeDevice(request, env) {
   const device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(deviceId).first();
   if (!device || device.license_id !== licenseId) throw new RequestError(404, "not_found");
   const now = Math.floor(Date.now() / 1000);
-  await database(env).prepare("UPDATE devices SET status = 'revoked', last_seen_at = ? WHERE id = ?")
-    .bind(now, device.id).run();
-  return jsonResponse({ ok: true, license_id: licenseId, device_id: device.id, status: "revoked" });
+  const forceRelease = validatedBoolean(body.force_release, "force_release", false);
+  const reusableAt = forceRelease
+    ? now
+    : trackedOfflineUntilOrConservativeFallback(env, device, now);
+  const status = forceRelease ? "revoked" : "release_pending";
+  await database(env).prepare(
+    "UPDATE devices SET status = ?, last_seen_at = ?, deactivated_at = ?, slot_reusable_at = ? WHERE id = ?",
+  ).bind(status, now, now, reusableAt, device.id).run();
+  return jsonResponse({ ok: true, license_id: licenseId, device_id: device.id, status, slot_reusable_at: reusableAt });
 }
 
 async function handleAdminUpdate(request, env) {
@@ -693,14 +785,21 @@ async function handleAdminResetDevices(request, env) {
   const body = await readJson(request);
   const { license } = await licenseForAdminBody(body, env);
   const now = Math.floor(Date.now() / 1000);
-  const result = await database(env).prepare(
-    "UPDATE devices SET status = 'revoked', last_seen_at = ? WHERE license_id = ? AND status = 'active'",
-  ).bind(now, license.id).run();
+  const forceRelease = validatedBoolean(body.force_release, "force_release", false);
+  const fallbackReusableAt = now + leaseDurations(env).graceSeconds;
+  const result = forceRelease
+    ? await database(env).prepare(
+      "UPDATE devices SET status = 'revoked', last_seen_at = ?, deactivated_at = ?, slot_reusable_at = ? WHERE license_id = ? AND (status = 'active' OR status = 'release_pending')",
+    ).bind(now, now, now, license.id).run()
+    : await database(env).prepare(
+      "UPDATE devices SET status = 'release_pending', last_seen_at = ?, deactivated_at = ?, slot_reusable_at = CASE WHEN lease_offline_until = 0 THEN ? WHEN lease_offline_until > ? THEN lease_offline_until ELSE ? END WHERE license_id = ? AND status = 'active'",
+    ).bind(now, now, fallbackReusableAt, now, now, license.id).run();
   await database(env).prepare("DELETE FROM activation_challenges WHERE license_id = ?").bind(license.id).run();
   return jsonResponse({
     ok: true,
     id: license.id,
     reset_devices: Number(result.meta?.changes || 0),
+    force_release: forceRelease,
   });
 }
 
@@ -714,6 +813,7 @@ const worker = {
           ok: true,
           service: "tlinkauto-license",
           license_contract_version: LICENSE_CONTRACT_VERSION,
+          device_proof_version: DEVICE_PROOF_VERSION,
           now: Math.floor(Date.now() / 1000),
         });
       }
@@ -752,11 +852,13 @@ const worker = {
 
 export const __test = {
   LICENSE_CONTRACT_VERSION,
+  DEVICE_PROOF_VERSION,
   base64UrlEncode,
   base64UrlDecode,
   rawSignatureToDer,
   derSignatureToRaw,
   deviceKeyHash,
+  deviceProofMessage,
 };
 
 export default worker;

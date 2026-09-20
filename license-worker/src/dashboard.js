@@ -97,6 +97,7 @@ export function renderAdminDashboard(nonce) {
       font-size: 12px; font-weight: 750;
     }
     .badge.active { color: #176b36; background: #eaf8ef; }
+    .badge.pending { color: #8a5700; background: #fff6df; }
     .badge.revoked { color: #9f1f28; background: #fff0f1; }
     .badge.expired { color: #8a5700; background: #fff6df; }
     .empty { padding: 42px 20px; text-align: center; color: #687384; }
@@ -401,8 +402,9 @@ export function renderAdminDashboard(nonce) {
         <h3>4. Quản lý một license</h3>
         <ul>
           <li><strong>Save Changes:</strong> cập nhật status, số thiết bị, ngày hết hạn và feature.</li>
-          <li><strong>Revoke thiết bị:</strong> thu hồi một binding và giải phóng một slot; thiết bị đó có thể active lại nếu còn slot và còn key.</li>
-          <li><strong>Reset Device Slots:</strong> revoke toàn bộ binding đang active và xóa challenge dở dang. Dùng sau restore, đổi máy hoặc mất private key.</li>
+          <li><strong>Revoke thiết bị:</strong> chuyển binding sang Release pending. Slot chỉ được giải phóng sau khi lease offline cuối cùng hết hạn.</li>
+          <li><strong>Force release:</strong> admin chủ động bỏ thời gian chờ. Thao tác này có thể tạo khoảng thời gian hai thiết bị cùng chạy nếu máy cũ đang chặn mạng.</li>
+          <li><strong>Reset Device Slots:</strong> đưa toàn bộ binding active vào Release pending và xóa challenge dở dang.</li>
           <li><strong>Revoke License:</strong> chặn activation/refresh của toàn bộ license. Chỉ chọn lại status Active khi thực sự muốn cấp quyền trở lại.</li>
         </ul>
         <p class="guide-callout warning"><strong>Lưu ý:</strong> thay đổi server không sửa lease đã ký đang nằm trên thiết bị. Muốn kiểm tra ngay, mở Settings → License → Refresh Lease hoặc chờ lifecycle refresh; revoke sẽ bị phát hiện ở lần refresh kế tiếp.</p>
@@ -424,7 +426,8 @@ export function renderAdminDashboard(nonce) {
         <ul>
           <li><code>Unauthorized</code>: kiểm tra hoặc rotate <code>ADMIN_TOKEN</code>, sau đó deploy secret lại.</li>
           <li><code>license_exists</code>: key đã tồn tại; tạo một key mới.</li>
-          <li><code>device_limit_reached</code>: revoke thiết bị cũ hoặc Reset Device Slots.</li>
+          <li><code>device_limit_reached</code>: chờ mốc Slot reusable hoặc dùng Force release nếu chấp nhận rủi ro overlap.</li>
+          <li><code>device_churn_limit_reached</code>: đã vượt số thiết bị mới trong cửa sổ 30 ngày; chờ hoặc admin xem xét.</li>
           <li><code>device_revoked</code>: active lại bằng key; nếu thiết bị đã đổi private key, reset slot trước.</li>
           <li><code>license_revoked_or_expired</code>: kiểm tra status và License expiration rồi Refresh Lease.</li>
           <li><code>device_mismatch</code> hoặc thiếu private key: không copy lease giữa máy; reset slot và active lại trên đúng thiết bị.</li>
@@ -736,7 +739,8 @@ export function renderAdminDashboard(nonce) {
 
           var seen = document.createElement("span");
           seen.className = "muted small device-seen";
-          seen.textContent = "Seen " + formatDate(device.last_seen_at);
+          seen.textContent = "Seen " + formatDate(device.last_seen_at) +
+            (device.status === "release_pending" ? " · Slot reusable " + formatDate(device.slot_reusable_at) : "");
 
           var control = document.createElement("div");
           if (device.status === "active") {
@@ -746,6 +750,16 @@ export function renderAdminDashboard(nonce) {
             revoke.textContent = "Revoke";
             revoke.addEventListener("click", function () { revokeDevice(device.id); });
             control.appendChild(revoke);
+          } else if (device.status === "release_pending") {
+            var pending = document.createElement("span");
+            pending.className = "badge pending";
+            pending.textContent = "Release pending";
+            var force = document.createElement("button");
+            force.type = "button";
+            force.className = "button danger quiet";
+            force.textContent = "Force release";
+            force.addEventListener("click", function () { revokeDevice(device.id, true); });
+            control.append(pending, force);
           } else {
             var badge = document.createElement("span");
             badge.className = "badge revoked";
@@ -812,7 +826,7 @@ export function renderAdminDashboard(nonce) {
             method: "POST",
             body: JSON.stringify({ license_id: selectedLicenseId })
           });
-          setNotice("Reset " + String(payload.reset_devices || 0) + " active device slot(s).", "success");
+          setNotice("Moved " + String(payload.reset_devices || 0) + " device slot(s) to release pending.", "success");
           byId("manage-dialog").close();
           await openManage(selectedLicenseId);
           await loadLicenses(currentOffset);
@@ -836,14 +850,17 @@ export function renderAdminDashboard(nonce) {
         }
       }
 
-      async function revokeDevice(deviceId) {
-        if (!confirm("Revoke this device binding?")) return;
+      async function revokeDevice(deviceId, forceRelease) {
+        var warning = forceRelease
+          ? "Force release this slot now? The old device may keep using its offline lease."
+          : "Revoke this device binding? Its slot stays reserved until the signed offline lease expires.";
+        if (!confirm(warning)) return;
         try {
           await api("/v1/admin/revoke-device", {
             method: "POST",
-            body: JSON.stringify({ license_id: selectedLicenseId, device_id: deviceId })
+            body: JSON.stringify({ license_id: selectedLicenseId, device_id: deviceId, force_release: Boolean(forceRelease) })
           });
-          setNotice("Device binding revoked.", "success");
+          setNotice(forceRelease ? "Device slot force released." : "Device binding is release pending.", "success");
           byId("manage-dialog").close();
           await openManage(selectedLicenseId);
           await loadLicenses(currentOffset);

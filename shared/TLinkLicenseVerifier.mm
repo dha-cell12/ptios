@@ -760,17 +760,7 @@ static NSDictionary *TLinkTrustCheckpointResult(BOOL valid,
 
 static NSDictionary *TLinkTrustCheckpointNotEvaluated(void)
 {
-#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
     return TLinkTrustCheckpointResult(YES, @"not_evaluated", @"", @{});
-#else
-    return @{
-        @"active": @NO,
-        @"valid": @YES,
-        @"state": @"not_applicable",
-        @"error": @"",
-        @"policy": @"signed_device_checkpoint_v1",
-    };
-#endif
 }
 
 static NSData *TLinkTrustCheckpointPayloadData(NSDictionary *payload)
@@ -992,7 +982,6 @@ static NSDictionary *TLinkValidateAndAdvanceTrustCheckpoint(NSDictionary *leaseP
 
 BOOL TLinkLicenseResetTrustCheckpoint(NSString **error)
 {
-#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
     [[NSFileManager defaultManager] createDirectoryAtPath:kTLinkLicenseDirectory
                               withIntermediateDirectories:YES
                                                attributes:nil
@@ -1018,10 +1007,6 @@ BOOL TLinkLicenseResetTrustCheckpoint(NSString **error)
     close(lockFD);
     if (!removed && error) *error = @"license_trust_checkpoint_reset_failed";
     return removed;
-#else
-    (void)error;
-    return YES;
-#endif
 }
 
 static NSDictionary *TLinkLicenseFailure(NSDictionary *config, NSString *state, NSString *error)
@@ -1277,7 +1262,6 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
     }
 
     NSDictionary *antiRollback = TLinkTrustCheckpointNotEvaluated();
-#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
     NSString *antiRollbackError = nil;
     antiRollback = TLinkValidateAndAdvanceTrustCheckpoint(payload,
                                                           devicePublicKey,
@@ -1296,7 +1280,6 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         failure[@"release_integrity"] = releaseIntegrity;
         return failure;
     }
-#endif
 
     NSArray *features = [payload[@"features"] isKindOfClass:[NSArray class]] ? payload[@"features"] : @[];
     BOOL enforcement = TLinkLicenseConfiguredEnforcement(config);

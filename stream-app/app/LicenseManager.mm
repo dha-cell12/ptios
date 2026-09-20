@@ -66,6 +66,13 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
     return value;
 }
 
+- (NSString *)deviceProofMessageForAction:(NSString *)action payload:(NSString *)payload
+{
+    return [NSString stringWithFormat:@"tlinkauto-license-device-proof-v2\n%@\n%@",
+                                      action ?: @"",
+                                      payload ?: @""];
+}
+
 - (NSString *)diagnosticMessageForError:(NSError *)error fallback:(NSString *)fallback
 {
     if (!error) return fallback ?: @"license_error";
@@ -74,9 +81,18 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
         NSDictionary *server = [error.userInfo[@"server_response"] isKindOfClass:[NSDictionary class]]
             ? error.userInfo[@"server_response"]
             : @{};
-        return [NSString stringWithFormat:@"device_limit_reached active=%@ max=%@ deactivate_the_old_device_or_request_an_admin_device_reset",
+        return [NSString stringWithFormat:@"device_limit_reached active=%@ max=%@ wait_for_old_device_offline_lease_or_request_admin_force_release",
                 server[@"active_devices"] ?: @"?",
                 server[@"max_devices"] ?: @"?"];
+    }
+    if ([serverMessage isEqualToString:@"device_churn_limit_reached"]) {
+        NSDictionary *server = [error.userInfo[@"server_response"] isKindOfClass:[NSDictionary class]]
+            ? error.userInfo[@"server_response"]
+            : @{};
+        return [NSString stringWithFormat:@"device_churn_limit_reached recent=%@ max=%@ window_seconds=%@ request_admin_review",
+                server[@"recent_devices"] ?: @"?",
+                server[@"max_new_devices"] ?: @"?",
+                server[@"window_seconds"] ?: @"?"];
     }
     if ([serverMessage isEqualToString:@"device_not_active"] ||
         [serverMessage isEqualToString:@"device_revoked"]) {
@@ -297,7 +313,6 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
     NSData *data = [NSJSONSerialization dataWithJSONObject:lease options:0 error:error];
     if (!data) return NO;
     NSData *previousLeaseData = [NSData dataWithContentsOfFile:TLinkLicenseLeasePath()];
-#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
     NSDictionary *previousStatus = TLinkLicenseStatusDictionary();
     NSDictionary *previousAntiRollback =
         [previousStatus[@"anti_rollback"] isKindOfClass:[NSDictionary class]]
@@ -307,14 +322,12 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
         [previousAntiRollback[@"max_issued_at"] doubleValue];
     NSData *previousCheckpointData =
         [NSData dataWithContentsOfFile:TLinkLicenseTrustCheckpointPath()];
-#endif
     [[NSFileManager defaultManager] createDirectoryAtPath:TLinkLicenseDirectoryPath()
                               withIntermediateDirectories:YES
                                                attributes:nil
                                                     error:nil];
     BOOL saved = [data writeToFile:TLinkLicenseLeasePath() options:NSDataWritingAtomic error:error];
     if (saved) {
-#if defined(TLINK_LICENSE_ROOTFULL_RUNTIME) && TLINK_LICENSE_ROOTFULL_RUNTIME
         NSString *checkpointError = nil;
         if (!TLinkLicenseResetTrustCheckpoint(&checkpointError)) {
             if (previousLeaseData.length > 0) {
@@ -375,7 +388,6 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
             }
             return NO;
         }
-#endif
         [[NSFileManager defaultManager] removeItemAtPath:kTLinkLicenseRecoveryDiagnosticsPath error:nil];
         TLinkLicenseAdvanceGeneration();
     }
@@ -474,10 +486,11 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
         return;
     }
     CFErrorRef signError = NULL;
+    NSString *proofMessage = [self deviceProofMessageForAction:@"refresh" payload:payload];
     NSData *deviceSignature = CFBridgingRelease(SecKeyCreateSignature(
         privateKey,
         kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
-        (__bridge CFDataRef)[payload dataUsingEncoding:NSUTF8StringEncoding],
+        (__bridge CFDataRef)[proofMessage dataUsingEncoding:NSUTF8StringEncoding],
         &signError));
     CFRelease(privateKey);
     if (!deviceSignature) {
@@ -490,10 +503,17 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
     [self postPath:@"/v1/refresh"
               body:@{
                   @"lease": lease,
+                  @"proof_version": @2,
+                  @"action": @"refresh",
                   @"device_signature": [self base64URLEncode:deviceSignature],
               }
         completion:^(NSDictionary *response, NSError *networkError) {
         if (networkError) {
+            NSString *serverCode = networkError.localizedDescription ?: @"";
+            if ([serverCode isEqualToString:@"device_revoked"] ||
+                [serverCode isEqualToString:@"license_revoked_or_expired"]) {
+                [self removeLocalLease:nil];
+            }
             if (completion) completion(NO, [self diagnosticMessageForError:networkError
                                                                    fallback:@"license_refresh_failed"]);
             return;
@@ -522,10 +542,11 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
         return;
     }
     CFErrorRef signError = NULL;
+    NSString *proofMessage = [self deviceProofMessageForAction:@"deactivate" payload:payload];
     NSData *deviceSignature = CFBridgingRelease(SecKeyCreateSignature(
         privateKey,
         kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
-        (__bridge CFDataRef)[payload dataUsingEncoding:NSUTF8StringEncoding],
+        (__bridge CFDataRef)[proofMessage dataUsingEncoding:NSUTF8StringEncoding],
         &signError));
     CFRelease(privateKey);
     if (!deviceSignature) {
@@ -541,6 +562,8 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
     [self postPath:@"/v1/deactivate"
               body:@{
                   @"lease": lease,
+                  @"proof_version": @2,
+                  @"action": @"deactivate",
                   @"device_signature": [self base64URLEncode:deviceSignature],
               }
         completion:^(NSDictionary *response, NSError *networkError) {

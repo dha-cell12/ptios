@@ -36,7 +36,12 @@ assert.ok(verifier.includes("license_signature_invalid"), "signature corruption 
 
 assert.ok(manager.includes("repairDevicePublicKey"), "device public-key repair API is missing");
 assert.ok(manager.includes("device_private_key_present"), "private-key recovery diagnostics are missing");
-assert.ok(manager.includes("deactivate_the_old_device_or_request_an_admin_device_reset"), "device-limit recovery guidance is missing");
+assert.ok(
+  manager.includes("wait_for_old_device_offline_lease_or_request_admin_force_release"),
+  "safe device-transfer recovery guidance is missing",
+);
+assert.ok(manager.includes("device_churn_limit_reached"), "device churn recovery guidance is missing");
+assert.ok(manager.includes("tlinkauto-license-device-proof-v2"), "action-bound device proof v2 is missing");
 assert.ok(coordinator.includes("publishLicenseChange:@\"repair_device_public_key\""), "repair does not publish a global license change");
 assert.ok(view.includes("Repair Device Binding"), "License UI has no device binding repair action");
 

@@ -96,8 +96,13 @@ Ket qua co cache toi da 5 giay trong tung process. Task `76` xoa cache cua
 - Khi refresh, app ky payload lease hien tai bang device private key.
 - Worker xac minh lease cu, trang thai license/device trong D1, va device
   signature truoc khi cap lease moi.
-- Revoke tren server ngan refresh moi. Lease da ky van co the hoat dong den
-  `offline_until`; hien tai chua co push revocation.
+- Revoke tren server ngan refresh moi. Self-deactivate va admin revoke mac dinh
+  chuyen binding sang `release_pending`; slot van bi giu den moc `offline_until`
+  lon nhat Worker da tung cap cho device. Vi vay lease cu co the tiep tuc offline
+  nhung khong the tao them mot slot dong thoi.
+- `force_release` chi danh cho admin va co canh bao ro rang ve nguy co overlap.
+- Refresh/deactivate dung device proof v2 bind chu ky voi action, ngan dung lai
+  refresh proof cho endpoint deactivate.
 
 ## 4. Enforcement hien tai
 
@@ -216,15 +221,19 @@ Xu ly:
 #### 6.5 Cua so offline sau revoke
 
 Revoke khong vo hieu lease da ky ngay; client co the hoat dong toi
-`offline_until`.
+`offline_until`. Worker hien giu slot o `release_pending` toi cung moc nay, nen
+khong con cho phep churn tao nhieu thiet bi offline dong thoi. Admin
+`force_release` la ngoai le co chu dich va phai chap nhan rui ro overlap.
 
-Xu ly: rut ngan grace cho feature nhay cam, yeu cau online check dinh ky cho
-`admin`/`shell`, va them signed revocation epoch/version vao lease.
+Phan con lai: rut ngan grace cho feature nhay cam, yeu cau online check dinh ky
+cho `admin`/`shell`, va them signed revocation epoch/version vao lease.
 
 #### 6.6 Lui dong ho he thong
 
-Verifier dung wall clock cua thiet bi. Nguoi co quyen cao co the thu lui gio de
-keo dai lease.
+Verifier rootfull va TrollStore deu duy tri signed device checkpoint gom server
+time da chap nhan va monotonic uptime. Rollback lon hoac rollback khong phu hop
+uptime bi tu choi. Nguoi co full root van co the xoa protected state, nen day
+khong thay the online revalidation.
 
 Xu ly: luu moc server time da ky va monotonic uptime, tu choi rollback lon, va
 bat online refresh khi phat hien clock anomaly.

@@ -93,9 +93,13 @@ không còn dùng nếu cần đưa số active về đúng giới hạn.
 
 Trong **Bound devices**, nhấn **Revoke** ở thiết bị cần thu hồi. Thao tác này:
 
-- đổi binding sang `revoked`;
-- giải phóng một active slot;
+- đổi binding sang `release_pending`;
+- giữ active slot đến khi lease offline cuối cùng đã hết hạn;
 - làm refresh của lease thiết bị đó trả `device_revoked`.
+
+Dashboard hiển thị **Slot reusable**. Chỉ dùng **Force release** khi admin chấp
+nhận rằng thiết bị cũ đang chặn mạng có thể tiếp tục chạy song song đến hết
+`offline_until`.
 
 Đây không phải blacklist vĩnh viễn. Nếu người dùng còn license key và còn slot,
 thiết bị có thể thực hiện activation lại.
@@ -103,8 +107,9 @@ thiết bị có thể thực hiện activation lại.
 ### Reset Device Slots
 
 Dùng khi restore iOS, đổi máy, mất device private key hoặc không xác định được
-binding cũ. Thao tác này revoke toàn bộ binding active và xóa activation
-challenge đang dở. Sau đó người dùng phải activation lại bằng license key.
+binding cũ. Thao tác này đưa toàn bộ binding active vào `release_pending` và
+xóa activation challenge đang dở. Slot chỉ dùng lại sau hạn offline đã ký;
+người dùng sau đó activation lại bằng license key.
 
 Không dùng Reset Device Slots chỉ để sửa lỗi mạng hoặc lỗi refresh tạm thời.
 
@@ -181,7 +186,8 @@ trong quá trình test. Việc thay đổi Worker bình thường nên dùng **R
 | --- | --- |
 | `Unauthorized` | `ADMIN_TOKEN` không khớp. Kiểm tra Worker secret hoặc rotate token. |
 | `license_exists` | Clear key đã tồn tại. Tạo key khác. |
-| `device_limit_reached` | Đã đủ slot. Revoke binding cũ hoặc Reset Device Slots. |
+| `device_limit_reached` | Đã đủ slot hoặc binding cũ đang release pending. Chờ Slot reusable; chỉ Force release khi chấp nhận overlap. |
+| `device_churn_limit_reached` | Vượt số device key mới trong cửa sổ chống churn. Chờ hết cửa sổ hoặc admin xem xét. |
 | `device_revoked` | Binding hiện tại bị revoke. Activation lại; reset slot nếu device key đã đổi. |
 | `license_revoked_or_expired` | License bị revoke hoặc qua hạn. Kiểm tra Status và License expiration. |
 | `device_mismatch` | Lease/public key không thuộc private key trên máy. Không copy lease giữa máy; reset và activation lại. |
@@ -198,4 +204,3 @@ trong quá trình test. Việc thay đổi Worker bình thường nên dùng **R
 - Backup D1 theo chính sách vận hành Cloudflare trước thay đổi hàng loạt.
 - Dashboard hiện chưa có audit log riêng; ghi lại người thao tác, License ID, lý
   do và thời điểm trong hệ thống vận hành bên ngoài.
-
