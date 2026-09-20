@@ -5911,6 +5911,8 @@ static BOOL sTLinkUITreeLegacyForegroundUnavailable = NO;
 static NSInteger sTLinkUITreeLastLaunchServicesMs = 0;
 static NSInteger sTLinkUITreeLastInventoryMs = 0;
 static NSInteger sTLinkUITreeLastFingerprintMs = 0;
+static NSUInteger sTLinkUITreeLastFingerprintChangedCells = 0;
+static NSInteger sTLinkUITreeLastFingerprintAverageDelta = 0;
 static id sTLinkFBSDisplayLayoutMonitor = nil;
 static id sTLinkFBSDisplayLayoutBlock = nil;
 static NSString *sTLinkFrontmostDiag = nil;
@@ -6834,6 +6836,10 @@ static BOOL TLinkUITreeScreenMateriallyChanged(NSData *before, NSData *after,
     NSInteger averageDelta = (NSInteger)(totalDelta / MAX((NSUInteger)1, before.length));
     if (changedCellsOut) *changedCellsOut = changedCells;
     if (averageDeltaOut) *averageDeltaOut = averageDelta;
+    // Keep transition detection deliberately sensitive. False positives from
+    // animations are resolved by the bounded three-observation recovery path;
+    // relaxing this gate risks accepting a stale app after a visually similar
+    // foreground switch.
     return averageDelta >= 10 || changedCells >= 20;
 }
 
@@ -6948,7 +6954,8 @@ static NSDictionary *TLinkUITreeCommitProbe(NSDictionary *probe,
 
 static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
                                                      BOOL screenChanged,
-                                                     NSData *screenFingerprint)
+                                                     NSData *screenFingerprint,
+                                                     BOOL allowStablePrevious)
 {
     NSArray<NSDictionary *> *allCandidates = TLinkRunningApplicationContexts();
     NSUInteger priorityCount = 0;
@@ -7043,8 +7050,10 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
 
     NSInteger durationMs = (NSInteger)llround((CFAbsoluteTimeGetCurrent() - started) * 1000.0);
     NSString *diagnostic = [NSString stringWithFormat:
-        @"ax_snapshot_probe_v4 fingerprint_ms=%ld launchservices_ms=%ld inventory_ms=%ld launchable=%lu excluded_services=%lu candidates=%lu ordered=%lu priority=%lu probed=%lu matches=%lu eligible=%lu alternatives=%lu screen_changed=%d duration_ms=%ld first_error=%@",
+        @"ax_snapshot_probe_v4 fingerprint_ms=%ld fingerprint_changed_cells=%lu fingerprint_average_delta=%ld launchservices_ms=%ld inventory_ms=%ld launchable=%lu excluded_services=%lu candidates=%lu ordered=%lu priority=%lu probed=%lu matches=%lu eligible=%lu alternatives=%lu screen_changed=%d allow_stable_previous=%d duration_ms=%ld first_error=%@",
         (long)sTLinkUITreeLastFingerprintMs,
+        (unsigned long)sTLinkUITreeLastFingerprintChangedCells,
+        (long)sTLinkUITreeLastFingerprintAverageDelta,
         (long)sTLinkUITreeLastLaunchServicesMs,
         (long)sTLinkUITreeLastInventoryMs,
         (unsigned long)sTLinkUITreeLaunchableBundleCount,
@@ -7057,11 +7066,13 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
         (unsigned long)eligibleMatches.count,
         (unsigned long)nonPreviousMatches.count,
         screenChanged,
+        allowStablePrevious,
         (long)durationMs,
         firstError ?: @""];
     NSArray<NSDictionary *> *selection = (screenChanged && nonPreviousMatches.count > 0)
         ? nonPreviousMatches : eligibleMatches;
-    if (screenChanged && previousBundleId.length > 0 && nonPreviousMatches.count == 0) {
+    if (screenChanged && previousBundleId.length > 0 &&
+        nonPreviousMatches.count == 0 && !allowStablePrevious) {
         return @{
             @"ok": @NO,
             @"error": @"ui_frontmost_transition_unsettled",
@@ -7099,11 +7110,15 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
         @" selected_index=%@ selected_bundle=%@",
         match[@"candidate_index"] ?: @(-1),
         confirmation[@"bundle_id"] ?: @""];
+    BOOL confirmedPrevious = previousBundleId.length > 0 &&
+                             [confirmation[@"bundle_id"] isEqualToString:previousBundleId];
     return TLinkUITreeCommitProbe(confirmation,
-                                  @"ax_snapshot_stable_scan_v3",
+                                  confirmedPrevious
+                                      ? @"ax_snapshot_previous_stable_v4"
+                                      : @"ax_snapshot_stable_scan_v3",
                                   confirmedDiagnostic,
                                   screenFingerprint,
-                                  2);
+                                  confirmedPrevious && allowStablePrevious ? 3 : 2);
 }
 
 static void TLinkUITreeInvalidateCachedContext(void)
@@ -7161,6 +7176,8 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
             currentFingerprint,
             &changedCells,
             &averageDelta);
+        sTLinkUITreeLastFingerprintChangedCells = changedCells;
+        sTLinkUITreeLastFingerprintAverageDelta = averageDelta;
         NSDictionary *cachedProbe = TLinkUITreeLightweightAXProbe(@{
             @"bundle_id": sTLinkUITreeAcceptedBundleId,
             @"pid": @(sTLinkUITreeAcceptedPid),
@@ -7181,29 +7198,35 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
         TLinkUITreeInvalidateCachedContext();
         NSDictionary *transitionProbe = TLinkUITreeContextByAXSnapshot(previousBundleId,
                                                                         screenChanged,
-                                                                        currentFingerprint);
+                                                                        currentFingerprint,
+                                                                        NO);
         if (TLinkAXResultSucceeded(transitionProbe)) return transitionProbe;
         if ([transitionProbe[@"error"] isEqualToString:@"ui_frontmost_transition_unsettled"]) {
             usleep(80 * 1000);
             sTLinkUITreeRunningContextsDirty = YES;
             transitionProbe = TLinkUITreeContextByAXSnapshot(previousBundleId,
                                                               YES,
-                                                              TLinkUITreeScreenFingerprint());
+                                                              TLinkUITreeScreenFingerprint(),
+                                                              YES);
             if (TLinkAXResultSucceeded(transitionProbe)) return transitionProbe;
             return transitionProbe;
         }
         return transitionProbe;
     }
 
+    sTLinkUITreeLastFingerprintChangedCells = 0;
+    sTLinkUITreeLastFingerprintAverageDelta = 0;
     NSData *initialFingerprint = TLinkUITreeScreenFingerprint();
     NSDictionary *axProbe = TLinkUITreeContextByAXSnapshot(previousBundleId,
                                                             NO,
-                                                            initialFingerprint);
+                                                            initialFingerprint,
+                                                            NO);
     if (TLinkAXResultSucceeded(axProbe)) return axProbe;
     usleep(80 * 1000);
     axProbe = TLinkUITreeContextByAXSnapshot(previousBundleId,
                                               NO,
-                                              TLinkUITreeScreenFingerprint());
+                                              TLinkUITreeScreenFingerprint(),
+                                              YES);
     if (TLinkAXResultSucceeded(axProbe)) return axProbe;
 
     // SBS/FBS have repeatedly returned empty data in the TrollStore service
@@ -7273,7 +7296,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             (CFAbsoluteTimeGetCurrent() - resolveStarted) * 1000.0);
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @9;
+        capability[@"implementation_version"] = @10;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
