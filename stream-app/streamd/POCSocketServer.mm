@@ -6952,6 +6952,7 @@ static NSDictionary *TLinkUITreeAXSpringBoardContext(void)
     sTLinkAXSpringBoardError = @"";
     NSMutableDictionary *result = [context mutableCopy];
     result[@"ok"] = @(true);
+    result[@"authoritative"] = @(true);
     result[@"source"] = source;
     result[@"diagnostic"] = sTLinkAXSpringBoardDiagnostic;
     return result;
@@ -7138,41 +7139,32 @@ static NSDictionary *TLinkUITreeContextByAXSpringBoardServer(void)
     BOOL contextChanged = ![bundleId isEqualToString:sTLinkUITreeAcceptedBundleId] ||
                           pid != sTLinkUITreeAcceptedPid;
 
-    NSData *fingerprint = TLinkUITreeScreenFingerprint();
-    NSUInteger changedCells = 0;
-    NSInteger averageDelta = 0;
-    BOOL hasComparableFingerprint = fingerprint.length > 0 &&
-                                    sTLinkUITreeAcceptedScreenFingerprint.length == fingerprint.length;
-    BOOL screenChanged = hasComparableFingerprint && TLinkUITreeScreenMateriallyChanged(
-        sTLinkUITreeAcceptedScreenFingerprint,
-        fingerprint,
-        &changedCells,
-        &averageDelta);
-    sTLinkUITreeLastFingerprintChangedCells = changedCells;
-    sTLinkUITreeLastFingerprintAverageDelta = averageDelta;
+    // A direct PID identifies the app without a screenshot. Fingerprints stay
+    // available exclusively to the v10 compatibility fallback; skipping the
+    // capture here removes 30-63 ms from the measured device hot path.
+    sTLinkUITreeLastFingerprintMs = 0;
+    sTLinkUITreeLastFingerprintChangedCells = 0;
+    sTLinkUITreeLastFingerprintAverageDelta = 0;
 
-    NSDictionary *probe = TLinkUITreeLightweightAXProbe(direct, direct[@"source"]);
-    if (!TLinkAXResultSucceeded(probe)) {
-        sTLinkAXSpringBoardState = @"probe_failed";
-        sTLinkAXSpringBoardError = probe[@"error"] ?: @"ui_ax_springboard_probe_failed";
-        return probe;
-    }
-
-    NSInteger verificationCount = 1;
-    if (contextChanged || screenChanged) {
-        // A direct PID change is authoritative, while a changed screen with the
-        // same PID may be either animation or a not-yet-published app switch.
-        // Re-read the server after a short settling interval before committing.
-        usleep((contextChanged ? 25 : 60) * 1000);
+    NSInteger directObservationCount = 1;
+    if (contextChanged) {
+        usleep(25 * 1000);
         NSDictionary *confirmationContext = TLinkUITreeAXSpringBoardContext();
+        directObservationCount++;
         if (![confirmationContext[@"ok"] boolValue] ||
             ![confirmationContext[@"bundle_id"] isEqualToString:bundleId] ||
             [confirmationContext[@"pid"] intValue] != pid) {
+            sTLinkAXSpringBoardState = @"transitioning";
+            sTLinkAXSpringBoardError = @"ui_ax_springboard_context_unsettled";
             return @{
                 @"ok": @(false),
-                @"error": @"ui_ax_springboard_context_unsettled",
+                @"authoritative": @(true),
+                @"error": sTLinkAXSpringBoardError,
+                @"bundle_id": bundleId ?: @"",
+                @"pid": @(pid),
+                @"source": direct[@"source"] ?: @"ax_springboard_focused_pid_v1",
                 @"diagnostic": [NSString stringWithFormat:
-                    @"%@ first_bundle=%@ first_pid=%d confirm_bundle=%@ confirm_pid=%d",
+                    @"%@ first_bundle=%@ first_pid=%d confirm_bundle=%@ confirm_pid=%d fingerprint_skipped=1",
                     sTLinkAXSpringBoardDiagnostic ?: @"",
                     bundleId ?: @"",
                     pid,
@@ -7181,26 +7173,97 @@ static NSDictionary *TLinkUITreeContextByAXSpringBoardServer(void)
                 @"state": @"transitioning",
             };
         }
-        probe = TLinkUITreeLightweightAXProbe(confirmationContext,
-                                              @"ax_springboard_stable_confirm_v1");
-        if (!TLinkAXResultSucceeded(probe)) return probe;
-        verificationCount = 2;
+        direct = confirmationContext;
     }
 
+    // AX can briefly return ui_element_query_failed immediately after an app
+    // switch even though focusedAppPID is already correct. Retry only that
+    // authoritative PID instead of allowing a stale MRU app to replace it.
+    static const useconds_t retryDelaysUs[] = { 0, 35 * 1000, 90 * 1000 };
+    NSDictionary *probe = nil;
+    NSInteger retryCount = 0;
+    for (NSUInteger attempt = 0; attempt < sizeof(retryDelaysUs) / sizeof(retryDelaysUs[0]); attempt++) {
+        if (retryDelaysUs[attempt] > 0) {
+            usleep(retryDelaysUs[attempt]);
+            retryCount++;
+            NSDictionary *latest = TLinkUITreeAXSpringBoardContext();
+            directObservationCount++;
+            if (![latest[@"ok"] boolValue] ||
+                ![latest[@"bundle_id"] isEqualToString:bundleId] ||
+                [latest[@"pid"] intValue] != pid) {
+                sTLinkAXSpringBoardState = @"transitioning";
+                sTLinkAXSpringBoardError = @"ui_ax_springboard_context_unsettled";
+                return @{
+                    @"ok": @(false),
+                    @"authoritative": @(true),
+                    @"error": sTLinkAXSpringBoardError,
+                    @"bundle_id": bundleId ?: @"",
+                    @"pid": @(pid),
+                    @"source": direct[@"source"] ?: @"ax_springboard_focused_pid_v1",
+                    @"diagnostic": [NSString stringWithFormat:
+                        @"%@ retry=%ld expected_bundle=%@ expected_pid=%d latest_bundle=%@ latest_pid=%d fingerprint_skipped=1",
+                        sTLinkAXSpringBoardDiagnostic ?: @"",
+                        (long)retryCount,
+                        bundleId ?: @"",
+                        pid,
+                        latest[@"bundle_id"] ?: @"",
+                        [latest[@"pid"] intValue]],
+                    @"direct_retry_count": @(retryCount),
+                    @"state": @"transitioning",
+                };
+            }
+            direct = latest;
+        }
+
+        probe = TLinkUITreeLightweightAXProbe(direct,
+                                              direct[@"source"] ?: @"ax_springboard_focused_pid_v1");
+        if (TLinkAXResultSucceeded(probe)) break;
+        NSString *probeError = [probe[@"error"] isKindOfClass:[NSString class]]
+            ? probe[@"error"] : @"";
+        if (![probeError isEqualToString:@"ui_element_query_failed"]) break;
+    }
+
+    if (!TLinkAXResultSucceeded(probe)) {
+        NSString *probeError = [probe[@"error"] isKindOfClass:[NSString class]]
+            ? probe[@"error"] : @"ui_ax_springboard_probe_failed";
+        BOOL targetNotReady = [probeError isEqualToString:@"ui_element_query_failed"];
+        sTLinkAXSpringBoardState = targetNotReady ? @"target_not_ready" : @"probe_failed";
+        sTLinkAXSpringBoardError = targetNotReady
+            ? @"ui_ax_springboard_target_not_ready"
+            : probeError;
+        return @{
+            @"ok": @(false),
+            @"authoritative": @(true),
+            @"error": sTLinkAXSpringBoardError,
+            @"ax_probe_error": probeError,
+            @"bundle_id": bundleId ?: @"",
+            @"pid": @(pid),
+            @"source": direct[@"source"] ?: @"ax_springboard_focused_pid_v1",
+            @"diagnostic": [NSString stringWithFormat:
+                @"%@ authoritative_pid=1 ax_retry_count=%ld direct_observations=%ld fingerprint_skipped=1 probe_error=%@",
+                sTLinkAXSpringBoardDiagnostic ?: @"",
+                (long)retryCount,
+                (long)directObservationCount,
+                probeError],
+            @"direct_retry_count": @(retryCount),
+            @"verification_count": @(directObservationCount),
+            @"state": targetNotReady ? @"transitioning" : @"unavailable",
+        };
+    }
+
+    NSMutableDictionary *successfulProbe = [probe mutableCopy];
+    successfulProbe[@"direct_retry_count"] = @(retryCount);
     NSString *diagnostic = [NSString stringWithFormat:
-        @"%@ fingerprint_ms=%ld changed_cells=%lu average_delta=%ld screen_changed=%d context_changed=%d verification_count=%ld",
+        @"%@ authoritative_pid=1 ax_retry_count=%ld direct_observations=%ld fingerprint_skipped=1 context_changed=%d",
         direct[@"diagnostic"] ?: @"",
-        (long)sTLinkUITreeLastFingerprintMs,
-        (unsigned long)changedCells,
-        (long)averageDelta,
-        screenChanged,
-        contextChanged,
-        (long)verificationCount];
-    return TLinkUITreeCommitProbe(probe,
+        (long)retryCount,
+        (long)directObservationCount,
+        contextChanged];
+    return TLinkUITreeCommitProbe(successfulProbe,
                                   direct[@"source"] ?: @"ax_springboard_focused_pid_v1",
                                   diagnostic,
-                                  fingerprint,
-                                  verificationCount);
+                                  nil,
+                                  directObservationCount);
 }
 
 static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
@@ -7421,6 +7484,11 @@ static NSDictionary *TLinkUITreeFrontmostContext(void)
     // process scan below as a fail-closed compatibility fallback.
     NSDictionary *axSpringBoardContext = TLinkUITreeContextByAXSpringBoardServer();
     if (TLinkAXResultSucceeded(axSpringBoardContext)) return axSpringBoardContext;
+    if ([axSpringBoardContext[@"authoritative"] boolValue]) {
+        // A mapped focused PID remains authoritative while its AX tree starts.
+        // Never let a stale MRU/process candidate overwrite that identity.
+        return axSpringBoardContext;
+    }
 
     if (sTLinkUITreeAcceptedBundleId.length > 0 &&
         sTLinkUITreeAcceptedPid > 0 &&
@@ -7558,7 +7626,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             (CFAbsoluteTimeGetCurrent() - resolveStarted) * 1000.0);
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @11;
+        capability[@"implementation_version"] = @12;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
@@ -7571,6 +7639,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"fallback_error": foreground[@"fallback_error"] ?: @"",
             @"generation": foreground[@"generation"] ?: @(sTLinkUITreeContextGeneration),
             @"verification_count": foreground[@"verification_count"] ?: @0,
+            @"direct_retry_count": foreground[@"direct_retry_count"] ?: @0,
             @"state": foreground[@"state"] ?: @"unresolved",
             @"resolve_duration_ms": @(resolveDurationMs),
             @"legacy_foreground_hot_path_disabled": @(sTLinkUITreeLegacyForegroundUnavailable),
