@@ -5900,6 +5900,8 @@ static pid_t sTLinkUITreeAcceptedPid = 0;
 static uint64_t sTLinkUITreeContextGeneration = 0;
 static NSString *sTLinkUITreeExpectedBundleId = nil;
 static uint64_t sTLinkUITreeExpectedAtMs = 0;
+static NSUInteger sTLinkUITreeLaunchableBundleCount = 0;
+static NSUInteger sTLinkUITreeExcludedServiceCount = 0;
 static id sTLinkFBSDisplayLayoutMonitor = nil;
 static id sTLinkFBSDisplayLayoutBlock = nil;
 static NSString *sTLinkFrontmostDiag = nil;
@@ -6573,8 +6575,77 @@ static NSData *TLinkHandleFrontmostPid(void)
     return TLinkSuccess([NSString stringWithFormat:@"%d", pid]);
 }
 
+static NSSet<NSString *> *TLinkUITreeLaunchableBundleIds(void)
+{
+    id workspace = TLinkApplicationWorkspace();
+    SEL allApplicationsSel = NSSelectorFromString(@"allApplications");
+    if (!workspace || ![workspace respondsToSelector:allApplicationsSel]) return [NSSet set];
+
+    NSArray *applications = nil;
+    @try {
+        applications = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, allApplicationsSel);
+    } @catch (__unused NSException *exception) {
+        applications = nil;
+    }
+    if (![applications isKindOfClass:[NSArray class]]) return [NSSet set];
+
+    NSMutableSet<NSString *> *bundleIds = [NSMutableSet set];
+    for (id proxy in applications) {
+        NSString *bundleId = TLinkStringForSelectorOrKey(proxy,
+                                                          @"bundleIdentifier",
+                                                          @"bundleIdentifier");
+        if (bundleId.length == 0) {
+            bundleId = TLinkStringForSelectorOrKey(proxy,
+                                                   @"applicationIdentifier",
+                                                   @"applicationIdentifier");
+        }
+        id appTags = TLinkObjectForSelectorOrKey(proxy, @"appTags", @"appTags");
+        if ([appTags isKindOfClass:[NSArray class]] &&
+            [(NSArray *)appTags containsObject:@"hidden"]) continue;
+        if (bundleId.length > 0) [bundleIds addObject:bundleId];
+    }
+    [bundleIds addObject:@"com.apple.springboard"];
+    return bundleIds;
+}
+
+static BOOL TLinkUITreeInfoDescribesInteractiveApp(NSDictionary *info,
+                                                   NSString *bundleId,
+                                                   NSString *executable)
+{
+    if (![info isKindOfClass:[NSDictionary class]] || bundleId.length == 0) return NO;
+    NSString *packageType = [info[@"CFBundlePackageType"] isKindOfClass:[NSString class]]
+        ? info[@"CFBundlePackageType"] : @"";
+    if (packageType.length > 0 && ![packageType isEqualToString:@"APPL"]) return NO;
+    if ([info[@"LSBackgroundOnly"] boolValue] || [info[@"LSUIElement"] boolValue]) return NO;
+
+    id rawTags = info[@"SBAppTags"];
+    NSArray *tags = [rawTags isKindOfClass:[NSArray class]] ? rawTags : @[];
+    if ([tags containsObject:@"hidden"]) return NO;
+
+    static NSSet<NSString *> *systemUIServices = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        systemUIServices = [NSSet setWithArray:@[
+            @"com.apple.assistivetouchd",
+            @"com.apple.AccessibilityUIServer",
+            @"com.apple.UIKitSystem",
+        ]];
+    });
+    if ([systemUIServices containsObject:bundleId]) return NO;
+
+    NSString *lowerBundle = bundleId.lowercaseString;
+    NSString *lowerExecutable = executable.lowercaseString;
+    if ([lowerBundle hasPrefix:@"com.apple."] &&
+        [lowerBundle hasSuffix:@"d"] &&
+        [lowerExecutable hasSuffix:@"d"]) return NO;
+    return YES;
+}
+
 static NSArray<NSDictionary *> *TLinkRunningApplicationContexts(void)
 {
+    NSSet<NSString *> *launchableBundleIds = TLinkUITreeLaunchableBundleIds();
+    sTLinkUITreeLaunchableBundleCount = launchableBundleIds.count;
+    sTLinkUITreeExcludedServiceCount = 0;
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
     size_t processBytes = 0;
     if (sysctl(mib, 4, NULL, &processBytes, NULL, 0) != 0 || processBytes == 0) return @[];
@@ -6615,6 +6686,12 @@ static NSArray<NSDictionary *> *TLinkRunningApplicationContexts(void)
             : @"";
         if (bundleId.length == 0 || executable.length == 0 ||
             ![[processPath lastPathComponent] isEqualToString:executable]) {
+            continue;
+        }
+
+        if (!TLinkUITreeInfoDescribesInteractiveApp(info, bundleId, executable) ||
+            (launchableBundleIds.count > 0 && ![launchableBundleIds containsObject:bundleId])) {
+            sTLinkUITreeExcludedServiceCount++;
             continue;
         }
 
@@ -6867,7 +6944,9 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
                     NSInteger fastDurationMs = (NSInteger)llround(
                         (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
                     NSString *fastDiagnostic = [NSString stringWithFormat:
-                        @"ax_snapshot_probe_v3 path=mru_fast priority=%lu probed=%lu screen_changed=1 duration_ms=%ld selected_index=%@ selected_bundle=%@",
+                        @"ax_snapshot_probe_v3 path=mru_fast launchable=%lu excluded_services=%lu priority=%lu probed=%lu screen_changed=1 duration_ms=%ld selected_index=%@ selected_bundle=%@",
+                        (unsigned long)sTLinkUITreeLaunchableBundleCount,
+                        (unsigned long)sTLinkUITreeExcludedServiceCount,
                         (unsigned long)priorityCount,
                         (unsigned long)probed,
                         (long)fastDurationMs,
@@ -6906,7 +6985,9 @@ static NSDictionary *TLinkUITreeContextByAXSnapshot(NSString *previousBundleId,
 
     NSInteger durationMs = (NSInteger)llround((CFAbsoluteTimeGetCurrent() - started) * 1000.0);
     NSString *diagnostic = [NSString stringWithFormat:
-        @"ax_snapshot_probe_v3 candidates=%lu ordered=%lu priority=%lu probed=%lu matches=%lu eligible=%lu alternatives=%lu screen_changed=%d duration_ms=%ld first_error=%@",
+        @"ax_snapshot_probe_v3 launchable=%lu excluded_services=%lu candidates=%lu ordered=%lu priority=%lu probed=%lu matches=%lu eligible=%lu alternatives=%lu screen_changed=%d duration_ms=%ld first_error=%@",
+        (unsigned long)sTLinkUITreeLaunchableBundleCount,
+        (unsigned long)sTLinkUITreeExcludedServiceCount,
         (unsigned long)allCandidates.count,
         (unsigned long)orderedCandidates.count,
         (unsigned long)priorityCount,
@@ -7134,7 +7215,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             (CFAbsoluteTimeGetCurrent() - resolveStarted) * 1000.0);
         capability[@"runtime"] = @"trollstore";
         capability[@"service"] = @"streamd";
-        capability[@"implementation_version"] = @7;
+        capability[@"implementation_version"] = @8;
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
         capability[@"foreground_context"] = @{
             @"ok": @([foreground[@"ok"] boolValue]),
