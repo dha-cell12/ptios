@@ -713,9 +713,15 @@ export function renderAdminDashboard(nonce) {
         }
       }
 
-      function renderDevices(devices) {
+      function renderDevices(devices, physicalDevices, hardwareEvents) {
         var list = byId("device-list");
         list.replaceChildren();
+        var physicalById = {};
+        (physicalDevices || []).forEach(function (physical) { physicalById[physical.id] = physical; });
+        var latestEventByDevice = {};
+        (hardwareEvents || []).forEach(function (event) {
+          if (!latestEventByDevice[event.device_id]) latestEventByDevice[event.device_id] = event;
+        });
         if (!devices.length) {
           var empty = document.createElement("div");
           empty.className = "empty";
@@ -735,7 +741,16 @@ export function renderAdminDashboard(nonce) {
           hash.className = "muted small device-id";
           hash.title = device.device_key_hash;
           hash.textContent = "Key " + device.device_key_hash.slice(0, 14) + "...";
-          identity.append(id, hash);
+          var physical = physicalById[device.physical_device_id];
+          var event = latestEventByDevice[device.id];
+          var hardware = document.createElement("div");
+          hardware.className = "muted small device-id";
+          hardware.textContent = physical
+            ? "Physical " + physical.id.slice(0, 12) + "… · resets " + physical.reset_count +
+              " · transfers " + physical.transfer_count + " · risk " + physical.risk_score +
+              (event ? " · " + event.decision_code : "")
+            : "Physical identity pending next activation";
+          identity.append(id, hash, hardware);
 
           var seen = document.createElement("span");
           seen.className = "muted small device-seen";
@@ -782,7 +797,7 @@ export function renderAdminDashboard(nonce) {
           byId("manage-max-devices").value = String(license.max_devices);
           byId("manage-expiry").value = inputFromEpoch(license.expires_at);
           setSelectedFeatures("manage-feature", license.features);
-          renderDevices(payload.devices || []);
+          renderDevices(payload.devices || [], payload.physical_devices || [], payload.hardware_events || []);
           byId("manage-dialog").showModal();
         } catch (error) {
           setNotice(error.message, "error");

@@ -5,6 +5,7 @@ const decoder = new TextDecoder();
 
 const LICENSE_CONTRACT_VERSION = 1;
 const DEVICE_PROOF_VERSION = 2;
+const ACTIVATION_PROOF_VERSION = 2;
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_LICENSE_KEY_LENGTH = 128;
 const ALLOWED_FEATURES = new Set(["automation", "stream", "script", "admin", "shell"]);
@@ -146,6 +147,188 @@ function validatedBoolean(value, name, fallback = false) {
 
 function deviceProofMessage(action, payload) {
   return `tlinkauto-license-device-proof-v${DEVICE_PROOF_VERSION}\n${action}\n${payload}`;
+}
+
+function activationProofMessage(challenge, intent, claimsDigest) {
+  return `tlinkauto-license-activation-proof-v${ACTIVATION_PROOF_VERSION}\n${challenge}\n${intent}\n${claimsDigest}`;
+}
+
+function validatedActivationIntent(value) {
+  if (value !== "reset_recovery" && value !== "device_transfer") {
+    throw new RequestError(400, "invalid_activation_intent");
+  }
+  return value;
+}
+
+function hardwarePolicyMode(env) {
+  const mode = env.HARDWARE_POLICY_MODE || "observe";
+  if (mode !== "observe" && mode !== "enforce") throw new Error("hardware_policy_mode_invalid");
+  return mode;
+}
+
+function normalizeHardwareValue(field, value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 128) {
+    throw new RequestError(400, "invalid_hardware_claims");
+  }
+  let normalized = value.replace(/\0/g, "").trim();
+  if (field === "udid") normalized = normalized.replace(/-/g, "").toLowerCase();
+  if (field === "serial" || field === "mlb") normalized = normalized.replace(/\s+/g, "").toUpperCase();
+  if (field === "ecid") {
+    try {
+      normalized = BigInt(normalized).toString(10);
+    } catch {
+      throw new RequestError(400, "invalid_hardware_claims");
+    }
+  }
+  if (!normalized || normalized.length > 128 || !/^[A-Za-z0-9]+$/.test(normalized)) {
+    throw new RequestError(400, "invalid_hardware_claims");
+  }
+  return normalized;
+}
+
+function validatedHardwareClaims(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 1 ||
+      !Array.isArray(value.collectors) || value.collectors.length === 0 || value.collectors.length > 4) {
+    throw new RequestError(400, "invalid_hardware_claims");
+  }
+  const allowedSources = new Set(["mobile_gestalt", "ioregistry"]);
+  const fields = ["udid", "serial", "mlb", "ecid"];
+  const collectors = [];
+  const seenSources = new Set();
+  for (const collector of value.collectors) {
+    if (!collector || typeof collector !== "object" || Array.isArray(collector) ||
+        !allowedSources.has(collector.source) || seenSources.has(collector.source)) {
+      throw new RequestError(400, "invalid_hardware_claims");
+    }
+    seenSources.add(collector.source);
+    const rawValues = collector.values && typeof collector.values === "object" && !Array.isArray(collector.values)
+      ? collector.values
+      : {};
+    const values = {};
+    for (const field of fields) {
+      if (rawValues[field] !== undefined && rawValues[field] !== null && rawValues[field] !== "") {
+        values[field] = normalizeHardwareValue(field, rawValues[field]);
+      }
+    }
+    collectors.push({ source: collector.source, values });
+  }
+  collectors.sort((left, right) => left.source.localeCompare(right.source));
+  return { version: 1, collectors };
+}
+
+function hardwareFieldValues(claims) {
+  const values = { udid: [], serial: [], mlb: [], ecid: [] };
+  for (const collector of claims.collectors) {
+    for (const field of Object.keys(values)) {
+      const value = collector.values[field];
+      if (value && !values[field].includes(value)) values[field].push(value);
+    }
+  }
+  return values;
+}
+
+async function hmacIdentifier(env, field, value) {
+  if (!env.DEVICE_ID_PEPPER || typeof env.DEVICE_ID_PEPPER !== "string") {
+    throw new Error("device_id_pepper_missing");
+  }
+  const key = await crypto.subtle.importKey(
+    "raw", encoder.encode(env.DEVICE_ID_PEPPER), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  return base64UrlEncode(await crypto.subtle.sign("HMAC", key, encoder.encode(`${field}\0${value}`)));
+}
+
+async function fingerprintHardwareClaims(env, claims) {
+  const values = hardwareFieldValues(claims);
+  const hashes = {};
+  const conflicts = [];
+  let identifierMask = 0;
+  const bits = { udid: 1, serial: 2, mlb: 4, ecid: 8 };
+  for (const field of Object.keys(values)) {
+    if (values[field].length > 0) identifierMask |= bits[field];
+    if (values[field].length > 1) conflicts.push(field);
+    hashes[field] = [];
+    for (const raw of values[field]) hashes[field].push(await hmacIdentifier(env, field, raw));
+  }
+  return { hashes, conflicts, identifierMask };
+}
+
+function validatedStoredFingerprints(value) {
+  const fields = ["udid", "serial", "mlb", "ecid"];
+  if (!value || typeof value !== "object" || !value.hashes || typeof value.hashes !== "object" ||
+      !Array.isArray(value.conflicts) || !Number.isSafeInteger(value.identifierMask) ||
+      value.identifierMask < 0 || value.identifierMask > 15) {
+    throw new Error("stored_hardware_fingerprints_invalid");
+  }
+  for (const field of fields) {
+    if (!Array.isArray(value.hashes[field]) || value.hashes[field].length > 2 ||
+        value.hashes[field].some((hash) => typeof hash !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(hash))) {
+      throw new Error("stored_hardware_fingerprints_invalid");
+    }
+  }
+  if (value.conflicts.some((field) => !fields.includes(field))) {
+    throw new Error("stored_hardware_fingerprints_invalid");
+  }
+  return value;
+}
+
+function physicalMatchScore(physical, fingerprints) {
+  const matched = [];
+  for (const field of ["udid", "serial", "mlb", "ecid"]) {
+    if (physical[`${field}_hmac`] && fingerprints.hashes[field].includes(physical[`${field}_hmac`])) matched.push(field);
+  }
+  return {
+    matched,
+    strong: matched.includes("ecid") || matched.filter((field) => field !== "ecid").length >= 2,
+  };
+}
+
+async function evaluateHardwareVerdict(env, licenseId, intent, fingerprints) {
+  const physicalDevices = await database(env).prepare(
+    "SELECT * FROM physical_devices WHERE license_id = ? ORDER BY last_seen_at DESC",
+  ).bind(licenseId).all();
+  const rows = physicalDevices.results || [];
+  const scored = rows.map((physical) => ({ physical, ...physicalMatchScore(physical, fingerprints) }));
+  const strongMatches = scored.filter((match) => match.strong);
+  const anyMatches = scored.filter((match) => match.matched.length > 0);
+  const availableStable = ["udid", "serial", "mlb", "ecid"]
+    .filter((field) => fingerprints.hashes[field].length === 1);
+
+  let classification;
+  let riskScore;
+  let physical = null;
+  let review = false;
+  if (fingerprints.conflicts.length > 0) {
+    classification = "source_conflict";
+    riskScore = 100;
+    review = true;
+  } else if (availableStable.length < 2 && !availableStable.includes("ecid")) {
+    classification = "insufficient_evidence";
+    riskScore = 70;
+    review = true;
+  } else if (strongMatches.length === 1) {
+    physical = strongMatches[0].physical;
+    classification = intent === "reset_recovery" ? "same_device_reset" : "same_device_reactivation";
+    riskScore = intent === "reset_recovery" ? 5 : 15;
+  } else if (strongMatches.length > 1) {
+    classification = "ambiguous_identity";
+    riskScore = 100;
+    review = true;
+  } else if (anyMatches.length > 0) {
+    classification = "partial_identity_match";
+    riskScore = 85;
+    review = true;
+  } else if (rows.length === 0) {
+    classification = "first_bind";
+    riskScore = 0;
+  } else if (intent === "reset_recovery") {
+    classification = "reset_identity_mismatch";
+    riskScore = 95;
+    review = true;
+  } else {
+    classification = "device_transfer";
+    riskScore = 25;
+  }
+  return { fingerprints, physical, classification, riskScore, review };
 }
 
 function leaseDurations(env) {
@@ -403,6 +586,18 @@ async function handleChallenge(request, env) {
   const body = await readJson(request);
   const key = validatedLicenseKey(body.license_key);
   const publicJwk = validatePublicJwk(body.device_public_key);
+  hardwarePolicyMode(env);
+  const legacyActivation = body.activation_intent === undefined && body.hardware_claims === undefined &&
+    env.ALLOW_LEGACY_DEVICE_PROOF === "true";
+  const activationIntent = legacyActivation ? "legacy" : validatedActivationIntent(body.activation_intent);
+  let hardwareClaimsDigest = "";
+  let hardwareFingerprintsJson = "{}";
+  if (!legacyActivation) {
+    const hardwareClaims = validatedHardwareClaims(body.hardware_claims);
+    const hardwareClaimsJson = JSON.stringify(hardwareClaims);
+    hardwareClaimsDigest = await sha256Base64Url(hardwareClaimsJson);
+    hardwareFingerprintsJson = JSON.stringify(await fingerprintHardwareClaims(env, hardwareClaims));
+  }
   const license = await loadLicense(env, key);
   const now = Math.floor(Date.now() / 1000);
   if (!licenseUsable(license, now)) return errorResponse("invalid_license", 403);
@@ -412,9 +607,20 @@ async function handleChallenge(request, env) {
   const challenge = randomToken(32);
   const keyHash = await deviceKeyHash(publicJwk);
   await database(env).prepare(
-    "INSERT INTO activation_challenges (id, license_id, device_key_hash, challenge, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).bind(id, license.id, keyHash, challenge, now + 300, now).run();
-  return jsonResponse({ ok: true, license_contract_version: LICENSE_CONTRACT_VERSION, challenge_id: id, challenge, expires_at: now + 300 });
+    "INSERT INTO activation_challenges (id, license_id, device_key_hash, challenge, activation_intent, hardware_fingerprints_json, hardware_claims_digest, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(id, license.id, keyHash, challenge, activationIntent, hardwareFingerprintsJson, hardwareClaimsDigest, now + 300, now).run();
+  const response = {
+    ok: true,
+    license_contract_version: LICENSE_CONTRACT_VERSION,
+    challenge_id: id,
+    challenge,
+    expires_at: now + 300,
+  };
+  if (!legacyActivation) {
+    response.activation_intent = activationIntent;
+    response.hardware_claims_digest = hardwareClaimsDigest;
+  }
+  return jsonResponse(response);
 }
 
 async function verifyDeviceSignature(publicJwk, signature, message) {
@@ -479,6 +685,51 @@ async function activationDeniedResponse(env, license, now) {
   });
 }
 
+async function persistHardwareVerdict(env, license, device, intent, verdict, now) {
+  let physicalId = verdict.physical?.id || crypto.randomUUID();
+  if (verdict.physical) {
+    const resetIncrement = verdict.classification === "same_device_reset" ? 1 : 0;
+    const transferIncrement = verdict.classification === "device_transfer" ? 1 : 0;
+    await database(env).prepare(
+      "UPDATE physical_devices SET last_seen_at = ?, reset_count = reset_count + ?, transfer_count = transfer_count + ?, risk_score = CASE WHEN risk_score > ? THEN risk_score ELSE ? END, status = ? WHERE id = ?",
+    ).bind(now, resetIncrement, transferIncrement, verdict.riskScore, verdict.riskScore,
+      verdict.review ? "review" : "active", physicalId).run();
+  } else {
+    const singleHash = (field) => verdict.fingerprints.hashes[field].length === 1
+      ? verdict.fingerprints.hashes[field][0]
+      : null;
+    const inserted = await database(env).prepare(
+      "INSERT OR IGNORE INTO physical_devices (id, license_id, udid_hmac, serial_hmac, mlb_hmac, ecid_hmac, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+    ).bind(physicalId, license.id, singleHash("udid"), singleHash("serial"), singleHash("mlb"),
+      singleHash("ecid"), now, now, verdict.classification === "device_transfer" ? 1 : 0,
+      verdict.riskScore, verdict.review ? "review" : "active").run();
+    if (Number(inserted.meta?.changes || 0) !== 1) {
+      const current = await database(env).prepare(
+        "SELECT * FROM physical_devices WHERE license_id = ? ORDER BY last_seen_at DESC",
+      ).bind(license.id).all();
+      const collision = (current.results || [])
+        .map((physical) => ({ physical, score: physicalMatchScore(physical, verdict.fingerprints) }))
+        .find((candidate) => candidate.score.matched.length > 0);
+      if (!collision) throw new Error("physical_identity_insert_conflict");
+      physicalId = collision.physical.id;
+      await database(env).prepare(
+        "UPDATE physical_devices SET last_seen_at = ?, reset_count = reset_count + ?, transfer_count = transfer_count + ?, risk_score = CASE WHEN risk_score > ? THEN risk_score ELSE ? END, status = ? WHERE id = ?",
+      ).bind(now, 0, 0, verdict.riskScore, verdict.riskScore,
+        verdict.review ? "review" : collision.physical.status, physicalId).run();
+    }
+  }
+  await database(env).prepare(
+    "UPDATE devices SET physical_device_id = ?, bind_reason = ?, hardware_confidence = ?, hardware_policy_version = ? WHERE id = ?",
+  ).bind(physicalId, intent, verdict.review ? "review" : "strong",
+    Math.max(1, Number(env.HARDWARE_POLICY_VERSION || 1)), device.id).run();
+  const eventId = crypto.randomUUID();
+  await database(env).prepare(
+    "INSERT INTO license_device_events (id, license_id, physical_device_id, device_id, event_type, decision_code, match_confidence, identifier_mask, risk_score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(eventId, license.id, physicalId, device.id, intent, verdict.classification,
+    verdict.review ? "review" : "strong", verdict.fingerprints.identifierMask, verdict.riskScore, now).run();
+  return { physicalId, eventId };
+}
+
 async function handleActivate(request, env) {
   const body = await readJson(request);
   const key = validatedLicenseKey(body.license_key);
@@ -500,7 +751,16 @@ async function handleActivate(request, env) {
     return errorResponse("invalid_or_expired_challenge", 403);
   }
 
-  const proofValid = await verifyDeviceSignature(publicJwk, signature, challengeRow.challenge);
+  const legacyActivation = challengeRow.activation_intent === "legacy" &&
+    env.ALLOW_LEGACY_DEVICE_PROOF === "true";
+  const activationMessage = legacyActivation
+    ? challengeRow.challenge
+    : activationProofMessage(
+      challengeRow.challenge,
+      challengeRow.activation_intent,
+      challengeRow.hardware_claims_digest,
+    );
+  const proofValid = await verifyDeviceSignature(publicJwk, signature, activationMessage);
   if (!proofValid) return errorResponse("invalid_device_signature", 403);
 
   const consume = await database(env).prepare(
@@ -508,16 +768,43 @@ async function handleActivate(request, env) {
   ).bind(challengeRow.id, license.id, deviceHash, now).run();
   if (Number(consume.meta?.changes || 0) !== 1) return errorResponse("challenge_already_consumed", 409);
 
+  let hardwareVerdict = null;
+  if (!legacyActivation) {
+    let hardwareFingerprints;
+    try {
+      hardwareFingerprints = validatedStoredFingerprints(
+        JSON.parse(challengeRow.hardware_fingerprints_json || "{}"),
+      );
+    } catch {
+      throw new Error("stored_hardware_fingerprints_invalid");
+    }
+    hardwareVerdict = await evaluateHardwareVerdict(
+      env, license.id, challengeRow.activation_intent, hardwareFingerprints,
+    );
+  }
+  if (hardwareVerdict?.review && hardwarePolicyMode(env) === "enforce") {
+    return errorResponse("device_review_required", 403);
+  }
+  if (hardwareVerdict?.physical && hardwareVerdict.classification === "same_device_reset") {
+    await database(env).prepare(
+      "UPDATE devices SET status = 'revoked', last_seen_at = ?, deactivated_at = ?, slot_reusable_at = ? WHERE license_id = ? AND physical_device_id = ?",
+    ).bind(now, now, now, license.id, hardwareVerdict.physical.id).run();
+  }
+
   let device = await database(env).prepare(
     "SELECT * FROM devices WHERE license_id = ? AND device_key_hash = ?",
   ).bind(license.id, deviceHash).first();
   if (!device) {
     const policy = churnPolicy(env, now);
     const deviceId = crypto.randomUUID();
-    const inserted = await database(env).prepare(
-      "INSERT OR IGNORE INTO devices (id, license_id, device_key_hash, public_jwk, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, 0, 0, 0 WHERE (SELECT COUNT(*) FROM devices WHERE license_id = ? AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) < (SELECT max_devices FROM licenses WHERE id = ?) AND (SELECT COUNT(*) FROM devices WHERE license_id = ? AND created_at >= ?) < ?",
-    ).bind(deviceId, license.id, deviceHash, JSON.stringify(publicJwk), now, now,
-      license.id, now, license.id, license.id, policy.windowStart, policy.maximum).run();
+    const samePhysicalReset = hardwareVerdict?.physical && hardwareVerdict.classification === "same_device_reset";
+    const insertSql = samePhysicalReset
+      ? "INSERT OR IGNORE INTO devices (id, license_id, device_key_hash, public_jwk, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, 0, 0, 0 WHERE (SELECT COUNT(*) FROM devices WHERE license_id = ? AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) < (SELECT max_devices FROM licenses WHERE id = ?)"
+      : "INSERT OR IGNORE INTO devices (id, license_id, device_key_hash, public_jwk, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at) SELECT ?, ?, ?, ?, 'active', ?, ?, 0, 0, 0 WHERE (SELECT COUNT(*) FROM devices WHERE license_id = ? AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) < (SELECT max_devices FROM licenses WHERE id = ?) AND (SELECT COUNT(*) FROM devices WHERE license_id = ? AND created_at >= ?) < ?";
+    const insertArgs = [deviceId, license.id, deviceHash, JSON.stringify(publicJwk), now, now,
+      license.id, now, license.id];
+    if (!samePhysicalReset) insertArgs.push(license.id, policy.windowStart, policy.maximum);
+    const inserted = await database(env).prepare(insertSql).bind(...insertArgs).run();
     if (Number(inserted.meta?.changes || 0) !== 1) {
       device = await database(env).prepare(
         "SELECT * FROM devices WHERE license_id = ? AND device_key_hash = ?",
@@ -543,7 +830,15 @@ async function handleActivate(request, env) {
     }
   }
   device = await database(env).prepare("SELECT * FROM devices WHERE id = ?").bind(device.id).first();
-  return jsonResponse({ ok: true, license_contract_version: LICENSE_CONTRACT_VERSION, lease: await issueLease(env, license, device) });
+  if (hardwareVerdict) {
+    await persistHardwareVerdict(env, license, device, challengeRow.activation_intent, hardwareVerdict, now);
+  }
+  return jsonResponse({
+    ok: true,
+    license_contract_version: LICENSE_CONTRACT_VERSION,
+    hardware_verdict: "accepted",
+    lease: await issueLease(env, license, device),
+  });
 }
 
 async function authenticatedDeviceRequest(body, env, expectedAction) {
@@ -709,7 +1004,7 @@ async function handleAdminLicenseDetail(request, env) {
   const license = await database(env).prepare("SELECT * FROM licenses WHERE id = ?").bind(id).first();
   if (!license) throw new RequestError(404, "not_found");
   const devicesResult = await database(env).prepare(
-    "SELECT id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at FROM devices WHERE license_id = ? ORDER BY last_seen_at DESC",
+    "SELECT id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at, physical_device_id, bind_reason, hardware_confidence, hardware_policy_version FROM devices WHERE license_id = ? ORDER BY last_seen_at DESC",
   ).bind(id).all();
   const devices = (Array.isArray(devicesResult.results) ? devicesResult.results : []).map((device) => ({
     id: device.id,
@@ -720,6 +1015,31 @@ async function handleAdminLicenseDetail(request, env) {
     lease_offline_until: Number(device.lease_offline_until || 0),
     slot_reusable_at: Number(device.slot_reusable_at || 0),
     deactivated_at: Number(device.deactivated_at || 0),
+    physical_device_id: device.physical_device_id || null,
+    bind_reason: device.bind_reason || null,
+    hardware_confidence: device.hardware_confidence || null,
+    hardware_policy_version: Number(device.hardware_policy_version || 0),
+  }));
+  const physicalResult = await database(env).prepare(
+    "SELECT id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status FROM physical_devices WHERE license_id = ? ORDER BY last_seen_at DESC",
+  ).bind(id).all();
+  const physicalDevices = (physicalResult.results || []).map((physical) => ({
+    id: physical.id,
+    first_seen_at: Number(physical.first_seen_at || 0),
+    last_seen_at: Number(physical.last_seen_at || 0),
+    reset_count: Number(physical.reset_count || 0),
+    transfer_count: Number(physical.transfer_count || 0),
+    risk_score: Number(physical.risk_score || 0),
+    status: physical.status,
+  }));
+  const eventsResult = await database(env).prepare(
+    "SELECT id, physical_device_id, device_id, event_type, decision_code, match_confidence, identifier_mask, risk_score, created_at FROM license_device_events WHERE license_id = ? ORDER BY created_at DESC LIMIT 100",
+  ).bind(id).all();
+  const hardwareEvents = (eventsResult.results || []).map((event) => ({
+    ...event,
+    identifier_mask: Number(event.identifier_mask || 0),
+    risk_score: Number(event.risk_score || 0),
+    created_at: Number(event.created_at || 0),
   }));
   const now = Math.floor(Date.now() / 1000);
   const activeDevices = devices.filter((device) => (
@@ -730,6 +1050,8 @@ async function handleAdminLicenseDetail(request, env) {
     ok: true,
     license: adminLicenseRecord(license, activeDevices, devices.length),
     devices,
+    physical_devices: physicalDevices,
+    hardware_events: hardwareEvents,
   });
 }
 
@@ -859,6 +1181,8 @@ export const __test = {
   derSignatureToRaw,
   deviceKeyHash,
   deviceProofMessage,
+  activationProofMessage,
+  validatedHardwareClaims,
 };
 
 export default worker;

@@ -105,11 +105,13 @@ class FakeStatement {
         });
       return { success: true, results };
     }
-    if (this.sql === "select id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at from devices where license_id = ? order by last_seen_at desc") {
+    if (this.sql.startsWith("select id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at") &&
+        this.sql.endsWith("from devices where license_id = ? order by last_seen_at desc")) {
       const results = [...this.database.devices.values()]
         .filter((row) => row.license_id === a)
         .sort((left, right) => right.last_seen_at - left.last_seen_at)
-        .map(({ id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at, deactivated_at }) => ({
+        .map(({ id, device_key_hash, status, created_at, last_seen_at, lease_offline_until, slot_reusable_at,
+          deactivated_at, physical_device_id, bind_reason, hardware_confidence, hardware_policy_version }) => ({
           id,
           device_key_hash,
           status,
@@ -118,7 +120,33 @@ class FakeStatement {
           lease_offline_until,
           slot_reusable_at,
           deactivated_at,
+          physical_device_id,
+          bind_reason,
+          hardware_confidence,
+          hardware_policy_version,
         }));
+      return { success: true, results };
+    }
+    if (this.sql === "select * from physical_devices where license_id = ? order by last_seen_at desc") {
+      const results = [...this.database.physicalDevices.values()]
+        .filter((row) => row.license_id === a)
+        .sort((left, right) => right.last_seen_at - left.last_seen_at);
+      return { success: true, results };
+    }
+    if (this.sql === "select id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status from physical_devices where license_id = ? order by last_seen_at desc") {
+      const results = [...this.database.physicalDevices.values()]
+        .filter((row) => row.license_id === a)
+        .sort((left, right) => right.last_seen_at - left.last_seen_at)
+        .map(({ id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status }) => ({
+          id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status,
+        }));
+      return { success: true, results };
+    }
+    if (this.sql === "select id, physical_device_id, device_id, event_type, decision_code, match_confidence, identifier_mask, risk_score, created_at from license_device_events where license_id = ? order by created_at desc limit 100") {
+      const results = [...this.database.events.values()]
+        .filter((row) => row.license_id === a)
+        .sort((left, right) => right.created_at - left.created_at)
+        .slice(0, 100);
       return { success: true, results };
     }
     throw new Error(`fake_d1_unhandled_all: ${this.sql}`);
@@ -141,12 +169,16 @@ class FakeStatement {
       });
       changes = 1;
     } else if (this.sql.startsWith("insert into activation_challenges ")) {
-      const [id, licenseId, deviceKeyHash, challenge, expiresAt, createdAt] = v;
+      const [id, licenseId, deviceKeyHash, challenge, activationIntent, hardwareFingerprintsJson,
+        hardwareClaimsDigest, expiresAt, createdAt] = v;
       this.database.challenges.set(id, {
         id,
         license_id: licenseId,
         device_key_hash: deviceKeyHash,
         challenge,
+        activation_intent: activationIntent,
+        hardware_fingerprints_json: hardwareFingerprintsJson,
+        hardware_claims_digest: hardwareClaimsDigest,
         expires_at: expiresAt,
         created_at: createdAt,
       });
@@ -174,19 +206,23 @@ class FakeStatement {
       }
     } else if (this.sql.startsWith("insert or ignore into devices ")) {
       const [id, licenseId, deviceKeyHash, publicJwk, createdAt, lastSeenAt,
-        occupiedLicenseId, now, maxLicenseId, churnLicenseId, windowStart, churnMaximum] = v;
+        occupiedLicenseId, now, maxLicenseId] = v;
+      const churnLicenseId = v[9];
+      const windowStart = v[10];
+      const churnMaximum = v[11];
       const license = this.database.licenses.get(maxLicenseId);
       const occupied = [...this.database.devices.values()].filter((row) => (
         row.license_id === occupiedLicenseId &&
         (row.status === "active" || (row.status === "release_pending" && row.slot_reusable_at > now))
       )).length;
-      const recent = [...this.database.devices.values()].filter(
+      const recent = churnLicenseId === undefined ? 0 : [...this.database.devices.values()].filter(
         (row) => row.license_id === churnLicenseId && row.created_at >= windowStart,
       ).length;
       const duplicate = [...this.database.devices.values()].some(
         (row) => row.license_id === licenseId && row.device_key_hash === deviceKeyHash,
       );
-      if (!duplicate && license && occupied < license.max_devices && recent < churnMaximum) {
+      if (!duplicate && license && occupied < license.max_devices &&
+          (churnMaximum === undefined || recent < churnMaximum)) {
         this.database.devices.set(id, {
           id,
           license_id: licenseId,
@@ -198,8 +234,19 @@ class FakeStatement {
           lease_offline_until: 0,
           slot_reusable_at: 0,
           deactivated_at: 0,
+          physical_device_id: null,
         });
         changes = 1;
+      }
+    } else if (this.sql === "update devices set status = 'revoked', last_seen_at = ?, deactivated_at = ?, slot_reusable_at = ? where license_id = ? and physical_device_id = ?") {
+      for (const row of this.database.devices.values()) {
+        if (row.license_id === v[3] && row.physical_device_id === v[4]) {
+          row.status = "revoked";
+          row.last_seen_at = v[0];
+          row.deactivated_at = v[1];
+          row.slot_reusable_at = v[2];
+          changes++;
+        }
       }
     } else if (this.sql === "update devices set last_seen_at = ?, public_jwk = ? where id = ?") {
       changes = this.database.update(this.database.devices, v[2], {
@@ -266,6 +313,48 @@ class FakeStatement {
           changes++;
         }
       }
+    } else if (this.sql.startsWith("insert or ignore into physical_devices ")) {
+      const [id, licenseId, udidHmac, serialHmac, mlbHmac, ecidHmac, firstSeenAt,
+        lastSeenAt, transferCount, riskScore, status] = v;
+      const duplicate = [...this.database.physicalDevices.values()].some((row) => (
+        row.license_id === licenseId && [
+          [row.udid_hmac, udidHmac], [row.serial_hmac, serialHmac],
+          [row.mlb_hmac, mlbHmac], [row.ecid_hmac, ecidHmac],
+        ].some(([existing, incoming]) => existing && incoming && existing === incoming)
+      ));
+      if (!duplicate) {
+        this.database.physicalDevices.set(id, {
+          id, license_id: licenseId, udid_hmac: udidHmac, serial_hmac: serialHmac,
+          mlb_hmac: mlbHmac, ecid_hmac: ecidHmac, first_seen_at: firstSeenAt,
+          last_seen_at: lastSeenAt, reset_count: 0, transfer_count: transferCount,
+          risk_score: riskScore, status,
+        });
+        changes = 1;
+      }
+    } else if (this.sql.startsWith("update physical_devices set last_seen_at = ?")) {
+      const row = this.database.physicalDevices.get(v[6]);
+      if (row) {
+        row.last_seen_at = v[0];
+        row.reset_count += v[1];
+        row.transfer_count += v[2];
+        row.risk_score = Math.max(row.risk_score, v[4]);
+        row.status = v[5];
+        changes = 1;
+      }
+    } else if (this.sql.startsWith("update devices set physical_device_id = ?")) {
+      changes = this.database.update(this.database.devices, v[4], {
+        physical_device_id: v[0], bind_reason: v[1], hardware_confidence: v[2],
+        hardware_policy_version: v[3],
+      });
+    } else if (this.sql.startsWith("insert into license_device_events ")) {
+      const [id, licenseId, physicalDeviceId, deviceId, eventType, decisionCode,
+        matchConfidence, identifierMask, riskScore, createdAt] = v;
+      this.database.events.set(id, {
+        id, license_id: licenseId, physical_device_id: physicalDeviceId, device_id: deviceId,
+        event_type: eventType, decision_code: decisionCode, match_confidence: matchConfidence,
+        identifier_mask: identifierMask, risk_score: riskScore, created_at: createdAt,
+      });
+      changes = 1;
     } else if (this.sql.startsWith("update licenses set status = ?, max_devices = ?")) {
       changes = this.database.update(this.database.licenses, v[5], {
         status: v[0],
@@ -291,6 +380,8 @@ class FakeD1 {
     this.licenses = new Map();
     this.devices = new Map();
     this.challenges = new Map();
+    this.physicalDevices = new Map();
+    this.events = new Map();
   }
 
   prepare(sql) {
@@ -321,11 +412,28 @@ async function createEnvironment() {
     OFFLINE_GRACE_SECONDS: "600",
     MAX_NEW_DEVICES_PER_WINDOW: "3",
     DEVICE_CHURN_WINDOW_SECONDS: "2592000",
+    DEVICE_ID_PEPPER: "unit-test-device-identity-pepper",
+    HARDWARE_POLICY_MODE: "observe",
+    HARDWARE_POLICY_VERSION: "1",
     ALLOW_LEGACY_DEVICE_PROOF: "false",
   };
 }
 
-async function createDevice() {
+let hardwareSequence = 1000;
+
+function hardwareClaims(hardwareKey) {
+  const suffix = String(hardwareKey).replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const ecid = String(9000000000000000n + BigInt(suffix.replace(/\D/g, "") || "1"));
+  return {
+    version: 1,
+    collectors: [
+      { source: "mobile_gestalt", values: { udid: `UDID${suffix}`, serial: `SER${suffix}`, mlb: `MLB${suffix}`, ecid } },
+      { source: "ioregistry", values: { serial: `SER${suffix}`, mlb: `MLB${suffix}`, ecid } },
+    ],
+  };
+}
+
+async function createDevice(hardwareKey = `DEVICE${++hardwareSequence}`) {
   const pair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
     true,
@@ -334,6 +442,7 @@ async function createDevice() {
   return {
     pair,
     publicJwk: await crypto.subtle.exportKey("jwk", pair.publicKey),
+    hardwareClaims: hardwareClaims(hardwareKey),
   };
 }
 
@@ -366,13 +475,17 @@ async function createLicense(env, overrides = {}) {
   }, true);
 }
 
-async function activate(env, device, licenseKey = "TLINK-PHASE-0001") {
+async function activate(env, device, licenseKey = "TLINK-PHASE-0001", intent = "device_transfer") {
   const challenge = await call(env, "/v1/challenge", {
     license_key: licenseKey,
     device_public_key: device.publicJwk,
+    activation_intent: intent,
+    hardware_claims: device.hardwareClaims,
   });
   assert.equal(challenge.response.status, 200);
-  const signature = await sign(device.pair.privateKey, challenge.json.challenge);
+  const signature = await sign(device.pair.privateKey, __test.activationProofMessage(
+    challenge.json.challenge, challenge.json.activation_intent, challenge.json.hardware_claims_digest,
+  ));
   const activation = await call(env, "/v1/activate", {
     license_key: licenseKey,
     device_public_key: device.publicJwk,
@@ -380,6 +493,21 @@ async function activate(env, device, licenseKey = "TLINK-PHASE-0001") {
     signature,
   });
   return { challenge, activation };
+}
+
+function activationChallengeBody(device, intent = "device_transfer") {
+  return {
+    license_key: "TLINK-PHASE-0001",
+    device_public_key: device.publicJwk,
+    activation_intent: intent,
+    hardware_claims: device.hardwareClaims,
+  };
+}
+
+async function activationSignature(privateKey, challenge) {
+  return sign(privateKey, __test.activationProofMessage(
+    challenge.challenge, challenge.activation_intent, challenge.hardware_claims_digest,
+  ));
 }
 
 async function authenticatedCall(env, path, lease, privateKey) {
@@ -478,15 +606,12 @@ test("activation challenge rejects bad proof, expiry and reuse", async () => {
   const device = await createDevice();
   const wrongDevice = await createDevice();
 
-  const challenge = await call(env, "/v1/challenge", {
-    license_key: "TLINK-PHASE-0001",
-    device_public_key: device.publicJwk,
-  });
+  const challenge = await call(env, "/v1/challenge", activationChallengeBody(device));
   const badProof = await call(env, "/v1/activate", {
     license_key: "TLINK-PHASE-0001",
     device_public_key: device.publicJwk,
     challenge_id: challenge.json.challenge_id,
-    signature: await sign(wrongDevice.pair.privateKey, challenge.json.challenge),
+    signature: await activationSignature(wrongDevice.pair.privateKey, challenge.json),
   });
   assert.equal(badProof.response.status, 403);
   assert.equal(badProof.json.error, "invalid_device_signature");
@@ -495,22 +620,19 @@ test("activation challenge rejects bad proof, expiry and reuse", async () => {
     license_key: "TLINK-PHASE-0001",
     device_public_key: device.publicJwk,
     challenge_id: challenge.json.challenge_id,
-    signature: await sign(device.pair.privateKey, challenge.json.challenge),
+    signature: await activationSignature(device.pair.privateKey, challenge.json),
   };
   assert.equal((await call(env, "/v1/activate", goodBody)).response.status, 200);
   const reused = await call(env, "/v1/activate", goodBody);
   assert.equal(reused.response.status, 403);
   assert.equal(reused.json.error, "invalid_or_expired_challenge");
 
-  const racingChallenge = await call(env, "/v1/challenge", {
-    license_key: "TLINK-PHASE-0001",
-    device_public_key: device.publicJwk,
-  });
+  const racingChallenge = await call(env, "/v1/challenge", activationChallengeBody(device));
   const racingBody = {
     license_key: "TLINK-PHASE-0001",
     device_public_key: device.publicJwk,
     challenge_id: racingChallenge.json.challenge_id,
-    signature: await sign(device.pair.privateKey, racingChallenge.json.challenge),
+    signature: await activationSignature(device.pair.privateKey, racingChallenge.json),
   };
   const racingResults = await Promise.all([
     call(env, "/v1/activate", racingBody),
@@ -519,19 +641,45 @@ test("activation challenge rejects bad proof, expiry and reuse", async () => {
   assert.equal(racingResults.filter((result) => result.response.status === 200).length, 1);
   assert.equal(racingResults.filter((result) => result.response.status !== 200).length, 1);
 
-  const expired = await call(env, "/v1/challenge", {
-    license_key: "TLINK-PHASE-0001",
-    device_public_key: device.publicJwk,
-  });
+  const expired = await call(env, "/v1/challenge", activationChallengeBody(device));
   env.DB.challenges.get(expired.json.challenge_id).expires_at = 1;
   const expiredResult = await call(env, "/v1/activate", {
     license_key: "TLINK-PHASE-0001",
     device_public_key: device.publicJwk,
     challenge_id: expired.json.challenge_id,
-    signature: await sign(device.pair.privateKey, expired.json.challenge),
+    signature: await activationSignature(device.pair.privateKey, expired.json),
   });
   assert.equal(expiredResult.response.status, 403);
   assert.equal(expiredResult.json.error, "invalid_or_expired_challenge");
+});
+
+test("legacy activation is available only during the explicit rollout window", async () => {
+  const env = await createEnvironment();
+  env.ALLOW_LEGACY_DEVICE_PROOF = "true";
+  await createLicense(env);
+  const device = await createDevice();
+  const challenge = await call(env, "/v1/challenge", {
+    license_key: "TLINK-PHASE-0001",
+    device_public_key: device.publicJwk,
+  });
+  assert.equal(challenge.response.status, 200);
+  assert.equal(Object.hasOwn(challenge.json, "hardware_claims_digest"), false);
+  const activated = await call(env, "/v1/activate", {
+    license_key: "TLINK-PHASE-0001",
+    device_public_key: device.publicJwk,
+    challenge_id: challenge.json.challenge_id,
+    signature: await sign(device.pair.privateKey, challenge.json.challenge),
+  });
+  assert.equal(activated.response.status, 200);
+  assert.equal(env.DB.physicalDevices.size, 0);
+
+  env.ALLOW_LEGACY_DEVICE_PROOF = "false";
+  const blocked = await call(env, "/v1/challenge", {
+    license_key: "TLINK-PHASE-0001",
+    device_public_key: device.publicJwk,
+  });
+  assert.equal(blocked.response.status, 400);
+  assert.equal(blocked.json.error, "invalid_activation_intent");
 });
 
 test("atomic slot allocation prevents two different devices from racing past max_devices", async () => {
@@ -540,15 +688,12 @@ test("atomic slot allocation prevents two different devices from racing past max
   const devices = await Promise.all([createDevice(), createDevice()]);
   const prepared = [];
   for (const device of devices) {
-    const challenge = await call(env, "/v1/challenge", {
-      license_key: "TLINK-PHASE-0001",
-      device_public_key: device.publicJwk,
-    });
+    const challenge = await call(env, "/v1/challenge", activationChallengeBody(device));
     prepared.push({
       license_key: "TLINK-PHASE-0001",
       device_public_key: device.publicJwk,
       challenge_id: challenge.json.challenge_id,
-      signature: await sign(device.pair.privateKey, challenge.json.challenge),
+      signature: await activationSignature(device.pair.privateKey, challenge.json),
     });
   }
   const results = await Promise.all(prepared.map((body) => call(env, "/v1/activate", body)));
@@ -562,20 +707,81 @@ test("parallel activation of the same device is idempotent", async () => {
   const device = await createDevice();
   const bodies = [];
   for (let index = 0; index < 2; index++) {
-    const challenge = await call(env, "/v1/challenge", {
-      license_key: "TLINK-PHASE-0001",
-      device_public_key: device.publicJwk,
-    });
+    const challenge = await call(env, "/v1/challenge", activationChallengeBody(device));
     bodies.push({
       license_key: "TLINK-PHASE-0001",
       device_public_key: device.publicJwk,
       challenge_id: challenge.json.challenge_id,
-      signature: await sign(device.pair.privateKey, challenge.json.challenge),
+      signature: await activationSignature(device.pair.privateKey, challenge.json),
     });
   }
   const results = await Promise.all(bodies.map((body) => call(env, "/v1/activate", body)));
   assert.equal(results.filter((result) => result.response.status === 200).length, 2);
   assert.equal(env.DB.devices.size, 1);
+  assert.equal(env.DB.physicalDevices.size, 1);
+});
+
+test("same physical device after reset gets a new device key without consuming a transfer slot", async () => {
+  const env = await createEnvironment();
+  await createLicense(env, { max_devices: 1 });
+  const beforeReset = await createDevice("RESET4242");
+  const afterReset = await createDevice("RESET4242");
+
+  const first = (await activate(env, beforeReset)).activation;
+  assert.equal(first.response.status, 200);
+  const recovered = (await activate(env, afterReset, "TLINK-PHASE-0001", "reset_recovery")).activation;
+  assert.equal(recovered.response.status, 200);
+
+  const physicalRows = [...env.DB.physicalDevices.values()];
+  assert.equal(physicalRows.length, 1);
+  assert.equal(physicalRows[0].reset_count, 1);
+  assert.equal([...env.DB.devices.values()].filter((row) => row.status === "active").length, 1);
+  assert.equal([...env.DB.devices.values()].filter((row) => row.status === "revoked").length, 1);
+  assert.equal(new Set([...env.DB.devices.values()].map((row) => row.physical_device_id)).size, 1);
+});
+
+test("a real transfer creates another physical identity and keeps only HMAC fingerprints", async () => {
+  const env = await createEnvironment();
+  await createLicense(env, { max_devices: 2 });
+  const first = await createDevice("OWNER1001");
+  const second = await createDevice("OWNER2002");
+  assert.equal((await activate(env, first)).activation.response.status, 200);
+  assert.equal((await activate(env, second)).activation.response.status, 200);
+
+  assert.equal(env.DB.physicalDevices.size, 2);
+  assert.ok([...env.DB.events.values()].some((event) => event.decision_code === "device_transfer"));
+  const persisted = JSON.stringify({
+    devices: [...env.DB.devices.values()],
+    physical: [...env.DB.physicalDevices.values()],
+    events: [...env.DB.events.values()],
+  });
+  for (const raw of ["UDIDOWNER1001", "SEROWNER1001", "MLBOWNER1001", "UDIDOWNER2002"]) {
+    assert.equal(persisted.includes(raw), false);
+  }
+});
+
+test("conflicting collectors are denied generically when server enforcement is enabled", async () => {
+  const env = await createEnvironment();
+  env.HARDWARE_POLICY_MODE = "enforce";
+  await createLicense(env);
+  const device = await createDevice("CONFLICT77");
+  device.hardwareClaims.collectors[1].values.serial = "SERDIFFERENT77";
+
+  const challenge = await call(env, "/v1/challenge", activationChallengeBody(device));
+  assert.equal(challenge.response.status, 200);
+  const storedChallenge = JSON.stringify([...env.DB.challenges.values()]);
+  assert.equal(storedChallenge.includes("SERDIFFERENT77"), false);
+  assert.equal(storedChallenge.includes("UDIDCONFLICT77"), false);
+  const result = await call(env, "/v1/activate", {
+    license_key: "TLINK-PHASE-0001",
+    device_public_key: device.publicJwk,
+    challenge_id: challenge.json.challenge_id,
+    signature: await activationSignature(device.pair.privateKey, challenge.json),
+  });
+  assert.equal(result.response.status, 403);
+  assert.deepEqual(result.json, { ok: false, error: "device_review_required" });
+  assert.equal(env.DB.physicalDevices.size, 0);
+  assert.equal(env.DB.events.size, 0);
 });
 
 test("device proof is bound to its action and new-device churn is bounded", async () => {
@@ -725,6 +931,10 @@ test("admin dashboard and ID-based management expose no recoverable license key"
   const detail = await call(env, `/v1/admin/license?id=${licenseId}`, undefined, true);
   assert.equal(detail.response.status, 200);
   assert.equal(detail.json.devices[0].id, deviceId);
+  assert.equal(detail.json.physical_devices.length, 1);
+  assert.equal(detail.json.hardware_events.length, 1);
+  assert.equal(detail.json.hardware_events[0].decision_code, "first_bind");
+  assert.equal(JSON.stringify(detail.json).includes("UDIDDEVICE"), false);
 
   const updated = await call(env, "/v1/admin/update", {
     license_id: licenseId,

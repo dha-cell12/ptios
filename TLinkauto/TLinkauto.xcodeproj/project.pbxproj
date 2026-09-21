@@ -14,6 +14,7 @@
 		A20000000000000000000002 /* LicenseLifecycleCoordinator.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* LicenseLifecycleCoordinator.mm */; };
 		A20000000000000000000003 /* LicenseViewController.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* LicenseViewController.mm */; };
 		A20000000000000000000004 /* TLinkLicenseVerifier.mm in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* TLinkLicenseVerifier.mm */; };
+		A20000000000000000000008 /* TLinkHardwareIdentity.mm in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001E /* TLinkHardwareIdentity.mm */; };
 		A20000000000000000000005 /* TLinkRootfullLicenseBuild.mm in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001A /* TLinkRootfullLicenseBuild.mm */; };
 		A20000000000000000000006 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001B /* Security.framework */; };
 		A20000000000000000000007 /* LicenseConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001C /* LicenseConfig.plist */; };
@@ -156,6 +157,8 @@
 		A20000000000000000000016 /* LicenseViewController.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = LicenseViewController.mm; path = ../stream-app/app/LicenseViewController.mm; sourceTree = SOURCE_ROOT; };
 		A20000000000000000000017 /* TLinkLicenseVerifier.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = TLinkLicenseVerifier.h; path = ../shared/TLinkLicenseVerifier.h; sourceTree = SOURCE_ROOT; };
 		A20000000000000000000018 /* TLinkLicenseVerifier.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TLinkLicenseVerifier.mm; path = ../shared/TLinkLicenseVerifier.mm; sourceTree = SOURCE_ROOT; };
+		A2000000000000000000001D /* TLinkHardwareIdentity.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = TLinkHardwareIdentity.h; path = ../shared/TLinkHardwareIdentity.h; sourceTree = SOURCE_ROOT; };
+		A2000000000000000000001E /* TLinkHardwareIdentity.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TLinkHardwareIdentity.mm; path = ../shared/TLinkHardwareIdentity.mm; sourceTree = SOURCE_ROOT; };
 		A20000000000000000000019 /* TLinkRootfullLicenseBuild.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = TLinkRootfullLicenseBuild.h; path = ../shared/TLinkRootfullLicenseBuild.h; sourceTree = SOURCE_ROOT; };
 		A2000000000000000000001A /* TLinkRootfullLicenseBuild.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TLinkRootfullLicenseBuild.mm; path = ../shared/TLinkRootfullLicenseBuild.mm; sourceTree = SOURCE_ROOT; };
 		A2000000000000000000001B /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
@@ -386,6 +389,8 @@
 				A20000000000000000000016 /* LicenseViewController.mm */,
 				A20000000000000000000017 /* TLinkLicenseVerifier.h */,
 				A20000000000000000000018 /* TLinkLicenseVerifier.mm */,
+				A2000000000000000000001D /* TLinkHardwareIdentity.h */,
+				A2000000000000000000001E /* TLinkHardwareIdentity.mm */,
 				A20000000000000000000019 /* TLinkRootfullLicenseBuild.h */,
 				A2000000000000000000001A /* TLinkRootfullLicenseBuild.mm */,
 			);
@@ -908,6 +913,7 @@
 				A20000000000000000000002 /* LicenseLifecycleCoordinator.mm in Sources */,
 				A20000000000000000000003 /* LicenseViewController.mm in Sources */,
 				A20000000000000000000004 /* TLinkLicenseVerifier.mm in Sources */,
+				A20000000000000000000008 /* TLinkHardwareIdentity.mm in Sources */,
 				A20000000000000000000005 /* TLinkRootfullLicenseBuild.mm in Sources */,
 				964DF11025B9D87E006061B4 /* GCDWebServerStreamedResponse.m in Sources */,
 				9666347E25C41C000028A5A3 /* ActivatorConfigurationViewController.m in Sources */,

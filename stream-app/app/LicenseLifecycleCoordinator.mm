@@ -528,11 +528,18 @@ static NSString *SCLicenseRequestDaemonReload(void)
 
 - (void)activateLicenseKey:(NSString *)licenseKey completion:(SCLicenseLifecycleCompletion)completion
 {
+    [self activateLicenseKey:licenseKey intent:@"device_transfer" completion:completion];
+}
+
+- (void)activateLicenseKey:(NSString *)licenseKey
+                    intent:(NSString *)intent
+                completion:(SCLicenseLifecycleCompletion)completion
+{
     if (![self beginOperation:@"activate" completion:nil]) {
         [self deliverCompletion:completion success:NO message:@"license_request_in_progress"];
         return;
     }
-    [self.manager activateLicenseKey:licenseKey completion:^(BOOL success, NSString *message) {
+    [self.manager activateLicenseKey:licenseKey intent:intent completion:^(BOOL success, NSString *message) {
         [self updateDiagnostics:@{
             @"last_activation_at_ms": @([self nowMilliseconds]),
             @"last_activation_result": success ? @"success" : @"failed",

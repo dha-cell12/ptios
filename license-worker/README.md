@@ -28,11 +28,14 @@ Generate a P-256 signing key:
 npm run keys
 ```
 
-Set the printed private JWK and an admin token as Worker secrets:
+Set the printed private JWK, an admin token, and a random device-identity pepper
+as Worker secrets. Keep the pepper stable: rotating it intentionally makes all
+stored hardware fingerprints unmatched until devices bind again.
 
 ```bash
 npx wrangler secret put LICENSE_SIGNING_PRIVATE_JWK
 npx wrangler secret put ADMIN_TOKEN
+npx wrangler secret put DEVICE_ID_PEPPER
 ```
 
 After deployment, open the administration dashboard at:
@@ -75,15 +78,30 @@ Worker:
 npx wrangler d1 migrations apply tlinkauto-license --remote
 ```
 
-`ALLOW_LEGACY_DEVICE_PROOF` is intentionally `false`. Deploy a client that
-sends device proof v2 together with this Worker. Proof v2 signs the requested
-action as well as the lease payload, so a captured refresh proof cannot be
-replayed as a deactivation.
+Hardware identity is decided only by the Worker. Rootfull and TrollStore send
+signed evidence from MobileGestalt and IORegistry with an explicit
+`reset_recovery` or `device_transfer` intent. The Worker normalizes and HMACs
+the evidence before writing the short-lived challenge. D1 retains only HMAC
+values, an identifier bitmask, the internal decision, and counters; raw UDID,
+serial, MLB, and ECID values are never stored.
+
+`HARDWARE_POLICY_MODE=observe` is the rollout default. Conflicts and suspicious
+reset claims are audited but do not block activation. After reviewing device
+coverage across supported iOS versions, change it to `enforce`; denied clients
+receive only `device_review_required`, not the matching rule or conflicting
+field. `HARDWARE_POLICY_VERSION` is written on each binding for auditability.
+
+`ALLOW_LEGACY_DEVICE_PROOF` is intentionally `false`. During a staged rollout,
+setting it to `true` temporarily accepts both the old activation challenge and
+the old refresh/deactivate proof. New activation proof v2 signs the challenge,
+intent, and evidence digest; refresh/deactivate proof v2 signs the requested
+action as well as the lease payload.
 
 For a staged production rollout without breaking older installed clients:
 
 1. apply the D1 migration;
-2. temporarily deploy this Worker with `ALLOW_LEGACY_DEVICE_PROOF=true`;
+2. configure `DEVICE_ID_PEPPER`, leave `HARDWARE_POLICY_MODE=observe`, and
+   temporarily deploy this Worker with `ALLOW_LEGACY_DEVICE_PROOF=true`;
 3. release the rootfull and TrollStore clients with proof v2;
 4. after the supported upgrade window, set the flag back to `false` and deploy
    the Worker again.

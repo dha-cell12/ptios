@@ -499,6 +499,21 @@ static UIFont *SCLicenseMonospacedFont(void)
     });
 }
 
+- (void)activateWithIntent:(NSString *)intent
+{
+    [self setRequestInFlight:YES];
+    [[SCLicenseLifecycleCoordinator sharedCoordinator]
+        activateLicenseKey:_licenseField.text
+                    intent:intent
+                completion:^(BOOL success, NSString *message) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self setRequestInFlight:NO];
+            [self reloadStatus];
+            [self showResult:message success:success];
+        });
+    }];
+}
+
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
@@ -510,15 +525,21 @@ static UIFont *SCLicenseMonospacedFont(void)
     if ((indexPath.row == 1 || indexPath.row == 3) && ![_status[@"licensed"] boolValue]) return;
     SCLicenseLifecycleCoordinator *coordinator = [SCLicenseLifecycleCoordinator sharedCoordinator];
     if (indexPath.row == 0) {
-        [self setRequestInFlight:YES];
-        [coordinator activateLicenseKey:_licenseField.text
-                             completion:^(BOOL success, NSString *message) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self setRequestInFlight:NO];
-                [self reloadStatus];
-                [self showResult:message success:success];
-            });
-        }];
+        UIAlertController *intent = [UIAlertController alertControllerWithTitle:@"Activation Type"
+                                                                        message:@"Choose recovery only when this is the same physical device after a reset."
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        [intent addAction:[UIAlertAction actionWithTitle:@"Same Device After Reset"
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(__unused UIAlertAction *action) {
+            [self activateWithIntent:@"reset_recovery"];
+        }]];
+        [intent addAction:[UIAlertAction actionWithTitle:@"Transfer to This Device"
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(__unused UIAlertAction *action) {
+            [self activateWithIntent:@"device_transfer"];
+        }]];
+        [intent addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:intent animated:YES completion:nil];
     } else if (indexPath.row == 1) {
         [self setRequestInFlight:YES];
         [coordinator refreshManuallyWithCompletion:^(BOOL success, NSString *message) {

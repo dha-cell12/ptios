@@ -18,6 +18,9 @@ typedef void (^SCLicenseLifecycleCompletion)(BOOL success, NSString *message);
 - (void)handleApplicationDidBecomeActive;
 - (void)performBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion;
 - (void)activateLicenseKey:(NSString *)licenseKey completion:(SCLicenseLifecycleCompletion)completion;
+- (void)activateLicenseKey:(NSString *)licenseKey
+                    intent:(NSString *)intent
+                completion:(SCLicenseLifecycleCompletion)completion;
 - (void)refreshManuallyWithCompletion:(SCLicenseLifecycleCompletion)completion;
 - (void)deactivateWithCompletion:(SCLicenseLifecycleCompletion)completion;
 - (BOOL)removeLocalLease:(NSError **)error;

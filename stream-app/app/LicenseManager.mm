@@ -1,5 +1,6 @@
 #import "LicenseManager.h"
 #import "../../shared/TLinkLicenseVerifier.h"
+#import "../../shared/TLinkHardwareIdentity.h"
 #import <Security/Security.h>
 
 static NSString *const kTLinkLicenseDeviceKeyModePath = @"/var/mobile/Library/TLinkauto/license/device_key_mode";
@@ -73,6 +74,16 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
                                       payload ?: @""];
 }
 
+- (NSString *)activationProofMessageForChallenge:(NSString *)challenge
+                                           intent:(NSString *)intent
+                                     claimsDigest:(NSString *)claimsDigest
+{
+    return [NSString stringWithFormat:@"tlinkauto-license-activation-proof-v2\n%@\n%@\n%@",
+                                      challenge ?: @"",
+                                      intent ?: @"",
+                                      claimsDigest ?: @""];
+}
+
 - (NSString *)diagnosticMessageForError:(NSError *)error fallback:(NSString *)fallback
 {
     if (!error) return fallback ?: @"license_error";
@@ -93,6 +104,9 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
                 server[@"recent_devices"] ?: @"?",
                 server[@"max_new_devices"] ?: @"?",
                 server[@"window_seconds"] ?: @"?"];
+    }
+    if ([serverMessage isEqualToString:@"device_review_required"]) {
+        return @"device_review_required contact_support";
     }
     if ([serverMessage isEqualToString:@"device_not_active"] ||
         [serverMessage isEqualToString:@"device_revoked"]) {
@@ -397,6 +411,13 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
 - (void)activateLicenseKey:(NSString *)licenseKey
                 completion:(void (^)(BOOL success, NSString *message))completion
 {
+    [self activateLicenseKey:licenseKey intent:@"device_transfer" completion:completion];
+}
+
+- (void)activateLicenseKey:(NSString *)licenseKey
+                    intent:(NSString *)intent
+                completion:(void (^)(BOOL success, NSString *message))completion
+{
     NSString *normalized = [[[licenseKey ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]
         uppercaseString] stringByReplacingOccurrencesOfString:@" " withString:@""];
     if (normalized.length < 8) {
@@ -418,8 +439,18 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
         return;
     }
 
+    NSString *activationIntent = [intent isEqualToString:@"reset_recovery"]
+        ? @"reset_recovery"
+        : @"device_transfer";
+    NSDictionary *hardwareEvidence = TLinkCopyHardwareIdentityEvidence();
+
     [self postPath:@"/v1/challenge"
-              body:@{@"license_key": normalized, @"device_public_key": publicJWK}
+              body:@{
+                  @"license_key": normalized,
+                  @"device_public_key": publicJWK,
+                  @"activation_intent": activationIntent,
+                  @"hardware_claims": hardwareEvidence ?: @{},
+              }
         completion:^(NSDictionary *challengeResponse, NSError *challengeError) {
         if (challengeError) {
             CFRelease(privateKey);
@@ -429,11 +460,22 @@ static NSString *const kTLinkLicenseRecoveryDiagnosticsPath = @"/var/mobile/Libr
         }
         NSString *challenge = [challengeResponse[@"challenge"] isKindOfClass:[NSString class]] ? challengeResponse[@"challenge"] : @"";
         NSString *challengeId = [challengeResponse[@"challenge_id"] isKindOfClass:[NSString class]] ? challengeResponse[@"challenge_id"] : @"";
+        NSString *claimsDigest = [challengeResponse[@"hardware_claims_digest"] isKindOfClass:[NSString class]] ? challengeResponse[@"hardware_claims_digest"] : @"";
+        NSString *confirmedIntent = [challengeResponse[@"activation_intent"] isKindOfClass:[NSString class]] ? challengeResponse[@"activation_intent"] : @"";
+        if (challenge.length == 0 || challengeId.length == 0 || claimsDigest.length == 0 ||
+            ![confirmedIntent isEqualToString:activationIntent]) {
+            CFRelease(privateKey);
+            if (completion) completion(NO, @"license_challenge_context_invalid");
+            return;
+        }
+        NSString *proofMessage = [self activationProofMessageForChallenge:challenge
+                                                                   intent:confirmedIntent
+                                                             claimsDigest:claimsDigest];
         CFErrorRef signError = NULL;
         NSData *signature = CFBridgingRelease(SecKeyCreateSignature(
             privateKey,
             kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
-            (__bridge CFDataRef)[challenge dataUsingEncoding:NSUTF8StringEncoding],
+            (__bridge CFDataRef)[proofMessage dataUsingEncoding:NSUTF8StringEncoding],
             &signError));
         CFRelease(privateKey);
         if (!signature) {
