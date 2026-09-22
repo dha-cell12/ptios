@@ -2,6 +2,9 @@
 
 Cloudflare Worker MVP for issuing signed, device-bound license leases.
 
+Hướng dẫn deploy production bằng Cloudflare API token và Wrangler:
+[`../docs/license-cloudflare-api-token-deploy-guide.md`](../docs/license-cloudflare-api-token-deploy-guide.md).
+
 ## Setup
 
 ```bash
