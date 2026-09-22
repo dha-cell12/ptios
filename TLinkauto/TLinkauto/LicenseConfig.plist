@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>LicenseEndpoint</key>
-	<string>https://REPLACE_WITH_WORKER_DOMAIN</string>
+	<string>https://tlinkauto-license.tlinkauto.workers.dev</string>
 	<key>LicenseKeyID</key>
-	<string>REPLACE_WITH_KEY_ID</string>
+	<string>tlinkauto-test-2026-01</string>
 	<key>LicensePublicKeyX</key>
-	<string>REPLACE_WITH_P256_X</string>
+	<string>NxW-xzbPbNT583WwRPQOvkLaLh09hOT0JGNomDjGKtw</string>
 	<key>LicensePublicKeyY</key>
-	<string>REPLACE_WITH_P256_Y</string>
+	<string>f5JiZrT7FN6WXbmbBmEynMKfirb44i4S6ljQhsvVGGM</string>
 	<key>LicenseEnforcementEnabled</key>
 	<false/>
 </dict>

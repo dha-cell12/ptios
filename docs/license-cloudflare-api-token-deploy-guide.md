@@ -217,10 +217,11 @@ Lệnh in ra:
 - `LicensePublicKeyY`.
 
 Lưu private JWK trong password manager. Không commit private JWK. Điền hai giá
-trị public `x`, `y` vào:
+trị public `x`, `y` vào cả hai tệp:
 
 ```text
 stream-app/app/LicenseConfig.plist
+TLinkauto/TLinkauto/LicenseConfig.plist
 ```
 
 Đảm bảo `LicenseKeyID` trong plist bằng `LICENSE_KEY_ID` trong
@@ -424,7 +425,8 @@ npx wrangler tail tlinkauto-license --format pretty
 
 ## 11. Cấu hình endpoint cho rootfull và TrollStore
 
-Trong `stream-app/app/LicenseConfig.plist`, đặt:
+Trong cả `stream-app/app/LicenseConfig.plist` (TrollStore) và
+`TLinkauto/TLinkauto/LicenseConfig.plist` (rootfull), đặt:
 
 ```xml
 <key>LicenseEndpoint</key>
@@ -439,6 +441,10 @@ Trong `stream-app/app/LicenseConfig.plist`, đặt:
 
 Rootfull và TrollStore cùng dùng `LicenseManager.mm` và hardware collector dùng
 chung. Sau khi đổi endpoint/public key phải build và ký lại cả hai artifact.
+Nếu build bằng GitHub Actions, cập nhật thêm các repository variables
+`TLINK_LICENSE_ENDPOINT`, `TLINK_LICENSE_KEY_ID`, `TLINK_LICENSE_PUBLIC_KEY_X`
+và `TLINK_LICENSE_PUBLIC_KEY_Y`. Workflow sẽ đối chiếu các giá trị này trực
+tiếp với `/v1/public-key` và dừng build nếu có khóa cũ.
 Giữ `LicenseEnforcementEnabled=false` trong lượt smoke test thiết bị đầu tiên;
 chỉ bật khi activation, refresh, offline grace và recovery đều đạt.
 

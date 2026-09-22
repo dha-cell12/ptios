@@ -67,8 +67,9 @@ The dashboard can:
 The clear license key cannot be recovered from D1. Only its SHA-256 hash is
 stored, so record the key when the create dialog returns it.
 
-Copy the printed public `x` and `y` values into
-`stream-app/app/LicenseConfig.plist`, set `LicenseEndpoint`, and deploy:
+Copy the printed public `x` and `y` values into both
+`stream-app/app/LicenseConfig.plist` and
+`TLinkauto/TLinkauto/LicenseConfig.plist`, set `LicenseEndpoint`, and deploy:
 
 ```bash
 npm run deploy

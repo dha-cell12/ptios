@@ -63,8 +63,8 @@ jobs:
       TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
       TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
       TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID != '' && vars.TLINK_LICENSE_KEY_ID || 'tlinkauto-test-2026-01' }}
-      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'fUrcjnIX_Ej5jvv9oGqY9kmoY0PbZmXPg5lzUnTeo38' }}
-      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'bVsC_64-AH4cT5aObcm0NnOzY_nY5cYC2EgVhXFSNhE' }}
+      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'NxW-xzbPbNT583WwRPQOvkLaLh09hOT0JGNomDjGKtw' }}
+      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'f5JiZrT7FN6WXbmbBmEynMKfirb44i4S6ljQhsvVGGM' }}
       TLINK_LICENSE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && 'true' || 'false' }}
       TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
 
@@ -115,6 +115,14 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled false" "$PLIST"
           fi
           plutil -lint "$PLIST"
+
+      - name: Verify public license key against Worker
+        run: |
+          node scripts/check-license-public-key.mjs \
+            --endpoint "$TLINK_LICENSE_ENDPOINT" \
+            --keyId "$TLINK_LICENSE_KEY_ID" \
+            --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
+            --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y"
 
       - name: Install dependencies
         run: |
