@@ -38,8 +38,8 @@ npm run deploy
 | Expired | License có status `active` nhưng đã qua hạn cố định. |
 | Active devices | Tổng binding thiết bị đang chiếm slot. |
 
-Ô tìm kiếm dùng **License ID**, không dùng clear license key. Danh sách hiển thị
-tối đa 50 bản ghi mỗi trang. Bộ lọc status trên site tính trạng thái hiệu lực:
+Ô tìm kiếm dùng được **License ID**, clear license key hoặc serial. Danh sách
+hiển thị tối đa 50 bản ghi mỗi trang. Bộ lọc status trên site tính trạng thái hiệu lực:
 license đã qua ngày hết hạn được hiển thị là Expired dù status lưu trong D1 vẫn
 là `active`.
 
@@ -52,9 +52,10 @@ Nhấn **New License** và điền:
 - **License expiration**: hạn quyền cố định. Để trống nghĩa là vĩnh viễn.
 - **Features**: phải chọn ít nhất một quyền.
 
-Nhấn **Create License**, sau đó sao chép clear key ở khung kết quả. Worker chỉ
-lưu SHA-256 hash của key; không thể khôi phục hoặc xem lại clear key từ D1 hay
-dashboard. Nếu mất key, tạo license mới và revoke license cũ.
+Nhấn **Create License**, sau đó sao chép clear key ở khung kết quả. Worker lưu
+clear key chuẩn hóa cùng SHA-256 hash để trang admin có thể hiển thị lại. Với
+license cũ tạo trước migration `0004`, mở **Manage** và nhập lại key gốc; Worker
+chỉ lưu khi SHA-256 của key khớp bản ghi hiện có.
 
 ### Feature
 
@@ -199,6 +200,8 @@ trong quá trình test. Việc thay đổi Worker bình thường nên dùng **R
 
 - Chỉ mở `/admin` qua HTTPS.
 - Không lưu `ADMIN_TOKEN`, signing private JWK hoặc clear license key trong source.
+- D1 và mọi bản backup/export giờ chứa clear license key và serial thiết bị; chỉ
+  cấp quyền đọc cho quản trị viên cần thiết và xử lý chúng như dữ liệu nhạy cảm.
 - Dùng feature tối thiểu, đặc biệt với `admin` và `shell`.
 - Xác nhận đúng License ID trước khi reset hoặc revoke.
 - Backup D1 theo chính sách vận hành Cloudflare trước thay đổi hàng loạt.

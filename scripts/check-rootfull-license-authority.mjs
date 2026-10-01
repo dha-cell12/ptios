@@ -121,7 +121,8 @@ assert.ok(
     postinst.indexOf("launchctl load -w /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist"),
   "license authority must load before tlinkautod",
 );
-assert.match(postinst, /rm -f \/var\/mobile\/Library\/TLinkauto\/run\/license-authority\.sock/);
+assert.match(postinst, /TLINK_DATA_ROOT="\/var\/mobile\/Library\/TLinkauto"/);
+assert.match(postinst, /rm -f "\$TLINK_DATA_ROOT\/run\/license-authority\.sock"/);
 
 assert.match(socketServer, /licenseAuthority=unix_signed_nonce_v1/);
 assert.match(artifactValidator, /usr\/libexec\/tlinkauto-licensed/);

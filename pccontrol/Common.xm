@@ -1,5 +1,6 @@
 #include "Common.h"
 #include "Config.h"
+#include "../shared/TLinkJailbreakPath.h"
 #import <sys/utsname.h>
 
 
@@ -151,7 +152,8 @@ pid_t system2(const char * command, int * infp, int * outfp)
             ::close(i);
 
         setsid();
-        execl("/bin/sh", "sh", "-c", command, NULL);
+        NSString *shellPath = TLinkJailbreakPath(@"/bin/sh");
+        execl([shellPath fileSystemRepresentation], "sh", "-c", command, NULL);
         _exit(1);
     }
 

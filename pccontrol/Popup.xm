@@ -5,6 +5,7 @@
 #include "AlertBox.h"
 #include "Toast.h"
 #import <UIKit/UIKit.h>
+#import "../shared/TLinkJailbreakPath.h"
 
 extern CGFloat device_screen_width;
 extern CGFloat device_screen_height;
@@ -86,7 +87,8 @@ static int windowHeight = 250;
             forControlEvents:UIControlEventTouchUpInside];
 
             recordButton.backgroundColor = [UIColor clearColor];
-            UIImage *recordImage = [UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/start-recording.png"];
+            UIImage *recordImage = [UIImage imageWithContentsOfFile:
+                TLinkJailbreakPath(@"/Library/Application Support/TLinkauto/start-recording.png")];
             if (recordImage) {
                 [recordButton setImage:recordImage forState:UIControlStateNormal];
             } else {
@@ -104,7 +106,8 @@ static int windowHeight = 250;
             forControlEvents:UIControlEventTouchUpInside];
 
             stopButton.backgroundColor = [UIColor clearColor];
-            UIImage *stopImage = [UIImage imageWithContentsOfFile:@"/Library/Application Support/TLinkauto/stop-playing.png"];
+            UIImage *stopImage = [UIImage imageWithContentsOfFile:
+                TLinkJailbreakPath(@"/Library/Application Support/TLinkauto/stop-playing.png")];
             if (stopImage) {
                 [stopButton setImage:stopImage forState:UIControlStateNormal];
             } else {

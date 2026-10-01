@@ -249,7 +249,8 @@ async function fingerprintHardwareClaims(env, claims) {
     hashes[field] = [];
     for (const raw of values[field]) hashes[field].push(await hmacIdentifier(env, field, raw));
   }
-  return { hashes, conflicts, identifierMask };
+  const serialPlaintext = values.serial.length === 1 ? values.serial[0] : null;
+  return { hashes, conflicts, identifierMask, serialPlaintext };
 }
 
 function validatedStoredFingerprints(value) {
@@ -268,7 +269,12 @@ function validatedStoredFingerprints(value) {
   if (value.conflicts.some((field) => !fields.includes(field))) {
     throw new Error("stored_hardware_fingerprints_invalid");
   }
-  return value;
+  const serialPlaintext = value.serialPlaintext === undefined ? null : value.serialPlaintext;
+  if (serialPlaintext !== null &&
+      (typeof serialPlaintext !== "string" || serialPlaintext.length > 128 || !/^[A-Z0-9]+$/.test(serialPlaintext))) {
+    throw new Error("stored_hardware_fingerprints_invalid");
+  }
+  return { ...value, serialPlaintext };
 }
 
 function physicalMatchScore(physical, fingerprints) {
@@ -691,17 +697,18 @@ async function persistHardwareVerdict(env, license, device, intent, verdict, now
     const resetIncrement = verdict.classification === "same_device_reset" ? 1 : 0;
     const transferIncrement = verdict.classification === "device_transfer" ? 1 : 0;
     await database(env).prepare(
-      "UPDATE physical_devices SET last_seen_at = ?, reset_count = reset_count + ?, transfer_count = transfer_count + ?, risk_score = CASE WHEN risk_score > ? THEN risk_score ELSE ? END, status = ? WHERE id = ?",
+      "UPDATE physical_devices SET last_seen_at = ?, reset_count = reset_count + ?, transfer_count = transfer_count + ?, risk_score = CASE WHEN risk_score > ? THEN risk_score ELSE ? END, status = ?, serial_plaintext = COALESCE(?, serial_plaintext) WHERE id = ?",
     ).bind(now, resetIncrement, transferIncrement, verdict.riskScore, verdict.riskScore,
-      verdict.review ? "review" : "active", physicalId).run();
+      verdict.review ? "review" : "active", verdict.fingerprints.serialPlaintext, physicalId).run();
   } else {
     const singleHash = (field) => verdict.fingerprints.hashes[field].length === 1
       ? verdict.fingerprints.hashes[field][0]
       : null;
     const inserted = await database(env).prepare(
-      "INSERT OR IGNORE INTO physical_devices (id, license_id, udid_hmac, serial_hmac, mlb_hmac, ecid_hmac, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-    ).bind(physicalId, license.id, singleHash("udid"), singleHash("serial"), singleHash("mlb"),
-      singleHash("ecid"), now, now, verdict.classification === "device_transfer" ? 1 : 0,
+      "INSERT OR IGNORE INTO physical_devices (id, license_id, udid_hmac, serial_hmac, serial_plaintext, mlb_hmac, ecid_hmac, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+    ).bind(physicalId, license.id, singleHash("udid"), singleHash("serial"),
+      verdict.fingerprints.serialPlaintext, singleHash("mlb"), singleHash("ecid"), now, now,
+      verdict.classification === "device_transfer" ? 1 : 0,
       verdict.riskScore, verdict.review ? "review" : "active").run();
     if (Number(inserted.meta?.changes || 0) !== 1) {
       const current = await database(env).prepare(
@@ -713,9 +720,10 @@ async function persistHardwareVerdict(env, license, device, intent, verdict, now
       if (!collision) throw new Error("physical_identity_insert_conflict");
       physicalId = collision.physical.id;
       await database(env).prepare(
-        "UPDATE physical_devices SET last_seen_at = ?, reset_count = reset_count + ?, transfer_count = transfer_count + ?, risk_score = CASE WHEN risk_score > ? THEN risk_score ELSE ? END, status = ? WHERE id = ?",
+        "UPDATE physical_devices SET last_seen_at = ?, reset_count = reset_count + ?, transfer_count = transfer_count + ?, risk_score = CASE WHEN risk_score > ? THEN risk_score ELSE ? END, status = ?, serial_plaintext = COALESCE(?, serial_plaintext) WHERE id = ?",
       ).bind(now, 0, 0, verdict.riskScore, verdict.riskScore,
-        verdict.review ? "review" : collision.physical.status, physicalId).run();
+        verdict.review ? "review" : collision.physical.status,
+        verdict.fingerprints.serialPlaintext, physicalId).run();
     }
   }
   await database(env).prepare(
@@ -927,8 +935,8 @@ async function handleAdminCreateLicense(request, env) {
   const maxDevices = validatedInteger(body.max_devices, "max_devices", 1, 1000, 1);
   const expiresAt = validatedInteger(body.expires_at, "expires_at", 0, 4102444800, 0);
   await database(env).prepare(
-    "INSERT INTO licenses (id, key_hash, status, max_devices, features_json, expires_at, created_at, updated_at) VALUES (?, ?, 'active', ?, ?, ?, ?, ?)",
-  ).bind(id, keyHash, maxDevices, JSON.stringify(features), expiresAt, now, now).run();
+    "INSERT INTO licenses (id, key_hash, license_key, status, max_devices, features_json, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+  ).bind(id, keyHash, key, maxDevices, JSON.stringify(features), expiresAt, now, now).run();
   return jsonResponse({ ok: true, id, license_key: key, status: "active", max_devices: maxDevices, expires_at: expiresAt, features });
 }
 
@@ -949,6 +957,8 @@ async function licenseForAdminBody(body, env) {
 function adminLicenseRecord(license, activeDevices, totalDevices) {
   return {
     id: license.id,
+    license_key: license.license_key || null,
+    serial: license.serial || null,
     status: license.status,
     max_devices: Number(license.max_devices || 1),
     features: featuresFromLicense(license),
@@ -967,7 +977,7 @@ async function handleAdminListLicenses(request, env) {
   const offset = validatedInteger(url.searchParams.get("offset"), "offset", 0, 1000000, 0);
   const now = Math.floor(Date.now() / 1000);
   const result = await database(env).prepare(
-    "SELECT id, status, max_devices, features_json, expires_at, created_at, updated_at, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) AS active_devices, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id) AS total_devices FROM licenses ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+    "SELECT id, license_key, status, max_devices, features_json, expires_at, created_at, updated_at, (SELECT serial_plaintext FROM physical_devices WHERE license_id = licenses.id AND serial_plaintext IS NOT NULL ORDER BY last_seen_at DESC LIMIT 1) AS serial, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id AND (status = 'active' OR (status = 'release_pending' AND slot_reusable_at > ?))) AS active_devices, (SELECT COUNT(*) FROM devices WHERE license_id = licenses.id) AS total_devices FROM licenses ORDER BY updated_at DESC LIMIT ? OFFSET ?",
   ).bind(now, limit + 1, offset).all();
   const rows = Array.isArray(result.results) ? result.results : [];
   const visible = rows.slice(0, limit);
@@ -1021,10 +1031,11 @@ async function handleAdminLicenseDetail(request, env) {
     hardware_policy_version: Number(device.hardware_policy_version || 0),
   }));
   const physicalResult = await database(env).prepare(
-    "SELECT id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status FROM physical_devices WHERE license_id = ? ORDER BY last_seen_at DESC",
+    "SELECT id, serial_plaintext, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status FROM physical_devices WHERE license_id = ? ORDER BY last_seen_at DESC",
   ).bind(id).all();
   const physicalDevices = (physicalResult.results || []).map((physical) => ({
     id: physical.id,
+    serial: physical.serial_plaintext || null,
     first_seen_at: Number(physical.first_seen_at || 0),
     last_seen_at: Number(physical.last_seen_at || 0),
     reset_count: Number(physical.reset_count || 0),
@@ -1048,7 +1059,10 @@ async function handleAdminLicenseDetail(request, env) {
   )).length;
   return jsonResponse({
     ok: true,
-    license: adminLicenseRecord(license, activeDevices, devices.length),
+    license: adminLicenseRecord({
+      ...license,
+      serial: physicalDevices.find((physical) => physical.serial)?.serial || null,
+    }, activeDevices, devices.length),
     devices,
     physical_devices: physicalDevices,
     hardware_events: hardwareEvents,
@@ -1078,7 +1092,8 @@ async function handleAdminUpdate(request, env) {
   if (!requireAdmin(request, env)) return errorResponse("unauthorized", 401);
   const body = await readJson(request);
   const { license } = await licenseForAdminBody(body, env);
-  const hasUpdate = ["status", "max_devices", "expires_at", "features"].some((key) => Object.hasOwn(body, key));
+  const hasUpdate = ["license_key", "status", "max_devices", "expires_at", "features"]
+    .some((key) => Object.hasOwn(body, key));
   if (!hasUpdate) throw new RequestError(400, "no_license_updates");
 
   const status = validatedStatus(body.status, license.status);
@@ -1086,11 +1101,17 @@ async function handleAdminUpdate(request, env) {
   const expiresAt = validatedInteger(body.expires_at, "expires_at", 0, 4102444800, Number(license.expires_at));
   const currentFeatures = featuresFromLicense(license);
   const features = validatedFeatures(body.features, currentFeatures);
+  let licenseKey = null;
+  if (body.license_key !== undefined && body.license_key !== null && body.license_key !== "") {
+    licenseKey = validatedLicenseKey(body.license_key);
+    const candidateHash = await sha256Base64Url(encoder.encode(licenseKey));
+    if (candidateHash !== license.key_hash) throw new RequestError(409, "license_key_hash_mismatch");
+  }
   const now = Math.floor(Date.now() / 1000);
   await database(env).prepare(
-    "UPDATE licenses SET status = ?, max_devices = ?, features_json = ?, expires_at = ?, updated_at = ? WHERE id = ?",
-  ).bind(status, maxDevices, JSON.stringify(features), expiresAt, now, license.id).run();
-  return jsonResponse({ ok: true, id: license.id, status, max_devices: maxDevices, expires_at: expiresAt, features });
+    "UPDATE licenses SET license_key = COALESCE(?, license_key), status = ?, max_devices = ?, features_json = ?, expires_at = ?, updated_at = ? WHERE id = ?",
+  ).bind(licenseKey, status, maxDevices, JSON.stringify(features), expiresAt, now, license.id).run();
+  return jsonResponse({ ok: true, id: license.id, license_key: licenseKey || license.license_key || null, status, max_devices: maxDevices, expires_at: expiresAt, features });
 }
 
 async function handleAdminRevoke(request, env) {

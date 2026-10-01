@@ -1,4 +1,5 @@
 #import "TLinkLicenseVerifier.h"
+#import "TLinkJailbreakPath.h"
 #if defined(TLINK_LICENSE_AUTHORITY_CLIENT) && TLINK_LICENSE_AUTHORITY_CLIENT
 #import "TLinkLicenseAuthorityClient.h"
 #endif
@@ -262,7 +263,7 @@ static NSString *TLinkBundlePathByScanningContainers(void)
         @"/private/var/containers/Bundle/Application/StreamControl.app",
     ];
     NSArray<NSString *> *rootfullCandidates = @[
-        @"/Applications/TLinkauto.app",
+        TLinkJailbreakPath(@"/Applications/TLinkauto.app"),
         @"/var/containers/Bundle/Application/TLinkauto.app",
         @"/private/var/containers/Bundle/Application/TLinkauto.app",
     ];

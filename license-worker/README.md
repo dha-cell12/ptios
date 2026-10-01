@@ -64,8 +64,10 @@ The dashboard can:
 - inspect device bindings and revoke one binding;
 - reset all active device slots or revoke the complete license.
 
-The clear license key cannot be recovered from D1. Only its SHA-256 hash is
-stored, so record the key when the create dialog returns it.
+For authenticated administration, D1 stores the normalized clear license key
+alongside its SHA-256 hash. Protect D1 exports and `ADMIN_TOKEN` as credentials.
+Existing rows created before migration `0004` show no clear key until an admin
+backfills the original key; the Worker verifies its SHA-256 hash before saving.
 
 Copy the printed public `x` and `y` values into both
 `stream-app/app/LicenseConfig.plist` and
@@ -85,9 +87,10 @@ npx wrangler d1 migrations apply tlinkauto-license --remote
 Hardware identity is decided only by the Worker. Rootfull and TrollStore send
 signed evidence from MobileGestalt and IORegistry with an explicit
 `reset_recovery` or `device_transfer` intent. The Worker normalizes and HMACs
-the evidence before writing the short-lived challenge. D1 retains only HMAC
-values, an identifier bitmask, the internal decision, and counters; raw UDID,
-serial, MLB, and ECID values are never stored.
+the evidence before writing the short-lived challenge. D1 keeps HMAC values for
+device matching and stores only the canonical normalized serial in plaintext
+for authenticated administration when all collectors agree. Raw UDID, MLB and
+ECID values remain unstored.
 
 `HARDWARE_POLICY_MODE=observe` is the rollout default. Conflicts and suspicious
 reset claims are audited but do not block activation. After reviewing device

@@ -4,11 +4,12 @@ include $(THEOS)/makefiles/common.mk
 
 TLINKAUTO_TOUCH_FILE_LOG ?= 0
 TLINK_LICENSE_FORCE_ENFORCEMENT ?= 0
+TLINK_ROOTHIDE_RUNTIME ?= 0
 
 TWEAK_NAME = pccontrol
 
 pccontrol_FILES = Tweak.xm SocketResponder.xm IPCMessagePort.xm Touch.xm Screen.xm Task.xm Process.xm Connectivity.xm AlertBox.xm Common.xm Record.xm Play.xm Window.xm Popup.xm TemplateMatch.xm ScreenMatch.xm Toast.xm Image.xm TesseractOCRTask.mm ColorPicker.xm UIKeyboard.xm DeviceInfo.xm HardwareKey.xm Scheduler.xm RuntimeUtils.xm H264Stream.xm jsruntime/TLinkJSNativeRequest.mm jsruntime/TLinkJSNativeResponse.mm jsruntime/TLinkInProcessNativeBridge.mm jsruntime/TLinkJSRuntimeCore.mm jsruntime/TLinkJSHelperProtocol.mm jsruntime/TLinkJSHelperClient.mm TLinkautoJSRuntime.mm ../shared/TLinkAdaptiveStreaming.mm ../shared/TLinkEventChannel.mm ../shared/TLinkJSFileHandle.mm ../shared/TLinkRunHistory.mm ../shared/TLinkVPNDiagnostics.mm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkLicenseAuthorityClient.mm ../shared/TLinkRootfullLicensePolicy.mm ../shared/TLinkAccessibilityTree.mm TouchIndicator/TouchIndicatorWindow.xm TouchIndicator/TouchIndicatorView.xm TouchIndicator/TouchIndicatorCoordinateView.xm TouchIndicator/TouchIndicatorViewList.xm ScriptPlayer.xm Activator/ActivatorListener.xm TextRecognization/VKOcrManager.xm TextRecognization/TextRecognizer.xm UpdateCache.xm TLinkTaskContext.mm ../third_party/TesseractOCR/TesseractOCR/G8Tesseract.mm ../third_party/TesseractOCR/TesseractOCR/G8PixWrapper.mm ../third_party/TesseractOCR/TesseractOCR/G8TextMonitor.mm ../third_party/TesseractOCR/TesseractOCR/G8RecognizedBlock.m ../third_party/TesseractOCR/TesseractOCR/G8HierarchicalRecognizedBlock.m ../third_party/TesseractOCR/TesseractOCR/G8TesseractParameters.m ../third_party/TesseractOCR/TesseractOCR/UIImage+G8Filters.m
-pccontrol_CFLAGS = -Wno-error -Wno-module-import-in-extern-c -fobjc-arc -DENABLE_TESSERACT_OCR=1 -DTLINKAUTO_TOUCH_FILE_LOG=$(TLINKAUTO_TOUCH_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1 -DTLINK_LICENSE_AUTHORITY_CLIENT=1
+pccontrol_CFLAGS = -Wno-error -Wno-module-import-in-extern-c -fobjc-arc -DENABLE_TESSERACT_OCR=1 -DTLINKAUTO_TOUCH_FILE_LOG=$(TLINKAUTO_TOUCH_FILE_LOG) -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1 -DTLINK_LICENSE_AUTHORITY_CLIENT=1 -DTLINK_ROOTHIDE_RUNTIME=$(TLINK_ROOTHIDE_RUNTIME)
 pccontrol_FRAMEWORKS = UIKit AssetsLibrary AVFoundation CoreMedia CoreVideo IOSurface Photos VideoToolbox JavaScriptCore Security
 pccontrol_ARCHS = arm64
 pccontrol_CCFLAGS = -std=c++14
@@ -24,8 +25,11 @@ pccontrol_LDFLAGS += $(THEOS_PROJECT_DIR)/third_party/TesseractOCR/TesseractOCR/
 pccontrol_PRIVATE_FRAMEWORKS = IOKit MobileCoreServices
 pccontrol_EXTRA_FRAMEWORKS = opencv2
 pccontrol_LIBRARIES = substrate
+ifeq ($(TLINK_ROOTHIDE_RUNTIME),1)
+pccontrol_CODESIGN_FLAGS = -S../layout/roothide-service-entitlements.plist
+endif
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 after-install::
-	install.exec "chown -R mobile:mobile /var/mobile/Library/TLinkauto && killall -9 SpringBoard;"
+	install.exec "TLINK_DATA_ROOT=/var/mobile/Library/TLinkauto; if [ -d /rootfs/var/mobile ]; then TLINK_DATA_ROOT=/rootfs/var/mobile/Library/TLinkauto; fi; chown -R mobile:mobile \$$TLINK_DATA_ROOT; killall -9 SpringBoard;"

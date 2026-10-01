@@ -42,6 +42,7 @@
 #include "H264Stream.h"
 #include "IPCConstants.h"
 #include "IPCMessagePort.h"
+#include "../shared/TLinkJailbreakPath.h"
 
 
 #define IPHONE7P_HEIGHT 1920
@@ -208,7 +209,8 @@ void startPopupListeningCallBack()
 
 Boolean initActivatorInstance()
 {
-    dlopen("/usr/lib/libactivator.dylib", RTLD_LAZY);
+    NSString *activatorPath = TLinkJailbreakPath(@"/usr/lib/libactivator.dylib");
+    dlopen([activatorPath fileSystemRepresentation], RTLD_LAZY);
     Class la = objc_getClass("LAActivator");
     if (la) { //libactivator is installed
         activatorInstance = [[ActivatorListener alloc] init];

@@ -411,8 +411,9 @@ $created = Invoke-RestMethod "$licenseBase/v1/admin/licenses" `
 $created | ConvertTo-Json -Depth 10
 ```
 
-License key rõ chỉ nên được lưu ở hệ thống bán hàng/password manager. D1 chỉ
-lưu hash nên không thể lấy lại clear key sau đó.
+Worker hiện lưu clear license key chuẩn hóa cùng SHA-256 hash để dashboard admin
+có thể hiển thị lại. Vì vậy phải coi D1, backup/export D1 và `ADMIN_TOKEN` là dữ
+liệu chứa credential; không đưa response admin hoặc bản export vào log công khai.
 
 Xem log request theo thời gian thực:
 
@@ -518,8 +519,8 @@ npx wrangler rollback VERSION_ID --message 'rollback license worker after failed
 ```
 
 Rollback Worker không rollback D1. Storage và schema thay đổi độc lập với Worker
-version. Migration `0003` của dự án là additive nên Worker cũ có thể bỏ qua các
-bảng/cột mới, nhưng không được tự động chạy SQL phá hủy để “khớp” code cũ.
+version. Migration `0003` và `0004` của dự án là additive nên Worker cũ có thể
+bỏ qua các bảng/cột mới, nhưng không được tự động chạy SQL phá hủy để “khớp” code cũ.
 Cloudflare lưu tối đa 100 version gần nhất cho rollback. Xem
 [Workers rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/).
 

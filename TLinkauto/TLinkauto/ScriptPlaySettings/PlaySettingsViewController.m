@@ -16,6 +16,7 @@
 #import "libactivator.h"
 #import <dlfcn.h>
 #import <objc/runtime.h>
+#import "../../../shared/TLinkJailbreakPath.h"
 
 @interface PlaySettingsViewController ()
 {
@@ -218,7 +219,7 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.row == 3)
     {
-        dlopen("/usr/lib/libactivator.dylib", RTLD_LAZY);
+        dlopen([TLinkJailbreakPath(@"/usr/lib/libactivator.dylib") fileSystemRepresentation], RTLD_LAZY);
         Class la = objc_getClass("LAActivator");
         if (la)
         {

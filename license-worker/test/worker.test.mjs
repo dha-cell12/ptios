@@ -80,23 +80,28 @@ class FakeStatement {
 
   async all() {
     const [a, b, c] = this.values;
-    if (this.sql.startsWith("select id, status, max_devices, features_json, expires_at, created_at, updated_at, (select count(*) from devices where license_id = licenses.id and (status = 'active'")) {
+    if (this.sql.startsWith("select id, license_key, status, max_devices, features_json, expires_at, created_at, updated_at, (select serial_plaintext from physical_devices")) {
       const now = a;
       const limit = b;
       const offset = c;
       const results = [...this.database.licenses.values()]
         .sort((left, right) => right.updated_at - left.updated_at)
         .slice(offset, offset + limit)
-        .map(({ id, status, max_devices, features_json, expires_at, created_at, updated_at }) => {
+        .map(({ id, license_key, status, max_devices, features_json, expires_at, created_at, updated_at }) => {
           const devices = [...this.database.devices.values()].filter((row) => row.license_id === id);
+          const latestPhysical = [...this.database.physicalDevices.values()]
+            .filter((row) => row.license_id === id && row.serial_plaintext)
+            .sort((left, right) => right.last_seen_at - left.last_seen_at)[0];
           return {
             id,
+            license_key,
             status,
             max_devices,
             features_json,
             expires_at,
             created_at,
             updated_at,
+            serial: latestPhysical?.serial_plaintext || null,
             active_devices: devices.filter((row) => (
               row.status === "active" || (row.status === "release_pending" && row.slot_reusable_at > now)
             )).length,
@@ -133,12 +138,12 @@ class FakeStatement {
         .sort((left, right) => right.last_seen_at - left.last_seen_at);
       return { success: true, results };
     }
-    if (this.sql === "select id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status from physical_devices where license_id = ? order by last_seen_at desc") {
+    if (this.sql === "select id, serial_plaintext, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status from physical_devices where license_id = ? order by last_seen_at desc") {
       const results = [...this.database.physicalDevices.values()]
         .filter((row) => row.license_id === a)
         .sort((left, right) => right.last_seen_at - left.last_seen_at)
-        .map(({ id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status }) => ({
-          id, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status,
+        .map(({ id, serial_plaintext, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status }) => ({
+          id, serial_plaintext, first_seen_at, last_seen_at, reset_count, transfer_count, risk_score, status,
         }));
       return { success: true, results };
     }
@@ -156,10 +161,11 @@ class FakeStatement {
     const v = this.values;
     let changes = 0;
     if (this.sql.startsWith("insert into licenses ")) {
-      const [id, keyHash, maxDevices, featuresJson, expiresAt, createdAt, updatedAt] = v;
+      const [id, keyHash, licenseKey, maxDevices, featuresJson, expiresAt, createdAt, updatedAt] = v;
       this.database.licenses.set(id, {
         id,
         key_hash: keyHash,
+        license_key: licenseKey,
         status: "active",
         max_devices: maxDevices,
         features_json: featuresJson,
@@ -314,7 +320,7 @@ class FakeStatement {
         }
       }
     } else if (this.sql.startsWith("insert or ignore into physical_devices ")) {
-      const [id, licenseId, udidHmac, serialHmac, mlbHmac, ecidHmac, firstSeenAt,
+      const [id, licenseId, udidHmac, serialHmac, serialPlaintext, mlbHmac, ecidHmac, firstSeenAt,
         lastSeenAt, transferCount, riskScore, status] = v;
       const duplicate = [...this.database.physicalDevices.values()].some((row) => (
         row.license_id === licenseId && [
@@ -325,20 +331,21 @@ class FakeStatement {
       if (!duplicate) {
         this.database.physicalDevices.set(id, {
           id, license_id: licenseId, udid_hmac: udidHmac, serial_hmac: serialHmac,
-          mlb_hmac: mlbHmac, ecid_hmac: ecidHmac, first_seen_at: firstSeenAt,
+          serial_plaintext: serialPlaintext, mlb_hmac: mlbHmac, ecid_hmac: ecidHmac, first_seen_at: firstSeenAt,
           last_seen_at: lastSeenAt, reset_count: 0, transfer_count: transferCount,
           risk_score: riskScore, status,
         });
         changes = 1;
       }
     } else if (this.sql.startsWith("update physical_devices set last_seen_at = ?")) {
-      const row = this.database.physicalDevices.get(v[6]);
+      const row = this.database.physicalDevices.get(v[7]);
       if (row) {
         row.last_seen_at = v[0];
         row.reset_count += v[1];
         row.transfer_count += v[2];
         row.risk_score = Math.max(row.risk_score, v[4]);
         row.status = v[5];
+        if (v[6]) row.serial_plaintext = v[6];
         changes = 1;
       }
     } else if (this.sql.startsWith("update devices set physical_device_id = ?")) {
@@ -355,13 +362,14 @@ class FakeStatement {
         identifier_mask: identifierMask, risk_score: riskScore, created_at: createdAt,
       });
       changes = 1;
-    } else if (this.sql.startsWith("update licenses set status = ?, max_devices = ?")) {
-      changes = this.database.update(this.database.licenses, v[5], {
-        status: v[0],
-        max_devices: v[1],
-        features_json: v[2],
-        expires_at: v[3],
-        updated_at: v[4],
+    } else if (this.sql.startsWith("update licenses set license_key = coalesce(?, license_key), status = ?")) {
+      changes = this.database.update(this.database.licenses, v[6], {
+        license_key: v[0] || this.database.licenses.get(v[6])?.license_key || null,
+        status: v[1],
+        max_devices: v[2],
+        features_json: v[3],
+        expires_at: v[4],
+        updated_at: v[5],
       });
     } else if (this.sql === "update licenses set status = 'revoked', updated_at = ? where id = ?") {
       changes = this.database.update(this.database.licenses, v[1], {
@@ -740,7 +748,7 @@ test("same physical device after reset gets a new device key without consuming a
   assert.equal(new Set([...env.DB.devices.values()].map((row) => row.physical_device_id)).size, 1);
 });
 
-test("a real transfer creates another physical identity and keeps only HMAC fingerprints", async () => {
+test("a real transfer stores canonical serial but keeps other hardware identifiers HMAC-only", async () => {
   const env = await createEnvironment();
   await createLicense(env, { max_devices: 2 });
   const first = await createDevice("OWNER1001");
@@ -755,7 +763,9 @@ test("a real transfer creates another physical identity and keeps only HMAC fing
     physical: [...env.DB.physicalDevices.values()],
     events: [...env.DB.events.values()],
   });
-  for (const raw of ["UDIDOWNER1001", "SEROWNER1001", "MLBOWNER1001", "UDIDOWNER2002"]) {
+  assert.ok(persisted.includes("SEROWNER1001"));
+  assert.ok(persisted.includes("SEROWNER2002"));
+  for (const raw of ["UDIDOWNER1001", "MLBOWNER1001", "UDIDOWNER2002", "MLBOWNER2002"]) {
     assert.equal(persisted.includes(raw), false);
   }
 });
@@ -891,7 +901,7 @@ test("reset, feature update, expiry and revoke are reflected by refresh", async 
   assert.ok(original.json.lease);
 });
 
-test("admin dashboard and ID-based management expose no recoverable license key", async () => {
+test("authenticated admin dashboard displays plaintext license key and canonical serial", async () => {
   const env = await createEnvironment();
   const dashboard = await worker.fetch(new Request("https://license.test/admin"), env);
   const dashboardHtml = await dashboard.text();
@@ -902,7 +912,8 @@ test("admin dashboard and ID-based management expose no recoverable license key"
   assert.match(dashboardHtml, /ADMIN_TOKEN/);
   assert.match(dashboardHtml, /Hướng dẫn quản trị license/);
   assert.match(dashboardHtml, /Reset Device Slots/);
-  assert.match(dashboardHtml, /Worker chỉ lưu SHA-256 hash/);
+  assert.match(dashboardHtml, /Worker lưu cả clear key và SHA-256 hash/);
+  assert.match(dashboardHtml, /License key stored in plaintext/);
   assert.match(dashboardHtml, /function openGuide\(\)/);
   assert.doesNotMatch(dashboardHtml, /\sstyle=/);
   assert.doesNotMatch(dashboardHtml, /phase-test-admin/);
@@ -926,23 +937,37 @@ test("admin dashboard and ID-based management expose no recoverable license key"
   assert.equal(list.json.licenses[0].id, licenseId);
   assert.equal(list.json.licenses[0].active_devices, 1);
   assert.equal(Object.hasOwn(list.json.licenses[0], "key_hash"), false);
-  assert.equal(Object.hasOwn(list.json.licenses[0], "license_key"), false);
+  assert.equal(list.json.licenses[0].license_key, "TLINK-PHASE-0001");
+  assert.equal(list.json.licenses[0].serial, device.hardwareClaims.collectors[0].values.serial);
 
   const detail = await call(env, `/v1/admin/license?id=${licenseId}`, undefined, true);
   assert.equal(detail.response.status, 200);
   assert.equal(detail.json.devices[0].id, deviceId);
   assert.equal(detail.json.physical_devices.length, 1);
+  assert.equal(detail.json.license.license_key, "TLINK-PHASE-0001");
+  assert.equal(detail.json.license.serial, device.hardwareClaims.collectors[0].values.serial);
+  assert.equal(detail.json.physical_devices[0].serial, device.hardwareClaims.collectors[0].values.serial);
   assert.equal(detail.json.hardware_events.length, 1);
   assert.equal(detail.json.hardware_events[0].decision_code, "first_bind");
   assert.equal(JSON.stringify(detail.json).includes("UDIDDEVICE"), false);
 
+  env.DB.licenses.get(licenseId).license_key = null;
+  const rejectedBackfill = await call(env, "/v1/admin/update", {
+    license_id: licenseId,
+    license_key: "TLINK-WRONG-0001",
+  }, true);
+  assert.equal(rejectedBackfill.response.status, 409);
+  assert.equal(rejectedBackfill.json.error, "license_key_hash_mismatch");
+
   const updated = await call(env, "/v1/admin/update", {
     license_id: licenseId,
+    license_key: "TLINK-PHASE-0001",
     max_devices: 3,
     features: ["automation", "script"],
   }, true);
   assert.equal(updated.response.status, 200);
   assert.equal(updated.json.max_devices, 3);
+  assert.equal(updated.json.license_key, "TLINK-PHASE-0001");
 
   const revokedDevice = await call(env, "/v1/admin/revoke-device", {
     license_id: licenseId,

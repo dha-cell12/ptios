@@ -8,6 +8,7 @@
 #include "../shared/TLinkRunHistory.h"
 #include "../shared/TLinkEventChannel.h"
 #include "../shared/TLinkAdaptiveStreaming.h"
+#include "../shared/TLinkJailbreakPath.h"
 #import <Foundation/Foundation.h>
 #ifndef YES
 #define YES true
@@ -535,8 +536,12 @@ static TLinkShellResult *RunShellCore(NSString *command, TLinkTaskExecutionConte
     posix_spawnattr_setpgroup(&attr, 0);
 
     pid_t pid = -1;
-    const char *cmdArgs[] = {"/usr/bin/sudo", "/usr/bin/tlinkautob", "-e", [command UTF8String], NULL};
-    int spawnErr = posix_spawn(&pid, "/usr/bin/sudo", &actions, &attr, (char *const *)cmdArgs, NULL);
+    NSString *sudoPath = TLinkJailbreakPath(@"/usr/bin/sudo");
+    NSString *helperPath = TLinkJailbreakPath(@"/usr/bin/tlinkautob");
+    const char *sudoFileSystemPath = [sudoPath fileSystemRepresentation];
+    const char *helperFileSystemPath = [helperPath fileSystemRepresentation];
+    const char *cmdArgs[] = {sudoFileSystemPath, helperFileSystemPath, "-e", [command UTF8String], NULL};
+    int spawnErr = posix_spawn(&pid, sudoFileSystemPath, &actions, &attr, (char *const *)cmdArgs, NULL);
 
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);

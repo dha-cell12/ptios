@@ -1,7 +1,23 @@
-# lipoplastic setup for armv6 + arm64 compilation
+# Rootful remains the default. Roothide builds use RootHide's Theos package
+# scheme, the arm64e Debian architecture, and the iOS 15 minimum supported by
+# the current RootHide bootstrap.
+TLINK_PACKAGE_RUNTIME ?= rootfull
+ifeq ($(TLINK_PACKAGE_RUNTIME),roothide)
+export THEOS_PACKAGE_SCHEME = roothide
+export DEB_ARCH = iphoneos-arm64e
+export ARCHS = arm64
+export TARGET = iphone:clang:latest:15.0
+export IPHONEOS_DEPLOYMENT_TARGET = 15.0
+TLINK_ROOTHIDE_RUNTIME := 1
+else ifeq ($(TLINK_PACKAGE_RUNTIME),rootfull)
 export ARCHS = arm64e arm64
-#export THEOS_DEVICE_IP = 192.168.0.3
 export TARGET = iphone:clang:latest:14.0
+TLINK_ROOTHIDE_RUNTIME := 0
+else
+$(error TLINK_PACKAGE_RUNTIME must be rootfull or roothide)
+endif
+export TLINK_PACKAGE_RUNTIME
+export TLINK_ROOTHIDE_RUNTIME
 
 TLINK_LICENSE_MODE ?= observe
 ifeq ($(TLINK_LICENSE_MODE),enforced)
@@ -19,6 +35,11 @@ SUBPROJECTS = appdelegate license-authority tlinkauto-binary tlinkauto-jsd vpn-b
 include $(THEOS)/makefiles/common.mk
 include $(THEOS)/makefiles/aggregate.mk
 
+before-package::
+ifeq ($(TLINK_PACKAGE_RUNTIME),roothide)
+	node "$(THEOS_PROJECT_DIR)/scripts/prepare-roothide-stage.mjs" --rootfs "$(THEOS_STAGING_DIR)"
+endif
+
 after-install::
-	install.exec "chown -R mobile:mobile /var/mobile/Library/TLinkauto && killall -9 SpringBoard;"
+	install.exec "TLINK_DATA_ROOT=/var/mobile/Library/TLinkauto; if [ -d /rootfs/var/mobile ]; then TLINK_DATA_ROOT=/rootfs/var/mobile/Library/TLinkauto; fi; chown -R mobile:mobile \$$TLINK_DATA_ROOT; killall -9 SpringBoard;"
 

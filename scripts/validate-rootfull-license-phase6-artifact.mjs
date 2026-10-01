@@ -68,8 +68,10 @@ async function listFiles(path) {
 const args = parseArgs(process.argv.slice(2));
 const rootfs = resolve(args.rootfs || "");
 const mode = args.mode;
-const output = resolve(args.output || `rootfull-license-phase6-${mode}.json`);
+const runtime = args.runtime || "rootfull";
+const output = resolve(args.output || `${runtime}-license-phase6-${mode}.json`);
 assert.ok(mode === "observe" || mode === "enforced", "mode must be observe or enforced");
+assert.ok(runtime === "rootfull" || runtime === "roothide", "runtime must be rootfull or roothide");
 
 const rootfullMarker = `rootfull_${mode}_compile_time_v1`;
 const wrongRootfullMarker = mode === "enforced"
@@ -225,6 +227,33 @@ assert.ok(
     !shortcutEntitlements.includes("com.apple.developer.networking.networkextension"),
   "shortcut extension must not inherit VPN entitlements",
 );
+if (runtime === "roothide") {
+  const roothideEntitlementKeys = [
+    "platform-application",
+    "com.apple.private.security.no-sandbox",
+    "com.apple.private.security.storage.AppBundles",
+    "com.apple.private.security.storage.AppDataContainers",
+  ];
+  for (const relative of binaries) {
+    const entitlements = signedEntitlements(join(rootfs, relative));
+    for (const key of roothideEntitlementKeys) {
+      assert.ok(entitlements.includes(key), `${relative} is missing Roothide entitlement ${key}`);
+    }
+  }
+  for (const key of roothideEntitlementKeys) {
+    assert.ok(shortcutEntitlements.includes(key), `shortcut extension is missing Roothide entitlement ${key}`);
+  }
+  for (const relative of [
+    "Library/LaunchDaemons/com.tlinkauto.license-authority.plist",
+    "Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist",
+  ]) {
+    const launchd = await readFile(join(rootfs, relative), "utf8");
+    assert.ok(
+      launchd.includes("/rootfs/var/mobile/Library/TLinkauto/"),
+      `${relative} does not target the shared rootfs data directory`,
+    );
+  }
+}
 
 const buildPlistPath = join(app, "RootfullLicenseBuild.plist");
 const configPath = join(app, "LicenseConfig.plist");
@@ -276,7 +305,8 @@ for (const path of await listFiles(rootfs)) {
 
 const manifest = {
   schema_version: 1,
-  product: "tlinkauto-rootfull",
+  product: `tlinkauto-${runtime}`,
+  package_runtime: runtime,
   license_contract_version: 1,
   rootfull_license_phase: 6,
   license_mode: mode,

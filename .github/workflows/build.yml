@@ -12,9 +12,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        package_runtime: [rootfull, roothide]
         license_mode: [observe, enforced]
     env:
       THEOS: ${{ github.workspace }}/theos
+      TLINK_PACKAGE_RUNTIME: ${{ matrix.package_runtime }}
+      TLINK_ROOTHIDE_RUNTIME: ${{ matrix.package_runtime == 'roothide' && '1' || '0' }}
       TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
       TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
       TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
@@ -26,7 +29,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate rootfull license contracts
+      - name: Validate license and package contracts
         run: |
           node scripts/check-rootfull-license-phase0.mjs
           node scripts/check-rootfull-license-phase1.mjs
@@ -56,6 +59,7 @@ jobs:
           node scripts/check-vpn-p3-trollstore-foreground.mjs
           node scripts/check-vpn-p4-on-demand.mjs
           node scripts/check-vpn-p5-background-agent.mjs
+          node scripts/check-roothide-build.mjs
 
       - name: Validate public license build inputs
         run: |
@@ -69,7 +73,7 @@ jobs:
           printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_X" | grep -Eq '^[A-Za-z0-9_-]{43}$'
           printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_Y" | grep -Eq '^[A-Za-z0-9_-]{43}$'
 
-      - name: Configure rootfull public license verifier
+      - name: Configure public license verifier
         run: |
           set -euo pipefail
           PLIST="TLinkauto/TLinkauto/LicenseConfig.plist"
@@ -97,7 +101,13 @@ jobs:
 
       - name: Set up Theos
         run: |
-          git clone --depth=1 https://github.com/theos/theos.git "$THEOS"
+          set -euo pipefail
+          if [ "$TLINK_PACKAGE_RUNTIME" = "roothide" ]; then
+            git clone --recursive --depth=1 https://github.com/roothide/theos.git "$THEOS"
+            git -C "$THEOS" submodule update --init --recursive --depth=1
+          else
+            git clone --depth=1 https://github.com/theos/theos.git "$THEOS"
+          fi
           "$THEOS/bin/update-theos"
 
       - name: Ensure dm.pl is available
@@ -119,16 +129,25 @@ jobs:
       - name: Build TLinkauto app bundle
         run: |
           set -euo pipefail
+          XCODE_RUNTIME_SETTINGS=()
+          APP_ENTITLEMENTS="layout/entitlements.plist"
+          SHORTCUT_ENTITLEMENTS="layout/shortcut-entitlements.plist"
+          if [ "$TLINK_PACKAGE_RUNTIME" = "roothide" ]; then
+            XCODE_RUNTIME_SETTINGS=(ARCHS=arm64 ONLY_ACTIVE_ARCH=YES IPHONEOS_DEPLOYMENT_TARGET=15.0)
+            APP_ENTITLEMENTS="layout/entitlements-roothide.plist"
+            SHORTCUT_ENTITLEMENTS="layout/shortcut-entitlements-roothide.plist"
+          fi
           xcodebuild \
             -project TLinkauto/TLinkauto.xcodeproj \
             -target TLinkauto \
             -configuration Release \
             -sdk iphoneos \
             SYMROOT="$PWD/build" \
-            GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) TLINK_LICENSE_FORCE_ENFORCEMENT=${TLINK_LICENSE_FORCE_ENFORCEMENT} TLINK_LICENSE_ROOTFULL_RUNTIME=1" \
+            GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) TLINK_LICENSE_FORCE_ENFORCEMENT=${TLINK_LICENSE_FORCE_ENFORCEMENT} TLINK_LICENSE_ROOTFULL_RUNTIME=1 TLINK_ROOTHIDE_RUNTIME=${TLINK_ROOTHIDE_RUNTIME}" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            "${XCODE_RUNTIME_SETTINGS[@]}" \
             build
 
           APP_PATH="$PWD/build/Release-iphoneos/TLinkauto.app"
@@ -157,40 +176,48 @@ jobs:
           chmod +x layout/Applications/TLinkauto.app/TLinkauto
           if [ -f layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext ]; then
             chmod +x layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext
-            codesign --force --sign - --entitlements layout/shortcut-entitlements.plist layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex
+            codesign --force --sign - --entitlements "$SHORTCUT_ENTITLEMENTS" layout/Applications/TLinkauto.app/PlugIns/shortcutext.appex
           fi
-          codesign --force --sign - --entitlements layout/entitlements.plist layout/Applications/TLinkauto.app
+          codesign --force --sign - --entitlements "$APP_ENTITLEMENTS" layout/Applications/TLinkauto.app
 
           codesign -d --entitlements :- layout/Applications/TLinkauto.app | grep platform-application
 
       - name: Build package
         run: |
           export PATH="${DPKG_BIN}:$PATH"
-          make package FINALPACKAGE=1 TLINK_LICENSE_MODE="${TLINK_LICENSE_MODE}"
+          make package FINALPACKAGE=1 \
+            TLINK_LICENSE_MODE="${TLINK_LICENSE_MODE}" \
+            TLINK_PACKAGE_RUNTIME="${TLINK_PACKAGE_RUNTIME}"
 
-      - name: Validate rootfull phase 6 artifact
+      - name: Validate phase 6 artifact
         run: |
           set -euo pipefail
           export PATH="${DPKG_BIN}:$PATH"
           DEB_PATH="$(find packages -type f -name '*.deb' -print -quit)"
           test -n "$DEB_PATH"
-          ROOTFS="$RUNNER_TEMP/rootfull-${TLINK_LICENSE_MODE}"
+          EXPECTED_ARCH="iphoneos-arm"
+          if [ "$TLINK_PACKAGE_RUNTIME" = "roothide" ]; then
+            EXPECTED_ARCH="iphoneos-arm64e"
+          fi
+          test "$(dpkg-deb -f "$DEB_PATH" Architecture)" = "$EXPECTED_ARCH"
+          ROOTFS="$RUNNER_TEMP/${TLINK_PACKAGE_RUNTIME}-${TLINK_LICENSE_MODE}"
           rm -rf "$ROOTFS"
           mkdir -p "$ROOTFS"
           dpkg-deb -x "$DEB_PATH" "$ROOTFS"
           node scripts/validate-rootfull-license-phase6-artifact.mjs \
             --rootfs "$ROOTFS" \
+            --runtime "$TLINK_PACKAGE_RUNTIME" \
             --mode "$TLINK_LICENSE_MODE" \
             --endpoint "$TLINK_LICENSE_ENDPOINT" \
             --keyId "$TLINK_LICENSE_KEY_ID" \
             --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
             --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y" \
-            --output "rootfull-license-phase6-${TLINK_LICENSE_MODE}.json"
+            --output "${TLINK_PACKAGE_RUNTIME}-license-phase6-${TLINK_LICENSE_MODE}.json"
 
       - name: Upload deb package
         uses: actions/upload-artifact@v4
         with:
-          name: TLinkauto-rootfull-deb-${{ matrix.license_mode }}
+          name: TLinkauto-${{ matrix.package_runtime }}-deb-${{ matrix.license_mode }}
           path: |
             packages/*.deb
-            rootfull-license-phase6-${{ matrix.license_mode }}.json
+            ${{ matrix.package_runtime }}-license-phase6-${{ matrix.license_mode }}.json

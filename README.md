@@ -22,6 +22,9 @@ Simply grab the deb package in **release** page if you don't want to struggle wi
 4. copy generated opencv/ios/opencv2.framework exactly to TLinkauto/frameworks/opencv2.framework
 5. run ```make package FINALPACKAGE=1``` and find your deb in packages folder
 
+For RootHide Bootstrap, use `TLINK_PACKAGE_RUNTIME=roothide`; see the full
+[Roothide build and installation guide](docs/roothide-build.md).
+
 If would like to build for iOS < 14.0, switch to a compatible Xcode version, and replace the target in Makefile with 11.0 or something.
 
 ## Special thanks for reference

@@ -6,6 +6,7 @@
 #include <string.h>
 #include "NSTask.h" // in ~/theos/include/NSTask.h
 #include "SocketServer.h"
+#import "../shared/TLinkJailbreakPath.h"
 
 #define SPRINGBOARD_PORT 6000
 #define equal(a, b) strcmp(a, b) == 0
@@ -130,7 +131,7 @@ int executeCommand()
         NSTask *task = [[NSTask alloc] init];
 
         // 设置执行的命令和参数
-        [task setLaunchPath:@"/bin/sh"];
+        [task setLaunchPath:TLinkJailbreakPath(@"/bin/sh")];
         [task setArguments:@[@"-c", [NSString stringWithFormat:@"%@", parameterArr[2]]]];
 
         // 设置输出管道，如果需要获取命令的输出

@@ -222,7 +222,7 @@ export function renderAdminDashboard(nonce) {
 
       <section id="license-panel" class="panel">
         <div class="toolbar">
-          <input id="search-input" class="input" type="search" placeholder="Search license ID">
+          <input id="search-input" class="input" type="search" placeholder="Search license ID, key or serial">
           <select id="status-filter" class="select" aria-label="Filter by status">
             <option value="all">All states</option>
             <option value="active">Active</option>
@@ -236,6 +236,8 @@ export function renderAdminDashboard(nonce) {
             <thead>
               <tr>
                 <th>License ID</th>
+                <th>License key</th>
+                <th>Serial</th>
                 <th>Status</th>
                 <th class="license-expiry">Expiration</th>
                 <th>Devices</th>
@@ -267,8 +269,8 @@ export function renderAdminDashboard(nonce) {
       </div>
       <div class="dialog-body">
         <div id="created-key-result" class="key-result hidden">
-          <strong>License created. Store this key now.</strong>
-          <div class="muted small">The Worker stores only its SHA-256 hash, so this clear key cannot be recovered later.</div>
+          <strong>License created.</strong>
+          <div class="muted small">The clear key is stored for authenticated administration. Protect D1 exports and ADMIN_TOKEN.</div>
           <div class="key-row">
             <input id="created-key" class="input" type="text" readonly>
             <button id="copy-key-button" class="button" type="button">Copy</button>
@@ -314,6 +316,11 @@ export function renderAdminDashboard(nonce) {
         <button class="button quiet" data-close="manage-dialog" type="button" aria-label="Close">Close</button>
       </div>
       <div class="dialog-body">
+        <div class="field">
+          <label for="manage-key">License key stored in plaintext</label>
+          <input id="manage-key" class="input" type="text" maxlength="128" autocomplete="off">
+          <span class="muted small">Existing records may be blank. Enter the original key to backfill it; the server verifies its SHA-256 hash before saving.</span>
+        </div>
         <div class="grid-2">
           <div class="field">
             <label for="manage-status">Status</label>
@@ -380,7 +387,8 @@ export function renderAdminDashboard(nonce) {
           <li>Đặt <strong>Maximum devices</strong> là số thiết bị được active đồng thời.</li>
           <li>Chọn ngày hết hạn; để trống nếu license vĩnh viễn.</li>
           <li>Chọn ít nhất một feature rồi nhấn <strong>Create License</strong>.</li>
-          <li>Sao chép key ngay khi kết quả xuất hiện. Worker chỉ lưu SHA-256 hash nên không thể xem lại clear key.</li>
+          <li>Worker lưu cả clear key và SHA-256 hash. Clear key chỉ được trả về API/trang quản trị sau khi xác thực ADMIN_TOKEN.</li>
+          <li>Serial chuẩn hóa chỉ được lưu khi các nguồn thu thập đồng thuận; nếu nguồn mâu thuẫn, thiết bị được đánh dấu review và không lưu serial đại diện.</li>
         </ol>
       </section>
 
@@ -552,7 +560,8 @@ export function renderAdminDashboard(nonce) {
         var rows = byId("license-rows");
         rows.replaceChildren();
         var visible = licenses.filter(function (license) {
-          var matchesQuery = !query || license.id.toLowerCase().includes(query);
+          var matchesQuery = !query || [license.id, license.license_key || "", license.serial || ""]
+            .some(function (value) { return value.toLowerCase().includes(query); });
           var matchesStatus = status === "all" || effectiveStatus(license) === status;
           return matchesQuery && matchesStatus;
         });
@@ -560,6 +569,8 @@ export function renderAdminDashboard(nonce) {
         visible.forEach(function (license) {
           var row = document.createElement("tr");
           addTextCell(row, license.id, "id-cell");
+          addTextCell(row, license.license_key || "Not stored", "id-cell");
+          addTextCell(row, license.serial || "Not activated", "id-cell");
 
           var statusCell = document.createElement("td");
           var state = effectiveStatus(license);
@@ -746,7 +757,7 @@ export function renderAdminDashboard(nonce) {
           var hardware = document.createElement("div");
           hardware.className = "muted small device-id";
           hardware.textContent = physical
-            ? "Physical " + physical.id.slice(0, 12) + "… · resets " + physical.reset_count +
+            ? "Serial " + (physical.serial || "not stored") + " · Physical " + physical.id.slice(0, 12) + "… · resets " + physical.reset_count +
               " · transfers " + physical.transfer_count + " · risk " + physical.risk_score +
               (event ? " · " + event.decision_code : "")
             : "Physical identity pending next activation";
@@ -793,6 +804,7 @@ export function renderAdminDashboard(nonce) {
           var payload = await api("/v1/admin/license?id=" + encodeURIComponent(id));
           var license = payload.license;
           byId("manage-id").textContent = license.id;
+          byId("manage-key").value = license.license_key || "";
           byId("manage-status").value = license.status;
           byId("manage-max-devices").value = String(license.max_devices);
           byId("manage-expiry").value = inputFromEpoch(license.expires_at);
@@ -818,6 +830,7 @@ export function renderAdminDashboard(nonce) {
             method: "POST",
             body: JSON.stringify({
               license_id: selectedLicenseId,
+              license_key: byId("manage-key").value,
               status: byId("manage-status").value,
               max_devices: Number(byId("manage-max-devices").value),
               expires_at: epochFromInput(byId("manage-expiry").value),

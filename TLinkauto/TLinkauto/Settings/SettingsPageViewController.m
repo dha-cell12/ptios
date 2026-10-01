@@ -19,6 +19,7 @@
 #import "libactivator.h"
 #import <dlfcn.h>
 #import <objc/runtime.h>
+#import "../../../shared/TLinkJailbreakPath.h"
 #import "Config.h"
 #import "ConfigManager.h"
 #import "../../../stream-app/app/LicenseViewController.h"
@@ -228,7 +229,7 @@
 }
 
 - (void)handleConfigActivatorEventsWithEntryCellInstance:(TableViewCellWithEntry*)cell {
-    dlopen("/usr/lib/libactivator.dylib", RTLD_LAZY);
+    dlopen([TLinkJailbreakPath(@"/usr/lib/libactivator.dylib") fileSystemRepresentation], RTLD_LAZY);
     Class ac = objc_getClass("LAActivator");
     if (ac) {
         
@@ -255,7 +256,7 @@
 }
 
 - (void)handleActivatorWithEntryCellInstance:(TableViewCellWithEntry*)cell {
-    dlopen("/usr/lib/libactivator.dylib", RTLD_LAZY);
+    dlopen([TLinkJailbreakPath(@"/usr/lib/libactivator.dylib") fileSystemRepresentation], RTLD_LAZY);
     Class la = objc_getClass("LAListenerSettingsViewController");
     if (la) {
         LAListenerSettingsViewController *vc = [[la alloc] init];

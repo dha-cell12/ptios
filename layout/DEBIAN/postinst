@@ -1,12 +1,21 @@
 #!/bin/sh
-rm -rf /Applications/zxtouch.app
-mkdir -p /var/mobile/Library/TLinkauto
-mkdir -p /var/mobile/Library/TLinkauto/run
-if [ -f /var/mobile/Library/TLinkauto/config.json.preinst-bak ]; then
-    mv /var/mobile/Library/TLinkauto/config.json.preinst-bak /var/mobile/Library/TLinkauto/config.json 2>/dev/null
+TLINK_DATA_ROOT="/var/mobile/Library/TLinkauto"
+if [ -d /rootfs/var/mobile ]; then
+    TLINK_DATA_ROOT="/rootfs/var/mobile/Library/TLinkauto"
 fi
-if [ ! -f /var/mobile/Library/TLinkauto/config.json ]; then
-    cat > /var/mobile/Library/TLinkauto/config.json <<'EOF'
+
+rm -rf /Applications/zxtouch.app
+mkdir -p "$TLINK_DATA_ROOT"
+mkdir -p "$TLINK_DATA_ROOT/run"
+if [ "$TLINK_DATA_ROOT" != "/var/mobile/Library/TLinkauto" ] &&
+   [ -d /var/mobile/Library/TLinkauto ]; then
+    cp -R /var/mobile/Library/TLinkauto/. "$TLINK_DATA_ROOT/"
+fi
+if [ -f "$TLINK_DATA_ROOT/config.json.preinst-bak" ]; then
+    mv "$TLINK_DATA_ROOT/config.json.preinst-bak" "$TLINK_DATA_ROOT/config.json" 2>/dev/null
+fi
+if [ ! -f "$TLINK_DATA_ROOT/config.json" ]; then
+    cat > "$TLINK_DATA_ROOT/config.json" <<'EOF'
 {
   "javascript_helper_runtime_enabled": false,
   "javascript_helper_runtime_default": false,
@@ -21,15 +30,21 @@ chmod +x /usr/bin/tlinkautob 2>/dev/null
 chmod +x /usr/libexec/tlinkauto-jsd 2>/dev/null
 chmod +x /usr/libexec/tlinkauto-licensed 2>/dev/null
 chmod +x /usr/libexec/tlinkauto-vpnd 2>/dev/null
-if [ -f /var/mobile/Library/TLinkauto/force_ldid_resign ] && command -v ldid >/dev/null 2>&1; then
+if [ -f "$TLINK_DATA_ROOT/force_ldid_resign" ] && command -v ldid >/dev/null 2>&1; then
     rm -rf /Applications/TLinkauto.app/_CodeSignature 2>/dev/null
     rm -rf /Applications/TLinkauto.app/PlugIns/shortcutext.appex/_CodeSignature 2>/dev/null
     rm -f /Applications/TLinkauto.app/embedded.mobileprovision 2>/dev/null
     rm -f /Applications/TLinkauto.app/PlugIns/shortcutext.appex/embedded.mobileprovision 2>/dev/null
-    if [ -f /entitlements.plist ]; then
-        ldid -S/entitlements.plist /Applications/TLinkauto.app/TLinkauto 2>/dev/null
-        if [ -f /shortcut-entitlements.plist ]; then
-            ldid -S/shortcut-entitlements.plist /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
+    APP_ENTITLEMENTS=/entitlements.plist
+    SHORTCUT_ENTITLEMENTS=/shortcut-entitlements.plist
+    if [ -d /rootfs/var/mobile ] && [ -f /entitlements-roothide.plist ]; then
+        APP_ENTITLEMENTS=/entitlements-roothide.plist
+        SHORTCUT_ENTITLEMENTS=/shortcut-entitlements-roothide.plist
+    fi
+    if [ -f "$APP_ENTITLEMENTS" ]; then
+        ldid -S"$APP_ENTITLEMENTS" /Applications/TLinkauto.app/TLinkauto 2>/dev/null
+        if [ -f "$SHORTCUT_ENTITLEMENTS" ]; then
+            ldid -S"$SHORTCUT_ENTITLEMENTS" /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
         else
             ldid -S /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
         fi
@@ -37,16 +52,21 @@ if [ -f /var/mobile/Library/TLinkauto/force_ldid_resign ] && command -v ldid >/d
         ldid -S /Applications/TLinkauto.app/TLinkauto 2>/dev/null
         ldid -S /Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext 2>/dev/null
     fi
-    if [ -f /license-authority-entitlements.plist ] &&
+    AUTHORITY_ENTITLEMENTS=/license-authority-entitlements.plist
+    if [ -d /rootfs/var/mobile ] && [ -f /license-authority-entitlements-roothide.plist ]; then
+        AUTHORITY_ENTITLEMENTS=/license-authority-entitlements-roothide.plist
+    fi
+    if [ -f "$AUTHORITY_ENTITLEMENTS" ] &&
        [ -x /usr/libexec/tlinkauto-licensed ]; then
-        ldid -S/license-authority-entitlements.plist /usr/libexec/tlinkauto-licensed 2>/dev/null
+        ldid -S"$AUTHORITY_ENTITLEMENTS" /usr/libexec/tlinkauto-licensed 2>/dev/null
     fi
 fi
 su mobile -c uicache
 uicache -p /Applications/TLinkauto.app 2>/dev/null
-echo "mobile ALL=(root) NOPASSWD:/usr/bin/tlinkautob" >> /etc/sudoers
-chown -R mobile:mobile /var/mobile/Library/TLinkauto
-chmod +x /var/mobile/Library/TLinkauto/coreutils/ScriptRuntime/add_datetime.sh
+grep -qxF "mobile ALL=(root) NOPASSWD:/usr/bin/tlinkautob" /etc/sudoers 2>/dev/null || \
+    echo "mobile ALL=(root) NOPASSWD:/usr/bin/tlinkautob" >> /etc/sudoers
+chown -R mobile:mobile "$TLINK_DATA_ROOT"
+chmod +x "$TLINK_DATA_ROOT/coreutils/ScriptRuntime/add_datetime.sh"
 chown root:wheel /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 chmod 644 /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 chown root:wheel /Library/LaunchDaemons/com.tlinkauto.js-helper.plist 2>/dev/null
@@ -67,23 +87,23 @@ killall -9 tlinkauto-licensed 2>/dev/null
 killall -9 tlinkauto-vpnd 2>/dev/null
 rm -f /Library/LaunchDaemons/com.zjx.zxtouchd.plist 2>/dev/null
 rm -f /usr/bin/zxtouchd /usr/bin/zxtouchb 2>/dev/null
-rm -f /var/mobile/Library/TLinkauto/run/js-helper.sock 2>/dev/null
-rm -f /var/mobile/Library/TLinkauto/run/js-helper.pid 2>/dev/null
-rm -f /var/mobile/Library/TLinkauto/run/js-helper.lock 2>/dev/null
-rm -f /var/mobile/Library/TLinkauto/run/license-authority.sock 2>/dev/null
+rm -f "$TLINK_DATA_ROOT/run/js-helper.sock" 2>/dev/null
+rm -f "$TLINK_DATA_ROOT/run/js-helper.pid" 2>/dev/null
+rm -f "$TLINK_DATA_ROOT/run/js-helper.lock" 2>/dev/null
+rm -f "$TLINK_DATA_ROOT/run/license-authority.sock" 2>/dev/null
 if [ -x /usr/libexec/tlinkauto-licensed ] && [ -f /Library/LaunchDaemons/com.tlinkauto.license-authority.plist ]; then
-    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.license-authority.plist >/var/mobile/Library/TLinkauto/license-authority-launchctl.log 2>&1
+    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.license-authority.plist >"$TLINK_DATA_ROOT/license-authority-launchctl.log" 2>&1
 else
-    echo "missing /usr/libexec/tlinkauto-licensed or authority plist" >/var/mobile/Library/TLinkauto/license-authority-launchctl.log
+    echo "missing /usr/libexec/tlinkauto-licensed or authority plist" >"$TLINK_DATA_ROOT/license-authority-launchctl.log"
 fi
 launchctl load -w /Library/LaunchDaemons/com.tlinkauto.tlinkautod.plist
 if [ -x /usr/libexec/tlinkauto-jsd ] && [ -f /Library/LaunchDaemons/com.tlinkauto.js-helper.plist ]; then
-    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.js-helper.plist >/var/mobile/Library/TLinkauto/js-helper-launchctl.log 2>&1
+    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.js-helper.plist >"$TLINK_DATA_ROOT/js-helper-launchctl.log" 2>&1
 else
-    echo "missing /usr/libexec/tlinkauto-jsd or helper plist" >/var/mobile/Library/TLinkauto/js-helper-launchctl.log
+    echo "missing /usr/libexec/tlinkauto-jsd or helper plist" >"$TLINK_DATA_ROOT/js-helper-launchctl.log"
 fi
 if [ -x /usr/libexec/tlinkauto-vpnd ] && [ -f /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist ]; then
-    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist >/var/mobile/Library/TLinkauto/vpn-broker-launchctl.log 2>&1
+    launchctl load -w /Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist >"$TLINK_DATA_ROOT/vpn-broker-launchctl.log" 2>&1
 else
-    echo "missing /usr/libexec/tlinkauto-vpnd or broker plist" >/var/mobile/Library/TLinkauto/vpn-broker-launchctl.log
+    echo "missing /usr/libexec/tlinkauto-vpnd or broker plist" >"$TLINK_DATA_ROOT/vpn-broker-launchctl.log"
 fi
