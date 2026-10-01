@@ -129,7 +129,9 @@ jobs:
       - name: Build TLinkauto app bundle
         run: |
           set -euo pipefail
-          XCODE_RUNTIME_SETTINGS=()
+          # Keep the array non-empty: macOS Bash 3.2 treats expansion of an
+          # empty array as an unbound variable when `set -u` is enabled.
+          XCODE_RUNTIME_SETTINGS=(ONLY_ACTIVE_ARCH=NO)
           APP_ENTITLEMENTS="layout/entitlements.plist"
           SHORTCUT_ENTITLEMENTS="layout/shortcut-entitlements.plist"
           if [ "$TLINK_PACKAGE_RUNTIME" = "roothide" ]; then

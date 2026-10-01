@@ -48,6 +48,8 @@ assert.match(workflow, /package_runtime: \[rootfull, roothide\]/);
 assert.match(workflow, /github\.com\/roothide\/theos\.git/);
 assert.match(workflow, /TLINK_ROOTHIDE_RUNTIME/);
 assert.match(workflow, /EXPECTED_ARCH="iphoneos-arm64e"/);
+assert.match(workflow, /XCODE_RUNTIME_SETTINGS=\(ONLY_ACTIVE_ARCH=NO\)/);
+assert.doesNotMatch(workflow, /XCODE_RUNTIME_SETTINGS=\(\)/);
 
 assert.match(pathHelper, /dlsym\(RTLD_DEFAULT, "jbroot"\)/);
 assert.match(pathHelper, /#include <roothide\.h>/);
