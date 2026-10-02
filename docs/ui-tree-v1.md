@@ -5,6 +5,7 @@ UI Tree v1 adds a shared, private-AXRuntime accessibility snapshot to the rootfu
 ## Runtime routes
 
 - Rootfull TCP requests run in `tlinkautod`. Rootfull in-process scripts use the same shared core through the SpringBoard script bridge.
+- Rootfull and roothide foreground lookup first reads `AXSpringBoardServer.focusedAppPID`, maps the PID to an interactive app bundle, and exposes the result in task 77 as `foreground_probe`. SpringBoardServices remains a compatibility fallback. Roothide uses the same `rootfull` wire runtime marker.
 - TrollStore TCP requests and scripts run in `streamd`. `StreamControl.app` may remain in the background while the target application is foreground.
 - TrollStore foreground discovery uses resolver v12. Its normal path dynamically loads `AXSpringBoardServer`, reads `focusedAppPID` (with `topEventPidOverride` as a filtered fallback), maps that one PID to its application bundle and validates only that AX tree. The direct PID is authoritative: after an app switch it is observed twice, and a temporarily unavailable AX tree is retried on that same PID after 35 ms and 90 ms. If the tree is still unavailable the resolver reports `ui_ax_springboard_target_not_ready`/`transitioning`; it never lets a stale MRU candidate replace a valid direct PID. Screenshot fingerprints are skipped on this path and remain confined to the v10 compatibility fallback, which is entered only when the private server, selector or PID mapping is unavailable. Candidates must be visible application bundles; hidden/background services such as `assistivetouchd` and TLink's hosted UI service are rejected. Diagnostics expose direct resolver state, PID values, retry count and duration.
 - The accepted context carries a monotonic `generation`, `state`, `verification_count`, and resolver timing. The cache is scoped to verified state rather than an unconditional time window; task 81 still revalidates context before injecting input.
@@ -49,4 +50,16 @@ const ready = device.waitForElement(
 if (ready.ok) device.tapElement({ text: "Login", role: "button", clickableOnly: true });
 ```
 
-Use `scripts/Test-TLinkUITree.ps1` for device qualification. Promotion from `experimental` requires UIKit, SwiftUI, WebView, rotation, lock-state, app-switch race, and repeated-snapshot soak testing on both runtimes.
+Use `scripts/Test-TLinkUITree.ps1` for TrollStore qualification. For rootfull or roothide, use the TCP UI tasks through `scripts/Test-TLinkJailbreakUITree.ps1`:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\Test-TLinkJailbreakUITree.ps1 `
+  -HostIP "192.168.1.244" -Runtime rootfull `
+  -ExpectedBundle "com.apple.Preferences" -Text "Settings" -RequireMatch `
+  -RepeatCount 10
+```
+
+Change `-Runtime` to `roothide` for a device running the Roothide package. Both packages report `runtime=rootfull` and `service=tlinkautod` in task 77; the TCP protocol cannot prove which package was installed. The script reports this distinction as `requested_package_runtime` and `package_runtime_verified=false`. To test task 80, add `-AtX` and `-AtY` in UIKit points. Task 81 runs only with explicit `-Tap`, a selector, and `-ExpectedBundle`; the selector must resolve to one clickable element.
+
+Promotion from `experimental` requires UIKit, SwiftUI, WebView, rotation, lock-state, app-switch race, and repeated-snapshot soak testing on both runtimes.

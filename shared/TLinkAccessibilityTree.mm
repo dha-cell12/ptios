@@ -7,6 +7,8 @@
 #import <unistd.h>
 #import <math.h>
 #import <mach/mach.h>
+#import <objc/message.h>
+#include <string.h>
 
 NSString *const TLinkAXSnapshotSchema = @"ui_snapshot_v1";
 NSString *const TLinkAXBackendName = @"axruntime_numeric_v1";
@@ -152,6 +154,7 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
 {
     BOOL prepared = TLinkAXPrepare();
     NSDictionary *lockState = TLinkAXLockState();
+    NSDictionary *foreground = TLinkAXCopyFrontmostContext();
     NSArray<NSString *> *names = @[
         @"com.apple.private.accessibility.inspection",
         @"com.apple.accessibility.api",
@@ -180,6 +183,15 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"automation_symbol": @(sTLinkAXAutomationSymbol),
         @"requesting_client_symbol": @(sTLinkAXRequestingClientSymbol),
         @"override_client_symbol": @(sTLinkAXOverrideClientSymbol),
+        @"foreground_probe": @{
+            @"ok": @([foreground[@"ok"] boolValue]),
+            @"bundle_id": foreground[@"bundle_id"] ?: @"",
+            @"pid": foreground[@"pid"] ?: @0,
+            @"source": foreground[@"source"] ?: @"",
+            @"error": foreground[@"error"] ?: @"",
+            @"diagnostic": foreground[@"diagnostic"] ?: @"",
+            @"direct_error": foreground[@"direct_error"] ?: @"",
+        },
         @"entitlements": entitlements,
         @"lock_state": lockState,
         @"default_max_elements": @250,
@@ -265,15 +277,131 @@ static pid_t TLinkAXPIDForBundleID(NSString *bundleID)
     return 0;
 }
 
+static pid_t TLinkAXPIDFromSelector(id target, SEL selector)
+{
+    if (!target || !selector || ![target respondsToSelector:selector]) return 0;
+    NSMethodSignature *signature = [target methodSignatureForSelector:selector];
+    if (!signature) return 0;
+    const char *returnType = signature.methodReturnType;
+    while (returnType && returnType[0] && strchr("rnNoORV", returnType[0])) returnType++;
+    if (returnType && returnType[0] == '@') {
+        id value = ((id (*)(id, SEL))objc_msgSend)(target, selector);
+        return [value respondsToSelector:@selector(intValue)] ? (pid_t)[value intValue] : 0;
+    }
+    if (signature.methodReturnLength > 0 &&
+        signature.methodReturnLength <= sizeof(NSInteger)) {
+        return (pid_t)((NSInteger (*)(id, SEL))objc_msgSend)(target, selector);
+    }
+    return 0;
+}
+
+static NSDictionary *TLinkAXContextForPID(pid_t pid)
+{
+    if (pid <= 0 || pid == getpid()) return nil;
+    int (*pidPath)(int, void *, uint32_t) =
+        (int (*)(int, void *, uint32_t))dlsym(RTLD_DEFAULT, "proc_pidpath");
+    if (!pidPath) return nil;
+    char path[4096] = {0};
+    if (pidPath(pid, path, sizeof(path)) <= 0) return nil;
+    NSString *executablePath = [NSString stringWithUTF8String:path] ?: @"";
+    NSRange appMarker = [executablePath rangeOfString:@".app/" options:NSBackwardsSearch];
+    if (appMarker.location == NSNotFound) return nil;
+    NSString *bundlePath = [executablePath substringToIndex:appMarker.location + @".app".length];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
+        [bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+    NSString *bundleID = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]]
+        ? info[@"CFBundleIdentifier"] : @"";
+    NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]]
+        ? info[@"CFBundleExecutable"] : @"";
+    NSString *packageType = [info[@"CFBundlePackageType"] isKindOfClass:[NSString class]]
+        ? info[@"CFBundlePackageType"] : @"";
+    if (bundleID.length == 0 || executable.length == 0 ||
+        ![[executablePath lastPathComponent] isEqualToString:executable] ||
+        (packageType.length > 0 && ![packageType isEqualToString:@"APPL"])) return nil;
+    if (![bundleID isEqualToString:@"com.apple.springboard"]) {
+        if ([info[@"LSBackgroundOnly"] boolValue] || [info[@"LSUIElement"] boolValue] ||
+            [bundleID isEqualToString:@"com.apple.assistivetouchd"] ||
+            [bundleID isEqualToString:@"com.apple.AccessibilityUIServer"] ||
+            [bundleID isEqualToString:@"com.apple.UIKitSystem"]) return nil;
+        NSArray *tags = [info[@"SBAppTags"] isKindOfClass:[NSArray class]]
+            ? info[@"SBAppTags"] : @[];
+        if ([tags containsObject:@"hidden"]) return nil;
+    }
+    return @{ @"bundle_id": bundleID, @"pid": @(pid) };
+}
+
+static NSDictionary *TLinkAXDirectFrontmostContext(void)
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dlopen("/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities",
+               RTLD_NOW | RTLD_GLOBAL);
+    });
+    Class serverClass = NSClassFromString(@"AXSpringBoardServer");
+    SEL serverSelector = NSSelectorFromString(@"server");
+    if (!serverClass || ![serverClass respondsToSelector:serverSelector]) {
+        return TLinkAXError(@"ui_ax_springboard_server_unavailable", nil);
+    }
+    pid_t focusedPID = 0;
+    pid_t topEventPID = 0;
+    BOOL systemAppFrontmost = NO;
+    @try {
+        id server = ((id (*)(Class, SEL))objc_msgSend)(serverClass, serverSelector);
+        if (!server) return TLinkAXError(@"ui_ax_springboard_server_unavailable", nil);
+        focusedPID = TLinkAXPIDFromSelector(server, NSSelectorFromString(@"focusedAppPID"));
+        topEventPID = TLinkAXPIDFromSelector(server, NSSelectorFromString(@"topEventPidOverride"));
+        SEL systemSelector = NSSelectorFromString(@"isSystemAppFrontmost");
+        if ([server respondsToSelector:systemSelector]) {
+            systemAppFrontmost = ((BOOL (*)(id, SEL))objc_msgSend)(server, systemSelector);
+        }
+    } @catch (__unused NSException *exception) {
+        return TLinkAXError(@"ui_ax_springboard_query_failed", nil);
+    }
+
+    NSDictionary *context = TLinkAXContextForPID(focusedPID);
+    NSString *source = @"ax_springboard_focused_pid_v1";
+    if (!context && topEventPID > 0 && topEventPID != focusedPID) {
+        context = TLinkAXContextForPID(topEventPID);
+        source = @"ax_springboard_top_event_pid_v1";
+    }
+    if (!context && systemAppFrontmost) {
+        context = TLinkAXContextForPID(TLinkAXPIDForBundleID(@"com.apple.springboard"));
+        source = @"ax_springboard_system_app_v1";
+    }
+    NSString *diagnostic = [NSString stringWithFormat:
+        @"focused_pid=%d top_event_pid=%d system_frontmost=%d",
+        focusedPID, topEventPID, systemAppFrontmost];
+    if (!context) {
+        return TLinkAXError(@"ui_ax_springboard_focused_pid_unavailable",
+                            @{ @"diagnostic": diagnostic });
+    }
+    return @{
+        @"ok": @YES,
+        @"bundle_id": context[@"bundle_id"],
+        @"pid": context[@"pid"],
+        @"source": source,
+        @"diagnostic": diagnostic,
+    };
+}
+
 NSDictionary *TLinkAXCopyFrontmostContext(void)
 {
+    NSDictionary *direct = TLinkAXDirectFrontmostContext();
+    if (TLinkAXResultSucceeded(direct)) return direct;
     NSString *bundleID = TLinkAXFrontmostBundleID();
     if (bundleID.length == 0) {
-        return TLinkAXError(@"ui_frontmost_bundle_unavailable", nil);
+        return TLinkAXError(@"ui_frontmost_bundle_unavailable", @{
+            @"direct_error": direct[@"error"] ?: @"unknown",
+            @"diagnostic": direct[@"diagnostic"] ?: @"",
+        });
     }
     pid_t pid = TLinkAXPIDForBundleID(bundleID);
     if (pid <= 0) {
-        return TLinkAXError(@"ui_frontmost_pid_unavailable", @{@"bundle_id": bundleID});
+        return TLinkAXError(@"ui_frontmost_pid_unavailable", @{
+            @"bundle_id": bundleID,
+            @"direct_error": direct[@"error"] ?: @"unknown",
+            @"diagnostic": direct[@"diagnostic"] ?: @"",
+        });
     }
     return @{
         @"ok": @YES,

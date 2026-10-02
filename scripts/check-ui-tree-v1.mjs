@@ -145,6 +145,10 @@ assert.match(trollServer, /SBSCopyInfoForApplicationWithProcessID/);
 assert.match(trollServer, /BKSApplicationStateAppIsFrontmost/);
 assert.match(trollServer, /SBApplicationStateDisplayIDKey/);
 assert.match(core, /SBFrontmostApplicationDisplayIdentifier/);
+assert.match(core, /TLinkAXDirectFrontmostContext/);
+assert.match(core, /AXSpringBoardServer/);
+assert.match(core, /focusedAppPID/);
+assert.match(core, /foreground_probe/);
 assert.match(rootServer, /finalResult\[@"tapped"\]\s*=\s*@\(true\)/);
 assert.match(rootTask, /finalResult\[@"context_changed"\]\s*=\s*@\(false\)/);
 
