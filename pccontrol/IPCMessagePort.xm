@@ -28,7 +28,18 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
         return NULL;
     }
 
-    NSLog(@"### com.tlinkauto.springboard: IPC received command: %@", command);
+    NSString *taskPrefix = [NSString stringWithUTF8String:kTLinkautoIPCCommandTaskPrefix];
+    NSString *taskBody = [command hasPrefix:taskPrefix]
+        ? [command substringFromIndex:taskPrefix.length] : @"";
+    NSInteger uiTreeTask = taskBody.length >= 2
+        ? [[taskBody substringToIndex:2] integerValue] : 0;
+    BOOL redactUITree = uiTreeTask >= 77 && uiTreeTask <= 81;
+    if (redactUITree) {
+        NSLog(@"### com.tlinkauto.springboard: IPC received UI tree task=%ld payload_redacted=1",
+              (long)uiTreeTask);
+    } else {
+        NSLog(@"### com.tlinkauto.springboard: IPC received command: %@", command);
+    }
     if ([command isEqualToString:[NSString stringWithUTF8String:kTLinkautoIPCCommandHome]]) {
         NSError *error = nil;
         sendHardwareKeyEventFromRawData((UInt8 *)"1;;1", &error);
@@ -42,12 +53,12 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
         return CFDataCreate(kCFAllocatorDefault, (const UInt8 *)response, strlen(response));
     }
 
-    NSString *taskPrefix = [NSString stringWithUTF8String:kTLinkautoIPCCommandTaskPrefix];
     if ([command hasPrefix:taskPrefix]) {
         NSString *rawTask = [command substringFromIndex:[taskPrefix length]];
         if ([rawTask length] > 0) {
             CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
-            NSLog(@"### com.tlinkauto.springboard: IPC task start: %@", rawTask);
+            if (redactUITree) NSLog(@"### com.tlinkauto.springboard: IPC UI tree task start=%ld", (long)uiTreeTask);
+            else NSLog(@"### com.tlinkauto.springboard: IPC task start: %@", rawTask);
             CFWriteStreamRef responseStream = CFWriteStreamCreateWithAllocatedBuffers(kCFAllocatorDefault,
                                                                                       kCFAllocatorDefault);
             if (responseStream) {
@@ -62,11 +73,16 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                 }
                 if (responseData && CFDataGetLength(responseData) > 0) {
                     CFAbsoluteTime duration = CFAbsoluteTimeGetCurrent() - startTime;
-                    NSData *responseNSData = [NSData dataWithBytes:CFDataGetBytePtr(responseData)
-                                                           length:(NSUInteger)CFDataGetLength(responseData)];
-                    NSString *responseString = [[NSString alloc] initWithData:responseNSData
-                                                                     encoding:NSUTF8StringEncoding];
-                    NSLog(@"### com.tlinkauto.springboard: IPC task response in %.3fs: %@", duration, responseString);
+                    if (redactUITree) {
+                        NSLog(@"### com.tlinkauto.springboard: IPC UI tree task=%ld response in %.3fs bytes=%ld",
+                              (long)uiTreeTask, duration, (long)CFDataGetLength(responseData));
+                    } else {
+                        NSData *responseNSData = [NSData dataWithBytes:CFDataGetBytePtr(responseData)
+                                                               length:(NSUInteger)CFDataGetLength(responseData)];
+                        NSString *responseString = [[NSString alloc] initWithData:responseNSData
+                                                                         encoding:NSUTF8StringEncoding];
+                        NSLog(@"### com.tlinkauto.springboard: IPC task response in %.3fs: %@", duration, responseString);
+                    }
                     return responseData;
                 }
                 if (responseProperty) {

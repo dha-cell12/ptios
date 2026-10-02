@@ -306,6 +306,11 @@ static bool zx_isHotPathPayload(const char *payload)
            strncmp(task, "68", 2) == 0 ||
            strncmp(task, "69", 2) == 0 ||
            strncmp(task, "70", 2) == 0 ||
+           strncmp(task, "77", 2) == 0 ||
+           strncmp(task, "78", 2) == 0 ||
+           strncmp(task, "79", 2) == 0 ||
+           strncmp(task, "80", 2) == 0 ||
+           strncmp(task, "81", 2) == 0 ||
            strncmp(task, "91", 2) == 0;
 }
 
@@ -942,12 +947,6 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
         return phase6Diagnostic;
     }
 
-#ifdef ZX_DAEMON
-    if (taskType >= 77 && taskType <= 81) {
-        return zx_handleUITreeTask(taskType, buffer);
-    }
-#endif
-
     if (taskType == 96) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)),
                        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -1008,7 +1007,7 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
             if (responseBytes && responseLength > 0) {
                 response = [NSData dataWithBytes:responseBytes length:(NSUInteger)responseLength];
                 NSString *responseString = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding];
-                if (taskType != 61) {
+                if (taskType != 61 && (taskType < 77 || taskType > 81)) {
                     zx_logf("IPC response: %s", responseString ? [responseString UTF8String] : "(null)");
                 }
             } else {

@@ -10,6 +10,7 @@ const [
   core,
   rootServer,
   rootTask,
+  rootIPC,
   rootPolicy,
   rootMakefile,
   rootEntitlements,
@@ -29,6 +30,7 @@ const [
   read("shared/TLinkAccessibilityTree.mm"),
   read("tlinkauto-binary/SocketServer.mm"),
   read("pccontrol/Task.xm"),
+  read("pccontrol/IPCMessagePort.xm"),
   read("shared/TLinkRootfullLicensePolicy.mm"),
   read("tlinkauto-binary/Makefile"),
   read("layout/tlinkautod-entitlements.plist"),
@@ -97,6 +99,13 @@ assert.match(rootTask, /zx_handleUITreeTask/);
 assert.match(rootServer, /zx_handleUITreeTask/);
 assert.match(rootServer, /#ifdef ZX_DAEMON[\s\S]*static NSDictionary \*zx_uiTreeDecodeBody[\s\S]*static NSData \*zx_handleUITreeTask[\s\S]*#endif/);
 assert.match(rootServer, /case 77:[\s\S]*case 81:[\s\S]*return true;/);
+assert.doesNotMatch(rootServer, /if \(taskType >= 77 && taskType <= 81\) \{\s*return zx_handleUITreeTask/);
+assert.match(core, /TLinkAXSpringBoardProcessContext/);
+assert.match(core, /_accessibilityFrontMostApplication/);
+assert.match(rootTask, /capability\[@"service"\]\s*=\s*@"springboard_script_bridge"/);
+assert.match(rootServer, /strncmp\(task, "77", 2\)[\s\S]*strncmp\(task, "81", 2\)/);
+assert.match(rootIPC, /IPC received UI tree task=%ld payload_redacted=1/);
+assert.match(rootIPC, /IPC UI tree task=%ld response in %\.3fs bytes=%ld/);
 assert.match(trollServer, /TLinkHandleUITreeTask/);
 assert.match(trollServer, /capability\[@"foreground_context"\]/);
 assert.match(trollServer, /capability\[@"implementation_version"\]\s*=\s*@12/);

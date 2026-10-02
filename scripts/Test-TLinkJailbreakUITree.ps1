@@ -117,8 +117,8 @@ if ($Tap -and (-not $hasSelector -or -not $ExpectedBundle)) {
 }
 
 $capability = ConvertFrom-TLinkUIResponse -TaskType 77 -Raw (Invoke-TLinkUITask -Task "77")
-if ($capability.runtime -ne "rootfull" -or $capability.service -ne "tlinkautod") {
-    throw "Task 77 reached '$($capability.runtime)/$($capability.service)', expected rootfull/tlinkautod"
+if ($capability.runtime -ne "rootfull" -or $capability.service -ne "springboard_script_bridge") {
+    throw "Task 77 reached '$($capability.runtime)/$($capability.service)', expected rootfull/springboard_script_bridge; reinstall the package with SpringBoard UI tree routing"
 }
 if ($capability.schema -ne "ui_tree_capability_v1" -or $capability.source -ne "axruntime_numeric_v1") {
     throw "Task 77 capability schema/backend mismatch: $($capability.schema)/$($capability.source)"
