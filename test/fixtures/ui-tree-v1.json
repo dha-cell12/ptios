@@ -19,6 +19,11 @@
   },
   "selectorMatches": ["contains", "exact", "prefix"],
   "selectorRequiresCriterion": true,
+  "incompletePolicy": {
+    "readOnly": "report_partial_or_truncated",
+    "tap": "reject_ui_snapshot_incomplete",
+    "waitGone": "retry_or_timeout"
+  },
   "scriptMethods": [
     "uiTreeCapability",
     "uiTree",

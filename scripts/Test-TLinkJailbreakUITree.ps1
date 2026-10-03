@@ -209,6 +209,9 @@ if ($hasX) {
 }
 
 if ($Tap) {
+    if ($selectorResult.partial -ne $false -or $selectorResult.truncated -ne $false) {
+        throw "Tap refused: task 79 selector snapshot is partial, truncated, or lacks completeness flags"
+    }
     if ([int]$selectorResult.match_count -ne 1 -or -not $selectorResult.found) {
         throw "Tap requires exactly one selector match; task 79 found $($selectorResult.match_count)"
     }

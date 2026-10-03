@@ -51,6 +51,9 @@ assert.equal(fixture.snapshotSchema, "ui_snapshot_v1");
 assert.equal(fixture.backend, "axruntime_numeric_v1");
 assert.equal(fixture.deviceValidated, false);
 assert.equal(fixture.selectorRequiresCriterion, true);
+assert.equal(fixture.incompletePolicy.readOnly, "report_partial_or_truncated");
+assert.equal(fixture.incompletePolicy.tap, "reject_ui_snapshot_incomplete");
+assert.equal(fixture.incompletePolicy.waitGone, "retry_or_timeout");
 
 for (const symbol of [
   "_AXUIElementCreateAppElementWithPid",
@@ -158,6 +161,12 @@ assert.match(core, /TLinkAXDirectFrontmostContext/);
 assert.match(core, /AXSpringBoardServer/);
 assert.match(core, /focusedAppPID/);
 assert.match(core, /foreground_probe/);
+assert.match(coreHeader, /TLinkAXResultCompleteForAction/);
+assert.match(core, /BOOL TLinkAXResultCompleteForAction\(NSDictionary \*result\)[\s\S]*?id partial = result\[@"partial"\];[\s\S]*?id truncated = result\[@"truncated"\];/);
+assert.match(rootTask, /TASK_UI_TREE_TAP && !TLinkAXResultCompleteForAction\(result\)/);
+assert.match(trollServer, /taskType == 81 && !TLinkAXResultCompleteForAction\(result\)/);
+assert.match(rootServer, /taskType == 81 && !TLinkAXResultCompleteForAction\(result\)/);
+assert.match(smartWait, /function waitUntilElementGone[\s\S]*?current\.partial == null \|\| current\.truncated == null \|\| current\.partial \|\| current\.truncated[\s\S]*?ui_snapshot_incomplete/);
 assert.match(rootServer, /finalResult\[@"tapped"\]\s*=\s*@\(true\)/);
 assert.match(rootTask, /finalResult\[@"context_changed"\]\s*=\s*@\(false\)/);
 

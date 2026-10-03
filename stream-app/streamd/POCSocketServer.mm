@@ -7700,6 +7700,9 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
     }
 
     if (!TLinkAXResultSucceeded(result)) return TLinkUITreeJSONResponse(result);
+    if (taskType == 81 && !TLinkAXResultCompleteForAction(result)) {
+        return TLinkError(@"ui_snapshot_incomplete");
+    }
     BOOL changed = TLinkUITreeContextChanged(context);
     NSMutableDictionary *finalResult = [result mutableCopy];
     finalResult[@"runtime"] = @"trollstore";

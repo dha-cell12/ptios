@@ -24,6 +24,8 @@ All request objects use base64-encoded UTF-8 JSON and successful responses conta
 - `81`: context-validated selector lookup and native tap.
 
 Tasks 77-81 require the `automation` license feature. Task 81 rechecks foreground bundle ID and PID before injecting the tap. It fails with `ui_context_changed` instead of tapping a stale coordinate.
+Task 81 also rejects any selector result whose snapshot is `partial` or `truncated` (or lacks those completeness flags) with `ui_snapshot_incomplete`. Read-only tasks 78/79 still return the incomplete result and its diagnostics. `waitUntilElementGone` treats an incomplete result as inconclusive: it retries under Smart Wait's bounded timeout instead of reporting that the element disappeared.
+For dense screens, callers may raise `maxElements` (up to 1,000) and `queryTimeoutMs` (up to 3,000) in Smart Wait options. If every read remains incomplete, disappearance times out with `lastError=ui_snapshot_incomplete`.
 
 Selectors support `text`, `identifier`, `role`, `index`, `visibleOnly`, `clickableOnly`, `caseSensitive`, and `match` (`contains`, `exact`, or `prefix`). Snake-case option aliases are accepted.
 Every find or tap selector must contain a non-empty `text`, `identifier`, or `role`; an index by itself is rejected so an empty selector can never tap the first element accidentally.

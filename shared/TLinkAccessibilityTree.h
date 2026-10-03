@@ -29,4 +29,8 @@ FOUNDATION_EXPORT NSDictionary *TLinkAXElementAtPoint(pid_t pid,
 
 FOUNDATION_EXPORT BOOL TLinkAXResultSucceeded(NSDictionary *result);
 
+// Mutation must not rely on a selector result from an incomplete AX snapshot.
+// Missing completeness flags also fail closed.
+FOUNDATION_EXPORT BOOL TLinkAXResultCompleteForAction(NSDictionary *result);
+
 NS_ASSUME_NONNULL_END

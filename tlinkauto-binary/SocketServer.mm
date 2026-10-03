@@ -793,6 +793,9 @@ static NSData *zx_handleUITreeTask(int taskType, const char *buffer)
     }
 
     if (!TLinkAXResultSucceeded(result)) return zx_uiTreeJSONResponse(result);
+    if (taskType == 81 && !TLinkAXResultCompleteForAction(result)) {
+        return zx_uiTreeError(@"ui_snapshot_incomplete");
+    }
     BOOL changed = zx_uiTreeContextChanged(context);
     NSMutableDictionary *finalResult = [result mutableCopy];
     finalResult[@"runtime"] = @"rootfull";

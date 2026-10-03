@@ -382,6 +382,9 @@ static inline NSString *TLinkSmartWaitPreludeSource(void)
     var waitOptions = visualOptions(options, 'wait_until_element_gone');
     var result = waitUntil(function(){
       var current = requireOk(nativeDevice.uiFind(query), 'uiFind failed');
+      if (current.partial == null || current.truncated == null || current.partial || current.truncated) {
+        throw new Error('ui_snapshot_incomplete');
+      }
       return current.found ? false : { gone: true, query: current };
     }, waitOptions);
     result.locator = { type: 'accessibility', selector: query };

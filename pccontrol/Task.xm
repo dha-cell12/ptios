@@ -775,6 +775,10 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
         zx_uiTreeNotifyResult(result, stream);
         return;
     }
+    if (taskType == TASK_UI_TREE_TAP && !TLinkAXResultCompleteForAction(result)) {
+        notifyClient((UInt8 *)"-1;;ui_snapshot_incomplete\r\n", stream);
+        return;
+    }
     if (zx_uiTreeContextChanged(context)) {
         notifyClient((UInt8 *)"-1;;ui_context_changed\r\n", stream);
         return;

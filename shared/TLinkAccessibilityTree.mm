@@ -786,6 +786,16 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
     return result ?: TLinkAXError(@"ui_find_failed", @{@"pid": @(pid)});
 }
 
+BOOL TLinkAXResultCompleteForAction(NSDictionary *result)
+{
+    if (!TLinkAXResultSucceeded(result)) return NO;
+    id partial = result[@"partial"];
+    id truncated = result[@"truncated"];
+    return [partial isKindOfClass:[NSNumber class]] &&
+           [truncated isKindOfClass:[NSNumber class]] &&
+           ![partial boolValue] && ![truncated boolValue];
+}
+
 NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point)
 {
     if (pid <= 0 || !isfinite(point.x) || !isfinite(point.y)) {

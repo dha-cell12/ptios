@@ -102,6 +102,9 @@ if ($Text -or $Identifier -or $Role) {
     if ($Role) { $selector.role = $Role }
     $selectorResult = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask ("79" + (ConvertTo-TLinkUIBody $selector)))
     if ($Tap) {
+        if ($selectorResult.partial -ne $false -or $selectorResult.truncated -ne $false) {
+            throw "Tap refused: task 79 selector snapshot is partial, truncated, or lacks completeness flags"
+        }
         $selector.clickableOnly = $true
         $tapResult = ConvertFrom-TLinkUIResponse (Invoke-TLinkUITask ("81" + (ConvertTo-TLinkUIBody $selector)))
     }

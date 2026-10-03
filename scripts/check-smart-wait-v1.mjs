@@ -104,6 +104,7 @@ assert.match(trollWorkflow, /node scripts\/check-smart-wait-v1\.mjs/);
 let nextFrameId = 1;
 let matchSequence = [];
 let ocrSequence = [];
+let uiFindSequence = [];
 let cancelled = false;
 const counters = {
   openImage: 0,
@@ -138,6 +139,9 @@ const device = {
     return { ok: true, matched, x: matched ? 10 : -1, y: matched ? 20 : -1, width: 20, height: 10, centerX: 20, centerY: 25, score: matched ? 0.99 : 0 };
   },
   ocrFrame: () => ({ ok: true, text: ocrSequence.length > 0 ? ocrSequence.shift() : "" }),
+  uiFind: () => uiFindSequence.length > 0
+    ? uiFindSequence.shift()
+    : { ok: true, found: false, partial: false, truncated: false },
   tap: () => {
     counters.tap += 1;
     return { ok: true };
@@ -187,6 +191,32 @@ assert.equal(text.ok, true);
 assert.equal(text.attempts, 3);
 assert.equal(counters.captureFrame, 9);
 assert.equal(counters.releaseFrame, 9);
+
+uiFindSequence = [{ ok: true, found: false, partial: true, truncated: false }];
+const partialGone = context.device.waitUntilElementGone({ text: "Loading" }, { timeoutMs: 0 });
+assert.equal(partialGone.ok, false);
+assert.equal(partialGone.gone, false);
+assert.equal(partialGone.timedOut, true);
+assert.equal(partialGone.lastError, "ui_snapshot_incomplete");
+
+uiFindSequence = [{ ok: true, found: false, partial: false, truncated: true }];
+const truncatedGone = context.device.waitUntilElementGone({ text: "Loading" }, { timeoutMs: 0 });
+assert.equal(truncatedGone.ok, false);
+assert.equal(truncatedGone.lastError, "ui_snapshot_incomplete");
+
+uiFindSequence = [{ ok: true, found: false }];
+const unknownGone = context.device.waitUntilElementGone({ text: "Loading" }, { timeoutMs: 0 });
+assert.equal(unknownGone.ok, false);
+assert.equal(unknownGone.lastError, "ui_snapshot_incomplete");
+
+uiFindSequence = [
+  { ok: true, found: false, partial: true, truncated: false },
+  { ok: true, found: false, partial: false, truncated: false },
+];
+const completeGone = context.device.waitUntilElementGone({ text: "Loading" }, { timeoutMs: 100, intervalMs: 20 });
+assert.equal(completeGone.ok, true);
+assert.equal(completeGone.gone, true);
+assert.equal(completeGone.attempts, 2);
 
 matchSequence = [true];
 const tapped = context.device.tapWhenVisible("button.png", { timeoutMs: 100 });
