@@ -1,7 +1,7 @@
 # A06 — P0-14 / P1-45 / P1-46
 
 Date: 2026-10-17. Base: `4cc10e5` (A05 build reported passed by the user).
-Status: source implemented; Windows portable tests and source contracts passed. macOS integration results, new iOS builds and device qualification pending.
+Status: source implemented; Windows portable tests and source contracts passed. User reported the build passed after both CI corrections, before B01 (`93d2b8b`). New macOS logs were not independently inspected; device qualification remains pending.
 
 ## Input and response bounds
 

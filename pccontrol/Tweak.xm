@@ -68,7 +68,6 @@ typedef struct eventData_s* eventDataPtr;
 const int TOUCH_EVENT_ARR_LEN = 20;
 
 Boolean isCrazyTapping = false;
-Boolean isRecording = false;
 
 
 
@@ -173,8 +172,11 @@ static void popupWindowCallBack(void* target, void* refcon, IOHIDServiceRef serv
 
             if (isRecordingStart())
             {
-                stopRecording();
-                showAlertBox(@"Recording stopped", [NSString stringWithFormat:@"Your touch record has been saved. Please open TLinkauto app to see your script list. This record script is located at %@recording", getScriptsFolder()], 999);
+                // File completion may wait for storage; keep the HID/main callback responsive.
+                stopRecordingAsync(^(NSError *error) {
+                    if (error) showAlertBox(@"Recording failed", error.localizedDescription, 999);
+                    else showAlertBox(@"Recording stopped", [NSString stringWithFormat:@"Your touch record has been saved. Please open TLinkauto app to see your script list. This record script is located at %@recording", getScriptsFolder()], 999);
+                });
                 [popupWindow show];
                 return;
             }

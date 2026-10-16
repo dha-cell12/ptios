@@ -8,7 +8,7 @@ Phần lớn nhận xét có cơ sở ở mã nguồn hiện tại và dùng đ�
 
 Đã đối chiếu 130 mã nhận xét trong FINDINGS (24 P0, 78 P1, 28 P2), các luồng gọi và cấu hình build liên quan. Đây là kiểm tra tĩnh; chưa chạy build iOS, Instruments hoặc tái hiện trên thiết bị. BENCHMARK-S002 đến BENCHMARK-S011 là kế hoạch đo, không phải kết quả đo. Chưa có cơ sở cam kết tỷ lệ giảm CPU/pin/RAM.
 
-Cập nhật triển khai 17/10/2026: A01–A05 đã sửa và người dùng báo build pass; còn xác minh trên thiết bị. A06 (P0-14/P1-45/P1-46) đã sửa source: context/length, reject input dài/NUL, sink giới hạn 1 MiB và cancellation/deadline hợp tác trong gesture/image/OCR/AX. Native A06, regression A01–A05 và 36 source-contract checks đã qua trên Windows. Test tích hợp macOS đã thêm vào CI; chờ kết quả, build mới và kiểm tra thiết bị. Sink giới hạn wire buffer; chưa giới hạn mọi object tạm của producer/RSS. Vendor/IPC/queue có thể trả muộn hơn deadline. Chi tiết: `IMPLEMENTATION-A01.md` đến `IMPLEMENTATION-A06.md`. Nhóm tiếp theo: B01.
+Cập nhật triển khai 17/10/2026: A01–A06 đã sửa và người dùng báo build pass; còn xác minh trên thiết bị. B01 (P0-01/P1-01/P2-04) đã sửa recorder pccontrol: owner/generation, buffer 4096 record, writer batch, timestamp monotonic trước I/O và drain/close trước idle. Native B01 (100.000 record, 385 lần ghi trong fixture, 8 × 1000 lifecycle), regression A01–A06 và 36 source-contract checks đã qua trên Windows. Test tích hợp macOS đã thêm vào CI; chờ kết quả, build mới và device benchmark. Chi tiết: IMPLEMENTATION-B01.md; giới hạn A06 tại IMPLEMENTATION-A06.md vẫn áp dụng. Nhóm tiếp theo: B02.
 
 ## Phạm vi triển khai đã chốt
 
@@ -49,7 +49,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 
 | Nhóm | Mã chính | Công việc | Cỡ | Nghiệm thu |
 |---|---|---|---|---|
-| B01 | P0-01, P1-01, P2-04 | Owner recorder; timestamp trước I/O; buffer bounded, writer batch, flush/close khi stop. | M | Chuỗi touch tương đương; timing không phụ thuộc write duration; không mất record khi stop; giảm write/event và callback p95/p99. |
+| B01 | P0-01, P1-01, P2-04 | **Đã triển khai source; chờ build/device: IMPLEMENTATION-B01.md.** Owner recorder; timestamp trước I/O; buffer bounded, writer batch, flush/close khi stop. | M | Chuỗi touch tương đương; timing không phụ thuộc write duration; không mất record khi stop; giảm write/event và callback p95/p99. |
 | B02 | P0-07, P0-09, P1-20, P1-21, P1-24, P1-26 | Move buffer; immutable/ref-counted snapshot; compute ngoài store queue; byte budget; expiry cleanup theo một deadline; monotonic clock. | M/L | Không copy BGRA đầy khung khi insert; release/lookup không chờ cả CV scan; giải phóng payload quá hạn có giới hạn; snapshot sống an toàn sau erase. |
 | B03 | P0-05, P1-14, P1-16, P1-17 | Bỏ per-touch log; response sink theo nhu cầu; output bounded theo client; tách heavy work/liveness với ordering rõ. | M/L | Task10 không còn ba NSLog/request; slow writer không cắt response âm thầm hoặc chặn mọi client; giữ ACK/error. |
 | B04 | P1-12, P0-06, P1-13, P1-18 | H264 no-progress deadline và trả active slot; batch TS; adaptive snapshot ngoài frame loop; absolute pacing. | M | Stalled receiver được ngắt có giới hạn; TS decode đúng; giảm send theo bytes thực gửi; không đọc JSON đồng bộ trong frame loop. |

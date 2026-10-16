@@ -52,7 +52,6 @@
 #include <math.h>
 #include <limits.h>
 
-extern CFRunLoopRef recordRunLoop;
 extern ScriptPlayer *scriptPlayer;
 static std::atomic<uint64_t> sTLinkSpringBoardLicenseTask10DropCount(0);
 static std::atomic<uint64_t> sTLinkZoomAttemptCount(0);
@@ -1098,22 +1097,23 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
     {
         @autoreleasepool {
             NSError *err = nil;
-            startRecording(writeStreamRef, &err);    
+            NSString *path = startRecordingWithError(&err);
             if (err)
             {
                 notifyClient((UInt8*)[[err localizedDescription] UTF8String], writeStreamRef);
             }
             else
             {
-                notifyClient((UInt8*)"0\r\n", writeStreamRef);
+                notifyClient((UInt8 *)[[NSString stringWithFormat:@"0;;%@\r\n", path] UTF8String], writeStreamRef);
             }
         }
     }
     else if (taskType == TASK_TOUCH_RECORDING_STOP)
     {
         @autoreleasepool {
-            stopRecording(); 
-            notifyClient((UInt8*)"0\r\n", writeStreamRef); 
+            NSError *err = nil;
+            stopRecordingWithError(&err);
+            notifyClient((UInt8 *)(err ? err.localizedDescription.UTF8String : "0\r\n"), writeStreamRef);
         }
     }
     else if (taskType == TASK_PLAY_SCRIPT)
