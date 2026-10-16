@@ -1,7 +1,7 @@
 # A02 — P1-07 / P1-09 / P1-10
 
 Date: 2026-10-16. Base: `a34b9ac` (A01 build reported passed by the user).
-Status: source implemented; native host and source-contract checks passed. New iOS build and device validation pending.
+Status: source implemented; native host and source-contract checks passed. User reported the A02 build passed before A03; device validation remains pending.
 
 ## Scope and changes
 
@@ -40,7 +40,7 @@ All 29 existing source-contract checks in that workflow also passed. These host 
 
 ## Remaining build/device checks
 
-1. Build the new rootfull and roothide artifacts. A01's reported successful build predates these A02 changes.
+1. User reported the A02 build passed on 2026-10-16. The report does not identify every build-matrix artifact; independently inspect the relevant rootfull/roothide CI jobs before release.
 2. On a test screen, enable task26 action 1, exercise finger 0 and 19 down/move/up, then action 0. Verify no crash, stuck views or overlay remaining after stop. Exercise physical touches and injected touches in scrolling/tracking modes.
 3. Repeatedly show/hide from concurrent clients and during HID activity. Only one active indicator client/window may exist; after stop acknowledgment no old generation may alter a restarted window. Include stop twice, show twice, and reload while stopped.
 4. Test missing/malformed config and failed HID-client creation in a diagnostic build, including callers passing a null NSError**. Errors must arrive before the task response and a later valid start must still succeed.

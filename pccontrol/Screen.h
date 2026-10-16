@@ -23,6 +23,7 @@
 + (NSString*)screenShotAlwaysUp;
 + (UIImage*)screenShotUIImage;
 + (void)releaseUIImage:(UIImage**)img;
+// Returns an owned (+1) image, or NULL on capture/allocation failure. Caller must release it.
 + (CGImageRef)createScreenShotCGImageRef;
 + (NSString*)screenShotToPath:(NSString*)filePath region:(CGRect)region error:(NSError**)error;
 

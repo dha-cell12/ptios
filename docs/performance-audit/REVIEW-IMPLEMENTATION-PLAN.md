@@ -8,7 +8,7 @@ Phần lớn nhận xét có cơ sở ở mã nguồn hiện tại và dùng đ�
 
 Đã đối chiếu 130 mã nhận xét trong FINDINGS (24 P0, 78 P1, 28 P2), các luồng gọi và cấu hình build liên quan. Đây là kiểm tra tĩnh; chưa chạy build iOS, Instruments hoặc tái hiện trên thiết bị. BENCHMARK-S002 đến BENCHMARK-S011 là kế hoạch đo, không phải kết quả đo. Chưa có cơ sở cam kết tỷ lệ giảm CPU/pin/RAM.
 
-Cập nhật triển khai 16/10/2026: A01 (P0-04/P1-06) đã sửa cho rootfull/roothide và streamd TrollStore; người dùng xác nhận build đã pass, còn xác minh trên thiết bị. A02 (P1-07/P1-09/P1-10) đã sửa cho indicator rootfull/roothide, native regression đã qua; build iOS mới và kiểm tra UIKit/HID trên thiết bị còn chờ. Chi tiết: `IMPLEMENTATION-A01.md`, `IMPLEMENTATION-A02.md`.
+Cập nhật triển khai 16/10/2026: A01 (P0-04/P1-06) và A02 (P1-07/P1-09/P1-10) đã sửa; người dùng xác nhận build đã pass, còn xác minh trên thiết bị. A03 (P1-19) đã sửa ownership/failure handling và stride ảnh xoay cho capture rootfull/roothide; native regression và 29 source-contract checks đã qua, còn chờ build iOS mới và kiểm tra thiết bị. Chi tiết: `IMPLEMENTATION-A01.md`, `IMPLEMENTATION-A02.md`, `IMPLEMENTATION-A03.md`.
 
 ## Phạm vi triển khai đã chốt
 

@@ -1,5 +1,8 @@
 #include "Screen.h"
 #include "Common.h"
+#include <limits.h>
+#include <stdint.h>
+#include <math.h>
 
 #include "headers/IOSurface/IOSurfaceAccelerator.h"
 #include "headers/IOSurface/IOMobileFramebuffer.h"
@@ -9,7 +12,6 @@
 
 OBJC_EXTERN void CARenderServerRenderDisplay(kern_return_t a, CFStringRef b, IOSurfaceRef surface, int x, int y);
 OBJC_EXTERN kern_return_t IOSurfaceLock(IOSurfaceRef buffer, IOSurfaceLockOptions options, uint32_t *seed);
-OBJC_EXTERN kern_return_t IOSurfaceUnLock(IOSurfaceRef buffer, IOSurfaceLockOptions options, uint32_t *seed);
 OBJC_EXTERN IOSurfaceRef IOSurfaceCreate(CFDictionaryRef dictionary);
 OBJC_EXTERN CGImageRef UICreateCGImageFromIOSurface(IOSurfaceRef surface);
 
@@ -23,6 +25,96 @@ static CGImageRef gKeepImage = NULL;
 static NSString *const kTLinkautoKeepPngPath = @"/tmp/TLinkauto_keep.png";
 
 static CGImageRef zx_captureScreenCGImageRef(void);
+
+// BEGIN capture ownership core (also compiled by the native fault-injection harness).
+struct TLinkCaptureGeometry {
+    size_t width;
+    size_t height;
+    size_t bytesPerRow;
+    size_t allocationSize;
+};
+
+static size_t zx_captureAlignedRowBytes(size_t width)
+{
+    if (width == 0 || width > (SIZE_MAX - 31) / 4) return 0;
+    return (width * 4 + 31) & ~(size_t)31;
+}
+
+static bool zx_captureGeometry(CGFloat boundsWidth, CGFloat boundsHeight, CGFloat scale,
+                               bool rotateIPad, TLinkCaptureGeometry *out)
+{
+    if (!out) return false;
+    *out = {};
+    if (!isfinite(boundsWidth) || !isfinite(boundsHeight) || !isfinite(scale) ||
+        boundsWidth <= 0 || boundsHeight <= 0 || scale <= 0) return false;
+    const CGFloat pixelWidth = boundsWidth * scale;
+    const CGFloat pixelHeight = boundsHeight * scale;
+    if (!isfinite(pixelWidth) || !isfinite(pixelHeight) || pixelWidth < 1 || pixelHeight < 1 ||
+        pixelWidth > INT_MAX || pixelHeight > INT_MAX) return false;
+    size_t width = (size_t)pixelWidth;
+    size_t height = (size_t)pixelHeight;
+    if ((rotateIPad && width < height) || (!rotateIPad && width > height)) {
+        size_t temporary = width;
+        width = height;
+        height = temporary;
+    }
+    const size_t bytesPerRow = zx_captureAlignedRowBytes(width);
+    if (bytesPerRow == 0 || height > SIZE_MAX / bytesPerRow) return false;
+    *out = {width, height, bytesPerRow, bytesPerRow * height};
+    return true;
+}
+
+// Borrow source and its color space for the whole context lifetime; return an owned image.
+static CGImageRef zx_captureRotatedImage(CGImageRef source)
+{
+    if (!source) return NULL;
+    const size_t width = CGImageGetWidth(source);
+    const size_t height = CGImageGetHeight(source);
+    CGColorSpaceRef colorSpace = CGImageGetColorSpace(source); // Get-rule reference, never release here.
+    const size_t bytesPerRow = zx_captureAlignedRowBytes(height); // Rotated output width is source height.
+    if (width == 0 || height == 0 || !colorSpace || CGImageGetBitsPerComponent(source) != 8 ||
+        bytesPerRow == 0 || width > SIZE_MAX / bytesPerRow) return NULL;
+    CGContextRef bitmap = CGBitmapContextCreate(NULL, height, width, 8, bytesPerRow,
+                                                colorSpace, kCGImageAlphaPremultipliedFirst);
+    if (!bitmap) return NULL;
+    const CGFloat radians = -90.0 * (M_PI / 180.0);
+    CGContextTranslateCTM(bitmap, 0.5 * height, 0.5 * width);
+    CGContextRotateCTM(bitmap, radians);
+    CGContextTranslateCTM(bitmap, -0.5 * width, -0.5 * height);
+    CGContextDrawImage(bitmap, CGRectMake(0, 0, (CGFloat)width, (CGFloat)height), source);
+    CGImageRef rotated = CGBitmapContextCreateImage(bitmap);
+    CGContextRelease(bitmap);
+    return rotated;
+}
+
+static CGImageRef zx_captureSurfaceImage(CFDictionaryRef properties, bool rotateIPad)
+{
+    IOSurfaceRef surface = IOSurfaceCreate(properties);
+    if (!surface) return NULL;
+    if (IOSurfaceLock(surface, 0, NULL) != KERN_SUCCESS) {
+        CFRelease(surface);
+        return NULL;
+    }
+    CARenderServerRenderDisplay(0, CFSTR("LCD"), surface, 0, 0);
+    CGImageRef image = UICreateCGImageFromIOSurface(surface);
+    if (image && (CGImageGetWidth(image) == 0 || CGImageGetHeight(image) == 0)) {
+        CGImageRelease(image);
+        image = NULL;
+    }
+    if (image && rotateIPad) {
+        CGImageRef rotated = zx_captureRotatedImage(image);
+        CGImageRelease(image);
+        image = rotated;
+    }
+    // Unlock only successfully locked surfaces, and balance every owned reference on failure.
+    if (IOSurfaceUnlock(surface, 0, NULL) != KERN_SUCCESS && image) {
+        CGImageRelease(image);
+        image = NULL;
+    }
+    CFRelease(surface);
+    return image;
+}
+// END capture ownership core.
 
 @implementation Screen
 {
@@ -126,102 +218,23 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 static CGImageRef zx_captureScreenCGImageRef(void)
 {
-    Boolean isiPad8orUp = false;
-
-    CGFloat scale = [UIScreen mainScreen].scale;
-    CGSize screenSize = [UIScreen mainScreen].bounds.size;
-
-    int height = (int)(screenSize.height * scale);
-    int width = (int)(screenSize.width * scale);
-
-    // check whether it is ipad8 or later
-    NSString *searchText = getDeviceName();
-
-    NSRange range = [searchText rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
-    if (range.location != NSNotFound) { // ipad pro (3rd) or later
-        isiPad8orUp = true;
-    }
-
-    if (isiPad8orUp)
-    {
-        if (width < height)
-        {
-            int temp = width;
-            width = height;
-            height = temp;
-        }
-    }
-    else
-    {
-        if (width > height)
-        {
-            int temp = width;
-            width = height;
-            height = temp;
-        }
-    }
-
-    int bytesPerElement = 4;
-    int bytesPerRow = roundUp(bytesPerElement * width, 32);
-
-    NSNumber *IOSurfaceBytesPerElement = [NSNumber numberWithInteger:bytesPerElement]; 
-    NSNumber *IOSurfaceBytesPerRow = [NSNumber numberWithInteger:bytesPerRow]; // don't know why but it should be a multiple of 32
-    NSNumber *IOSurfaceAllocSize = [NSNumber numberWithInteger:bytesPerRow * height]; 
-    NSNumber *nheight = [NSNumber numberWithInteger:height]; 
-    NSNumber *nwidth = [NSNumber numberWithInteger:width]; 
-    NSNumber *IOSurfacePixelFormat = [NSNumber numberWithInteger:1111970369]; 
-    NSNumber *IOSurfaceIsGlobal = [NSNumber numberWithInteger:1]; 
-
-    NSDictionary *properties = [[NSDictionary alloc] initWithObjectsAndKeys:IOSurfaceAllocSize, @"IOSurfaceAllocSize"
-                                , IOSurfaceBytesPerElement, @"IOSurfaceBytesPerElement", IOSurfaceBytesPerRow, @"IOSurfaceBytesPerRow", nheight, @"IOSurfaceHeight", 
-                                IOSurfaceIsGlobal, @"IOSurfaceIsGlobal", IOSurfacePixelFormat, @"IOSurfacePixelFormat", nwidth, @"IOSurfaceWidth", nil];    
-
-    IOSurfaceRef screenSurface = IOSurfaceCreate((__bridge CFDictionaryRef)(properties));
-
-    properties = nil;
-    
-    IOSurfaceLock(screenSurface, 0, NULL);
-    CARenderServerRenderDisplay(0, CFSTR("LCD"), screenSurface, 0, 0);
-        
-    CGImageRef cgImageRef = nil;
-    if (screenSurface) {
-        cgImageRef = UICreateCGImageFromIOSurface(screenSurface);
-        int targetWidth = CGImageGetWidth(cgImageRef);
-        int targetHeight = CGImageGetHeight(cgImageRef);
-
-        if (isiPad8orUp) // rotate 90 degrees counterclockwise
-        {
-            CGColorSpaceRef colorSpaceInfo = CGImageGetColorSpace(cgImageRef);
-            CGContextRef bitmap;
-
-            //if (sourceImage.imageOrientation == UIImageOrientationUp || sourceImage.imageOrientation == UIImageOrientationDown) {
-                bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(cgImageRef), colorSpaceInfo, kCGImageAlphaPremultipliedFirst);
-            //} else {
-                //bitmap = CGBitmapContextCreate(NULL, targetHeight, targetWidth, CGImageGetBitsPerComponent(cgImageRef), CGImageGetBytesPerRow(imageRef), colorSpaceInfo, bitmapInfo);
-
-            //}   
-
-            CGFloat degrees = -90.f;
-            CGFloat radians = degrees * (M_PI / 180.f);
-
-            CGContextTranslateCTM (bitmap, 0.5*targetHeight, 0.5*targetWidth);
-            CGContextRotateCTM (bitmap, radians);
-            CGContextTranslateCTM (bitmap, -0.5*targetWidth, -0.5*targetHeight);
-
-            CGContextDrawImage(bitmap, CGRectMake(0, 0, targetWidth, targetHeight), cgImageRef);
-            
-            CGImageRelease(cgImageRef);
-            cgImageRef = CGBitmapContextCreateImage(bitmap);
-
-            CGColorSpaceRelease(colorSpaceInfo);
-            CGContextRelease(bitmap);
-        }
-    }
-    IOSurfaceUnlock(screenSurface, 0, NULL);
-    CFRelease(screenSurface);
-    screenSurface = nil;
-
-    return cgImageRef;
+    UIScreen *screen = [UIScreen mainScreen];
+    CGSize screenSize = screen.bounds.size;
+    NSString *device = getDeviceName();
+    NSRange range = [device rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
+    const bool rotateIPad = range.location != NSNotFound;
+    TLinkCaptureGeometry geometry;
+    if (!zx_captureGeometry(screenSize.width, screenSize.height, screen.scale, rotateIPad, &geometry)) return NULL;
+    NSDictionary *properties = @{
+        @"IOSurfaceAllocSize": @(geometry.allocationSize),
+        @"IOSurfaceBytesPerElement": @4,
+        @"IOSurfaceBytesPerRow": @(geometry.bytesPerRow),
+        @"IOSurfaceHeight": @(geometry.height),
+        @"IOSurfaceWidth": @(geometry.width),
+        @"IOSurfaceIsGlobal": @YES,
+        @"IOSurfacePixelFormat": @1111970369,
+    };
+    return zx_captureSurfaceImage((__bridge CFDictionaryRef)properties, rotateIPad);
 }
 
 + (BOOL)keepScreen:(NSError**)error

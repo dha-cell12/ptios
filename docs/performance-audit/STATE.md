@@ -13,9 +13,11 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - A01 native regression harness passes for both production injection implementations with a retain-counted HID test double and guarded input pages, including 100k-frame runs. User reported the build passed before A02; device qualification is still pending.
 - Details and remaining device validation: `IMPLEMENTATION-A01.md`.
 - A02 / P1-07 + P1-09 + P1-10: source implemented for the rootfull/roothide global touch indicator. Main-loop ownership, zero-based 0..19 slots, synchronous error delivery, balanced HID teardown and generation-filtered callbacks.
-- A02 native ownership/slot/generation harness passes, including 10k client lifecycles, and all 29 existing source-contract checks pass. Actual UIKit/main-run-loop behavior and the new iOS artifact are not yet validated. Details: `IMPLEMENTATION-A02.md`.
+- A02 native ownership/slot/generation harness passes, including 10k client lifecycles, and all 29 existing source-contract checks pass. User reported the build passed before A03; actual UIKit/main-run-loop behavior is not yet device-validated. Details: `IMPLEMENTATION-A02.md`.
 - P1-08 is only partially improved (no per-move GCD backlog; cached font). Display-cadence coalescing remains separate performance work.
-- Next implementation group is A03 / P1-19; confirm A02 build and run the device checks before labeling A02 device-validated.
+- A03 / P1-19: rootfull/roothide capture source implemented. Guard failed surface/lock/image/context creation; balance owned references without releasing borrowed color space; calculate rotation stride from destination width and validate geometry/size arithmetic.
+- A03 native harness passes 22 success/fault paths and 20k frames with zero live test resources; A01/A02 native suites and all 29 existing source-contract checks also pass. New iOS build and device checks remain pending. Details: `IMPLEMENTATION-A03.md`.
+- Next implementation group is A04 / P0-15 + P0-16 + P1-52. Build reports do not replace each group's device qualification.
 
 ## Primary target
 
