@@ -1,6 +1,7 @@
 #include "../shared/TLinkNativeBudget.h"
 #include <cassert>
 #include <climits>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <string>
@@ -9,11 +10,27 @@ TLinkNativeBudgetPtr nativeBudgetFromPeer();
 struct Mat {
     int cols, rows;
     std::vector<unsigned char> bytes;
+    Mat() : cols(0), rows(0) {}
+    bool empty() const { return bytes.empty(); }
     Mat(int c, int r, unsigned char value) : cols(c), rows(r), bytes(size_t(c) * size_t(r), value) {}
     template<class T> const T *ptr(int row) const { return reinterpret_cast<const T *>(bytes.data() + size_t(row) * size_t(cols)); }
 };
 #include "ImageSadUnderTest.inc"
 #include "TemplateSadUnderTest.inc"
+// Image.h undefines these OpenCV-conflicting macros. Compile the full scale helper
+// under the same condition, with only unit-scale/small-buffer fixtures below.
+#undef NO
+#undef YES
+using BOOL = bool;
+namespace cv {
+    struct Size { Size(int, int) {} };
+    enum { INTER_AREA, INTER_LINEAR };
+    static void resize(const Mat &, Mat &, Size, double, double, int) {
+        assert(false && "fixture unexpectedly requested OpenCV resize");
+    }
+}
+#include "ImageScaleUnderTest.inc"
+
 static TLinkNativeBudgetPtr makeBudget(std::shared_ptr<TLinkNativeCancellation> token = {}, double timeout = 0,
                                       size_t cap = 1024, bool cleanup = false) {
     return std::make_shared<TLinkNativeBudget>(token, TLinkNativeDeadline(timeout), cap, cleanup, true);
@@ -100,5 +117,19 @@ int main() {
         { TLinkNativeBudgetScope scope(running); assert(sad(large, largeTemplate, 0, 0, 1024, 1024, 1, &x, &y) == LLONG_MAX); }
         canceller.join();
     }
-    std::puts("Native budget: bounded 1MiB sink, 200 cancel races, deadlines, cleanup, cross-TU/worker scopes and both production SAD loops passed.");
+    // Exercise the actual scale-loop cancellation branch, preserving empty outputs.
+    Mat smallImage(8, 8, 10), smallTemplate(2, 2, 10);
+    int x = 99, y = 99, w = 99, h = 99; double score = 99;
+    {
+        TLinkNativeBudgetScope scope(makeBudget(token));
+        assert(!zx_findTemplateSAD(smallImage, smallTemplate, 0.95, 1, 1, 1, 0, &x, &y, &w, &h, &score));
+        assert(x == -1 && y == -1 && w == 0 && h == 0 && score == 0);
+    }
+    assert(zx_findTemplateSAD(smallImage, smallTemplate, 0.95, 1, 1, 1, 0, &x, &y, &w, &h, &score));
+    assert(x == 0 && y == 0 && w == 2 && h == 2 && score == 1);
+    Mat different(2, 2, 255);
+    assert(!zx_findTemplateSAD(smallImage, different, 0.95, 1, 1, 1, 0, &x, &y, &w, &h, &score));
+    Mat empty;
+    assert(!zx_findTemplateSAD(smallImage, empty, 0.95, 1, 1, 1, 0, &x, &y, &w, &h, &score));
+    std::puts("Native budget: bounded 1MiB sink, 200 cancel races, deadlines, cleanup, cross-TU/worker scopes both production SAD loops and macro-independent scale cancellation passed.");
 }

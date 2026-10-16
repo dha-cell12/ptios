@@ -65,3 +65,9 @@ User-provided rootfull and TrollStore logs both stop in the shared macOS A06 har
 The harness now extracts that production helper as well. Fixture extraction and dependency checks run on every host, so Windows detects this missing-helper case before a macOS run. A normal successful press assertion exercises the result-merging path alongside the existing canceled/deadline press tests. Production runtime behavior is unchanged by this correction.
 
 Windows verification: `check-native-budget-safety.mjs` passes its native suite and fixture dependency checks; `git diff --check` passes. macOS compilation/runtime and both artifact builds still require a CI rerun.
+
+## OpenCV macro correction — 2026-10-17
+
+Rootfull/roothide CI exposed an undeclared `NO` in Image.xm's new scale-loop cancellation branch. Image.h intentionally undefines NO/YES before including OpenCV. Use C++ `false` there and in the new Tesseract recognition-state initializer, which also follows Image.h. Keep the existing OpenCV header policy.
+
+The portable native harness now compiles the complete production `zx_findTemplateSAD` body with NO/YES undefined, alongside its SAD helper. Small unit-scale fixtures check cancellation/default outputs, successful matching, non-matching and empty input; the resize double rejects unexpected use and does not substitute for real OpenCV qualification. Windows native A06, OCR P0/P1 checks, capture/image contract and diff validation pass. New iOS artifact builds remain unverified on this Windows host.

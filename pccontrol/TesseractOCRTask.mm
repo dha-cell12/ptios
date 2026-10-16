@@ -217,7 +217,7 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
     __attribute__((objc_precise_lifetime)) ZXTessBudgetDelegate *delegate = [[ZXTessBudgetDelegate alloc] initWithBudget:nativeBudget];
     tesseract.delegate = delegate;
     tesseract.maximumRecognitionTime = nativeBudget ? nativeBudget->remainingSeconds(3.0) : 3.0;
-    BOOL recognized = NO;
+    BOOL recognized = false;
     @try {
         tesseract.image = image;
         tesseract.rect = CGRectMake(0, 0, image.size.width, image.size.height);

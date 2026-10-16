@@ -315,7 +315,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
     }
 
     for (float s = scaleMax; s >= scaleMin - 0.0001f; s -= scaleStep) {
-        if (TLinkNativeStopped()) return NO;
+        if (TLinkNativeStopped()) return false;
         Mat templScaled;
         if (fabsf(s - 1.0f) < 0.0001f) {
             templScaled = templ;

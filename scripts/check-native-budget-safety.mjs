@@ -54,6 +54,9 @@ try {
     const body = between(source, "static long long zx_sad_match_region", "\n}") + "\n}\n";
     await writeFile(join(temp, `${name}SadUnderTest.inc`), body.replaceAll("zx_sad_match_region", `${name.toLowerCase()}SadUnderTest`));
   }
+  await writeFile(join(temp, "ImageScaleUnderTest.inc"),
+    (between(image, "static BOOL zx_findTemplateSAD", "\n}") + "\n}\n")
+      .replaceAll("zx_sad_match_region", "imageSadUnderTest"));
   const windows = process.platform === "win32";
   const compiler = process.env.CXX || (windows ? "cl" : "clang++");
   const msvc = /^(cl|cl\.exe)$/i.test(basename(compiler));
