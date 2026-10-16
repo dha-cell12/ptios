@@ -10,9 +10,12 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - User scope: exclude prototype TouchPOC / `poc-trollstore` findings P0-21, P1-65, P1-66, P2-25 from implementation. Do not optimize that artifact.
 - Production `stream-app/streamd` remains in scope even where its files/functions retain POC names.
 - A01 / P0-04 + P1-06: source changes implemented in rootfull/roothide and production TrollStore touch injection, including bounded ingress callers.
-- Native regression harness passes for both production injection implementations with a retain-counted HID test double and guarded input pages, including 100k-frame runs. No iOS build/device result is claimed.
+- A01 native regression harness passes for both production injection implementations with a retain-counted HID test double and guarded input pages, including 100k-frame runs. User reported the build passed before A02; device qualification is still pending.
 - Details and remaining device validation: `IMPLEMENTATION-A01.md`.
-- Next implementation group in the reviewed backlog is A02; A01 still needs CI/iOS build and device ownership/dispatch qualification before marking device-validated.
+- A02 / P1-07 + P1-09 + P1-10: source implemented for the rootfull/roothide global touch indicator. Main-loop ownership, zero-based 0..19 slots, synchronous error delivery, balanced HID teardown and generation-filtered callbacks.
+- A02 native ownership/slot/generation harness passes, including 10k client lifecycles, and all 29 existing source-contract checks pass. Actual UIKit/main-run-loop behavior and the new iOS artifact are not yet validated. Details: `IMPLEMENTATION-A02.md`.
+- P1-08 is only partially improved (no per-move GCD backlog; cached font). Display-cadence coalescing remains separate performance work.
+- Next implementation group is A03 / P1-19; confirm A02 build and run the device checks before labeling A02 device-validated.
 
 ## Primary target
 

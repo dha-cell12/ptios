@@ -8,7 +8,7 @@ Phần lớn nhận xét có cơ sở ở mã nguồn hiện tại và dùng đ�
 
 Đã đối chiếu 130 mã nhận xét trong FINDINGS (24 P0, 78 P1, 28 P2), các luồng gọi và cấu hình build liên quan. Đây là kiểm tra tĩnh; chưa chạy build iOS, Instruments hoặc tái hiện trên thiết bị. BENCHMARK-S002 đến BENCHMARK-S011 là kế hoạch đo, không phải kết quả đo. Chưa có cơ sở cam kết tỷ lệ giảm CPU/pin/RAM.
 
-Cập nhật triển khai 16/10/2026: A01 (P0-04/P1-06) đã sửa trong rootfull/roothide và streamd TrollStore; test native mô phỏng HID đã qua, còn build iOS và xác minh trên thiết bị. Chi tiết: `IMPLEMENTATION-A01.md`.
+Cập nhật triển khai 16/10/2026: A01 (P0-04/P1-06) đã sửa cho rootfull/roothide và streamd TrollStore; người dùng xác nhận build đã pass, còn xác minh trên thiết bị. A02 (P1-07/P1-09/P1-10) đã sửa cho indicator rootfull/roothide, native regression đã qua; build iOS mới và kiểm tra UIKit/HID trên thiết bị còn chờ. Chi tiết: `IMPLEMENTATION-A01.md`, `IMPLEMENTATION-A02.md`.
 
 ## Phạm vi triển khai đã chốt
 
@@ -37,7 +37,7 @@ Cỡ S/M/L là độ phức tạp tương đối, chưa phải cam kết thời 
 | Nhóm | Mã chính | Công việc | Cỡ | Nghiệm thu |
 |---|---|---|---|---|
 | A01 | P0-04, P1-06 | Cân bằng child CF ownership; parser có length; truyền độ dài hợp lệ từ mọi caller. | S/M | Payload ngắn/sai count bị từ chối trước injection; 100k touch không tăng live child ownership tuyến tính; kiểm tra retain-after-append trên thiết bị. |
-| A02 | P1-07, P1-09, P1-10 | Chuẩn hóa finger 0–19; owner/state machine indicator; bỏ NSError** qua async; cleanup client trên owner. | M | Finger 0/19 đúng, index ngoài miền bị chặn; start/stop nhanh không nhân đôi client hoặc lỗi lifetime. |
+| A02 | P1-07, P1-09, P1-10 | **Đã triển khai; chờ build/device.** Chuẩn hóa finger 0–19; owner/state machine indicator; bỏ NSError** qua async; cleanup client trên owner. | M | Finger 0/19 đúng, index ngoài miền bị chặn; start/stop nhanh không nhân đôi client hoặc lỗi lifetime. |
 | A03 | P1-19 | Sửa borrowed color-space release và các Create failure/NULL path của capture. | S/M | Capture iPhone/iPad hai orientation đúng; fault path không dùng NULL/over-release. |
 | A04 | P0-15, P0-16, P1-52 | Một owner scheduler, generation theo tên, ack sau commit; reject busy sớm; minimum interval theo chính sách; khóa auto-launch RMW. | M | Sau remove-ack không fire generation cũ; set thay thế chỉ một timer; cập nhật đồng thời không mất key; không đọc config liên tục khi busy. |
 | A05 | P0-03, P1-02 | RAW session/state machine; stopping đến khi worker cleanup xong; bỏ nested run loop cho repeat. | M | Stop/start liên tục không injection generation cũ sau khi run mới bắt đầu; không giữ worker repeat vô hạn. |

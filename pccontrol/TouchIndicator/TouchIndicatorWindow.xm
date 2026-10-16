@@ -1,410 +1,324 @@
 #include "TouchIndicatorWindow.h"
-#include "TouchIndicatorViewList.h"
 #include "../Screen.h"
-#include "../AlertBox.h"
 #include "../Common.h"
-
+#include "../../shared/TLinkTouchPayload.h"
 #import "TouchIndicatorView.h"
 #import "TouchIndicatorCoordinateView.h"
-
-#include "../headers/IOHIDEvent.h"
-#include "../headers/IOHIDEventData.h"
-#include "../headers/IOHIDEventTypes.h"
 #include "../headers/IOHIDEventSystemClient.h"
-#include "../headers/IOHIDEventSystem.h"
-#import <mach/mach.h>
+#include <stdint.h>
+#include <math.h>
 
-#define HIDE 0
-#define SHOW 1
-#define RELOAD 2
-
-//#define COORDINATE_VIEW_WIDTH 100
 #define COORDINATE_VIEW_HEIGHT 20
 
-
-static Boolean isShowing = false;
-
-static void IOHIDEventCallbackForTouchIndicator(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef parentEvent);
-
+// All lifecycle state, HID callbacks and UIKit objects have the main run loop as owner.
+enum TLinkIndicatorState {
+    TLinkIndicatorStopped,
+    TLinkIndicatorStarting,
+    TLinkIndicatorRunning,
+    TLinkIndicatorStopping,
+};
+static TLinkIndicatorState indicatorState = TLinkIndicatorStopped;
+static uintptr_t indicatorGeneration = 0;
 static IOHIDEventSystemClientRef ioHIDEventSystemClient = NULL;
-static CFRunLoopRef runLoopRef = NULL;
-
-
-
+static TouchIndicatorWindow *touchIndicatorWindow = nil;
 static CGFloat screenBoundsWidth = 0;
 static CGFloat screenBoundsHeight = 0;
 static CGFloat scale = 0;
 
-static TouchIndicatorWindow *touchIndicatorWindow;
+static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHIDEventQueueRef queue, IOHIDEventRef event);
 
-void report_memory(void) {
-  struct task_basic_info info;
-  mach_msg_type_number_t size = TASK_BASIC_INFO_COUNT;
-  kern_return_t kerr = task_info(mach_task_self(),
-                                 TASK_BASIC_INFO,
-                                 (task_info_t)&info,
-                                 &size);
-  if( kerr == KERN_SUCCESS ) {
-    NSLog(@"com.tlinkauto.springboard: Memory in use (in bytes): %lu", info.resident_size);
-    NSLog(@"com.tlinkauto.springboard: Memory in use (in MiB): %f", ((CGFloat)info.resident_size / 1048576));
-  } else {
-    NSLog(@"com.tlinkauto.springboard: Error with task_info(): %s", mach_error_string(kerr));
-  }
+// BEGIN indicator HID ownership core (also compiled by the host regression harness).
+static bool zx_indicatorValidFingerIndex(int index)
+{
+    return index >= 0 && index < kTLinkTouchMaxFingerCount;
 }
 
-
-void handleTouchIndicatorTaskWithRawData(UInt8* eventData, NSError **error)
+static bool zx_indicatorAcceptsCallback(void *refcon)
 {
-    if ([[NSString stringWithFormat:@"%s", eventData] intValue] == HIDE)
-    {
-        stopTouchIndicator(error);
+    return indicatorState == TLinkIndicatorRunning && ioHIDEventSystemClient != NULL &&
+           (uintptr_t)refcon == indicatorGeneration;
+}
+
+static bool zx_indicatorStartClientOnMain(void)
+{
+    if (indicatorState != TLinkIndicatorStarting || ioHIDEventSystemClient != NULL) return false;
+    ioHIDEventSystemClient = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+    if (!ioHIDEventSystemClient) return false;
+    if (++indicatorGeneration == 0) ++indicatorGeneration;
+    IOHIDEventSystemClientRegisterEventCallback(ioHIDEventSystemClient,
+        IOHIDEventCallbackForTouchIndicator,
+        NULL, (void *)indicatorGeneration);
+    IOHIDEventSystemClientScheduleWithRunLoop(ioHIDEventSystemClient, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+    indicatorState = TLinkIndicatorRunning;
+    return true;
+}
+
+static void zx_indicatorStopClientOnMain(void)
+{
+    indicatorState = TLinkIndicatorStopping; // Reject callbacks before unregistering/releasing ownership.
+    if (ioHIDEventSystemClient) {
+        IOHIDEventSystemClientUnregisterEventCallback(ioHIDEventSystemClient);
+        IOHIDEventSystemClientUnscheduleWithRunLoop(ioHIDEventSystemClient, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+        CFRelease(ioHIDEventSystemClient);
+        ioHIDEventSystemClient = NULL;
     }
-    else if ([[NSString stringWithFormat:@"%s", eventData] intValue] == SHOW)
-    {
-        startTouchIndicator(error);
+    indicatorState = TLinkIndicatorStopped;
+}
+// END indicator HID ownership core.
+
+static void zx_indicatorPerformOnMain(dispatch_block_t operation)
+{
+    if ([NSThread isMainThread]) operation();
+    else dispatch_sync(dispatch_get_main_queue(), operation);
+}
+
+static NSError *zx_indicatorError(NSString *message)
+{
+    return [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n", message]}];
+}
+
+struct TLinkIndicatorColor {
+    CGFloat red = 255;
+    CGFloat green = 0;
+    CGFloat blue = 0;
+    CGFloat alpha = 0.7;
+};
+
+static NSError *zx_indicatorLoadColor(BOOL requireFile, TLinkIndicatorColor *color)
+{
+    NSString *path = getCommonConfigFilePath();
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        return requireFile ? zx_indicatorError(@"Touch indicator configuration file is missing.") : nil;
     }
-    else if ([[NSString stringWithFormat:@"%s", eventData] intValue] == RELOAD)
-    {
-        if (!isShowing)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot reload config file because the touch indicator is not showing.\r\n"}];
-            return;
+    NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:path];
+    if (!config) return zx_indicatorError(@"Unable to read touch indicator configuration.");
+    id settings = config[@"touch_indicator"];
+    if (!settings) return nil;
+    if (![settings isKindOfClass:[NSDictionary class]]) return zx_indicatorError(@"Invalid touch indicator configuration.");
+    id values = settings[@"color"];
+    if (!values) return nil;
+    if (![values isKindOfClass:[NSDictionary class]]) return zx_indicatorError(@"Invalid touch indicator color configuration.");
+    NSString *keys[] = {@"r", @"g", @"b", @"alpha"};
+    CGFloat *components[] = {&color->red, &color->green, &color->blue, &color->alpha};
+    for (int i = 0; i < 4; i++) {
+        id value = values[keys[i]];
+        if (!value) continue;
+        if (![value respondsToSelector:@selector(doubleValue)] || !isfinite([value doubleValue])) {
+            return zx_indicatorError(@"Invalid touch indicator color component.");
         }
-        // check whether config file exist
-        NSString *configFilePath = getCommonConfigFilePath();
-
-        if (![[NSFileManager defaultManager] fileExistsAtPath:configFilePath])
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n"}];
-            showAlertBox(@"Error", @"Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", 999);
-            return;
-        }
-        // read indicator color from the config file
-        NSDictionary *config = [[NSDictionary alloc] initWithContentsOfFile:configFilePath];
-
-        CGFloat red = 0;
-        CGFloat green = 0;
-        CGFloat blue = 0;
-        CGFloat alpha = 0.5f;
-
-        @try {
-            red = [config[@"touch_indicator"][@"color"][@"r"] floatValue];
-            green = [config[@"touch_indicator"][@"color"][@"g"] floatValue];
-            blue = [config[@"touch_indicator"][@"color"][@"b"] floatValue];
-            alpha = [config[@"touch_indicator"][@"color"][@"alpha"] floatValue];
-            NSLog(@"com.tlinkauto.springboard: reload touch indicator. Read color: red: %f, g: %f, b: %f", red, green, blue);
-        }
-        @catch (NSException *exception) {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n", exception]}];
-            showAlertBox(@"Error", [NSString stringWithFormat:@"Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", exception], 999);
-            return;
-        }
-
-        [touchIndicatorWindow setIndicatorColorWithRed:red green:green blue:blue alpha:alpha];
+        *components[i] = (CGFloat)[value doubleValue];
     }
-    else
-    {
-        NSLog(@"com.tlinkauto.springboard: Unknown touch indicator data");
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown touch indicator data\r\n"}];
-        return;
-    }
+    return nil;
+}
 
+static void zx_indicatorStopOnMain(void)
+{
+    zx_indicatorStopClientOnMain();
+    [touchIndicatorWindow hide];
+    touchIndicatorWindow = nil;
+}
+
+static NSError *zx_indicatorStartOnMain(void)
+{
+    if (indicatorState != TLinkIndicatorStopped) return zx_indicatorError(@"Touch indicator is already showing.");
+    indicatorState = TLinkIndicatorStarting;
+    TLinkIndicatorColor color;
+    NSError *failure = zx_indicatorLoadColor(NO, &color);
+    if (!failure) {
+        CGRect bounds = [Screen getBounds];
+        scale = [Screen getScale];
+        screenBoundsWidth = MIN(CGRectGetWidth(bounds), CGRectGetHeight(bounds));
+        screenBoundsHeight = MAX(CGRectGetWidth(bounds), CGRectGetHeight(bounds));
+        if (!isfinite(screenBoundsWidth) || !isfinite(screenBoundsHeight) || !isfinite(scale) ||
+            screenBoundsWidth <= 0 || screenBoundsHeight <= 0 || scale <= 0) {
+            failure = zx_indicatorError(@"Cannot get screen bounds for the touch indicator.");
+        }
+    }
+    if (!failure) {
+        touchIndicatorWindow = [[TouchIndicatorWindow alloc] init];
+        if (!touchIndicatorWindow) failure = zx_indicatorError(@"Unable to create the touch indicator window.");
+    }
+    if (!failure) {
+        [touchIndicatorWindow setIndicatorColorWithRed:color.red green:color.green blue:color.blue alpha:color.alpha];
+        if (!zx_indicatorStartClientOnMain()) failure = zx_indicatorError(@"Unable to create the touch indicator HID client.");
+    }
+    if (failure) {
+        zx_indicatorStopOnMain();
+        return failure;
+    }
+    [touchIndicatorWindow show];
+    return nil;
+}
+
+void startTouchIndicator(NSError **error)
+{
+    // Only an owned NSError object crosses this synchronous boundary, never the caller's NSError**.
+    __block NSError *result = nil;
+    zx_indicatorPerformOnMain(^{ result = zx_indicatorStartOnMain(); });
+    if (error) *error = result;
 }
 
 void stopTouchIndicator(NSError **error)
 {
-    NSLog(@"com.tlinkauto.springboard: Touch indicator turn off request");
-    // set touch indicator window to nil
-    touchIndicatorWindow = nil;
-    // unregister callback
-    if (ioHIDEventSystemClient && runLoopRef)
-    {
-        IOHIDEventSystemClientUnregisterEventCallback(ioHIDEventSystemClient);
-        IOHIDEventSystemClientUnscheduleWithRunLoop(ioHIDEventSystemClient, runLoopRef, kCFRunLoopDefaultMode);
-
-        ioHIDEventSystemClient = NULL;
-
-        CFRunLoopStop(runLoopRef);
-        runLoopRef = NULL;
-    }
-
-    isShowing = false;
+    zx_indicatorPerformOnMain(^{ zx_indicatorStopOnMain(); });
+    if (error) *error = nil;
 }
 
-
-
-void startTouchIndicator(NSError **error)
+void handleTouchIndicatorTaskWithRawData(UInt8 *eventData, NSError **error)
 {
-    if (isShowing)
-    {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Touch indicator is already showing\r\n"}];
-        showAlertBox(@"Error", @"Touch indicator is already showing", 999);
-        return;
-    }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSLog(@"com.tlinkauto.springboard: Touch indicator turn on request");
-
-        // check whether config file exist
-        NSString *configFilePath = getCommonConfigFilePath();
-
-        CGFloat red = 255;
-        CGFloat green = 0;
-        CGFloat blue = 0;
-        CGFloat alpha = 0.7f;
-
-        if ([[NSFileManager defaultManager] fileExistsAtPath:configFilePath])
-        {
-            /*
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n"}];
-            showAlertBox(@"Error", @"Unable to show touch indicator because the configuration file is missing. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", 999);
-            return;
-            */
-                    // read indicator color from the config file
-            NSDictionary *config = [[NSDictionary alloc] initWithContentsOfFile:configFilePath];
-
-            @try {
-                red = [config[@"touch_indicator"][@"color"][@"r"] floatValue];
-                green = [config[@"touch_indicator"][@"color"][@"g"] floatValue];
-                blue = [config[@"touch_indicator"][@"color"][@"b"] floatValue];
-                alpha = [config[@"touch_indicator"][@"color"][@"alpha"] floatValue];
-                NSLog(@"com.tlinkauto.springboard: red: %f, g: %f, b: %f", red, green, blue);
-            }
-            @catch (NSException *exception) {
-                NSLog(@"com.tlinkauto.springboard: 123123");
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.\r\n", exception]}];
-                showAlertBox(@"Error", [NSString stringWithFormat:@"Unable to show touch indicator because key error in configuration file: %@. Please go to \"TLinkauto - settings - fix configuration\" to fix this problem.", exception], 999);
+    NSString *raw = eventData ? [NSString stringWithUTF8String:(const char *)eventData] : nil;
+    NSString *action = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([action isEqualToString:@"0"]) {
+        stopTouchIndicator(error);
+    } else if ([action isEqualToString:@"1"]) {
+        startTouchIndicator(error);
+    } else if ([action isEqualToString:@"2"]) {
+        __block NSError *result = nil;
+        zx_indicatorPerformOnMain(^{
+            if (indicatorState != TLinkIndicatorRunning) {
+                result = zx_indicatorError(@"Cannot reload configuration while the touch indicator is stopped.");
                 return;
             }
-        }
-
-
-        // get screen size
-        CGRect bounds = [Screen getBounds];
-        scale = [Screen getScale];
-        screenBoundsWidth = CGRectGetWidth(bounds);
-        screenBoundsHeight = CGRectGetHeight(bounds);
-
-        if (screenBoundsWidth > screenBoundsHeight)
-            swapCGFloat(&screenBoundsWidth, &screenBoundsHeight);
-
-        if (screenBoundsWidth == 0 || screenBoundsHeight == 0)
-        {
-            showAlertBox(@"Error", @"Cannot get screen bound.", 999);
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot get screen bound\r\n"}];
-            return;
-        }
-
-        // init a touch indicator window
-        
-        touchIndicatorWindow = [[TouchIndicatorWindow alloc] init];
-        [touchIndicatorWindow show];
-        
-        // create callback
-        ioHIDEventSystemClient = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
-        
-
-        IOHIDEventSystemClientScheduleWithRunLoop(ioHIDEventSystemClient, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-        IOHIDEventSystemClientRegisterEventCallback(ioHIDEventSystemClient, (IOHIDEventSystemClientEventCallback)IOHIDEventCallbackForTouchIndicator, NULL, NULL);
-        
-        isShowing = true;
-
-        runLoopRef = CFRunLoopGetCurrent();
-
-        CFRunLoopRun();
-        
-    });
+            TLinkIndicatorColor color;
+            result = zx_indicatorLoadColor(YES, &color);
+            if (!result) [touchIndicatorWindow setIndicatorColorWithRed:color.red green:color.green blue:color.blue alpha:color.alpha];
+        });
+        if (error) *error = result;
+    } else {
+        if (error) *error = zx_indicatorError(@"Unknown touch indicator action; expected 0, 1 or 2.");
+    }
 }
 
-static void IOHIDEventCallbackForTouchIndicator(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef parentEvent) 
+static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHIDEventQueueRef queue, IOHIDEventRef parentEvent)
 {
-    
-    if (IOHIDEventGetType(parentEvent) == kIOHIDEventTypeDigitizer){
-        if (!touchIndicatorWindow)
-        {
-            return;
-        }
-
-        
-    if (IOHIDEventGetType(parentEvent) == kIOHIDEventTypeDigitizer)
-    {
-        NSArray *childrens = (__bridge NSArray *)IOHIDEventGetChildren(parentEvent);
-
-        for (int i = 0; i < [childrens count]; i++)
-        {
-            Boolean print = false;
-            IOHIDEventRef event = (__bridge IOHIDEventRef)childrens[i];
-            IOHIDFloat x = IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerX);
-            IOHIDFloat y = IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerY);
-            int eventMask = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerEventMask);
-            int range = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerRange);
+    if (!zx_indicatorAcceptsCallback(refcon) || !touchIndicatorWindow || !parentEvent ||
+        IOHIDEventGetType(parentEvent) != kIOHIDEventTypeDigitizer) return;
+    @autoreleasepool {
+        CFArrayRef children = IOHIDEventGetChildren(parentEvent);
+        if (!children) return;
+        for (CFIndex i = 0; i < CFArrayGetCount(children); i++) {
+            IOHIDEventRef event = (IOHIDEventRef)CFArrayGetValueAtIndex(children, i);
+            if (!event || IOHIDEventGetType(event) != kIOHIDEventTypeDigitizer) continue;
+            CFIndex rawIndex = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerIndex);
+            if (rawIndex < 0 || rawIndex >= kTLinkTouchMaxFingerCount) continue;
+            int index = (int)rawIndex;
+            int mask = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerEventMask);
             int touch = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerTouch);
-            int index = IOHIDEventGetIntegerValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerIndex);
-            //NSLog(@"### com.tlinkauto.springboard: x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d", x, y, eventMask, index, range, touch);
-            //NSLog(@"### com.tlinkauto.springboard:  x %f : y %f. eventMask: %d. index: %d, range: %d. Touch: %d.", x, y, eventMask, index, range, touch);
-
-            IOHIDFloat majorRadius = IOHIDEventGetFloatValue(event, 0xb0014);
-
-            CGFloat xOnScreen = x * screenBoundsWidth;
-            CGFloat yOnScreen = y * screenBoundsHeight;
-
-            if ( touch == 1 && eventMask & 2 )
-                // touch down
-                [touchIndicatorWindow showIndicator:index withX:xOnScreen andY:yOnScreen majorRadius:majorRadius];
-            else if ( touch == 1 && eventMask & 4 )
-                // touch move
-                [touchIndicatorWindow moveIndicator:index x:xOnScreen y:yOnScreen majorRadius:majorRadius];
-
-            else if (!touch && (eventMask & 2) )
-                // touch up
-                [touchIndicatorWindow hideIndicator:index];
+            CGFloat x = IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerX) * screenBoundsWidth;
+            CGFloat y = IOHIDEventGetFloatValue(event, (IOHIDEventField)kIOHIDEventFieldDigitizerY) * screenBoundsHeight;
+            CGFloat radius = IOHIDEventGetFloatValue(event, 0xb0014);
+            if (!touch && (mask & 2)) [touchIndicatorWindow hideIndicator:index];
+            else if (isfinite(x) && isfinite(y) && isfinite(radius) && radius >= 0) {
+                if (touch && (mask & 2)) [touchIndicatorWindow showIndicator:index withX:x andY:y majorRadius:radius];
+                else if (touch && (mask & 4)) [touchIndicatorWindow moveIndicator:index x:x y:y majorRadius:radius];
             }
         }
     }
-    
 }
 
-
-@implementation TouchIndicatorWindow
-{
+@implementation TouchIndicatorWindow {
     UIWindow *_window;
-    //TouchIndicatorViewList* indicatorViewList;
-    TouchIndicatorView* touchIndicatorViewList[20];
-    TouchIndicatorCoordinateView* coordinateView[20];
-    UIColor* indicatorColor;
+    TouchIndicatorView *touchIndicatorViewList[kTLinkTouchMaxFingerCount];
+    TouchIndicatorCoordinateView *coordinateView[kTLinkTouchMaxFingerCount];
+    UIColor *indicatorColor;
+    UIFont *_coordinateFont;
+    BOOL _visible;
 }
 
-- (id)init {
+- (id)init
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
     self = [super init];
-    if (self)
-    {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            _window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, screenBoundsWidth, screenBoundsHeight)];
-            _window.windowLevel = UIWindowLevelAlert;
-            [_window setBackgroundColor:[UIColor clearColor]];
-            [_window setUserInteractionEnabled:NO];
-            [_window setAutoresizingMask:18];
-
-            indicatorColor = [UIColor colorWithRed:255 green:0 blue:0 alpha:0.5];
-            //init indicator view list
-            //indicatorViewList = [[TouchIndicatorViewList alloc] init];
-            
-            /*
-            for (int i = 0; i < 20; i++)
-            {
-
-            }
-            */
-
-        });
+    if (self) {
+        _window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, screenBoundsWidth, screenBoundsHeight)];
+        if (!_window) return nil;
+        _window.windowLevel = UIWindowLevelAlert;
+        _window.backgroundColor = [UIColor clearColor];
+        _window.userInteractionEnabled = NO;
+        _window.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _window.hidden = YES;
+        indicatorColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:0.7];
+        _coordinateFont = [UIFont fontWithName:@"Trebuchet MS" size:11.0] ?: [UIFont systemFontOfSize:11.0];
     }
     return self;
 }
 
-
-- (void)hideIndicator:(int)index {
-    if (index >= 20)
-    {
-        return;
-    }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [touchIndicatorViewList[index-1] removeFromSuperview];
-        touchIndicatorViewList[index-1] = nil;
-
-        [coordinateView[index-1] removeFromSuperview];
-        coordinateView[index-1] = nil;
-    });
+- (void)hideIndicator:(int)index
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
+    if (!zx_indicatorValidFingerIndex(index)) return;
+    [touchIndicatorViewList[index] removeFromSuperview];
+    touchIndicatorViewList[index] = nil;
+    [coordinateView[index] removeFromSuperview];
+    coordinateView[index] = nil;
 }
 
-- (void)showIndicator:(int)index withX:(int)x andY:(int)y majorRadius:(CGFloat)radius {    
-    if (index >= 20)
-    {
-        return;
-    }
-    if (touchIndicatorViewList[index-1] != nil)
-    {
-        [self hideIndicator:index];
-    }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        CGFloat indicatorSize = radius*SIZE_INDIACTOR_TOUCH_RADIUS_RATIO;
-        // init a indicator
-        CGFloat halfSize = indicatorSize/2;
-        TouchIndicatorView *indicator = [[TouchIndicatorView alloc] initWithFrame:CGRectMake(x - halfSize, y - halfSize, indicatorSize, indicatorSize)];
-        indicator.layer.cornerRadius = halfSize;
-        indicator.backgroundColor = indicatorColor;
-
-        // create touch coordinate view
-        NSString *coordinateText = [NSString stringWithFormat:@"(%d, %d)", (int)(x * scale), (int)(y * scale)];
-        UIFont *font = [UIFont fontWithName: @"Trebuchet MS" size: 11.0f];
-        CGSize stringSize = [coordinateText sizeWithFont:font]; 
-        CGFloat stringWidth = stringSize.width;
-
-        TouchIndicatorCoordinateView *coordinateLabelView = [[TouchIndicatorCoordinateView alloc] initWithFrame:CGRectMake(x + halfSize + 5, y, stringWidth+5, COORDINATE_VIEW_HEIGHT)];
-        coordinateLabelView.backgroundColor = indicatorColor;
-
-
-        UILabel *coordinateLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, stringWidth+5, COORDINATE_VIEW_HEIGHT)];
-        coordinateLabel.text = coordinateText;
-        [coordinateLabel setTextColor:[UIColor whiteColor]];
-        [coordinateLabel setBackgroundColor:[UIColor clearColor]];
-        [coordinateLabel setFont:font]; 
-        [coordinateLabelView addSubview:coordinateLabel];
-        coordinateLabelView.coordinateLabel = coordinateLabel;
-
-        // add to list
-        touchIndicatorViewList[index-1] = indicator;
-        coordinateView[index-1] = coordinateLabelView;
-        
-        // add to subview
-        [_window addSubview:indicator];
-        [_window addSubview:coordinateLabelView];
-
-        //[indicator setHidden:YES];
-    });
+- (void)showIndicator:(int)index withX:(CGFloat)x andY:(CGFloat)y majorRadius:(CGFloat)radius
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
+    if (!zx_indicatorValidFingerIndex(index) || !_visible) return;
+    [self hideIndicator:index];
+    CGFloat size = radius * SIZE_INDIACTOR_TOUCH_RADIUS_RATIO;
+    CGFloat half = size / 2;
+    TouchIndicatorView *indicator = [[TouchIndicatorView alloc] initWithFrame:CGRectMake(x - half, y - half, size, size)];
+    indicator.layer.cornerRadius = half;
+    indicator.backgroundColor = indicatorColor;
+    NSString *text = [NSString stringWithFormat:@"(%d, %d)", (int)(x * scale), (int)(y * scale)];
+    CGFloat width = [text sizeWithAttributes:@{NSFontAttributeName:_coordinateFont}].width + 5;
+    TouchIndicatorCoordinateView *coordinate = [[TouchIndicatorCoordinateView alloc] initWithFrame:CGRectMake(x + half + 5, y, width, COORDINATE_VIEW_HEIGHT)];
+    coordinate.backgroundColor = indicatorColor;
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, width, COORDINATE_VIEW_HEIGHT)];
+    label.text = text;
+    label.textColor = [UIColor whiteColor];
+    label.backgroundColor = [UIColor clearColor];
+    label.font = _coordinateFont;
+    [coordinate addSubview:label];
+    coordinate.coordinateLabel = label;
+    touchIndicatorViewList[index] = indicator;
+    coordinateView[index] = coordinate;
+    [_window addSubview:indicator];
+    [_window addSubview:coordinate];
 }
 
-- (void) show {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        _window.hidden = NO;
-    });
+- (void)show
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
+    _visible = YES;
+    _window.hidden = NO;
 }
 
-- (void) hide {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        _window.hidden = YES;
-    });
+- (void)hide
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
+    _visible = NO;
+    _window.hidden = YES;
+    for (int i = 0; i < kTLinkTouchMaxFingerCount; i++) [self hideIndicator:i];
 }
 
-
-- (void)setIndicatorColorWithRed:(CGFloat)red green:(CGFloat)green blue:(CGFloat)blue alpha:(CGFloat)alpha {
+- (void)setIndicatorColorWithRed:(CGFloat)red green:(CGFloat)green blue:(CGFloat)blue alpha:(CGFloat)alpha
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
     indicatorColor = [UIColor colorWithRed:red/255 green:green/255 blue:blue/255 alpha:alpha];
+    for (int i = 0; i < kTLinkTouchMaxFingerCount; i++) {
+        touchIndicatorViewList[i].backgroundColor = indicatorColor;
+        coordinateView[i].backgroundColor = indicatorColor;
+    }
 }
 
-
-- (void)moveIndicator:(int)index x:(CGFloat)x y:(CGFloat)y majorRadius:(CGFloat)radius {
-    if (index >= 20)
-    {
-        return;
-    }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (touchIndicatorViewList[index-1] == NULL)
-            return;
-
-        // update width and height and cornerRadius
-        CGFloat indicatorSize = radius*SIZE_INDIACTOR_TOUCH_RADIUS_RATIO;
-        CGFloat halfSize = indicatorSize/2;
-        touchIndicatorViewList[index-1].frame = CGRectMake(x - halfSize, y - halfSize, indicatorSize, indicatorSize);
-        touchIndicatorViewList[index-1].layer.cornerRadius = halfSize;
-
-        NSString *coordinateText = [NSString stringWithFormat:@"(%d, %d)", (int)(x*scale), (int)(y*scale)];
-        UIFont *font = [UIFont fontWithName: @"Trebuchet MS" size: 11.0f];
-        CGSize stringSize = [coordinateText sizeWithFont:font]; 
-        CGFloat stringWidth = stringSize.width;
-
-        coordinateView[index-1].coordinateLabel.text = coordinateText;
-
-        coordinateView[index-1].coordinateLabel.frame = CGRectMake(0, 0, stringWidth+5, COORDINATE_VIEW_HEIGHT);
-        coordinateView[index-1].frame =  CGRectMake(x + halfSize + 5, y, stringWidth+5, COORDINATE_VIEW_HEIGHT);
-    });
+- (void)moveIndicator:(int)index x:(CGFloat)x y:(CGFloat)y majorRadius:(CGFloat)radius
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
+    if (!zx_indicatorValidFingerIndex(index) || !_visible || !touchIndicatorViewList[index]) return;
+    CGFloat size = radius * SIZE_INDIACTOR_TOUCH_RADIUS_RATIO;
+    CGFloat half = size / 2;
+    touchIndicatorViewList[index].frame = CGRectMake(x - half, y - half, size, size);
+    touchIndicatorViewList[index].layer.cornerRadius = half;
+    NSString *text = [NSString stringWithFormat:@"(%d, %d)", (int)(x * scale), (int)(y * scale)];
+    CGFloat width = [text sizeWithAttributes:@{NSFontAttributeName:_coordinateFont}].width + 5;
+    coordinateView[index].coordinateLabel.text = text;
+    coordinateView[index].coordinateLabel.frame = CGRectMake(0, 0, width, COORDINATE_VIEW_HEIGHT);
+    coordinateView[index].frame = CGRectMake(x + half + 5, y, width, COORDINATE_VIEW_HEIGHT);
 }
 
 @end

@@ -1,7 +1,9 @@
 # A01 — P0-04 / P1-06
 
 Date: 2026-10-16. Base: `18e6e67c7250e172da02df3e2ea558aa6ffc0242`.
-Status: source implemented; native host regression passed; iOS build/device validation pending.
+Status: source implemented; native host regression passed; user reported build passed before A02. Device validation remains pending.
+
+Build confirmation is from the user in this chat; no CI run/artifact identity was supplied or independently inspected.
 
 ## Scope
 
@@ -38,7 +40,7 @@ Run on Windows from a Visual Studio x64 Developer Command Prompt with `set CXX=c
 
 ## Remaining target validation
 
-1. Let both CI workflows compile the real iOS artifacts; local Windows has no Xcode/iOS SDK, and this session has not run hosted CI.
+1. Build passed according to the user before A02. Keep the distinction between that build confirmation and the device tests below; local Windows has no Xcode/iOS SDK.
 2. On representative rootfull/roothide and TrollStore devices, verify private IOHID append retention and down/move/up/zoom behavior. The HID test double models retain-on-append; it cannot establish private-API behavior on a particular iOS version.
 3. Run the matching S002 ownership probe with 100k frames and Instruments Allocations/VM Tracker. Check live IOHID object counts/RSS slope, not a promised byte saving. Check finger-up cleanup at the end.
 4. Exercise malformed task10/task61/batch requests and valid ACK compatibility on a test screen. Verify rejected frames do not inject partial events and the following valid frame still behaves correctly.
