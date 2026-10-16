@@ -1,7 +1,7 @@
 # A04 — P0-15 / P0-16 / P1-52
 
 Date: 2026-10-16. Base: `b005a38` (A03 build reported passed by the user).
-Status: source implemented; portable native tests and source-contract checks passed. macOS host integration, new iOS builds and device qualification pending.
+Status: source implemented; portable native tests and source-contract checks passed. User reported the A04 build passed before A05. macOS test logs were not independently inspected; device qualification remains pending.
 
 ## Timer ownership and acknowledgment (P0-15)
 
@@ -61,7 +61,7 @@ Their runtime results are pending; portable tests cannot establish real dispatch
 
 ## Remaining build/device checks
 
-1. Run the new macOS host suites and build rootfull, roothide and StreamControl. The latest user-reported build predates A04. Check each relevant CI matrix artifact.
+1. User reported the A04 build passed before A05. The report does not identify every matrix artifact or include host-test logs; inspect the relevant rootfull/roothide/StreamControl CI jobs before release.
 2. Run S007 Probe A from 8 device clients: set/remove, replacement, restart and removal during fire. After ACK, no new launch may be admitted by the removed generation; only one current timer per name remains.
 3. Run S007 Probe B: reject repeating 1/10/100 ms; verify 1-second repeat and subsecond one-shot. With a long-running script, verify timer fires do not increment scheduler license checks or cause config reads/play calls. Measure CPU, wakeups, main-thread stalls and timer latency; no quantitative improvement is claimed before measurement.
 4. Exercise RAW and JS, successful/failed/license-denied starts, stop/start overlaps and script-originated timer operations. A05 still owns complete RAW stopping/session isolation.

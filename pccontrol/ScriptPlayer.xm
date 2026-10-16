@@ -14,43 +14,36 @@
 #import "../shared/TLinkRunHistory.h"
 #import "Screen.h"
 #include <os/lock.h>
-#include <atomic>
+#include "../shared/TLinkPlaybackState.h"
+#include "../shared/TLinkRawPlayback.h"
+#include "Touch.h"
 
-static std::atomic_bool isPlaying{false};
+// BEGIN playback session implementation (compiled with runtime doubles by the macOS harness).
+@interface TLinkPlaybackSession : TLinkScriptSession {
+@public
+    TLinkRawTouches touches;
+}
+@property (nonatomic, copy) NSString *bundlePath;
+@property (nonatomic, copy) NSString *entryPath;
+@property (nonatomic, copy) NSString *foregroundApp;
+@property (nonatomic, copy) NSDictionary *manifest;
+@property (nonatomic, assign) int repeatsRemaining;
+@property (nonatomic, assign) uint64_t repeatDelayNs;
+@property (nonatomic, assign) double speed;
+@property (nonatomic, assign) BOOL switchApp;
+@property (nonatomic, assign) BOOL raw;
+@property (nonatomic, assign) BOOL preparing;
+@property (nonatomic, assign) BOOL licenseRevoked;
+@property (nonatomic, strong) dispatch_semaphore_t wake;
+@property (nonatomic, copy) NSString *historyRunId;
+@property (nonatomic, copy) NSString *consoleLogPath;
+@end
+@implementation TLinkPlaybackSession
+@end
 
-typedef NS_ENUM(NSInteger, TLinkScriptState) {
-    TLinkScriptStateIdle = 0,
-    TLinkScriptStateScheduled,
-    TLinkScriptStateRunning,
-    TLinkScriptStateStopping
-};
-
-@implementation ScriptPlayer
-{
-    int repeatTime;
-    float interval;
-    float speed;
-    NSString* scriptBundlePath;
-    UIWindow *_playIndicator;
-    int currentScriptType; // -1 none, 0 upcoming, 1 raw, 3 js
-    NSTimer *replayTimer;
-    UIView *circleView;
-    Boolean scriptPlayForceStop;
-    Boolean switchAppBeforePlaying;
-    NSDictionary *currentManifest;
-
-    os_unfair_lock _playerLock;
-    TLinkScriptState _state;
-    TLinkScriptSession *_currentSession;
-    TLinkautoJSRuntime *_currentRuntime;
-    dispatch_queue_t _jsSerialQueue;
-    dispatch_source_t _licenseHeartbeat;
-    uint64_t _licenseHeartbeatGeneration;
-    uint64_t _licenseHeartbeatCheckCount;
-    uint64_t _licenseRevocationCount;
-    BOOL _licenseRevokedCurrentRun;
-    NSString *_historyRunId;
-    NSString *_historyConsoleLogPath;
+static NSError *tlinkPlaybackError(NSString *message) {
+    return [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"-1;;%@\r\n", message]}];
 }
 
 static BOOL tlinkautoJavaScriptRuntimeEnabled(void) {
@@ -77,567 +70,458 @@ static NSString *tlinkautoStringValue(id value) {
     return nil;
 }
 
-- (BOOL)isPlaying { return isPlaying; }
-
-- (BOOL)canStartScheduledScript {
-    os_unfair_lock_lock(&_playerLock);
-    BOOL allowed = _state == TLinkScriptStateIdle && !isPlaying.load();
-    os_unfair_lock_unlock(&_playerLock);
-    return allowed;
-}
-
-- (NSString*)getCurrentBundlePath { return scriptBundlePath ?: @""; }
-
-- (NSDictionary *)licenseRuntimeDiagnostics {
-    os_unfair_lock_lock(&_playerLock);
-    NSDictionary *diagnostics = @{
-        @"heartbeat_active": @(_licenseHeartbeat != nil),
-        @"heartbeat_interval_ms": @1000,
-        @"generation": @(_licenseHeartbeatGeneration),
-        @"check_count": @(_licenseHeartbeatCheckCount),
-        @"revocation_count": @(_licenseRevocationCount),
-        @"revoked_current_run": @(_licenseRevokedCurrentRun),
-    };
-    os_unfair_lock_unlock(&_playerLock);
-    return diagnostics;
-}
-
-- (void)beginRunHistoryIfNeeded:(NSString *)entryPath {
-    @synchronized (self) {
-        if (_historyRunId.length > 0) return;
-        NSDictionary *record = TLinkRunHistoryBegin(@"rootfull",
-                                                     scriptBundlePath ?: @"",
-                                                     entryPath ?: @"",
-                                                     @{
-                                                         @"repeat_times": @(repeatTime),
-                                                         @"interval": @(interval),
-                                                         @"speed": @(speed),
-                                                     });
-        _historyRunId = [record[@"run_id"] copy];
-        _historyConsoleLogPath = @"";
-    }
-}
-
-- (void)finishRunHistoryWithState:(NSString *)state error:(NSString *)error {
-    NSString *runId = nil;
-    NSString *consolePath = nil;
-    @synchronized (self) {
-        runId = _historyRunId;
-        consolePath = _historyConsoleLogPath;
-        _historyRunId = nil;
-        _historyConsoleLogPath = nil;
-    }
-    if (runId.length == 0) return;
-
-    NSString *screenshotPath = @"";
-    NSString *screenshotError = @"";
-    BOOL failed = [state isEqualToString:@"failed"] || [state isEqualToString:@"license_revoked"];
-    if (failed) {
-        screenshotPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:
-            [NSString stringWithFormat:@"%@.png", runId]];
-        NSError *captureError = nil;
-        NSString *saved = [Screen screenShotToPath:screenshotPath region:CGRectZero error:&captureError];
-        if (saved.length == 0) {
-            screenshotError = captureError.localizedDescription ?: @"capture_failed";
-            screenshotPath = @"";
-        }
-    }
-    TLinkRunHistoryFinish(runId,
-                          state ?: @"finished",
-                          error ?: @"",
-                          @[],
-                          consolePath ?: @"",
-                          screenshotPath,
-                          screenshotError,
-                          @{});
-}
-
-- (void)stopLicenseHeartbeatForGeneration:(uint64_t)generation {
-    dispatch_source_t timer = nil;
-    os_unfair_lock_lock(&_playerLock);
-    if (generation == 0 || _licenseHeartbeatGeneration == generation) {
-        timer = _licenseHeartbeat;
-        _licenseHeartbeat = nil;
-        _licenseHeartbeatGeneration = 0;
-    }
-    os_unfair_lock_unlock(&_playerLock);
-    if (timer) dispatch_source_cancel(timer);
-}
-
-- (void)handleLicenseHeartbeatForGeneration:(uint64_t)generation {
-    os_unfair_lock_lock(&_playerLock);
-    BOOL current = generation != 0 &&
-                   _licenseHeartbeatGeneration == generation &&
-                   _licenseHeartbeat != nil &&
-                   isPlaying;
-    if (current) _licenseHeartbeatCheckCount++;
-    os_unfair_lock_unlock(&_playerLock);
-    if (!current) return;
-
-    NSString *denial = nil;
-    if (TLinkRootfullLicenseComponentAllowed(@"script",
-                                             @"script_runtime",
-                                             &denial)) {
-        return;
-    }
-
-    TLinkautoJSRuntime *runtime = nil;
-    os_unfair_lock_lock(&_playerLock);
-    if (_licenseHeartbeatGeneration != generation || !isPlaying) {
-        os_unfair_lock_unlock(&_playerLock);
-        return;
-    }
-    _licenseRevocationCount++;
-    _licenseRevokedCurrentRun = YES;
-    repeatTime = 0;
-    scriptPlayForceStop = true;
-    if (_currentSession) [_currentSession.cancellationToken cancel];
-    runtime = _currentRuntime;
-    if (currentScriptType == 3) _state = TLinkScriptStateStopping;
-    os_unfair_lock_unlock(&_playerLock);
-
-    NSString *message = [NSString stringWithFormat:
-        @"license_revoked_during_execution %@",
-        denial ?: @"license_required"];
-    setLastScriptError(message);
-    JS_DIAG("LICENSE_REVOKED", "%s", [message UTF8String]);
-    NSLog(@"com.tlinkauto.script: %@", message);
-    [self stopLicenseHeartbeatForGeneration:generation];
-    if (runtime) [runtime requestStop];
-}
-
-- (void)startLicenseHeartbeatForGeneration:(uint64_t)generation {
-    if (generation == 0) return;
-    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
-                                                     0,
-                                                     0,
-                                                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
-    if (!timer) return;
-    dispatch_source_set_timer(timer,
-                              dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
-                              NSEC_PER_SEC,
-                              100 * NSEC_PER_MSEC);
-    __weak ScriptPlayer *weakSelf = self;
-    dispatch_source_set_event_handler(timer, ^{
-        ScriptPlayer *strongSelf = weakSelf;
-        if (strongSelf) [strongSelf handleLicenseHeartbeatForGeneration:generation];
-    });
-
-    dispatch_source_t previous = nil;
-    os_unfair_lock_lock(&_playerLock);
-    previous = _licenseHeartbeat;
-    _licenseHeartbeat = timer;
-    _licenseHeartbeatGeneration = generation;
-    _licenseRevokedCurrentRun = NO;
-    os_unfair_lock_unlock(&_playerLock);
-    if (previous) dispatch_source_cancel(previous);
-    dispatch_resume(timer);
-}
-
-- (void)setPath:(NSString*)path {
-    if (isPlaying) return;
-    scriptBundlePath = path;
-}
-
-- (void)setRepeatTime:(int)rt {
-    if (isPlaying) return;
-    repeatTime = rt;
-}
-
-- (void)setInterval:(float)intv {
-    if (isPlaying) return;
-    interval = intv;
-}
-
-- (void)setSpeed:(float)sp {
-    if (isPlaying) return;
-    speed = sp;
-}
-
-- (void)setSwitchApp:(BOOL)value {
-    if (isPlaying) return;
-    switchAppBeforePlaying = value;
+@implementation ScriptPlayer {
+    os_unfair_lock _playerLock;
+    TLinkPlaybackState _playback;
+    TLinkPlaybackSession *_currentSession;
+    TLinkautoJSRuntime *_currentRuntime;
+    dispatch_queue_t _playbackQueue;
+    dispatch_source_t _repeatTimer;
+    dispatch_source_t _licenseHeartbeat;
+    uint64_t _licenseHeartbeatGeneration;
+    uint64_t _licenseHeartbeatCheckCount;
+    uint64_t _licenseRevocationCount;
+    uint64_t _lastCompletedGeneration;
+    // Main-thread-only UI. A queued cleanup may only hide its own generation's window.
+    UIWindow *_playIndicator;
+    UIView *circleView;
+    uint64_t _indicatorGeneration;
+    // Legacy setters configure an idle launch only. Production Play.xm submits a whole tuple.
+    NSString *scriptBundlePath;
+    int repeatTime;
+    double interval;
+    double speed;
+    BOOL switchAppBeforePlaying;
 }
 
 - (id)init {
     self = [super init];
     if (self) {
         _playerLock = OS_UNFAIR_LOCK_INIT;
-        _jsSerialQueue = dispatch_queue_create("com.tlinkauto.js.serial", DISPATCH_QUEUE_SERIAL);
-        _state = TLinkScriptStateIdle;
-        [self clear];
+        _playbackQueue = dispatch_queue_create("com.tlinkauto.playback", DISPATCH_QUEUE_SERIAL);
+        speed = 1;
     }
     return self;
 }
-
-- (id)initWithPath:(NSString*)path {
+- (id)initWithPath:(NSString *)path {
     self = [self init];
-    if (self) {
-        scriptBundlePath = path;
-        currentScriptType = -1;
-    }
+    if (self) scriptBundlePath = [path copy];
     return self;
 }
+- (BOOL)isPlaying {
+    os_unfair_lock_lock(&_playerLock);
+    BOOL busy = _playback.busy();
+    os_unfair_lock_unlock(&_playerLock);
+    return busy;
+}
+- (BOOL)canStartScheduledScript {
+    os_unfair_lock_lock(&_playerLock);
+    BOOL allowed = !_playback.busy();
+    os_unfair_lock_unlock(&_playerLock);
+    return allowed;
+}
+- (NSString *)getCurrentBundlePath {
+    os_unfair_lock_lock(&_playerLock);
+    NSString *path = _currentSession.bundlePath ?: @"";
+    os_unfair_lock_unlock(&_playerLock);
+    return path;
+}
+- (void)setPath:(NSString *)path {
+    os_unfair_lock_lock(&_playerLock);
+    if (!_playback.busy()) scriptBundlePath = [path copy];
+    os_unfair_lock_unlock(&_playerLock);
+}
+- (void)setRepeatTime:(int)value {
+    os_unfair_lock_lock(&_playerLock);
+    if (!_playback.busy()) repeatTime = value;
+    os_unfair_lock_unlock(&_playerLock);
+}
+- (void)setInterval:(float)value {
+    os_unfair_lock_lock(&_playerLock);
+    if (!_playback.busy()) interval = value;
+    os_unfair_lock_unlock(&_playerLock);
+}
+- (void)setSpeed:(float)value {
+    os_unfair_lock_lock(&_playerLock);
+    if (!_playback.busy()) speed = value;
+    os_unfair_lock_unlock(&_playerLock);
+}
+- (void)setSwitchApp:(BOOL)value {
+    os_unfair_lock_lock(&_playerLock);
+    if (!_playback.busy()) switchAppBeforePlaying = value;
+    os_unfair_lock_unlock(&_playerLock);
+}
+- (int)play:(NSError **)error {
+    os_unfair_lock_lock(&_playerLock);
+    NSString *path = scriptBundlePath;
+    int repeats = repeatTime;
+    double delay = interval, playSpeed = speed;
+    BOOL switchApp = switchAppBeforePlaying;
+    os_unfair_lock_unlock(&_playerLock);
+    return [self playPath:path repeatTime:repeats interval:delay speed:playSpeed switchApp:switchApp error:error];
+}
 
--(int)runScript:(NSError**)error {
-    if (!scriptBundlePath) {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. ScriptBundlePath not set.\r\n"}];
-        return -1;
-    }
+- (NSDictionary *)licenseRuntimeDiagnostics {
+    os_unfair_lock_lock(&_playerLock);
+    NSDictionary *diagnostics = @{
+        @"heartbeat_active": @(_licenseHeartbeat != nil), @"heartbeat_interval_ms": @1000,
+        @"generation": @(_licenseHeartbeatGeneration), @"check_count": @(_licenseHeartbeatCheckCount),
+        @"revocation_count": @(_licenseRevocationCount),
+        @"revoked_current_run": @(_currentSession.licenseRevoked),
+        @"playback_generation": @(_currentSession.generation),
+        @"playback_phase": @((int)_playback.phase()),
+    };
+    os_unfair_lock_unlock(&_playerLock);
+    return diagnostics;
+}
 
-    BOOL isDir;
-    if (![[NSFileManager defaultManager] fileExistsAtPath:scriptBundlePath isDirectory:&isDir] || !isDir) {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Path not found or it is not a directory.\r\n"}];
-        [self finishRunHistoryWithState:@"failed" error:@"Unable to run the script. Path not found or it is not a directory."];
-        return -1;
-    }
-
-    NSString *infoFilePath = [NSString stringWithFormat:@"%@/info.plist", scriptBundlePath];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:infoFilePath isDirectory:&isDir]) {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Info.plist not found.\r\n"}];
-        [self finishRunHistoryWithState:@"failed" error:@"Unable to run the script. Info.plist not found."];
-        return -1;
-    }
-    NSDictionary *scriptInfo = [NSDictionary dictionaryWithContentsOfFile:infoFilePath];
-    NSDictionary *manifest = tlinkautoReadManifest(scriptBundlePath);
-    currentManifest = manifest ?: @{};
-    
-    NSString *entryFileName = tlinkautoStringValue(manifest[@"entry"]) ?: scriptInfo[@"Entry"];
-    if (!entryFileName || [entryFileName length] == 0) {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Script entry is missing.\r\n"}];
-        [self finishRunHistoryWithState:@"failed" error:@"Script entry is missing."];
-        return -1;
-    }
-    NSString *fileExtension = [entryFileName pathExtension];
-    NSString *runtime = [tlinkautoStringValue(manifest[@"runtime"]) lowercaseString];
-    NSNumber *apiVersion = [manifest[@"apiVersion"] respondsToSelector:@selector(intValue)] ? manifest[@"apiVersion"] : nil;
-    NSString *foregroundApp = scriptInfo[@"FrontApp"];
-
+- (void)updateIndicatorForSession:(TLinkPlaybackSession *)session waiting:(BOOL)waiting {
     dispatch_async(dispatch_get_main_queue(), ^{
-        _playIndicator = [[UIWindow alloc] initWithFrame:CGRectMake(0,0,10*2,10*2)];
-        _playIndicator.windowLevel = UIWindowLevelStatusBar;
-        _playIndicator.hidden = NO;
-        [_playIndicator setBackgroundColor:[UIColor clearColor]];
-        [_playIndicator setUserInteractionEnabled:NO];
-
-        circleView = [[UIView alloc] initWithFrame:CGRectMake(0,0,10*2,10*2)];
-        circleView.layer.cornerRadius = 10;
-        circleView.backgroundColor = [UIColor greenColor];
-        [_playIndicator addSubview:circleView];
+        os_unfair_lock_lock(&self->_playerLock);
+        BOOL current = self->_currentSession == session && ![session.cancellationToken isCancelled] &&
+                       self->_playback.phase() != TLinkPlaybackPhase::Finishing;
+        os_unfair_lock_unlock(&self->_playerLock);
+        if (!current) return;
+        if (self->_indicatorGeneration != session.generation) {
+            self->_playIndicator.hidden = YES;
+            self->_playIndicator = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 20, 20)];
+            self->_playIndicator.windowLevel = UIWindowLevelStatusBar;
+            self->_playIndicator.backgroundColor = [UIColor clearColor];
+            self->_playIndicator.userInteractionEnabled = NO;
+            self->circleView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 20, 20)];
+            self->circleView.layer.cornerRadius = 10;
+            [self->_playIndicator addSubview:self->circleView];
+            self->_indicatorGeneration = session.generation;
+        }
+        self->circleView.backgroundColor = waiting ? [UIColor orangeColor] : [UIColor greenColor];
+        self->_playIndicator.hidden = NO;
     });
-
-    NSString *entryFilePath = [scriptBundlePath stringByAppendingPathComponent:entryFileName];
-    [self beginRunHistoryIfNeeded:entryFilePath];
-
-    if ([fileExtension isEqualToString:@"raw"]) {
-        currentScriptType = 1;
-        uint64_t generation = mach_absolute_time();
-        isPlaying = true;
-        [self startLicenseHeartbeatForGeneration:generation];
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            NSError *err = nil;
-            [self playFromRawFile:entryFilePath foregroundApp:foregroundApp err:&err];
-            [self stopLicenseHeartbeatForGeneration:generation];
-        }); 
-        return 0;
-    } else if ([runtime isEqualToString:@"javascriptcore"] || [fileExtension isEqualToString:@"js"]) {
-        if (!tlinkautoJavaScriptRuntimeEnabled()) {
-            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;JavaScriptCore runtime is disabled.\r\n"}];
-            [self finishRunHistoryWithState:@"failed" error:@"JavaScriptCore runtime is disabled."];
-            [self clear];
-            return -1;
-        }
-        if (apiVersion && [apiVersion intValue] != 1) {
-            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported JavaScript API version: %@\r\n", apiVersion]}];
-            [self finishRunHistoryWithState:@"failed" error:[NSString stringWithFormat:@"Unsupported JavaScript API version: %@", apiVersion]];
-            [self clear];
-            return -1;
-        }
-        currentScriptType = 3;
-        
-        os_unfair_lock_lock(&_playerLock);
-        
-        if (_state != TLinkScriptStateIdle) {
-            os_unfair_lock_unlock(&_playerLock);
-            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Script is already running.\r\n"}];
-            [self finishRunHistoryWithState:@"failed" error:@"Script is already running."];
-            return -1;
-        }
-        _state = TLinkScriptStateScheduled;
-        
-        TLinkScriptSession *session = [[TLinkScriptSession alloc] init];
-        session.generation = (uint64_t)[[NSDate date] timeIntervalSince1970] * 1000000;
-        session.cancellationToken = [[TLinkCancellationToken alloc] init];
-        session.taskContext = [[TLinkTaskExecutionContext alloc] init];
-        session.taskContext.cancellationToken = session.cancellationToken;
-        
-        _currentSession = session;
-        isPlaying = true;
-        os_unfair_lock_unlock(&_playerLock);
-        [self startLicenseHeartbeatForGeneration:session.generation];
-
-        dispatch_async(_jsSerialQueue, ^{
-            [self executeJSIteration:session filePath:entryFilePath foregroundApp:foregroundApp];
-        });
-        return 0;
-    } else if ([runtime isEqualToString:@"python"] || [fileExtension isEqualToString:@"py"]) {
-        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Python script support has been removed. Please migrate this script to JavaScript.\r\n"}];
-        setLastScriptError(@"Python script support has been removed. Please migrate this script to JavaScript.");
-        [self finishRunHistoryWithState:@"failed" error:getLastScriptError()];
-        [self clear];
-        return -1;
-    }
-    
-    if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unsupported script entry extension: %@\r\n", fileExtension ?: @""]}];
-    [self finishRunHistoryWithState:@"failed" error:[NSString stringWithFormat:@"Unsupported script entry extension: %@", fileExtension ?: @""]];
-    [self clear];
-    return -1;
+}
+- (void)hideIndicatorForSession:(TLinkPlaybackSession *)session {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self->_indicatorGeneration != session.generation) return;
+        self->_playIndicator.hidden = YES;
+        self->_playIndicator = nil;
+        self->circleView = nil;
+        self->_indicatorGeneration = 0;
+    });
+}
+- (void)showError:(NSString *)message forSession:(TLinkPlaybackSession *)session {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        os_unfair_lock_lock(&self->_playerLock);
+        BOOL current = self->_currentSession == session ||
+            (!self->_currentSession && self->_lastCompletedGeneration == session.generation);
+        os_unfair_lock_unlock(&self->_playerLock);
+        if (current) showAlertBox(session.raw ? @"Error" : @"JavaScript Error", message, 999);
+    });
 }
 
-- (int)play:(NSError**)error {
+- (void)beginRunHistoryForSession:(TLinkPlaybackSession *)session entryPath:(NSString *)entryPath {
+    NSDictionary *record = TLinkRunHistoryBegin(@"rootfull", session.bundlePath, entryPath, @{
+        @"repeat_times": @(session.repeatsRemaining),
+        @"interval": @((double)session.repeatDelayNs / NSEC_PER_SEC), @"speed": @(session.speed),
+    });
+    session.historyRunId = [record[@"run_id"] copy];
+}
+- (void)finishRunHistoryForSession:(TLinkPlaybackSession *)session state:(NSString *)state error:(NSString *)error {
+    NSString *runId = session.historyRunId;
+    if (runId.length == 0) return;
+    session.historyRunId = nil;
+    NSString *screenshotPath = @"", *screenshotError = @"";
+    if ([state isEqualToString:@"failed"] || [state isEqualToString:@"license_revoked"]) {
+        screenshotPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:
+                          [NSString stringWithFormat:@"%@.png", runId]];
+        NSError *captureError = nil;
+        NSString *saved = [Screen screenShotToPath:screenshotPath region:CGRectZero error:&captureError];
+        if (saved.length == 0) { screenshotError = captureError.localizedDescription ?: @"capture_failed"; screenshotPath = @""; }
+    }
+    TLinkRunHistoryFinish(runId, state, error ?: @"", @[], session.consoleLogPath ?: @"",
+                         screenshotPath, screenshotError, @{});
+}
+
+- (void)stopLicenseHeartbeatForGeneration:(uint64_t)generation {
     os_unfair_lock_lock(&_playerLock);
-    
-    if (_state != TLinkScriptStateIdle || isPlaying) {
-        os_unfair_lock_unlock(&_playerLock);
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Another script is currently running.\r\n"}];
-        return -1;
+    dispatch_source_t timer = nil;
+    if (_licenseHeartbeatGeneration == generation) {
+        timer = _licenseHeartbeat; _licenseHeartbeat = nil; _licenseHeartbeatGeneration = 0;
     }
     os_unfair_lock_unlock(&_playerLock);
-    return [self runScript:error];
+    if (timer) dispatch_source_cancel(timer);
 }
-
--(void)playFromRawFile:(NSString*) filePath foregroundApp:(NSString*)foregroundApp err:(NSError**)err {
-    isPlaying = true;
-    if (switchAppBeforePlaying) bringAppForeground(foregroundApp);
-
-    FILE *file = fopen([filePath UTF8String], "r");
-    if (!file) {
-        showAlertBox(@"Error", [NSString stringWithFormat:@"Cannot play this script because TLinkauto cannot open the file. File path: %@", filePath], 999);
-        setLastScriptError([NSString stringWithFormat:@"Cannot open raw script: %@", filePath]);
-        isPlaying = false;
-        [self stopLicenseHeartbeatForGeneration:0];
-        [self finishRunHistoryWithState:@"failed" error:getLastScriptError()];
-        return;
-    }
-    
-    char buffer[256];
-    
-    while (fgets(buffer, sizeof(char)*256, file) != NULL) {
-        if (scriptPlayForceStop) {
-            scriptPlayForceStop = false;
-            break;
-        }
-        if (speed > 0 && speed != 1) {
-            int type, sleepTime;
-            sscanf(buffer, "%2d", &type);
-            if (type == TASK_USLEEP) {
-                sscanf(buffer, "%2d%d", &type, &sleepTime);
-                sleepTime = sleepTime / speed;
-                processTask((UInt8*)[[NSString stringWithFormat:@"18%d", sleepTime] UTF8String], NULL);
-            } else {
-                processTask((UInt8*)buffer, NULL);
-            }
-        } else {
-            processTask((UInt8*)buffer, NULL);
-        }
-    }
-    fclose(file);
-    [self playHasStopped];
-}
-
-- (void)executeJSIteration:(TLinkScriptSession *)session filePath:(NSString *)filePath foregroundApp:(NSString *)foregroundApp {
+- (void)requestStopSession:(TLinkPlaybackSession *)session revoked:(BOOL)revoked message:(NSString *)message {
     os_unfair_lock_lock(&_playerLock);
-    if (_currentSession != session || [session.cancellationToken isCancelled]) {
-        os_unfair_lock_unlock(&_playerLock);
-        return;
+    if (_currentSession != session || !_playback.stop(session.generation)) {
+        os_unfair_lock_unlock(&_playerLock); return;
     }
-    TLinkautoJSRuntime *runtime = [[TLinkautoJSRuntime alloc] init];
-    _currentRuntime = runtime;
-    _state = TLinkScriptStateRunning;
+    if (revoked && !session.licenseRevoked) {
+        session.licenseRevoked = YES;
+        _licenseRevocationCount++;
+        setLastScriptError(message ?: @"license_revoked_during_execution");
+    }
+    [session.cancellationToken cancel];
+    dispatch_source_t repeat = _repeatTimer; _repeatTimer = nil;
+    TLinkautoJSRuntime *runtime = _currentRuntime;
+    BOOL preparing = session.preparing;
     os_unfair_lock_unlock(&_playerLock);
-
-    if (self->switchAppBeforePlaying) {
-        bringAppForeground(foregroundApp);
-    }
-
-    NSError *runError = nil;
-    BOOL ok = [runtime runScriptAtPath:filePath bundlePath:scriptBundlePath manifest:currentManifest context:session.taskContext error:&runError];
-    @synchronized (self) {
-        _historyConsoleLogPath = [[runtime currentConsoleLogPath] copy] ?: @"";
-    }
-    
-    os_unfair_lock_lock(&_playerLock);
-    if (_currentSession != session) {
-        os_unfair_lock_unlock(&_playerLock);
-        return;
-    }
-    _currentRuntime = nil; // Clear for replay
-    if ([session.cancellationToken isCancelled]) {
-        os_unfair_lock_unlock(&_playerLock);
-        [self finishSessionIfCurrent:session outcome:NO];
-        return;
-    }
-    
-    if (repeatTime > 0) {
-        repeatTime--;
-        os_unfair_lock_unlock(&_playerLock);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self->circleView.backgroundColor = [UIColor orangeColor];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(interval * NSEC_PER_SEC)), _jsSerialQueue, ^{
-            [self executeJSIteration:session filePath:filePath foregroundApp:foregroundApp];
-        });
-    } else {
-        os_unfair_lock_unlock(&_playerLock);
-        if (!ok && runError) {
-            setLastScriptError([runError localizedDescription]);
-            if (![session.cancellationToken isCancelled]) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    showAlertBox(@"JavaScript Error", [runError localizedDescription], 999);
-                });
-            }
-        }
-        [self finishSessionIfCurrent:session outcome:ok];
-    }
-}
-
-- (void)finishSessionIfCurrent:(TLinkScriptSession *)session outcome:(BOOL)ok {
+    if (repeat) dispatch_source_cancel(repeat);
     [self stopLicenseHeartbeatForGeneration:session.generation];
+    dispatch_semaphore_signal(session.wake);
+    if (runtime) [runtime requestStop];
+    // Preparing callers retain ownership until their file/history setup has returned.
+    // All other cleanup queues behind the active RAW/JS iteration, never ahead of it.
+    if (!preparing) dispatch_async(_playbackQueue, ^{
+        @autoreleasepool { [self finishSessionIfCurrent:session state:@"cancelled" error:@""]; }
+    });
+}
+- (void)handleLicenseHeartbeatForGeneration:(uint64_t)generation {
     os_unfair_lock_lock(&_playerLock);
-    if (_currentSession == session) {
-        _currentSession = nil;
+    TLinkPlaybackSession *session = _currentSession;
+    BOOL current = session && session.generation == generation && _licenseHeartbeat != nil &&
+        _playback.phase() != TLinkPlaybackPhase::Finishing && ![session.cancellationToken isCancelled];
+    if (current) _licenseHeartbeatCheckCount++;
+    os_unfair_lock_unlock(&_playerLock);
+    if (!current) return;
+    NSString *denial = nil;
+    if (TLinkRootfullLicenseComponentAllowed(@"script", @"script_runtime", &denial)) return;
+    NSString *message = [NSString stringWithFormat:@"license_revoked_during_execution %@", denial ?: @"license_required"];
+    [self requestStopSession:session revoked:YES message:message];
+}
+- (void)startLicenseHeartbeatForSession:(TLinkPlaybackSession *)session {
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    if (!timer) return;
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, 100 * NSEC_PER_MSEC);
+    __weak ScriptPlayer *weakSelf = self;
+    const uint64_t generation = session.generation;
+    dispatch_source_set_event_handler(timer, ^{
+        @autoreleasepool { [weakSelf handleLicenseHeartbeatForGeneration:generation]; }
+    });
+    os_unfair_lock_lock(&_playerLock);
+    if (_currentSession == session && ![session.cancellationToken isCancelled] &&
+        _playback.phase() != TLinkPlaybackPhase::Finishing) {
+        _licenseHeartbeat = timer; _licenseHeartbeatGeneration = generation;
+    } else dispatch_source_cancel(timer);
+    dispatch_resume(timer); // Sources are always resumed before either local/installed ownership can disappear.
+    os_unfair_lock_unlock(&_playerLock);
+}
+
+- (void)finishSessionIfCurrent:(TLinkPlaybackSession *)session state:(NSString *)state error:(NSString *)error {
+    os_unfair_lock_lock(&_playerLock);
+    if (_currentSession != session || !_playback.beginFinish(session.generation)) {
+        os_unfair_lock_unlock(&_playerLock); return;
+    }
+    if (session.licenseRevoked) { state = @"license_revoked"; error = getLastScriptError(); }
+    else if ([session.cancellationToken isCancelled]) { state = @"cancelled"; error = @""; }
+    dispatch_source_t repeat = _repeatTimer; _repeatTimer = nil;
+    os_unfair_lock_unlock(&_playerLock);
+    if (repeat) dispatch_source_cancel(repeat);
+    [self stopLicenseHeartbeatForGeneration:session.generation];
+    @try {
+        // Cleanup UPs cannot be denied as new script work: these fingers were observed only
+        // after successful injection, and cleanup is complete before a new session is admitted.
+        if (!session->touches.release([](const uint8_t *bytes, size_t length) {
+            return performTouchFromRawData(bytes, length);
+        })) { state = @"failed"; error = @"Unable to release RAW touch state during cleanup."; }
+        if (error.length) setLastScriptError(error);
+        [self finishRunHistoryForSession:session state:state error:error];
+        if ([state isEqualToString:@"failed"] && error.length) [self showError:error forSession:session];
+    } @catch (NSException *exception) {
+        setLastScriptError(exception.reason ?: @"Playback cleanup failed.");
+    } @finally {
+        [self hideIndicatorForSession:session];
+        os_unfair_lock_lock(&_playerLock);
         _currentRuntime = nil;
-        _state = TLinkScriptStateIdle;
-        isPlaying = false;
+        _currentSession = nil;
+        scriptBundlePath = nil; repeatTime = 0; interval = 0; speed = 1;
+        _lastCompletedGeneration = session.generation;
+        _playback.finish(session.generation); // Last model mutation; never publish idle before cleanup.
+        os_unfair_lock_unlock(&_playerLock);
+    }
+}
+
+- (int)playPath:(NSString *)path repeatTime:(int)repeats interval:(double)delay speed:(double)playSpeed
+     switchApp:(BOOL)switchApp error:(NSError **)error {
+    if (error) *error = nil;
+    uint64_t delayNs = 0;
+    if (path.length == 0 || !TLinkPlaybackDelay(delay, &delayNs)) {
+        if (error) *error = tlinkPlaybackError(@"A script path and finite, nonnegative repeat interval are required.");
+        return -1;
+    }
+    TLinkPlaybackSession *session = [[TLinkPlaybackSession alloc] init];
+    session.bundlePath = path; session.repeatsRemaining = repeats; session.repeatDelayNs = delayNs;
+    session.speed = std::isfinite(playSpeed) && playSpeed > 0 ? playSpeed : 1;
+    session.switchApp = switchApp; session.preparing = YES;
+    session.wake = dispatch_semaphore_create(0);
+    session.cancellationToken = [[TLinkCancellationToken alloc] init];
+    session.taskContext = [[TLinkTaskExecutionContext alloc] init];
+    session.taskContext.cancellationToken = session.cancellationToken;
+    os_unfair_lock_lock(&_playerLock);
+    session.generation = _playback.reserve();
+    if (!session.generation) {
+        os_unfair_lock_unlock(&_playerLock);
+        if (error) *error = tlinkPlaybackError(@"Unable to run the script. Another script is currently running or stopping.");
+        return -1;
+    }
+    _currentSession = session;
+    os_unfair_lock_unlock(&_playerLock);
+    @try {
+        return [self prepareSession:session error:error];
+    } @catch (NSException *exception) {
+        NSString *message = exception.reason ?: @"Unable to prepare script.";
+        [self finishSessionIfCurrent:session state:@"failed" error:message];
+        if (error) *error = tlinkPlaybackError(message);
+        return -1;
+    }
+}
+- (int)prepareSession:(TLinkPlaybackSession *)session error:(NSError **)error {
+    NSString *failure = nil;
+    BOOL isDir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:session.bundlePath isDirectory:&isDir] || !isDir)
+        failure = @"Unable to run the script. Path not found or it is not a directory.";
+    NSString *infoPath = [session.bundlePath stringByAppendingPathComponent:@"info.plist"];
+    if (!failure && ![[NSFileManager defaultManager] fileExistsAtPath:infoPath])
+        failure = @"Unable to run the script. Info.plist not found.";
+    NSDictionary *scriptInfo = failure ? nil : [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    NSDictionary *manifest = failure ? nil : tlinkautoReadManifest(session.bundlePath);
+    NSString *entryName = tlinkautoStringValue(manifest[@"entry"]) ?: tlinkautoStringValue(scriptInfo[@"Entry"]);
+    if (!failure && entryName.length == 0) failure = @"Script entry is missing.";
+    if (!failure) {
+        session.entryPath = [session.bundlePath stringByAppendingPathComponent:entryName];
+        session.foregroundApp = tlinkautoStringValue(scriptInfo[@"FrontApp"]);
+        session.manifest = manifest ?: @{};
+        [self beginRunHistoryForSession:session entryPath:session.entryPath];
+        session.raw = [entryName.pathExtension isEqualToString:@"raw"];
+        NSString *runtime = [tlinkautoStringValue(manifest[@"runtime"]) lowercaseString];
+        if (!session.raw) {
+            if (![runtime isEqualToString:@"javascriptcore"] && ![entryName.pathExtension isEqualToString:@"js"])
+                failure = @"Unsupported script entry. Python support has been removed; use RAW or JavaScript.";
+            else if (!tlinkautoJavaScriptRuntimeEnabled()) failure = @"JavaScriptCore runtime is disabled.";
+            else if ([manifest[@"apiVersion"] respondsToSelector:@selector(intValue)] && [manifest[@"apiVersion"] intValue] != 1)
+                failure = @"Unsupported JavaScript API version.";
+            if (session.repeatsRemaining < 0) session.repeatsRemaining = 0; // Preserve existing JS behavior.
+        } else {
+            __weak TLinkPlaybackSession *weakSession = session;
+            session.taskContext.didInjectTouchPayload = ^(const uint8_t *bytes, size_t length) {
+                TLinkPlaybackSession *owner = weakSession;
+                if (owner) owner->touches.observe(bytes, length);
+            };
+        }
+    }
+    if (failure) {
+        [self finishSessionIfCurrent:session state:@"failed" error:failure];
+        if (error) *error = tlinkPlaybackError(failure);
+        return -1;
+    }
+    [self startLicenseHeartbeatForSession:session];
+    [self updateIndicatorForSession:session waiting:NO];
+    os_unfair_lock_lock(&_playerLock);
+    session.preparing = NO;
+    BOOL ready = ![session.cancellationToken isCancelled] && _playback.ready(session.generation);
+    os_unfair_lock_unlock(&_playerLock);
+    if (!ready) { [self finishSessionIfCurrent:session state:@"cancelled" error:@""]; return 0; }
+    dispatch_async(_playbackQueue, ^{
+        @autoreleasepool { [self executeIteration:session]; }
+    });
+    return 0;
+}
+- (BOOL)beginIteration:(TLinkPlaybackSession *)session {
+    os_unfair_lock_lock(&_playerLock);
+    BOOL current = _currentSession == session;
+    BOOL run = current && ![session.cancellationToken isCancelled] && _playback.enter(session.generation);
+    dispatch_source_t timer = current ? _repeatTimer : nil;
+    if (current) _repeatTimer = nil;
+    os_unfair_lock_unlock(&_playerLock);
+    if (timer) dispatch_source_cancel(timer);
+    if (!run) [self finishSessionIfCurrent:session state:@"cancelled" error:@""];
+    return run;
+}
+- (void)executeIteration:(TLinkPlaybackSession *)session {
+    if (![self beginIteration:session]) return;
+    [self updateIndicatorForSession:session waiting:NO];
+    BOOL ok = YES;
+    NSString *failure = nil;
+    FILE *file = NULL;
+    @try {
+        if (session.switchApp && ![session.cancellationToken isCancelled]) bringAppForeground(session.foregroundApp);
+        if (![session.cancellationToken isCancelled] && session.raw) {
+            file = fopen(session.entryPath.UTF8String, "rb");
+            TLinkRawResult result = TLinkRunRaw(file, session.speed,
+                [&] { return [session.cancellationToken isCancelled] != NO; },
+                [&](uint64_t ns) {
+                    @autoreleasepool {
+                        NSString *denial = nil;
+                        if (!TLinkRootfullLicenseTaskAllowed(TASK_USLEEP, &denial)) {
+                            [self requestStopSession:session revoked:YES message:denial]; return false;
+                        }
+                        if ([session.cancellationToken isCancelled]) return false;
+                        dispatch_semaphore_wait(session.wake, dispatch_time(DISPATCH_TIME_NOW, (int64_t)ns));
+                        return [session.cancellationToken isCancelled] == NO;
+                    }
+                },
+                [&](uint8_t *bytes, size_t length) {
+                    @autoreleasepool { processTaskWithContext(bytes, length, NULL, session.taskContext); }
+                });
+            ok = result == TLinkRawResult::Finished || result == TLinkRawResult::Cancelled;
+            if (!ok) failure = result == TLinkRawResult::ReadError ? @"Cannot read RAW script." : @"Invalid or overlong RAW record.";
+        } else if (![session.cancellationToken isCancelled]) {
+            TLinkautoJSRuntime *runtime = [[TLinkautoJSRuntime alloc] init];
+            os_unfair_lock_lock(&_playerLock);
+            BOOL run = _currentSession == session && ![session.cancellationToken isCancelled];
+            if (run) _currentRuntime = runtime;
+            os_unfair_lock_unlock(&_playerLock);
+            if (run) {
+                NSError *runError = nil;
+                ok = [runtime runScriptAtPath:session.entryPath bundlePath:session.bundlePath manifest:session.manifest
+                                     context:session.taskContext error:&runError];
+                session.consoleLogPath = [runtime currentConsoleLogPath];
+                if (!ok) failure = runError.localizedDescription ?: @"JavaScript execution failed.";
+            }
+        }
+    } @catch (NSException *exception) { ok = NO; failure = exception.reason ?: @"Script execution failed."; }
+    @finally {
+        if (file) fclose(file);
+        os_unfair_lock_lock(&_playerLock);
+        if (_currentSession == session) _currentRuntime = nil;
+        os_unfair_lock_unlock(&_playerLock);
+    }
+    [self completeIteration:session success:ok error:failure];
+}
+- (void)completeIteration:(TLinkPlaybackSession *)session success:(BOOL)ok error:(NSString *)error {
+    os_unfair_lock_lock(&_playerLock);
+    BOOL current = _currentSession == session;
+    BOOL repeat = current && ![session.cancellationToken isCancelled] && (!session.raw || ok) &&
+                  session.repeatsRemaining != 0 && _playback.wait(session.generation);
+    dispatch_source_t timer = nil;
+    if (repeat) {
+        if (session.repeatsRemaining > 0) session.repeatsRemaining--;
+        timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _playbackQueue);
+        if (timer) {
+            _repeatTimer = timer;
+            const uint64_t ns = session.repeatDelayNs;
+            dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)ns), DISPATCH_TIME_FOREVER,
+                                      ns / 10 < 100 * NSEC_PER_MSEC ? ns / 10 : 100 * NSEC_PER_MSEC);
+            __weak ScriptPlayer *weakSelf = self;
+            dispatch_source_set_event_handler(timer, ^{
+                @autoreleasepool { [weakSelf executeIteration:session]; }
+            });
+            dispatch_resume(timer);
+        }
     }
     os_unfair_lock_unlock(&_playerLock);
-
-    NSString *state = ok ? @"finished" : @"failed";
-    NSString *error = ok ? @"" : getLastScriptError();
-    if ([session.cancellationToken isCancelled]) {
-        if (_licenseRevokedCurrentRun) {
-            state = @"license_revoked";
-            error = getLastScriptError();
-        } else {
-            state = @"cancelled";
-            error = @"";
-        }
-    }
-    [self finishRunHistoryWithState:state error:error];
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self clearLegacyState];
-    });
+    if (timer) { [self updateIndicatorForSession:session waiting:YES]; return; }
+    if (repeat) { ok = NO; error = @"Unable to schedule script repeat."; }
+    [self finishSessionIfCurrent:session state:ok ? @"finished" : @"failed" error:error];
 }
-
-- (void)clearLegacyState {
-    repeatTime = 0;
-    interval = 0.0f;
-    speed = 1.0f;
-    scriptBundlePath = nil;
-    currentScriptType = -1;
-    if (_playIndicator) {
-        _playIndicator.hidden = YES;
-        _playIndicator = nil;
-    }
-    if (replayTimer) {
-        [replayTimer invalidate];
-        replayTimer = nil;
-    }
-}
-
-- (void)replay:(NSTimer*)nstimer {
-    NSError *err = nil;
-    [self runScript:&err];
-    CFRunLoopStop(CFRunLoopGetCurrent());
-}
-
--(void) playHasStopped {
-    if (repeatTime != 0) {    
-        dispatch_async(dispatch_get_main_queue(), ^{
-            circleView.backgroundColor = [UIColor orangeColor];
-        });
-        replayTimer = [NSTimer scheduledTimerWithTimeInterval:interval target:self selector:@selector(replay:) userInfo:nil repeats:NO];
-        repeatTime--;
-        currentScriptType = 0;
-        CFRunLoopRun();
-    } else {
-        if (_licenseRevokedCurrentRun) {
-            [self finishRunHistoryWithState:@"license_revoked" error:getLastScriptError()];
-        } else {
-            [self finishRunHistoryWithState:@"finished" error:@""];
-        }
-        [self clear];
-    }
-}
-
-- (void)clear {
-    [self stopLicenseHeartbeatForGeneration:0];
-    repeatTime = 0;
-    interval = 0.0f;
-    speed = 1.0f;
-    scriptBundlePath = nil;
-    isPlaying = false;
-    currentScriptType = -1;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        _playIndicator.hidden = YES;
-        _playIndicator = nil;
-    });
-
-    if (replayTimer) [replayTimer invalidate];
-    replayTimer = nil;
-}
-
-- (void)forceStop:(NSError**)error {
+- (void)forceStop:(NSError **)error {
+    if (error) *error = nil;
     os_unfair_lock_lock(&_playerLock);
-    if (_state == TLinkScriptStateIdle && !isPlaying) {
-        os_unfair_lock_unlock(&_playerLock);
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Cannot stop script. No script is playing.\r\n"}];
+    TLinkPlaybackSession *session = _currentSession;
+    os_unfair_lock_unlock(&_playerLock);
+    if (!session) {
+        if (error) *error = tlinkPlaybackError(@"Cannot stop script. No script is playing.");
         return;
     }
-
-    if (currentScriptType == 3) {
-        if (_state == TLinkScriptStateScheduled) {
-            [_currentSession.cancellationToken cancel];
-            _currentSession = nil;
-            _state = TLinkScriptStateIdle;
-            isPlaying = false;
-            os_unfair_lock_unlock(&_playerLock);
-            [self finishRunHistoryWithState:@"cancelled" error:@""];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self clearLegacyState];
-            });
-        } else if (_state == TLinkScriptStateRunning) {
-            [_currentSession.cancellationToken cancel];
-            if (_currentRuntime) {
-                __strong TLinkautoJSRuntime *runtime = _currentRuntime;
-                _state = TLinkScriptStateStopping;
-                os_unfair_lock_unlock(&_playerLock);
-                [runtime requestStop];
-            } else {
-                TLinkScriptSession *session = _currentSession;
-                os_unfair_lock_unlock(&_playerLock);
-                dispatch_async(_jsSerialQueue, ^{
-                    [self finishSessionIfCurrent:session outcome:NO];
-                });
-            }
-        } else if (_state == TLinkScriptStateStopping) {
-            [_currentSession.cancellationToken cancel];
-            os_unfair_lock_unlock(&_playerLock);
-        } else {
-            os_unfair_lock_unlock(&_playerLock);
-        }
-    } else {
-        os_unfair_lock_unlock(&_playerLock);
-        if (currentScriptType == 0) {
-            [self finishRunHistoryWithState:@"cancelled" error:@""];
-            [self clear];
-        } else if (currentScriptType == 1) {
-            scriptPlayForceStop = true;
-            [self finishRunHistoryWithState:@"cancelled" error:@""];
-            [self clear];
-        }
-    }
+    [self requestStopSession:session revoked:NO message:nil];
 }
 @end
+// END playback session implementation.

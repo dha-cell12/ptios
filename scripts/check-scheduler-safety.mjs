@@ -29,8 +29,8 @@ for (const file of ["pccontrol/Scheduler.xm", "stream-app/streamd/POCSocketServe
   assert.doesNotMatch(text, /writeToFile:(?:kTLinkAutoLaunchConfigPath|autoLaunchFilePath\(\))/);
 }
 const player = await readFile(join(root, "pccontrol/ScriptPlayer.xm"), "utf8");
-assert.match(player, /std::atomic_bool isPlaying/);
-assert.match(player, /canStartScheduledScript[\s\S]*os_unfair_lock_lock\(&_playerLock\)[\s\S]*_state == TLinkScriptStateIdle && !isPlaying.load\(\)/);
+assert.match(player, /TLinkPlaybackState _playback/);
+assert.match(player, /canStartScheduledScript[\s\S]*os_unfair_lock_lock\(&_playerLock\)[\s\S]*BOOL allowed = !_playback.busy\(\)/);
 const tempRoot = resolve(tmpdir());
 const temp = await mkdtemp(join(tempRoot, "tlink-scheduler-safety-"));
 try {

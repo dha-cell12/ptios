@@ -7,7 +7,8 @@
 #import "ScriptPlayer.h"
 #include "Common.h"
 
-static BOOL switchAppBeforeRunScript = true;
+#include <atomic>
+static std::atomic_bool switchAppBeforeRunScript{true};
 ScriptPlayer *scriptPlayer;
 
 void initScriptPlayer()
@@ -30,7 +31,7 @@ int playScript(UInt8* path, NSError **error)
     if (!scriptPlayer)
     {
         NSLog(@"com.tlinkauto.springboard: Unable to run the script. Internal error. scriptPlayer is null.");
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Internal error. scriptPlayer is null.\r\n"}];
+        if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to run the script. Internal error. scriptPlayer is null.\r\n"}];
         return -1;
     }
     // read config file to get repeat time etc
@@ -57,13 +58,9 @@ int playScript(UInt8* path, NSError **error)
     }
     
 
-    [scriptPlayer setPath:[NSString stringWithFormat:@"%s", path]];
-    [scriptPlayer setRepeatTime:repeatTime];
-    [scriptPlayer setSpeed:playSpeed];
-    [scriptPlayer setInterval:sleepBetweenRun];
-    [scriptPlayer setSwitchApp:switchAppBeforeRunScript];
-
-    return [scriptPlayer play:error];
+    return [scriptPlayer playPath:[NSString stringWithFormat:@"%s", path]
+                      repeatTime:repeatTime interval:sleepBetweenRun speed:playSpeed
+                       switchApp:switchAppBeforeRunScript.load() error:error];
 }
 
 

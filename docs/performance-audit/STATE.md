@@ -5,7 +5,7 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
-## Implementation checkpoint — 2026-10-16
+## Implementation checkpoint — 2026-10-17
 
 - User scope: exclude prototype TouchPOC / `poc-trollstore` findings P0-21, P1-65, P1-66, P2-25 from implementation. Do not optimize that artifact.
 - Production `stream-app/streamd` remains in scope even where its files/functions retain POC names.
@@ -18,8 +18,11 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - A03 / P1-19: rootfull/roothide capture source implemented. Guard failed surface/lock/image/context creation; balance owned references without releasing borrowed color space; calculate rotation stride from destination width and validate geometry/size arithmetic.
 - A03 native harness passes 22 success/fault paths and 20k frames with zero live test resources; A01/A02 native suites and all 29 existing source-contract checks also pass. User reported the A03 build passed before A04; device checks remain pending. Details: `IMPLEMENTATION-A03.md`.
 - A04 / P0-15 + P0-16 + P1-52: source implemented. Rootfull/roothide timers use a serial background owner, non-reused generation tokens, committed set/remove acknowledgments, a 1-second repeat floor, leeway and cheap busy rejection before license/config work. All three production auto-launch writers share a file-lock transaction helper.
-- A04 portable registry/policy tests pass (8 clients x 10k cycles); A01-A03 native regressions and all 36 source-contract checks across both workflows pass. macOS dispatch/ARC and Foundation cross-process tests are added to CI but were not run on this Windows host. New iOS builds and device checks remain pending. Details: `IMPLEMENTATION-A04.md`.
-- Next implementation group is A05 / P0-03 + P1-02. Build reports do not replace each group's device qualification.
+- A04 portable registry/policy tests pass (8 clients x 10k cycles); A01-A03 native regressions and all 36 source-contract checks across both workflows pass. User reported the A04 build passed before A05. macOS test logs were not independently inspected; device qualification remains pending. Details: `IMPLEMENTATION-A04.md`.
+- A05 / P0-03 + P1-02: source implemented for rootfull/roothide. RAW/JS share session admission and completion ownership; stopping stays busy through task/file/touch/history cleanup. Repeat waits use cancellable dispatch sources, with no NSTimer or nested run loop. RAW delays are interruptible and speed-adjusted without per-delay NSString construction.
+- A05 portable tests pass 100k RAW records, 8 x 10k lifecycle cycles, stale-generation and blocked-task/cleanup checks, plus successful-touch tracking/release. All 36 source-contract checks and A01-A04 native suites pass. A macOS dispatch/ARC player harness is added to CI but not run on this Windows host. New builds and device checks remain pending. Details: `IMPLEMENTATION-A05.md`.
+- P1-03 receives a source-level mitigation (bounded per-record pools and no speed-adjust NSString), without a measured RAM claim.
+- Next implementation group is A06 / P0-14 + P1-45 + P1-46. Build reports do not replace each group's device qualification.
 
 ## Primary target
 

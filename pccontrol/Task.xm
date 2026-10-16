@@ -856,6 +856,8 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
         @autoreleasepool{
             if (!performTouchFromRawData(eventData, eventDataLength)) {
                 notifyClient((UInt8 *)"1;;touch_bad_payload\r\n", writeStreamRef);
+            } else if (context.didInjectTouchPayload) {
+                context.didInjectTouchPayload(eventData, eventDataLength);
             }
         }
     }
@@ -883,6 +885,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 notifyClient((UInt8*)"1;;touch_ack_bad_payload\r\n", writeStreamRef);
                 return;
             }
+            if (context.didInjectTouchPayload) context.didInjectTouchPayload(eventData + touchOffset, eventDataLength - touchOffset);
             int dispatchUs = (int)((CFAbsoluteTimeGetCurrent() - start) * 1000000.0);
             NSString *response = [NSString stringWithFormat:@"0;;%@;;%d\r\n", seq, dispatchUs];
             notifyClient((UInt8*)[response UTF8String], writeStreamRef);

@@ -2,6 +2,8 @@
 #define TLINK_TASK_CONTEXT_H
 
 #import <Foundation/Foundation.h>
+#include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 #include <atomic>
@@ -21,6 +23,8 @@
 @property (nonatomic, copy) NSString *ownerSessionId;
 @property (nonatomic, copy) NSString *ownerRunId;
 @property (nonatomic, copy) NSString *ownerRuntime;
+// Synchronous observer of successful injections; RAW session cleanup uses it on its worker.
+@property (nonatomic, copy) void (^didInjectTouchPayload)(const uint8_t *bytes, size_t length);
 @end
 
 // --- Script Session ---
