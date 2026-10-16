@@ -1,5 +1,6 @@
 #include "SocketServer.h"
 #include <string.h>
+#include "../shared/TLinkNativeBudget.h"
 
 int notifyClient(UInt8* msg, CFWriteStreamRef client)
 {
@@ -7,6 +8,9 @@ int notifyClient(UInt8* msg, CFWriteStreamRef client)
     {
         return -1;
     }
+
+    auto budget = TLinkCurrentNativeBudget();
+    if (budget && budget->capturesResponse()) return budget->appendCString(msg);
 
     const UInt8 *cursor = msg;
     CFIndex remaining = (CFIndex)strlen((char*)msg);

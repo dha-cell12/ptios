@@ -1,3 +1,4 @@
+#include "../../shared/TLinkNativeDispatch.h"
 #import "VKOcrManager.h"
 #ifndef ZX_DAEMON
 #import "../Screen.h"
@@ -116,11 +117,25 @@ Return the string from a area
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Cannot start recognize text from this instance: %@ because another task is running.\r\n", self]}];
         return nil;
     }
+    if (TLinkNativeStopped()) return nil;
     inProgress = true;
+    dispatch_source_t monitor = nil;
+    auto nativeBudget = TLinkCurrentNativeBudget();
+    if (nativeBudget) {
+        VNRecognizeTextRequest *activeRequest = request;
+        monitor = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        if (monitor) {
+            dispatch_source_set_timer(monitor, dispatch_time(DISPATCH_TIME_NOW, 0), 10 * NSEC_PER_MSEC, NSEC_PER_MSEC);
+            dispatch_source_set_event_handler(monitor, ^{ if (nativeBudget->stopped()) [activeRequest cancel]; });
+            dispatch_resume(monitor);
+        }
+    }
+    @try {
 
     NSError *err = nil;
     [requestHandler performRequests:@[request] error:&err];
 
+    if (TLinkNativeStopped()) return nil;
     if (err)
     {
         NSLog(@"com.tlinkauto.springboard: error happened while performing ocr. %@", err);
@@ -130,9 +145,13 @@ Return the string from a area
     
     NSMutableArray<NSString*>* stringList = [[NSMutableArray alloc] init];
 
+    NSUInteger outputBytes = 0;
     for (VNRecognizedTextObservation* i in requestResult.results)
     {
-        VNRecognizedText* text = [i topCandidates:1][0];
+        if (TLinkNativeStopped()) return nil;
+        NSArray<VNRecognizedText *> *candidates = [i topCandidates:1];
+        if (candidates.count == 0) continue;
+        VNRecognizedText* text = candidates[0];
         NSString* textString = [text string];
 
         VNRectangleObservation* boundingBox = [text boundingBoxForRange:NSMakeRange(0, [textString length]) error:nil];
@@ -146,11 +165,13 @@ Return the string from a area
 
         NSString* outputString = [NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d", textString, (int)rectx, (int)recty, (int)rectWidth, (int)rectHeight];
 
+        outputBytes += [outputString lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 2;
+        if (!TLinkNativeOutputAllowed(outputBytes)) return nil;
         [stringList addObject:outputString];
     }
 
-    inProgress = false;
     return [stringList componentsJoinedByString:@";;"];
+    } @finally { if (monitor) dispatch_source_cancel(monitor); inProgress = false; }
 }
 
 /*

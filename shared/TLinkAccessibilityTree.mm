@@ -1,3 +1,4 @@
+#include "TLinkNativeDispatch.h"
 #import "TLinkAccessibilityTree.h"
 
 #import <UIKit/UIKit.h>
@@ -490,6 +491,7 @@ NSDictionary *TLinkAXCopyFrontmostContext(void)
 
 static id TLinkAXAttribute(TLinkAXElementRef element, uint32_t key, int *errorOut)
 {
+    if (TLinkNativeStopped()) return nil;
     if (!element || !sTLinkAXCopyAttribute) return nil;
     CFTypeRef value = NULL;
     int error = sTLinkAXCopyAttribute(element, (CFStringRef)(uintptr_t)key, &value);
@@ -527,7 +529,9 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef element,
 {
     if (!element) return nil;
     @try {
-        if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, 0.10f);
+        if (TLinkNativeStopped()) return nil;
+        auto nativeBudget = TLinkCurrentNativeBudget();
+        if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, nativeBudget ? (float)nativeBudget->remainingSeconds(0.10) : 0.10f);
         id frameValue = TLinkAXAttribute(element, 2003, NULL);
         CGRect frame = CGRectZero;
         if (!frameValue ||
@@ -632,7 +636,11 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     @try {
         root = sTLinkAXCreateApp(pid);
         if (!root) return TLinkAXError(@"ui_ax_application_unavailable", @{@"pid": @(pid)});
-        if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(root, MIN(0.5f, (float)timeoutMs / 1000.0f));
+        auto nativeBudget = TLinkCurrentNativeBudget();
+        double queryTimeout = MIN(0.5f, (float)timeoutMs / 1000.0f);
+        if (nativeBudget) queryTimeout = nativeBudget->remainingSeconds(queryTimeout);
+        if (TLinkNativeStopped()) { CFRelease(root); root = NULL; return TLinkAXError(@"ui_cancelled_or_timed_out", nil); }
+        if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(root, (float)queryTimeout);
         int error = sTLinkAXCopyAttribute(root, (CFStringRef)(uintptr_t)3015, &rawElements);
         CFRelease(root);
         root = NULL;
@@ -652,7 +660,9 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     NSUInteger scanned = 0;
     NSUInteger serializationFailures = 0;
     BOOL truncated = NO;
+    size_t estimatedJSONBytes = 0;
     for (id object in elements) {
+        if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
         if (rows.count >= (NSUInteger)maxElements || CFAbsoluteTimeGetCurrent() >= deadline) {
             truncated = YES;
             break;
@@ -665,6 +675,18 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
         }
         if (visibleOnly && ![node[@"intersects_screen"] boolValue]) continue;
         if (clickableOnly && ![node[@"clickable"] boolValue]) continue;
+        if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
+        // Conservative escaped-JSON and base64 accounting before retaining another row.
+        size_t rowBytes = 768;
+        for (NSString *key in @[@"label", @"value", @"identifier", @"role"]) {
+            NSString *text = node[key];
+            size_t bytes = [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            if (!TLinkNativeOutputAllowed(bytes)) return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
+            rowBytes += 6 * bytes;
+        }
+        estimatedJSONBytes += rowBytes;
+        if (!TLinkNativeOutputAllowed(32 * 1024 + 4 * ((estimatedJSONBytes + 2) / 3)))
+            return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
         [rows addObject:node];
     }
     NSTimeInterval durationMs = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
@@ -696,7 +718,7 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
 NSDictionary *TLinkAXCopySnapshot(pid_t pid, NSString *bundleID, NSDictionary *options)
 {
     __block NSDictionary *result = nil;
-    dispatch_sync(TLinkAXQueue(), ^{
+    TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         result = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options ?: @{});
     });
     return result ?: TLinkAXError(@"ui_snapshot_failed", @{@"pid": @(pid)});
@@ -739,6 +761,7 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
     NSInteger requestedIndex = TLinkAXBoundedInteger(selector[@"index"], 0, 0, 999);
     NSMutableArray *matches = [NSMutableArray array];
     for (NSDictionary *element in snapshot[@"elements"]) {
+        if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
         if (visibleOnly && ![element[@"intersects_screen"] boolValue]) continue;
         if (clickableOnly && ![element[@"clickable"] boolValue]) continue;
         if (identifier.length > 0 &&
@@ -779,7 +802,7 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
     options[@"timeout_ms"] = selector[@"timeout_ms"] ?: selector[@"timeoutMs"] ?: @1500;
     options[@"allow_locked"] = selector[@"allow_locked"] ?: selector[@"allowLocked"] ?: @NO;
     __block NSDictionary *result = nil;
-    dispatch_sync(TLinkAXQueue(), ^{
+    TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         NSDictionary *snapshot = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options);
         result = TLinkAXFindInSnapshot(snapshot, selector);
     });
@@ -802,7 +825,7 @@ NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point
         return TLinkAXError(@"ui_hit_test_invalid_request", @{@"pid": @(pid)});
     }
     __block NSDictionary *result = nil;
-    dispatch_sync(TLinkAXQueue(), ^{
+    TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         NSDictionary *lockState = TLinkAXLockState();
         if ([lockState[@"screen_off"] boolValue]) {
             result = TLinkAXError(@"ui_screen_off", @{@"pid": @(pid), @"lock_state": lockState});

@@ -1,3 +1,4 @@
+#include "../shared/TLinkNativeDispatch.h"
 //
 //  TemplateMatch.cpp
 //  OpenCVTest
@@ -192,6 +193,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
                                     int x0, int y0, int x1, int y1,
                                     int step, int *bestX, int *bestY)
 {
+    auto nativeBudget = TLinkCurrentNativeBudget();
     const int w = templ.cols;
     const int h = templ.rows;
 
@@ -213,9 +215,11 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     }
 
     for (int y = y0; y <= y1; y += step) {
+        if (nativeBudget && nativeBudget->stopped()) return LLONG_MAX;
         for (int x = x0; x <= x1; x += step) {
             long long sad = 0;
             for (int ty = 0; ty < h; ty++) {
+                if ((ty & 31) == 0 && nativeBudget && nativeBudget->stopped()) return LLONG_MAX;
                 const unsigned char *imgRow = img.ptr<unsigned char>(y + ty) + x;
                 const unsigned char *tRow = templ.ptr<unsigned char>(ty);
                 for (int tx = 0; tx < w; tx++) {
@@ -431,6 +435,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     //创建结果矩阵，用于存放单次匹配到的位置信息(单次会匹配到很多，后面根据不同算法取最大或最小值)
         //匹配不同大小的模板图
     for (int i=0; i < _scaledTempls.size(); i++) {
+        if (TLinkNativeStopped()) return CGRect();
         if (CFAbsoluteTimeGetCurrent() - t0 > timeoutSeconds) {
             TMLOGF("match timeout after %.2fs", (double)timeoutSeconds);
             return CGRect();

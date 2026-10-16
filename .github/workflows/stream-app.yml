@@ -19,6 +19,8 @@ on:
       - 'test/scheduler-safety-test.cpp'
       - 'test/scheduler-runtime-test.mm'
       - 'test/autolaunch-transaction-test.mm'
+      - 'test/native-budget-*.cpp'
+      - 'test/native-bridge-budget-runtime-test.mm'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
@@ -44,6 +46,8 @@ on:
       - 'test/scheduler-safety-test.cpp'
       - 'test/scheduler-runtime-test.mm'
       - 'test/autolaunch-transaction-test.mm'
+      - 'test/native-budget-*.cpp'
+      - 'test/native-bridge-budget-runtime-test.mm'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
@@ -271,6 +275,7 @@ jobs:
           node scripts/check-zoom-p1-multitouch.mjs
           node scripts/check-touch-safety.mjs
           node scripts/check-scheduler-safety.mjs
+          node scripts/check-native-budget-safety.mjs
           node scripts/check-zoom-p2-observability.mjs
           node scripts/check-smart-wait-v1.mjs
           node scripts/check-ui-tree-v1.mjs

@@ -20,6 +20,7 @@
 #include <spawn.h>
 #include <poll.h>
 #include "Touch.h"
+#include "../shared/TLinkRawPlayback.h"
 #include "Process.h"
 #include "AlertBox.h"
 #include "Record.h"
@@ -59,6 +60,7 @@ static std::atomic<uint64_t> sTLinkZoomSuccessCount(0);
 static std::atomic<uint64_t> sTLinkZoomValidationRejectedCount(0);
 static std::atomic<uint64_t> sTLinkZoomDispatchExceptionCount(0);
 static std::atomic<uint64_t> sTLinkZoomCleanupCount(0);
+static std::atomic<uint64_t> sTLinkZoomCancelledCount(0);
 static std::atomic<uint64_t> sTLinkZoomFrameCount(0);
 static std::atomic<uint64_t> sTLinkZoomLastAtMs(0);
 static std::atomic<int> sTLinkZoomLastResult(0);
@@ -78,7 +80,7 @@ static NSDictionary *zx_zoomDiagnostics(void)
     uint64_t successes = sTLinkZoomSuccessCount.load(std::memory_order_relaxed);
     uint64_t validationRejected = sTLinkZoomValidationRejectedCount.load(std::memory_order_relaxed);
     uint64_t dispatchExceptions = sTLinkZoomDispatchExceptionCount.load(std::memory_order_relaxed);
-    uint64_t completed = successes + validationRejected + dispatchExceptions;
+    uint64_t completed = successes + validationRejected + dispatchExceptions + sTLinkZoomCancelledCount.load(std::memory_order_relaxed);
     int result = sTLinkZoomLastResult.load(std::memory_order_relaxed);
     int direction = sTLinkZoomLastDirection.load(std::memory_order_relaxed);
     return @{
@@ -88,10 +90,11 @@ static NSDictionary *zx_zoomDiagnostics(void)
         @"validation_rejected_count": @(validationRejected),
         @"dispatch_exception_count": @(dispatchExceptions),
         @"cleanup_count": @(sTLinkZoomCleanupCount.load(std::memory_order_relaxed)),
+        @"cancelled_count": @(sTLinkZoomCancelledCount.load(std::memory_order_relaxed)),
         @"frame_count": @(sTLinkZoomFrameCount.load(std::memory_order_relaxed)),
         @"in_flight": @(attempts > completed ? attempts - completed : 0),
         @"last_at_ms": @(sTLinkZoomLastAtMs.load(std::memory_order_relaxed)),
-        @"last_result": result == 1 ? @"success" : (result == 2 ? @"validation_rejected" : (result == 3 ? @"dispatch_exception" : @"none")),
+        @"last_result": result == 1 ? @"success" : (result == 2 ? @"validation_rejected" : (result == 3 ? @"dispatch_exception" : (result == 4 ? @"cancelled" : @"none"))),
         @"last_direction": direction > 0 ? @"spread" : (direction < 0 ? @"pinch" : @"unknown"),
         @"last_finger_count": @(sTLinkZoomLastFingerCount.load(std::memory_order_relaxed)),
         @"last_steps": @(sTLinkZoomLastSteps.load(std::memory_order_relaxed)),
@@ -110,6 +113,7 @@ static int getTaskType(UInt8* dataArray)
 static int zx_clampTouchCoord(CGFloat value)
 {
     if (value < 0) value = 0;
+    if (value >= 9999.9) return 99999;
     int fixed = (int)(value * 10.0f + 0.5f);
     if (fixed > 99999) fixed = 99999;
     return fixed;
@@ -151,6 +155,22 @@ static NSArray<NSString *> *zx_splitTaskParts(UInt8 *eventData)
     return [raw componentsSeparatedByString:@";;"];
 }
 
+static bool zx_nativeContinue(NSError **error)
+{
+    if (!TLinkNativeStopped()) return true;
+    auto budget = TLinkCurrentNativeBudget();
+    NSString *code = budget && budget->reason() == TLinkNativeStop::Deadline ? @"TimeoutError" : @"AbortError";
+    if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"-1;;%@\r\n", code]}];
+    return false;
+}
+static bool zx_nativeTouchArguments(CGFloat x, CGFloat y, int finger, int duration, NSError **error)
+{
+    if (isfinite(x) && isfinite(y) && finger >= 0 && finger < kTLinkTouchMaxFingerCount && duration >= 0 && duration <= 60000) return true;
+    if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid native touch coordinates, finger or duration.\r\n"}];
+    return false;
+}
 static bool zx_handleNativeTap(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
@@ -158,17 +178,16 @@ static bool zx_handleNativeTap(UInt8 *eventData, NSError **err)
         if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native tap format: x;;y[;;duration_ms;;finger]\r\n"}];
         return false;
     }
-    CGFloat x = [parts[0] floatValue];
-    CGFloat y = [parts[1] floatValue];
+    CGFloat x = [parts[0] floatValue], y = [parts[1] floatValue];
     int durationMs = parts.count >= 3 ? [parts[2] intValue] : 50;
     int finger = parts.count >= 4 ? [parts[3] intValue] : 0;
-    if (durationMs < 0) durationMs = 0;
-    zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
-    if (durationMs > 0) usleep((useconds_t)durationMs * 1000);
-    zx_performSingleTouch(TOUCH_UP, finger, x, y);
-    return true;
+    if (!zx_nativeTouchArguments(x, y, finger, durationMs, err) || !zx_nativeContinue(err)) return false;
+    @try {
+        zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
+        if (!TLinkNativeWaitNs((uint64_t)durationMs * 1000000)) return zx_nativeContinue(err);
+        return true;
+    } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
 }
-
 static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
@@ -176,27 +195,29 @@ static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
         if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native swipe format: x1;;y1;;x2;;y2;;duration_ms[;;finger;;steps]\r\n"}];
         return false;
     }
-    CGFloat x1 = [parts[0] floatValue];
-    CGFloat y1 = [parts[1] floatValue];
-    CGFloat x2 = [parts[2] floatValue];
-    CGFloat y2 = [parts[3] floatValue];
+    CGFloat x1 = [parts[0] floatValue], y1 = [parts[1] floatValue];
+    CGFloat x2 = [parts[2] floatValue], y2 = [parts[3] floatValue];
     int durationMs = [parts[4] intValue];
     int finger = parts.count >= 6 ? [parts[5] intValue] : 0;
     int steps = parts.count >= 7 ? [parts[6] intValue] : durationMs / 16;
-    if (durationMs < 0) durationMs = 0;
-    if (steps < 2) steps = 2;
-    if (steps > 120) steps = 120;
-
-    zx_performSingleTouch(TOUCH_DOWN, finger, x1, y1);
-    int sleepPerStep = steps > 0 ? durationMs * 1000 / steps : 0;
-    for (int i = 1; i < steps; i++) {
-        if (sleepPerStep > 0) usleep((useconds_t)sleepPerStep);
-        CGFloat t = (CGFloat)i / (CGFloat)steps;
-        zx_performSingleTouch(TOUCH_MOVE, finger, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
-    }
-    if (sleepPerStep > 0) usleep((useconds_t)sleepPerStep);
-    zx_performSingleTouch(TOUCH_UP, finger, x2, y2);
-    return true;
+    if (!zx_nativeTouchArguments(x1, y1, finger, durationMs, err) ||
+        !zx_nativeTouchArguments(x2, y2, finger, durationMs, err) || !zx_nativeContinue(err)) return false;
+    steps = MAX(2, MIN(steps, 120));
+    CGFloat x = x1, y = y1;
+    @try {
+        zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
+        const uint64_t waitNs = (uint64_t)durationMs * 1000000 / steps;
+        for (int i = 1; i < steps; ++i) {
+            if (!TLinkNativeWaitNs(waitNs)) return zx_nativeContinue(err);
+            CGFloat t = (CGFloat)i / steps;
+            x = x1 + (x2 - x1) * t; y = y1 + (y2 - y1) * t;
+            if (!zx_nativeContinue(err)) return false;
+            zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
+        }
+        if (!TLinkNativeWaitNs(waitNs)) return zx_nativeContinue(err);
+        x = x2; y = y2;
+        return true;
+    } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
 }
 
 static bool zx_parseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
@@ -321,12 +342,13 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
     bool fingersDown = false;
     @try {
         zx_zoomPoints(points, fingerCount, centerX, centerY, startRadius, angleDegrees);
+        if (!zx_nativeContinue(err)) { sTLinkZoomCancelledCount.fetch_add(1); sTLinkZoomLastResult.store(4); return false; }
         zx_performTouchFrame(TOUCH_DOWN, baseFinger, points, fingerCount);
         fingersDown = true;
 
         int sleepPerIntervalUs = durationMs * 1000 / (steps - 1);
         for (int step = 1; step < steps; step++) {
-            if (sleepPerIntervalUs > 0) usleep((useconds_t)sleepPerIntervalUs);
+            if (!TLinkNativeWaitNs((uint64_t)sleepPerIntervalUs * 1000)) { sTLinkZoomCancelledCount.fetch_add(1); sTLinkZoomLastResult.store(4); return zx_nativeContinue(err); }
             double t = (double)step / (double)(steps - 1);
             double radius = startRadius + (endRadius - startRadius) * t;
             zx_zoomPoints(points, fingerCount, centerX, centerY, radius, angleDegrees);
@@ -338,8 +360,14 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
         if (fingersDown) {
             sTLinkZoomCleanupCount.fetch_add(1, std::memory_order_relaxed);
             zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
+            fingersDown = false;
         }
         return zx_zoomError(err, @"zoom_dispatch_exception");
+    } @finally {
+        if (fingersDown) {
+            sTLinkZoomCleanupCount.fetch_add(1, std::memory_order_relaxed);
+            zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
+        }
     }
     sTLinkZoomSuccessCount.fetch_add(1, std::memory_order_relaxed);
     sTLinkZoomLastResult.store(1, std::memory_order_relaxed);
@@ -364,28 +392,31 @@ static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
         if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture requires at least two points.\r\n"}];
         return false;
     }
-    if (durationMs < 0) durationMs = 0;
-
-    CGFloat x = 0, y = 0;
-    if (!zx_parseGesturePoint(pointTexts[0], &x, &y)) {
-        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid first gesture point.\r\n"}];
+    if (!zx_nativeContinue(err)) return false;
+    if (pointTexts.count > 512) {
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Gesture requires at most 512 points.\r\n"}];
         return false;
     }
-    zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
-
-    int intervals = (int)pointTexts.count - 1;
-    int sleepPerInterval = intervals > 0 ? durationMs * 1000 / intervals : 0;
-    for (NSUInteger i = 1; i < pointTexts.count; i++) {
-        if (!zx_parseGesturePoint(pointTexts[i], &x, &y)) {
-            zx_performSingleTouch(TOUCH_UP, finger, x, y);
+    CGFloat x = 0, y = 0;
+    for (NSString *text in pointTexts) {
+        if (!zx_parseGesturePoint(text, &x, &y)) {
             if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid gesture point.\r\n"}];
             return false;
         }
-        zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
-        if (sleepPerInterval > 0) usleep((useconds_t)sleepPerInterval);
+        if (!zx_nativeTouchArguments(x, y, finger, durationMs, err)) return false;
     }
-    zx_performSingleTouch(TOUCH_UP, finger, x, y);
-    return true;
+    zx_parseGesturePoint(pointTexts[0], &x, &y);
+    @try {
+        zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
+        const uint64_t waitNs = (uint64_t)durationMs * 1000000 / (pointTexts.count - 1);
+        for (NSUInteger i = 1; i < pointTexts.count; ++i) {
+            if (!zx_nativeContinue(err)) return false;
+            zx_parseGesturePoint(pointTexts[i], &x, &y);
+            zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
+            if (!TLinkNativeWaitNs(waitNs)) return zx_nativeContinue(err);
+        }
+        return true;
+    } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
 }
 
 static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
@@ -397,7 +428,11 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
     }
 
     NSArray<NSString *> *commands = [raw componentsSeparatedByString:@"||"];
+    TLinkRawTouches ownedTouches;
+    bool completed = false;
+    @try {
     for (NSString *cmd in commands) {
+        if (!zx_nativeContinue(err)) return false;
         if (cmd.length < 2) continue;
         int task = [[cmd substringToIndex:2] intValue];
         NSString *payload = [cmd substringFromIndex:2];
@@ -407,6 +442,7 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
                 if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"1;;touch_bad_payload\r\n"}];
                 return false;
             }
+            ownedTouches.observe(payloadBytes, [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
         } else if (task == TASK_NATIVE_TAP) {
             if (!zx_handleNativeTap(payloadBytes, err)) return false;
         } else if (task == TASK_NATIVE_SWIPE) {
@@ -418,7 +454,12 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
             return false;
         }
     }
+    if (!zx_nativeContinue(err)) return false;
+    completed = true;
     return true;
+    } @finally {
+        if (!completed) ownedTouches.release([](const uint8_t *bytes, size_t length) { return performTouchFromRawData(bytes, length); });
+    }
 }
 
 // === runShell drain/timeout support (Group A) ===
@@ -617,7 +658,7 @@ static TLinkShellResult *RunShellCore(NSString *command, TLinkTaskExecutionConte
             timedOut = true;
             break;
         }
-        if (context && context.cancellationToken && [context.cancellationToken isCancelled]) {
+        if (TLinkNativeStopped() || (context && context.cancellationToken && [context.cancellationToken isCancelled])) {
             cancelled = true;
             break;
         }
@@ -833,20 +874,36 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
         notifyClient((UInt8 *)"1;;task_bad_payload\r\n", writeStreamRef);
         return;
     }
+    TLinkNativeBudgetScope taskScope(TLinkTaskBudget(context));
     const size_t eventDataLength = actualLength - 2;
     
     //NSLog(@"### com.tlinkauto.springboard: task type: %d. Data: %s", getTaskType(buff), buff);
     UInt8 *eventData = buff + 0x2;
     int taskType = getTaskType(buff);
 
+    auto nativeBudget = TLinkCurrentNativeBudget();
+    const bool cleanup = nativeBudget && nativeBudget->cleanup() &&
+        (taskType == TASK_FRAME_RELEASE ||
+         (taskType == TASK_IMAGE_OBJECT && eventDataLength >= 3 && memcmp(eventData, "3;;", 3) == 0) ||
+         (taskType == TASK_HARDWARE_KEY && eventDataLength >= 3 && memcmp(eventData, "0;;", 3) == 0));
+    if (TLinkNativeStopped() && !cleanup) {
+        notifyClient((UInt8 *)"1;;native_cancelled_or_timed_out\r\n", writeStreamRef);
+        return;
+    }
     NSString *licenseDenial = nil;
-    if (!TLinkRootfullLicenseTaskAllowed(taskType, &licenseDenial)) {
+    if (!cleanup && !TLinkRootfullLicenseTaskAllowed(taskType, &licenseDenial)) {
         if (taskType == TASK_PERFORM_TOUCH) {
             sTLinkSpringBoardLicenseTask10DropCount.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         notifyClient((UInt8 *)[(licenseDenial ?: @"-1;;license_required\r\n") UTF8String],
                      writeStreamRef);
+        return;
+    }
+
+    // License refresh may wait for IPC; recheck before committing an action.
+    if (TLinkNativeStopped() && !cleanup) {
+        notifyClient((UInt8 *)"1;;native_cancelled_or_timed_out\r\n", writeStreamRef);
         return;
     }
 
@@ -951,35 +1008,12 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
     }
     else if (taskType == TASK_USLEEP)
     {
-        if (writeStreamRef)
-        {
-            int usleepTime = 0;
-            @try{
-                usleepTime = atoi((char*)eventData);
-            }
-            @catch (NSException *exception) {
-                NSLog(@"com.tlinkauto.springboard: Debug: %@", exception.reason);
-                return;
-            }
-            //NSLog(@"com.tlinkauto.springboard: sleep %d microseconds", usleepTime);
-            usleep(usleepTime);
-            notifyClient((UInt8*)"0;;Sleep ends\r\n", writeStreamRef); 
-        }
-        else
-        {
-            int usleepTime = 0;
-
-            @try{
-                usleepTime = atoi((char*)eventData);
-            }
-            @catch (NSException *exception) {
-                NSLog(@"com.tlinkauto.springboard: Debug: %@", exception.reason);
-                return;
-            }
-            //NSLog(@"com.tlinkauto.springboard: sleep %d microseconds", usleepTime);
-            usleep(usleepTime);
-        }
-
+        long long micros = atoll((const char *)eventData);
+        if (micros < 0 || micros > INT_MAX) {
+            notifyClient((UInt8 *)"1;;invalid_sleep\r\n", writeStreamRef);
+        } else if (!TLinkNativeWaitNs((uint64_t)micros * 1000)) {
+            notifyClient((UInt8 *)"1;;native_cancelled_or_timed_out\r\n", writeStreamRef);
+        } else if (writeStreamRef) notifyClient((UInt8 *)"0;;Sleep ends\r\n", writeStreamRef);
     }
     else if (taskType == TASK_RUN_SHELL)
     {

@@ -1,7 +1,7 @@
 # A05 — P0-03 / P1-02
 
 Date: 2026-10-17. Base: `0dea340` (A04 build reported passed by the user).
-Status: source implemented; portable native and source-contract checks passed. New macOS host integration, iOS builds and device qualification pending.
+Status: source implemented; portable native and source-contract checks passed. User reported the A05 build passed before A06 (committed as `4cc10e5`). macOS host test logs were not independently inspected; device qualification remains pending.
 
 ## Session ownership (P0-03)
 
@@ -58,7 +58,7 @@ This suite was not run on Windows. It does not execute real UIKit, IOHID/private
 
 ## Remaining build/device checks
 
-1. Run the macOS host suite and build new rootfull/roothide artifacts plus affected context consumers. The latest user-reported build predates A05.
+1. User reported the A05 build passed. Inspect macOS host-suite results and qualify rootfull/roothide artifacts on devices.
 2. Repeatedly start dense RAW, stop and immediately start RAW/JS from multiple clients. Reject starts while stopping/finishing; after admission of a new session no older generation may inject, alter history/settings or hide its indicator.
 3. Stop during long Task-18 delay, repeat gap, before worker entry, foreground switching and a long native task. Waiting repeats cancel without their deadline; non-cooperative native work may delay completion. A06 owns full native deadlines/cancellation, so no maximum stop latency is claimed here.
 4. Verify RAW speed, task/license behavior, count 0/positive/negative, zero/nonzero gaps, finger release at stop/EOF, JS cancellation/repeat and failure evidence. Include allocation pressure and external finger-ID contention on the private injector.

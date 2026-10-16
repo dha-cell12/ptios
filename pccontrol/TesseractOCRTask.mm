@@ -1,3 +1,4 @@
+#include "../shared/TLinkNativeDispatch.h"
 #import "TesseractOCRTask.h"
 #import "Image.h"
 
@@ -6,6 +7,17 @@
 #import <TesseractOCR/G8Tesseract.h>
 #import <TesseractOCR/G8RecognizedBlock.h>
 #import <TesseractOCR/G8TesseractParameters.h>
+
+@interface ZXTessBudgetDelegate : NSObject <G8TesseractDelegate> {
+    TLinkNativeBudgetPtr _budget;
+}
+- (instancetype)initWithBudget:(TLinkNativeBudgetPtr)budget;
+@end
+@implementation ZXTessBudgetDelegate
+- (instancetype)initWithBudget:(TLinkNativeBudgetPtr)budget { self = [super init]; if (self) _budget = std::move(budget); return self; }
+- (BOOL)shouldCancelImageRecognitionForTesseract:(G8Tesseract *)tesseract { (void)tesseract; return _budget && _budget->stopped(); }
+@end
+
 #endif
 
 #include <dispatch/dispatch.h>
@@ -151,6 +163,7 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
                                uint64_t frameAgeMs,
                                NSError **error)
 {
+    if (TLinkNativeStopped()) return nil;
     CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
     CFAbsoluteTime prep0 = CFAbsoluteTimeGetCurrent();
 
@@ -199,25 +212,36 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
     }
 
     CFAbsoluteTime ocr0 = CFAbsoluteTimeGetCurrent();
-    tesseract.image = image;
-    tesseract.rect = CGRectMake(0, 0, image.size.width, image.size.height);
-    BOOL recognized = [tesseract recognize];
-    double ocrMs = (CFAbsoluteTimeGetCurrent() - ocr0) * 1000.0;
-    if (!recognized) {
-        if (error) *error = zx_tessError(@"recognize_failed", @"Tesseract recognition failed.");
-        return nil;
-    }
+    if (TLinkNativeStopped()) return nil;
+    auto nativeBudget = TLinkCurrentNativeBudget();
+    __attribute__((objc_precise_lifetime)) ZXTessBudgetDelegate *delegate = [[ZXTessBudgetDelegate alloc] initWithBudget:nativeBudget];
+    tesseract.delegate = delegate;
+    tesseract.maximumRecognitionTime = nativeBudget ? nativeBudget->remainingSeconds(3.0) : 3.0;
+    BOOL recognized = NO;
+    @try {
+        tesseract.image = image;
+        tesseract.rect = CGRectMake(0, 0, image.size.width, image.size.height);
+        if (TLinkNativeStopped()) return nil;
+        recognized = [tesseract recognize];
+        if (TLinkNativeStopped()) return nil;
+        double ocrMs = (CFAbsoluteTimeGetCurrent() - ocr0) * 1000.0;
+        if (!recognized) {
+            if (error) *error = zx_tessError(@"recognize_failed", @"Tesseract recognition failed.");
+            return nil;
+        }
 
-    NSString *text = [tesseract.recognizedText ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    double confidence = zx_tessMeanConfidence(tesseract);
-    double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
-    return [NSString stringWithFormat:@"%@;;%.2f;;%llu;;%.3f;;%.3f;;%.3f",
-            zx_tessBase64(text),
-            confidence,
-            (unsigned long long)frameAgeMs,
-            ocrMs,
-            preprocessMs,
-            totalMs];
+        NSString *text = [tesseract.recognizedText ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!TLinkNativeOutputAllowed(256 + 4 * (([text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 2) / 3))) return nil;
+        double confidence = zx_tessMeanConfidence(tesseract);
+        double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+        return [NSString stringWithFormat:@"%@;;%.2f;;%llu;;%.3f;;%.3f;;%.3f",
+                zx_tessBase64(text),
+                confidence,
+                (unsigned long long)frameAgeMs,
+                ocrMs,
+                preprocessMs,
+                totalMs];
+    } @finally { tesseract.delegate = nil; tesseract.image = nil; }
 }
 #endif
 
@@ -256,7 +280,7 @@ NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error)
 
     __block NSString *ret = nil;
     __block NSError *blockErr = nil;
-    dispatch_sync(zx_tessQueue(), ^{
+    TLinkNativeDispatchSync(zx_tessQueue(), ^{
         cv::Mat gray;
         uint64_t frameAgeMs = 0;
         if (!zx_copyFrameGrayRegionForOCR(frameId, x, y, w, h, coord, maxAgeMs, gray, &frameAgeMs, &blockErr)) {

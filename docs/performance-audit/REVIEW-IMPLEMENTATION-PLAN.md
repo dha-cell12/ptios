@@ -8,7 +8,7 @@ Phần lớn nhận xét có cơ sở ở mã nguồn hiện tại và dùng đ�
 
 Đã đối chiếu 130 mã nhận xét trong FINDINGS (24 P0, 78 P1, 28 P2), các luồng gọi và cấu hình build liên quan. Đây là kiểm tra tĩnh; chưa chạy build iOS, Instruments hoặc tái hiện trên thiết bị. BENCHMARK-S002 đến BENCHMARK-S011 là kế hoạch đo, không phải kết quả đo. Chưa có cơ sở cam kết tỷ lệ giảm CPU/pin/RAM.
 
-Cập nhật triển khai 17/10/2026: A01–A04 đã sửa; người dùng xác nhận các build đã pass, còn xác minh trên thiết bị. A05 (P0-03/P1-02) đã sửa vòng đời RAW và cleanup dùng chung RAW/JS cho rootfull/roothide. Native tests (100.000 record RAW, 8 × 10.000 chu kỳ trạng thái), regression A01–A04 và 36 source-contract checks đã qua trên host. Kiểm thử macOS dispatch/ARC đã thêm vào CI; còn chờ kết quả cùng build iOS mới. P1-03 có mitigation ở source, chưa đo RAM. Chi tiết: `IMPLEMENTATION-A01.md` đến `IMPLEMENTATION-A05.md`. Nhóm tiếp theo: A06.
+Cập nhật triển khai 17/10/2026: A01–A05 đã sửa và người dùng báo build pass; còn xác minh trên thiết bị. A06 (P0-14/P1-45/P1-46) đã sửa source: context/length, reject input dài/NUL, sink giới hạn 1 MiB và cancellation/deadline hợp tác trong gesture/image/OCR/AX. Native A06, regression A01–A05 và 36 source-contract checks đã qua trên Windows. Test tích hợp macOS đã thêm vào CI; chờ kết quả, build mới và kiểm tra thiết bị. Sink giới hạn wire buffer; chưa giới hạn mọi object tạm của producer/RSS. Vendor/IPC/queue có thể trả muộn hơn deadline. Chi tiết: `IMPLEMENTATION-A01.md` đến `IMPLEMENTATION-A06.md`. Nhóm tiếp theo: B01.
 
 ## Phạm vi triển khai đã chốt
 
@@ -41,7 +41,7 @@ Cỡ S/M/L là độ phức tạp tương đối, chưa phải cam kết thời 
 | A03 | P1-19 | Sửa borrowed color-space release và các Create failure/NULL path của capture. | S/M | Capture iPhone/iPad hai orientation đúng; fault path không dùng NULL/over-release. |
 | A04 | P0-15, P0-16, P1-52 | Một owner scheduler, generation theo tên, ack sau commit; reject busy sớm; minimum interval theo chính sách; khóa auto-launch RMW. | M | Sau remove-ack không fire generation cũ; set thay thế chỉ một timer; cập nhật đồng thời không mất key; không đọc config liên tục khi busy. |
 | A05 | P0-03, P1-02 | RAW session/state machine; stopping đến khi worker cleanup xong; bỏ nested run loop cho repeat. | M | Stop/start liên tục không injection generation cũ sau khi run mới bắt đầu; không giữ worker repeat vô hạn. |
-| A06 | P0-14, P1-45, P1-46 | Truyền context/length; reject input dài thay truncate; output budget khi sinh; cancellation/deadline vào handler dài. | M/L | Input dài không thực thi một phần; không materialize response quá cap rồi mới reject; native work dừng theo budget công bố, cleanup vẫn chạy. |
+| A06 | P0-14, P1-45, P1-46 | **Đã triển khai source; giới hạn hợp tác/xác minh còn lại: IMPLEMENTATION-A06.md.** Truyền context/length; reject input dài thay truncate; output budget khi sinh; cancellation/deadline vào handler dài. | M/L | Input dài không thực thi một phần; không materialize response quá cap rồi mới reject; native work dừng theo budget công bố, cleanup vẫn chạy. |
 
 Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch), P2-06 (accept errno), P2-17 (history lock failure) thành PR nhỏ trong đợt này.
 
@@ -147,7 +147,7 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P1-42 | Tối ưu | jsruntime/TLinkJSRuntimeCore.mm:213–259 hai log path, I/O từng line, queue không trần; console có NSLog sync. C03. |
 | P1-43 | Tối ưu | shared/TLinkJSFileHandle.mm:200 read một byte/vòng trong readLine; buffered reader phải giữ seek/read mix semantics. C03. |
 | P1-44 | Tối ưu có contract | FileHandle dòng 49 luôn tạo cả text/base64; không bỏ trường cũ âm thầm. C03. |
-| P1-45, P1-46 | Sửa | Bridge dòng 200 truncate 8192 ký tự; dòng 220 response cap kiểm tra sau materialize. A06. |
+| P1-45, P1-46 | Đã sửa source | A06: P1-45 là response sink cap khi ghi; P1-46 là reject input quá 8192 UTF-16 units trước dispatch. Giới hạn producer/RSS còn ghi rõ tại IMPLEMENTATION-A06.md. |
 | P1-47 | Tối ưu | Bridge storage handlers có chuyển đổi text/data/JSON lặp. C03. |
 | P1-48, P1-49 | Tối ưu | shared/TLinkRunHistory.mm begin/finish rewrite index chứa evidence; redact/tail/evidence sau khi lấy flock. C03. |
 | P1-50 | Sửa retention | Logger tạo _logs/runId.log; history prune chỉ xóa dưới run-history root, không giới hạn số run logs. C03. |

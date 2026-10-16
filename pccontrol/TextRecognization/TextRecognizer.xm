@@ -1,3 +1,4 @@
+#include "../../shared/TLinkNativeBudget.h"
 #include "TextRecognizer.h"
 #import "VKOcrManager.h"
 #import "../Screen.h"
@@ -72,6 +73,12 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         // screen shot
         CGImageRef screenshot = [Screen createScreenShotCGImageRef];
 
+        if (!screenshot) {
+            if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+                userInfo:@{NSLocalizedDescriptionKey:@"-1;;capture_failed\r\n"}];
+            return nil;
+        }
+        @try {
         int orientation = [Screen getScreenOrientation];
 
         // init
@@ -94,14 +101,13 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
 
         NSString* result = [ocrManager recognize:error];
 
-        if (debugPath && ![debugPath isEqualToString:@""])
+        if (!TLinkNativeStopped() && debugPath && ![debugPath isEqualToString:@""])
         {
             [ocrManager outputDebugImage:debugPath error:error];
         }
 
-        CFRelease(screenshot);
-        
         return result;
+        } @finally { CFRelease(screenshot); }
     }
     else if (task == TASK_GET_SUPPORTED_LANGUAGE_LIST)
     {

@@ -400,6 +400,9 @@ static NSString *tlinkautoStringValue(id value) {
                 failure = @"Unsupported JavaScript API version.";
             if (session.repeatsRemaining < 0) session.repeatsRemaining = 0; // Preserve existing JS behavior.
         } else {
+            // RAW has no cumulative native deadline/output sink. Reuse its cancellation-only
+            // budget so dense touch playback does not allocate a budget for every record.
+            [session.taskContext setNativeBudget:TLinkTaskBudget(session.taskContext)];
             __weak TLinkPlaybackSession *weakSession = session;
             session.taskContext.didInjectTouchPayload = ^(const uint8_t *bytes, size_t length) {
                 TLinkPlaybackSession *owner = weakSession;

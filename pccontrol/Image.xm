@@ -1,3 +1,4 @@
+#include "../shared/TLinkNativeDispatch.h"
 #import "Image.h"
 #import "Image.h"
 #import "Screen.h"
@@ -221,6 +222,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
                                     int x0, int y0, int x1, int y1,
                                     int step, int *bestX, int *bestY)
 {
+    auto nativeBudget = TLinkCurrentNativeBudget();
     const int w = templ.cols;
     const int h = templ.rows;
 
@@ -242,9 +244,11 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     }
 
     for (int y = y0; y <= y1; y += step) {
+        if (nativeBudget && nativeBudget->stopped()) return LLONG_MAX;
         for (int x = x0; x <= x1; x += step) {
             long long sad = 0;
             for (int ty = 0; ty < h; ty++) {
+                if ((ty & 31) == 0 && nativeBudget && nativeBudget->stopped()) return LLONG_MAX;
                 const unsigned char *imgRow = img.ptr<unsigned char>(y + ty) + x;
                 const unsigned char *tRow = templ.ptr<unsigned char>(ty);
                 for (int tx = 0; tx < w; tx++) {
@@ -311,6 +315,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
     }
 
     for (float s = scaleMax; s >= scaleMin - 0.0001f; s -= scaleStep) {
+        if (TLinkNativeStopped()) return NO;
         Mat templScaled;
         if (fabsf(s - 1.0f) < 0.0001f) {
             templScaled = templ;
@@ -450,7 +455,7 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
     }
 
     __block uint32_t frameId = 0;
-    dispatch_sync(zx_imageQueue(), ^{
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
         frameId = zx_storeFrameLocked(frame);
     });
     double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
@@ -470,7 +475,7 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
     NSString *command = [data count] > 0 ? data[0] : @"";
     NSString *lower = [command lowercaseString];
     __block NSUInteger removed = 0;
-    dispatch_sync(zx_imageQueue(), ^{
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
         if ([lower isEqualToString:@"all"]) {
             if ([data count] >= 4) {
                 std::string sessionId = zx_stringFromPart(data, 1, "");
@@ -548,7 +553,7 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
 
     __block NSString *ret = nil;
     __block NSError *blockErr = nil;
-    dispatch_sync(zx_imageQueue(), ^{
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
         uint64_t nowMs = zx_nowMs();
         zx_cleanupFramesLocked(nowMs);
         auto fit = gFrameStore.find(frameId);
@@ -617,7 +622,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 
     __block NSString *ret = nil;
     __block NSError *blockErr = nil;
-    dispatch_sync(zx_imageQueue(), ^{
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
         uint64_t nowMs = zx_nowMs();
         zx_cleanupFramesLocked(nowMs);
         auto fit = gFrameStore.find(frameId);
@@ -691,6 +696,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             if (w <= 0 || x + w > frame.width) w = frame.width - x;
             if (h <= 0 || y + h > frame.height) h = frame.height - y;
             for (int cy = 0; cy < h; cy += step) {
+                if (TLinkNativeStopped()) return;
                 const uint8_t *row = frame.bgra.data() + (size_t)(y + cy) * (size_t)frame.bytesPerRow;
                 for (int cx = 0; cx < w; cx += step) {
                     const uint8_t *p = row + (size_t)(x + cx) * 4;
@@ -757,6 +763,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             int ayEnd = MIN(regionY + regionH - 1, frame.height - 1 - maxDy);
             if (axStart <= axEnd && ayStart <= ayEnd) {
                 for (int ay = ayStart; ay <= ayEnd; ay += step) {
+                    if (TLinkNativeStopped()) return;
                     for (int ax = axStart; ax <= axEnd; ax += step) {
                         bool ok = true;
                         for (const ZXPointColor &pc : points) {
@@ -801,7 +808,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
 
     __block NSString *ret = nil;
     __block NSError *blockErr = nil;
-    dispatch_sync(zx_imageQueue(), ^{
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
         uint64_t nowMs = zx_nowMs();
         zx_cleanupFramesLocked(nowMs);
         auto fit = gFrameStore.find(frameId);
@@ -817,6 +824,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
 
         NSArray<NSString *> *ops = [opsRaw componentsSeparatedByString:@"@@"];
         for (NSString *opRaw in ops) {
+            if (TLinkNativeStopped()) return;
             if (!opRaw || [opRaw length] == 0) continue;
             NSArray<NSString *> *fields = [opRaw componentsSeparatedByString:@","];
             if ([fields count] < 1) { blockErr = zx_frameError(@"1;;invalid_batch_op\r\n"); return; }
@@ -920,7 +928,7 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
     __block uint64_t ageMs = 0;
     bool pointCoord = zx_stringIsPointCoord(coord ?: @"");
 
-    dispatch_sync(zx_imageQueue(), ^{
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
         uint64_t nowMs = zx_nowMs();
         zx_cleanupFramesLocked(nowMs);
         auto fit = gFrameStore.find(frameId);
@@ -1216,7 +1224,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         image.ttlMs = 0;
         zx_applyImageOwner(image, data, 5);
         __block uint32_t imageId = 0;
-        dispatch_sync(zx_imageQueue(), ^{
+        TLinkNativeDispatchSync(zx_imageQueue(), ^{
             imageId = zx_storeImageLocked(image);
         });
         if (imageId == 0) {
@@ -1256,7 +1264,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         image.ttlMs = 0;
         zx_applyImageOwner(image, data, 2);
         __block uint32_t imageId = 0;
-        dispatch_sync(zx_imageQueue(), ^{
+        TLinkNativeDispatchSync(zx_imageQueue(), ^{
             imageId = zx_storeImageLocked(image);
         });
         if (imageId == 0) {
@@ -1274,7 +1282,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         NSString *target = [data[1] isKindOfClass:[NSString class]] ? data[1] : @"";
         NSString *lower = [target lowercaseString];
         __block NSUInteger removed = 0;
-        dispatch_sync(zx_imageQueue(), ^{
+        TLinkNativeDispatchSync(zx_imageQueue(), ^{
             if ([lower isEqualToString:@"all"]) {
                 if ([data count] >= 5) {
                     std::string sessionId = zx_stringFromPart(data, 2, "");
@@ -1357,7 +1365,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
 
     __block ZXImageObject templObj;
     __block bool found = false;
-    dispatch_sync(zx_imageQueue(), ^{
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
         auto it = gImageStore.find(templateId);
         if (it != gImageStore.end()) {
             templObj = it->second;
