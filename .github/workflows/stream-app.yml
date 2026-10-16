@@ -15,6 +15,7 @@ on:
       - 'docs/run-history-*.md'
       - 'docs/event-channel-*.md'
       - 'docs/adaptive-streaming-*.md'
+      - 'test/touch-safety-test.cpp'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
@@ -36,6 +37,7 @@ on:
       - 'docs/run-history-*.md'
       - 'docs/event-channel-*.md'
       - 'docs/adaptive-streaming-*.md'
+      - 'test/touch-safety-test.cpp'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
@@ -261,6 +263,7 @@ jobs:
           node scripts/check-capture-image-optimization-v1.mjs
           node scripts/check-zoom-p0-baseline.mjs
           node scripts/check-zoom-p1-multitouch.mjs
+          node scripts/check-touch-safety.mjs
           node scripts/check-zoom-p2-observability.mjs
           node scripts/check-smart-wait-v1.mjs
           node scripts/check-ui-tree-v1.mjs

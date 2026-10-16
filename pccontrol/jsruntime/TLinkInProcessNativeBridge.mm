@@ -209,7 +209,7 @@ static NSDictionary *TLinkautoJSStateResult(NSDictionary *result, NSString *enab
         return @{ @"ok": @NO, @"raw": @"1;;stream_create_failed\r\n", @"parts": @[@"1", @"stream_create_failed"] };
     }
     CFWriteStreamOpen(stream);
-    processTask((UInt8 *)[payloadData mutableBytes], stream);
+    processTaskWithContext((UInt8 *)[payloadData mutableBytes], [payloadData length] - 1, stream, nil);
     CFWriteStreamClose(stream);
     CFDataRef written = (CFDataRef)CFWriteStreamCopyProperty(stream, kCFStreamPropertyDataWritten);
     CFRelease(stream);

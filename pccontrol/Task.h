@@ -112,7 +112,9 @@
 
 #import "TLinkTaskContext.h"
 
+// Compatibility entry point: buff must be a complete NUL-terminated task string.
 void processTaskLegacy(UInt8 *buff, CFWriteStreamRef writeStreamRef = NULL);
+// actualLength excludes the terminator. Non-touch handlers also require a NUL-terminated body.
 void processTaskWithContext(UInt8 *buffer, size_t actualLength, CFWriteStreamRef stream, TLinkTaskExecutionContext *context);
 void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef = NULL); // routes to processTaskLegacy
 

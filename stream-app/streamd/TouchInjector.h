@@ -8,6 +8,7 @@
 #include "headers/IOHIDEventSystem.h"
 
 #include <mach/mach_time.h>
+#include "../../shared/TLinkTouchPayload.h"
 
 // Touch event types (match legacy TLinkauto wire protocol).
 #define POC_TOUCH_UP 0
@@ -30,7 +31,8 @@ void POCTouchInit(void);
 
 // Parse a legacy task-10 payload (without the leading "10") and dispatch the
 // resulting IOHIDEvent. This is the same wire format the original daemon used.
-void POCPerformTouchFromRawData(const unsigned char *eventData);
+// Length excludes the NUL terminator; malformed frames have no HID/state side effects.
+bool POCPerformTouchFromRawData(const unsigned char *eventData, size_t eventDataLength);
 
 // Convenience for the self-test button: synthesize a down+up at (x, y) in points.
 void POCSelfTestTapAtPoint(double xPoint, double yPoint);

@@ -13,20 +13,11 @@
 #define TOUCH_DOWN 1
 #define TOUCH_MOVE 2
 
-const int TOUCH_DATA_LEN = 13;
+#include "../shared/TLinkTouchPayload.h"
 
-static int getTouchCountFromDataArray(UInt8* dataArray);
-static int getTouchTypeFromDataArray(UInt8* dataArray, int index);
-static int getTouchIndexFromDataArray(UInt8* dataArray, int index);
-static float getTouchXFromDataArray(UInt8* dataArray, int index);
-static float getTouchYFromDataArray(UInt8* dataArray, int index);
-void performTouchFromRawData(UInt8 *eventData);
+// Length excludes the NUL terminator. Invalid frames are rejected before any HID/state change.
+bool performTouchFromRawData(const UInt8 *eventData, size_t eventDataLength);
 
-static IOHIDEventRef generateChildEventTouchDown(int index, float x, float y);
-static IOHIDEventRef generateChildEventTouchMove(int index, float x, float y);
-static IOHIDEventRef generateChildEventTouchUp(int index, float x, float y);
-
-static void postIOHIDEvent(IOHIDEventRef event);
 static void setSenderIdCallback(void* target, void* refcon, IOHIDServiceRef service, IOHIDEventRef event);
 void startSetSenderIDCallBack();
 void initSenderId();

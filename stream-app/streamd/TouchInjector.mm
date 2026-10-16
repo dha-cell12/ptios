@@ -25,7 +25,7 @@
 // toggle. Default is A.
 // ---------------------------------------------------------------------------
 
-#define MAX_FINGER_INDEX 20
+#define MAX_FINGER_INDEX kTLinkTouchMaxFingerCount
 
 #define NOT_VALID 0
 #define VALID 1
@@ -219,6 +219,7 @@ static IOHIDEventRef POCChildDown(int index, float x, float y)
     IOHIDEventRef child = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, mach_absolute_time(), index, 3, 3,
                                                                x / sScreenWidth, y / sScreenHeight,
                                                                0.0f, 0.0f, 0.0f, 1, 1, 0);
+    if (!child) return NULL;
     IOHIDEventSetFloatValue(child, 0xb0014, 0.04f);
     IOHIDEventSetFloatValue(child, 0xb0015, 0.04f);
     return child;
@@ -229,6 +230,7 @@ static IOHIDEventRef POCChildMove(int index, float x, float y)
     IOHIDEventRef child = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, mach_absolute_time(), index, 3, 4,
                                                                x / sScreenWidth, y / sScreenHeight,
                                                                0.0f, 0.0f, 0.0f, 1, 1, 0);
+    if (!child) return NULL;
     IOHIDEventSetFloatValue(child, 0xb0014, 0.04f);
     IOHIDEventSetFloatValue(child, 0xb0015, 0.04f);
     return child;
@@ -239,19 +241,33 @@ static IOHIDEventRef POCChildUp(int index, float x, float y)
     IOHIDEventRef child = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, mach_absolute_time(), index, 3, 2,
                                                                x / sScreenWidth, y / sScreenHeight,
                                                                0.0f, 0.0f, 0.0f, 0, 0, 0);
+    if (!child) return NULL;
     IOHIDEventSetFloatValue(child, 0xb0014, 0.04f);
     IOHIDEventSetFloatValue(child, 0xb0015, 0.04f);
     return child;
 }
 
-static void POCAppendChild(IOHIDEventRef parent, int type, int index, float x, float y)
+static bool POCAppendChild(IOHIDEventRef parent, int type, int index, float x, float y)
 {
-    switch (type) {
-        case POC_TOUCH_MOVE: IOHIDEventAppendEvent(parent, POCChildMove(index, x, y)); break;
-        case POC_TOUCH_DOWN: IOHIDEventAppendEvent(parent, POCChildDown(index, x, y)); break;
-        case POC_TOUCH_UP:   IOHIDEventAppendEvent(parent, POCChildUp(index, x, y));   break;
-        default: POCLogf("unknown touch type %d", type);
+    IOHIDEventRef child = NULL;
+    switch (type)
+    {
+        case POC_TOUCH_MOVE:
+            child = POCChildMove(index, x, y);
+            break;
+        case POC_TOUCH_DOWN:
+            child = POCChildDown(index, x, y);
+            break;
+        case POC_TOUCH_UP:
+            child = POCChildUp(index, x, y);
+            break;
+        default:
+            return false;
     }
+    if (!child) return false;
+    IOHIDEventAppendEvent(parent, child);
+    CFRelease(child); // Append retains the child; balance our Create-rule ownership.
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,83 +349,58 @@ static void POCPostEvent(IOHIDEventRef event)
 // ---------------------------------------------------------------------------
 // Wire-protocol parsing (legacy task-10 format, 13 chars/finger)
 // ---------------------------------------------------------------------------
-static int POCTouchCount(const unsigned char *a)
+bool POCPerformTouchFromRawData(const unsigned char *eventData, size_t eventDataLength)
 {
-    if (!a || a[0] < '0' || a[0] > '9') return 0;
-    int count = a[0] - '0';
-    if (count > MAX_FINGER_INDEX) count = MAX_FINGER_INDEX;
-    return count;
-}
+    TLinkTouchPoint points[kTLinkTouchMaxCount];
+    int touchCount = 0;
+    if (!TLinkParseTouchPayload(eventData, eventDataLength, points, &touchCount)) return false;
 
-static inline int POCParseFixed(const unsigned char *a, int start, int count)
-{
-    int value = 0;
-    for (int i = 0; i < count; i++) {
-        unsigned char ch = a[start + i];
-        if (ch < '0' || ch > '9') return 0;
-        value = value * 10 + (ch - '0');
-    }
-    return value;
-}
-
-static int POCTouchType(const unsigned char *a, int i)  { return a[1 + i * POC_TOUCH_DATA_LEN] - '0'; }
-static int POCTouchIndex(const unsigned char *a, int i) { return POCParseFixed(a, 2 + i * POC_TOUCH_DATA_LEN, 2); }
-static float POCTouchX(const unsigned char *a, int i)   { return POCParseFixed(a, 4 + i * POC_TOUCH_DATA_LEN, 5) / 10.0f; }
-static float POCTouchY(const unsigned char *a, int i)   { return POCParseFixed(a, 9 + i * POC_TOUCH_DATA_LEN, 5) / 10.0f; }
-
-void POCPerformTouchFromRawData(const unsigned char *eventData)
-{
-    int touchCount = POCTouchCount(eventData);
-    if (touchCount <= 0) return;
-
-    IOHIDEventRef parent = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), 3, 99, 1, 0, 0,
-                                                          0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0);
+    IOHIDEventRef parent = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), 3, 99, 1, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0);
+    if (!parent) return false;
     IOHIDEventSetIntegerValue(parent, 0xb0019, 1);
     IOHIDEventSetIntegerValue(parent, 0x4, 1);
 
-    for (int i = 0; i < touchCount; i++) {
-        int touchType = POCTouchType(eventData, i);
-        int x = (int)POCTouchX(eventData, i);
-        int y = (int)POCTouchY(eventData, i);
-        int index = POCTouchIndex(eventData, i);
-        if (index < 0 || index >= MAX_FINGER_INDEX) continue;
-
-        POCAppendChild(parent, touchType, index, x, y);
-
-        switch (touchType) {
-            case POC_TOUCH_MOVE:
-                sEventsToAppend[index][EVENT_VALID_INDEX] = VALID_AT_NEXT_APPEND;
-                sEventsToAppend[index][EVENT_TYPE_INDEX] = POC_TOUCH_MOVE;
-                sEventsToAppend[index][EVENT_X_INDEX] = x;
-                sEventsToAppend[index][EVENT_Y_INDEX] = y;
-                break;
-            case POC_TOUCH_DOWN:
-                sEventsToAppend[index][EVENT_VALID_INDEX] = VALID_AT_NEXT_APPEND;
-                sEventsToAppend[index][EVENT_TYPE_INDEX] = POC_TOUCH_DOWN;
-                sEventsToAppend[index][EVENT_X_INDEX] = x;
-                sEventsToAppend[index][EVENT_Y_INDEX] = y;
-                break;
-            case POC_TOUCH_UP:
-                sEventsToAppend[index][EVENT_VALID_INDEX] = NOT_VALID;
-                break;
+    // Commit active-finger state only after the entire parent has been built successfully.
+    int nextEventsToAppend[MAX_FINGER_INDEX][4];
+    memcpy(nextEventsToAppend, sEventsToAppend, sizeof(nextEventsToAppend));
+    for (int i = 0; i < touchCount; i++)
+    {
+        const TLinkTouchPoint &point = points[i];
+        if (!POCAppendChild(parent, point.type, point.index, (float)point.x, (float)point.y)) {
+            CFRelease(parent);
+            return false;
+        }
+        int *next = nextEventsToAppend[point.index];
+        if (point.type == POC_TOUCH_UP) {
+            next[EVENT_VALID_INDEX] = NOT_VALID;
+        } else {
+            next[EVENT_VALID_INDEX] = VALID_AT_NEXT_APPEND;
+            next[EVENT_TYPE_INDEX] = point.type;
+            next[EVENT_X_INDEX] = point.x;
+            next[EVENT_Y_INDEX] = point.y;
         }
     }
 
-    for (int i = 0; i < MAX_FINGER_INDEX; i++) {
-        if (sEventsToAppend[i][EVENT_VALID_INDEX] == VALID) {
-            POCAppendChild(parent, sEventsToAppend[i][EVENT_TYPE_INDEX], i,
-                           sEventsToAppend[i][EVENT_X_INDEX], sEventsToAppend[i][EVENT_Y_INDEX]);
-        } else if (sEventsToAppend[i][EVENT_VALID_INDEX] == VALID_AT_NEXT_APPEND) {
-            sEventsToAppend[i][EVENT_VALID_INDEX] = VALID;
+    for (int i = 0; i < MAX_FINGER_INDEX; i++)
+    {
+        int *next = nextEventsToAppend[i];
+        if (next[EVENT_VALID_INDEX] == VALID) {
+            if (!POCAppendChild(parent, next[EVENT_TYPE_INDEX], i, (float)next[EVENT_X_INDEX], (float)next[EVENT_Y_INDEX])) {
+                CFRelease(parent);
+                return false;
+            }
+        } else if (next[EVENT_VALID_INDEX] == VALID_AT_NEXT_APPEND) {
+            next[EVENT_VALID_INDEX] = VALID;
         }
     }
 
     IOHIDEventSetIntegerValue(parent, 0xb0007, 0x23);
     IOHIDEventSetIntegerValue(parent, 0xb0008, 0x1);
     IOHIDEventSetIntegerValue(parent, 0xb0009, 0x1);
-
+    memcpy(sEventsToAppend, nextEventsToAppend, sizeof(sEventsToAppend));
     POCPostEvent(parent);
     CFRelease(parent);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -461,9 +452,9 @@ void POCSelfTestTapAtPoint(double xPoint, double yPoint)
     POCLogf("self-test tap at (%.0f,%.0f)pt -> (%d,%d)px down=%s up=%s",
             xPoint, yPoint, xPx, yPx, down, up);
 
-    POCPerformTouchFromRawData((const unsigned char *)down);
+    POCPerformTouchFromRawData((const unsigned char *)down, strlen(down));
     usleep(60000);
-    POCPerformTouchFromRawData((const unsigned char *)up);
+    POCPerformTouchFromRawData((const unsigned char *)up, strlen(up));
 }
 
 unsigned long long POCTouchCurrentSenderID(void) { return sSenderID; }

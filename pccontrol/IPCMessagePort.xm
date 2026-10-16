@@ -63,7 +63,8 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                                                                                       kCFAllocatorDefault);
             if (responseStream) {
                 CFWriteStreamOpen(responseStream);
-                processTask((UInt8 *)[rawTask UTF8String], responseStream);
+                processTaskWithContext((UInt8 *)[rawTask UTF8String],
+                                       [rawTask lengthOfBytesUsingEncoding:NSUTF8StringEncoding], responseStream, nil);
                 CFTypeRef responseProperty = CFWriteStreamCopyProperty(responseStream, kCFStreamPropertyDataWritten);
                 CFWriteStreamClose(responseStream);
                 CFRelease(responseStream);
@@ -89,7 +90,8 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                     CFRelease(responseProperty);
                 }
             } else {
-                processTask((UInt8 *)[rawTask UTF8String]);
+                processTaskWithContext((UInt8 *)[rawTask UTF8String],
+                                       [rawTask lengthOfBytesUsingEncoding:NSUTF8StringEncoding], NULL, nil);
             }
             CFAbsoluteTime duration = CFAbsoluteTimeGetCurrent() - startTime;
             NSLog(@"### com.tlinkauto.springboard: IPC task finished in %.3fs without response", duration);

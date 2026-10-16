@@ -75,10 +75,16 @@ const [
   read("shared/TLinkRootfullLicensePolicy.mm"),
 ]);
 
+const touchPayload = await read("shared/TLinkTouchPayload.h");
+assert.match(touchPayload, /kTLinkTouchMaxFingerCount = 20/);
+assert.match(touchPayload, /kTLinkTouchMaxCount = 9/);
+assert.match(touchPayload, /kTLinkTouchDataLength = 13/);
+assert.match(touchPayload, /data\[0\] < '1' \|\| data\[0\] > '9'/,
+  "task 10 count must remain one digit, with zero rejected as an empty frame");
 for (const [label, source] of [["rootfull", rootTouch], ["TrollStore", trollTouch]]) {
-  assert.match(source, /#define MAX_FINGER_INDEX 20/, `${label} finger-index ceiling changed`);
-  assert.match(source, /a\[0\] < '0'.*a\[0\] > '9'|dataArray\[0\] < '0'.*dataArray\[0\] > '9'/s,
-    `${label} must retain the one-digit task 10 touch count`);
+  assert.match(source, /#define MAX_FINGER_INDEX kTLinkTouchMaxFingerCount/, `${label} finger-index ceiling changed`);
+  assert.match(source, /TLinkParseTouchPayload\(eventData, eventDataLength/,
+    `${label} must use the shared bounded one-digit task 10 parser`);
   assert.match(source, /IOHIDEventCreateDigitizerEvent/, `${label} must create a parent digitizer event`);
   assert.match(source, /for \(int i = 0; i < touchCount; i\+\+\)/,
     `${label} must append all frame fingers to one parent`);

@@ -1153,8 +1153,10 @@ static NSString *TLinkScriptStoragePath(TLinkScriptSession *session, NSString *r
 static NSString *TLinkScriptRunTask(int taskType, NSString *body)
 {
     if (taskType == 10) {
-        TLinkRecordLegacyTouchIndicatorEvents(body ?: @"", @"script-task10");
-        POCPerformTouchFromRawData((const unsigned char *)[(body ?: @"") UTF8String]);
+        NSString *payload = body ?: @"";
+        if (!POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String],
+                                      [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding])) return @"1;;touch_bad_payload";
+        TLinkRecordLegacyTouchIndicatorEvents(payload, @"script-task10");
         return @"0";
     }
     NSString *line = [NSString stringWithFormat:@"%02d%@", taskType, body ?: @""];
@@ -3052,7 +3054,8 @@ static void TLinkPerformSingleTouch(int type, int finger, CGFloat x, CGFloat y)
 {
     NSString *payload = TLinkTouchPayload(type, finger, x, y);
     TLinkRecordTouchIndicator(x, y, type, @"native-touch");
-    POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
+    POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String],
+                              [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
 }
 
 static void TLinkPerformTouchFrame(int type, int baseFinger, const CGPoint *points, int count)
@@ -3066,7 +3069,8 @@ static void TLinkPerformTouchFrame(int type, int baseFinger, const CGPoint *poin
                               TLinkClampTouchCoord(points[i].y)];
         TLinkRecordTouchIndicator(points[i].x, points[i].y, type, @"native-zoom");
     }
-    POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
+    POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String],
+                              [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
     sTLinkZoomFrameCount.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -3416,8 +3420,12 @@ static BOOL TLinkHandleNativeBatch(NSString *body, NSString **error)
         NSString *payload = [cmd substringFromIndex:2];
         if (task == 10) {
             if ([payload hasPrefix:@";;"]) payload = [payload substringFromIndex:2];
+            if (!POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String],
+                                          [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding])) {
+                if (error) *error = @"touch_bad_payload";
+                return NO;
+            }
             TLinkRecordLegacyTouchIndicatorEvents(payload, @"native-batch-task10");
-            POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
         } else if (task == 62) {
             if (!TLinkHandleNativeTap(payload, error)) return NO;
         } else if (task == 63) {
@@ -10359,13 +10367,16 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 61) {
         NSRange sep = [body rangeOfString:@";;"];
-        if (sep.location == NSNotFound) {
+        if (sep.location == NSNotFound || sep.location == 0) {
             return TLinkError(@"touch_ack_bad_payload");
         }
         NSString *seq = [body substringToIndex:sep.location];
         NSString *payload = [body substringFromIndex:sep.location + sep.length];
         CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-        POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String]);
+        if (!POCPerformTouchFromRawData((const unsigned char *)[payload UTF8String],
+                                      [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding])) {
+            return TLinkError(@"touch_ack_bad_payload");
+        }
         int dispatchUs = (int)((CFAbsoluteTimeGetCurrent() - start) * 1000000.0);
         return TLinkSuccess([NSString stringWithFormat:@"%@;;%d", seq, dispatchUs]);
     }
@@ -10650,12 +10661,14 @@ static NSData *POCHandleLine(const char *line)
         NSString *bodyString = [NSString stringWithUTF8String:body];
         if (!bodyString) bodyString = @"";
         POCLogf("socket: task10 received body='%s' len=%lu", body, (unsigned long)strlen(body));
-        TLinkRecordLegacyTouchIndicatorEvents(bodyString, @"socket-task10");
 
         dispatch_async(dispatch_get_main_queue(), ^{
             const char *mainBody = [bodyString UTF8String];
             POCLogf("socket: task10 dispatching on main thread body='%s'", mainBody);
-            POCPerformTouchFromRawData((const unsigned char *)mainBody);
+            if (POCPerformTouchFromRawData((const unsigned char *)mainBody,
+                                         [bodyString lengthOfBytesUsingEncoding:NSUTF8StringEncoding])) {
+                TLinkRecordLegacyTouchIndicatorEvents(bodyString, @"socket-task10");
+            }
         });
         return nil; // keep legacy touch fire-and-forget
     }

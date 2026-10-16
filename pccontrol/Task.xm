@@ -125,7 +125,8 @@ static NSString *zx_touchPayload(int type, int finger, CGFloat x, CGFloat y)
 static void zx_performSingleTouch(int type, int finger, CGFloat x, CGFloat y)
 {
     NSString *payload = zx_touchPayload(type, finger, x, y);
-    performTouchFromRawData((UInt8 *)[payload UTF8String]);
+    performTouchFromRawData((const UInt8 *)[payload UTF8String],
+                            [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
 }
 
 static void zx_performTouchFrame(int type, int baseFinger, const CGPoint *points, int count)
@@ -138,7 +139,8 @@ static void zx_performTouchFrame(int type, int baseFinger, const CGPoint *points
                               zx_clampTouchCoord(points[i].x),
                               zx_clampTouchCoord(points[i].y)];
     }
-    performTouchFromRawData((UInt8 *)[payload UTF8String]);
+    performTouchFromRawData((const UInt8 *)[payload UTF8String],
+                            [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
     sTLinkZoomFrameCount.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -401,7 +403,10 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
         NSString *payload = [cmd substringFromIndex:2];
         UInt8 *payloadBytes = (UInt8 *)[payload UTF8String];
         if (task == TASK_PERFORM_TOUCH) {
-            performTouchFromRawData(payloadBytes);
+            if (!performTouchFromRawData(payloadBytes, [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding])) {
+                if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"1;;touch_bad_payload\r\n"}];
+                return false;
+            }
         } else if (task == TASK_NATIVE_TAP) {
             if (!zx_handleNativeTap(payloadBytes, err)) return false;
         } else if (task == TASK_NATIVE_SWIPE) {
@@ -676,7 +681,8 @@ static TLinkShellResult *RunShellCore(NSString *command, TLinkTaskExecutionConte
 
 void processTaskLegacy(UInt8 *buff, CFWriteStreamRef writeStreamRef)
 {
-    processTaskWithContext(buff, SIZE_MAX, writeStreamRef, nil);
+    // Legacy callers own a complete NUL-terminated string; bounded ingress uses the explicit-length API.
+    processTaskWithContext(buff, buff ? strlen((const char *)buff) : 0, writeStreamRef, nil);
 }
 
 void processTask(UInt8 *buff, CFWriteStreamRef writeStreamRef)
@@ -822,7 +828,12 @@ Process Task
 */
 void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef writeStreamRef, TLinkTaskExecutionContext *context)
 {
-    if (!buff) return;
+    if (!buff || actualLength < 2 || actualLength == SIZE_MAX ||
+        buff[0] < '0' || buff[0] > '9' || buff[1] < '0' || buff[1] > '9') {
+        notifyClient((UInt8 *)"1;;task_bad_payload\r\n", writeStreamRef);
+        return;
+    }
+    const size_t eventDataLength = actualLength - 2;
     
     //NSLog(@"### com.tlinkauto.springboard: task type: %d. Data: %s", getTaskType(buff), buff);
     UInt8 *eventData = buff + 0x2;
@@ -843,7 +854,9 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
     if (taskType == TASK_PERFORM_TOUCH)
     {
         @autoreleasepool{
-            performTouchFromRawData(eventData);
+            if (!performTouchFromRawData(eventData, eventDataLength)) {
+                notifyClient((UInt8 *)"1;;touch_bad_payload\r\n", writeStreamRef);
+            }
         }
     }
     else if (taskType >= TASK_UI_TREE_CAPABILITY && taskType <= TASK_UI_TREE_TAP)
@@ -856,18 +869,22 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
     {
         @autoreleasepool{
             CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-            char *sep = strstr((char *)eventData, ";;");
-            if (!sep) {
+            size_t separator = 0;
+            while (separator + 1 < eventDataLength &&
+                   (eventData[separator] != ';' || eventData[separator + 1] != ';')) separator++;
+            if (separator == 0 || separator + 1 >= eventDataLength ||
+                memchr(eventData, '\0', separator) != NULL) {
                 notifyClient((UInt8*)"1;;touch_ack_bad_payload\r\n", writeStreamRef);
                 return;
             }
-
-            *sep = '\0';
-            char *seq = (char *)eventData;
-            UInt8 *touchData = (UInt8 *)(sep + 2);
-            performTouchFromRawData(touchData);
+            NSString *seq = [[NSString alloc] initWithBytes:eventData length:separator encoding:NSUTF8StringEncoding];
+            const size_t touchOffset = separator + 2;
+            if (!seq || !performTouchFromRawData(eventData + touchOffset, eventDataLength - touchOffset)) {
+                notifyClient((UInt8*)"1;;touch_ack_bad_payload\r\n", writeStreamRef);
+                return;
+            }
             int dispatchUs = (int)((CFAbsoluteTimeGetCurrent() - start) * 1000000.0);
-            NSString *response = [NSString stringWithFormat:@"0;;%s;;%d\r\n", seq, dispatchUs];
+            NSString *response = [NSString stringWithFormat:@"0;;%@;;%d\r\n", seq, dispatchUs];
             notifyClient((UInt8*)[response UTF8String], writeStreamRef);
         }
     }

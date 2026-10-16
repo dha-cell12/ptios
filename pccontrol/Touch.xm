@@ -3,6 +3,9 @@
 #include "Screen.h"
 #include "AlertBox.h"
 #include "Task.h"
+#include <string.h>
+
+static void postIOHIDEvent(IOHIDEventRef event);
 
 #ifndef TLINKAUTO_TOUCH_FILE_LOG
 #define TLINKAUTO_TOUCH_FILE_LOG 0
@@ -10,7 +13,7 @@
 
 #define TOUCH_SENDER_ID_PLIST_FILE_NAME @"senderid.plist"
 
-#define MAX_FINGER_INDEX 20
+#define MAX_FINGER_INDEX kTLinkTouchMaxFingerCount
 
 #define NOT_VALID 0
 #define VALID 1
@@ -96,71 +99,6 @@ static void stopSetSenderIDCallBack(void)
 static int eventsToAppend[MAX_FINGER_INDEX][4];
 
 /*
-get count from data array by socket
-*/
-static int getTouchCountFromDataArray(UInt8* dataArray)
-{
-	if (!dataArray || dataArray[0] < '0' || dataArray[0] > '9') {
-        return 0;
-    }
-	int count = (dataArray[0] - '0');
-	if (count > MAX_FINGER_INDEX) {
-        count = MAX_FINGER_INDEX;
-    }
-	return count;
-}
-
-static inline int zx_parseFixedDigits(UInt8 *dataArray, int start, int count)
-{
-    int value = 0;
-    for (int i = 0; i < count; i++) {
-        UInt8 ch = dataArray[start + i];
-        if (ch < '0' || ch > '9') {
-            return 0;
-        }
-        value = value * 10 + (ch - '0');
-    }
-    return value;
-}
-
-/*
-get type from data array by socket
-*/
-static int getTouchTypeFromDataArray(UInt8* dataArray, int index)
-{
-	int type = (dataArray[1+index*TOUCH_DATA_LEN] - '0');
-	return type;
-}
-
-/*
-get index from data array by socket
-*/
-static int getTouchIndexFromDataArray(UInt8* dataArray, int index)
-{
-	int touchIndex = zx_parseFixedDigits(dataArray, 2 + index * TOUCH_DATA_LEN, 2);
-	return touchIndex;
-}
-
-/*
-get x from data array by socket
-*/
-static float getTouchXFromDataArray(UInt8* dataArray, int index)
-{
-	int x = zx_parseFixedDigits(dataArray, 4 + index * TOUCH_DATA_LEN, 5);
-	return x/10.0;
-}
-
-
-/*
-get y from data array by socket
-*/
-static float getTouchYFromDataArray(UInt8* dataArray, int index)
-{
-	int y = zx_parseFixedDigits(dataArray, 9 + index * TOUCH_DATA_LEN, 5);
-	return y/10.0;
-}
-
-/*
 Get the child event of touching down.
 index: index of the finger
 x: coordinate x of the screen (before conversion)
@@ -169,6 +107,7 @@ y: coordinate y of the screen (before conversion)
 static IOHIDEventRef generateChildEventTouchDown(int index, float x, float y)
 {
 	IOHIDEventRef child = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, mach_absolute_time(), index, 3, 3, x/device_screen_width, y/device_screen_height, 0.0f, 0.0f, 0.0f, 1, 1, 0);
+    if (!child) return NULL;
     IOHIDEventSetFloatValue(child, 0xb0014, 0.04f); //set the major index getRandomNumberFloat(0.03, 0.05)
     IOHIDEventSetFloatValue(child, 0xb0015, 0.04f); //set the minor index
 	return child;
@@ -183,6 +122,7 @@ y: coordinate y of the screen (before conversion)
 static IOHIDEventRef generateChildEventTouchMove(int index, float x, float y)
 {
 	IOHIDEventRef child = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, mach_absolute_time(), index, 3, 4, x/device_screen_width, y/device_screen_height, 0.0f, 0.0f, 0.0f, 1, 1, 0);
+    if (!child) return NULL;
     IOHIDEventSetFloatValue(child, 0xb0014, 0.04f); //set the major index
     IOHIDEventSetFloatValue(child, 0xb0015, 0.04f); //set the minor index
 	return child;
@@ -197,6 +137,7 @@ y: coordinate y of the screen (before conversion)
 static IOHIDEventRef generateChildEventTouchUp(int index, float x, float y)
 {
 	IOHIDEventRef child = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, mach_absolute_time(), index, 3, 2, x/device_screen_width, y/device_screen_height, 0.0f, 0.0f, 0.0f, 0, 0, 0);
+    if (!child) return NULL;
     IOHIDEventSetFloatValue(child, 0xb0014, 0.04f); //set the major index
     IOHIDEventSetFloatValue(child, 0xb0015, 0.04f); //set the minor index
 	return child;
@@ -205,94 +146,84 @@ static IOHIDEventRef generateChildEventTouchUp(int index, float x, float y)
 /**
 Append child event to parent
 */
-static void appendChildEvent(IOHIDEventRef parent, int type, int index, float x, float y)
+static bool appendChildEvent(IOHIDEventRef parent, int type, int index, float x, float y)
 {
+    IOHIDEventRef child = NULL;
     switch (type)
     {
         case TOUCH_MOVE:
-			IOHIDEventAppendEvent(parent, generateChildEventTouchMove(index, x, y));
+            child = generateChildEventTouchMove(index, x, y);
             break;
         case TOUCH_DOWN:
-            IOHIDEventAppendEvent(parent, generateChildEventTouchDown(index, x, y));
+            child = generateChildEventTouchDown(index, x, y);
             break;
         case TOUCH_UP:
-            IOHIDEventAppendEvent(parent, generateChildEventTouchUp(index, x, y));
+            child = generateChildEventTouchUp(index, x, y);
             break;
         default:
-            NSLog(@"com.tlinkauto.springboard: Unknown touch event type in appendChildEvent, type: %d", type);
+            return false;
     }
+    if (!child) return false;
+    IOHIDEventAppendEvent(parent, child);
+    CFRelease(child); // Append retains the child; balance our Create-rule ownership.
+    return true;
 }
-
 
 /**
 Perform touch events with data received from socket
 */
-void performTouchFromRawData(UInt8 *eventData)
+bool performTouchFromRawData(const UInt8 *eventData, size_t eventDataLength)
 {
-    int touchCount = getTouchCountFromDataArray(eventData);
-    if (touchCount <= 0) {
-        return;
-    }
+    TLinkTouchPoint points[kTLinkTouchMaxCount];
+    int touchCount = 0;
+    if (!TLinkParseTouchPayload(eventData, eventDataLength, points, &touchCount)) return false;
 
-    // generate a parent event
-	IOHIDEventRef parent = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), 3, 99, 1, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0); 
-    IOHIDEventSetIntegerValue(parent , 0xb0019, 1); //set flags of parent event   flags: 0x20001 -> 0xa0001
-    IOHIDEventSetIntegerValue(parent , 0x4, 1); //set flags of parent event   flags: 0xa0001 -> 0xa0011
+    IOHIDEventRef parent = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), 3, 99, 1, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0);
+    if (!parent) return false;
+    IOHIDEventSetIntegerValue(parent, 0xb0019, 1);
+    IOHIDEventSetIntegerValue(parent, 0x4, 1);
 
+    // Commit active-finger state only after the entire parent has been built successfully.
+    int nextEventsToAppend[MAX_FINGER_INDEX][4];
+    memcpy(nextEventsToAppend, eventsToAppend, sizeof(nextEventsToAppend));
     for (int i = 0; i < touchCount; i++)
     {
-        //NSLog(@"### com.tlinkauto.springboard: get data. index: %d. type: %d. touchIndex: %d. x: %f. y: %f", i, getTouchTypeFromDataArray(eventData, i), getTouchIndexFromDataArray(eventData, i), getTouchXFromDataArray(eventData, i), getTouchYFromDataArray(eventData, i));
-        int touchType = getTouchTypeFromDataArray(eventData, i);
-        int x = getTouchXFromDataArray(eventData, i);
-        int y = getTouchYFromDataArray(eventData, i);
-        int index = getTouchIndexFromDataArray(eventData, i);
-        if (index < 0 || index >= MAX_FINGER_INDEX) {
-            continue;
+        const TLinkTouchPoint &point = points[i];
+        if (!appendChildEvent(parent, point.type, point.index, (float)point.x, (float)point.y)) {
+            CFRelease(parent);
+            return false;
         }
-
-        appendChildEvent(parent, touchType, index, x, y); // append child event to parent
-
-        switch (touchType)
-        {
-            case TOUCH_MOVE:
-                eventsToAppend[index][EVENT_VALID_INDEX] = VALID_AT_NEXT_APPEND;
-                eventsToAppend[index][EVENT_TYPE_INDEX] = TOUCH_MOVE;
-                eventsToAppend[index][EVENT_X_INDEX] = (int)x;
-                eventsToAppend[index][EVENT_Y_INDEX] = (int)y;
-                break;
-            case TOUCH_DOWN:
-                eventsToAppend[index][EVENT_VALID_INDEX] = VALID_AT_NEXT_APPEND;
-                eventsToAppend[index][EVENT_TYPE_INDEX] = TOUCH_DOWN;
-                eventsToAppend[index][EVENT_X_INDEX] = (int)x; //!!!!!!directly converting to int may couse some precision problems
-                eventsToAppend[index][EVENT_Y_INDEX] = (int)y; //!!!
-                break;
-            case TOUCH_UP:
-                eventsToAppend[index][EVENT_VALID_INDEX] = NOT_VALID;
-                break;
+        int *next = nextEventsToAppend[point.index];
+        if (point.type == TOUCH_UP) {
+            next[EVENT_VALID_INDEX] = NOT_VALID;
+        } else {
+            next[EVENT_VALID_INDEX] = VALID_AT_NEXT_APPEND;
+            next[EVENT_TYPE_INDEX] = point.type;
+            next[EVENT_X_INDEX] = point.x;
+            next[EVENT_Y_INDEX] = point.y;
         }
-
     }
 
     for (int i = 0; i < MAX_FINGER_INDEX; i++)
     {
-        if (eventsToAppend[i][EVENT_VALID_INDEX] == VALID)
-        {
-            //NSLog(@"com.tlinkauto.springboard: appending event for finger: %d. type: %d. x: %d. y: %d", i, eventsToAppend[i][EVENT_TYPE_INDEX], eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
-            appendChildEvent(parent, eventsToAppend[i][EVENT_TYPE_INDEX], i, eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
-        }
-        else if (eventsToAppend[i][EVENT_VALID_INDEX] == VALID_AT_NEXT_APPEND) // make it valid
-        {
-            //NSLog(@"com.tlinkauto.springboard:  finger: %d to become valid. type: %d. x: %d. y: %d", i, eventsToAppend[i][EVENT_TYPE_INDEX], eventsToAppend[i][EVENT_X_INDEX], eventsToAppend[i][EVENT_Y_INDEX]);
-            eventsToAppend[i][EVENT_VALID_INDEX] = VALID;
+        int *next = nextEventsToAppend[i];
+        if (next[EVENT_VALID_INDEX] == VALID) {
+            if (!appendChildEvent(parent, next[EVENT_TYPE_INDEX], i, (float)next[EVENT_X_INDEX], (float)next[EVENT_Y_INDEX])) {
+                CFRelease(parent);
+                return false;
+            }
+        } else if (next[EVENT_VALID_INDEX] == VALID_AT_NEXT_APPEND) {
+            next[EVENT_VALID_INDEX] = VALID;
         }
     }
 
     IOHIDEventSetIntegerValue(parent, 0xb0007, 0x23);
     IOHIDEventSetIntegerValue(parent, 0xb0008, 0x1);
     IOHIDEventSetIntegerValue(parent, 0xb0009, 0x1);
-
+    memcpy(eventsToAppend, nextEventsToAppend, sizeof(eventsToAppend));
     postIOHIDEvent(parent);
     CFRelease(parent);
+    return true;
 }
 
 /**

@@ -1,0 +1,1640 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TLinkauto / ptios - API & TrollStore compatibility</title>
+  <style>
+    :root{
+      --bg:#0b1020;--panel:#121a2d;--panel2:#0f1728;--text:#eef4ff;--muted:#9fb0ca;
+      --line:#24324b;--accent:#6aa8ff;--ok:#45d483;--warn:#ffbe55;--bad:#ff6b7a;--exp:#b991ff;
+      --code:#09111f;--shadow:0 12px 30px rgba(0,0,0,.22)
+    }
+    *{box-sizing:border-box} html{scroll-behavior:smooth}
+    body{margin:0;background:linear-gradient(180deg,#0a0f1c 0%,#0d1425 35%,#0b1020 100%);color:var(--text);
+      font:15px/1.58 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+    a{color:#9bc2ff}
+    .wrap{max-width:1240px;margin:auto;padding:24px}
+    header{padding:36px 0 18px}
+    h1{font-size:clamp(30px,5vw,52px);line-height:1.05;margin:0 0 14px;letter-spacing:-.03em}
+    h2{font-size:24px;margin:34px 0 14px} h3{margin:0;font-size:19px}
+    p{margin:8px 0;color:var(--muted)}
+    .hero{display:grid;grid-template-columns:1.5fr .8fr;gap:18px;align-items:stretch}
+    .hero-card,.panel,.api-card{background:rgba(18,26,45,.9);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}
+    .hero-card{padding:24px}
+    .hero-card strong{color:#fff}
+    .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:18px}
+    .stat{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px}
+    .stat b{display:block;font-size:22px}
+    .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+    .badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:750;border:1px solid transparent}
+    .ok{color:#bff7d4;background:rgba(69,212,131,.12);border-color:rgba(69,212,131,.28)}
+    .limited{color:#ffe1a6;background:rgba(255,190,85,.12);border-color:rgba(255,190,85,.28)}
+    .no{color:#ffc2c9;background:rgba(255,107,122,.12);border-color:rgba(255,107,122,.28)}
+    .experimental{color:#dec9ff;background:rgba(185,145,255,.12);border-color:rgba(185,145,255,.28)}
+    .toolbar{position:sticky;top:0;z-index:20;background:rgba(11,16,32,.9);backdrop-filter:blur(14px);padding:12px 0;border-bottom:1px solid rgba(36,50,75,.75)}
+    .toolbar-inner{display:grid;grid-template-columns:1fr 220px;gap:10px}
+    input,select{width:100%;background:#0d1526;border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--text);outline:none}
+    input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(106,168,255,.12)}
+    .notice{border-left:4px solid var(--warn);padding:14px 16px;background:rgba(255,190,85,.08);border-radius:10px;margin:18px 0;color:#d8e3f7}
+    .notice strong{color:#fff}
+    .api-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .api-card{padding:18px;min-width:0}
+    .api-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+    .category{font-size:12px;color:#8fb7ef;text-transform:uppercase;letter-spacing:.08em;font-weight:800;margin-bottom:5px}
+    .apis{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+    code.inline{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0b1323;border:1px solid #263650;padding:4px 7px;border-radius:8px;color:#dceaff}
+    .sig{margin-top:10px;padding:10px 12px;border-radius:10px;background:#0c1424;border:1px dashed #2c3c57;color:#cfe0fa;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;overflow:auto}
+    pre{position:relative;background:var(--code);border:1px solid #23324b;border-radius:12px;padding:14px;overflow:auto;margin:12px 0 0;color:#d8e8ff;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .note{font-size:13px;color:#b5c4db;margin-top:10px}
+    .source{font-size:12px;color:#8295b3;margin-top:9px}
+    .wide{grid-column:1/-1}
+    .missing{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .missing>div{border:1px solid var(--line);border-radius:12px;background:#0d1526;padding:12px}
+    footer{padding:38px 0 50px;color:#8799b8;font-size:13px}
+    .full-demo{margin-top:14px;border:1px solid #2a3b59;border-radius:12px;background:#0c1424;overflow:hidden}
+    .full-demo>summary{cursor:pointer;list-style:none;padding:12px 14px;font-weight:800;color:#dceaff;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .full-demo>summary::-webkit-details-marker{display:none}
+    .full-demo>summary:after{content:"Mở";font-size:11px;color:#8fb7ef;border:1px solid #30486c;border-radius:999px;padding:3px 8px}
+    .full-demo[open]>summary:after{content:"Đóng"}
+    .full-demo-body{border-top:1px solid #22314a;padding:12px 14px 14px}
+    .full-demo-note{font-size:12px;color:#9fb0ca;margin:0 0 10px}
+    .full-demo-toolbar{display:flex;justify-content:flex-end;margin-bottom:6px}
+    .copy-demo{border:1px solid #34517b;background:#10213a;color:#d9e8ff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700}
+    .copy-demo:hover{border-color:#6aa8ff}
+    .full-demo pre{margin-top:0}
+    .hidden{display:none!important}
+    @media (max-width:860px){.hero{grid-template-columns:1fr}.api-grid{grid-template-columns:1fr}.toolbar-inner{grid-template-columns:1fr}.missing{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="hero">
+        <section class="hero-card">
+          <div class="category">ptios / TLinkauto</div>
+          <h1>API JavaScriptCore & tương thích TrollStore</h1>
+          <p>Trang tĩnh này tổng hợp các API public dùng trong script <strong>main.js</strong>, cách gọi, demo ngắn và trạng thái trên runtime TrollStore hiện tại.</p>
+          <div class="legend">
+            <span class="badge ok">● Có trên TrollStore</span>
+            <span class="badge limited">▲ Có nhưng hạn chế</span>
+            <span class="badge experimental">◆ Experimental</span>
+            <span class="badge no">× Không có trên TrollStore</span>
+          </div>
+        </section>
+        <section class="hero-card stats">
+          <div class="stat"><span class="badge ok">Ổn định</span><b>Core automation</b><small>touch, screenshot, color, frame, image, Tesseract OCR, storage</small></div>
+          <div class="stat"><span class="badge experimental">Thử nghiệm</span><b>Zoom / UI Tree</b><small>đã có API nhưng còn chờ promotion thiết bị</small></div>
+          <div class="stat"><span class="badge limited">Hạn chế</span><b>SpringBoard-only</b><small>keyboard visibility, global touch indicator, true boot start</small></div>
+          <div class="stat"><span class="badge no">Khác rootfull</span><b>Module helpers</b><small>require/include/manifest và vài helper TLinkauto chưa có ở facade TrollStore</small></div>
+        </section>
+      </div>
+      <div class="notice"><strong>Lưu ý runtime:</strong> iOS on-device hiện dùng JavaScriptCore. Python playback đã bị loại khỏi package/runtime; các file Python trong repo chỉ còn tính chất legacy/dev tooling.</div>
+    </header>
+  </div>
+
+  <div class="toolbar">
+    <div class="wrap toolbar-inner">
+      <input id="search" type="search" placeholder="Tìm API, ví dụ: ocr, frame, clipboard, vpnconf, waitForText...">
+      <select id="filter">
+        <option value="all">Tất cả trạng thái TrollStore</option>
+        <option value="ok">Có trên TrollStore</option>
+        <option value="limited">Có nhưng hạn chế</option>
+        <option value="experimental">Experimental</option>
+        <option value="no">Không có trên TrollStore</option>
+      </select>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <h2>Cách đọc kết quả API</h2>
+    <section class="panel" style="padding:18px">
+      <p>Phần lớn API native trả object chuẩn hóa có <code class="inline">ok</code>, <code class="inline">code</code>, <code class="inline">payload</code>, <code class="inline">raw</code> và thêm field đã parse khi có thể.</p>
+      <pre>var r = device.pickColor(100, 200);
+if (!r.ok) {
+  console.log("Lỗi: " + (r.error || r.payload || r.raw));
+} else {
+  console.log("RGB =", r.red, r.green, r.blue);
+}</pre>
+    </section>
+
+    <h2>Danh sách chức năng</h2>
+    <div id="apiGrid" class="api-grid">
+
+      <article class="api-card" data-status="no" data-keywords="runtime require include manifest module loader rootfull">
+        <div class="api-head"><div><div class="category">Runtime</div><h3>Module loader & manifest</h3></div><span class="badge no">TrollStore: không có</span></div>
+        <div class="apis"><code class="inline">require(path)</code><code class="inline">include(path)</code><code class="inline">manifest</code><code class="inline">sleep(ms)</code></div>
+        <p>Rootfull JavaScriptCore có CommonJS-like loader, include, manifest object và global sleep. Facade TrollStore hiện không cài các global này.</p>
+        <div class="sig">require("./lib") · include("./common.js") · manifest.name · sleep(250)</div>
+        <pre>// Rootfull
+var util = require("./lib/util");
+include("./common.js");
+console.log(manifest.name);
+sleep(250);
+
+// TrollStore thay sleep global bằng:
+device.sleep(0.25);</pre>
+        <div class="note">Trên TrollStore hãy giữ script tự chứa trong main.js hoặc dùng storage/file APIs thay vì trông chờ require/include.</div>
+        <div class="source">Nguồn: pccontrol/jsruntime/TLinkJSRuntimeCore.mm; stream-app/streamd/POCSocketServer.mm</div>
+      </article>
+
+      <article class="api-card" data-status="no" data-keywords="TLinkauto assert ensureOk retry withFrame withImage withCapturedImage helper">
+        <div class="api-head"><div><div class="category">Runtime helper</div><h3>Helper TLinkauto của rootfull</h3></div><span class="badge no">TrollStore: không có</span></div>
+        <div class="apis"><code class="inline">TLinkauto.assert</code><code class="inline">TLinkauto.ensureOk</code><code class="inline">TLinkauto.retry</code><code class="inline">TLinkauto.withFrame</code><code class="inline">TLinkauto.withImage</code><code class="inline">TLinkauto.withCapturedImage</code></div>
+        <p>Các helper tiện ích này được inject ở rootfull runtime. TrollStore chỉ dùng object TLinkauto cho Smart Wait, không có nhóm helper này.</p>
+        <pre>// Rootfull
+var shot = TLinkauto.ensureOk(device.screenshot(), "screenshot failed");
+TLinkauto.withFrame({ bgra: true }, function(frame) {
+  console.log(device.framePickColor(frame.id, 10, 10, {}));
+});
+
+// TrollStore: kiểm tra ok và release thủ công
+var frame = device.captureFrame({ bgra: 1, gray: 0 });
+try {
+  if (!frame.ok) throw new Error(frame.error || frame.raw);
+} finally {
+  if (frame.ok) device.releaseFrame(frame.id);
+}</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="console log runtimeInfo shouldStop">
+        <div class="api-head"><div><div class="category">Runtime</div><h3>Log, trạng thái runtime & stop</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">console.log/info/warn/error</code><code class="inline">device.log(value)</code><code class="inline">device.runtimeInfo()</code><code class="inline">device.shouldStop()</code></div>
+        <pre>console.log("start");
+console.warn("debug");
+console.log(JSON.stringify(device.runtimeInfo()));
+
+if (device.shouldStop()) {
+  console.log("script đang được yêu cầu dừng");
+}</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="task taskResult runTask raw task bridge">
+        <div class="api-head"><div><div class="category">Raw task</div><h3>Task bridge</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.task(id, body)</code><code class="inline">device.taskResult(id, body)</code><code class="inline">device.runTask(id, body)</code></div>
+        <p><code class="inline">task()</code> trả chuỗi wire thô; hai hàm còn lại trả object chuẩn hóa.</p>
+        <pre>var raw = device.task(23, "100;;200");
+console.log(raw);
+
+var r = device.runTask(23, "100;;200");
+console.log(JSON.stringify(r));</pre>
+        <div class="note">Ưu tiên API cấp cao như pickColor/tap/screenshot. Dùng raw task khi cần tương thích task cũ.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="sleep usleep timing wait">
+        <div class="api-head"><div><div class="category">Timing</div><h3>Sleep có thể dừng</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.sleep(seconds)</code><code class="inline">device.usleep(microseconds)</code></div>
+        <pre>device.sleep(0.5);
+device.usleep(100000); // 100 ms</pre>
+        <div class="note">Hai hàm này tôn trọng stop request và tốc độ playback của script.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="tap touch click">
+        <div class="api-head"><div><div class="category">Touch</div><h3>Tap</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.tap(x, y)</code></div>
+        <pre>var r = device.tap(220, 560);
+if (!r.ok) throw new Error(r.raw);</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="swipe longPress gesture batch touch">
+        <div class="api-head"><div><div class="category">Touch</div><h3>Swipe, long press, gesture & batch</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.swipe(x1,y1,x2,y2,duration)</code><code class="inline">device.longPress(x,y,duration)</code><code class="inline">device.gesture(points, options)</code><code class="inline">device.batch(commands)</code></div>
+        <pre>device.swipe(120, 700, 120, 250, 0.35);
+device.longPress(220, 520, 0.8);
+
+device.gesture(
+  [[100,500],[130,450],[170,400],[220,350]],
+  { finger: 0, durationMs: 350 }
+);
+
+device.batch([
+  { type: "tap", x: 120, y: 300 },
+  { type: "swipe", x1: 100, y1: 600, x2: 100, y2: 250, durationMs: 300 }
+]);</pre>
+      </article>
+
+      <article class="api-card" data-status="experimental" data-keywords="zoom pinch spread multitouch">
+        <div class="api-head"><div><div class="category">Touch</div><h3>Zoom / pinch / spread</h3></div><span class="badge experimental">TrollStore: experimental</span></div>
+        <div class="apis"><code class="inline">device.zoom(centerX, centerY, startRadius, endRadius, options)</code></div>
+        <pre>// zoom out / spread
+var r = device.zoom(195, 420, 35, 130, {
+  durationMs: 350,
+  fingerCount: 2,
+  steps: 20,
+  angleDegrees: 0
+});
+console.log(JSON.stringify(r));</pre>
+        <div class="note">Implementation và diagnostics đã có nhưng trạng thái capability vẫn experimental/chờ device promotion.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="hardwareKey pressHardwareKey home volume lock power">
+        <div class="api-head"><div><div class="category">Hardware key</div><h3>Phím cứng</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.hardwareKey(key, action)</code><code class="inline">device.pressHardwareKey(key)</code></div>
+        <pre>device.pressHardwareKey("volume-up");
+
+device.hardwareKey("lock", "down");
+device.sleep(0.08);
+device.hardwareKey("lock", "up");</pre>
+        <div class="note">Key hỗ trợ: home, volume-up, volume-down, lock/power.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="tapMacro auto tap macro crazy stopTapMacro">
+        <div class="api-head"><div><div class="category">Touch</div><h3>Tap macro</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.tapMacro(x, y, options)</code><code class="inline">device.stopTapMacro()</code></div>
+        <pre>device.tapMacro(200, 500, {
+  count: 20,
+  intervalMs: 80,
+  durationMs: 20,
+  finger: 0
+});
+
+// khi cần
+device.stopTapMacro();</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="toast alert overlay visual">
+        <div class="api-head"><div><div class="category">Visual</div><h3>Toast & alert</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.toast(message, options)</code><code class="inline">device.alert(title, message, options)</code></div>
+        <pre>device.toast("Đã lưu", {
+  type: 4,
+  duration: 2,
+  position: 2,
+  fontSize: 15
+});
+
+device.alert("TLinkauto", "Hoàn tất", { duration: 2 });</pre>
+        <div class="note">Toast TrollStore đi qua UI service ở foreground/background; alert dùng overlay hoặc CFUserNotification fallback.</div>
+      </article>
+
+      <article class="api-card" data-status="limited" data-keywords="dialog clearDialogValues background response sync">
+        <div class="api-head"><div><div class="category">Visual</div><h3>Dialog</h3></div><span class="badge limited">TrollStore: hạn chế</span></div>
+        <div class="apis"><code class="inline">device.dialog(options)</code><code class="inline">device.clearDialogValues()</code></div>
+        <pre>var r = device.dialog({
+  title: "Xác nhận",
+  message: "Tiếp tục?",
+  ok: "Có",
+  cancel: "Không"
+});
+console.log(JSON.stringify(r));</pre>
+        <div class="note">Ở background, dialog có thể hiển thị qua CFUserNotification nhưng lựa chọn người dùng không được bridge đồng bộ trở lại task gốc.</div>
+      </article>
+
+      <article class="api-card" data-status="limited" data-keywords="touchIndicator keepAwake idle timer global springboard">
+        <div class="api-head"><div><div class="category">Visual / power</div><h3>Touch indicator & keep awake</h3></div><span class="badge limited">TrollStore: hạn chế</span></div>
+        <div class="apis"><code class="inline">device.touchIndicator(action)</code><code class="inline">device.keepAwake(enabled)</code></div>
+        <pre>device.touchIndicator("show");
+device.keepAwake(true);
+
+// ... automation ...
+
+device.touchIndicator("hide");
+device.keepAwake(false);</pre>
+        <div class="note">Touch indicator chỉ foreground trên TrollStore; global indicator cần SpringBoard injection. Keep-awake là best effort.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="screenshot screenshotTo screenshotRegion defaultScreenshotPath">
+        <div class="api-head"><div><div class="category">Screenshot</div><h3>Chụp màn hình</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.defaultScreenshotPath()</code><code class="inline">device.screenshot()</code><code class="inline">device.screenshotTo(path)</code><code class="inline">device.screenshotRegion(path, options)</code></div>
+        <pre>var shot = device.screenshot();
+console.log(shot.path);
+
+device.screenshotTo("/var/mobile/Library/TLinkauto/screenshots/demo.png");
+
+device.screenshotRegion(
+  "/var/mobile/Library/TLinkauto/screenshots/roi.png",
+  { x: 50, y: 100, width: 300, height: 250 }
+);</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="Photos album saveScreenshotToAlbum clearScreenshotAlbum">
+        <div class="api-head"><div><div class="category">Screenshot</div><h3>Album ảnh TLinkauto</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.saveScreenshotToAlbum(path)</code><code class="inline">device.clearScreenshotAlbum()</code></div>
+        <pre>var shot = device.screenshot();
+if (shot.ok) device.saveScreenshotToAlbum(shot.path);
+
+// Xóa asset trong album TLinkauto
+// device.clearScreenshotAlbum();</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="pickColor findColor isColors findMultiColor rgb">
+        <div class="api-head"><div><div class="category">Color</div><h3>Màu trên màn hình</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.pickColor(x,y)</code><code class="inline">device.findColor(options)</code><code class="inline">device.isColors(points, options)</code><code class="inline">device.findMultiColor(points, options)</code></div>
+        <pre>var c = device.pickColor(100, 200);
+
+var found = device.findColor({
+  x: 0, y: 0, width: 390, height: 844,
+  redMin: 200, redMax: 255,
+  greenMin: 0, greenMax: 80,
+  blueMin: 0, blueMax: 80,
+  skip: 2
+});
+
+var ok = device.isColors(
+  [[100,200,255,0,0],[110,200,255,255,255]],
+  { tolerance: 10 }
+);</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="captureFrame releaseFrame releaseAllFrames framePickColor framePickColors frameFindColor frameIsColors frameFindMultiColor">
+        <div class="api-head"><div><div class="category">Frame cache</div><h3>Frame lifecycle & color trên frame</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">captureFrame</code><code class="inline">releaseFrame</code><code class="inline">releaseAllFrames</code><code class="inline">framePickColor</code><code class="inline">framePickColors</code><code class="inline">frameFindColor</code><code class="inline">frameIsColors</code><code class="inline">frameFindMultiColor</code></div>
+        <pre>var frame = device.captureFrame({ bgra: 1, gray: 1, ttlMs: 3000 });
+if (frame.ok) {
+  try {
+    console.log(device.framePickColor(frame.id, 10, 10, { maxAgeMs: 3000 }));
+    console.log(device.framePickColors(frame.id, [[10,10],[20,20]], { maxAgeMs: 3000 }));
+  } finally {
+    device.releaseFrame(frame.id);
+  }
+}</pre>
+        <div class="note">Nên capture một frame rồi chạy nhiều check trên cùng frame để giảm IPC và tăng tốc automation.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="openImage captureImage releaseImage findImageInFrame matchTemplate template image">
+        <div class="api-head"><div><div class="category">Image</div><h3>Image handle & template matching</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.openImage(path)</code><code class="inline">device.captureImage(x,y,w,h)</code><code class="inline">device.releaseImage(id)</code><code class="inline">device.findImageInFrame(frameId,imageId,options)</code><code class="inline">device.matchTemplate(path, options)</code></div>
+        <pre>var img = device.openImage("assets/login.png");
+var frame = device.captureFrame({ bgra: 1, gray: 1, ttlMs: 3000 });
+
+try {
+  if (img.ok && frame.ok) {
+    var m = device.findImageInFrame(frame.id, img.id, {
+      x: 0, y: 0, width: frame.width, height: frame.height,
+      acceptable: 0.90,
+      pixelSkip: 1,
+      maxAgeMs: 3000
+    });
+    console.log(JSON.stringify(m));
+  }
+} finally {
+  if (frame.ok) device.releaseFrame(frame.id);
+  if (img.ok) device.releaseImage(img.id);
+}</pre>
+        <div class="note">TrollStore dùng native RGBA/vImage matching; OpenCV không bắt buộc cho MVP.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="ocr ocrLanguages ocrFrame tesseract text recognition">
+        <div class="api-head"><div><div class="category">OCR</div><h3>Tesseract OCR</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.ocrLanguages()</code><code class="inline">device.ocrFrame(frameId, options)</code><code class="inline">device.ocr(options)</code></div>
+        <pre>console.log(device.ocrLanguages());
+
+var r = device.ocr({
+  x: 0, y: 0, width: 750, height: 300,
+  lang: "vie",
+  oem: 1,
+  psm: 7,
+  scaleUp: 2,
+  thresholdMode: 0
+});
+console.log(r.text);</pre>
+        <div class="note">Task 91 Tesseract là đường ổn định/default. Vision OCR CPU-only vẫn experimental.</div>
+      </article>
+
+      <article class="api-card" data-status="experimental" data-keywords="waitUntil waitForApp waitForColor smart wait">
+        <div class="api-head"><div><div class="category">Smart Wait</div><h3>Wait cơ bản</h3></div><span class="badge experimental">TrollStore: có, đang promotion</span></div>
+        <div class="apis"><code class="inline">device.waitUntil(predicate, options)</code><code class="inline">device.waitForApp(bundleId, options)</code><code class="inline">device.waitForColor(x,y,color,options)</code></div>
+        <pre>var ready = device.waitUntil(function(attempt) {
+  return attempt >= 3 ? { ready: true } : false;
+}, { timeoutMs: 3000, intervalMs: 100, stableFrames: 2 });
+
+var app = device.waitForApp("com.apple.Preferences", {
+  timeoutMs: 5000,
+  stableFrames: 1
+});
+
+var color = device.waitForColor(100, 200, "#ff0000", {
+  tolerance: 8,
+  timeoutMs: 5000,
+  stableFrames: 2
+});</pre>
+        <div class="note">Cùng implementation Smart Wait v1 được cài trên rootfull và TrollStore; trạng thái thiết bị vẫn đang promotion.</div>
+      </article>
+
+      <article class="api-card" data-status="experimental" data-keywords="waitForImage waitForText waitUntilGone tapWhenVisible smart wait image text">
+        <div class="api-head"><div><div class="category">Smart Wait</div><h3>Wait theo ảnh / OCR text</h3></div><span class="badge experimental">TrollStore: có, đang promotion</span></div>
+        <div class="apis"><code class="inline">device.waitForImage(path, options)</code><code class="inline">device.waitForText(text, options)</code><code class="inline">device.waitUntilGone(path, options)</code><code class="inline">device.tapWhenVisible(path, options)</code></div>
+        <pre>var login = device.tapWhenVisible("assets/login.png", {
+  acceptable: 0.90,
+  timeoutMs: 8000,
+  intervalMs: 150,
+  stableFrames: 2
+});
+
+var home = device.waitForText("Trang chủ", {
+  region: [0, 0, 750, 300],
+  lang: "vie",
+  matchMode: "contains",
+  stableFrames: 2,
+  timeoutMs: 8000
+});</pre>
+      </article>
+
+      <article class="api-card" data-status="experimental" data-keywords="ui tree accessibility uiTree uiFind uiAt tapElement waitForElement waitUntilElementGone">
+        <div class="api-head"><div><div class="category">UI Tree</div><h3>Accessibility tree</h3></div><span class="badge experimental">TrollStore: experimental</span></div>
+        <div class="apis"><code class="inline">device.uiTreeCapability()</code><code class="inline">device.uiTree(options)</code><code class="inline">device.uiFind(selector)</code><code class="inline">device.uiAt(x,y)</code><code class="inline">device.tapElement(selector)</code><code class="inline">device.waitForElement(selector,options)</code><code class="inline">device.waitUntilElementGone(selector,options)</code></div>
+        <pre>var cap = device.uiTreeCapability();
+if (cap.state !== "ready") throw new Error(JSON.stringify(cap));
+
+var found = device.waitForElement(
+  { text: "Settings", match: "contains", visibleOnly: true },
+  { timeoutMs: 3000, intervalMs: 250, ignoreErrors: false }
+);
+
+if (found.ok) {
+  device.tapElement({ text: "Settings", match: "exact", clickableOnly: true });
+}</pre>
+        <div class="note">TrollStore snapshot qua AXRuntime trong streamd nên app StreamControl có thể ở background.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="frontMostAppId orientation appState appInfo appPid frontMostPid appPaths listBundles">
+        <div class="api-head"><div><div class="category">App / process</div><h3>Query app & process</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">frontMostAppId</code><code class="inline">orientation</code><code class="inline">appState</code><code class="inline">appInfo</code><code class="inline">appPid</code><code class="inline">frontMostPid</code><code class="inline">appPaths</code><code class="inline">listBundles</code></div>
+        <pre>var front = device.frontMostAppId();
+console.log(front);
+
+var id = "com.apple.Preferences";
+console.log(device.appState(id));
+console.log(device.appInfo(id));
+console.log(device.appPid(id));
+console.log(device.appPaths(id));
+
+console.log(device.listBundles(false));</pre>
+      </article>
+
+      <article class="api-card" data-status="limited" data-keywords="openApp killApp clearAppData openUrl privhelper app actions">
+        <div class="api-head"><div><div class="category">App / process</div><h3>Mở, kill, clear data & URL</h3></div><span class="badge limited">TrollStore: qua privhelper</span></div>
+        <div class="apis"><code class="inline">device.openApp(bundleId)</code><code class="inline">device.killApp(bundleId)</code><code class="inline">device.clearAppData(bundleId)</code><code class="inline">device.openUrl(url)</code></div>
+        <pre>device.openApp("com.apple.Preferences");
+device.openUrl("https://example.com");
+
+// Các thao tác destructive nên kiểm tra result:
+var r = device.killApp("com.example.target");
+console.log(JSON.stringify(r));</pre>
+        <div class="note">TrollStore dùng streamd + privhelper. Clear data chỉ cho container an toàn và từ chối bundle/path được bảo vệ.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="clipboard getClipboardText setClipboardText setClipboardImage insertText pasteFromClipboard deleteCharacters moveCursor keyboard">
+        <div class="api-head"><div><div class="category">Keyboard / clipboard</div><h3>Clipboard & text editing</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.getClipboardText()</code><code class="inline">device.setClipboardText(text)</code><code class="inline">device.setClipboardImage(path)</code><code class="inline">device.insertText(text)</code><code class="inline">device.pasteFromClipboard()</code><code class="inline">device.deleteCharacters(count)</code><code class="inline">device.moveCursor(offset)</code><code class="inline">device.keyboardTask(kind,content)</code></div>
+        <pre>device.setClipboardText("hello");
+console.log(device.getClipboardText());
+
+// cần focus sẵn vào text field
+device.insertText("Xin chào");
+device.deleteCharacters(3);
+device.moveCursor(-2);
+
+var shot = device.screenshot();
+if (shot.ok) device.setClipboardImage(shot.path);</pre>
+        <div class="note">Insert/paste dùng background clipboard + HID Command+V; delete/cursor dùng HID Backspace/arrow.</div>
+      </article>
+
+      <article class="api-card" data-status="limited" data-keywords="showKeyboard hideKeyboard keyboard visibility">
+        <div class="api-head"><div><div class="category">Keyboard</div><h3>Hiện / ẩn bàn phím</h3></div><span class="badge limited">TrollStore: limited_on_trollstore</span></div>
+        <div class="apis"><code class="inline">device.showKeyboard()</code><code class="inline">device.hideKeyboard()</code></div>
+        <pre>var show = device.showKeyboard();
+console.log(JSON.stringify(show));
+
+var hide = device.hideKeyboard();
+console.log(JSON.stringify(hide));</pre>
+        <div class="note">API name vẫn tồn tại để tương thích rootfull nhưng TrollStore thiếu SpringBoard keyboard observer nên không điều khiển visibility đầy đủ.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="rootDir currentDir botPath info batteryInfo getScreenSize pathTask orientation">
+        <div class="api-head"><div><div class="category">Device info / paths</div><h3>Thông tin thiết bị & đường dẫn</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.rootDir()</code><code class="inline">device.currentDir()</code><code class="inline">device.botPath()</code><code class="inline">device.info()</code><code class="inline">device.batteryInfo()</code><code class="inline">device.getScreenSize()</code><code class="inline">device.pathTask(task,key)</code><code class="inline">device.orientation()</code></div>
+        <pre>console.log(device.rootDir());
+console.log(device.currentDir());
+console.log(device.botPath());
+console.log(device.info());
+console.log(device.batteryInfo());
+console.log(device.getScreenSize());
+console.log(device.orientation());</pre>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="storage readText writeText readJSON writeJSON fileExists deleteFile">
+        <div class="api-head"><div><div class="category">Storage</div><h3>Text / JSON bundle-relative</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.readText(path)</code><code class="inline">device.writeText(path,text)</code><code class="inline">device.readJSON(path)</code><code class="inline">device.writeJSON(path,value)</code><code class="inline">device.fileExists(path)</code><code class="inline">device.deleteFile(path)</code></div>
+        <pre>device.writeText("storage/state.txt", "ready");
+console.log(device.readText("storage/state.txt"));
+
+device.writeJSON("storage/state.json", {
+  ready: true,
+  at: Date.now()
+});
+console.log(device.readJSON("storage/state.json"));
+
+console.log(device.fileExists("storage/state.json"));
+device.deleteFile("storage/state.txt");</pre>
+        <div class="note">Path bị giới hạn trong script bundle; không được ghi đè .js, manifest.json hoặc info.plist.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="openFile readLine write writeBase64 seek tell flush isClosed close file handle">
+        <div class="api-head"><div><div class="category">Storage</div><h3>File handle API</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.openFile(path,mode)</code><code class="inline">read</code><code class="inline">readLine</code><code class="inline">write</code><code class="inline">writeBase64</code><code class="inline">seek</code><code class="inline">tell</code><code class="inline">flush</code><code class="inline">isClosed</code><code class="inline">close</code></div>
+        <pre>var f = device.openFile("storage/demo.txt", "w+");
+if (!f.ok) throw new Error(f.error);
+
+f.write("first line\nsecond line\n");
+f.seek("set", 0);
+console.log(f.readLine().line);
+console.log(f.read("*a").data);
+f.flush();
+f.close();</pre>
+        <div class="note">Tối đa 32 handle/script; mỗi lần read/write tối đa 512 KiB. Handle chưa đóng sẽ auto-close khi evaluation kết thúc.</div>
+      </article>
+
+      <article class="api-card" data-status="ok" data-keywords="setAutoLaunch listAutoLaunch setTimer removeTimer scheduler boot">
+        <div class="api-head"><div><div class="category">Scheduler</div><h3>Auto launch & timer</h3></div><span class="badge ok">TrollStore: có</span></div>
+        <div class="apis"><code class="inline">device.setAutoLaunch(name,script,enabled)</code><code class="inline">device.listAutoLaunch()</code><code class="inline">device.setTimer(name,interval,repeat,script)</code><code class="inline">device.removeTimer(name)</code></div>
+        <pre>device.setAutoLaunch("boot-main", "My Bot.tl", true);
+console.log(device.listAutoLaunch());
+
+device.setTimer("poll", 30, true, "My Bot.tl");
+// device.removeTimer("poll");</pre>
+        <div class="note">Scheduler trong streamd hoạt động, nhưng "true boot auto-start" kiểu LaunchDaemon vẫn không có trên TrollStore; widget/BGTask chỉ best effort.</div>
+      </article>
+
+      <article class="api-card" data-status="limited" data-keywords="wifi bluetooth airplane cellularData connectivity setWifi setBluetooth setAirplaneMode setCellularData">
+        <div class="api-head"><div><div class="category">Connectivity</div><h3>Wi‑Fi / Bluetooth / Airplane / Cellular</h3></div><span class="badge limited">TrollStore: best effort</span></div>
+        <div class="apis"><code class="inline">wifi</code><code class="inline">setWifi</code><code class="inline">bluetooth</code><code class="inline">setBluetooth</code><code class="inline">airplaneMode</code><code class="inline">setAirplaneMode</code><code class="inline">cellularData</code><code class="inline">setCellularData</code><code class="inline">connectivityTask</code></div>
+        <pre>console.log(device.wifi());
+device.setWifi(true);
+
+console.log(device.bluetooth());
+device.setBluetooth(false);
+
+console.log(device.airplaneMode());
+console.log(device.cellularData());</pre>
+        <div class="note">Backend phụ thuộc private frameworks/khả năng hệ thống nên nên luôn kiểm tra result.ok.</div>
+      </article>
+
+      <article class="api-card" data-status="limited" data-keywords="runShell shell command terminal">
+        <div class="api-head"><div><div class="category">Shell</div><h3>Shell command</h3></div><span class="badge limited">TrollStore: gated</span></div>
+        <div class="apis"><code class="inline">device.runShell(command, timeoutSeconds)</code></div>
+        <pre>var r = device.runShell("echo tlinkauto-shell-ok", 5);
+console.log(JSON.stringify(r));</pre>
+        <div class="note">Shell task bị gate bởi Settings và mặc định tắt. Nếu iOS không có /bin/sh, runtime có mini-shell giới hạn cho diagnostics/cp/printf.</div>
+      </article>
+
+      <article class="api-card" data-status="limited" data-keywords="vpn vpnconf create createResult lastResult PPTP L2TP IPSec IKEv2">
+        <div class="api-head"><div><div class="category">VPN</div><h3>vpnconf profile creation</h3></div><span class="badge limited">TrollStore: có, phụ thuộc protocol/iOS</span></div>
+        <div class="apis"><code class="inline">vpnconf.create(options)</code><code class="inline">vpnconf.createResult(options)</code><code class="inline">vpnconf.lastResult()</code></div>
+        <pre>var profile = {
+  dispName: "DemoVPN",
+  VPNType: "IKEv2",
+  server: "vpn.example.com",
+  remoteIdentifier: "vpn.example.com",
+  authorization: "user",
+  password: "password",
+  VPNSendAllTraffic: 1
+};
+
+var ok = vpnconf.create(profile);
+console.log(ok, vpnconf.lastResult());
+
+// connect/query qua task 59 nếu cần:
+// device.runTask(59, "1;;1");</pre>
+        <div class="note">IKEv2 dùng NEVPNManager. PPTP/L2TP/IPSec dùng private backend và có thể không tồn tại trên iOS mới. Credential không đi qua port 6000/task 59.</div>
+      </article>
+
+      <article class="api-card wide" data-status="no limited experimental" data-keywords="missing unsupported keychain activator siri boot springboard vision ocr">
+        <div class="api-head"><div><div class="category">Khác biệt TrollStore</div><h3>Các chức năng chưa tương đương rootfull</h3></div><span class="badge no">Cần chú ý</span></div>
+        <div class="missing">
+          <div><span class="badge no">Không có</span><p><strong>Keychain clearing tùy ý</strong><br>Chưa hỗ trợ vì access group/entitlement.</p></div>
+          <div><span class="badge no">Không có</span><p><strong>Module loader rootfull</strong><br><code class="inline">require</code>, <code class="inline">include</code>, <code class="inline">manifest</code>, global <code class="inline">sleep</code>.</p></div>
+          <div><span class="badge no">Không có</span><p><strong>Rootfull helper TLinkauto</strong><br><code class="inline">assert</code>, <code class="inline">ensureOk</code>, <code class="inline">retry</code>, <code class="inline">withFrame</code>, <code class="inline">withImage</code>, <code class="inline">withCapturedImage</code>.</p></div>
+          <div><span class="badge limited">Hạn chế</span><p><strong>Keyboard visibility</strong><br><code class="inline">showKeyboard/hideKeyboard</code> cần SpringBoard keyboard observer.</p></div>
+          <div><span class="badge limited">Hạn chế</span><p><strong>Global touch indicator</strong><br>Chỉ foreground; global overlay cần SpringBoard injection.</p></div>
+          <div><span class="badge limited">Hạn chế</span><p><strong>Activator / Siri equivalent</strong><br>Vẫn được ghi nhận là limited_on_trollstore.</p></div>
+          <div><span class="badge limited">Hạn chế</span><p><strong>True boot auto-start</strong><br>Widget + BGTaskScheduler chỉ best effort, không phải platformized LaunchDaemon.</p></div>
+          <div><span class="badge experimental">Experimental</span><p><strong>Vision OCR CPU-only</strong><br>Đường Vision vẫn experimental; Tesseract task 91 là stable/default.</p></div>
+        </div>
+      </article>
+    </div>
+
+    <h2>Mẫu main.js khuyến nghị</h2>
+    <section class="panel" style="padding:18px">
+      <pre>console.log("bot start");
+
+var screen = device.getScreenSize();
+if (!screen.ok) throw new Error(screen.error || screen.raw);
+
+var app = device.frontMostAppId();
+console.log("frontmost=" + JSON.stringify(app));
+
+var button = device.tapWhenVisible("assets/button.png", {
+  acceptable: 0.90,
+  timeoutMs: 5000,
+  intervalMs: 150,
+  stableFrames: 2
+});
+
+if (!button.ok) {
+  device.toast("Không tìm thấy nút", { type: 1, duration: 2 });
+  throw new Error(button.lastError || "button not found");
+}
+
+var done = device.waitForText("Hoàn tất", {
+  lang: "vie",
+  matchMode: "contains",
+  timeoutMs: 8000,
+  stableFrames: 2
+});
+
+console.log("done=" + JSON.stringify(done));</pre>
+    </section>
+
+    <h2>Nguồn đối chiếu trong repo</h2>
+    <section class="panel" style="padding:18px">
+      <p><code class="inline">pccontrol/jsruntime/TLinkautoDeviceBridge.h</code> — public JSExport rootfull.</p>
+      <p><code class="inline">pccontrol/jsruntime/TLinkJSRuntimeCore.mm</code> — global runtime/helper rootfull.</p>
+      <p><code class="inline">stream-app/streamd/POCSocketServer.mm</code> — facade JavaScriptCore TrollStore.</p>
+      <p><code class="inline">shared/TLinkSmartWaitPrelude.h</code> — Smart Wait dùng chung.</p>
+      <p><code class="inline">docs/trollstore-runtime-status.md</code> và <code class="inline">docs/trollstore-script-compat-regression.md</code> — trạng thái/capability TrollStore.</p>
+      <p><code class="inline">stream-app/app/CompatibilityExamples/*.js</code> — demo regression thực tế.</p>
+    </section>
+
+    <footer>
+      Tài liệu này được tạo từ trạng thái mã nguồn hiện tại trong workspace ptios. Khi facade TrollStore thay đổi, nên cập nhật lại badge và demo theo POCSocketServer.mm + trollstore-runtime-status.md.
+    </footer>
+  </main>
+
+
+  <script>
+    (function(){
+      var FULL_DEMOS = Object.create(null);
+
+      function add(key, note, code) {
+        FULL_DEMOS[key] = { note: note, code: code };
+      }
+
+      add("require(path)",
+        "Rootfull-only. Demo này cho thấy require, include, manifest và global sleep trong cùng một main.js.",
+String.raw`// main.js - rootfull
+console.log("script =", manifest && manifest.name ? manifest.name : "(no name)");
+
+var math = require("./lib/math");
+console.log("2 + 3 =", math.add(2, 3));
+
+include("./common.js"); // chạy file JS trong cùng context
+if (typeof commonInit === "function") {
+  commonInit();
+}
+
+console.log("chờ 250 ms bằng global sleep()");
+sleep(250);
+console.log("done");
+
+// lib/math.js
+// module.exports = {
+//   add: function(a, b) { return a + b; }
+// };`);
+
+      add("TLinkauto.assert",
+        "Rootfull-only. Bao phủ assert, ensureOk, retry, withFrame, withImage và withCapturedImage.",
+String.raw`// Rootfull JavaScriptCore
+TLinkauto.assert(typeof device === "object", "device bridge missing");
+
+var shot = TLinkauto.ensureOk(
+  device.screenshot(),
+  "screenshot failed"
+);
+console.log("screenshot =", shot.path);
+
+var retryResult = TLinkauto.retry(function(attempt) {
+  var c = device.pickColor(10, 10);
+  if (!c.ok) throw new Error(c.error || c.raw || "pickColor failed");
+  if (c.red < 0) throw new Error("invalid color");
+  return c;
+}, { retries: 2, delayMs: 100 });
+console.log("retry =", JSON.stringify(retryResult));
+
+TLinkauto.withFrame({ bgra: true, gray: true }, function(frame) {
+  var c = TLinkauto.ensureOk(
+    device.framePickColor(frame.id, 10, 10, {}),
+    "framePickColor failed"
+  );
+  console.log("frame RGB =", c.red, c.green, c.blue);
+});
+
+TLinkauto.withImage(shot.path, function(image) {
+  console.log("opened image id =", image.id);
+});
+
+TLinkauto.withCapturedImage(0, 0, 200, 200, function(image) {
+  console.log("captured image =", image.id, image.width, image.height);
+});`);
+
+      add("console.log/info/warn/error",
+        "Có thể copy nguyên khối để kiểm tra log, runtimeInfo, device.log và stop request.",
+String.raw`console.log("runtime demo start");
+console.info("info message");
+console.warn("warning message");
+console.error("error message");
+
+device.log("log trực tiếp qua device.log");
+
+var info = device.runtimeInfo();
+console.log("runtimeInfo =", JSON.stringify(info));
+
+for (var i = 0; i < 20; i++) {
+  if (device.shouldStop()) {
+    console.warn("stop requested at loop " + i);
+    break;
+  }
+  console.log("loop", i);
+  device.sleep(0.1);
+}
+
+console.log("runtime demo finished");`);
+
+      add("device.task(id, body)",
+        "Bao phủ task() chuỗi thô, taskResult() và runTask() object chuẩn hóa.",
+String.raw`// task 23 = pick color
+var raw = device.task(23, "100;;200");
+console.log("task raw =", raw);
+
+var parsed = device.taskResult(23, "100;;200");
+console.log("taskResult =", JSON.stringify(parsed));
+if (!parsed.ok) {
+  throw new Error(parsed.error || parsed.payload || parsed.raw || "taskResult failed");
+}
+
+var alias = device.runTask(23, "100;;200");
+console.log("runTask =", JSON.stringify(alias));
+if (!alias.ok) {
+  throw new Error(alias.error || alias.payload || alias.raw || "runTask failed");
+}`);
+
+      add("device.sleep(seconds)",
+        "Hai API đều có thể bị ngắt khi script nhận stop request.",
+String.raw`console.log("sleep 500 ms");
+var a = device.sleep(0.5);
+console.log("sleep result =", JSON.stringify(a));
+
+console.log("usleep 100000 microseconds = 100 ms");
+var b = device.usleep(100000);
+console.log("usleep result =", JSON.stringify(b));
+
+if (!a.ok || !b.ok) {
+  console.warn("sleep bị dừng hoặc runtime yêu cầu stop");
+}`);
+
+      add("device.tap(x, y)",
+        "Tap native một điểm và kiểm tra kết quả.",
+String.raw`var x = 220;
+var y = 560;
+
+var r = device.tap(x, y);
+console.log("tap =", JSON.stringify(r));
+
+if (!r.ok) {
+  throw new Error(r.error || r.payload || r.raw || "tap failed");
+}`);
+
+      add("device.swipe(x1,y1,x2,y2,duration)",
+        "Bao phủ swipe, longPress, gesture nhiều điểm và native batch.",
+String.raw`function requireOk(r, name) {
+  if (!r || !r.ok) throw new Error(name + ": " + (r && (r.error || r.payload || r.raw) || "failed"));
+  return r;
+}
+
+requireOk(device.swipe(120, 700, 120, 250, 0.35), "swipe");
+device.sleep(0.2);
+
+requireOk(device.longPress(220, 520, 0.8), "longPress");
+device.sleep(0.2);
+
+requireOk(device.gesture(
+  [[100,500], [130,450], [170,400], [220,350]],
+  { finger: 0, durationMs: 350 }
+), "gesture");
+
+var batch = device.batch([
+  { type: "tap", x: 120, y: 300 },
+  {
+    type: "swipe",
+    x1: 100, y1: 600,
+    x2: 100, y2: 250,
+    durationMs: 300
+  }
+]);
+requireOk(batch, "batch");
+console.log("batch =", JSON.stringify(batch));`);
+
+      add("device.zoom(centerX, centerY, startRadius, endRadius, options)",
+        "Experimental trên TrollStore. startRadius < endRadius là spread; ngược lại là pinch.",
+String.raw`function runZoom(startRadius, endRadius) {
+  var r = device.zoom(195, 420, startRadius, endRadius, {
+    durationMs: 350,
+    fingerCount: 2,
+    steps: 20,
+    angleDegrees: 0,
+    baseFinger: 0
+  });
+  console.log("zoom =", JSON.stringify(r));
+  if (!r.ok) throw new Error(r.error || r.payload || r.raw || "zoom failed");
+}
+
+runZoom(35, 130); // spread / zoom in
+device.sleep(0.5);
+runZoom(130, 35); // pinch / zoom out`);
+
+      add("device.hardwareKey(key, action)",
+        "Bao phủ down/up thủ công và pressHardwareKey() tiện dụng.",
+String.raw`function check(r, name) {
+  console.log(name + " =", JSON.stringify(r));
+  if (!r.ok) throw new Error(name + " failed: " + (r.error || r.payload || r.raw));
+}
+
+check(device.pressHardwareKey("volume-up"), "volume-up");
+
+// down/up thủ công
+check(device.hardwareKey("volume-down", "down"), "volume-down down");
+device.sleep(0.08);
+check(device.hardwareKey("volume-down", "up"), "volume-down up");
+
+// Các key hợp lệ: home, volume-up, volume-down, lock/power
+// check(device.pressHardwareKey("lock"), "lock");`);
+
+      add("device.tapMacro(x, y, options)",
+        "Chạy macro tap có giới hạn rồi chủ động stop.",
+String.raw`var start = device.tapMacro(200, 500, {
+  count: 20,
+  intervalMs: 80,
+  durationMs: 20,
+  finger: 0
+});
+console.log("tapMacro start =", JSON.stringify(start));
+if (!start.ok) throw new Error(start.error || start.payload || start.raw);
+
+device.sleep(0.5);
+
+var stop = device.stopTapMacro();
+console.log("tapMacro stop =", JSON.stringify(stop));
+if (!stop.ok) {
+  console.warn("stopTapMacro:", stop.error || stop.payload || stop.raw);
+}`);
+
+      add("device.toast(message, options)",
+        "Toast có position/type/fontSize; alert hỗ trợ duration.",
+String.raw`var toast = device.toast("Đã lưu", {
+  type: 4,
+  duration: 2,
+  position: 2,
+  fontSize: 15,
+  allowScreenshot: false
+});
+console.log("toast =", JSON.stringify(toast));
+
+var alertResult = device.alert(
+  "TLinkauto",
+  "Automation hoàn tất",
+  { duration: 2 }
+);
+console.log("alert =", JSON.stringify(alertResult));
+
+if (!toast.ok) throw new Error("toast failed");
+if (!alertResult.ok) throw new Error("alert failed");`);
+
+      add("device.dialog(options)",
+        "Bao phủ dialog và clearDialogValues. Background TrollStore không trả lựa chọn đồng bộ về caller.",
+String.raw`device.clearDialogValues();
+
+var r = device.dialog({
+  title: "Xác nhận",
+  message: "Tiếp tục chạy automation?",
+  ok: "Tiếp tục",
+  cancel: "Hủy"
+});
+console.log("dialog =", JSON.stringify(r));
+
+if (!r.ok) {
+  throw new Error(r.error || r.payload || r.raw || "dialog failed");
+}
+
+console.log("response hiện tại =", r.response);
+
+// Khi cần reset giá trị đã lưu:
+var cleared = device.clearDialogValues();
+console.log("clearDialogValues =", JSON.stringify(cleared));`);
+
+      add("device.touchIndicator(action)",
+        "Touch indicator TrollStore chỉ foreground; keepAwake là best effort.",
+String.raw`var indicator = device.touchIndicator("show");
+console.log("indicator show =", JSON.stringify(indicator));
+
+var awake = device.keepAwake(true);
+console.log("keepAwake on =", JSON.stringify(awake));
+
+try {
+  for (var i = 0; i < 10; i++) {
+    if (device.shouldStop()) break;
+    device.tap(100 + i * 5, 300);
+    device.sleep(0.1);
+  }
+} finally {
+  console.log("indicator hide =", JSON.stringify(device.touchIndicator("hide")));
+  console.log("keepAwake off =", JSON.stringify(device.keepAwake(false)));
+}`);
+
+      add("device.defaultScreenshotPath()",
+        "Bao phủ default path, screenshot(), screenshotTo() và screenshotRegion().",
+String.raw`function check(r, name) {
+  console.log(name + " =", JSON.stringify(r));
+  if (!r.ok) throw new Error(name + " failed: " + (r.error || r.payload || r.raw));
+  return r;
+}
+
+var defaultPath = device.defaultScreenshotPath();
+console.log("defaultScreenshotPath =", defaultPath);
+
+var autoShot = check(device.screenshot(), "screenshot");
+console.log("auto path =", autoShot.path);
+
+var custom = check(
+  device.screenshotTo("/var/mobile/Library/TLinkauto/screenshots/full.png"),
+  "screenshotTo"
+);
+
+var roi = check(
+  device.screenshotRegion(
+    "/var/mobile/Library/TLinkauto/screenshots/roi.png",
+    { x: 50, y: 100, width: 300, height: 250 }
+  ),
+  "screenshotRegion"
+);
+console.log(custom.path, roi.path);`);
+
+      add("device.saveScreenshotToAlbum(path)",
+        "Demo lưu một ảnh vào album và minh họa clear album ở chế độ an toàn.",
+String.raw`var shot = device.screenshot();
+if (!shot.ok) throw new Error(shot.error || shot.raw || "screenshot failed");
+
+var saved = device.saveScreenshotToAlbum(shot.path);
+console.log("saveScreenshotToAlbum =", JSON.stringify(saved));
+if (!saved.ok) throw new Error(saved.error || saved.raw || "save album failed");
+
+// Lệnh này xóa ảnh trong album TLinkauto.
+// Đổi thành true khi thực sự muốn test destructive action.
+var CONFIRM_CLEAR_ALBUM = false;
+if (CONFIRM_CLEAR_ALBUM) {
+  var cleared = device.clearScreenshotAlbum();
+  console.log("clearScreenshotAlbum =", JSON.stringify(cleared));
+}`);
+
+      add("device.pickColor(x,y)",
+        "Bao phủ pickColor, findColor, isColors và findMultiColor.",
+String.raw`var c = device.pickColor(100, 200);
+console.log("pickColor =", JSON.stringify(c));
+if (!c.ok) throw new Error(c.error || c.raw || "pickColor failed");
+
+var found = device.findColor({
+  x: 0, y: 0, width: 750, height: 1334,
+  redMin: 200, redMax: 255,
+  greenMin: 0, greenMax: 80,
+  blueMin: 0, blueMax: 80,
+  skip: 2
+});
+console.log("findColor =", JSON.stringify(found));
+
+var exact = device.isColors([
+  [100, 200, c.red, c.green, c.blue],
+  [110, 200, 255, 255, 255]
+], {
+  mode: 1,
+  tolerance: 10
+});
+console.log("isColors =", JSON.stringify(exact));
+
+var multi = device.findMultiColor([
+  [0, 0, 255, 0, 0],
+  [20, 0, 255, 255, 255]
+], {
+  x: 0, y: 0, width: 750, height: 1334,
+  mode: 1,
+  tolerance: 10,
+  skip: 2
+});
+console.log("findMultiColor =", JSON.stringify(multi));`);
+
+      add("captureFrame",
+        "Bao phủ toàn bộ vòng đời frame và các API color frame. Luôn release handle trong finally.",
+String.raw`function log(name, r) {
+  console.log(name + " =", JSON.stringify(r));
+  return r;
+}
+
+var frame = device.captureFrame({
+  bgra: 1,
+  gray: 1,
+  ttlMs: 3000
+});
+if (!frame.ok) throw new Error(frame.error || frame.raw || "captureFrame failed");
+
+try {
+  log("framePickColor",
+    device.framePickColor(frame.id, 10, 10, { coord: "pixel", maxAgeMs: 3000 }));
+
+  log("framePickColors",
+    device.framePickColors(frame.id, [[10,10], [20,20], [30,30]], { maxAgeMs: 3000 }));
+
+  log("frameFindColor",
+    device.frameFindColor(frame.id, {
+      x: 0, y: 0, width: frame.width, height: frame.height,
+      redMin: 200, redMax: 255,
+      greenMin: 0, greenMax: 90,
+      blueMin: 0, blueMax: 90,
+      skip: 2,
+      maxAgeMs: 3000
+    }));
+
+  log("frameIsColors",
+    device.frameIsColors(frame.id, [[10,10,255,255,255]], {
+      tolerance: 10,
+      maxAgeMs: 3000
+    }));
+
+  log("frameFindMultiColor",
+    device.frameFindMultiColor(frame.id, [
+      [0,0,255,255,255],
+      [20,0,0,0,0]
+    ], {
+      x: 0, y: 0, width: frame.width, height: frame.height,
+      tolerance: 10,
+      skip: 2,
+      maxAgeMs: 3000
+    }));
+} finally {
+  log("releaseFrame", device.releaseFrame(frame.id));
+}
+
+// Dọn toàn bộ frame còn sót của session:
+log("releaseAllFrames", device.releaseAllFrames());`);
+
+      add("device.openImage(path)",
+        "Bao phủ openImage, captureImage, releaseImage, findImageInFrame và matchTemplate.",
+String.raw`function requireOk(r, name) {
+  console.log(name + " =", JSON.stringify(r));
+  if (!r || !r.ok) throw new Error(name + ": " + (r && (r.error || r.raw) || "failed"));
+  return r;
+}
+
+var template = requireOk(device.openImage("assets/login.png"), "openImage");
+var captured = requireOk(device.captureImage(0, 0, 250, 250), "captureImage");
+var frame = requireOk(device.captureFrame({ bgra: 1, gray: 1, ttlMs: 3000 }), "captureFrame");
+
+try {
+  var match = device.findImageInFrame(frame.id, template.id, {
+    x: 0, y: 0,
+    width: frame.width,
+    height: frame.height,
+    acceptable: 0.90,
+    scaleMin: 1.0,
+    scaleMax: 1.0,
+    scaleStep: 1.0,
+    pixelSkip: 1,
+    coord: "pixel",
+    maxAgeMs: 3000
+  });
+  console.log("findImageInFrame =", JSON.stringify(match));
+
+  var legacy = device.matchTemplate("assets/login.png", {
+    acceptable: 0.80
+  });
+  console.log("matchTemplate =", JSON.stringify(legacy));
+} finally {
+  device.releaseFrame(frame.id);
+  console.log("release template =", JSON.stringify(device.releaseImage(template.id)));
+  console.log("release captured =", JSON.stringify(device.releaseImage(captured.id)));
+}`);
+
+      add("device.ocrLanguages()",
+        "Bao phủ ocrLanguages, ocrFrame và ocr. Tesseract task 91 là đường ổn định.",
+String.raw`var langs = device.ocrLanguages();
+console.log("languages =", JSON.stringify(langs));
+if (!langs.ok) throw new Error(langs.error || langs.raw || "ocrLanguages failed");
+
+var frame = device.captureFrame({ gray: 1, bgra: 0, ttlMs: 3000 });
+if (!frame.ok) throw new Error(frame.error || frame.raw || "captureFrame failed");
+
+try {
+  var fromFrame = device.ocrFrame(frame.id, {
+    x: 20, y: 100, width: 335, height: 120,
+    lang: "vie",
+    oem: 1,
+    psm: 7,
+    whitelist: "",
+    scaleUp: 2,
+    thresholdMode: 0,
+    coord: "pixel",
+    maxAgeMs: 3000
+  });
+  console.log("ocrFrame =", JSON.stringify(fromFrame));
+} finally {
+  device.releaseFrame(frame.id);
+}
+
+var direct = device.ocr({
+  x: 20, y: 100, width: 335, height: 120,
+  lang: "vie+eng",
+  oem: 1,
+  psm: 7,
+  scaleUp: 2,
+  thresholdMode: 0,
+  ttlMs: 3000
+});
+console.log("ocr =", JSON.stringify(direct));`);
+
+      add("device.waitUntil(predicate, options)",
+        "Bao phủ waitUntil, waitForApp và waitForColor với timeout/stableFrames.",
+String.raw`var stable = device.waitUntil(function(attempt) {
+  return attempt >= 3 ? { ready: true, attempt: attempt } : false;
+}, {
+  timeoutMs: 3000,
+  intervalMs: 100,
+  stableFrames: 2,
+  ignoreErrors: false
+});
+console.log("waitUntil =", JSON.stringify(stable));
+
+var front = device.frontMostAppId();
+if (front.ok && front.bundleId) {
+  var app = device.waitForApp(front.bundleId, {
+    timeoutMs: 3000,
+    intervalMs: 100,
+    stableFrames: 1
+  });
+  console.log("waitForApp =", JSON.stringify(app));
+}
+
+var current = device.pickColor(10, 10);
+if (current.ok) {
+  var color = device.waitForColor(10, 10, current, {
+    tolerance: 2,
+    timeoutMs: 3000,
+    intervalMs: 100,
+    stableFrames: 2
+  });
+  console.log("waitForColor =", JSON.stringify(color));
+}`);
+
+      add("device.waitForImage(path, options)",
+        "Bao phủ waitForImage, waitForText, waitUntilGone và tapWhenVisible.",
+String.raw`var imagePath = "assets/login.png";
+
+var found = device.waitForImage(imagePath, {
+  acceptable: 0.90,
+  timeoutMs: 5000,
+  intervalMs: 150,
+  stableFrames: 2,
+  pixelSkip: 1
+});
+console.log("waitForImage =", JSON.stringify(found));
+
+if (found.ok) {
+  var tapped = device.tapWhenVisible(imagePath, {
+    acceptable: 0.90,
+    timeoutMs: 1500,
+    stableFrames: 1,
+    offsetX: 0,
+    offsetY: 0
+  });
+  console.log("tapWhenVisible =", JSON.stringify(tapped));
+}
+
+var text = device.waitForText("Trang chủ", {
+  region: [0, 0, 750, 300],
+  lang: "vie",
+  psm: 7,
+  scaleUp: 2,
+  matchMode: "contains",
+  caseSensitive: false,
+  timeoutMs: 8000,
+  intervalMs: 250,
+  stableFrames: 2
+});
+console.log("waitForText =", JSON.stringify(text));
+
+var gone = device.waitUntilGone(imagePath, {
+  acceptable: 0.90,
+  timeoutMs: 5000,
+  intervalMs: 200,
+  stableFrames: 2
+});
+console.log("waitUntilGone =", JSON.stringify(gone));`);
+
+      add("device.uiTreeCapability()",
+        "Experimental. Bao phủ capability, snapshot, find, hit-test, tapElement và hai Smart Wait accessibility.",
+String.raw`var cap = device.uiTreeCapability();
+console.log("uiTreeCapability =", JSON.stringify(cap));
+if (!cap || cap.state !== "ready") {
+  throw new Error("UI Tree unavailable: " + JSON.stringify(cap));
+}
+
+var tree = device.uiTree({
+  visibleOnly: true,
+  maxElements: 250,
+  timeoutMs: 1000
+});
+console.log("uiTree count =", tree.count, "bundle =", tree.bundle_id);
+
+var selector = {
+  text: "Settings",
+  match: "contains",
+  visibleOnly: true
+};
+
+var found = device.uiFind(selector);
+console.log("uiFind =", JSON.stringify(found));
+
+var at = device.uiAt(100, 200);
+console.log("uiAt =", JSON.stringify(at));
+
+var waited = device.waitForElement(selector, {
+  timeoutMs: 3000,
+  intervalMs: 250,
+  stableFrames: 1,
+  ignoreErrors: false
+});
+console.log("waitForElement =", JSON.stringify(waited));
+
+if (waited.ok) {
+  var tap = device.tapElement({
+    text: "Settings",
+    match: "exact",
+    clickableOnly: true
+  });
+  console.log("tapElement =", JSON.stringify(tap));
+}
+
+var gone = device.waitUntilElementGone(selector, {
+  timeoutMs: 1500,
+  intervalMs: 250,
+  stableFrames: 1,
+  ignoreErrors: true
+});
+console.log("waitUntilElementGone =", JSON.stringify(gone));`);
+
+      add("frontMostAppId",
+        "Bao phủ toàn bộ nhóm query app/process.",
+String.raw`var id = "com.apple.Preferences";
+
+console.log("frontMostAppId =", JSON.stringify(device.frontMostAppId()));
+console.log("orientation =", JSON.stringify(device.orientation()));
+
+var state = device.appState(id);
+console.log("appState =", JSON.stringify(state));
+
+var info = device.appInfo(id);
+console.log("appInfo =", JSON.stringify(info));
+
+var pid = device.appPid(id);
+console.log("appPid =", JSON.stringify(pid));
+
+var frontPid = device.frontMostPid();
+console.log("frontMostPid =", JSON.stringify(frontPid));
+
+var paths = device.appPaths(id);
+console.log("appPaths =", JSON.stringify(paths));
+
+var ids = device.listBundles(false);
+console.log("listBundles(false) =", JSON.stringify(ids));
+
+var detailed = device.listBundles(true);
+console.log("listBundles(true) =", JSON.stringify(detailed));`);
+
+      add("device.openApp(bundleId)",
+        "Các lệnh kill/clear data là destructive; demo đặt cờ false để tránh chạy nhầm.",
+String.raw`function log(name, r) {
+  console.log(name + " =", JSON.stringify(r));
+  return r;
+}
+
+var id = "com.apple.Preferences";
+var opened = log("openApp", device.openApp(id));
+if (!opened.ok) console.warn("openApp limited:", opened.error || opened.raw);
+
+var url = log("openUrl", device.openUrl("https://example.com"));
+if (!url.ok) console.warn("openUrl limited:", url.error || url.raw);
+
+// CẢNH BÁO: hai thao tác dưới có tính destructive/process-control.
+var RUN_DESTRUCTIVE_DEMO = false;
+
+if (RUN_DESTRUCTIVE_DEMO) {
+  var target = "com.example.target";
+
+  var killed = log("killApp", device.killApp(target));
+  if (!killed.ok) console.warn("killApp:", killed.error || killed.raw);
+
+  var cleared = log("clearAppData", device.clearAppData(target));
+  if (!cleared.ok) console.warn("clearAppData:", cleared.error || cleared.raw);
+}`);
+
+      add("device.getClipboardText()",
+        "Bao phủ clipboard text/image, insert/paste, delete, cursor và keyboardTask raw wrapper.",
+String.raw`function log(name, r) {
+  console.log(name + " =", JSON.stringify(r));
+  return r;
+}
+
+log("setClipboardText", device.setClipboardText("hello from TLinkauto"));
+
+var clip = log("getClipboardText", device.getClipboardText());
+if (clip.ok) console.log("clipboard text =", clip.text);
+
+// Focus một text field trong app đích trước khi test:
+log("insertText", device.insertText("Xin chào"));
+log("deleteCharacters", device.deleteCharacters(3));
+log("moveCursor", device.moveCursor(-2));
+log("pasteFromClipboard", device.pasteFromClipboard());
+
+// keyboardTask raw-compatible: kind 6 = đọc clipboard text
+log("keyboardTask(6)", device.keyboardTask(6, ""));
+
+var shot = device.screenshot();
+if (shot.ok) {
+  log("setClipboardImage", device.setClipboardImage(shot.path));
+}`);
+
+      add("device.showKeyboard()",
+        "Tên API tồn tại cho parity rootfull; TrollStore thường trả limited_on_trollstore.",
+String.raw`var show = device.showKeyboard();
+console.log("showKeyboard =", JSON.stringify(show));
+
+if (!show.ok) {
+  console.warn("showKeyboard unavailable/limited:", show.error || show.payload || show.raw);
+}
+
+var hide = device.hideKeyboard();
+console.log("hideKeyboard =", JSON.stringify(hide));
+
+if (!hide.ok) {
+  console.warn("hideKeyboard unavailable/limited:", hide.error || hide.payload || hide.raw);
+}`);
+
+      add("device.rootDir()",
+        "Bao phủ paths, info, battery, screen size, orientation và pathTask generic.",
+String.raw`function dump(name, value) {
+  console.log(name + " =", JSON.stringify(value));
+}
+
+dump("rootDir", device.rootDir());
+dump("currentDir", device.currentDir());
+dump("botPath", device.botPath());
+dump("info", device.info());
+dump("batteryInfo", device.batteryInfo());
+dump("getScreenSize", device.getScreenSize());
+dump("orientation", device.orientation());
+
+// Generic pathTask: task 44 = rootDir, key tự chọn
+dump("pathTask", device.pathTask(44, "root"));`);
+
+      add("device.readText(path)",
+        "Bao phủ toàn bộ storage text/JSON/file existence/delete. Path luôn bundle-relative.",
+String.raw`function check(r, name) {
+  console.log(name + " =", JSON.stringify(r));
+  if (!r.ok) throw new Error(name + ": " + (r.error || r.raw || "failed"));
+  return r;
+}
+
+check(device.writeText("storage/state.txt", "ready\n"), "writeText");
+
+var text = check(device.readText("storage/state.txt"), "readText");
+console.log("text =", text.text);
+
+check(device.writeJSON("storage/state.json", {
+  ready: true,
+  at: Date.now(),
+  count: 1
+}), "writeJSON");
+
+var json = check(device.readJSON("storage/state.json"), "readJSON");
+console.log("json value =", JSON.stringify(json.value));
+
+var exists = check(device.fileExists("storage/state.json"), "fileExists");
+console.log("exists =", exists.exists, "directory =", exists.directory);
+
+var deleted = check(device.deleteFile("storage/state.txt"), "deleteFile");
+console.log("deleted =", deleted.deleted);`);
+
+      add("device.openFile(path,mode)",
+        "Bao phủ read/readLine/write/writeBase64/seek/tell/flush/isClosed/close.",
+String.raw`var f = device.openFile("storage/file-handle-demo.txt", "w+");
+if (!f.ok) throw new Error(f.error || "openFile failed");
+
+try {
+  console.log("write =", JSON.stringify(f.write("first line\nsecond line\n")));
+
+  // "base64 text" -> bytes ghi trực tiếp
+  console.log("writeBase64 =", JSON.stringify(f.writeBase64("YmFzZTY0IGxpbmUK")));
+
+  console.log("tell =", JSON.stringify(f.tell()));
+
+  console.log("seek start =", JSON.stringify(f.seek("set", 0)));
+
+  var first = f.readLine();
+  console.log("readLine =", JSON.stringify(first));
+
+  var rest = f.read("*a");
+  console.log("read all =", JSON.stringify(rest));
+
+  console.log("seek start again =", JSON.stringify(f.seek("set", 0)));
+  var firstFive = f.read(5);
+  console.log("read 5 bytes =", JSON.stringify(firstFive));
+
+  console.log("flush =", JSON.stringify(f.flush()));
+  console.log("isClosed before =", JSON.stringify(f.isClosed()));
+} finally {
+  console.log("close =", JSON.stringify(f.close()));
+  console.log("isClosed after =", JSON.stringify(f.isClosed()));
+}`);
+
+      add("device.setAutoLaunch(name,script,enabled)",
+        "Bao phủ set/list auto-launch và set/remove timer.",
+String.raw`function log(name, r) {
+  console.log(name + " =", JSON.stringify(r));
+  if (!r.ok) console.warn(name + " failed:", r.error || r.raw);
+  return r;
+}
+
+log("setAutoLaunch",
+  device.setAutoLaunch("boot-main", "My Bot.tl", true));
+
+log("listAutoLaunch",
+  device.listAutoLaunch());
+
+log("setTimer",
+  device.setTimer("poll-every-30s", 30, true, "My Bot.tl"));
+
+// Sau khi test, xóa timer:
+// log("removeTimer", device.removeTimer("poll-every-30s"));
+
+// Disable autolaunch khi không còn cần:
+// log("disable auto launch",
+//   device.setAutoLaunch("boot-main", "My Bot.tl", false));`);
+
+      add("wifi",
+        "Bao phủ query/set Wi‑Fi, Bluetooth, Airplane, Cellular và connectivityTask generic. Setter là best effort/private-framework dependent.",
+String.raw`function log(name, r) {
+  console.log(name + " =", JSON.stringify(r));
+  return r;
+}
+
+log("wifi", device.wifi());
+log("bluetooth", device.bluetooth());
+log("airplaneMode", device.airplaneMode());
+log("cellularData", device.cellularData());
+
+// Tránh tự thay đổi connectivity khi chỉ đọc tài liệu.
+var APPLY_CHANGES = false;
+
+if (APPLY_CHANGES) {
+  log("setWifi", device.setWifi(true));
+  log("setBluetooth", device.setBluetooth(true));
+  log("setAirplaneMode", device.setAirplaneMode(false));
+  log("setCellularData", device.setCellularData(true));
+
+  // Generic wrapper: task 55 = Wi-Fi, key output = "enabled"
+  log("connectivityTask query",
+    device.connectivityTask(55, "enabled", null));
+}`);
+
+      add("device.runShell(command, timeoutSeconds)",
+        "Shell bị gate bởi Settings và mặc định tắt; luôn kiểm tra ok/exitCode.",
+String.raw`var r = device.runShell("echo tlinkauto-shell-ok", 5);
+console.log("runShell =", JSON.stringify(r));
+
+if (!r.ok) {
+  console.warn("Shell có thể đang tắt trong Settings:", r.error || r.payload || r.raw);
+} else {
+  console.log("exitCode =", r.exitCode);
+  console.log("output =", r.output);
+}`);
+
+      add("vpnconf.create(options)",
+        "Bao phủ create, createResult, lastResult. Dùng credential giả và không log password/secret.",
+String.raw`var profile = {
+  dispName: "Demo IKEv2",
+  VPNType: "IKEv2",
+  server: "vpn.example.com",
+  remoteIdentifier: "vpn.example.com",
+  authorization: "demo-user",
+  password: "CHANGE_ME",
+  VPNSendAllTraffic: 1
+};
+
+if (profile.password === "CHANGE_ME") {
+  console.log("Hãy thay password trước khi chạy demo VPN");
+} else {
+  var ok = vpnconf.create(profile);
+  var last = vpnconf.lastResult();
+
+  console.log("vpnconf.create ok =", ok);
+  console.log("vpnconf.lastResult code =", last.code);
+
+  var result = vpnconf.createResult(profile);
+  console.log("vpnconf.createResult =", JSON.stringify({
+    ok: result.ok,
+    code: result.code,
+    profile_type: result.profile_type
+  }));
+
+  if (!ok) throw new Error("VPN create failed: " + last.code);
+
+  // Query/control profile đã lưu qua task 59 nếu cần:
+  // console.log(device.runTask(59, "0"));
+  // console.log(device.runTask(59, "1;;1"));
+}`);
+
+      function renderFullDemos() {
+        var cards = Array.prototype.slice.call(document.querySelectorAll(".api-card"));
+        cards.forEach(function(card) {
+          var firstApi = card.querySelector(".apis code.inline");
+          if (!firstApi) return;
+
+          var key = (firstApi.textContent || "").trim();
+          var demo = FULL_DEMOS[key];
+          if (!demo) return;
+
+          var details = document.createElement("details");
+          details.className = "full-demo";
+
+          var summary = document.createElement("summary");
+          summary.textContent = "Demo đầy đủ — bao phủ mọi API trong nhóm";
+          details.appendChild(summary);
+
+          var body = document.createElement("div");
+          body.className = "full-demo-body";
+
+          var note = document.createElement("p");
+          note.className = "full-demo-note";
+          note.textContent = demo.note;
+          body.appendChild(note);
+
+          var toolbar = document.createElement("div");
+          toolbar.className = "full-demo-toolbar";
+
+          var copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "copy-demo";
+          copy.textContent = "Copy demo";
+          copy.addEventListener("click", function() {
+            var code = demo.code;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(code).then(function() {
+                copy.textContent = "Đã copy";
+                setTimeout(function(){ copy.textContent = "Copy demo"; }, 1200);
+              });
+            } else {
+              var area = document.createElement("textarea");
+              area.value = code;
+              document.body.appendChild(area);
+              area.select();
+              document.execCommand("copy");
+              document.body.removeChild(area);
+              copy.textContent = "Đã copy";
+              setTimeout(function(){ copy.textContent = "Copy demo"; }, 1200);
+            }
+          });
+          toolbar.appendChild(copy);
+          body.appendChild(toolbar);
+
+          var pre = document.createElement("pre");
+          pre.textContent = demo.code;
+          body.appendChild(pre);
+
+          details.appendChild(body);
+          card.appendChild(details);
+        });
+      }
+
+      renderFullDemos();
+    })();
+  </script>
+
+  <script>
+    (function(){
+      var search = document.getElementById("search");
+      var filter = document.getElementById("filter");
+      var cards = Array.prototype.slice.call(document.querySelectorAll(".api-card"));
+
+      function apply(){
+        var q = (search.value || "").trim().toLowerCase();
+        var f = filter.value;
+        cards.forEach(function(card){
+          var text = (card.textContent + " " + (card.getAttribute("data-keywords") || "")).toLowerCase();
+          var status = card.getAttribute("data-status") || "";
+          var okText = !q || text.indexOf(q) !== -1;
+          var okStatus = f === "all" || status.split(/\s+/).indexOf(f) !== -1;
+          card.classList.toggle("hidden", !(okText && okStatus));
+        });
+      }
+
+      search.addEventListener("input", apply);
+      filter.addEventListener("change", apply);
+    })();
+  </script>
+</body>
+</html>
