@@ -17,6 +17,7 @@
 
 - (int)play:(NSError**)error;
 - (BOOL)isPlaying;
+- (BOOL)canStartScheduledScript;
 - (NSString*)getCurrentBundlePath;
 - (NSDictionary *)licenseRuntimeDiagnostics;
 

@@ -1,7 +1,7 @@
 # A03 — P1-19
 
 Date: 2026-10-16. Base: `8a67002` (A02 build reported passed by the user).
-Status: source implemented; native host and source-contract checks passed. New iOS build and device validation pending.
+Status: source implemented; native host and source-contract checks passed. User reported the A03 build passed before A04; device validation remains pending.
 
 ## Scope and changes
 
@@ -31,7 +31,7 @@ A01 native tests passed again for both production touch implementations (100k-fr
 
 ## Remaining build/device checks
 
-1. Build rootfull and roothide with the new Screen.xm; the user's latest successful build predates A03. Windows host tests do not compile UIKit/Logos or the real private APIs.
+1. User reported the A03 build passed on 2026-10-16 before A04. The report does not identify every build-matrix artifact; inspect the relevant rootfull/roothide CI jobs before release. Windows host tests do not compile UIKit/Logos or the real private APIs.
 2. On iPhone and iPad8+ in both orientations, verify screenshot dimensions, orientation, colors, crop coordinates, image/OCR consumers and H264 output against the previous artifact. Exercise keep/unkeep and release returned snapshots.
 3. Run repeated capture under Instruments (S004 Probe H), including memory pressure and diagnostic allocation/lock failures. Check live CGImage, CGContext and IOSurface counts after caller release and compare RSS/latency; no measured performance gain is claimed yet.
 4. Verify real `UICreateCGImageFromIOSurface` provider lifetime after unlocking/releasing the local surface reference. The native double models a provider retaining the surface, matching the existing caller assumption; it cannot establish private API behavior. The render API returns void, so this change cannot detect a render-server failure that still yields an image.

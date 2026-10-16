@@ -16,8 +16,10 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - A02 native ownership/slot/generation harness passes, including 10k client lifecycles, and all 29 existing source-contract checks pass. User reported the build passed before A03; actual UIKit/main-run-loop behavior is not yet device-validated. Details: `IMPLEMENTATION-A02.md`.
 - P1-08 is only partially improved (no per-move GCD backlog; cached font). Display-cadence coalescing remains separate performance work.
 - A03 / P1-19: rootfull/roothide capture source implemented. Guard failed surface/lock/image/context creation; balance owned references without releasing borrowed color space; calculate rotation stride from destination width and validate geometry/size arithmetic.
-- A03 native harness passes 22 success/fault paths and 20k frames with zero live test resources; A01/A02 native suites and all 29 existing source-contract checks also pass. New iOS build and device checks remain pending. Details: `IMPLEMENTATION-A03.md`.
-- Next implementation group is A04 / P0-15 + P0-16 + P1-52. Build reports do not replace each group's device qualification.
+- A03 native harness passes 22 success/fault paths and 20k frames with zero live test resources; A01/A02 native suites and all 29 existing source-contract checks also pass. User reported the A03 build passed before A04; device checks remain pending. Details: `IMPLEMENTATION-A03.md`.
+- A04 / P0-15 + P0-16 + P1-52: source implemented. Rootfull/roothide timers use a serial background owner, non-reused generation tokens, committed set/remove acknowledgments, a 1-second repeat floor, leeway and cheap busy rejection before license/config work. All three production auto-launch writers share a file-lock transaction helper.
+- A04 portable registry/policy tests pass (8 clients x 10k cycles); A01-A03 native regressions and all 36 source-contract checks across both workflows pass. macOS dispatch/ARC and Foundation cross-process tests are added to CI but were not run on this Windows host. New iOS builds and device checks remain pending. Details: `IMPLEMENTATION-A04.md`.
+- Next implementation group is A05 / P0-03 + P1-02. Build reports do not replace each group's device qualification.
 
 ## Primary target
 

@@ -13,6 +13,7 @@
 #import "../../shared/TLinkLicenseVerifier.h"
 #import "../../shared/TLinkSmartWaitPrelude.h"
 #import "../../shared/TLinkRunHistory.h"
+#import "../../shared/TLinkAutoLaunchConfig.h"
 #import "../../shared/TLinkVPNDiagnostics.h"
 #import "../../shared/TLinkVPNPrivateRequest.h"
 #import "../../shared/TLinkAccessibilityTree.h"
@@ -9135,13 +9136,6 @@ static NSMutableDictionary *TLinkLoadAutoLaunchConfig(void)
     return config ?: [NSMutableDictionary dictionary];
 }
 
-static BOOL TLinkSaveAutoLaunchConfig(NSDictionary *config)
-{
-    NSString *parent = [kTLinkAutoLaunchConfigPath stringByDeletingLastPathComponent];
-    [[NSFileManager defaultManager] createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:nil];
-    return [config writeToFile:kTLinkAutoLaunchConfigPath atomically:YES];
-}
-
 static NSData *TLinkHandleSetAutoLaunch(NSString *body)
 {
     NSArray<NSString *> *parts = TLinkSplitBody(body);
@@ -9155,9 +9149,8 @@ static NSData *TLinkHandleSetAutoLaunch(NSString *body)
         return TLinkError(@"auto_launch_requires_name_and_script");
     }
 
-    NSMutableDictionary *config = TLinkLoadAutoLaunchConfig();
-    config[name] = @{@"script": script, @"enabled": @(enabled)};
-    if (!TLinkSaveAutoLaunchConfig(config)) {
+    if (!TLinkAutoLaunchSetEntry(kTLinkAutoLaunchConfigPath, name,
+                                 @{@"script": script, @"enabled": @(enabled)}, NULL)) {
         return TLinkError(@"auto_launch_save_failed");
     }
     return TLinkSuccess([NSString stringWithFormat:@"auto_launch_set;;%@;;%d", name, enabled ? 1 : 0]);

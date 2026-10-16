@@ -14,8 +14,9 @@
 #import "../shared/TLinkRunHistory.h"
 #import "Screen.h"
 #include <os/lock.h>
+#include <atomic>
 
-static BOOL isPlaying = false;
+static std::atomic_bool isPlaying{false};
 
 typedef NS_ENUM(NSInteger, TLinkScriptState) {
     TLinkScriptStateIdle = 0,
@@ -77,6 +78,13 @@ static NSString *tlinkautoStringValue(id value) {
 }
 
 - (BOOL)isPlaying { return isPlaying; }
+
+- (BOOL)canStartScheduledScript {
+    os_unfair_lock_lock(&_playerLock);
+    BOOL allowed = _state == TLinkScriptStateIdle && !isPlaying.load();
+    os_unfair_lock_unlock(&_playerLock);
+    return allowed;
+}
 
 - (NSString*)getCurrentBundlePath { return scriptBundlePath ?: @""; }
 

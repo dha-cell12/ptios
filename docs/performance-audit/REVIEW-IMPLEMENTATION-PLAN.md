@@ -8,7 +8,7 @@ Phần lớn nhận xét có cơ sở ở mã nguồn hiện tại và dùng đ�
 
 Đã đối chiếu 130 mã nhận xét trong FINDINGS (24 P0, 78 P1, 28 P2), các luồng gọi và cấu hình build liên quan. Đây là kiểm tra tĩnh; chưa chạy build iOS, Instruments hoặc tái hiện trên thiết bị. BENCHMARK-S002 đến BENCHMARK-S011 là kế hoạch đo, không phải kết quả đo. Chưa có cơ sở cam kết tỷ lệ giảm CPU/pin/RAM.
 
-Cập nhật triển khai 16/10/2026: A01 (P0-04/P1-06) và A02 (P1-07/P1-09/P1-10) đã sửa; người dùng xác nhận build đã pass, còn xác minh trên thiết bị. A03 (P1-19) đã sửa ownership/failure handling và stride ảnh xoay cho capture rootfull/roothide; native regression và 29 source-contract checks đã qua, còn chờ build iOS mới và kiểm tra thiết bị. Chi tiết: `IMPLEMENTATION-A01.md`, `IMPLEMENTATION-A02.md`, `IMPLEMENTATION-A03.md`.
+Cập nhật triển khai 16/10/2026: A01–A03 đã sửa; người dùng xác nhận các build đã pass, còn xác minh trên thiết bị. A04 (P0-15/P0-16/P1-52) đã sửa timer rootfull/roothide và giao dịch auto-launch cho ba production writer. Native registry/policy tests (8 client × 10.000 chu kỳ), regression A01–A03 và 36 source-contract checks đã qua trên host; kiểm thử macOS dispatch/ARC + Foundation đã thêm vào CI, còn chờ kết quả cùng build iOS mới. Chi tiết: `IMPLEMENTATION-A01.md` đến `IMPLEMENTATION-A04.md`. Nhóm tiếp theo: A05.
 
 ## Phạm vi triển khai đã chốt
 

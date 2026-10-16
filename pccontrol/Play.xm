@@ -20,6 +20,11 @@ void updateSwtichAppBeforeRunScript(BOOL value)
     switchAppBeforeRunScript = value;
 }
 
+BOOL canStartScriptPlaying(void)
+{
+    return scriptPlayer && [scriptPlayer canStartScheduledScript];
+}
+
 int playScript(UInt8* path, NSError **error)
 {
     if (!scriptPlayer)

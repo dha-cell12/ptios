@@ -1,5 +1,6 @@
 #import "BootScriptViewController.h"
 #import "TLinkTheme.h"
+#import "../../shared/TLinkAutoLaunchConfig.h"
 
 static NSString *const kTLinkScriptsRootPath = @"/var/mobile/Library/TLinkauto/scripts";
 static NSString *const kTLinkBootScriptConfigPath = @"/var/mobile/Library/TLinkauto/config/tweak/boot_script.plist";
@@ -126,15 +127,13 @@ static NSString *const kTLinkBootAutoLaunchName = @"00-boot-script";
         return NO;
     }
 
-    NSMutableDictionary *autoLaunch = [[NSDictionary dictionaryWithContentsOfFile:kTLinkAutoLaunchConfigPath] mutableCopy];
-    if (!autoLaunch) autoLaunch = [NSMutableDictionary dictionary];
-    autoLaunch[kTLinkBootAutoLaunchName] = @{
+    NSError *autoLaunchError = nil;
+    if (!TLinkAutoLaunchSetEntry(kTLinkAutoLaunchConfigPath, kTLinkBootAutoLaunchName, @{
         @"script": script ?: @"",
         @"enabled": @(enabled),
         @"source": @"widget_boot_script_v1",
-    };
-    if (![autoLaunch writeToFile:kTLinkAutoLaunchConfigPath atomically:YES]) {
-        if (errorMessage) *errorMessage = @"Could not update autolaunch.plist.";
+    }, &autoLaunchError)) {
+        if (errorMessage) *errorMessage = autoLaunchError.localizedDescription ?: @"Could not update autolaunch.plist.";
         return NO;
     }
 
