@@ -63,19 +63,26 @@ try {
     ? ["/nologo", "/std:c++14", "/W4", "/WX", "/EHsc", `/I${temp}`, ...files, `/Fe${binary}`, `/Fo${temp}\\`]
     : ["-std=c++14", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-pthread", "-I", temp, ...files, "-o", binary]);
   run(binary, []);
+  // Extract and check fixture dependencies on every host, even when Foundation is unavailable.
+  const rawBridge = between(bridge, "// BEGIN bounded native dispatch", "// END bounded native dispatch.");
+  const press = between(bridge, "    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey])",
+    "    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake])");
+  const helpers = between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
+    between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSStringContainsAny") +
+    between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
+  for (const name of new Set([...`${rawBridge}\n${press}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+    assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
+  }
+  await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
+  await writeFile(join(temp, "NativeHelpersUnderTest.inc"), helpers);
+  await writeFile(join(temp, "NativeRequestPreludeUnderTest.inc"),
+    between(bridge, "    NSString *method = request.method;", "    id<TLinkInProcessFacadeInterface> runtime"));
+  await writeFile(join(temp, "NativePressUnderTest.inc"), press);
+  await writeFile(join(temp, "NativeGesturesUnderTest.inc"),
+    between(task, "static std::atomic<uint64_t> sTLinkZoomAttemptCount", "static NSDictionary *zx_zoomDiagnostics") +
+    between(task, "static int zx_clampTouchCoord", "// === runShell drain/timeout support"));
+  console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
-    await writeFile(join(temp, "NativeBridgeUnderTest.inc"),
-      between(bridge, "// BEGIN bounded native dispatch", "// END bounded native dispatch."));
-    await writeFile(join(temp, "NativeHelpersUnderTest.inc"),
-      between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
-      between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSStringContainsAny"));
-    await writeFile(join(temp, "NativeRequestPreludeUnderTest.inc"),
-      between(bridge, "    NSString *method = request.method;", "    id<TLinkInProcessFacadeInterface> runtime"));
-    await writeFile(join(temp, "NativePressUnderTest.inc"),
-      between(bridge, "    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey])", "    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake])"));
-    await writeFile(join(temp, "NativeGesturesUnderTest.inc"),
-      between(task, "static std::atomic<uint64_t> sTLinkZoomAttemptCount", "static NSDictionary *zx_zoomDiagnostics") +
-      between(task, "static int zx_clampTouchCoord", "// === runShell drain/timeout support"));
     const runtime = join(temp, "native-bridge-runtime-test");
     run(compiler, ["-std=c++14", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-Wno-deprecated-declarations",
       "-fobjc-arc", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-framework", "Foundation", "-framework", "CoreFoundation", "-framework", "CoreGraphics",

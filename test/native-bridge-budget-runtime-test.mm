@@ -190,6 +190,11 @@ int main() { @autoreleasepool {
     pressed = [bridge executeRequest:press context:parent(0.05) error:nil];
     failure(pressed.value, @"TimeoutError");
     assert(releases == beforePress + 2 && lastPayload == "300;;1");
+    // Normal completion executes the production result-merging helper as well.
+    pressed = [bridge executeRequest:press context:parent() error:nil];
+    assert(pressed.ok && [pressed.value[@"ok"] boolValue]);
+    assert([pressed.value[@"down"][@"ok"] boolValue]);
+    assert(releases == beforePress + 3 && lastPayload == "300;;1");
     checkGesture(zx_handleNativeTap, @"20;;30;;60000;;19", 1, 1);
     checkGesture(zx_handleNativeSwipe, @"20;;30;;80;;90;;5000;;19;;120", 1, 2);
     checkGesture(zx_handleNativeGesture, @"19;;5000;;20,30|40,50|60,70", 1, 2);

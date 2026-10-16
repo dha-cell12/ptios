@@ -57,3 +57,11 @@ Both production workflows now run the new suite. On macOS it additionally compil
 5. Measure stop latency, allocations/RSS, queue residence and active OCR monitor wakeups on devices. Compare dense RAW playback to A05; no quantitative CPU/RAM/latency gain is claimed by host correctness tests.
 
 Next: B01 (P0-01/P1-01/P2-04), recorder ownership/timing/bounded buffering and batched writes.
+
+## CI harness correction — 2026-10-17
+
+User-provided rootfull and TrollStore logs both stop in the shared macOS A06 harness: the extracted PressHardwareKey body references `TLinkautoJSResultByAdding`, but the generated helper include omitted its definition. The logs show earlier portable/dispatch/playback checks passing; they do not establish that the new artifacts built successfully.
+
+The harness now extracts that production helper as well. Fixture extraction and dependency checks run on every host, so Windows detects this missing-helper case before a macOS run. A normal successful press assertion exercises the result-merging path alongside the existing canceled/deadline press tests. Production runtime behavior is unchanged by this correction.
+
+Windows verification: `check-native-budget-safety.mjs` passes its native suite and fixture dependency checks; `git diff --check` passes. macOS compilation/runtime and both artifact builds still require a CI rerun.
