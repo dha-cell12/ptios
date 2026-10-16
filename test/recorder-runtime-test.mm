@@ -144,6 +144,26 @@ int main(int argc, const char **argv) { @autoreleasepool {
     assert(argc == 2); scriptsRoot = [NSString stringWithUTF8String:argv[1]];
     writeEntered = dispatch_semaphore_create(0); writeRelease = dispatch_semaphore_create(0);
     TLinkRecorder *recorder = [TLinkRecorder shared]; assert(!isRecordingStart());
+    std::fprintf(stderr, "Recorder runtime: deferred owner/writer regression\n");
+    // Asynchronous owner requests must defer even when made on the owner NSThread.
+    // A synchronous writer block may run on that same thread; thread identity is
+    // not permission to recursively stop and dispatch_sync onto the active writer.
+    __block bool insideRequest = false, insideWriter = false, ownerDeferred = false, writerDeferred = false;
+    [recorder performOwner:^{
+        insideRequest = true;
+        [recorder performOwner:^{ assert(!insideRequest); ownerDeferred = true; } wait:false];
+        assert(!ownerDeferred);
+        insideRequest = false;
+        dispatch_sync(recorder->_writer, ^{
+            insideWriter = true;
+            [recorder performOwner:^{ assert(!insideWriter); writerDeferred = true; } wait:false];
+            assert(!writerDeferred);
+            insideWriter = false;
+        });
+    } wait:true];
+    [recorder performOwner:^{} wait:true];
+    assert(ownerDeferred && writerDeferred);
+    std::fprintf(stderr, "Recorder runtime: start/stop and RAW drain\n");
     recordingStartTaskUnderTest((CFWriteStreamRef)(uintptr_t)1);
     NSString *envelope = [NSString stringWithUTF8String:repliedPath.c_str()];
     assert([envelope hasPrefix:@"0;;"] && [envelope hasSuffix:@"\r\n"]);
@@ -152,6 +172,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     NSError *error = nil; stopRecordingWithError(&error);
     assert(!error && !isRecordingStart() && created == released && touchCount(path) == 1000);
     assert([info(path)[@"RecordingStatus"] isEqualToString:@"complete"]);
+    std::fprintf(stderr, "Recorder runtime: stale callbacks/stops and package uniqueness\n");
     // Same-second starts are exclusive packages, including main-thread API callers.
     NSString *second = start(); assert(![path isEqualToString:second]);
     const uintptr_t old = recorder->_buffer.generation();
@@ -163,6 +184,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     } wait:true];
     assert(zx_stopRecordingGeneration(recorder, old) && isRecordingStart());
     stopRecordingWithError(&error); assert(!error && touchCount(third) == 0);
+    std::fprintf(stderr, "Recorder runtime: blocked writer completion\n");
     // A stop cannot publish idle or acknowledge while the writer is blocked.
     path = start(); blockWrite = true; emit(256); wait(writeEntered);
     auto done = dispatch_semaphore_create(0); __block NSError *stopError = nil;
@@ -172,19 +194,23 @@ int main(int argc, const char **argv) { @autoreleasepool {
     startRecording(nullptr, &error); assert(error);
     dispatch_semaphore_signal(writeRelease); wait(done);
     assert(!stopError && !isRecordingStart() && touchCount(path) == 256 && created == released);
+    std::fprintf(stderr, "Recorder runtime: bounded overflow\n");
     // Exhaust bounded pending storage while a batch is in flight; retained prefix is marked failed.
     path = start(); blockWrite = true; emit(256); wait(writeEntered); emit(5000);
     assert(isRecordingStart() && recorder->_buffer.pending() <= TLinkRecorderBuffer::Capacity);
     dispatch_semaphore_signal(writeRelease);
     [recorder performOwner:^{} wait:true];
     assert(!isRecordingStart() && [info(path)[@"RecordingStatus"] isEqualToString:@"failed"] && alerts >= 1);
+    std::fprintf(stderr, "Recorder runtime: write/sync/close failures\n");
     for (auto *fault : {&failWrite, &failSync, &failClose}) {
         path = start(); *fault = true; emit(1); stopRecordingWithError(&error);
         assert(error && !isRecordingStart() && created == released);
         assert([info(path)[@"RecordingStatus"] isEqualToString:@"failed"]);
     }
+    std::fprintf(stderr, "Recorder runtime: startup failures\n");
     failCreate = true; startRecording(nullptr, &error); assert(error && !isRecordingStart() && created == released);
     failOpen = true; startRecording(nullptr, &error); assert(error && !isRecordingStart() && created == released);
+    std::fprintf(stderr, "Recorder runtime: concurrent starts and repeated teardown\n");
     // Exactly one simultaneous starter wins; no handle/client escapes teardown.
     dispatch_group_t group = dispatch_group_create(); winners = 0;
     for (int i = 0; i < 8; ++i) dispatch_group_async(group, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{

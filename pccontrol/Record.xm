@@ -129,7 +129,9 @@ static void recordIOHIDEventCallback(void *, void *, IOHIDEventQueueRef, IOHIDEv
     return self;
 }
 - (void)performOwner:(dispatch_block_t)operation wait:(bool)wait {
-    if ([NSThread currentThread] == _ownerThread) { operation(); return; }
+    // dispatch_sync(writer) can execute inline on this NSThread. Async owner work
+    // must still be deferred, or a writer failure re-enters stop and syncs its own queue.
+    if (wait && [NSThread currentThread] == _ownerThread) { operation(); return; }
     if (!_ownerLoop) return;
     dispatch_semaphore_t done = wait ? dispatch_semaphore_create(0) : nil;
     __block NSException *exception = nil;

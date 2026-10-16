@@ -63,3 +63,11 @@ The rootfull/roothide workflow also compiles the actual recorder owner body on m
 4. Compare input/RAW event order and arrival-to-delay timing, callback p50/p95/p99, write calls, allocation rate, RSS, wakeups and energy against A06. Include a long idle gap, stop with pending records and repeated same-second starts. Measure the dedicated idle owner thread's footprint before claiming net CPU/RAM gains.
 
 Next: B02 (P0-07/P0-09/P1-20/P1-21/P1-24/P1-26), frame/image store ownership, byte budgets and compute outside the store queue.
+
+## macOS runtime correction — 2026-10-17
+
+User CI reached the recorder Foundation runtime executable and terminated with SIGTRAP after the portable suite passed. Source review found a re-entrant owner/writer path: dispatch_sync can execute its writer block on the owner NSThread; writerFailed requests performOwner(wait:false), but the old same-thread fast path ran it immediately. Its stop operation then synchronously entered the already-active writer queue. This is a production lifecycle defect, not a compiler-only harness omission, and is consistent with the reported trap. The supplied log has no native stack trace to prove the exact trap site.
+
+Only synchronous wait:true owner requests may now take the same-thread fast path. Async owner requests always go through CFRunLoopPerformBlock, including writer failures raised during an inline drain in stop. The outer stop can finish drain/error handling and close before the queued failure notification is considered; it does not recursively stop its writer.
+
+The macOS harness adds explicit owner-originated and writer-originated async deferral assertions, retains the write/sync/close fault cases, and prints stage markers to stderr so any remaining crash is localized in CI output. Windows recorder core/source checks and diff validation pass. This host cannot run Foundation/macOS, so the corrected runtime and final rootfull/roothide artifacts still need a CI rerun.

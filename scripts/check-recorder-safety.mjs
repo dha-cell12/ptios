@@ -11,6 +11,8 @@ assert.doesNotMatch(source, /NSFileHandle|writeData:|lastEventTimeStampForRecord
 assert.match(source, /IOHIDEventSystemClientUnscheduleWithRunLoop\(_client, _ownerLoop, kCFRunLoopDefaultMode\)/);
 assert.match(source, /CFRelease\(_client\)/);
 assert.match(source, /CFRunLoopPerformBlock\(_ownerLoop/);
+assert.match(source, /if \(wait && \[NSThread currentThread\] == _ownerThread\)/);
+
 assert.match(source, /_writerGeneration != generation \|\| _fd < 0/);
 assert.match(source, /O_WRONLY \| O_CREAT \| O_EXCL \| O_CLOEXEC/);
 assert.match(source, /dispatch_sync\(_writer,[\s\S]*fsync\(self->_fd\)[\s\S]*close\(self->_fd\)[\s\S]*_buffer.finish/);
