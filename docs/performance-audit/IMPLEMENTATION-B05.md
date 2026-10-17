@@ -53,3 +53,9 @@ This new Foundation branch has not run on this Windows host. It doubles the cryp
 Authority admission bounds FD/worker count, not the duration of opaque verification/Keychain operations. Its existing per-socket receive/send timeout can still be extended by a trickling peer; absolute service I/O deadlines remain follow-up hardening. Saturating all eight admitted clients can deny availability without creating unbounded workers. Cold callers have a bounded wait, but the single verification or generation worker is not forcibly cancelled; expired snapshots fail closed while it is stuck. The snapshot mutex is short, not lock-free, and does not provide a hard scheduler-latency guarantee.
 
 Next implementation slice: **B05b**, then B06. OCR remains C01.
+
+## TrollStore workflow assertion correction
+
+The TrollStore source sanity step still required the removed cache expression `sTLinkLicenseFeatureGeneration != generation`. It now checks generation-change invalidation in `TLinkLicenseHotState`, the verifier adapter observation call and stale-epoch rejection. The existing native policy and macOS adapter runners provide behavioral coverage; this workflow correction retains the generation-safety check against the current implementation.
+
+Validation after the assertion correction: all 528 static-file grep assertions in the TrollStore workflow pass using GNU grep on Windows, as does the license hot-state/admission native runner. `git diff --check` passes. Final macOS/iOS build still needs CI confirmation.

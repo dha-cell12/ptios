@@ -501,7 +501,9 @@ jobs:
           grep -q 'generation.lock' shared/TLinkLicenseVerifier.mm
           grep -q 'flock(lockFD, LOCK_EX)' shared/TLinkLicenseVerifier.mm
           grep -q 'notify_register_dispatch' shared/TLinkLicenseVerifier.mm
-          grep -q 'sTLinkLicenseFeatureGeneration != generation' shared/TLinkLicenseVerifier.mm
+          grep -Fq 'if (known_ && generation_ != generation) invalidate();' shared/TLinkLicenseHotState.h
+          grep -Fq 'sTLinkLicenseHotState.observe(generation, now);' shared/TLinkLicenseVerifier.mm
+          grep -Fq 'ticket.epoch != epoch_' shared/TLinkLicenseHotState.h
           grep -q 'TLinkLicenseAdvanceGeneration' stream-app/app/LicenseManager.mm
           grep -Fq 'args:@[@"reload"]' stream-app/app/LicenseLifecycleCoordinator.mm
           grep -q 'generation_action' stream-app/streamd/POCSocketServer.mm
