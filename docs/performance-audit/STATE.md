@@ -30,7 +30,9 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - User reported the corrected B01 build at `07c1b84` passed before B02. Device qualification remains pending.
 - B02 / P0-07 + P0-09 + P1-20 + P1-21 + P1-24 + P1-26: pccontrol frame/image source implemented. Noncopyable shared immutable payloads, compute outside store queue, active-reader/pending-inclusive 96/64/128 MiB frame/image/combined limits, bounded disk preflight, two compute admissions, monotonic ages and active one-shot frame expiry. Explicit image lifetime and legacy response fields preserved; new admission/format limits documented.
 - B02 portable extracted-core tests pass 20k lifecycles and 8 x 10k concurrent reservations, all 36 existing source contracts and seven previous native suites pass. macOS actual adapter/release/ImageIO wrapper tests added to root CI; final build/device checks pending. Details: `IMPLEMENTATION-B02.md`.
-- Next implementation group is B03 (OCR cache/pixel budgets). Build reports do not replace each group's device qualification.
+- User reported the corrected B02 build passed at `e304763` before B03; its device checks remain pending.
+- B03 / P0-05 + P1-14 (daemon portion) + P1-16 + P1-17 (IPC portion): root no-reply touch fast path, 1 MiB IPC sink, no response payload logs, separate serial ordinary-work queue, per-client FIFO, explicit daemon transport ping and bounded nonblocking output (2 MiB/client, 16 MiB/global, progress/residence deadlines). Limits and remaining C04/B05/B06 behavior: `IMPLEMENTATION-B03.md`. Build/device/macOS integration checks pending.
+- B03 next-group labeling is corrected: OCR budgets belong to C01 in the authoritative plan. Next is B04 (H264). Build reports do not replace each group's device qualification.
 
 ## Primary target
 

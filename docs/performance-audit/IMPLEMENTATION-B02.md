@@ -62,10 +62,12 @@ Rootfull/roothide CI now includes the new runner. On macOS it also compiles the 
 4. Open the actual supported PNG/JPEG/EXIF/TIFF/BMP image sets. Verify normal gray pixels/results, transpose handling, >32 MiB files, >16M-pixel images, malformed input and metadata/codec disagreement. Qualify any format rejected by ImageIO.
 5. Compare BGRA allocation/copy counts, store queue wait and release p50/p95/p99, peak live payload/RSS, CPU and energy against B01. Include three large iPad frames, near-full image storage, background/suspend/resume and simultaneous consumers. Report measured tradeoffs before claiming a speedup or changing the published limits.
 
-Next planned group: **B03 — OCR cache/pixel budgets**. Build reports do not replace device acceptance.
+Next planned group: **B03 — IPC/socket hot path and bounded output** (OCR cache/pixel budgets are C01 in the plan). Build reports do not replace device acceptance.
 
 ## Objective-C++ build correction - 2026-10-17
 
 The iOS compiler reported two direct captures of an Objective-C __block admittedImages map by a C++ lambda, in frame matching and batch matching. This is a language restriction the portable C++ storage test could not diagnose. Both handlers now move the completed map into an ordinary const C++ local after synchronous queue admission; their compute lambdas only capture that local. The move transfers shared references without copying image payloads.
 
 The runner now rejects direct captures of those function-local __block variables on every host. Its macOS harness also compiles the actual admission/transfer and compute lookup statements from both handlers, exercising existing and missing template IDs with Foundation/dispatch. The original wrapper harness omitted these handler boundaries. Windows can run the portable checks; the corrected Objective-C++/iOS build still requires CI.
+
+User reported the corrected B02 build passed at `e304763` before B03. Device acceptance remains pending.

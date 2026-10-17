@@ -16,6 +16,10 @@
 #include <sys/stat.h>
 #include <netinet/tcp.h>
 #include <atomic>
+#include <errno.h>
+#include "../shared/TLinkSocketOutput.h"
+#include "../shared/TLinkNativeBudget.h"
+#include "../shared/TLinkIPCPolicy.h"
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -42,13 +46,20 @@ typedef NS_ENUM(uint8_t, ZXWireProtocol) {
     ZXWireProtocolJSONV1 = 2,
 };
 
-@interface ZXClientContext : NSObject
+@interface ZXClientContext : NSObject {
+@public
+    TLinkSocketOutput output;
+    std::atomic_bool closed;
+}
 @property(nonatomic, assign) CFReadStreamRef readStream;
 @property(nonatomic, assign) CFWriteStreamRef writeStream;
 @property(nonatomic, assign) CFRunLoopRef runLoop;
 @property(nonatomic, strong) NSMutableData *buffer;
 @property(nonatomic, assign) ZXWireProtocol protocol;
 @property(nonatomic, assign) BOOL eventPollPending;
+@property(nonatomic, assign) BOOL requestPending;
+@property(nonatomic, assign) BOOL parseScheduled;
+@property(nonatomic, assign) CFSocketNativeHandle nativeSocket;
 @end
 
 @implementation ZXClientContext
@@ -70,6 +81,13 @@ static NSData *zx_frameJSONResponse(NSDictionary *obj);
 static void zx_logf(const char *fmt, ...);
 static bool zx_isHotPathPayload(const char *payload);
 static dispatch_queue_t socketQueue(void);
+static void zx_cleanupClient(CFReadStreamRef readStream);
+static void zx_rearmOutput(void);
+static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requestId, bool json, bool fireAndForget);
+static size_t gOutputBytes = 0;
+static size_t gPendingTasks = 0;
+static const size_t kZXMaxClients = 64;
+static const size_t kZXMaxPendingTasks = 16;
 
 static NSData *zx_eventChannelResponse(NSString *body)
 {
@@ -87,11 +105,6 @@ static NSData *zx_eventChannelResponse(NSString *body)
 static BOOL zx_deferLegacyEventPoll(ZXClientContext *ctx, NSString *body)
 {
     if (!ctx || !ctx.writeStream) return false;
-    NSString *licenseDenial = nil;
-    if (!TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)) {
-        zx_writeAll(ctx.writeStream, zx_dataFromCString([licenseDenial UTF8String]));
-        return true;
-    }
     __block CFWriteStreamRef stream = NULL;
     @synchronized (ctx) {
         if (ctx.eventPollPending) {
@@ -103,14 +116,18 @@ static BOOL zx_deferLegacyEventPoll(ZXClientContext *ctx, NSString *body)
         CFRetain(stream);
     }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSData *response = zx_eventChannelResponse(body);
-        dispatch_async(socketQueue(), ^{
-            @synchronized (ctx) {
-                if (ctx.writeStream == stream) zx_writeAll(stream, response);
-                ctx.eventPollPending = false;
-            }
-            CFRelease(stream);
-        });
+        @autoreleasepool {
+            NSString *licenseDenial = nil;
+            NSData *response = TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)
+                ? zx_eventChannelResponse(body) : zx_dataFromCString([licenseDenial UTF8String]);
+            dispatch_async(socketQueue(), ^{
+                @synchronized (ctx) {
+                    if (ctx.writeStream == stream) zx_writeAll(stream, response);
+                    ctx.eventPollPending = false;
+                }
+                CFRelease(stream);
+            });
+        }
     });
     return true;
 }
@@ -118,12 +135,6 @@ static BOOL zx_deferLegacyEventPoll(ZXClientContext *ctx, NSString *body)
 static BOOL zx_deferJSONEventPoll(ZXClientContext *ctx, NSString *body, NSNumber *requestId)
 {
     if (!ctx || !ctx.writeStream) return false;
-    NSString *licenseDenial = nil;
-    if (!TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)) {
-        NSDictionary *denied = zx_jsonResponseFromLegacy(zx_dataFromCString([licenseDenial UTF8String]), requestId);
-        zx_writeAll(ctx.writeStream, zx_frameJSONResponse(denied));
-        return true;
-    }
     __block CFWriteStreamRef stream = NULL;
     @synchronized (ctx) {
         if (ctx.eventPollPending) {
@@ -137,15 +148,20 @@ static BOOL zx_deferJSONEventPoll(ZXClientContext *ctx, NSString *body, NSNumber
         CFRetain(stream);
     }
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSDictionary *object = zx_jsonResponseFromLegacy(zx_eventChannelResponse(body), requestId);
-        NSData *response = zx_frameJSONResponse(object);
-        dispatch_async(socketQueue(), ^{
-            @synchronized (ctx) {
-                if (ctx.writeStream == stream) zx_writeAll(stream, response);
-                ctx.eventPollPending = false;
-            }
-            CFRelease(stream);
-        });
+        @autoreleasepool {
+            NSString *licenseDenial = nil;
+            NSData *legacy = TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)
+                ? zx_eventChannelResponse(body) : zx_dataFromCString([licenseDenial UTF8String]);
+            NSDictionary *object = zx_jsonResponseFromLegacy(legacy, requestId);
+            NSData *response = zx_frameJSONResponse(object);
+            dispatch_async(socketQueue(), ^{
+                @synchronized (ctx) {
+                    if (ctx.writeStream == stream) zx_writeAll(stream, response);
+                    ctx.eventPollPending = false;
+                }
+                CFRelease(stream);
+            });
+        }
     });
     return true;
 }
@@ -155,7 +171,8 @@ static dispatch_queue_t socketQueue()
     static dispatch_queue_t queue;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        queue = dispatch_queue_create("com.tlinkauto.tlinkautod.socket", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_autorelease_frequency(DISPATCH_QUEUE_SERIAL, DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
+        queue = dispatch_queue_create("com.tlinkauto.tlinkautod.socket", attr);
     });
     return queue;
 }
@@ -169,6 +186,8 @@ static void zx_cleanupClient(CFReadStreamRef readStream)
     NSNumber *key = @((long)readStream);
     ZXClientContext *ctx = [socketClients objectForKey:key];
     if (ctx) {
+        ctx->closed.store(true, std::memory_order_release);
+        ctx->output.clear(gOutputBytes);
         CFWriteStreamRef writeStream = NULL;
         @synchronized (ctx) {
             writeStream = ctx.writeStream;
@@ -188,6 +207,7 @@ static void zx_cleanupClient(CFReadStreamRef readStream)
             CFWriteStreamClose(writeStream);
             CFRelease(writeStream);
         }
+        zx_rearmOutput();
         zx_logf("client closed");
         return;
     }
@@ -481,7 +501,7 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
     CFDataRef *responseTarget = waitForResponse ? &responseData : NULL;
     const CFTimeInterval sendTimeout = waitForResponse ? 5.0 : 1.5;
     SInt32 result = CFMessagePortSendRequest(remotePort,
-                                             1,
+                                             waitForResponse ? 1 : TLinkIPCNoReplyMessage,
                                              messageData,
                                              sendTimeout,
                                              sendTimeout,
@@ -657,22 +677,66 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 }
 #endif
 
+static uint64_t zx_socketNowMs() { return TLinkNativeNowNs() / 1000000; }
+// BEGIN socket output adapter.
+static dispatch_source_t gOutputTimer;
+static bool gOutputTimerArmed = false;
+static bool gOutputRearming = false;
+static void zx_flushOutput(ZXClientContext *ctx)
+{
+    if (!ctx || ctx->closed.load(std::memory_order_acquire)) return;
+    const int fd = ctx.nativeSocket;
+    auto result = ctx->output.pump(zx_socketNowMs(), gOutputBytes, [fd](const uint8_t *bytes, size_t length) -> long long {
+        const ssize_t sent = send(fd, bytes, length, MSG_DONTWAIT);
+        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return 0;
+        return sent > 0 ? (long long)sent : -1;
+    });
+    if (result == TLinkSocketOutput::Result::Failed) zx_cleanupClient(ctx.readStream);
+}
+static void zx_rearmOutput(void)
+{
+    if (gOutputRearming) return;
+    gOutputRearming = true;
+    bool pending = false;
+    for (ZXClientContext *ctx in [socketClients allValues]) if (!ctx->output.empty()) { pending = true; break; }
+    if (!gOutputTimer && pending) {
+        gOutputTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, socketQueue());
+        if (!gOutputTimer) {
+            for (ZXClientContext *ctx in [socketClients allValues]) if (!ctx->output.empty()) zx_cleanupClient(ctx.readStream);
+            gOutputRearming = false;
+            return;
+        }
+        dispatch_source_set_event_handler(gOutputTimer, ^{
+            for (ZXClientContext *ctx in [socketClients allValues]) zx_flushOutput(ctx);
+            zx_rearmOutput();
+        });
+        dispatch_resume(gOutputTimer);
+    }
+    // Do not push an armed deadline back on each new response: busy clients
+    // must not starve a stalled peer's service/no-progress deadline.
+    if (gOutputTimer && pending != gOutputTimerArmed) {
+        gOutputTimerArmed = pending;
+        dispatch_source_set_timer(gOutputTimer,
+            pending ? dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC) : DISPATCH_TIME_FOREVER,
+            pending ? 20 * NSEC_PER_MSEC : DISPATCH_TIME_FOREVER, NSEC_PER_MSEC);
+    }
+    gOutputRearming = false;
+}
 static void zx_writeAll(CFWriteStreamRef stream, NSData *data)
 {
-    if (!stream || !data || data.length == 0) {
+    if (!stream || !data.length) return;
+    for (ZXClientContext *ctx in [socketClients allValues]) {
+        if (ctx.writeStream != stream) continue;
+        if (!ctx->output.append((const uint8_t *)data.bytes, data.length, zx_socketNowMs(), gOutputBytes)) {
+            zx_cleanupClient(ctx.readStream); // Close makes overflow/failure visible; never silently truncate a success.
+            return;
+        }
+        zx_flushOutput(ctx);
+        zx_rearmOutput();
         return;
     }
-    const UInt8 *bytes = (const UInt8 *)data.bytes;
-    CFIndex remaining = (CFIndex)data.length;
-    while (remaining > 0) {
-        CFIndex wrote = CFWriteStreamWrite(stream, bytes, remaining);
-        if (wrote <= 0) {
-            break;
-        }
-        bytes += wrote;
-        remaining -= wrote;
-    }
 }
+// END socket output adapter.
 
 static NSData *zx_dataFromCString(const char *cstr)
 {
@@ -920,7 +984,6 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
     if (!licenseAllowed) {
         if (taskType == 10) {
             sTLinkRootfullLicenseTask10DropCount.fetch_add(1, std::memory_order_relaxed);
-            zx_logf("task 10 dropped by rootfull license gate");
             return nil;
         }
         zx_logf("task %d denied by rootfull license gate: %s",
@@ -1009,10 +1072,7 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
             NSData *response = nil;
             if (responseBytes && responseLength > 0) {
                 response = [NSData dataWithBytes:responseBytes length:(NSUInteger)responseLength];
-                NSString *responseString = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding];
-                if (taskType != 61 && (taskType < 77 || taskType > 81)) {
-                    zx_logf("IPC response: %s", responseString ? [responseString UTF8String] : "(null)");
-                }
+                // Response payloads are not mirrored to system/file logs.
             } else {
                 zx_logf("IPC response empty");
                 response = zx_dataFromCString("0\r\n");
@@ -1057,11 +1117,11 @@ static NSData *zx_frameJSONResponse(NSDictionary *obj)
     }
     NSError *err = nil;
     NSData *body = [NSJSONSerialization dataWithJSONObject:obj options:0 error:&err];
-    if (!body || err) {
-        return nil;
-    }
-    if (body.length > kZXTPMaxBodySize) {
-        return nil;
+    if (!body || err || body.length > kZXTPMaxBodySize) {
+        NSDictionary *failure = @{@"id": obj[@"id"] ?: @0, @"ok": @(false), @"data": [NSNull null],
+                                   @"error": body.length > kZXTPMaxBodySize ? @"response_too_large" : @"response_encode_failed"};
+        body = [NSJSONSerialization dataWithJSONObject:failure options:0 error:NULL];
+        if (!body) return nil;
     }
     UInt8 header[kZXTPHeaderSize];
     header[0] = kZXTPMagic[0];
@@ -1081,19 +1141,76 @@ static NSData *zx_frameJSONResponse(NSDictionary *obj)
     return framed;
 }
 
+// BEGIN socket work adapter.
+static dispatch_queue_t zx_taskQueue(void)
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_autorelease_frequency(DISPATCH_QUEUE_SERIAL, DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
+        queue = dispatch_queue_create("com.tlinkauto.tlinkautod.tasks", attr);
+    });
+    return queue;
+}
+static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requestId, bool json, bool fireAndForget)
+{
+    if (!ctx || ctx->closed.load(std::memory_order_acquire)) return;
+    if (!payload) { zx_cleanupClient(ctx.readStream); return; }
+    if ([payload isEqualToString:@"CMD_PING"]) {
+        // Transport liveness only; SpringBoard admission/health is separate.
+        zx_writeAll(ctx.writeStream, json ? zx_frameJSONResponse(zx_jsonResponseFromLegacy(zx_dataFromCString("0;;daemon\r\n"), requestId))
+                                        : zx_dataFromCString("0;;daemon\r\n"));
+        return;
+    }
+    if (gPendingTasks >= kZXMaxPendingTasks) {
+        zx_cleanupClient(ctx.readStream); // No accepted action/ambiguous success on overload.
+        return;
+    }
+    ctx.requestPending = true; ++gPendingTasks;
+    dispatch_async(zx_taskQueue(), ^{
+        @autoreleasepool {
+            NSData *response = nil;
+            if (!ctx->closed.load(std::memory_order_acquire)) {
+                NSData *legacy = nil;
+                @try { legacy = zx_handleLegacyRequestBytes([payload UTF8String]); }
+                @catch (NSException *exception) { (void)exception; legacy = zx_dataFromCString("1;;request_failed\r\n"); }
+                if (legacy.length > 1024 * 1024) legacy = zx_dataFromCString("1;;response_too_large\r\n");
+                if (!json) response = legacy;
+                else if (!fireAndForget) response = zx_frameJSONResponse(zx_jsonResponseFromLegacy(legacy, requestId));
+            }
+            dispatch_async(socketQueue(), ^{
+                --gPendingTasks;
+                if (!ctx->closed.load(std::memory_order_acquire)) {
+                    ctx.requestPending = false;
+                    if (response.length) zx_writeAll(ctx.writeStream, response);
+                    zx_processClientBuffer(ctx);
+                }
+            });
+        }
+    });
+}
+// END socket work adapter.
+
 static void zx_processClientBuffer(ZXClientContext *ctx)
 {
-    if (!ctx || !ctx.buffer) {
+    if (!ctx || !ctx.buffer || ctx.parseScheduled) {
         return;
     }
 
+    unsigned parsed = 0;
     while (true) {
+        if (ctx.requestPending || ctx->closed.load(std::memory_order_acquire)) return;
         const UInt8 *bytes = (const UInt8 *)ctx.buffer.bytes;
         const NSUInteger len = ctx.buffer.length;
         if (len == 0) {
             return;
         }
 
+        if (++parsed > 32) {
+            ctx.parseScheduled = true;
+            dispatch_async(socketQueue(), ^{ ctx.parseScheduled = false; zx_processClientBuffer(ctx); });
+            return;
+        }
         if (ctx.protocol == ZXWireProtocolUnknown) {
             if (len >= 4 && memcmp(bytes, kZXTPMagic, 4) == 0) {
                 ctx.protocol = ZXWireProtocolJSONV1;
@@ -1109,8 +1226,7 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
 
         if (ctx.protocol == ZXWireProtocolLegacyV0) {
             if (ctx.buffer.length > kZXLegacyMaxBufferSize) {
-                zx_logf("legacy buffer too large; clearing client buffer");
-                [ctx.buffer setLength:0];
+                zx_cleanupClient(ctx.readStream);
                 return;
             }
 
@@ -1130,10 +1246,10 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                     int taskType = getTaskTypeFromBuffer((const char *)bytes);
                     if (taskType == 19 && len > 2) {
                         char *line = (char *)malloc(len + 1);
+                        if (!line || memchr(bytes, 0, len)) { free(line); zx_cleanupClient(ctx.readStream); return; }
                         memcpy(line, bytes, len);
                         line[len] = 0;
-                        NSData *resp = zx_handleLegacyRequestBytes(line);
-                        zx_writeAll(ctx.writeStream, resp);
+                        zx_deferTask(ctx, [NSString stringWithUTF8String:line], nil, false, false);
                         free(line);
                         [ctx.buffer setLength:0];
                     }
@@ -1148,6 +1264,7 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
 
             if (lineLen > 0) {
                 char *line = (char *)malloc(lineLen + 1);
+                if (!line || memchr(bytes, 0, lineLen)) { free(line); zx_cleanupClient(ctx.readStream); return; }
                 memcpy(line, bytes, lineLen);
                 line[lineLen] = 0;
                 int taskType = getTaskTypeFromBuffer(line);
@@ -1156,8 +1273,7 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                     if ([body hasPrefix:@";;"]) body = [body substringFromIndex:2];
                     zx_deferLegacyEventPoll(ctx, body);
                 } else {
-                    NSData *resp = zx_handleLegacyRequestBytes(line);
-                    zx_writeAll(ctx.writeStream, resp);
+                    zx_deferTask(ctx, [NSString stringWithUTF8String:line], nil, false, false);
                 }
                 free(line);
             }
@@ -1216,7 +1332,9 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
             }
             NSNumber *taskNum = [dict objectForKey:@"task"];
             NSArray *args = [dict objectForKey:@"args"];
-            if (![taskNum isKindOfClass:[NSNumber class]]) {
+            if ([dict[@"command"] isEqual:@"ping"]) {
+                zx_deferTask(ctx, @"CMD_PING", reqId, true, false);
+            } else if (![taskNum isKindOfClass:[NSNumber class]]) {
                 NSDictionary *respObj = @{@"id": reqId, @"ok": @false, @"data": [NSNull null], @"error": @"missing_task"};
                 zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
             } else {
@@ -1239,11 +1357,7 @@ static void zx_processClientBuffer(ZXClientContext *ctx)
                 if (task == 95) {
                     zx_deferJSONEventPoll(ctx, [legacy substringFromIndex:2], reqId);
                 } else {
-                    NSData *legacyResp = zx_handleLegacyRequestBytes([legacy UTF8String]);
-                    if (!fireAndForget) {
-                        NSDictionary *respObj = zx_jsonResponseFromLegacy(legacyResp, reqId);
-                        zx_writeAll(ctx.writeStream, zx_frameJSONResponse(respObj));
-                    }
+                    zx_deferTask(ctx, legacy, reqId, true, fireAndForget);
                 }
             }
         }
@@ -1326,34 +1440,25 @@ void socketServer()
 
 static void readStream(CFReadStreamRef readStream, CFStreamEventType eventype, void * clientCallBackInfo)
 {
+    (void)clientCallBackInfo;
+    CFRetain(readStream);
     dispatch_async(socketQueue(), ^{
-        @autoreleasepool{
+        @autoreleasepool { @try {
+            ZXClientContext *ctx = [socketClients objectForKey:@((long)readStream)];
+            if (!ctx) return;
             if (eventype == kCFStreamEventEndEncountered || eventype == kCFStreamEventErrorOccurred) {
-                zx_cleanupClient(readStream);
-                return;
+                zx_cleanupClient(readStream); return;
             }
-            if (eventype != kCFStreamEventHasBytesAvailable) {
-                return;
-            }
-
-            UInt8 readDataBuff[2048];
-
-            CFIndex hasRead = CFReadStreamRead(readStream, readDataBuff, sizeof(readDataBuff));
-
-            if (hasRead > 0) {
-                ZXClientContext *ctx = [socketClients objectForKey:@((long)readStream)];
-                if (!ctx) {
-                    zx_logf("read event for unknown client; ignoring");
-                    return;
-                }
-                [ctx.buffer appendBytes:readDataBuff length:(NSUInteger)hasRead];
-                zx_processClientBuffer(ctx);
-            } else {
-                zx_cleanupClient(readStream);
-            }
-        }
+            if (eventype != kCFStreamEventHasBytesAvailable || !CFReadStreamHasBytesAvailable(readStream)) return;
+            UInt8 bytes[2048];
+            CFIndex count = CFReadStreamRead(readStream, bytes, sizeof(bytes));
+            if (count <= 0) { zx_cleanupClient(readStream); return; }
+            const NSUInteger limit = ctx.protocol == ZXWireProtocolLegacyV0 ? kZXLegacyMaxBufferSize : kZXTPMaxBodySize + kZXTPHeaderSize;
+            if ((NSUInteger)count > limit - MIN(limit, ctx.buffer.length)) { zx_cleanupClient(readStream); return; }
+            [ctx.buffer appendBytes:bytes length:(NSUInteger)count];
+            zx_processClientBuffer(ctx);
+        } @finally { CFRelease(readStream); } }
     });
-
 }
 
 static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType type, CFDataRef address, const void *data, void *info)
@@ -1363,6 +1468,10 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
         CFSocketNativeHandle  nativeSocketHandle = *(CFSocketNativeHandle *)data;
         int one = 1;
         setsockopt(nativeSocketHandle, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        if (setsockopt(nativeSocketHandle, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) != 0) { close(nativeSocketHandle); return; }
+        __block bool full = false;
+        dispatch_sync(socketQueue(), ^{ full = socketClients.count >= kZXMaxClients; });
+        if (full) { close(nativeSocketHandle); return; }
 
         uint8_t name[SOCK_MAXADDRLEN];
         socklen_t namelen = sizeof(name);
@@ -1403,6 +1512,8 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
             }
 
             ZXClientContext *ctx = [[ZXClientContext alloc] init];
+            ctx.nativeSocket = nativeSocketHandle;
+            ctx->closed.store(false, std::memory_order_relaxed);
             ctx.readStream = readStreamRef;
             ctx.writeStream = writeStreamRef;
             ctx.runLoop = CFRunLoopGetCurrent();
