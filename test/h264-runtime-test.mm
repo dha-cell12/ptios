@@ -6,9 +6,8 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/file.h>
-#include <stdatomic.h>
-#include <dispatch/dispatch.h>
 #include <atomic>
+#include <dispatch/dispatch.h>
 #include <thread>
 #include <cassert>
 #include <cstdio>
@@ -28,7 +27,7 @@ NSString *TLinkAdaptiveFixtureRoot(void) {
 NSDictionary *TLinkEventChannelPublish(NSString *, NSString *, NSString *, NSDictionary *) { return @{}; }
 namespace root {
 static const uint16_t kTSPatPid = 0, kTSPmtPid = 0x100, kTSVideoPid = 0x101, kTSProgramNumber = 1;
-static _Atomic int gActiveClientFd = -1;
+#include "RootActiveUnderTest.inc"
 static uint64_t zx_now_us() { return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000000.0); }
 #include "RootSendUnderTest.inc"
 #include "RootEndianUnderTest.inc"
@@ -40,7 +39,7 @@ static uint64_t zx_now_us() { return (uint64_t)(CFAbsoluteTimeGetCurrent() * 100
 }
 namespace troll {
 static const uint16_t kTSPatPid = 0, kTSPmtPid = 0x100, kTSVideoPid = 0x101, kTSProgramNumber = 1;
-static _Atomic int gActiveClientFd = -1;
+#include "TrollActiveUnderTest.inc"
 static uint64_t zx_now_us() { return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000000.0); }
 #include "TrollSendUnderTest.inc"
 #include "TrollEndianUnderTest.inc"
@@ -61,12 +60,12 @@ static void networkCases() {
     std::vector<uint8_t> payload(1024 * 1024, 0x5a);
     for (unsigned runtime = 0; runtime < 2; ++runtime) {
         int pair[2]; pairOfSockets(pair);
-        if (!runtime) { root::setClientSocketOptions(pair[0]); atomic_store(&root::gActiveClientFd, pair[0]); }
-        else { troll::setClientSocketOptions(pair[0]); atomic_store(&troll::gActiveClientFd, pair[0]); }
+        if (!runtime) { root::setClientSocketOptions(pair[0]); std::atomic_store(&root::gActiveClientFd, pair[0]); }
+        else { troll::setClientSocketOptions(pair[0]); std::atomic_store(&troll::gActiveClientFd, pair[0]); }
         TLinkH264Socket writer(pair[0], 30000000, 100000000);
         assert(!writer.send(payload.data(), payload.size()));
-        if (!runtime) { root::zx_releaseStreamClient(pair[0]); assert(atomic_load(&root::gActiveClientFd) == -1); }
-        else { troll::zx_releaseStreamClient(pair[0]); assert(atomic_load(&troll::gActiveClientFd) == -1); }
+        if (!runtime) { root::zx_releaseStreamClient(pair[0]); assert(std::atomic_load(&root::gActiveClientFd) == -1); }
+        else { troll::zx_releaseStreamClient(pair[0]); assert(std::atomic_load(&troll::gActiveClientFd) == -1); }
         close(pair[1]);
     }
     int pair[2]; pairOfSockets(pair);

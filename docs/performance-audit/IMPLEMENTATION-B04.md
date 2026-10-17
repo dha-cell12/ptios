@@ -56,3 +56,9 @@ Network deadlines bound the sender's cooperative nonblocking loop, subject to sc
 ## macOS portable harness correction
 
 Both root and TrollStore CI stopped compiling the portable H264 fixture because its local `htonl` definition collided with the Darwin SDK macro pulled in by libc++ headers. The fixture now explicitly includes `<arpa/inet.h>` on POSIX hosts and confines the byte-swap fallback to Windows. Production framing and sender code are unchanged. The existing golden-header and root/TrollStore byte-parity cases exercise this conversion; the macOS Foundation/socket integration branch still requires CI execution.
+
+## C++11 atomic compatibility correction
+
+The next CI log confirms the 3,000-case portable H264 suite passes, then shows the macOS runtime fixture failing because newer libc++ rejects mixing `<stdatomic.h>` with `<atomic>` before C++23. Both production H264 translation units and the runtime fixture now consistently use `<atomic>`, directly initialized `std::atomic` values and qualified C++ atomic operations. The default sequentially consistent ordering and viewer/keyframe/license-counter behavior are retained without changing the C++ language level. The portable harness now also compiles the actual production active-slot declaration and release helper for both runtimes, checking ordinary release and an obsolete FD that must not clear a different viewer. Socket shutdown/close are doubled only for these portable cases; real socket cleanup remains covered by the macOS branch.
+
+After this correction, the H264 native runner and all 36 existing source-contract checks pass on Windows. The macOS Foundation/socket branch and iOS artifacts still require CI confirmation.

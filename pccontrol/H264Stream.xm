@@ -15,7 +15,7 @@
 #include <netinet/tcp.h>
 #include <unistd.h>
 #include <errno.h>
-#include <stdatomic.h>
+#include <atomic>
 #include <string.h>
 #include <stdlib.h>
 #include <os/lock.h>
@@ -170,20 +170,20 @@ static const uint16_t kTSVideoPid = 0x0101;
 static const uint16_t kTSProgramNumber = 1;
 
 // only one viewer
-static _Atomic int gActiveClientFd = -1;
-static _Atomic uint64_t gLicenseDeniedAcceptCount = 0;
-static _Atomic uint64_t gLicenseRevokedClientCount = 0;
+static std::atomic<int> gActiveClientFd{-1};
+static std::atomic<uint64_t> gLicenseDeniedAcceptCount{0};
+static std::atomic<uint64_t> gLicenseRevokedClientCount{0};
 
 uint64_t TLinkH264LicenseDeniedAcceptCount(void) {
-    return atomic_load(&gLicenseDeniedAcceptCount);
+    return std::atomic_load(&gLicenseDeniedAcceptCount);
 }
 
 uint64_t TLinkH264LicenseRevokedClientCount(void) {
-    return atomic_load(&gLicenseRevokedClientCount);
+    return std::atomic_load(&gLicenseRevokedClientCount);
 }
 
 int TLinkH264LicenseHeartbeatActive(void) {
-    return atomic_load(&gActiveClientFd) >= 0 ? 1 : 0;
+    return std::atomic_load(&gActiveClientFd) >= 0 ? 1 : 0;
 }
 
 #pragma mark - Utils
@@ -617,7 +617,7 @@ static void zx_releaseStreamClient(int fd) {
     shutdown(fd, SHUT_RDWR);
     close(fd);
     int exp = fd;
-    atomic_compare_exchange_strong(&gActiveClientFd, &exp, -1);
+    std::atomic_compare_exchange_strong(&gActiveClientFd, &exp, -1);
 }
 // END H264 client release.
 
@@ -701,7 +701,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     if (!TLinkRootfullLicenseComponentAllowed(@"stream",
                                                               @"h264_session",
                                                               &licenseDenial)) {
-                        atomic_fetch_add(&gLicenseRevokedClientCount, 1);
+                        std::atomic_fetch_add(&gLicenseRevokedClientCount, 1);
                         NSLog(@"com.tlinkauto.h264: active client closed by license port=%d denial=%@",
                               profile->port,
                               licenseDenial ?: @"license_required");
@@ -961,7 +961,7 @@ void startH264StreamServer(void) {
                 if (!TLinkRootfullLicenseComponentAllowed(@"stream",
                                                           @"h264_accept",
                                                           &licenseDenial)) {
-                    atomic_fetch_add(&gLicenseDeniedAcceptCount, 1);
+                    std::atomic_fetch_add(&gLicenseDeniedAcceptCount, 1);
                     NSLog(@"com.tlinkauto.h264: client rejected by license port=%d denial=%@",
                           profile->port,
                           licenseDenial ?: @"license_required");
@@ -971,7 +971,7 @@ void startH264StreamServer(void) {
                 }
 
                 int exp = -1;
-                if (!atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {
+                if (!std::atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {
                     shutdown(c, SHUT_RDWR);
                     close(c);
                     continue;

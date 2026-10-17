@@ -17,6 +17,7 @@ for (const [prefix, source] of [['Root', a], ['Troll', b]]) {
  fixtures[`${prefix}TablesUnderTest.inc`] = between(source, 'static bool sendTables(', '// BEGIN H264 client release.');
  fixtures[`${prefix}PATUnderTest.inc`] = between(source, 'static uint32_t mpegCrc32(', '#pragma mark - TS packet writer');
  fixtures[`${prefix}ReleaseUnderTest.inc`] = between(source, '// BEGIN H264 client release.', '// END H264 client release.');
+ fixtures[`${prefix}ActiveUnderTest.inc`] = source.match(/static std::atomic<int> gActiveClientFd\{-1\};/)[0];
  const loop = between(source, '        while (running) {', '#pragma mark - Server');
  assert.doesNotMatch(loop, /TLinkAdaptiveStreamingDecision(?:ForSession)?\(|TLinkAdaptiveStreamingRecordRecovery\(|usleep\(|streamSeconds \+=/);
  assert.match(loop, /readTargetFPS:/);

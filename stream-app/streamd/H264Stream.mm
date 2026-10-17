@@ -15,7 +15,7 @@
 #include <netinet/tcp.h>
 #include <unistd.h>
 #include <errno.h>
-#include <stdatomic.h>
+#include <atomic>
 #include <string.h>
 #include <stdlib.h>
 #include <os/lock.h>
@@ -183,10 +183,10 @@ static const uint16_t kTSVideoPid = 0x0101;
 static const uint16_t kTSProgramNumber = 1;
 
 // only one viewer
-static _Atomic int gActiveClientFd = -1;
-static _Atomic uint32_t gForceKeyframeMask = 0;
-static _Atomic uint64_t gForceKeyframeRequestCount = 0;
-static _Atomic uint64_t gForceKeyframeAppliedCount = 0;
+static std::atomic<int> gActiveClientFd{-1};
+static std::atomic<uint32_t> gForceKeyframeMask{0};
+static std::atomic<uint64_t> gForceKeyframeRequestCount{0};
+static std::atomic<uint64_t> gForceKeyframeAppliedCount{0};
 static os_unfair_lock gRTCControlLock = OS_UNFAIR_LOCK_INIT;
 static int gLastForceKeyframePort = 0;
 static NSString *gLastForceKeyframeSource = @"none";
@@ -200,8 +200,8 @@ static uint32_t zx_portMask(int port) {
 static void zx_requestKeyframe(int port, NSString *source) {
     uint32_t mask = zx_portMask(port);
     if (mask == 0) return;
-    atomic_fetch_or(&gForceKeyframeMask, mask);
-    atomic_fetch_add(&gForceKeyframeRequestCount, 1);
+    std::atomic_fetch_or(&gForceKeyframeMask, mask);
+    std::atomic_fetch_add(&gForceKeyframeRequestCount, 1);
     os_unfair_lock_lock(&gRTCControlLock);
     gLastForceKeyframePort = port;
     gLastForceKeyframeSource = [source.length > 0 ? source : @"unknown" copy];
@@ -213,9 +213,9 @@ static NSDictionary *zx_rtcControlStatus(void) {
     os_unfair_lock_lock(&gRTCControlLock);
     NSDictionary *status = @{
         @"schema": @"stream_control_v2",
-        @"force_keyframe_requests": @(atomic_load(&gForceKeyframeRequestCount)),
-        @"force_keyframe_applied": @(atomic_load(&gForceKeyframeAppliedCount)),
-        @"pending_port_mask": @(atomic_load(&gForceKeyframeMask)),
+        @"force_keyframe_requests": @(std::atomic_load(&gForceKeyframeRequestCount)),
+        @"force_keyframe_applied": @(std::atomic_load(&gForceKeyframeAppliedCount)),
+        @"pending_port_mask": @(std::atomic_load(&gForceKeyframeMask)),
         @"last_force_keyframe_port": @(gLastForceKeyframePort),
         @"last_force_keyframe_source": gLastForceKeyframeSource ?: @"none",
         @"last_force_keyframe_at_ms": @(gLastForceKeyframeAtMs),
@@ -736,7 +736,7 @@ static void zx_releaseStreamClient(int fd) {
     shutdown(fd, SHUT_RDWR);
     close(fd);
     int exp = fd;
-    atomic_compare_exchange_strong(&gActiveClientFd, &exp, -1);
+    std::atomic_compare_exchange_strong(&gActiveClientFd, &exp, -1);
 }
 // END H264 client release.
 
@@ -855,10 +855,10 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 // Force keyframe on first frame
                 CFMutableDictionaryRef opts = NULL;
                 uint32_t portMask = zx_portMask(profile->port);
-                uint32_t requestedMask = atomic_fetch_and(&gForceKeyframeMask, ~portMask);
+                uint32_t requestedMask = std::atomic_fetch_and(&gForceKeyframeMask, ~portMask);
                 if ((requestedMask & portMask) != 0) {
                     forceNextKeyframe = true;
-                    atomic_fetch_add(&gForceKeyframeAppliedCount, 1);
+                    std::atomic_fetch_add(&gForceKeyframeAppliedCount, 1);
                 }
                 if (frame == 0 || forceNextKeyframe) {
                     opts = CFDictionaryCreateMutable(kCFAllocatorDefault, 1,
@@ -1082,7 +1082,7 @@ void startH264StreamServer(void) {
                 }
 
                 int exp = -1;
-                if (!atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {
+                if (!std::atomic_compare_exchange_strong(&gActiveClientFd, &exp, c)) {
                     shutdown(c, SHUT_RDWR);
                     close(c);
                     continue;
