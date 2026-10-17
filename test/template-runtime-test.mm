@@ -96,6 +96,21 @@ static NSData *png(const cv::Mat &image){
 }
 static TemplateMatch *matcher(){TemplateMatch *value=[TemplateMatch new];[value setMaxTryTimes:2];[value setAcceptableValue:1];[value setScaleRation:.8f];return value;}
 static void noLiveWork(){auto bytes=sZXTemplateMemory.stats();assert(bytes.frames==0&&bytes.images<=32*1024*1024&&bytes.total<=96*1024*1024);}
+// A callee must preserve NSError across its internal pool and ARC's writeback.
+// The outer strong reference is read after the caller's temporary pool also drains.
+static void loaderFailureSurvivesPool(NSString *path,NSString *expected) {
+    NSError *failure=nil;
+    __weak NSError *observed=nil;
+    @autoreleasepool {
+        auto result=zx_tmLoad(path,true,NULL,&failure);
+        assert(!result&&failure);
+        observed=failure;
+    }
+    assert(observed==failure&&[failure.localizedDescription containsString:expected]);
+    failure=nil;
+    assert(!observed);
+    noLiveWork();
+}
 int main(int argc,char **argv){assert(argc==2);@autoreleasepool{
     NSString *root=[NSString stringWithUTF8String:argv[1]],*screenPath=[root stringByAppendingPathComponent:@"screen.png"],*templPath=[root stringByAppendingPathComponent:@"needle.png"];
     cv::Mat image(24,32,CV_8UC1),needle(8,8,CV_8UC1);
@@ -122,6 +137,9 @@ int main(int argc,char **argv){assert(argc==2);@autoreleasepool{
     assert([png(needle) writeToFile:templPath atomically:true]);
     unsigned before=decodes.load();[tm setMaxTryTimes:100000];error=nil;(void)[tm templateMatchWithPath:screenPath templatePath:templPath error:&error];assert([error.localizedDescription containsString:@"template_parameters_invalid"]&&decodes==before);[tm setMaxTryTimes:2];
     NSString *broken=[root stringByAppendingPathComponent:@"broken.png"];assert([[@"bad image" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:broken atomically:true]);
+    fputs("Template Foundation: NSError survives loader/caller pools and ARC writeback\n",stderr);
+    for(unsigned n=0;n<1000;++n)loaderFailureSurvivesPool(broken,@"template_pixel_limit");
+    loaderFailureSurvivesPool([root stringByAppendingPathComponent:@"missing.png"],@"template_file_invalid_or_too_large");
     error=nil;(void)[tm templateMatchWithPath:broken templatePath:templPath error:&error];assert([error.localizedDescription containsString:@"template_pixel_limit"]);noLiveWork();
     cv::Mat wide(1,8193,CV_8UC1);NSString *widePath=[root stringByAppendingPathComponent:@"wide.png"];assert([png(wide) writeToFile:widePath atomically:true]);
     before=decodes.load();error=nil;(void)[tm templateMatchWithPath:screenPath templatePath:widePath error:&error];assert([error.localizedDescription containsString:@"template_pixel_limit"]&&decodes==before);noLiveWork();
@@ -147,5 +165,5 @@ int main(int argc,char **argv){assert(argc==2);@autoreleasepool{
     {TLinkNativeBudgetScope scope(budget);error=nil;(void)[tm templateMatchWithPath:screenPath templatePath:templPath error:&error];assert([error.localizedDescription containsString:@"template_cancelled_or_timed_out"]);}
     [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidReceiveMemoryWarningNotification object:nil];assert(sZXTemplateMemory.stats().total==0);
     NSDictionary *stats=TLinkTemplateMatchPerformance();assert([stats[@"payload_bytes"] unsignedLongLongValue]==0&&[stats[@"work_bytes"] unsignedLongLongValue]==0);
-    puts("Template Foundation passed: file bounds, real metadata/PNG/provider lifetime, immutable replacement snapshots, cache hits, pressure epochs, preparation expiry, exceptions, live-byte rejection and compute admission. Real OpenCV interpolation/device qualification remains pending.");
+    puts("Template Foundation passed: NSError pool/writeback lifetime, file bounds, real metadata/PNG/provider lifetime, immutable replacement snapshots, cache hits, pressure epochs, preparation expiry, exceptions, live-byte rejection and compute admission. Real OpenCV interpolation/device qualification remains pending.");
 }}

@@ -34,7 +34,7 @@ try{
  if(process.platform==='darwin'){
   const runtime=join(temp,'template-runtime');
   run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-deprecated-declarations','-fobjc-arc',
-   '-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreGraphics','-framework','ImageIO',
+   '-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreGraphics','-framework','ImageIO',
    '-framework','CoreMedia','-framework','CoreVideo','-I',temp,'-I',join(root,'shared'),join(root,'test/template-runtime-test.mm'),'-o',runtime]);run(runtime,[temp]);
  }else console.log('macOS actual TemplateMatch storage/decoder/orchestration/pressure tests wired to CI; not run on Windows. OpenCV operations are controlled doubles in that fixture.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-template-'));await rm(temp,{recursive:true,force:true});}

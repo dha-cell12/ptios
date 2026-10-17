@@ -52,6 +52,14 @@ The eight seconds start at the matching API, **after upstream daemon queues and 
 
 Root daemon task 75/76 diagnostics add `template_match` with cache entries/hits/misses/purges, current/peak reserved bytes and policy limits. These are per-process, best-effort snapshots rather than an atomic account of all process allocations. The daemon snapshot does not include SpringBoard's separate cache.
 
+## CI error-lifetime correction
+
+The user reported both production workflows crashing in the macOS Foundation fixture at `objc_retain` after entering the image tests. Source review found a production lifetime defect: the loader wrote an autoreleased NSError through an `NSError **` out parameter, then drained its internal autorelease pool before the caller's ARC writeback could retain that error. Malformed image/metadata and other in-pool failures could therefore return a dangling NSError.
+
+The pooled wrapper now owns a strong local error. The inner helper returns into that strong local while the pool is still live; only after pool drainage does the wrapper forward the error to its caller. The encoded-data reservation also belongs to the wrapper, so it continues covering bytes through autorelease-pool drainage. File/cache/pixel/timeout policies are unchanged.
+
+The macOS regression adds 1,000 malformed-image failures and a missing-file case, retains the error across both loader and caller pools, reads its description and verifies weak-reference cleanup after the final strong reference is released. Existing public API failure tests remain enabled. The macOS binary now includes debug symbols; ASan/UBSan remain enabled. Windows template-core and native-budget suites were rerun successfully; corrected Foundation execution still requires macOS CI and is not claimed to have passed locally.
+
 ## Validation and acceptance
 
 Windows validation passes **36 source-contract runners, 14 native runners A01–C01b and 528 static grep assertions** from the TrollStore workflow. The portable C01b harness compares actual extracted SAD values and coordinates with the frozen pre-change implementation over 3,000 randomized cases. It also exercises planning/overflow/pyramid limits, exact float keys, local/inherited cancellation, work exhaustion, retained owners after eviction, 80,000 concurrent reservations and 100,000 LRU cycles. Existing A06 tests continue exercising the extracted legacy SAD loop.

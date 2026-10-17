@@ -143,7 +143,9 @@ static std::string zx_tmFingerprint(NSString *path,const struct stat &st) {
         (long long)st.st_mtimespec.tv_sec,st.st_mtimespec.tv_nsec,(long long)st.st_ctimespec.tv_sec,st.st_ctimespec.tv_nsec);
     return std::to_string(key.size())+":"+key+suffix;
 }
-static ZXTemplateRef zx_tmLoad(NSString *path,bool base,std::string *identity,NSError **error) {
+// The caller owns the pool and encoded-data reservation through its drainage.
+static ZXTemplateRef zx_tmLoadInPool(NSString *path,bool base,std::string *identity,NSError **error,
+                                    std::shared_ptr<TLinkImageCharge> &encodedCharge) {
     auto request=TLinkTemplateCurrentRequest();
     if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
     ZXTemplateFile file(path);struct stat before;
@@ -155,41 +157,50 @@ static ZXTemplateRef zx_tmLoad(NSString *path,bool base,std::string *identity,NS
         if(base){auto hit=sZXTemplateBases.get(key);if(hit){sZXTemplateHits.fetch_add(1);return hit;}}
     }
     sZXTemplateMisses.fetch_add(1);
-    // Keep the charge through pool drainage, including NSData's autoreleased ownership.
-    auto encodedCharge=zx_tmReserve(TLinkImageKind::Frame,size_t(before.st_size)+1);
+    encodedCharge=zx_tmReserve(TLinkImageKind::Frame,size_t(before.st_size)+1);
     if(!encodedCharge){zx_tmError(error,"template_memory_budget");return {};}
-    @autoreleasepool {
-        NSMutableData *encoded=[NSMutableData dataWithLength:size_t(before.st_size)+1];
-        if(!encoded){zx_tmError(error,"template_decode_failed");return {};}
-        size_t readBytes=0;
-        while(readBytes<size_t(before.st_size)+1){
-            if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
-            ssize_t count=read(file.fd,(uint8_t *)encoded.mutableBytes+readBytes,std::min(size_t(65536),size_t(before.st_size)+1-readBytes));
-            if(count<0&&errno==EINTR)continue;
-            if(count<0){zx_tmError(error,"template_read_failed");return {};}if(!count)break;readBytes+=size_t(count);
-        }
-        struct stat after;
-        if(readBytes!=size_t(before.st_size)||fstat(file.fd,&after)||key!=zx_tmFingerprint(path,after)){zx_tmError(error,"template_file_changed");return {};}
-        [encoded setLength:readBytes];
-        CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)encoded,NULL);
-        NSDictionary *properties=source?CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL)):nil;
-        if(source)CFRelease(source);
-        size_t pixels=0;
-        if(!TLinkImagePixels([properties[(__bridge NSString *)kCGImagePropertyPixelWidth] unsignedLongLongValue],
-            [properties[(__bridge NSString *)kCGImagePropertyPixelHeight] unsignedLongLongValue],base?kTLinkTemplatePixels:kTLinkTemplateScreenPixels,&pixels)){
-            zx_tmError(error,"template_pixel_limit");return {};
-        }
-        auto charge=zx_tmReserve(base?TLinkImageKind::Image:TLinkImageKind::Frame,pixels);
-        if(!charge){zx_tmError(error,"template_memory_budget");return {};}
+    NSMutableData *encoded=[NSMutableData dataWithLength:size_t(before.st_size)+1];
+    if(!encoded){zx_tmError(error,"template_decode_failed");return {};}
+    size_t readBytes=0;
+    while(readBytes<size_t(before.st_size)+1){
         if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
-        cv::Mat input(1,(int)encoded.length,CV_8UC1,encoded.mutableBytes);
-        cv::Mat gray=cv::imdecode(input,IMREAD_GRAYSCALE);
-        if(gray.empty()||gray.type()!=CV_8UC1||uint64_t(gray.rows)*gray.cols!=pixels){zx_tmError(error,"template_decode_failed");return {};}
-        auto result=std::make_shared<ZXTemplatePayload>();result->epoch=epoch;result->charge=std::move(charge);result->mats.push_back(gray);
-        if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
-        if(base){std::lock_guard<std::mutex> lock(sZXTemplateLock);if(epoch==sZXTemplateEpoch)sZXTemplateBases.put(key,result,16);}
-        return result;
+        ssize_t count=read(file.fd,(uint8_t *)encoded.mutableBytes+readBytes,std::min(size_t(65536),size_t(before.st_size)+1-readBytes));
+        if(count<0&&errno==EINTR)continue;
+        if(count<0){zx_tmError(error,"template_read_failed");return {};}if(!count)break;readBytes+=size_t(count);
     }
+    struct stat after;
+    if(readBytes!=size_t(before.st_size)||fstat(file.fd,&after)||key!=zx_tmFingerprint(path,after)){zx_tmError(error,"template_file_changed");return {};}
+    [encoded setLength:readBytes];
+    CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)encoded,NULL);
+    NSDictionary *properties=source?CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL)):nil;
+    if(source)CFRelease(source);
+    size_t pixels=0;
+    if(!TLinkImagePixels([properties[(__bridge NSString *)kCGImagePropertyPixelWidth] unsignedLongLongValue],
+        [properties[(__bridge NSString *)kCGImagePropertyPixelHeight] unsignedLongLongValue],base?kTLinkTemplatePixels:kTLinkTemplateScreenPixels,&pixels)){
+        zx_tmError(error,"template_pixel_limit");return {};
+    }
+    auto charge=zx_tmReserve(base?TLinkImageKind::Image:TLinkImageKind::Frame,pixels);
+    if(!charge){zx_tmError(error,"template_memory_budget");return {};}
+    if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
+    cv::Mat input(1,(int)encoded.length,CV_8UC1,encoded.mutableBytes);
+    cv::Mat gray=cv::imdecode(input,IMREAD_GRAYSCALE);
+    if(gray.empty()||gray.type()!=CV_8UC1||uint64_t(gray.rows)*gray.cols!=pixels){zx_tmError(error,"template_decode_failed");return {};}
+    auto result=std::make_shared<ZXTemplatePayload>();result->epoch=epoch;result->charge=std::move(charge);result->mats.push_back(gray);
+    if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
+    if(base){std::lock_guard<std::mutex> lock(sZXTemplateLock);if(epoch==sZXTemplateEpoch)sZXTemplateBases.put(key,result,16);}
+    return result;
+}
+static ZXTemplateRef zx_tmLoad(NSString *path,bool base,std::string *identity,NSError **error) {
+    // ARC writes the helper's autoreleasing result back to this strong local BEFORE
+    // the pool drains. Forward to the caller only AFTER drainage, in its own pool.
+    NSError *failure=nil;
+    std::shared_ptr<TLinkImageCharge> encodedCharge;
+    ZXTemplateRef result;
+    @autoreleasepool {
+        result=zx_tmLoadInPool(path,base,identity,&failure,encodedCharge);
+    }
+    if(error&&failure)*error=failure;
+    return result;
 }
 static std::string zx_tmScaledKey(const std::string &base,const TLinkTemplatePlan &plan,float sr,int tries) {
     uint32_t ratioBits,scaleBits;std::memcpy(&ratioBits,&plan.ratio,sizeof(ratioBits));std::memcpy(&scaleBits,&sr,sizeof(scaleBits));
