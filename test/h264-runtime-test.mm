@@ -54,48 +54,95 @@ static void pairOfSockets(int pair[2]) {
     int one = 1, size = 1024;
     assert(setsockopt(pair[0], SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) == 0);
     assert(setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0);
+    int flags = fcntl(pair[1], F_GETFL, 0); assert(flags >= 0);
+    assert(fcntl(pair[1], F_SETFL, flags | O_NONBLOCK) == 0);
+}
+// Fixture reads share an absolute deadline; no MSG_WAITALL or EOF-only join.
+static ssize_t receiveAvailable(int fd, uint8_t *bytes, size_t capacity, uint64_t deadline) {
+    for (;;) {
+        if (TLinkH264NowNs() >= deadline) {
+            fprintf(stderr, "H264 receive deadline: fd=%d capacity=%zu\n", fd, capacity);
+            abort();
+        }
+        ssize_t n = recv(fd, bytes, capacity, MSG_DONTWAIT);
+        if (n >= 0) return n;
+        if (errno == EINTR) continue;
+        assert(errno == EAGAIN || errno == EWOULDBLOCK);
+        struct pollfd item = {fd, POLLIN, 0};
+        int ready = poll(&item, 1, 50);
+        assert(ready >= 0 || errno == EINTR);
+        if (ready > 0) assert(!(item.revents & POLLNVAL));
+    }
+}
+static void receiveExact(int fd, uint8_t *bytes, size_t length) {
+    const uint64_t deadline = TLinkH264NowNs() + 5000000000ULL;
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t n = receiveAvailable(fd, bytes + offset, length - offset, deadline);
+        assert(n > 0); offset += static_cast<size_t>(n);
+    }
 }
 static void networkCases() {
+    const uint8_t byte = 0;
+    TLinkH264Socket invalid(-1); assert(!invalid.send(&byte, 1));
     // A full peer times out despite repeated poll/readiness wakes; its viewer slot returns.
     std::vector<uint8_t> payload(1024 * 1024, 0x5a);
     for (unsigned runtime = 0; runtime < 2; ++runtime) {
+        fprintf(stderr, "H264 socket: stalled %s sender\n", runtime ? "TrollStore" : "root");
         int pair[2]; pairOfSockets(pair);
         if (!runtime) { root::setClientSocketOptions(pair[0]); std::atomic_store(&root::gActiveClientFd, pair[0]); }
         else { troll::setClientSocketOptions(pair[0]); std::atomic_store(&troll::gActiveClientFd, pair[0]); }
+        int originalFlags = fcntl(pair[0], F_GETFL, 0); assert(originalFlags >= 0);
+        assert(!(originalFlags & O_NONBLOCK)); // Exercise setup on an initially blocking socket.
         TLinkH264Socket writer(pair[0], 30000000, 100000000);
+        int flags = fcntl(pair[0], F_GETFL, 0);
+        assert(flags >= 0 && (flags & O_NONBLOCK) && (flags & originalFlags) == originalFlags);
+        const uint64_t started = TLinkH264NowNs();
         assert(!writer.send(payload.data(), payload.size()));
+        assert(TLinkH264NowNs() - started < 2000000000ULL);
         if (!runtime) { root::zx_releaseStreamClient(pair[0]); assert(std::atomic_load(&root::gActiveClientFd) == -1); }
         else { troll::zx_releaseStreamClient(pair[0]); assert(std::atomic_load(&troll::gActiveClientFd) == -1); }
         close(pair[1]);
     }
+    fputs("H264 socket: PAT/PMT round-trip\n", stderr);
     int pair[2]; pairOfSockets(pair);
     TLinkH264Socket writer(pair[0]); uint8_t a = 0, b = 0;
     assert(root::sendTables(writer, &a, &b)); uint8_t tables[376];
-    assert(recv(pair[1], tables, sizeof(tables), MSG_WAITALL) == (ssize_t)sizeof(tables));
+    receiveExact(pair[1], tables, sizeof(tables));
     assert(tables[0] == 0x47 && tables[188] == 0x47 && a == 1 && b == 1);
     TLinkH264Socket writer2(pair[0]); assert(troll::sendTables(writer2, &a, &b));
-    assert(recv(pair[1], tables, sizeof(tables), MSG_WAITALL) == (ssize_t)sizeof(tables));
+    receiveExact(pair[1], tables, sizeof(tables));
     assert(a == 2 && b == 2);
     auto pat = root::buildPAT(0), pmt = troll::buildPMT(0);
     assert(root::mpegCrc32((const uint8_t *)pat.bytes + 5, 16) == 0);
     assert(troll::mpegCrc32((const uint8_t *)pmt.bytes + 5, 21) == 0);
     // Stream both production packetizers through real nonblocking sends and decode payload.
     std::vector<uint8_t> received;
-    std::thread reader([&] { uint8_t bytes[8192]; for (;;) { ssize_t n = recv(pair[1], bytes, sizeof(bytes), 0); if (n <= 0) break; received.insert(received.end(), bytes, bytes + n); } });
+    fputs("H264 socket: concurrent TS round-trip\n", stderr);
+    std::thread reader([&] {
+        uint8_t bytes[8192]; const uint64_t deadline = TLinkH264NowNs() + 15000000000ULL;
+        for (;;) {
+            ssize_t n = receiveAvailable(pair[1], bytes, sizeof(bytes), deadline);
+            if (n == 0) break;
+            received.insert(received.end(), bytes, bytes + n);
+        }
+    });
     uint8_t cc = 0;
     writer.begin(); assert(root::writeTSPackets(writer, 0x101, payload.data(), payload.size(), true, true, 12345, &cc));
     writer.begin(); assert(troll::writeTSPackets(writer, 0x101, payload.data(), payload.size(), true, true, 12345, &cc));
-    shutdown(pair[0], SHUT_WR); reader.join();
+    assert(shutdown(pair[0], SHUT_WR) == 0); reader.join();
     std::vector<uint8_t> decoded;
     for (size_t offset = 0; offset < received.size(); offset += 188) {
-        const uint8_t *packet = received.data() + offset; assert(packet[0] == 0x47 && received.size() - offset >= 188);
+        assert(received.size() - offset >= 188);
+        const uint8_t *packet = received.data() + offset; assert(packet[0] == 0x47);
         size_t start = 4; if (packet[3] & 0x20) start += 1 + packet[4]; assert(start <= 188);
         decoded.insert(decoded.end(), packet + start, packet + 188);
     }
     std::vector<uint8_t> expected = payload; expected.insert(expected.end(), payload.begin(), payload.end()); assert(decoded == expected);
     close(pair[0]); close(pair[1]);
+    fputs("H264 socket: closed-peer failure\n", stderr);
     pairOfSockets(pair); close(pair[1]);
-    TLinkH264Socket closed(pair[0]); const uint8_t byte = 0;
+    TLinkH264Socket closed(pair[0]);
     assert(!root::writeRawAnnexBFrame(closed, &byte, 1, true, 1, 1, 2, 3));
     assert(!troll::writeRawAnnexBFrame(closed, &byte, 1, true, 1, 1, 2, 3)); close(pair[0]);
 }

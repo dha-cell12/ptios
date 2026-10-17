@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root, p), 'utf8')).replaceAll('\r\n', '\n');
-const [a, b, adaptive] = await Promise.all(['pccontrol/H264Stream.xm','stream-app/streamd/H264Stream.mm','shared/TLinkAdaptiveStreaming.mm'].map(read));
+const [a, b, adaptive, socket] = await Promise.all(['pccontrol/H264Stream.xm','stream-app/streamd/H264Stream.mm','shared/TLinkAdaptiveStreaming.mm','shared/TLinkH264Socket.h'].map(read));
 function between(source, begin, end) { const x = source.indexOf(begin), y = source.indexOf(end, x + begin.length); assert.ok(x >= 0 && y > x, begin); return source.slice(x, y); }
 const fixtures = {};
 for (const [prefix, source] of [['Root', a], ['Troll', b]]) {
@@ -28,6 +28,12 @@ for (const [prefix, source] of [['Root', a], ['Troll', b]]) {
 }
 assert.match(adaptive, /gAdaptiveDecisionBusy.compare_exchange_strong/);
 assert.match(adaptive, /session_changed/);
+// Compile the actual socket adapter with only its POSIX syscall boundary doubled.
+let socketAdapter = socket.slice(socket.indexOf('// Socket lifetime'), socket.lastIndexOf('#endif'));
+for (const [call, replacement] of [['::send(', '::fixtureSend('], ['fcntl(', 'fixtureFcntl('], ['poll(', 'fixturePoll(']]) {
+ assert.ok(socketAdapter.includes(call)); socketAdapter = socketAdapter.replaceAll(call, replacement);
+}
+fixtures['H264SocketUnderTest.inc'] = socketAdapter;
 const oldRoot = 'static NSString *TLinkAdaptiveRoot(void) { return @"/var/mobile/Library/TLinkauto/adaptive-streaming"; }';
 assert.ok(adaptive.includes(oldRoot));
 fixtures['AdaptiveUnderTest.mm'] = '#import <Foundation/Foundation.h>\nextern NSString *TLinkAdaptiveFixtureRoot(void);\n' + adaptive.replace(oldRoot, 'static NSString *TLinkAdaptiveRoot(void) { return TLinkAdaptiveFixtureRoot(); }');
@@ -46,6 +52,12 @@ try {
  run(compiler, msvc ? ['/nologo','/std:c++14','/W4','/WX','/EHsc',`/I${temp}`, file, `/Fe${binary}`, `/Fo${join(temp,'core.obj')}`]
   : ['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-I',temp,file,'-o',binary]);
  run(binary, []);
+ const adapterBinary = join(temp, windows ? 'h264-socket-adapter.exe' : 'h264-socket-adapter');
+ const adapterFile = join(root, 'test/h264-socket-adapter-test.cpp');
+ run(compiler, msvc ? ['/nologo','/std:c++14','/W4','/WX','/EHsc',`/I${temp}`,adapterFile,`/Fe${adapterBinary}`,`/Fo${join(temp,'adapter.obj')}`]
+  : ['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-I',temp,adapterFile,'-o',adapterBinary]);
+ run(adapterBinary, []);
+
  if (process.platform === 'darwin') {
   const runtime = join(temp,'h264-runtime');
   run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-Wno-deprecated-declarations','-fobjc-arc',
