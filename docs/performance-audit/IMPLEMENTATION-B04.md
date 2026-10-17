@@ -52,3 +52,7 @@ Both production workflows run `check-h264-safety.mjs`. Its macOS ASan/UBSan bran
 5. Compare send syscalls, capture cadence/jitter, dropped frames, CPU, allocations/RSS, p95/p99 latency and energy against B03 with identical device/profile/load.
 
 Network deadlines bound the sender's cooperative nonblocking loop, subject to scheduling/poll granularity. Capture, VideoToolbox operations/invalidation, license checks and session-start/end persistence can still block outside that window; there is no hard end-to-end teardown SLA. Start/end persistence remains synchronous outside the frame loop, though the viewer slot is released before end persistence. The fixed TS batch and bounded adaptive work do not impose a process RSS ceiling. No private capture backend changes or device performance claims are included.
+
+## macOS portable harness correction
+
+Both root and TrollStore CI stopped compiling the portable H264 fixture because its local `htonl` definition collided with the Darwin SDK macro pulled in by libc++ headers. The fixture now explicitly includes `<arpa/inet.h>` on POSIX hosts and confines the byte-swap fallback to Windows. Production framing and sender code are unchanged. The existing golden-header and root/TrollStore byte-parity cases exercise this conversion; the macOS Foundation/socket integration branch still requires CI execution.

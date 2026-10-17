@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#ifndef _WIN32
+#include <arpa/inet.h>
+#endif
 class TLinkH264Socket {
 public:
     std::vector<uint8_t> bytes;
@@ -13,7 +16,11 @@ public:
         bytes.insert(bytes.end(), p, p + n); return true;
     }
 };
+// The Windows-only fixture fallback avoids a Winsock link dependency.
+// POSIX hosts use the same SDK conversion as the production writer.
+#ifdef _WIN32
 static uint32_t htonl(uint32_t x) { return (x >> 24) | ((x >> 8) & 0xff00U) | ((x << 8) & 0xff0000U) | (x << 24); }
+#endif
 namespace root {
 static uint64_t zx_now_us() { return 1234567; }
 #include "RootSendUnderTest.inc"
