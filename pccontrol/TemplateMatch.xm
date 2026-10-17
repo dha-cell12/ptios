@@ -14,6 +14,12 @@
 #include <string>
 #include <math.h>
 #include <sys/stat.h>
+#import <ImageIO/ImageIO.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <mutex>
+#include <cstring>
 
 #ifndef ZX_TEMPLATE_MATCH_DEBUG
 #define ZX_TEMPLATE_MATCH_DEBUG 0
@@ -85,115 +91,129 @@ static void zx_tm_logf(const char *fmt, ...)
 using namespace cv;
 using namespace std;
 
-struct ZXTemplateCacheEntry {
-    time_t mtime;
-    off_t size;
-    Mat templ;
+// BEGIN bounded template storage.
+struct ZXTemplatePayload {
+    std::shared_ptr<TLinkImageCharge> charge;
+    std::shared_ptr<const ZXTemplatePayload> dependency;
+    std::vector<Mat> mats;
+    uint64_t epoch = 0;
 };
-
-static bool zx_templateFileInfo(NSString *path, time_t *mtime, off_t *size)
-{
-    if (!path) return false;
-    struct stat st;
-    if (stat([path fileSystemRepresentation], &st) != 0) {
-        return false;
-    }
-    if (mtime) *mtime = st.st_mtime;
-    if (size) *size = st.st_size;
-    return true;
+using ZXTemplateRef = std::shared_ptr<const ZXTemplatePayload>;
+static std::mutex sZXTemplateLock;
+static TLinkImageMemory sZXTemplateMemory(64*1024*1024,32*1024*1024,96*1024*1024);
+static TLinkImageComputeGate sZXTemplateCompute;
+static TLinkTemplateLRU<ZXTemplateRef> sZXTemplateBases, sZXTemplateScales;
+static uint64_t sZXTemplateEpoch = 1;
+static std::atomic<uint64_t> sZXTemplateHits{0},sZXTemplateMisses{0},sZXTemplatePressure{0};
+static void zx_tmError(NSError **error, const char *code) {
+    if(error) *error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%s\r\n",code]}];
 }
-
-static string zx_templateCacheKey(NSString *path, time_t mtime, off_t size)
-{
-    const char *p = path ? [path UTF8String] : "";
-    char suffix[96];
-    snprintf(suffix, sizeof(suffix), "|%lld|%lld", (long long)mtime, (long long)size);
-    string key = p ? p : "";
-    key += suffix;
-    return key;
+static void zx_tmPurge(void) {
+    std::lock_guard<std::mutex> lock(sZXTemplateLock); ++sZXTemplateEpoch;
+    sZXTemplateScales.clear();sZXTemplateBases.clear();sZXTemplatePressure.fetch_add(1);
 }
-
-static Mat zx_cachedTemplateForPath(NSString *path)
-{
-    time_t mtime = 0;
-    off_t size = 0;
-    if (!zx_templateFileInfo(path, &mtime, &size)) {
-        return Mat();
+static void zx_tmObservePressure(void) {
+    static dispatch_once_t once;static dispatch_source_t source;static id observer;
+    dispatch_once(&once, ^{
+        observer=[NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:nil
+            usingBlock:^(NSNotification *note){(void)note;zx_tmPurge();}];(void)observer;
+        source=dispatch_source_create(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE,0,DISPATCH_MEMORYPRESSURE_WARN|DISPATCH_MEMORYPRESSURE_CRITICAL,
+            dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0));
+        if(source){dispatch_source_set_event_handler(source,^{zx_tmPurge();});dispatch_resume(source);}
+    });
+}
+static std::shared_ptr<TLinkImageCharge> zx_tmReserve(TLinkImageKind kind,size_t bytes) {
+    // Cache eviction cannot free frame/work-category capacity.
+    if(kind==TLinkImageKind::Frame)return sZXTemplateMemory.reserve(kind,bytes);
+    std::lock_guard<std::mutex> lock(sZXTemplateLock);
+    auto charge=sZXTemplateMemory.reserve(kind,bytes);
+    while(!charge&&(sZXTemplateScales.evict()||sZXTemplateBases.evict())) charge=sZXTemplateMemory.reserve(kind,bytes);
+    return charge;
+}
+struct ZXTemplateFile {
+    int fd;
+    explicit ZXTemplateFile(NSString *path):fd(path ? open(path.fileSystemRepresentation,O_RDONLY|O_CLOEXEC|O_NONBLOCK) : -1){}
+    ~ZXTemplateFile(){if(fd>=0)close(fd);}
+};
+static std::string zx_tmFingerprint(NSString *path,const struct stat &st) {
+    const char *text=path.UTF8String;std::string key=text?text:"";
+    char suffix[256];snprintf(suffix,sizeof(suffix),"|%llu|%llu|%lld|%lld:%ld|%lld:%ld",
+        (unsigned long long)st.st_dev,(unsigned long long)st.st_ino,(long long)st.st_size,
+        (long long)st.st_mtimespec.tv_sec,st.st_mtimespec.tv_nsec,(long long)st.st_ctimespec.tv_sec,st.st_ctimespec.tv_nsec);
+    return std::to_string(key.size())+":"+key+suffix;
+}
+static ZXTemplateRef zx_tmLoad(NSString *path,bool base,std::string *identity,NSError **error) {
+    auto request=TLinkTemplateCurrentRequest();
+    if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
+    ZXTemplateFile file(path);struct stat before;
+    if(file.fd<0||fstat(file.fd,&before)||!S_ISREG(before.st_mode)||before.st_size<=0||uint64_t(before.st_size)>kTLinkTemplateEncodedBytes){zx_tmError(error,"template_file_invalid_or_too_large");return {};}
+    std::string key=zx_tmFingerprint(path,before);if(identity)*identity=key;
+    uint64_t epoch;
+    {
+        std::lock_guard<std::mutex> lock(sZXTemplateLock);epoch=sZXTemplateEpoch;
+        if(base){auto hit=sZXTemplateBases.get(key);if(hit){sZXTemplateHits.fetch_add(1);return hit;}}
     }
-
-    const string key = zx_templateCacheKey(path, mtime, size);
-    static map<string, ZXTemplateCacheEntry> cache;
-    @synchronized([TemplateMatch class]) {
-        map<string, ZXTemplateCacheEntry>::iterator it = cache.find(key);
-        if (it != cache.end()) {
-            return it->second.templ;
+    sZXTemplateMisses.fetch_add(1);
+    // Keep the charge through pool drainage, including NSData's autoreleased ownership.
+    auto encodedCharge=zx_tmReserve(TLinkImageKind::Frame,size_t(before.st_size)+1);
+    if(!encodedCharge){zx_tmError(error,"template_memory_budget");return {};}
+    @autoreleasepool {
+        NSMutableData *encoded=[NSMutableData dataWithLength:size_t(before.st_size)+1];
+        if(!encoded){zx_tmError(error,"template_decode_failed");return {};}
+        size_t readBytes=0;
+        while(readBytes<size_t(before.st_size)+1){
+            if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
+            ssize_t count=read(file.fd,(uint8_t *)encoded.mutableBytes+readBytes,std::min(size_t(65536),size_t(before.st_size)+1-readBytes));
+            if(count<0&&errno==EINTR)continue;
+            if(count<0){zx_tmError(error,"template_read_failed");return {};}if(!count)break;readBytes+=size_t(count);
         }
-    }
-
-    Mat templ = imread([path UTF8String], IMREAD_GRAYSCALE);
-    if (templ.empty()) {
-        return templ;
-    }
-
-    @synchronized([TemplateMatch class]) {
-        if (cache.size() > 32) {
-            cache.clear();
+        struct stat after;
+        if(readBytes!=size_t(before.st_size)||fstat(file.fd,&after)||key!=zx_tmFingerprint(path,after)){zx_tmError(error,"template_file_changed");return {};}
+        [encoded setLength:readBytes];
+        CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)encoded,NULL);
+        NSDictionary *properties=source?CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL)):nil;
+        if(source)CFRelease(source);
+        size_t pixels=0;
+        if(!TLinkImagePixels([properties[(__bridge NSString *)kCGImagePropertyPixelWidth] unsignedLongLongValue],
+            [properties[(__bridge NSString *)kCGImagePropertyPixelHeight] unsignedLongLongValue],base?kTLinkTemplatePixels:kTLinkTemplateScreenPixels,&pixels)){
+            zx_tmError(error,"template_pixel_limit");return {};
         }
-        ZXTemplateCacheEntry entry;
-        entry.mtime = mtime;
-        entry.size = size;
-        entry.templ = templ;
-        cache[key] = entry;
-    }
-    return templ;
-}
-
-static string zx_scaledTemplateCacheKey(const char *templateKey, int templCols, int templRows, float resizeRatio, float scaleRation, int maxTryTimes)
-{
-    char buf[256];
-    snprintf(buf, sizeof(buf), "|cols=%d|rows=%d|r=%.6f|sr=%.6f|mtt=%d", templCols, templRows, resizeRatio, scaleRation, maxTryTimes);
-    string key = templateKey ? templateKey : "";
-    key += buf;
-    return key;
-}
-
-static map<string, vector<Mat> > &zx_scaledTemplateCache(void)
-{
-    static map<string, vector<Mat> > cache;
-    return cache;
-}
-
-static bool zx_getScaledTemplateCache(const string &key, vector<Mat> *out)
-{
-    @synchronized([TemplateMatch class]) {
-        map<string, vector<Mat> > &cache = zx_scaledTemplateCache();
-        map<string, vector<Mat> >::iterator it = cache.find(key);
-        if (it == cache.end()) {
-            return false;
-        }
-        if (out) *out = it->second;
-        return true;
+        auto charge=zx_tmReserve(base?TLinkImageKind::Image:TLinkImageKind::Frame,pixels);
+        if(!charge){zx_tmError(error,"template_memory_budget");return {};}
+        if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
+        cv::Mat input(1,(int)encoded.length,CV_8UC1,encoded.mutableBytes);
+        cv::Mat gray=cv::imdecode(input,IMREAD_GRAYSCALE);
+        if(gray.empty()||gray.type()!=CV_8UC1||uint64_t(gray.rows)*gray.cols!=pixels){zx_tmError(error,"template_decode_failed");return {};}
+        auto result=std::make_shared<ZXTemplatePayload>();result->epoch=epoch;result->charge=std::move(charge);result->mats.push_back(gray);
+        if(request&&request->stopped()){zx_tmError(error,request->error());return {};}
+        if(base){std::lock_guard<std::mutex> lock(sZXTemplateLock);if(epoch==sZXTemplateEpoch)sZXTemplateBases.put(key,result,16);}
+        return result;
     }
 }
-
-static void zx_setScaledTemplateCache(const string &key, const vector<Mat> &templates)
-{
-    @synchronized([TemplateMatch class]) {
-        map<string, vector<Mat> > &cache = zx_scaledTemplateCache();
-        if (cache.size() > 64) {
-            cache.clear();
-        }
-        cache[key] = templates;
-    }
+static std::string zx_tmScaledKey(const std::string &base,const TLinkTemplatePlan &plan,float sr,int tries) {
+    uint32_t ratioBits,scaleBits;std::memcpy(&ratioBits,&plan.ratio,sizeof(ratioBits));std::memcpy(&scaleBits,&sr,sizeof(scaleBits));
+    char suffix[192];snprintf(suffix,sizeof(suffix),"|%d:%d:%d:%d|%08x:%08x:%d",plan.screenWidth,plan.screenHeight,
+        plan.templateWidth,plan.templateHeight,ratioBits,scaleBits,tries);return base+suffix;
 }
+NSDictionary *TLinkTemplateMatchPerformance(void) {
+    auto bytes=sZXTemplateMemory.stats();std::lock_guard<std::mutex> lock(sZXTemplateLock);
+    return @{@"base_entries":@(sZXTemplateBases.size()),@"scaled_entries":@(sZXTemplateScales.size()),
+        @"payload_bytes":@(bytes.images),@"work_bytes":@(bytes.frames),@"total_bytes":@(bytes.total),@"peak_bytes":@(bytes.peak),
+        @"payload_limit_bytes":@(32*1024*1024),@"total_limit_bytes":@(96*1024*1024),@"cache_hits":@(sZXTemplateHits.load()),
+        @"cache_misses":@(sZXTemplateMisses.load()),@"purge_count":@(sZXTemplatePressure.load()),@"max_tries":@8,@"request_budget_ms":@8000,
+        @"max_concurrent_calls":@2,@"work_comparison_limit":@256000000,@"max_pyramid_bytes":@(kTLinkTemplatePyramidBytes),
+        @"encoded_file_limit_bytes":@(kTLinkTemplateEncodedBytes),@"work_limit_bytes":@(64*1024*1024)};
+}
+// END bounded template storage.
 
-static inline long long zx_absll(long long v) { return v < 0 ? -v : v; }
 
 static long long zx_sad_match_region(const Mat &img, const Mat &templ,
                                     int x0, int y0, int x1, int y1,
                                     int step, int *bestX, int *bestY)
 {
     auto nativeBudget = TLinkCurrentNativeBudget();
+    auto request = TLinkTemplateCurrentRequest();
     const int w = templ.cols;
     const int h = templ.rows;
 
@@ -215,14 +235,17 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     }
 
     for (int y = y0; y <= y1; y += step) {
-        if (nativeBudget && nativeBudget->stopped()) return LLONG_MAX;
+        if ((nativeBudget && nativeBudget->stopped()) || (request && request->stopped())) return LLONG_MAX;
         for (int x = x0; x <= x1; x += step) {
             long long sad = 0;
             for (int ty = 0; ty < h; ty++) {
-                if ((ty & 31) == 0 && nativeBudget && nativeBudget->stopped()) return LLONG_MAX;
+                if ((ty & 31) == 0 && ((nativeBudget && nativeBudget->stopped()) || (request && request->stopped()))) return LLONG_MAX;
                 const unsigned char *imgRow = img.ptr<unsigned char>(y + ty) + x;
                 const unsigned char *tRow = templ.ptr<unsigned char>(ty);
                 for (int tx = 0; tx < w; tx++) {
+                    if ((tx & 4095) == 0) {
+                        if ((nativeBudget && nativeBudget->stopped()) || (request && !request->consume(std::min(size_t(4096),size_t(w-tx))))) return LLONG_MAX;
+                    }
                     sad += (long long)abs((int)imgRow[tx] - (int)tRow[tx]);
                 }
                 if (sad >= bestSad) {
@@ -246,14 +269,13 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
 
 @interface TemplateMatch() {
     UIImage *_templateImage;
-    vector<Mat> _scaledTempls;
     int maxTryTimes;
     float acceptableValue;
     float scaleRation;
     float resizeRatio;
 }
 
-- (CGRect)matchWithMat:(Mat)img andTemplate:(Mat)templ scaledCacheKey:(const char *)scaledCacheKey;
+- (CGRect)matchWithMat:(Mat)img andTemplate:(ZXTemplateRef)templ identity:(const std::string &)identity error:(NSError **)error;
 
 @end
 
@@ -286,73 +308,44 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
     return self;
 }
 
-- (CGRect)templateMatchWithCGImage:(CGImageRef)img templatePath:(NSString*)templatePath error:(NSError**)err {
-    CGColorSpaceRef colorSpace = CGImageGetColorSpace(img);
-    CGFloat cols = CGImageGetWidth(img);
-    CGFloat rows = CGImageGetHeight(img);
-
-    cv::Mat screenMat(rows, cols, CV_8UC4); // 8 bits per component, 4 channels
-
-    
-    CGContextRef contextRef = CGBitmapContextCreate(screenMat.data,                 // Pointer to backing data
-                                                    cols,                      // Width of bitmap
-                                                    rows,                     // Height of bitmap
-                                                    8,                          // Bits per component
-                                                    screenMat.step[0],              // Bytes per row
-                                                    colorSpace,                 // Colorspace
-                                                    kCGImageAlphaNoneSkipLast |
-                                                    kCGBitmapByteOrderDefault); // Bitmap info flags
-
-    CGContextDrawImage(contextRef, CGRectMake(0, 0, cols, rows), img);
-
-    CGContextRelease(contextRef);
-    // CGImageGetColorSpace() does not transfer ownership.
-    
-    time_t templMtime = 0;
-    off_t templSize = 0;
-    zx_templateFileInfo(templatePath, &templMtime, &templSize);
-    string templCacheKey = zx_templateCacheKey(templatePath, templMtime, templSize);
-    Mat templ = zx_cachedTemplateForPath(templatePath); //[templatePath UTF8String]
-    if (templ.cols == 0 && templ.rows == 0)
-    {
-        if (err) {
-            *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
-        }
-        return CGRect();    
-    }
-    cv::Mat greyMat;
-    cv::cvtColor(screenMat, greyMat, COLOR_RGBA2GRAY);
-
-    return [self matchWithMat:greyMat andTemplate:templ scaledCacheKey:templCacheKey.c_str()];
+- (CGRect)templateMatchWithCGImage:(CGImageRef)image templatePath:(NSString*)path error:(NSError**)error {
+    auto request=std::make_shared<TLinkTemplateRequest>(TLinkCurrentNativeBudget());TLinkTemplateRequestScope scope(request);
+    TLinkImageWork work(sZXTemplateCompute);
+    if(!work){zx_tmError(error,"template_compute_busy");return CGRect();}
+    if(!TLinkTemplateParametersValid(maxTryTimes,scaleRation,acceptableValue)){zx_tmError(error,"template_parameters_invalid");return CGRect();}
+    zx_tmObservePressure();
+    try { @try {
+        size_t pixels=0;
+        if(!image||!TLinkImagePixels(CGImageGetWidth(image),CGImageGetHeight(image),kTLinkTemplateScreenPixels,&pixels)){zx_tmError(error,"template_screen_pixel_limit");return CGRect();}
+        std::string identity;auto templ=zx_tmLoad(path,true,&identity,error);if(!templ)return CGRect();
+        auto charge=zx_tmReserve(TLinkImageKind::Frame,pixels*5);if(!charge){zx_tmError(error,"template_memory_budget");return CGRect();}
+        if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+        Mat rgba((int)CGImageGetHeight(image),(int)CGImageGetWidth(image),CV_8UC4);
+        CGColorSpaceRef color=CGImageGetColorSpace(image),owned=NULL;
+        if(!color){owned=CGColorSpaceCreateDeviceRGB();color=owned;}
+        CGContextRef context=CGBitmapContextCreate(rgba.data,rgba.cols,rgba.rows,8,rgba.step[0],color,kCGImageAlphaNoneSkipLast|kCGBitmapByteOrderDefault);
+        if(owned)CGColorSpaceRelease(owned);
+        if(!context){zx_tmError(error,"template_context_failed");return CGRect();}
+        CGContextDrawImage(context,CGRectMake(0,0,rgba.cols,rgba.rows),image);CGContextRelease(context);
+        Mat gray;cv::cvtColor(rgba,gray,COLOR_RGBA2GRAY);rgba.release();
+        if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+        return [self matchWithMat:gray andTemplate:templ identity:identity error:error];
+    } @catch(NSException *exception){(void)exception;zx_tmError(error,"template_operation_failed");return CGRect();}
+    } catch(const std::exception &exception){(void)exception;zx_tmError(error,"template_operation_failed");return CGRect();}
 }
 
-- (CGRect)templateMatchWithPath:(NSString*)imgPath templatePath:(NSString*)templatePath error:(NSError**)err {
-    TMLOGF("templateMatchWithPath start. imgPath=%s templatePath=%s", [imgPath UTF8String], [templatePath UTF8String]);
-    Mat image = imread([imgPath UTF8String], IMREAD_GRAYSCALE); //[imgPath UTF8String]
-    time_t templMtime = 0;
-    off_t templSize = 0;
-    zx_templateFileInfo(templatePath, &templMtime, &templSize);
-    string templCacheKey = zx_templateCacheKey(templatePath, templMtime, templSize);
-    Mat templ = zx_cachedTemplateForPath(templatePath); //[templatePath UTF8String]
-
-    TMLOGF("imread done. img=%dx%d templ=%dx%d", image.cols, image.rows, templ.cols, templ.rows);
-    
-    if (image.cols == 0 && image.rows == 0)
-    {
-        if (err) {
-            *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the screenshot photo is 0! Screenshot path: %@\r\n", imgPath]}];
-        }
-        return CGRect();    
-    }
-    if (templ.cols == 0 && templ.rows == 0)
-    {
-        if (err) {
-            *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Read failed! Check permission or file existance. The height and width of the template image is 0! Template path: %@\r\n", templatePath]}];
-        }
-        return CGRect();    
-    }
-
-    return [self matchWithMat:image andTemplate:templ scaledCacheKey:templCacheKey.c_str()];
+- (CGRect)templateMatchWithPath:(NSString*)imagePath templatePath:(NSString*)path error:(NSError**)error {
+    auto request=std::make_shared<TLinkTemplateRequest>(TLinkCurrentNativeBudget());TLinkTemplateRequestScope scope(request);
+    TLinkImageWork work(sZXTemplateCompute);
+    if(!work){zx_tmError(error,"template_compute_busy");return CGRect();}
+    if(!TLinkTemplateParametersValid(maxTryTimes,scaleRation,acceptableValue)){zx_tmError(error,"template_parameters_invalid");return CGRect();}
+    zx_tmObservePressure();
+    try { @try {
+        std::string identity;auto templ=zx_tmLoad(path,true,&identity,error);if(!templ)return CGRect();
+        auto image=zx_tmLoad(imagePath,false,NULL,error);if(!image)return CGRect();
+        return [self matchWithMat:image->mats[0] andTemplate:templ identity:identity error:error];
+    } @catch(NSException *exception){(void)exception;zx_tmError(error,"template_operation_failed");return CGRect();}
+    } catch(const std::exception &exception){(void)exception;zx_tmError(error,"template_operation_failed");return CGRect();}
 }
 
 //uncompleted
@@ -364,140 +357,78 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
 //调用OpenCV进行匹配
 //此方法具体解释参考OpenCV官方文档: https://docs.opencv.org/3.2.0/de/da9/tutorial_template_matching.html
 - (CGRect)matchWithMat:(Mat)img andTemplate:(Mat)templ {
-    return [self matchWithMat:img andTemplate:templ scaledCacheKey:NULL];
+    auto request=std::make_shared<TLinkTemplateRequest>(TLinkCurrentNativeBudget());TLinkTemplateRequestScope scope(request);
+    TLinkImageWork work(sZXTemplateCompute);if(!work)return CGRect();
+    size_t pixels=0,screen=0;
+    if(!TLinkImagePixels(templ.cols,templ.rows,kTLinkTemplatePixels,&pixels)||!TLinkImagePixels(img.cols,img.rows,kTLinkTemplateScreenPixels,&screen))return CGRect();
+    auto charge=zx_tmReserve(TLinkImageKind::Image,pixels),screenCharge=zx_tmReserve(TLinkImageKind::Frame,screen);
+    if(!charge||!screenCharge)return CGRect();
+    auto payload=std::make_shared<ZXTemplatePayload>();payload->charge=charge;payload->mats.push_back(templ);
+    try{return [self matchWithMat:img andTemplate:payload identity:std::string() error:NULL];}
+    catch(const std::exception &exception){(void)exception;return CGRect();}
 }
 
-- (CGRect)matchWithMat:(Mat)img andTemplate:(Mat)templ scaledCacheKey:(const char *)scaledCacheKey {
-    // OpenCV on iOS can behave better with fixed thread count.
-    cv::setNumThreads(1);
-
-    // Downscale before matching to keep CPU usage reasonable.
-    // This avoids matchTemplate() appearing to "hang" on larger screens.
-    float r = resizeRatio;
-    if (r <= 0.0f || r > 1.0f) {
-        r = 1.0f;
+- (CGRect)matchWithMat:(Mat)img andTemplate:(ZXTemplateRef)base identity:(const std::string &)identity error:(NSError **)error {
+    auto request=TLinkTemplateCurrentRequest();
+    if(!request||request->stopped()){zx_tmError(error,"template_cancelled_or_timed_out");return CGRect();}
+    if(!base||base->mats.empty()||img.empty()||img.type()!=CV_8UC1||base->mats[0].type()!=CV_8UC1||
+        !TLinkTemplateParametersValid(maxTryTimes,scaleRation,acceptableValue)){zx_tmError(error,"template_parameters_invalid");return CGRect();}
+    Mat templ=base->mats[0];TLinkTemplatePlan plan;
+    if(!TLinkTemplateMakePlan(img.cols,img.rows,templ.cols,templ.rows,resizeRatio,maxTryTimes,scaleRation,
+        [](double value){return cvRound(value);},plan)){zx_tmError(error,"template_scale_budget");return CGRect();}
+    if(plan.scales.empty())return CGRect();
+    static std::once_flag threads;
+    std::call_once(threads,[]{cv::setNumThreads(1);});
+    auto resizeCharge=plan.ratio!=1 ? zx_tmReserve(TLinkImageKind::Frame,size_t(plan.screenWidth)*plan.screenHeight) : std::shared_ptr<TLinkImageCharge>();
+    // Mat releases first; another caller cannot reuse these bytes while they are live.
+    Mat imgWork=img;
+    if(plan.ratio!=1&&!resizeCharge){zx_tmError(error,"template_memory_budget");return CGRect();}
+    if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+    if(plan.ratio!=1)cv::resize(img,imgWork,cv::Size(0,0),plan.ratio,plan.ratio,cv::INTER_AREA);
+    if(imgWork.empty()||imgWork.cols!=plan.screenWidth||imgWork.rows!=plan.screenHeight){zx_tmError(error,"template_scale_geometry_changed");return CGRect();}
+    const std::string key=zx_tmScaledKey(identity,plan,scaleRation,maxTryTimes);
+    ZXTemplateRef pyramid;uint64_t epoch;
+    {
+        std::lock_guard<std::mutex> lock(sZXTemplateLock);epoch=sZXTemplateEpoch;
+        if(!identity.empty())pyramid=sZXTemplateScales.get(key);
     }
-    if (r == 1.0f) {
-        const long long pixels = (long long)img.cols * (long long)img.rows;
-        if (pixels > 600000) {
-            r = 0.5f;
+    if(pyramid)sZXTemplateHits.fetch_add(1);
+    else {
+        sZXTemplateMisses.fetch_add(1);
+        // The entire pyramid is admitted before the first template resize.
+        auto charge=zx_tmReserve(TLinkImageKind::Image,plan.bytes);
+        if(!charge){zx_tmError(error,"template_memory_budget");return CGRect();}
+        auto pending=std::make_shared<ZXTemplatePayload>();pending->epoch=epoch;pending->charge=std::move(charge);pending->dependency=base;
+        auto workCharge=plan.ratio!=1 ? zx_tmReserve(TLinkImageKind::Frame,size_t(plan.templateWidth)*plan.templateHeight) : std::shared_ptr<TLinkImageCharge>();
+        if(plan.ratio!=1&&!workCharge){zx_tmError(error,"template_memory_budget");return CGRect();}
+        Mat templWork=templ;
+        if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+        if(plan.ratio!=1)cv::resize(templ,templWork,cv::Size(0,0),plan.ratio,plan.ratio,cv::INTER_AREA);
+        for(const auto &scale:plan.scales){
+            if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+            Mat resized;
+            if(scale.factor==1)resized=templWork;
+            else cv::resize(templWork,resized,cv::Size(0,0),scale.factor,scale.factor,cv::INTER_LINEAR);
+            if(resized.empty()||resized.cols!=scale.width||resized.rows!=scale.height||resized.total()>scale.bytes){zx_tmError(error,"template_scale_geometry_changed");return CGRect();}
+            pending->mats.push_back(resized);
         }
+        pyramid=pending;
+        if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+        if(!identity.empty()){std::lock_guard<std::mutex> lock(sZXTemplateLock);if(epoch==sZXTemplateEpoch&&base->epoch==epoch)sZXTemplateScales.put(key,pyramid,32);}
     }
-    TMLOGF("using resizeRatio=%.3f", r);
-
-    Mat imgWork = img;
-    Mat templWork = templ;
-    if (r != 1.0f) {
-        cv::resize(img, imgWork, cv::Size(0, 0), r, r, cv::INTER_AREA);
-        cv::resize(templ, templWork, cv::Size(0, 0), r, r, cv::INTER_AREA);
+    for(const Mat &current:pyramid->mats){
+        if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+        if(current.cols>imgWork.cols||current.rows>imgWork.rows)continue;
+        int bx=0,by=0;
+        long long sad=zx_sad_match_region(imgWork,current,0,0,imgWork.cols-current.cols,imgWork.rows-current.rows,4,&bx,&by);
+        if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+        int rx=bx,ry=by;
+        long long refined=zx_sad_match_region(imgWork,current,bx-8,by-8,bx+8,by+8,1,&rx,&ry);
+        if(request->stopped()){zx_tmError(error,request->error());return CGRect();}
+        if(refined<sad){sad=refined;bx=rx;by=ry;}
+        const double score=1.0-double(sad)/(255.0*current.cols*current.rows);
+        if(score>=acceptableValue){const CGFloat inverse=1.0/plan.ratio;return CGRectMake(bx*inverse,by*inverse,current.cols*inverse,current.rows*inverse);}
     }
-
-    bool gotScaledCache = false;
-    string scaledKey;
-    if (scaledCacheKey) {
-        scaledKey = zx_scaledTemplateCacheKey(scaledCacheKey, templWork.cols, templWork.rows, r, scaleRation, maxTryTimes);
-        gotScaledCache = zx_getScaledTemplateCache(scaledKey, &_scaledTempls);
-    }
-
-    if (!gotScaledCache) {
-        _scaledTempls.clear();
-        _scaledTempls.push_back(templWork);
-
-        Mat templResized;
-        float powIncreaRation = 1.0f;
-        float powReduceRation = 1.0f;
-
-        //由于模板图和原图大小比例不一致，需要放大缩小模板图，来多次比较。所以建立不同比例的模板图。
-        for(int i=0;i<maxTryTimes;i++) {
-            //放大模板图
-            powIncreaRation *= (2 - scaleRation);
-            resize(templWork, templResized, cv::Size(0, 0), powIncreaRation, powIncreaRation);
-            _scaledTempls.push_back(templResized); //由于push_back方法执行值拷贝，所以可以复用templResized变量。
-
-            //缩小模板图
-            powReduceRation *= scaleRation;
-            resize(templWork, templResized, cv::Size(0, 0), powReduceRation, powReduceRation);
-            _scaledTempls.push_back(templResized);
-        }
-
-        if (scaledCacheKey) {
-            zx_setScaledTemplateCache(scaledKey, _scaledTempls);
-        }
-    }
-
-    TMLOGF("start matching. screen=%dx%d templates=%lu", imgWork.cols, imgWork.rows, (unsigned long)_scaledTempls.size());
-
-    //匹配不同大小的模板图
-
-    CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
-    const CFTimeInterval timeoutSeconds = 8.0;
-
-    //创建结果矩阵，用于存放单次匹配到的位置信息(单次会匹配到很多，后面根据不同算法取最大或最小值)
-        //匹配不同大小的模板图
-    for (int i=0; i < _scaledTempls.size(); i++) {
-        if (TLinkNativeStopped()) return CGRect();
-        if (CFAbsoluteTimeGetCurrent() - t0 > timeoutSeconds) {
-            TMLOGF("match timeout after %.2fs", (double)timeoutSeconds);
-            return CGRect();
-        }
-
-        Mat currentTemplate = _scaledTempls[i];
-
-        // If template becomes larger than the screenshot, OpenCV will assert/crash.
-        if (currentTemplate.cols <= 0 || currentTemplate.rows <= 0 ||
-            currentTemplate.cols > imgWork.cols || currentTemplate.rows > imgWork.rows) {
-            continue;
-        }
-
-        int result_cols = imgWork.cols - currentTemplate.cols + 1;
-        int result_rows = imgWork.rows - currentTemplate.rows + 1;
-        if (result_cols <= 0 || result_rows <= 0) {
-            continue;
-        }
-        // Custom SAD-based template matching.
-        // Rationale: OpenCV matchTemplate() has been observed to hang on some devices/framework builds.
-        CFAbsoluteTime one0 = CFAbsoluteTimeGetCurrent();
-        TMLOGF("sadMatch #%d templ=%dx%d result=%dx%d", i, currentTemplate.cols, currentTemplate.rows, result_cols, result_rows);
-
-        int bx = 0;
-        int by = 0;
-        const int coarseStep = 4;
-        long long bestSad = zx_sad_match_region(imgWork, currentTemplate,
-                                               0, 0, imgWork.cols - currentTemplate.cols, imgWork.rows - currentTemplate.rows,
-                                               coarseStep, &bx, &by);
-
-        // Refine around coarse best.
-        const int refineRadius = coarseStep * 2;
-        int rx0 = bx - refineRadius;
-        int ry0 = by - refineRadius;
-        int rx1 = bx + refineRadius;
-        int ry1 = by + refineRadius;
-        int rbx = bx;
-        int rby = by;
-        long long refinedSad = zx_sad_match_region(imgWork, currentTemplate,
-                                                   rx0, ry0, rx1, ry1,
-                                                   1, &rbx, &rby);
-        if (refinedSad < bestSad) {
-            bestSad = refinedSad;
-            bx = rbx;
-            by = rby;
-        }
-
-        const long long denom = 255LL * (long long)currentTemplate.cols * (long long)currentTemplate.rows;
-        const double score = (denom > 0) ? (1.0 - ((double)bestSad / (double)denom)) : 0.0;
-        TMLOGF("sadMatch #%d done in %.3fs score=%.4f", i, (double)(CFAbsoluteTimeGetCurrent() - one0), score);
-
-        if (score >= acceptableValue) {
-            TMLOGF("match success. x=%d y=%d width=%d height=%d score=%.4f", bx, by, currentTemplate.cols, currentTemplate.rows, score);
-
-            const CGFloat inv = (r == 0.0f) ? 1.0 : (1.0 / (CGFloat)r);
-            return CGRectMake(bx * inv, by * inv,
-                              currentTemplate.cols * inv, currentTemplate.rows * inv);
-        }
-    }
-    
-    //未匹配到，则返回空区域
-    TMLOGF("match failed");
     return CGRect();
 }
 

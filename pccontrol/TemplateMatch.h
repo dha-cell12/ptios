@@ -1,11 +1,11 @@
 #ifndef TEMPLATE_MATCH_H
 #define TEMPLATE_MATCH_H
-#endif 
 
 #ifdef __cplusplus
 #undef NO
 #undef YES
 #import <opencv.hpp>
+#include "../shared/TLinkTemplatePolicy.h"
 #endif
 
 
@@ -37,3 +37,7 @@
 - (void)setMaxTryTimes:(int)mtt;
 
 @end
+
+FOUNDATION_EXPORT NSDictionary *TLinkTemplateMatchPerformance(void);
+
+#endif

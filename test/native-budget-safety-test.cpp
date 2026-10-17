@@ -1,4 +1,5 @@
 #include "../shared/TLinkNativeBudget.h"
+#include "../shared/TLinkTemplatePolicy.h"
 #include <cassert>
 #include <climits>
 #include <cmath>

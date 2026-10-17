@@ -1,8 +1,8 @@
 # C01 — OCR, template and color resource policy
 
-Date: 2026-10-17. The user reported B06 build pass before C01a. B06 remains in the current working-tree changes on top of `b3383d9`; that report is not an independently inspected macOS test log or device benchmark.
+Date: 2026-10-17. The user reported the C01a build at `1b4b382` passed before C01b. This does not replace device qualification or independent inspection of the macOS test log.
 
-Status: **C01a source implemented; new macOS/iOS build and device acceptance pending.** Rootfull/roothide Tesseract and the production TrollStore post-scale preflight are in scope. TouchPOC is excluded. Remaining C01 work is not marked complete. Next slice: **C01b — template cache/scale/tries budgets**, followed by remaining Vision/color/capture work.
+Status: **C01a build accepted by user; device acceptance pending.** Rootfull/roothide Tesseract and the production TrollStore post-scale preflight are in scope. TouchPOC is excluded. **C01b source is now implemented**, with its new build/device checks pending; see [IMPLEMENTATION-C01B.md](IMPLEMENTATION-C01B.md). Remaining C01 work is not marked complete. Next slice: **C01c — remaining Vision/color/frame reuse and modern image matcher work**.
 
 ## C01a: bounded Tesseract request state
 
@@ -46,4 +46,4 @@ Both workflows run `check-ocr-safety.mjs`. Its macOS ASan/UBSan branch compiles 
 2. Use `Collect-TLinkOCRBaseline.ps1 -HostIP <ip> -RegionWidth 500 -RegionHeight 500 -TesseractScaleUp 4` for the exact pixel boundary, then width 501 for rejection. The collector records responses; it does not automatically declare resource/accuracy acceptance. Test point coordinates on @2x/@3x devices too.
 3. Exercise many configuration identities and memory warnings while idle, loading and recognizing. Inspect task-60 `tesseract_ocr`, Allocations and VM Tracker: cached engines must remain at most two and request images/Pix data must not persist after cleanup. Models/vendor persistent caches can retain memory independently.
 4. Start concurrent OCR calls, cancel the parent during queued/preprocess/recognition work, and create a blocked/slow engine. Verify busy/timeout errors, no late success, no stale queued ROI allocation and subsequent recovery. Measure actual opaque-operation overrun and UI/IPC head-of-line impact.
-5. Continue C01b with P1-25/P1-36/P1-37/P1-38 (template cache bytes, resize/tries/work budgets, full preparation deadline and OpenCV global configuration). Then address remaining Vision candidate/debug cleanup, color capture/loop budgets and frame-backed capture reuse. A06 already added several cancellation/finally guards; verify current code before treating old audit line numbers as remaining defects.
+5. C01b now implements the legacy template portion of P1-25/P1-36/P1-37/P1-38 and P2-08; see IMPLEMENTATION-C01B.md for policy and pending acceptance. Continue C01c with remaining Vision candidate/debug cleanup, color capture/loop budgets, modern image matcher work and frame-backed capture reuse. A06 already added several cancellation/finally guards; verify current code before treating old audit line numbers as remaining defects.

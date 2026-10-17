@@ -26,6 +26,11 @@ CGRect screenMatchFromRawData(UInt8 *eventData, NSError **error)
 @implementation ScreenMatch
 
 + (CGRect)matchCurrentScreenWithTemplate:(NSString*)templatePath maxTryTimes:(int)mtt acceptableValue:(float)av scaleRation:(float)sr error:(NSError**)err {
+    if (!TLinkTemplateParametersValid(mtt, sr, av)) {
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+            userInfo:@{NSLocalizedDescriptionKey:@"-1;;template_parameters_invalid\r\n"}];
+        return CGRect();
+    }
     if (![[NSFileManager defaultManager] fileExistsAtPath:templatePath])
     {
         *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Template image not found for image matching. Template path: %@\r\n", templatePath]}];

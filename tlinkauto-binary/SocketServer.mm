@@ -614,6 +614,7 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
     } else if (parts.count != 1) {
         return (char *)strdup("-1;;The data format should be \"template_path[;;max_try_times;;acceptable_value;;scaleRation]\"\r\n");
     }
+    if (!TLinkTemplateParametersValid(maxTryTimes, scaleRation, acceptableValue)) return (char *)strdup("-1;;template_parameters_invalid\r\n");
     if ([templatePath length] == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:templatePath]) {
         NSString *err = [NSString stringWithFormat:@"-1;;Template image not found for image matching. Template path: %@\r\n", templatePath];
         zx_logf("Task21 error: template not found path=%s", [templatePath UTF8String]);
@@ -910,6 +911,9 @@ static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buf
         status[@"release_integrity_active"] = @1;
         status[@"anti_rollback_active"] = @1;
         status[@"verifier_performance"] = TLinkLicensePerformanceDictionary();
+#ifdef ZX_DAEMON
+        status[@"template_match"] = TLinkTemplateMatchPerformance();
+#endif
         status[@"task10_license_drop_count"] =
             @(sTLinkRootfullLicenseTask10DropCount.load(std::memory_order_relaxed));
         status[@"rootfull_build_mode"] =
