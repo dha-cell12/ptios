@@ -1,3 +1,4 @@
+#include "../../shared/TLinkOCRPolicy.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <Vision/Vision.h>
@@ -128,6 +129,7 @@ static dispatch_queue_t POCSocketQueue(void)
 @property(nonatomic, assign) CFRunLoopRef runLoop;
 @property(nonatomic, strong) NSMutableData *buffer;
 @property(nonatomic, assign) BOOL eventPollPending;
+@property(nonatomic, strong) TLinkEventPollRequest *eventPollRequest;
 @end
 
 @implementation POCClientContext
@@ -8797,12 +8799,14 @@ static UIImage *TLinkScaledImageForTesseract(UIImage *image, int scaleUp)
 {
     if (!image || scaleUp <= 1) return image;
     if (scaleUp > 4) scaleUp = 4;
+    TLinkOCRImagePlan plan;
+    if (!TLinkOCRPlanImageExtent(image.size.width, image.size.height, scaleUp, true, plan)) return nil;
     CGSize size = CGSizeMake(image.size.width * scaleUp, image.size.height * scaleUp);
     UIGraphicsBeginImageContextWithOptions(size, YES, 1.0);
     [image drawInRect:CGRectMake(0, 0, size.width, size.height)];
     UIImage *scaled = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    return scaled ?: image;
+    return scaled;
 }
 
 static NSData *TLinkRunTrueTesseractOCR(UIImage *image,
@@ -8815,6 +8819,9 @@ static NSData *TLinkRunTrueTesseractOCR(UIImage *image,
                                         double captureMs)
 {
     if (!image) return TLinkError(@"tesseract_capture_image_missing");
+    TLinkOCRImagePlan plan;
+    if (!image.CGImage || !TLinkOCRPlanImage(CGImageGetWidth(image.CGImage), CGImageGetHeight(image.CGImage), scaleUp, true, plan))
+        return TLinkError(@"ocr_scaled_image_too_large max_pixels=4000000 reduce_roi_or_scale");
     NSString *root = TLinkTessdataRoot();
     NSString *tessdataDir = [root stringByAppendingPathComponent:@"tessdata"];
     if (![[NSFileManager defaultManager] fileExistsAtPath:tessdataDir]) {
@@ -8832,6 +8839,7 @@ static NSData *TLinkRunTrueTesseractOCR(UIImage *image,
     }
 
     UIImage *workImage = TLinkScaledImageForTesseract(image, scaleUp);
+    if (!workImage) return TLinkError(@"tesseract_scale_failed");
     NSData *png = UIImagePNGRepresentation(workImage);
     if (png.length == 0) return TLinkError(@"tesseract_png_encode_failed");
 
@@ -9045,6 +9053,12 @@ static NSData *TLinkHandleTesseractOCRCompatInProcess(NSString *body)
     }
     if (w <= 0 || h <= 0) return TLinkError(@"tesseract_vision_fallback_invalid_region");
 
+    TLinkOCRImagePlan inputPlan;
+    CGFloat coordinateScale = [coord.lowercaseString isEqualToString:@"point"] ? [UIScreen mainScreen].scale : 1.0;
+    double pixelW = (double)w * coordinateScale, pixelH = (double)h * coordinateScale;
+    if (!std::isfinite(pixelW) || !std::isfinite(pixelH) || pixelW < 1 || pixelH < 1 || pixelW > INT_MAX || pixelH > INT_MAX ||
+        !TLinkOCRPlanImage((uint64_t)ceil(pixelW), (uint64_t)ceil(pixelH), scaleUp, true, inputPlan))
+        return TLinkError(@"ocr_scaled_image_too_large max_pixels=4000000 reduce_roi_or_scale");
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     const uint64_t maxCompatOCRPixels = 4000000;
     uint64_t totalPixels = (uint64_t)w * (uint64_t)h;
@@ -10720,45 +10734,54 @@ static void POCWriteAll(CFWriteStreamRef stream, NSData *data)
     }
 }
 
+// BEGIN TrollStore event socket adapter.
+static NSData *POCEventBatchResponse(NSDictionary *batch, NSString *error)
+{
+    if (error.length) return [error hasPrefix:@"-1;;"] ? [error dataUsingEncoding:NSUTF8StringEncoding] : TLinkError(error);
+    NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
+    return json.length ? TLinkSuccess([json base64EncodedStringWithOptions:0]) : TLinkError(@"event_channel_json_failed");
+}
+static TLinkEventPollRequest *POCBeginEventPoll(NSString *body, TLinkEventPollCompletion completion)
+{
+    return TLinkEventChannelBeginPoll(body, ^NSString *{
+        NSString *error = nil;
+        if (TLinkLicenseFeatureAllowed(@"automation", &error)) return nil;
+        return [[NSString alloc] initWithData:TLinkLicenseDeniedResponse(95, @"automation", error) encoding:NSUTF8StringEncoding];
+    }, completion);
+}
+TLinkEventPollRequest *TLinkBeginRemoteEventPoll(NSData *lineData, void (^completion)(TLinkEventPollRequest *, NSData *))
+{
+    // Keep the same legacy optional delimiter and terminal CR/LF/NUL handling.
+    const uint8_t *bytes = (const uint8_t *)lineData.bytes;
+    NSUInteger length = lineData.length;
+    while (length && (bytes[length - 1] == '\r' || bytes[length - 1] == '\n' || bytes[length - 1] == 0)) --length;
+    NSString *line = length >= 2 && length <= kMaxBuffer && bytes[0] == '9' && bytes[1] == '5' && !memchr(bytes, 0, length)
+        ? [[NSString alloc] initWithBytes:bytes length:length encoding:NSUTF8StringEncoding] : nil;
+    NSString *body = line ? TLinkBodyFromLine(line.UTF8String) : @"invalid";
+    return POCBeginEventPoll(body, ^(TLinkEventPollRequest *request, NSDictionary *batch, NSString *error) {
+        completion(request, POCEventBatchResponse(batch, error));
+    });
+}
 static void POCDeferEventPoll(POCClientContext *ctx, NSString *body)
 {
     if (!ctx || !ctx.writeStream) return;
-    NSString *licenseError = nil;
-    if (!TLinkLicenseFeatureAllowed(@"automation", &licenseError)) {
-        POCWriteAll(ctx.writeStream, TLinkLicenseDeniedResponse(95, @"automation", licenseError));
-        return;
+    if (ctx.eventPollPending) {
+        POCWriteAll(ctx.writeStream, TLinkError(@"event_poll_already_pending")); return;
     }
-    __block CFWriteStreamRef stream = NULL;
-    @synchronized (ctx) {
-        if (ctx.eventPollPending) {
-            POCWriteAll(ctx.writeStream, TLinkError(@"event_poll_already_pending"));
-            return;
-        }
-        ctx.eventPollPending = YES;
-        stream = ctx.writeStream;
-        CFRetain(stream);
-    }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSString *eventError = nil;
-        NSDictionary *batch = TLinkEventChannelPollBody(body, &eventError);
-        NSData *response = nil;
-        if (eventError.length > 0) {
-            response = TLinkError(eventError);
-        } else {
-            NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
-            response = json.length > 0
-                ? TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"")
-                : TLinkError(@"event_channel_json_failed");
-        }
+    ctx.eventPollPending = YES;
+    __weak POCClientContext *weakContext = ctx;
+    ctx.eventPollRequest = POCBeginEventPoll(body, ^(TLinkEventPollRequest *request, NSDictionary *batch, NSString *error) {
+        if (request.isCancelled) return;
+        NSData *response = POCEventBatchResponse(batch, error);
         dispatch_async(POCSocketQueue(), ^{
-            @synchronized (ctx) {
-                if (ctx.writeStream == stream) POCWriteAll(stream, response);
-                ctx.eventPollPending = NO;
-            }
-            CFRelease(stream);
+            POCClientContext *owner = weakContext;
+            if (!owner || request.isCancelled || owner.eventPollRequest != request) return;
+            owner.eventPollRequest = nil; owner.eventPollPending = NO;
+            if (owner.writeStream) POCWriteAll(owner.writeStream, response);
         });
     });
 }
+// END TrollStore event socket adapter.
 
 static void POCProcessBuffer(POCClientContext *ctx)
 {
@@ -10818,6 +10841,7 @@ static void POCCleanupClient(CFReadStreamRef readStream)
         writeStream = ctx.writeStream;
         ctx.writeStream = NULL;
         ctx.readStream = NULL;
+        [ctx.eventPollRequest cancel]; ctx.eventPollRequest = nil;
         ctx.eventPollPending = NO;
     }
     CFRunLoopRef runLoop = ctx.runLoop ? ctx.runLoop : CFRunLoopGetCurrent();

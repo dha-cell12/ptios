@@ -57,6 +57,7 @@ typedef NS_ENUM(uint8_t, ZXWireProtocol) {
 @property(nonatomic, strong) NSMutableData *buffer;
 @property(nonatomic, assign) ZXWireProtocol protocol;
 @property(nonatomic, assign) BOOL eventPollPending;
+@property(nonatomic, strong) TLinkEventPollRequest *eventPollRequest;
 @property(nonatomic, assign) BOOL requestPending;
 @property(nonatomic, assign) BOOL parseScheduled;
 @property(nonatomic, assign) CFSocketNativeHandle nativeSocket;
@@ -102,68 +103,49 @@ static NSData *zx_eventChannelResponse(NSString *body)
     return zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String]);
 }
 
-static BOOL zx_deferLegacyEventPoll(ZXClientContext *ctx, NSString *body)
+static NSData *zx_eventBatchResponse(NSDictionary *batch, NSString *error)
+{
+    if (error.length) {
+        NSString *line = [error hasPrefix:@"-1;;"] ? error : [NSString stringWithFormat:@"-1;;%@\r\n", error];
+        return zx_dataFromCString(line.UTF8String);
+    }
+    NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
+    return json.length ? zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", [json base64EncodedStringWithOptions:0]] UTF8String])
+        : zx_dataFromCString("-1;;event_channel_json_failed\r\n");
+}
+static BOOL zx_beginEventPoll(ZXClientContext *ctx, NSString *body, NSNumber *requestId, BOOL json)
 {
     if (!ctx || !ctx.writeStream) return false;
-    __block CFWriteStreamRef stream = NULL;
-    @synchronized (ctx) {
-        if (ctx.eventPollPending) {
-            zx_writeAll(ctx.writeStream, zx_dataFromCString("-1;;event_poll_already_pending\r\n"));
-            return true;
-        }
-        ctx.eventPollPending = true;
-        stream = ctx.writeStream;
-        CFRetain(stream);
+    if (ctx.eventPollPending) {
+        NSData *busy = zx_dataFromCString("-1;;event_poll_already_pending\r\n");
+        zx_writeAll(ctx.writeStream, json ? zx_frameJSONResponse(zx_jsonResponseFromLegacy(busy, requestId)) : busy);
+        return true;
     }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        @autoreleasepool {
-            NSString *licenseDenial = nil;
-            NSData *response = TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)
-                ? zx_eventChannelResponse(body) : zx_dataFromCString([licenseDenial UTF8String]);
-            dispatch_async(socketQueue(), ^{
-                @synchronized (ctx) {
-                    if (ctx.writeStream == stream) zx_writeAll(stream, response);
-                    ctx.eventPollPending = false;
-                }
-                CFRelease(stream);
-            });
-        }
+    ctx.eventPollPending = true;
+    __weak ZXClientContext *weakContext = ctx;
+    ctx.eventPollRequest = TLinkEventChannelBeginPoll(body, ^NSString *{
+        NSString *denial = nil;
+        return TLinkRootfullLicenseTaskAllowed(95, &denial) ? nil : (denial ?: @"license_required");
+    }, ^(TLinkEventPollRequest *request, NSDictionary *batch, NSString *error) {
+        if (request.isCancelled) return;
+        NSData *legacy = zx_eventBatchResponse(batch, error);
+        NSData *response = json ? zx_frameJSONResponse(zx_jsonResponseFromLegacy(legacy, requestId)) : legacy;
+        dispatch_async(socketQueue(), ^{
+            ZXClientContext *owner = weakContext;
+            if (!owner || request.isCancelled || owner.eventPollRequest != request) return;
+            owner.eventPollRequest = nil; owner.eventPollPending = false;
+            if (owner.writeStream) zx_writeAll(owner.writeStream, response);
+        });
     });
     return true;
 }
-
+static BOOL zx_deferLegacyEventPoll(ZXClientContext *ctx, NSString *body)
+{
+    return zx_beginEventPoll(ctx, body, nil, false);
+}
 static BOOL zx_deferJSONEventPoll(ZXClientContext *ctx, NSString *body, NSNumber *requestId)
 {
-    if (!ctx || !ctx.writeStream) return false;
-    __block CFWriteStreamRef stream = NULL;
-    @synchronized (ctx) {
-        if (ctx.eventPollPending) {
-            NSDictionary *busy = @{ @"id": requestId ?: @0, @"ok": @(false),
-                                    @"data": [NSNull null], @"error": @"event_poll_already_pending" };
-            zx_writeAll(ctx.writeStream, zx_frameJSONResponse(busy));
-            return true;
-        }
-        ctx.eventPollPending = true;
-        stream = ctx.writeStream;
-        CFRetain(stream);
-    }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        @autoreleasepool {
-            NSString *licenseDenial = nil;
-            NSData *legacy = TLinkRootfullLicenseTaskAllowed(95, &licenseDenial)
-                ? zx_eventChannelResponse(body) : zx_dataFromCString([licenseDenial UTF8String]);
-            NSDictionary *object = zx_jsonResponseFromLegacy(legacy, requestId);
-            NSData *response = zx_frameJSONResponse(object);
-            dispatch_async(socketQueue(), ^{
-                @synchronized (ctx) {
-                    if (ctx.writeStream == stream) zx_writeAll(stream, response);
-                    ctx.eventPollPending = false;
-                }
-                CFRelease(stream);
-            });
-        }
-    });
-    return true;
+    return zx_beginEventPoll(ctx, body, requestId, true);
 }
 
 static dispatch_queue_t socketQueue()
@@ -193,6 +175,7 @@ static void zx_cleanupClient(CFReadStreamRef readStream)
             writeStream = ctx.writeStream;
             ctx.writeStream = NULL;
             ctx.readStream = NULL;
+            [ctx.eventPollRequest cancel]; ctx.eventPollRequest = nil;
             ctx.eventPollPending = false;
         }
         CFRunLoopRef runLoop = ctx.runLoop ? ctx.runLoop : CFRunLoopGetCurrent();

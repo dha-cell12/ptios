@@ -41,7 +41,8 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
                                   uint64_t maxAgeMs,
                                   cv::Mat &outGray,
                                   uint64_t *outAgeMs,
-                                  NSError **error);
+                                  NSError **error,
+                                  int ocrScaleUp = 1);
 #endif
 
 #endif

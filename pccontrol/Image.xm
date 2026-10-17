@@ -1,3 +1,4 @@
+#include "../shared/TLinkOCRPolicy.h"
 #include "../shared/TLinkNativeDispatch.h"
 #import "Image.h"
 #import <ImageIO/ImageIO.h>
@@ -999,7 +1000,8 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
                                   uint64_t maxAgeMs,
                                   cv::Mat &outGray,
                                   uint64_t *outAgeMs,
-                                  NSError **error)
+                                  NSError **error,
+                                  int ocrScaleUp)
 {
     bool ok = false;
     NSError *blockErr = nil;
@@ -1037,6 +1039,11 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
             return;
         }
 
+        TLinkOCRImagePlan plan;
+        if (!TLinkOCRPlanImage(workW, workH, ocrScaleUp, true, plan)) {
+            blockErr = zx_frameError(@"1;;ocr_scaled_image_too_large\r\n"); return;
+        }
+        if (TLinkNativeStopped()) return;
         cv::Rect roi(workX, workY, workW, workH);
         if (frame.hasGray && !frame.gray.empty()) {
             copied = frame.gray(roi).clone();

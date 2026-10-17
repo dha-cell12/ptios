@@ -21,6 +21,10 @@ on:
       - 'test/autolaunch-transaction-test.mm'
       - 'test/native-budget-*.cpp'
       - 'test/native-bridge-budget-runtime-test.mm'
+      - 'test/event-channel-*.cpp'
+      - 'test/event-channel-*.mm'
+      - 'test/ocr-*.cpp'
+      - 'test/ocr-runtime-test.mm'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
@@ -48,6 +52,10 @@ on:
       - 'test/autolaunch-transaction-test.mm'
       - 'test/native-budget-*.cpp'
       - 'test/native-bridge-budget-runtime-test.mm'
+      - 'test/event-channel-*.cpp'
+      - 'test/event-channel-*.mm'
+      - 'test/ocr-*.cpp'
+      - 'test/ocr-runtime-test.mm'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
       - 'test/fixtures/run-history-*.json'
@@ -287,6 +295,8 @@ jobs:
           node scripts/check-trollstore-volume-trigger.mjs
           node scripts/check-trollstore-toast-uiservice.mjs
           node scripts/check-event-channel-v1.mjs
+          node scripts/check-event-channel-safety.mjs
+          node scripts/check-ocr-safety.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
           node scripts/check-stream-rtc-control-v2.mjs

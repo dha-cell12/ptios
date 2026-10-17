@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)][ValidateSet("rootfull", "trollstore")][string]$Runtime,
     [int]$Port = 6000,
     [switch]$RunScriptSmoke,
+    [switch]$RunCancellationStress,
     [string]$ScriptPath = ""
 )
 
@@ -57,6 +58,34 @@ $initial = ConvertFrom-TLinkEventResponse (Invoke-TLinkEventTask -Task "950;;0;;
 if ($initial.schema -ne "event_channel_v1") { throw "event channel schema mismatch" }
 $cursor = [uint64]$initial.latest_cursor
 
+$cancellationRecoveryMs = $null
+if ($RunCancellationStress) {
+    # Run on an otherwise quiet device so unrelated publications cannot complete the probes.
+    $clients = [Collections.Generic.List[Net.Sockets.TcpClient]]::new()
+    try {
+        for ($index = 0; $index -lt 8; $index++) {
+            $probe = [Net.Sockets.TcpClient]::new()
+            $clients.Add($probe)
+            $probe.Connect($HostIP, $Port)
+            $bytes = [Text.Encoding]::UTF8.GetBytes("95$cursor;;25000;;8;;perf.cancel.probe`r`n")
+            $probe.GetStream().Write($bytes, 0, $bytes.Length)
+        }
+        Start-Sleep -Milliseconds 300
+        $capacity = ConvertFrom-TLinkEventResponse (Invoke-TLinkEventTask -Task "95$cursor;;0;;1;;perf.cancel.probe" -ReceiveTimeout 5000)
+        if ($capacity.state -ne "busy") { throw "Expected eight pending polls; run cancellation stress on a quiet device." }
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        foreach ($probe in $clients) { $probe.Dispose() }
+        do {
+            $recovery = ConvertFrom-TLinkEventResponse (Invoke-TLinkEventTask -Task "95$cursor;;0;;1;;perf.cancel.probe" -ReceiveTimeout 5000)
+            if ($recovery.state -eq "ready") { break }
+            if ($recovery.state -ne "busy") { throw "Unexpected cancellation recovery state: $($recovery.state)" }
+            Start-Sleep -Milliseconds 50
+        } while ($watch.ElapsedMilliseconds -lt 5000)
+        $cancellationRecoveryMs = $watch.ElapsedMilliseconds
+        if ($recovery.state -ne "ready" -or $cancellationRecoveryMs -ge 5000) { throw "Poll capacity did not recover within 5 seconds after eight disconnects." }
+    } finally { foreach ($probe in $clients) { $probe.Dispose() } }
+}
+
 $received = $null
 if ($RunScriptSmoke) {
     if (-not $ScriptPath) {
@@ -99,6 +128,8 @@ if ($RunScriptSmoke) {
     runtime = $Runtime
     schema = $initial.schema
     latest_cursor = $initial.latest_cursor
+    cancellation_stress_run = [bool]$RunCancellationStress
+    cancellation_recovery_ms = $cancellationRecoveryMs
     script_smoke_run = [bool]$RunScriptSmoke
     received_events = if ($received) { @($received.events).Count } else { 0 }
     gap = if ($received) { [bool]$received.gap } else { $false }

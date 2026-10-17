@@ -109,7 +109,8 @@ extern NSInteger const kG8MaxCredibleResolution;
 /**
  *  An image on which Tesseract should perform recognition.
  */
-@property (nonatomic, strong, nonnull) UIImage *image;
+// Setting nil releases the request image and recognition buffers, retaining engine configuration.
+@property (nonatomic, strong, nullable) UIImage *image;
 
 /**
  *  A rectangle to specify the region of the image on which Tesseract should

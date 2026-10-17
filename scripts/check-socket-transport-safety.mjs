@@ -26,7 +26,7 @@ const fixtures = {
  'SocketContextUnderTest.inc': section(socket, 'typedef NS_ENUM', 'static const UInt8 kZXTPMagic'),
  'SocketConstantsUnderTest.inc': section(socket, 'static const UInt8 kZXTPMagic', 'static std::atomic<uint64_t>'),
  'SocketGlobalsUnderTest.inc': section(socket, 'static size_t gOutputBytes', 'static NSData *zx_eventChannelResponse'),
- 'SocketPollUnderTest.inc': section(socket, 'static BOOL zx_deferLegacyEventPoll(', 'static dispatch_queue_t socketQueue()\n{'),
+ 'SocketPollUnderTest.inc': section(socket, 'static NSData *zx_eventBatchResponse(', 'static dispatch_queue_t socketQueue()\n{'),
  'SocketQueueUnderTest.inc': section(socket, 'static dispatch_queue_t socketQueue()\n{', 'static void zx_cleanupClient'),
  'SocketCleanupUnderTest.inc': section(socket, 'static void zx_cleanupClient(CFReadStreamRef readStream)\n{', '#if TLINKAUTO_FILE_LOG'),
  'SocketOutputUnderTest.inc': section(socket, '// BEGIN socket output adapter.', '// END socket output adapter.'),
@@ -55,9 +55,12 @@ try {
  run(binary, []);
  if (process.platform === 'darwin') {
   const runtime = join(temp, 'socket-runtime');
+  const eventSource = await read('shared/TLinkEventChannel.mm');
+  const eventFile = join(temp,'SocketEventFixture.mm');
+  await writeFile(eventFile,eventSource.replace('@"/var/mobile/Library/TLinkauto/event-channel"',`@${JSON.stringify(join(temp,'event-journal'))}`));
   run(compiler, ['-std=c++11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-deprecated-declarations', '-fobjc-arc',
    '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-framework', 'Foundation', '-framework', 'CoreFoundation',
-   '-I', temp, join(root, 'test/socket-transport-runtime-test.mm'), '-x', 'objective-c++', join(root, 'pccontrol/SocketResponder.xm'), '-o', runtime]);
+   '-I', temp, '-I', join(root,'shared'), eventFile, join(root, 'test/socket-transport-runtime-test.mm'), '-x', 'objective-c++', join(root, 'pccontrol/SocketResponder.xm'), '-o', runtime]);
   run(runtime, []);
  } else console.log('macOS actual socket parser/output/work/read/accept and CF IPC callback integration added to root CI; not run on this host.');
 } finally { assert.equal(dirname(temp), tempRoot); assert.ok(basename(temp).startsWith('tlink-socket-')); await rm(temp, { recursive: true, force: true }); }

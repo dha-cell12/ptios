@@ -17,6 +17,7 @@
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkSocketOutput.h"
 #include "../shared/TLinkIPCPolicy.h"
+#import "../shared/TLinkEventChannel.h"
 #include "../pccontrol/IPCConstants.h"
 #include "../pccontrol/SocketServer.h"
 #define TLinkautoD_ADDR "0.0.0.0"
@@ -32,7 +33,6 @@ static NSDictionary *zx_jsonResponseFromLegacy(NSData *, NSNumber *);
 static NSData *zx_frameJSONResponse(NSDictionary *);
 static void zx_logf(const char *, ...) {}
 static NSData *zx_dataFromCString(const char *s) { return s ? [NSData dataWithBytes:s length:strlen(s)] : nil; }
-static NSData *zx_eventChannelResponse(NSString *) { return zx_dataFromCString("0;;poll\r\n"); }
 static BOOL TLinkRootfullLicenseTaskAllowed(int, NSString **) { return true; }
 static dispatch_semaphore_t taskStarted, taskFinish;
 static NSMutableArray *taskCalls;
@@ -136,6 +136,14 @@ int main() {
     (void)&TCPServerAcceptCallBack;
     socketClients = [NSMutableDictionary dictionary]; taskCalls = [NSMutableArray array];
     taskStarted = dispatch_semaphore_create(0); taskFinish = dispatch_semaphore_create(0);
+    fputs("Socket runtime: actual eight deferred polls cancel through production cleanup\n",stderr);
+    NSMutableArray *eventClients = [NSMutableArray array]; std::vector<int> eventPeers;
+    for (unsigned n = 0; n < 8; ++n) { int peer; ZXClientContext *event = client(&peer); [eventClients addObject:event]; eventPeers.push_back(peer); feed(event,text(@"950;;25000;;8;;*\n")); }
+    for (unsigned n = 0; n < 8; ++n) {
+        ZXClientContext *event = eventClients[n]; TLinkEventPollRequest *request = event.eventPollRequest;
+        dispose(event,eventPeers[n]); assert(request.isCancelled && !event.eventPollRequest && !event.eventPollPending);
+    }
+    assert([TLinkEventChannelStatus()[@"active_polls"] intValue] == 0);
     int aPeer, bPeer; ZXClientContext *a = client(&aPeer), *b = client(&bPeer);
     fputs("Socket runtime: FIFO work and independent daemon ping\n", stderr);
     feed(a, text(@"99slow\n60next\n"));

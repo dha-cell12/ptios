@@ -50,3 +50,27 @@ eventChannelDeviceValidated=0
 WebTango cung cấp `device.pollEvents()` và `device.subscribeEvents()`. Hàm
 subscribe trả về callback `unsubscribe()`, reconnect với exponential backoff,
 và tiếp tục cursor trên kết nối event chuyên dụng mới.
+
+## B06: chờ và hủy theo transport
+
+Task 95 của TCP/root JSON và remote bridge dùng đăng ký bất đồng bộ. Sau khi
+ghi journal thành công, publisher phát Darwin notification; journal/cursor vẫn
+quyết định replay. Một timer chung chỉ kiểm tra metadata mỗi giây khi có poll,
+để bù thông báo bị mất. File không đổi không bị đọc/parse lại; hết poll thì timer
+dừng. Reader dùng shared lock; owner không chờ file lock đang bị giữ.
+
+TCP cleanup hủy token và trả poll capacity ngay khi xử lý disconnect. Remote
+bridge hủy khi control WebSocket của thiết bị ngắt, đồng thời chặn response của
+kết nối cũ. Browser ngắt riêng ở phía relay cần relay truyền cancellation;
+thiết bị không suy đoán việc đó. Authorization có admission riêng tối đa 8,
+timeout chờ 5 giây; timeout poll 0–25 giây bắt đầu sau authorization. Deadline
+dùng monotonic clock, timestamp event vẫn dùng wall clock.
+
+`next_cursor` có thể đi qua các event không khớp topic đã quét, kể cả phần đuôi;
+không đi qua matching event bị giữ lại cho trang tiếp theo. Base64/schema và
+hợp đồng at-least-once giữ nguyên.
+
+Probe tám disconnect trên thiết bị yên lặng: thêm `-RunCancellationStress` vào
+`scripts/Test-TLinkEventChannelV1.ps1`. Build/device và kiểm thử Foundation mới
+cần được xác nhận; chi tiết giới hạn và kế hoạch đo ở
+[IMPLEMENTATION-B06.md](performance-audit/IMPLEMENTATION-B06.md).

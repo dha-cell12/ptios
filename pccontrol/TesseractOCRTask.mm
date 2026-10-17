@@ -1,4 +1,5 @@
 #include "../shared/TLinkNativeDispatch.h"
+#include "../shared/TLinkOCRPolicy.h"
 #import "TesseractOCRTask.h"
 #import "Image.h"
 
@@ -9,12 +10,12 @@
 #import <TesseractOCR/G8TesseractParameters.h>
 
 @interface ZXTessBudgetDelegate : NSObject <G8TesseractDelegate> {
-    TLinkNativeBudgetPtr _budget;
+    TLinkOCRBudgetPtr _budget;
 }
-- (instancetype)initWithBudget:(TLinkNativeBudgetPtr)budget;
+- (instancetype)initWithBudget:(TLinkOCRBudgetPtr)budget;
 @end
 @implementation ZXTessBudgetDelegate
-- (instancetype)initWithBudget:(TLinkNativeBudgetPtr)budget { self = [super init]; if (self) _budget = std::move(budget); return self; }
+- (instancetype)initWithBudget:(TLinkOCRBudgetPtr)budget { self = [super init]; if (self) _budget = std::move(budget); return self; }
 - (BOOL)shouldCancelImageRecognitionForTesseract:(G8Tesseract *)tesseract { (void)tesseract; return _budget && _budget->stopped(); }
 @end
 
@@ -22,6 +23,17 @@
 
 #include <dispatch/dispatch.h>
 #include <math.h>
+
+static std::atomic<unsigned> sZXTessActive{0}, sZXTessEntries{0};
+static std::atomic<bool> sZXTessPurgeQueued{false};
+static std::atomic<uint64_t> sZXTessEpoch{1}, sZXTessHits{0}, sZXTessMisses{0}, sZXTessBusy{0}, sZXTessPressure{0};
+NSDictionary *TLinkTesseractOCRPerformance(void) {
+    return @{@"cache_entries": @(sZXTessEntries.load()), @"cache_entry_limit": @2, @"cache_hits": @(sZXTessHits.load()),
+        @"cache_misses": @(sZXTessMisses.load()), @"active_requests": @(sZXTessActive.load()), @"request_limit": @2,
+        @"busy_count": @(sZXTessBusy.load()), @"memory_pressure_count": @(sZXTessPressure.load()),
+        @"scaled_pixel_limit": @(kTLinkOCRMaxScaledPixels), @"visible_gray_byte_limit": @(kTLinkOCRVisibleGrayBytes),
+        @"request_budget_ms": @3000};
+}
 
 static NSString *const kZXTessdataRoot = @"/var/mobile/Library/TLinkauto";
 
@@ -78,14 +90,31 @@ static dispatch_queue_t zx_tessQueue(void)
     return q;
 }
 
-static NSMutableDictionary<NSString *, G8Tesseract *> *zx_tessCache(void)
-{
-    static NSMutableDictionary<NSString *, G8Tesseract *> *cache;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        cache = [NSMutableDictionary dictionary];
-    });
+using ZXTessCache = TLinkOCRLRU<std::string, G8Tesseract *>;
+static ZXTessCache &zx_tessCache(void) {
+    static ZXTessCache cache;
     return cache;
+}
+static void zx_tessPurgeCache(void) { zx_tessCache().clear(); sZXTessEntries.store(0); }
+static void zx_tessMemoryPressure(void) {
+    sZXTessPressure.fetch_add(1); sZXTessEpoch.fetch_add(1);
+    if (!sZXTessPurgeQueued.exchange(true)) dispatch_async(zx_tessQueue(), ^{ sZXTessPurgeQueued.store(false); zx_tessPurgeCache(); });
+}
+static void zx_tessObserveMemoryPressure(void) {
+    static dispatch_once_t once;
+    static dispatch_source_t source;
+    static id warningObserver;
+    dispatch_once(&once, ^{
+        warningObserver = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidReceiveMemoryWarningNotification
+            object:nil queue:nil usingBlock:^(NSNotification *note) { (void)note; zx_tessMemoryPressure(); }];
+        (void)warningObserver;
+        source = dispatch_source_create(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, 0,
+            DISPATCH_MEMORYPRESSURE_WARN | DISPATCH_MEMORYPRESSURE_CRITICAL, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+        if (source) {
+            dispatch_source_set_event_handler(source, ^{ zx_tessMemoryPressure(); });
+            dispatch_resume(source);
+        }
+    });
 }
 
 static G8PageSegmentationMode zx_tessPSM(int psm)
@@ -161,20 +190,21 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
                                int scaleUp,
                                int thresholdMode,
                                uint64_t frameAgeMs,
-                               NSError **error)
+                               NSError **error,
+                               TLinkOCRBudgetPtr requestBudget)
 {
-    if (TLinkNativeStopped()) return nil;
-    CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
-    CFAbsoluteTime prep0 = CFAbsoluteTimeGetCurrent();
+    if (requestBudget->stopped()) return nil;
+    const uint64_t total0 = TLinkNativeNowNs(), prep0 = total0;
 
-    cv::Mat work = gray;
-    if (scaleUp < 1) scaleUp = 1;
-    if (scaleUp > 4) scaleUp = 4;
-    if (scaleUp > 1) {
-        cv::resize(work, work, cv::Size(), scaleUp, scaleUp, cv::INTER_CUBIC);
-    } else {
-        work = work.clone();
+    TLinkOCRImagePlan plan;
+    if (gray.empty() || gray.type() != CV_8UC1 || !TLinkOCRPlanImage(gray.cols, gray.rows, scaleUp, thresholdMode == 1 || thresholdMode == 2, plan)) {
+        if (error) *error = zx_tessError(@"ocr_scaled_image_too_large", @"OCR accepts at most 4,000,000 scaled pixels; reduce ROI or scale_up.");
+        return nil;
     }
+    cv::Mat work = gray;
+    if (plan.scale > 1) cv::resize(gray, work, cv::Size(plan.width, plan.height), 0, 0, cv::INTER_CUBIC);
+    else if (plan.separateWork) work = gray.clone();
+    if (requestBudget->stopped()) return nil;
 
     if (thresholdMode == 1) {
         cv::threshold(work, work, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
@@ -184,15 +214,25 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
         cv::adaptiveThreshold(work, work, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, blockSize, 7);
     }
 
+    if (requestBudget->stopped()) return nil;
     UIImage *image = zx_tessUIImageFromGrayMat(work);
-    double preprocessMs = (CFAbsoluteTimeGetCurrent() - prep0) * 1000.0;
+    work.release(); // UIImage owns its provider bytes; discard the scaled work buffer before engine init.
+    if (requestBudget->stopped()) return nil;
+    double preprocessMs = (TLinkNativeNowNs() - prep0) / 1e6;
     if (!image) {
         if (error) *error = zx_tessError(@"image_convert_failed", @"Failed to convert OCR region to UIImage.");
         return nil;
     }
 
-    NSString *key = [NSString stringWithFormat:@"%@|%d|%d|%@", lang ?: @"vie", oem, psm, whitelist ?: @""];
-    G8Tesseract *tesseract = zx_tessCache()[key];
+    // Retain the complete prior engine identity, with an unambiguous encoding.
+    NSData *identity = [NSJSONSerialization dataWithJSONObject:@[lang ?: @"vie", @(oem), @(psm), whitelist ?: @""] options:0 error:NULL];
+    if (!identity.length) { if (error) *error = zx_tessError(@"engine_identity_failed", @"Unable to encode engine configuration."); return nil; }
+    std::string key((const char *)identity.bytes, identity.length);
+    zx_tessObserveMemoryPressure();
+    const uint64_t cacheEpoch = sZXTessEpoch.load();
+    G8Tesseract *tesseract = zx_tessCache().find(key);
+    if (tesseract) sZXTessHits.fetch_add(1);
+    else { sZXTessMisses.fetch_add(1); zx_tessCache().prepareMiss(); sZXTessEntries.store((unsigned)zx_tessCache().size()); }
     if (!tesseract) {
         tesseract = [[G8Tesseract alloc] initWithLanguage:(lang && [lang length] > 0) ? lang : @"vie"
                                          configDictionary:nil
@@ -208,23 +248,28 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
             tesseract.charWhitelist = whitelist;
         }
         tesseract.maximumRecognitionTime = 3.0;
-        zx_tessCache()[key] = tesseract;
+        // A completed cold init may warm the bounded cache even if this request has expired.
+        if (sZXTessEpoch.load() == cacheEpoch) zx_tessCache().insert(key, tesseract);
+        sZXTessEntries.store((unsigned)zx_tessCache().size());
     }
 
-    CFAbsoluteTime ocr0 = CFAbsoluteTimeGetCurrent();
-    if (TLinkNativeStopped()) return nil;
-    auto nativeBudget = TLinkCurrentNativeBudget();
-    __attribute__((objc_precise_lifetime)) ZXTessBudgetDelegate *delegate = [[ZXTessBudgetDelegate alloc] initWithBudget:nativeBudget];
+    const uint64_t ocr0 = TLinkNativeNowNs();
+    if (requestBudget->stopped()) return nil;
+    __attribute__((objc_precise_lifetime)) ZXTessBudgetDelegate *delegate = [[ZXTessBudgetDelegate alloc] initWithBudget:requestBudget];
     tesseract.delegate = delegate;
-    tesseract.maximumRecognitionTime = nativeBudget ? nativeBudget->remainingSeconds(3.0) : 3.0;
+
     BOOL recognized = false;
     @try {
         tesseract.image = image;
         tesseract.rect = CGRectMake(0, 0, image.size.width, image.size.height);
-        if (TLinkNativeStopped()) return nil;
+        if (requestBudget->stopped()) return nil;
+        tesseract.maximumRecognitionTime = requestBudget->remainingSeconds();
+        if (tesseract.maximumRecognitionTime <= 0) return nil;
+        // The wrapper converts seconds to integer milliseconds; avoid a positive remainder becoming zero/unlimited.
+        if (tesseract.maximumRecognitionTime < 0.001) tesseract.maximumRecognitionTime = 0.001;
         recognized = [tesseract recognize];
-        if (TLinkNativeStopped()) return nil;
-        double ocrMs = (CFAbsoluteTimeGetCurrent() - ocr0) * 1000.0;
+        if (requestBudget->stopped()) return nil;
+        double ocrMs = (TLinkNativeNowNs() - ocr0) / 1e6;
         if (!recognized) {
             if (error) *error = zx_tessError(@"recognize_failed", @"Tesseract recognition failed.");
             return nil;
@@ -233,7 +278,7 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
         NSString *text = [tesseract.recognizedText ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (!TLinkNativeOutputAllowed(256 + 4 * (([text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 2) / 3))) return nil;
         double confidence = zx_tessMeanConfidence(tesseract);
-        double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+        double totalMs = (TLinkNativeNowNs() - total0) / 1e6;
         return [NSString stringWithFormat:@"%@;;%.2f;;%llu;;%.3f;;%.3f;;%.3f",
                 zx_tessBase64(text),
                 confidence,
@@ -247,6 +292,10 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
 
 NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error)
 {
+
+#if ENABLE_TESSERACT_OCR
+    const uint64_t enteredAt = TLinkNativeNowNs();
+#endif
     NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData] ?: @"";
     raw = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([[raw lowercaseString] isEqualToString:@"check_langs"]) {
@@ -257,6 +306,9 @@ NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error)
     if (error) *error = zx_tessError(@"disabled", @"Tesseract OCR is not enabled in this build.");
     return nil;
 #else
+    TLinkOCRAdmission admission(sZXTessActive);
+    if (!admission) { sZXTessBusy.fetch_add(1); if (error) *error = zx_tessError(@"ocr_busy", @"Only two OCR requests may be active or queued."); return nil; }
+    auto requestBudget = std::make_shared<TLinkOCRRequestBudget>(TLinkCurrentNativeBudget(), enteredAt);
     NSArray<NSString *> *data = zx_tessSplitEventData(eventData);
     if ([data count] < 13) {
         if (error) *error = zx_tessError(@"bad_format", @"Format: frame_id;;x;;y;;w;;h;;lang;;oem;;psm;;whitelist_b64;;scale_up;;threshold_mode;;coord;;max_age_ms");
@@ -280,14 +332,34 @@ NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error)
 
     __block NSString *ret = nil;
     __block NSError *blockErr = nil;
+    const uint64_t queuedEpoch = sZXTessEpoch.load();
     TLinkNativeDispatchSync(zx_tessQueue(), ^{
-        cv::Mat gray;
-        uint64_t frameAgeMs = 0;
-        if (!zx_copyFrameGrayRegionForOCR(frameId, x, y, w, h, coord, maxAgeMs, gray, &frameAgeMs, &blockErr)) {
-            return;
+        @autoreleasepool {
+            try {
+                @try {
+                    if (queuedEpoch != sZXTessEpoch.load()) zx_tessPurgeCache();
+                    if (requestBudget->stopped()) return;
+                    cv::Mat gray;
+                    uint64_t frameAgeMs = 0;
+                    if (!zx_copyFrameGrayRegionForOCR(frameId, x, y, w, h, coord, maxAgeMs, gray, &frameAgeMs, &blockErr, scaleUp)) return;
+                    ret = zx_tessRunOCR(gray, lang, oem, psm, whitelist, scaleUp, thresholdMode, frameAgeMs, &blockErr, requestBudget);
+                } @catch (NSException *exception) {
+                    blockErr = zx_tessError(@"ocr_exception", exception.reason ?: @"OCR failed.");
+                    zx_tessPurgeCache();
+                } @finally {
+                    // A warning may arrive while this owner is in an opaque engine operation.
+                    if (queuedEpoch != sZXTessEpoch.load()) zx_tessPurgeCache();
+                }
+            } catch (const std::exception &exception) {
+                blockErr = zx_tessError(@"ocr_exception", [NSString stringWithUTF8String:exception.what()] ?: @"OCR failed.");
+                zx_tessPurgeCache();
+            }
         }
-        ret = zx_tessRunOCR(gray, lang, oem, psm, whitelist, scaleUp, thresholdMode, frameAgeMs, &blockErr);
     });
+    if (requestBudget->stopped()) {
+        if (error) *error = zx_tessError(@"ocr_cancelled_or_timed_out", @"OCR request cancelled or its 3-second cooperative budget expired.");
+        return nil;
+    }
 
     if (blockErr) {
         if (error) *error = blockErr;

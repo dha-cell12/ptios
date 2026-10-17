@@ -60,6 +60,8 @@ jobs:
           node scripts/check-ui-tree-v1.mjs
           node scripts/check-run-history-v1.mjs
           node scripts/check-event-channel-v1.mjs
+          node scripts/check-event-channel-safety.mjs
+          node scripts/check-ocr-safety.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
           node scripts/check-stream-rtc-control-v2.mjs

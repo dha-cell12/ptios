@@ -207,6 +207,7 @@ didCompleteWithError:(NSError *)error
     NSURLSession *_session;
     NSURLSessionWebSocketTask *_controlTask;
     NSMutableDictionary<NSString *, TLinkRemoteVideoPump *> *_videoPumps;
+    NSMutableSet<TLinkEventPollRequest *> *_eventPolls;
     NSString *_baseURL;
     NSString *_token;
     NSString *_deviceId;
@@ -222,6 +223,7 @@ didCompleteWithError:(NSError *)error
     if (self) {
         _queue = dispatch_queue_create("com.tlinkauto.remote-bridge", DISPATCH_QUEUE_SERIAL);
         _videoPumps = [NSMutableDictionary dictionary];
+        _eventPolls = [NSMutableSet set];
         _state = @"disabled";
         _lastError = @"";
     }
@@ -337,6 +339,8 @@ didCompleteWithError:(NSError *)error
 - (void)disconnect
 {
     _opened = NO;
+    for (TLinkEventPollRequest *request in _eventPolls) [request cancel];
+    [_eventPolls removeAllObjects];
     for (TLinkRemoteVideoPump *pump in _videoPumps.allValues) [pump stop];
     [_videoPumps removeAllObjects];
     [_controlTask cancelWithCloseCode:NSURLSessionWebSocketCloseCodeGoingAway reason:nil];
@@ -434,6 +438,22 @@ didCompleteWithError:(NSError *)error
         NSData *line = [[NSData alloc] initWithBase64EncodedString:payload options:0];
         if (!line) {
             if (expectsResponse) [self sendTaskResult:requestId data:[@"-1;;invalid_remote_task_base64\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+            return;
+        }
+        const uint8_t *taskBytes = (const uint8_t *)line.bytes;
+        if (line.length >= 2 && taskBytes[0] == '9' && taskBytes[1] == '5') {
+            NSURLSessionWebSocketTask *connection = _controlTask;
+            __weak TLinkRemoteBridgeAgent *weakSelf = self;
+            TLinkEventPollRequest *poll = TLinkBeginRemoteEventPoll(line, ^(TLinkEventPollRequest *request, NSData *response) {
+                TLinkRemoteBridgeAgent *owner = weakSelf;
+                if (!owner || request.isCancelled) return;
+                dispatch_async(owner->_queue, ^{
+                    [owner->_eventPolls removeObject:request];
+                    if (!request.isCancelled && connection == owner->_controlTask && owner->_opened && expectsResponse)
+                        [owner sendTaskResult:requestId data:response];
+                });
+            });
+            [_eventPolls addObject:poll];
             return;
         }
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{

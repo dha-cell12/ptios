@@ -2,6 +2,7 @@
 #define POC_SOCKET_SERVER_H
 
 #import <Foundation/Foundation.h>
+#import "../../shared/TLinkEventChannel.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -24,6 +25,9 @@ void TLinkSetLaunchExecutablePath(const char *path);
 // share the exact same parser, license gates and response format as tcp/6000.
 // Returns nil for legacy fire-and-forget task 10.
 NSData *TLinkDispatchTaskLineData(NSData *lineData);
+// Dedicated cancellable task-95 adapter for remote transports; callers check the task prefix.
+TLinkEventPollRequest *TLinkBeginRemoteEventPoll(NSData *lineData,
+    void (^completion)(TLinkEventPollRequest *request, NSData *response));
 
 // Backward-compatible name kept while the source file is still being migrated
 // from the original PoC naming.

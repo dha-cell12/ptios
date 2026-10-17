@@ -12,6 +12,8 @@ param(
     [int]$RecognitionLevel = 0,
     [string]$VisionLanguages = "en-US",
     [string]$TesseractLanguage = "eng",
+    [ValidateRange(1, 4)]
+    [int]$TesseractScaleUp = 2,
     [ValidateSet("foreground", "background", "locked", "after_respring", "after_reboot", "unknown")]
     [string]$Context = "unknown",
     [string]$DeviceModel = "",
@@ -150,6 +152,7 @@ $metadata = [ordered]@{
     vision_opt_in = [bool]$RunVision
     vision_profile = $VisionProfile
     tesseract_enabled = -not [bool]$SkipTesseract
+    tesseract_scale_up = $TesseractScaleUp
 }
 
 $probes = [ordered]@{}
@@ -167,7 +170,7 @@ if (-not $SkipTesseract) {
 
     if ($frameId -gt 0) {
         try {
-            $tesseractTask = "91$frameId;;$RegionX;;$RegionY;;$RegionWidth;;$RegionHeight;;$TesseractLanguage;;1;;6;;;;2;;0;;pixel;;3000"
+            $tesseractTask = "91$frameId;;$RegionX;;$RegionY;;$RegionWidth;;$RegionHeight;;$TesseractLanguage;;1;;6;;;;$TesseractScaleUp;;0;;pixel;;3000"
             $probes.task91_ocr = Invoke-TLinkTask -Task $tesseractTask
         }
         finally {

@@ -1,0 +1,49 @@
+# C01 — OCR, template and color resource policy
+
+Date: 2026-10-17. The user reported B06 build pass before C01a. B06 remains in the current working-tree changes on top of `b3383d9`; that report is not an independently inspected macOS test log or device benchmark.
+
+Status: **C01a source implemented; new macOS/iOS build and device acceptance pending.** Rootfull/roothide Tesseract and the production TrollStore post-scale preflight are in scope. TouchPOC is excluded. Remaining C01 work is not marked complete. Next slice: **C01b — template cache/scale/tries budgets**, followed by remaining Vision/color/capture work.
+
+## C01a: bounded Tesseract request state
+
+P0-10: the root Tesseract cache now retains at most **two configured engines**, with LRU eviction before a replacement is constructed. Its key retains the complete prior language/OEM/PSM/whitelist identity, encoded without delimiter ambiguity. Different recognition configurations are not merged into a language-only engine; this avoids introducing cross-configuration adaptive state reuse. Engine memory per model is opaque: this is an entry/cardinality limit, not an accurate engine-byte or process-RSS cap. Eviction can lose learned/warm state, so recognition quality and cold/warm behavior need device comparison.
+
+A memory-pressure dispatch source and UIKit memory-warning observer increment an epoch and coalesce purge on the serial OCR owner. Epoch checks and owner cleanup prevent an engine initialized during a warning from surviving that purge; a warning during a running request also causes owner cleanup at exit. Existing engine calls are not forcibly interrupted by memory pressure, and observation uses one process-lifetime dispatch source and one notification token. No additional OCR recognition parallelism is introduced.
+
+The old task cleanup already assigned `tesseract.image = nil`, but the bundled G8 wrapper treated nil as an invalid-size image and returned before dropping its strong image reference. C01a fixes that live wrapper branch: nil calls the engine's `Clear()`, clears UIImage/size/rectangle state and resets request flags. The bundled baseapi header documents `Clear()` as releasing stored image/results while retaining expensive recognition data. Delegate/image cleanup remains in `@finally`, including failures and cancellation. Objective-C and C++ exceptions are converted to OCR errors **inside the dispatch block**, with cache purge; exceptions do not escape through libdispatch frames.
+
+## Image admission and scale
+
+P0-11: a checked shared planner clamps scale to the legacy range **1–4**, rejects invalid/overflowing geometry and accepts at most **4,000,000 pixels after scale**. Root preflight runs after frame-coordinate/clipping resolution and before copying the gray ROI; preprocessing checks the actual Mat again before resize. A rejected request reports `ocr_scaled_image_too_large`; it does not silently reduce scale or execute a partial OCR.
+
+For example, a 500×500 ROI at scale 4 fits exactly; 501×500 at scale 4 is rejected. A default scale-2 request must fit at most 1,000,000 source pixels. Existing small-region workflows remain within that bound; oversized full-screen requests need a smaller ROI or scale 1.
+
+The planner also checks a **12 MiB source-visible gray-buffer estimate**: original gray ROI plus a distinct work buffer when needed, plus the UIImage/provider copy. It does not count every OpenCV scratch allocation, Foundation temporary, UIKit/Pix conversion or Tesseract/Leptonica model/work buffer. It is not a process memory guarantee. Scale 1 without thresholding aliases the already-owned ROI instead of cloning it. Thresholding still gets separate work storage; the scaled Mat is released once the UIImage owns its provider bytes, before engine initialization.
+
+Production TrollStore uses the same pixel preflight before screen capture, including point-to-pixel scaling, and checks the actual cropped CGImage again before scale/PNG/Pix conversion. Its existing per-worker engine lifecycle, OEM/model fallback and response extension are retained. Failed scaling returns an explicit error instead of silently falling back to the original size. TrollStore's RGB/PNG/Pix storage is not covered by the root gray-buffer estimate; its existing isolated-worker timeout remains unchanged.
+
+## Full-request cooperative budget
+
+P1-27: root task 91 admits at most **two active-or-queued requests**, including the one on its serial owner. Excess callers receive `ocr_busy`. Admission is released when that synchronous handler returns, including error/exception paths; cancellation cannot instantly free a caller still blocked behind an opaque owner operation. Each request gets a monotonic **3-second cooperative budget from handler entry**, including parse/queue residence, ROI copy, preprocessing, model initialization, recognition and result extraction. An inherited native deadline or cancellation remains effective. Stale queued work is skipped before ROI allocation; expired/cancelled requests return `ocr_cancelled_or_timed_out` instead of an empty success.
+
+Recognition receives only the remaining budget; a positive sub-millisecond remainder is rounded to one monitor millisecond to avoid disabling the vendor deadline through integer truncation. The delegate continues to check the true request/parent deadline. A completed configured cold initialization may warm the bounded cache even when its original request has expired; that request still returns timeout and cannot emit successful recognition. This avoids repeated cold-start failure when model initialization alone exceeds the request budget.
+
+`dispatch_sync` callers can still wait behind an already-running opaque operation. OpenCV calls, model loading, image-to-Pix conversion and vendor callbacks are cooperative boundaries, not preemptible tasks. No hard three-second response or release deadline is claimed. The request budget begins at the OCR handler, not at TCP arrival or before upstream task/license queues. Existing wire timing fields retain their scope inside the OCR adapter; they do not suddenly include upstream queue/ROI time.
+
+## Protocol, diagnostics and validation
+
+Task 27 is unchanged in C01a. Task 91 keeps its input fields, success field order, Base64 text, confidence and frame age; TrollStore keeps `tesseract_init_source`. New admission/timeout/resource errors are intentional behavior changes. Root task 60 adds `tesseract_ocr` with atomic cache hit/miss/entry, pressure, admission and policy counters; no per-request image/text logging is added.
+
+Windows validation passes **36 source-contract runners, 13 native runners A01–C01a and 528 static grep assertions** from the production TrollStore workflow. The new portable suite covers 100,000 scale/overflow/visible-buffer plans, 100,000 cache identities with ownership checks, LRU order, 80,000 concurrent admission cycles, three-second boundaries, inherited deadline and cancellation. Existing touch/image/playback/budget/socket/license/event regressions remain green.
+
+Both workflows run `check-ocr-safety.mjs`. Its macOS ASan/UBSan branch compiles the actual root task/parser/cache/orchestration and actual grayscale-to-CG provider conversion. The real bundled G8 `setImage` method and its nil/Clear branch are extracted and exercised. UIKit's image facade, OpenCV operations, frame-copy provider and OCR engine are controlled doubles; the monotonic clock boundary is controlled for queue/init expiry cases. Tests cover 1,000 configuration identities with at most two live engines, cache hit/eviction, no scale-1 clone, preflight before allocation, pressure, Objective-C/C++ exceptions, late cold-init warm-up, two admitted jobs/third busy, stale queued jobs and parent cancellation. The full vendor conversion/recognizer and TrollStore UI/worker dependency tree are not compiled in this fixture.
+
+**The new macOS branches have not run on this Windows host.** Actual traineddata, OpenCV/Leptonica/Tesseract behavior, iOS artifacts, OCR accuracy, RSS/CPU/energy and device performance remain unqualified. Source-level cache limits do not establish a measured memory saving.
+
+## Device acceptance and remaining work
+
+1. Build rootfull/roothide and production TrollStore with the new tests. Compare task-91 text/confidence/field shape on the same images, languages, OEM, PSM, whitelist, threshold and scale combinations, including cache hits and eviction/reinitialization. Check successful initialization after a first cold timeout.
+2. Use `Collect-TLinkOCRBaseline.ps1 -HostIP <ip> -RegionWidth 500 -RegionHeight 500 -TesseractScaleUp 4` for the exact pixel boundary, then width 501 for rejection. The collector records responses; it does not automatically declare resource/accuracy acceptance. Test point coordinates on @2x/@3x devices too.
+3. Exercise many configuration identities and memory warnings while idle, loading and recognizing. Inspect task-60 `tesseract_ocr`, Allocations and VM Tracker: cached engines must remain at most two and request images/Pix data must not persist after cleanup. Models/vendor persistent caches can retain memory independently.
+4. Start concurrent OCR calls, cancel the parent during queued/preprocess/recognition work, and create a blocked/slow engine. Verify busy/timeout errors, no late success, no stale queued ROI allocation and subsequent recovery. Measure actual opaque-operation overrun and UI/IPC head-of-line impact.
+5. Continue C01b with P1-25/P1-36/P1-37/P1-38 (template cache bytes, resize/tries/work budgets, full preparation deadline and OpenCV global configuration). Then address remaining Vision candidate/debug cleanup, color capture/loop budgets and frame-backed capture reuse. A06 already added several cancellation/finally guards; verify current code before treating old audit line numbers as remaining defects.

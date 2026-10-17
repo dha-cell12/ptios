@@ -3,6 +3,7 @@
 
 #import <Foundation/Foundation.h>
 
+NSDictionary *TLinkTesseractOCRPerformance(void);
 NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error);
 
 #endif

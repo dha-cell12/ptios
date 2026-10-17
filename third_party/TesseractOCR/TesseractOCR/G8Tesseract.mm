@@ -421,6 +421,13 @@ static bool tesseractCancelCallbackFunction(void *cancel_this, int words);
 #pragma mark - Internal getters and setters
 
 - (void)setEngineImage:(UIImage *)image {
+    // A cached engine must not keep its last request's UIImage or Leptonica buffers.
+    if (!image) {
+        if (self.isEngineConfigured) _tesseract->Clear();
+        _image = nil; self.imageSize = CGSizeZero; _rect = CGRectZero;
+        [self resetFlags];
+        return;
+    }
     if (image.size.width <= 0 || image.size.height <= 0) {
         NSLog(@"ERROR: Image has invalid size!");
         return;

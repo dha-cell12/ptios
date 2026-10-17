@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. B05a baseline: `303b5be`; B05b baseline: `992a43a`. The user reported corrected B04 and B05a builds passed before their following slices. Device performance qualification remains pending.
 
-Status: **B05a/B05b source implemented; new B05b macOS/iOS build and device acceptance pending.** Production rootfull/roothide and the shared TrollStore verifier remain in scope; prototype TouchPOC is excluded. Next group: **B06**. OCR remains C01.
+Status: **B05a/B05b source implemented; the user reported B05b build pass at `b3383d9` before B06; device acceptance pending.** Production rootfull/roothide and the shared TrollStore verifier remain in scope; prototype TouchPOC is excluded. Next group: **B06**. OCR remains C01.
 
 ## Snapshot and refresh — B05a
 
@@ -59,7 +59,7 @@ The macOS ASan/UBSan branches added to both workflows compile actual production 
 - Actual configuration/signature-cache helpers with **real ephemeral P-256 keys and Security-framework signatures**. Only the signature-call boundary is delayed/counted; it still executes real verification. Cases cover invalid signatures, altered payload/signature/key/key-ID/build/generation/epoch, mutable inputs, late insertion races, oversized uncached verification, real plist replacement/deletion and same-size/same-mtime edits.
 - Actual playback session code with controlled runtime hooks, capability-owner checks, cancellation, retirement after completion and restart isolation. Native task bodies remain doubled in that player fixture.
 
-These new macOS branches have not run on this Windows host; they and final iOS artifacts require CI confirmation. The existing B05a fixture reached a later obsolete grep assertion in the user's TrollStore build; that assertion was corrected to the new generation/epoch policy, and the user subsequently reported build pass. B05b adds new code beyond that accepted build.
+These new macOS branches have not run on this Windows host; they and final iOS artifacts require CI confirmation. The existing B05a fixture reached a later obsolete grep assertion in the user's TrollStore build; that assertion was corrected to the new generation/epoch policy, and the user subsequently reported build pass. B05b added new code beyond that accepted B05a build; the user subsequently reported B05b build pass before B06. The macOS logs were not independently inspected.
 
 ## Device acceptance and limits
 

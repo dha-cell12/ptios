@@ -1640,6 +1640,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
                 },
                 @"run_history": TLinkRunHistorySnapshot(20),
                 @"event_channel": TLinkEventChannelStatus(),
+                @"tesseract_ocr": TLinkTesseractOCRPerformance(),
                 @"adaptive_streaming": TLinkH264AdaptiveStreamingStatus(),
                 @"zoom": @{
                     @"phase": @2,
