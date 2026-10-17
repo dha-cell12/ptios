@@ -11,6 +11,7 @@
 #import "TLinkautoJSRuntime.h"
 #import "TLinkTaskContext.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
+#import "../shared/TLinkLicenseVerifier.h"
 #import "../shared/TLinkRunHistory.h"
 #import "Screen.h"
 #include <os/lock.h>
@@ -328,6 +329,8 @@ static NSString *tlinkautoStringValue(id value) {
     } @catch (NSException *exception) {
         setLastScriptError(exception.reason ?: @"Playback cleanup failed.");
     } @finally {
+        [session.cancellationToken cancel]; // Retire capability copies before publishing idle.
+        session.taskContext.allowsAutomationForOwner = nil;
         [self hideIndicatorForSession:session];
         os_unfair_lock_lock(&_playerLock);
         _currentRuntime = nil;
@@ -403,6 +406,12 @@ static NSString *tlinkautoStringValue(id value) {
             // RAW has no cumulative native deadline/output sink. Reuse its cancellation-only
             // budget so dense touch playback does not allocate a budget for every record.
             [session.taskContext setNativeBudget:TLinkTaskBudget(session.taskContext)];
+            session.taskContext.ownerSessionId = NSUUID.UUID.UUIDString;
+            auto authorization = TLinkLicenseAutomationAuthorizationForOwner(session.taskContext.ownerSessionId);
+            TLinkCancellationToken *authorizationCancellation = session.cancellationToken;
+            session.taskContext.allowsAutomationForOwner = ^BOOL(NSString *owner) {
+                return ![authorizationCancellation isCancelled] && authorization && authorization(owner);
+            };
             __weak TLinkPlaybackSession *weakSession = session;
             session.taskContext.didInjectTouchPayload = ^(const uint8_t *bytes, size_t length) {
                 TLinkPlaybackSession *owner = weakSession;
@@ -453,7 +462,9 @@ static NSString *tlinkautoStringValue(id value) {
                 [&](uint64_t ns) {
                     @autoreleasepool {
                         NSString *denial = nil;
-                        if (!TLinkRootfullLicenseTaskAllowed(TASK_USLEEP, &denial)) {
+                        BOOL authorized = session.taskContext.allowsAutomationForOwner &&
+                            session.taskContext.allowsAutomationForOwner(session.taskContext.ownerSessionId);
+                        if (!authorized && !TLinkRootfullLicenseTaskAllowed(TASK_USLEEP, &denial)) {
                             [self requestStopSession:session revoked:YES message:denial]; return false;
                         }
                         if ([session.cancellationToken isCancelled]) return false;

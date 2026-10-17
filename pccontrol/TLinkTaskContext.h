@@ -30,6 +30,8 @@
 @property (nonatomic, copy) NSString *ownerSessionId;
 @property (nonatomic, copy) NSString *ownerRunId;
 @property (nonatomic, copy) NSString *ownerRuntime;
+// Internal RAW-session capability; only task 10/18 may use the numeric automation view.
+@property (nonatomic, copy) BOOL (^allowsAutomationForOwner)(NSString *owner);
 // Synchronous observer of successful injections; RAW session cleanup uses it on its worker.
 @property (nonatomic, copy) void (^didInjectTouchPayload)(const uint8_t *bytes, size_t length);
 @end

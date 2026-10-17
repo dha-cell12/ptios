@@ -34,6 +34,21 @@ int main() {
     assert(!TLinkLicenseSnapshotTimeAllowed(1000, 1000, 0, 0));
     assert(!TLinkLicenseSnapshotTimeAllowed(1000, 1000, std::numeric_limits<double>::quiet_NaN(), 0));
     assert(!TLinkLicenseSnapshotTimeAllowed(1000, 1000, 2000, std::numeric_limits<double>::infinity()));
+    TLinkLicenseAutomationView view; view.epoch = 7; view.started = 100; view.verifiedWall = 1000;
+    view.offline = 2000; view.automation = true;
+    assert(TLinkLicenseAutomationViewAllows(view, 7, 100, 100, 1000));
+    assert(!TLinkLicenseAutomationViewAllows(view, 8, 100, 100, 1000));
+    assert(!TLinkLicenseAutomationViewAllows(view, 7, 0, 100, 1000));
+    assert(!TLinkLicenseAutomationViewAllows(view, 7, 100, 500000101, 1000));
+    assert(!TLinkLicenseAutomationViewAllows(view, 7, 5000000100ULL, 5000000100ULL, 1000));
+    assert(!TLinkLicenseAutomationViewAllows(view, 7, 100, 100, 2001));
+    view.automation = false; assert(!TLinkLicenseAutomationViewAllows(view, 7, 100, 100, 1000));
+    view.observe = true; assert(TLinkLicenseAutomationViewAllows(view, 7, 100, 100, 1000));
+    assert(!TLinkLicenseAutomationViewAllows(view, 8, 100, 100, 1000));
+    for (unsigned n = 0; n < 100000; ++n) {
+        view.epoch = n; assert(TLinkLicenseAutomationViewAllows(view, n, 100, 100, 1000));
+        assert(!TLinkLicenseAutomationViewAllows(view, n + 1, 100, 100, 1000));
+    }
     // Serialized readers/invalidation must never resurrect a ticket from an old epoch.
     std::mutex lock; TLinkLicenseHotState concurrent;
     std::vector<std::thread> threads;
@@ -59,5 +74,5 @@ int main() {
     });
     for (auto &t : threads) t.join();
     assert(owners.load() == 0 && admission.active() == 0 && accepted.load() > 0);
-    puts("License hot state passed: TTL/probe/refresh boundaries, stale epochs/generations, slow verifier, signed-time limits, 80k invalidation cycles and 120k authority admission attempts.");
+    puts("License hot state passed: TTL/probe/refresh and RAW numeric-view boundaries, stale epochs/generations, slow verifier, signed-time limits, 80k invalidation cycles and 120k authority admission attempts.");
 }

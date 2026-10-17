@@ -889,7 +889,9 @@ static NSData *zx_handleUITreeTask(int taskType, const char *buffer)
 static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buffer)
 {
     if (taskType == 75 || taskType == 76) {
-        uint64_t generationBefore = TLinkLicenseGeneration();
+        NSString *diagnosticMode = buffer && strlen(buffer) > 2 ? [NSString stringWithUTF8String:buffer + 2] : @"";
+        BOOL cachedStatus = taskType == 75 && TLinkLicenseDiagnosticUsesCache(diagnosticMode);
+        uint64_t generationBefore = cachedStatus ? 0 : TLinkLicenseGeneration();
         NSString *action = @"status";
         if (taskType == 76) {
             NSString *rawBody = buffer && strlen(buffer) > 2
@@ -906,7 +908,8 @@ static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buf
             }
         }
 
-        NSMutableDictionary *status = [TLinkLicenseStatusDictionary() mutableCopy];
+        NSMutableDictionary *status = [(taskType == 75 ? TLinkLicenseDiagnosticStatus(diagnosticMode) : TLinkLicenseStatusDictionary()) mutableCopy];
+        if (cachedStatus) generationBefore = [status[@"license_generation"] unsignedLongLongValue];
         status[@"license_contract_version"] = @1;
         status[@"rootfull_license_phase"] = @6;
         status[@"runtime"] = @"rootfull";
@@ -931,7 +934,7 @@ static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buf
         status[@"verifier_build_mode"] = TLinkLicenseBuildMode() ?: @"";
         status[@"cache_invalidated"] = @(taskType == 76);
         status[@"generation_before"] = @(generationBefore);
-        status[@"license_generation"] = @(TLinkLicenseGeneration());
+        status[@"license_generation"] = @(cachedStatus ? generationBefore : TLinkLicenseGeneration());
         status[@"generation_action"] = action;
         status[@"source"] = @"tlinkautod_rootfull_phase6_release_hardened";
         NSData *json = [NSJSONSerialization dataWithJSONObject:status options:0 error:nil];
@@ -944,15 +947,18 @@ static NSData *zx_rootfullPhase6DiagnosticResponse(int taskType, const char *buf
 
     switch (taskType) {
         case 97: {
-            NSDictionary *status = TLinkLicenseStatusDictionary();
+            NSString *diagnosticMode = buffer && strlen(buffer) > 2 ? [NSString stringWithUTF8String:buffer + 2] : @"";
+            BOOL cachedStatus = TLinkLicenseDiagnosticUsesCache(diagnosticMode);
+            NSDictionary *status = TLinkLicenseDiagnosticStatus(diagnosticMode);
             NSString *capability = [NSString stringWithFormat:
                 @"0;;runtime=rootfull service=tlinkautod license_contract_version=1 license_phase=6 verifier=shared_signed_lease licenseAuthority=unix_signed_nonce_v1 licenseAuthoritySocket=license-authority.sock activationUI=1 lifecycle=foreground_single_flight_backoff runtimeGate=1 gateScope=task_and_long_running_component taskPolicy=rootfull_explicit_v1 h264Gate=1 h264HeartbeatMs=5000 scriptHeartbeat=1 scriptHeartbeatMs=1000 schedulerGate=1 helperGate=1 uiFeatureSnapshot=1 verifierMetrics=1 releaseIntegrity=1 antiRollback=1 task10LicenseDropCount=%llu licenseState=%@ licenseConfigured=%d licenseGeneration=%llu rootfullBuildMode=%s verifierBuildMode=%@ ports=6000,7001,7002,7003,7004,7005,7006 visionOCRState=ready visionOCRProfiles=springboard_default visionOCRRoute=daemon_to_springboard visionOCRFallback=none ocrDefaultEngine=tesseract ocrEngineSelector=none ocrProtocolVersion=legacy_v1 ocrLegacyTasks=27,91 multiTouchRaw=legacy_task10_parent_frames zoomState=experimental zoomTask=64 zoomWire=task64_additive_zoom_v1 zoomFingerCounts=2,3 zoomBackend=legacy_multitouch_parent_frames zoomPhase=2 zoomGeometry=radial_linear_interpolation_v1 zoomValidation=preflight_bounds_v1 zoomCleanup=all_fingers_up_on_exception_v1 zoomDeviceValidated=0 zoomDiagnostics=zoom_runtime_diagnostics_v1 zoomClients=task64_python_js_webtango_v1 smartWaitState=implemented smartWaitPhase=1 smartWaitSchema=smart_wait_result_v1 smartWaitClients=rootfull_js_trollstore_js_webtango_v1 smartWaitLocators=predicate,app,color,image,text,image_gone,tap_when_visible smartWaitFrameStrategy=fresh_frame_per_attempt_release_always_template_open_once smartWaitDeviceValidated=0 securePairingState=contract_only securePairingPhase=0 securePairingContractVersion=1 securePairingTransport=zxsp_json_v1 securePairingMode=observe_only securePairingLegacyPolicy=unchanged_p0 securePairingCrypto=p256_ecdh_ecdsa_hkdf_sha256_aes256_gcm securePairingDeviceValidated=0 vpnContractVersion=1 vpnLegacyTask=59 vpnProfileScope=tlink_owned_only vpnConfigurationTransport=local_ui_keychain_only vpnCredentialsOverTask59=forbidden vpnState=full_control vpnQuery=broker_localhost_6014 vpnControl=broker_localhost_6014 vpnBackend=nevpnmanager_ikev2 vpnBroker=tlinkauto_vpnd_6014 vpnPhase=4 vpnOnDemand=local_ui_connect_all_networks vpnDisconnectPolicy=explicit_disconnect_disables_on_demand vpnDiagnostics=task59_action2_base64_json_v1 vpnEntitlementProbe=broker_process_via_592 vpnProfileIdentifier=tlinkauto-managed-v1\r\n",
                 (unsigned long long)sTLinkRootfullLicenseTask10DropCount.load(std::memory_order_relaxed),
                 status[@"state"] ?: @"invalid",
                 [status[@"configured"] boolValue] ? 1 : 0,
-                (unsigned long long)TLinkLicenseGeneration(),
+                (unsigned long long)(cachedStatus ? [status[@"license_generation"] unsignedLongLongValue] : TLinkLicenseGeneration()),
                 TLinkRootfullLicenseBuildMode(),
                 TLinkLicenseBuildMode()];
+            if (cachedStatus) capability = [capability stringByReplacingOccurrencesOfString:@"\r\n" withString:@" licenseFreshness=cached\r\n"];
             capability = [capability stringByReplacingOccurrencesOfString:@" securePairingState=contract_only"
                                                                withString:@" runHistoryState=implemented runHistoryVersion=1 runHistorySchema=run_history_v1 failureEvidenceSchema=failure_evidence_v1 runHistoryTransport=task60_status_json_v1 runHistoryRetentionMaxRuns=50 failureEvidenceScreenshot=best_effort_png_on_failure runHistoryDeviceValidated=0 eventChannelState=implemented eventChannelVersion=1 eventChannelSchema=event_channel_v1 eventChannelTransport=task95_long_poll_v1 eventChannelResume=cursor_v1 eventChannelJournalMaxEvents=256 eventChannelPollMaxEvents=32 eventChannelPollTimeoutMaxMs=25000 eventChannelDeviceValidated=0 adaptiveStreamingState=implemented adaptiveStreamingVersion=1 adaptiveStreamingSchema=adaptive_streaming_v1 adaptiveStreamingFeedback=task94_base64_json_v1 adaptiveStreamingLevels=high,balanced,survival adaptiveStreamingSelfHealing=encoder_restart_3_client_reconnect_6 adaptiveStreamingDeviceValidated=0 uiTreeState=experimental uiTreeSchema=ui_snapshot_v1 uiTreeBackend=axruntime_numeric_v1 uiTreeTasks=77,78,79,80,81 uiTreeActions=capability,snapshot,find,at,tap uiTreeHierarchy=flat_v1 uiTreeDeviceValidated=0 securePairingState=contract_only"];
             return zx_dataFromCString([capability UTF8String]);

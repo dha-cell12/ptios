@@ -7830,9 +7830,9 @@ static NSData *TLinkHandleOpenURL(NSString *body)
     return TLinkError([NSString stringWithFormat:@"open_url_failed_or_limited_on_trollstore exit=%d", helperExit]);
 }
 
-static NSData *TLinkHandleHelloStatus(void)
+static NSData *TLinkHandleHelloStatus(NSString *diagnosticMode)
 {
-    NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
+    NSDictionary *licenseStatus = TLinkLicenseDiagnosticStatus(diagnosticMode);
     NSDictionary *backgroundService = [NSDictionary dictionaryWithContentsOfFile:kTLinkBackgroundSchedulerDiagnosticsPath];
     if (![backgroundService isKindOfClass:[NSDictionary class]]) {
         backgroundService = @{
@@ -10121,7 +10121,8 @@ static NSData *TLinkLicenseDeniedResponse(int taskType, NSString *feature, NSStr
 
 static NSData *TLinkHandleLicenseStatus(BOOL invalidate, NSString *body)
 {
-    uint64_t generationBefore = TLinkLicenseGeneration();
+    BOOL cachedStatus = !invalidate && TLinkLicenseDiagnosticUsesCache(body);
+    uint64_t generationBefore = cachedStatus ? 0 : TLinkLicenseGeneration();
     NSString *action = @"status";
     if (invalidate) {
         NSString *rawMode = body ? body : @"";
@@ -10136,8 +10137,9 @@ static NSData *TLinkHandleLicenseStatus(BOOL invalidate, NSString *body)
             action = @"advance";
         }
     }
-    uint64_t generationAfter = TLinkLicenseGeneration();
-    NSMutableDictionary *status = [TLinkLicenseStatusDictionary() mutableCopy];
+    NSMutableDictionary *status = [(invalidate ? TLinkLicenseStatusDictionary() : TLinkLicenseDiagnosticStatus(body)) mutableCopy];
+    if (cachedStatus) generationBefore = [status[@"license_generation"] unsignedLongLongValue];
+    uint64_t generationAfter = cachedStatus ? generationBefore : TLinkLicenseGeneration();
     status[@"license_contract_version"] = @1;
     status[@"checked_at_ms"] = @((uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0));
     status[@"cache_invalidated"] = @(invalidate);
@@ -10355,7 +10357,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
     }
 
     if (taskType == 60) {
-        return TLinkHandleHelloStatus();
+        return TLinkHandleHelloStatus(body);
     }
 
     if (taskType == 61) {
@@ -10491,7 +10493,9 @@ static NSData *TLinkHandleTaskLine(const char *line)
 
     if (taskType == 97) {
         NSString *cap = @"runtime=trollstore serviceVersion=14 phase=image-color-frame-ocr-app-script-lite ports=6000,7001,7002,7003,7004,7005,7006 tasks=10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,90,91,96,97,98,99 capabilities=touch,touchRecording,tapMacro,capture,captureDetached,screenshotAlbum,h264,hidMonitor,paths,color,image,frame,ocr,visionOCR,ocrPNGInput,ocrWorkerIsolation,ocrWorkerBreadcrumbs,ocrAppSideBridge,ocrAppRGBBridge,ocrAppAccurateRetry,tesseractOCR,tesseractOCRCompat,scriptJS,scriptStorage,scriptTaskBridge,scriptCompatFacade,scriptRunTaskAlias,scriptStorageAPI,scriptFileHandleAPI,scriptKeyboardAPI,scriptColorFrameAPI,scriptImageAPI,scriptOCRAPI,scriptAppAPI,scriptPlaySettings,scriptHardwareKey,scriptTapMacro,scriptVPNConfiguration,scriptLogClear,scheduler,schedulerAutoLaunch,settingsCache,keepAwake,visualFeedback,remoteBridgeWSS,remoteBridgeControl,remoteBridgeVideo,remoteBridgeReconnect,backgroundAutoStartBestEffort,backgroundUIBridge,backgroundVisualNotifications,backgroundVisualCFUserNotification,backgroundToastUIService,backgroundToastFixedCenter,backgroundPositionedToastOverlay,toastOverlay,alertOverlay,dialogOverlay,touchIndicator,appInfo,appLaunchPrivhelper,appKillPrivhelper,openURLPrivhelper,listBundles,keyboardClipboard,clipboardImage,clipboardUIDaemon,clipboardBackgroundEntitlement,clipboardForegroundFallback,keyboardHIDPaste,keyboardHIDEditing,hardwareKey,connectivity,wifi,bluetooth,airplane,cellularData,vpnQuery,shellTaskGated,clearDataPrivhelper,gracefulShutdown,privhelperRestart,privhelperEnsureStreamd unsupported=keychain,keyboardVisibilityControl,globalTouchIndicator,trueBootAutoStart unsupportedTasks=none remoteBridge=outbound_wss_control_and_zxh2_video_mvp keyboard=background_clipboard_hid_paste_cursor_delete clipboard=background_entitled_uidaemon_with_ui_bridge_and_foreground_fallback keyboardInput=clipboard_command_v_best_effort keyboardVisibility=limited_requires_springboard_keyboard_observer hardwareKey=hid_keyboard_event touchRecording=iohid_monitor_raw_js_replay tapMacro=bounded_async_native_tap scheduler=streamd_lite autolaunch=startup_after_streamd backgroundAutoStart=best_effort_bgtaskscheduler_after_first_launch keepAwake=foreground_app_plus_background_uidaemon_best_effort visualFeedback=foreground_overlay_background_uiservice_positioned_cfusernotification_fallback toast=foreground_or_background_uiservice_positioned_with_cf_fallback dialog=foreground_overlay_or_background_cfusernotification_alert touchIndicator=foreground_only_requires_springboard_injection_for_global connectivity=best_effort_private_framework vpn=script_profile_create_plus_background_agent_control shell=local_sh_or_mini_shell_gated_disabled_by_default screenshotAlbum=photos_framework_tlinkauto_album clearData=privhelper_best_effort_data_container_only ocr=tesseract_true_static_libs_memory_fallback tessdata=/var/mobile/Library/TLinkauto/tessdata tesseractOCR=true_tesseract_static_libs_memory_fallback_requires_traineddata serviceMode=helper_ensure_streamd_clipboardd_uiservice_best_effort imageMatch=multiscale_vimage_rgba_v2 appMgmt=limited_process_info_helper_launch_kill script=javascriptcore_rootfull_compat_facade fileHandle=bundle_relative_shared_rootfull_trollstore_max32_transfer512KiB";
-        NSDictionary *licenseStatus = TLinkLicenseStatusDictionary();
+        BOOL cachedStatus = TLinkLicenseDiagnosticUsesCache(body);
+        NSDictionary *licenseStatus = TLinkLicenseDiagnosticStatus(body);
+        if (cachedStatus) cap = [cap stringByAppendingString:@" licenseFreshness=cached"];
         cap = [cap stringByReplacingOccurrencesOfString:@"serviceVersion=14" withString:@"serviceVersion=23"];
         cap = [cap stringByAppendingFormat:@" licenseBuildMode=%@", TLinkLicenseBuildMode()];
         cap = [cap stringByReplacingOccurrencesOfString:@"71,72,73,90" withString:@"71,72,73,74,75,76,77,78,79,80,81,90"];
@@ -10555,7 +10559,7 @@ static NSData *TLinkHandleTaskLine(const char *line)
         cap = [cap stringByAppendingString:@" licenseContractVersion=1 licensePolicyVersion=1"];
         cap = [cap stringByAppendingString:@" licenseLifecycle=foreground_bg_single_flight_backoff_v1"];
         cap = [cap stringByAppendingFormat:@" licenseGeneration=%llu licenseGenerationSync=darwin_plus_request_check",
-            (unsigned long long)TLinkLicenseGeneration()];
+            (unsigned long long)(cachedStatus ? [licenseStatus[@"license_generation"] unsignedLongLongValue] : TLinkLicenseGeneration())];
         @synchronized (TLinkVisualFeedbackLock()) {
             cap = [cap stringByAppendingFormat:@" licensePolicy=explicit_table_fail_closed licenseRuntimeRecheck=h264_5s_script_1s task10LicenseDropCount=%llu",
                 (unsigned long long)sTLinkLicenseDropCount];

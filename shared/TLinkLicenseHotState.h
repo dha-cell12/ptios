@@ -17,6 +17,7 @@ class TLinkLicenseHotState {
     bool known_ = false, snapshot_ = false, refreshing_ = false;
 public:
     struct Ticket { uint64_t epoch, started; };
+    uint64_t epoch() const { return epoch_; }
     void invalidate() { ++epoch_; snapshot_ = false; known_ = false; nextRefresh_ = 0; }
     void observe(uint64_t generation, uint64_t now) {
         if (known_ && generation_ != generation) invalidate();
@@ -37,6 +38,17 @@ public:
         snapshotAt_ = ticket.started; snapshot_ = true; return true;
     }
 };
+struct TLinkLicenseAutomationView {
+    uint64_t epoch = 0, started = 0;
+    double verifiedWall = 0, offline = 0, expiry = 0;
+    bool observe = false, automation = false;
+};
+inline bool TLinkLicenseAutomationViewAllows(const TLinkLicenseAutomationView &view, uint64_t epoch,
+    uint64_t probeAt, uint64_t now, double wall) {
+    if (view.epoch != epoch || now < view.started || now - view.started >= 5000000000ULL ||
+        !probeAt || now < probeAt || now - probeAt > 500000000ULL) return false;
+    return view.observe || (view.automation && TLinkLicenseSnapshotTimeAllowed(wall, view.verifiedWall, view.offline, view.expiry));
+}
 class TLinkLicenseAuthorityAdmission {
     std::atomic<unsigned> active_{0};
 public:

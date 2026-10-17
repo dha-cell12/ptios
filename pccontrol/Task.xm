@@ -890,7 +890,9 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
         return;
     }
     NSString *licenseDenial = nil;
-    if (!cleanup && !TLinkRootfullLicenseTaskAllowed(taskType, &licenseDenial)) {
+    const BOOL sessionAutomation = (taskType == TASK_PERFORM_TOUCH || taskType == TASK_USLEEP) &&
+        context.allowsAutomationForOwner && context.allowsAutomationForOwner(context.ownerSessionId);
+    if (!cleanup && !sessionAutomation && !TLinkRootfullLicenseTaskAllowed(taskType, &licenseDenial)) {
         if (taskType == TASK_PERFORM_TOUCH) {
             sTLinkSpringBoardLicenseTask10DropCount.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -1570,8 +1572,9 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
             }
             NSString *licenseBuildMode =
                 [NSString stringWithUTF8String:TLinkRootfullLicenseBuildMode()] ?: @"";
+            NSString *licenseDiagnosticMode = [[NSString alloc] initWithBytes:eventData length:eventDataLength encoding:NSUTF8StringEncoding];
             NSMutableDictionary *licenseStatus =
-                [TLinkLicenseStatusDictionary() mutableCopy];
+                [(TLinkLicenseDiagnosticUsesCache(licenseDiagnosticMode) ? TLinkLicenseDiagnosticStatus(licenseDiagnosticMode) : TLinkLicenseStatusDictionary()) mutableCopy];
             licenseStatus[@"phase"] = @6;
             licenseStatus[@"runtime"] = @"rootfull";
             licenseStatus[@"runtime_gate_active"] = @1;

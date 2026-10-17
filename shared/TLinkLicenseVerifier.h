@@ -16,6 +16,10 @@ FOUNDATION_EXPORT NSDictionary *TLinkLicenseConfiguration(void);
 FOUNDATION_EXPORT NSDictionary *TLinkLicenseStatusDictionary(void);
 // Memory snapshot only; stale/unavailable state is fail-closed. Does not force fresh diagnostics.
 FOUNDATION_EXPORT NSDictionary *TLinkLicenseCachedStatusDictionary(void);
+typedef BOOL (^TLinkLicenseAutomationAuthorization)(NSString *owner);
+FOUNDATION_EXPORT TLinkLicenseAutomationAuthorization TLinkLicenseAutomationAuthorizationForOwner(NSString *owner);
+FOUNDATION_EXPORT BOOL TLinkLicenseDiagnosticUsesCache(NSString *mode);
+FOUNDATION_EXPORT NSDictionary *TLinkLicenseDiagnosticStatus(NSString *mode);
 FOUNDATION_EXPORT BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error);
 FOUNDATION_EXPORT NSData *TLinkLicenseCreateDeviceSignature(
     NSData *message,

@@ -4,6 +4,7 @@
 #import <os/lock.h>
 #import "../pccontrol/ScriptPlayer.h"
 #import "../pccontrol/TLinkTaskContext.h"
+#import "../shared/TLinkLicenseVerifier.h"
 #include "../shared/TLinkPlaybackState.h"
 #include "../shared/TLinkRawPlayback.h"
 #include <atomic>
@@ -61,6 +62,13 @@ static int bringAppForeground(NSString *app) { (void)app; return 0; }
 static BOOL TLinkRootfullLicenseComponentAllowed(NSString *feature, NSString *source, NSString **denial) {
     (void)feature; (void)source; if (!allowLicense && denial) *denial = @"license_required"; return allowLicense.load();
 }
+static std::atomic<bool> fastAuthorization{false};
+static TLinkLicenseAutomationAuthorization capturedAuthorization;
+static NSString *capturedOwner;
+TLinkLicenseAutomationAuthorization TLinkLicenseAutomationAuthorizationForOwner(NSString *owner) {
+    NSString *bound = [owner copy];
+    return ^BOOL(NSString *candidate) { return fastAuthorization.load() && allowLicense.load() && [bound isEqual:candidate]; };
+}
 static BOOL TLinkRootfullLicenseTaskAllowed(int task, NSString **denial) {
     if (task == 18) dispatch_semaphore_signal(waitEntered);
     if (!allowLicense && denial) *denial = @"license_required";
@@ -111,6 +119,7 @@ static bool performTouchFromRawData(const uint8_t *bytes, size_t length) {
 static void processTaskWithContext(UInt8 *bytes, size_t length, void *stream, TLinkTaskExecutionContext *context) {
     (void)stream;
     ++tasks;
+    if (fastAuthorization.load()) { capturedAuthorization = [context.allowsAutomationForOwner copy]; capturedOwner = [context.ownerSessionId copy]; }
     if (length >= 2 && bytes[0] == '1' && bytes[1] == '0') {
         if (performTouchFromRawData(bytes + 2, length - 2) && context.didInjectTouchPayload)
             context.didInjectTouchPayload(bytes + 2, length - 2);
@@ -204,6 +213,13 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     allowLicense = false; start(player, sleeping); idle(player); allowLicense = true;
     assert([lastState isEqualToString:@"license_revoked"]);
     start(player, once); idle(player);
+    fastAuthorization = true; holdTask = true; start(player, once); wait(taskEntered);
+    assert(capturedAuthorization && capturedAuthorization(capturedOwner) && !capturedAuthorization(@"wrong-owner"));
+    TLinkLicenseAutomationAuthorization oldAuthorization = [capturedAuthorization copy]; NSString *oldOwner = [capturedOwner copy];
+    stop(player); assert(!oldAuthorization(oldOwner));
+    holdTask = false; dispatch_semaphore_signal(taskRelease); idle(player);
+    start(player, once); idle(player); assert(!capturedAuthorization(capturedOwner) && !oldAuthorization(oldOwner));
+    assert(![oldOwner isEqual:capturedOwner]); fastAuthorization = false;
     assert(historyBegins == historyFinishes);
     // Drain queued fake-UI updates after several completed generations. None changes model state.
     [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];

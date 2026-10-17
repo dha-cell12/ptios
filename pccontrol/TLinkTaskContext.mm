@@ -42,6 +42,7 @@ TLinkTaskExecutionContext *TLinkNativeCallContext(TLinkTaskExecutionContext *par
     child.defaultMaxOutputBytes = parent.defaultMaxOutputBytes > 0 ? MIN(parent.defaultMaxOutputBytes, (NSUInteger)(1024 * 1024)) : 1024 * 1024;
     child.ownerSessionId = parent.ownerSessionId; child.ownerRunId = parent.ownerRunId; child.ownerRuntime = parent.ownerRuntime;
     child.didInjectTouchPayload = parent.didInjectTouchPayload;
+    child.allowsAutomationForOwner = parent.allowsAutomationForOwner;
     uint64_t deadline = TLinkNativeDeadline(child.defaultTimeoutSeconds);
     if (inherited && inherited->deadline()) deadline = std::min(deadline, inherited->deadline());
     auto token = parent.cancellationToken;

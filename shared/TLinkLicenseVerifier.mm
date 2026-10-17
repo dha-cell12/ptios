@@ -24,6 +24,7 @@
 #include <atomic>
 #include <mach/mach_time.h>
 #include <mutex>
+#include <memory>
 #include <condition_variable>
 #include <dispatch/dispatch.h>
 #include "TLinkLicenseHotState.h"
@@ -315,6 +316,50 @@ NSString *TLinkBundledExecutablePath(NSString *name)
     return [[NSFileManager defaultManager] isExecutableFileAtPath:path] ? path : nil;
 }
 
+// BEGIN license artifact storage.
+static std::mutex sTLinkLicenseArtifactLock;
+static std::atomic<uint64_t> sTLinkLicenseArtifactEpoch{1}, sTLinkLicenseConfigHits{0}, sTLinkLicenseArtifactHits{0}, sTLinkLicenseArtifactMisses{0};
+static NSData *sTLinkLicenseConfigBytes;
+static NSString *sTLinkLicenseConfigPath;
+static NSDictionary *sTLinkLicenseConfigValue;
+static uint64_t sTLinkLicenseConfigGeneration = 0, sTLinkLicenseConfigEpoch = 0;
+static NSArray *sTLinkLicenseVerifiedArtifact;
+static const NSUInteger kTLinkLicenseArtifactCacheBytes = 1024 * 1024;
+static void TLinkLicenseInvalidateArtifacts(void) {
+    std::lock_guard<std::mutex> lock(sTLinkLicenseArtifactLock);
+    sTLinkLicenseArtifactEpoch.fetch_add(1);
+    sTLinkLicenseConfigBytes = nil; sTLinkLicenseConfigPath = nil; sTLinkLicenseConfigValue = nil;
+    sTLinkLicenseVerifiedArtifact = nil;
+}
+static NSDictionary *TLinkLicenseConfigurationAtPath(NSString *path) {
+    NSData *bytes = [NSData dataWithContentsOfFile:path];
+    if (!bytes.length) return nil; // Always observe deletion/replacement, even with an old cache entry.
+    const uint64_t epoch = sTLinkLicenseArtifactEpoch.load(), generation = TLinkLicenseGeneration();
+    const bool admitted = bytes.length <= kTLinkLicenseArtifactCacheBytes;
+    if (admitted) {
+        std::lock_guard<std::mutex> lock(sTLinkLicenseArtifactLock);
+        if (epoch == sTLinkLicenseConfigEpoch && generation == sTLinkLicenseConfigGeneration &&
+            [path isEqual:sTLinkLicenseConfigPath] && [bytes isEqualToData:sTLinkLicenseConfigBytes]) {
+            sTLinkLicenseConfigHits.fetch_add(1); return sTLinkLicenseConfigValue;
+        }
+    }
+    id value = [NSPropertyListSerialization propertyListWithData:bytes options:NSPropertyListImmutable format:NULL error:NULL];
+    if (![value isKindOfClass:[NSDictionary class]]) return nil;
+    if (admitted && TLinkLicenseGeneration() == generation) {
+        std::lock_guard<std::mutex> lock(sTLinkLicenseArtifactLock);
+        if (sTLinkLicenseArtifactEpoch.load() == epoch) {
+            sTLinkLicenseConfigBytes = [bytes copy]; sTLinkLicenseConfigPath = [path copy]; sTLinkLicenseConfigValue = [value copy];
+            sTLinkLicenseConfigEpoch = epoch; sTLinkLicenseConfigGeneration = generation;
+        }
+    }
+    return value;
+}
+static NSDictionary *TLinkLicenseArtifactPerformance(void) {
+    return @{@"config_hit_count": @(sTLinkLicenseConfigHits.load()), @"signature_hit_count": @(sTLinkLicenseArtifactHits.load()),
+        @"signature_miss_count": @(sTLinkLicenseArtifactMisses.load()), @"entries_per_kind": @1, @"input_cache_limit_bytes": @(kTLinkLicenseArtifactCacheBytes)};
+}
+// END license artifact storage.
+
 NSDictionary *TLinkLicenseConfiguration(void)
 {
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
@@ -332,7 +377,7 @@ NSDictionary *TLinkLicenseConfiguration(void)
         [candidates addObject:bundlePath];
     }
     for (NSString *path in candidates) {
-        NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:path];
+        NSDictionary *config = TLinkLicenseConfigurationAtPath(path);
         if ([config isKindOfClass:[NSDictionary class]]) return config;
     }
     return @{};
@@ -445,6 +490,39 @@ static SecKeyRef TLinkCreateServerPublicKey(NSDictionary *config) CF_RETURNS_RET
     return key;
 }
 
+// BEGIN license server signature artifact.
+// Cache only a successful server signature over these exact bytes. Dynamic trust checks stay at callers.
+static BOOL TLinkLicenseVerifyServerArtifact(NSDictionary *config, NSData *payload, NSData *signature, NSString **description) {
+    payload = [payload copy]; signature = [signature copy];
+    const uint64_t epoch = sTLinkLicenseArtifactEpoch.load(), generation = TLinkLicenseGeneration();
+    NSString *x = [config[@"LicensePublicKeyX"] isKindOfClass:[NSString class]] ? [config[@"LicensePublicKeyX"] copy] : @"";
+    NSString *y = [config[@"LicensePublicKeyY"] isKindOfClass:[NSString class]] ? [config[@"LicensePublicKeyY"] copy] : @"";
+    NSString *keyID = [config[@"LicenseKeyID"] isKindOfClass:[NSString class]] ? [config[@"LicenseKeyID"] copy] : @"";
+    const bool admitted = payload.length > 0 && payload.length <= kTLinkLicenseArtifactCacheBytes &&
+        signature.length > 0 && signature.length <= kTLinkLicenseArtifactCacheBytes - payload.length &&
+        x.length <= 4096 && y.length <= 4096 && keyID.length <= 4096;
+    NSArray *key = admitted ? @[payload, signature, x, y, keyID, TLinkLicenseBuildMode(), @(generation), @(epoch)] : nil;
+    if (key) {
+        std::lock_guard<std::mutex> lock(sTLinkLicenseArtifactLock);
+        if ([key isEqual:sTLinkLicenseVerifiedArtifact]) { sTLinkLicenseArtifactHits.fetch_add(1); return YES; }
+    }
+    sTLinkLicenseArtifactMisses.fetch_add(1);
+    SecKeyRef serverKey = TLinkCreateServerPublicKey(@{@"LicensePublicKeyX": x, @"LicensePublicKeyY": y});
+    if (!serverKey) { if (description) *description = @"license_server_public_key_invalid"; return NO; }
+    CFErrorRef error = NULL;
+    BOOL valid = payload.length > 0 && signature.length > 0 && SecKeyVerifySignature(serverKey,
+        kSecKeyAlgorithmECDSASignatureMessageX962SHA256, (__bridge CFDataRef)payload, (__bridge CFDataRef)signature, &error);
+    CFRelease(serverKey);
+    if (!valid && description) *description = error ? [(__bridge NSError *)error localizedDescription] : @"license_signature_invalid";
+    if (error) CFRelease(error);
+    if (valid && key && TLinkLicenseGeneration() == generation) {
+        std::lock_guard<std::mutex> lock(sTLinkLicenseArtifactLock);
+        if (sTLinkLicenseArtifactEpoch.load() == epoch) sTLinkLicenseVerifiedArtifact = [key copy];
+    }
+    return valid;
+}
+// END license server signature artifact.
+
 BOOL TLinkLicenseDevicePublicKeyAnchored(
     NSData *publicPoint,
     NSString **error)
@@ -483,25 +561,15 @@ BOOL TLinkLicenseDevicePublicKeyAnchored(
     NSData *signatureData = TLinkBase64URLDecode(
         [lease[@"signature"] isKindOfClass:[NSString class]]
             ? lease[@"signature"] : @"");
-    SecKeyRef serverKey = TLinkCreateServerPublicKey(config);
-    if (payloadData.length == 0 ||
-        signatureData.length == 0 ||
-        !serverKey) {
-        if (serverKey) CFRelease(serverKey);
+    if (payloadData.length == 0 || signatureData.length == 0) {
         if (error) *error = @"license_authority_lease_signature_inputs_invalid";
         return NO;
     }
-    CFErrorRef verifyError = NULL;
-    BOOL signatureValid = SecKeyVerifySignature(
-        serverKey,
-        kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
-        (__bridge CFDataRef)payloadData,
-        (__bridge CFDataRef)signatureData,
-        &verifyError);
-    CFRelease(serverKey);
-    if (verifyError) CFRelease(verifyError);
+    NSString *artifactError = nil;
+    BOOL signatureValid = TLinkLicenseVerifyServerArtifact(config, payloadData, signatureData, &artifactError);
     if (!signatureValid) {
-        if (error) *error = @"license_authority_lease_signature_invalid";
+        if (error) *error = [artifactError isEqualToString:@"license_server_public_key_invalid"]
+            ? @"license_authority_lease_signature_inputs_invalid" : @"license_authority_lease_signature_invalid";
         return NO;
     }
     id payloadObject = [NSJSONSerialization
@@ -1177,18 +1245,11 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
         return TLinkLicenseFailure(config, @"invalid", @"license_lease_fields_invalid");
     }
 
-    SecKeyRef serverKey = TLinkCreateServerPublicKey(config);
-    if (!serverKey) return TLinkLicenseFailure(config, @"invalid", @"license_server_public_key_invalid");
-    CFErrorRef verifyError = NULL;
-    BOOL signatureValid = SecKeyVerifySignature(serverKey,
-                                                kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
-                                                (__bridge CFDataRef)payloadData,
-                                                (__bridge CFDataRef)signatureData,
-                                                &verifyError);
-    CFRelease(serverKey);
-    NSString *verifyDescription = verifyError ? [(__bridge NSError *)verifyError localizedDescription] : @"";
-    if (verifyError) CFRelease(verifyError);
+    NSString *verifyDescription = nil;
+    BOOL signatureValid = TLinkLicenseVerifyServerArtifact(config, payloadData, signatureData, &verifyDescription);
     if (!signatureValid) {
+        if ([verifyDescription isEqualToString:@"license_server_public_key_invalid"])
+            return TLinkLicenseFailure(config, @"invalid", @"license_server_public_key_invalid");
         TLinkQuarantineCorruptLease(@"license_signature_invalid");
         return TLinkLicenseFailure(config, @"invalid", verifyDescription.length > 0 ? verifyDescription : @"license_signature_invalid");
     }
@@ -1319,6 +1380,22 @@ static double sTLinkLicenseSnapshotWall = 0;
 static bool sTLinkLicenseProbeArmed = false;
 static unsigned sTLinkLicenseColdWaiters = 0;
 static int sTLinkLicenseNotificationToken = 0;
+static std::shared_ptr<const TLinkLicenseAutomationView> sTLinkLicenseAutomationView;
+static std::atomic<uint64_t> sTLinkLicenseAutomationEpoch{1}, sTLinkLicenseAutomationProbe{0}, sTLinkLicenseAutomationChecks{0};
+static void TLinkLicenseUpdateNumericGuardLocked(uint64_t now) {
+    sTLinkLicenseAutomationEpoch.store(sTLinkLicenseHotState.epoch());
+    sTLinkLicenseAutomationProbe.store(now);
+}
+static void TLinkLicensePublishNumericLocked(NSDictionary *status, uint64_t started, double wall) {
+    auto view = std::make_shared<TLinkLicenseAutomationView>();
+    view->epoch = sTLinkLicenseHotState.epoch(); view->started = started; view->verifiedWall = wall;
+    view->observe = ![status[@"enforcement_enabled"] boolValue];
+    NSArray *features = [status[@"features"] isKindOfClass:[NSArray class]] ? status[@"features"] : @[];
+    view->automation = [status[@"licensed"] boolValue] && ([features containsObject:@"all"] || [features containsObject:@"automation"]);
+    view->offline = [status[@"offline_until"] doubleValue]; view->expiry = [status[@"license_expires_at"] doubleValue];
+    std::atomic_store(&sTLinkLicenseAutomationView, std::shared_ptr<const TLinkLicenseAutomationView>(view));
+}
+
 
 static NSDictionary *TLinkLicensePendingSnapshot(void) {
     return @{@"enforcement_enabled": @YES, @"licensed": @NO, @"features": @[],
@@ -1344,9 +1421,13 @@ static void TLinkLicenseRequestRefreshLocked(uint64_t now) {
                 [status[@"license_generation"] unsignedLongLongValue] == after;
             {
                 std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
-                if (sTLinkLicenseHotState.finish(ticket, before, after, TLinkLicenseHotNowNs(), coherent)) {
+                uint64_t now = TLinkLicenseHotNowNs();
+                bool accepted = sTLinkLicenseHotState.finish(ticket, before, after, now, coherent);
+                TLinkLicenseUpdateNumericGuardLocked(now);
+                if (accepted) {
                     sTLinkLicenseFeatureStatus = [status copy];
                     sTLinkLicenseSnapshotWall = verificationWall;
+                    TLinkLicensePublishNumericLocked(status, ticket.started, verificationWall);
                 }
             }
             sTLinkLicenseFeatureCacheMissCount.fetch_add(1, std::memory_order_relaxed);
@@ -1380,6 +1461,7 @@ static void TLinkLicenseInitializeHotCache(void) {
                     std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
                     uint64_t now = TLinkLicenseHotNowNs();
                     sTLinkLicenseHotState.observe(generation, now);
+                    TLinkLicenseUpdateNumericGuardLocked(now);
                     TLinkLicenseRequestRefreshLocked(now);
                 }
                 sTLinkLicenseSnapshotChanged.notify_all();
@@ -1423,11 +1505,35 @@ static NSDictionary *TLinkLicenseReadSnapshot(BOOL waitForCold, BOOL *warmHit) {
     return status;
 }
 NSDictionary *TLinkLicenseCachedStatusDictionary(void) { return TLinkLicenseReadSnapshot(NO, NULL); }
+TLinkLicenseAutomationAuthorization TLinkLicenseAutomationAuthorizationForOwner(NSString *owner) {
+    NSString *boundOwner = [owner copy];
+    return [^BOOL(NSString *candidate) {
+        if (!boundOwner.length || ![boundOwner isEqualToString:candidate]) return NO;
+        auto view = std::atomic_load(&sTLinkLicenseAutomationView);
+        const uint64_t epoch = sTLinkLicenseAutomationEpoch.load(), probe = sTLinkLicenseAutomationProbe.load();
+        if (!view || epoch != sTLinkLicenseAutomationEpoch.load()) return NO;
+        sTLinkLicenseAutomationChecks.fetch_add(1);
+        const double wall = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+        return TLinkLicenseAutomationViewAllows(*view, epoch, probe, TLinkLicenseHotNowNs(), wall) ? YES : NO;
+    } copy];
+}
+BOOL TLinkLicenseDiagnosticUsesCache(NSString *mode) {
+    return [[[mode ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] lowercaseString] isEqualToString:@"cached"];
+}
+NSDictionary *TLinkLicenseDiagnosticStatus(NSString *mode) {
+    if (!TLinkLicenseDiagnosticUsesCache(mode)) return TLinkLicenseStatusDictionary();
+    NSMutableDictionary *status = [TLinkLicenseCachedStatusDictionary() mutableCopy];
+    status[@"diagnostic_freshness"] = @"cached"; status[@"snapshot_max_age_ms"] = @5000;
+    return status;
+}
 void TLinkLicenseInvalidateCache(void) {
+    TLinkLicenseInvalidateArtifacts();
     TLinkLicenseInitializeHotCache();
     {
         std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
         sTLinkLicenseHotState.invalidate(); sTLinkLicenseFeatureStatus = nil;
+        sTLinkLicenseAutomationEpoch.store(sTLinkLicenseHotState.epoch()); sTLinkLicenseAutomationProbe.store(0);
+        std::atomic_store(&sTLinkLicenseAutomationView, std::shared_ptr<const TLinkLicenseAutomationView>{});
         if (sTLinkLicenseProbeArmed) TLinkLicenseRequestRefreshLocked(TLinkLicenseHotNowNs());
     }
     sTLinkLicenseSnapshotChanged.notify_all();
@@ -1472,7 +1578,9 @@ NSDictionary *TLinkLicensePerformanceDictionary(void)
         @"cache_miss_count": @(misses), // Legacy field now counts completed background refreshes.
         @"completed_refresh_count": @(misses),
         @"cold_check_count": @(sTLinkLicenseColdCheckCount.load(std::memory_order_relaxed)),
-        @"metrics_version": @2,
+        @"metrics_version": @3,
+        @"artifact_cache": TLinkLicenseArtifactPerformance(),
+        @"raw_numeric_check_count": @(sTLinkLicenseAutomationChecks.load()),
         @"idle_probe_stop_ms": @10000,
         @"cache_ttl_ms": @5000,
         @"refresh_after_ms": @4000,
