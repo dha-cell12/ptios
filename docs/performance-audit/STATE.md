@@ -27,7 +27,10 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - The response sink bounds wire accumulation; it does not bound every producer's transient object or process RSS. Cancellation is cooperative; no hard native-call completion deadline is claimed.
 - B01 / P0-01 + P1-01 + P2-04: pccontrol recorder source implemented. One dedicated CF owner, generation-bound HID/stop/UI lifecycle, fixed 4096-record ring, writer batching/active-only flush, monotonic callback-arrival timing, fail-stop on overflow/I/O error and drain/fsync/close before idle. Same-second packages are exclusive. Existing daemon 14/15 ACK remains queued, distinct from direct completion-aware task replies.
 - B01 portable harness passes 100k RAW round-trip records (385 batched fixture writes), 1000 coordinate comparisons, timing/overflow/write faults and 8 x 1k lifecycle cycles. All 36 existing source contracts and A01-A06 native regressions pass. Actual macOS owner/run-loop/HID/file harness is added to rootfull/roothide CI but not run on Windows; new build/device checks pending. Details and durability/stop-latency limits: `IMPLEMENTATION-B01.md`.
-- Next implementation group is B02 (frame/image store). Build reports do not replace each group's device qualification.
+- User reported the corrected B01 build at `07c1b84` passed before B02. Device qualification remains pending.
+- B02 / P0-07 + P0-09 + P1-20 + P1-21 + P1-24 + P1-26: pccontrol frame/image source implemented. Noncopyable shared immutable payloads, compute outside store queue, active-reader/pending-inclusive 96/64/128 MiB frame/image/combined limits, bounded disk preflight, two compute admissions, monotonic ages and active one-shot frame expiry. Explicit image lifetime and legacy response fields preserved; new admission/format limits documented.
+- B02 portable extracted-core tests pass 20k lifecycles and 8 x 10k concurrent reservations, all 36 existing source contracts and seven previous native suites pass. macOS actual adapter/release/ImageIO wrapper tests added to root CI; final build/device checks pending. Details: `IMPLEMENTATION-B02.md`.
+- Next implementation group is B03 (OCR cache/pixel budgets). Build reports do not replace each group's device qualification.
 
 ## Primary target
 

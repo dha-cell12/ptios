@@ -71,3 +71,5 @@ User CI reached the recorder Foundation runtime executable and terminated with S
 Only synchronous wait:true owner requests may now take the same-thread fast path. Async owner requests always go through CFRunLoopPerformBlock, including writer failures raised during an inline drain in stop. The outer stop can finish drain/error handling and close before the queued failure notification is considered; it does not recursively stop its writer.
 
 The macOS harness adds explicit owner-originated and writer-originated async deferral assertions, retains the write/sync/close fault cases, and prints stage markers to stderr so any remaining crash is localized in CI output. Windows recorder core/source checks and diff validation pass. This host cannot run Foundation/macOS, so the corrected runtime and final rootfull/roothide artifacts still need a CI rerun.
+
+User subsequently reported the corrected build passed at `07c1b84` before starting B02. Device acceptance above remains pending.

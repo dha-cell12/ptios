@@ -1,6 +1,7 @@
 #include "../shared/TLinkNativeDispatch.h"
 #import "Image.h"
-#import "Image.h"
+#import <ImageIO/ImageIO.h>
+#include "../shared/TLinkImageStorage.h"
 #import "Screen.h"
 #import "Common.h"
 #import "ScriptPlayer.h"
@@ -19,21 +20,27 @@ extern ScriptPlayer *scriptPlayer;
 using namespace cv;
 using namespace std;
 
-typedef struct {
-    uint32_t imageId;
+// BEGIN immutable image payload types (also compiled by native storage tests).
+struct ZXImageObject {
+    std::shared_ptr<TLinkImageCharge> charge; // Destroy after pixel members.
+    uint32_t imageId = 0;
     cv::Mat gray;
     int w;
     int h;
     uint64_t createdAtMs;
     uint64_t ttlMs;
-    bool released;
     std::string ownerSessionId;
     std::string ownerRunId;
     std::string ownerRuntime;
-} ZXImageObject;
+    ZXImageObject() = default;
+    ZXImageObject(const ZXImageObject &) = delete;
+    ZXImageObject &operator=(const ZXImageObject &) = delete;
+};
 
-typedef struct {
-    uint32_t frameId;
+struct ZXFrameObject {
+    std::shared_ptr<TLinkImageCharge> charge; // Readers keep the charge until pixels are freed.
+    uint32_t frameId = 0;
+    uint64_t capturedAtMs = 0; // Legacy CFAbsoluteTime wall timestamp; never used for TTL.
     int width;
     int height;
     int bytesPerRow;
@@ -41,7 +48,6 @@ typedef struct {
     uint64_t createdAtMs;
     uint64_t expiresAtMs;
     uint64_t ttlMs;
-    bool released;
     std::string ownerSessionId;
     std::string ownerRunId;
     std::string ownerRuntime;
@@ -49,7 +55,13 @@ typedef struct {
     bool hasGray;
     std::vector<uint8_t> bgra;
     cv::Mat gray;
-} ZXFrameObject;
+    ZXFrameObject() = default;
+    ZXFrameObject(const ZXFrameObject &) = delete;
+    ZXFrameObject &operator=(const ZXFrameObject &) = delete;
+};
+using ZXFrameRef = std::shared_ptr<const ZXFrameObject>;
+using ZXImageRef = std::shared_ptr<const ZXImageObject>;
+// END immutable image payload types.
 
 typedef struct {
     int dx;
@@ -69,20 +81,27 @@ static dispatch_queue_t zx_imageQueue(void)
     return q;
 }
 
-static unordered_map<uint32_t, ZXImageObject> gImageStore;
+// BEGIN image store globals (native tests provide the same queue/clock boundary).
+static unordered_map<uint32_t, ZXImageRef> gImageStore;
 static uint32_t gNextImageId = 1;
 static const size_t kMaxImageObjects = 64;
-
-static unordered_map<uint32_t, ZXFrameObject> gFrameStore;
+static unordered_map<uint32_t, ZXFrameRef> gFrameStore;
 static uint32_t gNextFrameId = 1;
 static const size_t kMaxFrameObjects = 3;
 static const uint64_t kDefaultFrameTtlMs = 1000;
 static const uint64_t kHardFrameTtlMs = 5000;
-
-static uint64_t zx_nowMs(void)
-{
-    return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
-}
+static const size_t kMaxImagePixels = 16 * 1024 * 1024;
+static TLinkImageMemory gImageMemory(96 * 1024 * 1024, 64 * 1024 * 1024, 128 * 1024 * 1024);
+static TLinkImageComputeGate gImageCompute;
+// END image store globals.
+static uint64_t zx_nowMs(void) { return TLinkImageNowMs(); }
+static bool zx_rearmFrameExpiryLocked(void);
+static void zx_cleanupFramesLocked(uint64_t nowMs);
+static void zx_trimFramesLocked(void);
+static uint32_t zx_storeImageLocked(std::shared_ptr<ZXImageObject> image);
+static uint32_t zx_storeFrameLocked(std::shared_ptr<ZXFrameObject> frame);
+static ZXFrameRef zx_snapshotFrame(uint32_t frameId);
+static std::shared_ptr<TLinkImageCharge> zx_reservePayload(TLinkImageKind kind, size_t bytes);
 
 static NSError *zx_frameError(NSString *message)
 {
@@ -105,7 +124,6 @@ static void zx_applyFrameOwner(ZXFrameObject &frame, NSArray *data, NSUInteger s
     frame.ownerSessionId = zx_stringFromPart(data, startIndex, "");
     frame.ownerRunId = zx_stringFromPart(data, startIndex + 1, "");
     frame.ownerRuntime = zx_stringFromPart(data, startIndex + 2, "legacy");
-    frame.released = false;
 }
 
 static void zx_applyImageOwner(ZXImageObject &image, NSArray *data, NSUInteger startIndex)
@@ -113,7 +131,6 @@ static void zx_applyImageOwner(ZXImageObject &image, NSArray *data, NSUInteger s
     image.ownerSessionId = zx_stringFromPart(data, startIndex, "");
     image.ownerRunId = zx_stringFromPart(data, startIndex + 1, "");
     image.ownerRuntime = zx_stringFromPart(data, startIndex + 2, "legacy");
-    image.released = false;
 }
 
 static bool zx_ownerMatchFields(const std::string &objSessionId,
@@ -142,7 +159,6 @@ static bool zx_ownerMatchesImage(const ZXImageObject &image, const std::string &
 }
 
 static void zx_cleanupFramesLocked(uint64_t nowMs);
-static uint32_t zx_storeFrameLocked(const ZXFrameObject &frame);
 static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData);
 static bool zx_stringIsPointCoord(NSString *coord);
 static int zx_coordToPixel(double value, double scale, bool pointCoord);
@@ -183,7 +199,8 @@ static cv::Mat zx_cvMatGrayFromCGImage(CGImageRef img, NSError **error)
     }
     const size_t cols = CGImageGetWidth(img);
     const size_t rows = CGImageGetHeight(img);
-    if (cols == 0 || rows == 0 || cols > 20000 || rows > 20000) {
+    size_t pixels = 0;
+    if (!TLinkImagePixels(cols, rows, kMaxImagePixels, &pixels)) {
         return cv::Mat();
     }
 
@@ -391,6 +408,9 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
 
 NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
 {
+    TLinkImageWork work(gImageCompute);
+    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return nil; }
+
     NSArray<NSString *> *data = zx_splitEventData(eventData);
     bool needGray = true;
     bool needBGRA = true;
@@ -405,22 +425,37 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
     if (ttlMs == 0) ttlMs = kDefaultFrameTtlMs;
     if (ttlMs > kHardFrameTtlMs) ttlMs = kHardFrameTtlMs;
 
-    CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
-    CFAbsoluteTime capture0 = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime total0 = TLinkImageNowSeconds();
+    CFAbsoluteTime capture0 = TLinkImageNowSeconds();
     CGImageRef screen = [Screen createScreenShotCGImageRef];
-    double captureMs = (CFAbsoluteTimeGetCurrent() - capture0) * 1000.0;
+    double captureMs = (TLinkImageNowSeconds() - capture0) * 1000.0;
     if (!screen) {
         if (error) *error = zx_frameError(@"1;;capture_failed\r\n");
         return nil;
     }
 
-    ZXFrameObject frame;
+    size_t pixels = 0;
+    if (!TLinkImagePixels(CGImageGetWidth(screen), CGImageGetHeight(screen), kMaxImagePixels, &pixels)) {
+        CGImageRelease(screen);
+        if (error) *error = zx_frameError(@"1;;frame_pixel_limit\r\n");
+        return nil;
+    }
+    auto charge = zx_reservePayload(TLinkImageKind::Frame, pixels * ((needBGRA ? 4 : 0) + (needGray ? 1 : 0)));
+    if (!charge) {
+        CGImageRelease(screen);
+        if (error) *error = zx_frameError(@"1;;frame_memory_budget\r\n");
+        return nil;
+    }
+    auto pendingFrame = std::make_shared<ZXFrameObject>();
+    pendingFrame->charge = std::move(charge);
+    ZXFrameObject &frame = *pendingFrame;
     frame.width = (int)CGImageGetWidth(screen);
     frame.height = (int)CGImageGetHeight(screen);
     frame.bytesPerRow = frame.width * 4;
     frame.scale = [Screen getScale];
     frame.createdAtMs = zx_nowMs();
-    frame.expiresAtMs = frame.createdAtMs + ttlMs;
+    frame.expiresAtMs = TLinkImageExpiry(frame.createdAtMs, ttlMs);
+    frame.capturedAtMs = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
     frame.ttlMs = ttlMs;
     zx_applyFrameOwner(frame, data, 3);
     frame.hasBGRA = false;
@@ -428,27 +463,27 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
 
     std::vector<uint8_t> tmpBGRA;
     int w = 0, h = 0, bpr = 0;
-    CFAbsoluteTime bgra0 = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime bgra0 = TLinkImageNowSeconds();
     if (!zx_renderBGRAFromCGImage(screen, needBGRA ? frame.bgra : tmpBGRA, &w, &h, &bpr)) {
         CGImageRelease(screen);
         if (error) *error = zx_frameError(@"1;;bgra_render_failed\r\n");
         return nil;
     }
-    double bgraMs = (CFAbsoluteTimeGetCurrent() - bgra0) * 1000.0;
+    double bgraMs = (TLinkImageNowSeconds() - bgra0) * 1000.0;
     CGImageRelease(screen);
     frame.width = w;
     frame.height = h;
     frame.bytesPerRow = bpr;
     frame.hasBGRA = needBGRA;
 
-    CFAbsoluteTime gray0 = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime gray0 = TLinkImageNowSeconds();
     if (needGray) {
         std::vector<uint8_t> &source = needBGRA ? frame.bgra : tmpBGRA;
         cv::Mat bgraMat(frame.height, frame.width, CV_8UC4, source.data(), frame.bytesPerRow);
         cv::cvtColor(bgraMat, frame.gray, COLOR_BGRA2GRAY);
         frame.hasGray = !frame.gray.empty();
     }
-    double grayMs = (CFAbsoluteTimeGetCurrent() - gray0) * 1000.0;
+    double grayMs = (TLinkImageNowSeconds() - gray0) * 1000.0;
     if (needGray && !frame.hasGray) {
         if (error) *error = zx_frameError(@"1;;gray_convert_failed\r\n");
         return nil;
@@ -456,13 +491,17 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
 
     __block uint32_t frameId = 0;
     TLinkNativeDispatchSync(zx_imageQueue(), ^{
-        frameId = zx_storeFrameLocked(frame);
+        frameId = zx_storeFrameLocked(pendingFrame);
     });
-    double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+    if (!frameId) {
+        if (error) *error = zx_frameError(@"1;;frame_publish_failed\r\n");
+        return nil;
+    }
+    double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
     return [NSString stringWithFormat:@"%u;;%d;;%d;;%d;;%.3f;;pixel;;BGRA;;%d;;%d;;%llu;;%.3f;;%.3f;;%.3f;;%.3f",
             frameId, frame.width, frame.height, frame.bytesPerRow, frame.scale,
             frame.hasBGRA ? 1 : 0, frame.hasGray ? 1 : 0,
-            (unsigned long long)frame.createdAtMs,
+            (unsigned long long)frame.capturedAtMs,
             captureMs, bgraMs, grayMs, totalMs];
 }
 
@@ -483,11 +522,9 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
                 std::string runtime = zx_stringFromPart(data, 3, "");
                 std::vector<uint32_t> ids;
                 for (auto const &kv : gFrameStore) {
-                    if (zx_ownerMatchesFrame(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                    if (zx_ownerMatchesFrame(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
                 }
                 for (uint32_t fid : ids) {
-                    auto it = gFrameStore.find(fid);
-                    if (it != gFrameStore.end()) it->second.released = true;
                     removed += gFrameStore.erase(fid);
                 }
             } else {
@@ -501,11 +538,9 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
                 std::string runtime = zx_stringFromPart(data, 3, "");
                 std::vector<uint32_t> ids;
                 for (auto const &kv : gFrameStore) {
-                    if (zx_ownerMatchesFrame(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                    if (zx_ownerMatchesFrame(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
                 }
                 for (uint32_t fid : ids) {
-                    auto it = gFrameStore.find(fid);
-                    if (it != gFrameStore.end()) it->second.released = true;
                     removed += gFrameStore.erase(fid);
                 }
             }
@@ -515,17 +550,17 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
             if (it != gFrameStore.end()) {
                 bool allowed = true;
                 if ([data count] >= 4) {
-                    allowed = zx_ownerMatchesFrame(it->second,
+                    allowed = zx_ownerMatchesFrame(*it->second,
                                                    zx_stringFromPart(data, 1, ""),
                                                    zx_stringFromPart(data, 2, ""),
                                                    zx_stringFromPart(data, 3, ""));
                 }
                 if (allowed) {
-                    it->second.released = true;
                     removed = gFrameStore.erase(frameId);
                 }
             }
         }
+        zx_rearmFrameExpiryLocked();
     });
     return [NSString stringWithFormat:@"%lu", (unsigned long)removed];
 }
@@ -551,24 +586,36 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
     bool pointCoord = ([data count] >= 12) ? zx_stringIsPointCoord(data[11]) : false;
     uint64_t maxAgeMs = ([data count] >= 13) ? (uint64_t)MAX(0, [data[12] longLongValue]) : kDefaultFrameTtlMs;
 
-    __block NSString *ret = nil;
-    __block NSError *blockErr = nil;
+    NSString *ret = nil;
+    NSError *blockErr = nil;
+    TLinkImageWork work(gImageCompute);
+    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return nil; }
+    ZXFrameRef snapshot;
+    __block ZXFrameRef admittedFrame;
+    __block unordered_map<uint32_t, ZXImageRef> admittedImages;
     TLinkNativeDispatchSync(zx_imageQueue(), ^{
-        uint64_t nowMs = zx_nowMs();
-        zx_cleanupFramesLocked(nowMs);
-        auto fit = gFrameStore.find(frameId);
-        if (fit == gFrameStore.end()) {
+        zx_cleanupFramesLocked(zx_nowMs());
+        auto it = gFrameStore.find(frameId);
+        if (it != gFrameStore.end()) admittedFrame = it->second;
+        auto image = gImageStore.find(imageId);
+        if (image != gImageStore.end()) admittedImages.emplace(imageId, image->second);
+        zx_rearmFrameExpiryLocked();
+    });
+    snapshot = std::move(admittedFrame);
+    [&] {
+        const uint64_t nowMs = zx_nowMs();
+        if (!snapshot) {
             blockErr = zx_frameError(@"1;;frame_not_found\r\n");
             return;
         }
-        ZXFrameObject &frame = fit->second;
+        const ZXFrameObject &frame = *snapshot;
         if (!frame.hasGray || frame.gray.empty()) {
             blockErr = zx_frameError(@"1;;frame_missing_gray\r\n");
             return;
         }
         if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
-        auto iit = gImageStore.find(imageId);
-        if (iit == gImageStore.end() || iit->second.gray.empty()) {
+        auto iit = admittedImages.find(imageId);
+        if (iit == admittedImages.end() || iit->second->gray.empty()) {
             blockErr = zx_frameError(@"1;;image_not_found\r\n");
             return;
         }
@@ -584,14 +631,14 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
         if (workW <= 0 || workX + workW > frame.width) workW = frame.width - workX;
         if (workH <= 0 || workY + workH > frame.height) workH = frame.height - workY;
 
-        CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
+        CFAbsoluteTime total0 = TLinkImageNowSeconds();
         cv::Rect roi(workX, workY, workW, workH);
         cv::Mat region = frame.gray(roi);
         int mx = -1, my = -1, mw = 0, mh = 0;
         double score = 0.0;
-        bool match = zx_findTemplateSAD(region, iit->second.gray, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip,
+        bool match = zx_findTemplateSAD(region, iit->second->gray, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip,
                                         &mx, &my, &mw, &mh, &score);
-        double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+        double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
         if (!match) {
             ret = [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f;;%llu;;%.3f;;%.3f", score, (unsigned long long)ageMs, totalMs, totalMs];
             return;
@@ -602,7 +649,7 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
         double cy = absY + mh / 2.0;
         ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f;;%llu;;%.3f;;%.3f",
                absX, absY, mw, mh, cx, cy, score, (unsigned long long)ageMs, totalMs, totalMs];
-    });
+    }();
     if (blockErr) {
         if (error) *error = blockErr;
         return nil;
@@ -620,23 +667,25 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
     uint32_t frameId = (uint32_t)[data[0] intValue];
     NSString *mode = [[data[1] lowercaseString] copy];
 
-    __block NSString *ret = nil;
-    __block NSError *blockErr = nil;
-    TLinkNativeDispatchSync(zx_imageQueue(), ^{
-        uint64_t nowMs = zx_nowMs();
-        zx_cleanupFramesLocked(nowMs);
-        auto fit = gFrameStore.find(frameId);
-        if (fit == gFrameStore.end()) {
+    NSString *ret = nil;
+    NSError *blockErr = nil;
+    TLinkImageWork work(gImageCompute);
+    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return nil; }
+    ZXFrameRef snapshot;
+    snapshot = zx_snapshotFrame(frameId);
+    [&] {
+        const uint64_t nowMs = zx_nowMs();
+        if (!snapshot) {
             blockErr = zx_frameError(@"1;;frame_not_found\r\n");
             return;
         }
-        ZXFrameObject &frame = fit->second;
+        const ZXFrameObject &frame = *snapshot;
         if (!frame.hasBGRA || frame.bgra.empty()) {
             blockErr = zx_frameError(@"1;;frame_missing_bgra\r\n");
             return;
         }
         uint64_t ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
-        CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
+        CFAbsoluteTime total0 = TLinkImageNowSeconds();
 
         if ([mode isEqualToString:@"pick"]) {
             if ([data count] < 4) { blockErr = zx_frameError(@"1;;pick format should be frame_id;;pick;;x;;y[;;coord;;max_age_ms]\r\n"); return; }
@@ -648,7 +697,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
             int r = 0, g = 0, b = 0;
             zx_readBGRA(frame, x, y, &r, &g, &b);
-            double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%llu;;%.3f;;%.3f", r, g, b, (unsigned long long)ageMs, totalMs, totalMs];
             return;
         }
@@ -672,7 +721,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
                 zx_readBGRA(frame, x, y, &r, &g, &b);
                 [parts addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
             }
-            double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"%@;;%llu;;%.3f;;%.3f", [parts componentsJoinedByString:@"|"], (unsigned long long)ageMs, totalMs, totalMs];
             return;
         }
@@ -702,13 +751,13 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
                     const uint8_t *p = row + (size_t)(x + cx) * 4;
                     int b = p[0], g = p[1], r = p[2];
                     if (r >= rmin && r <= rmax && g >= gmin && g <= gmax && b >= bmin && b <= bmax) {
-                        double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+                        double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
                         ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d;;%llu;;%.3f;;%.3f", x + cx, y + cy, r, g, b, (unsigned long long)ageMs, totalMs, totalMs];
                         return;
                     }
                 }
             }
-            double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"-1;;-1;;-1;;-1;;-1;;%llu;;%.3f;;%.3f", (unsigned long long)ageMs, totalMs, totalMs];
             return;
         }
@@ -731,7 +780,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
                 zx_readBGRA(frame, x, y, &r, &g, &b);
                 if (!zx_bgraColorMatch(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) { matched = false; break; }
             }
-            double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"%d;;%llu;;%.3f;;%.3f", matched ? 1 : 0, (unsigned long long)ageMs, totalMs, totalMs];
             return;
         }
@@ -772,20 +821,20 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
                             if (!zx_bgraColorMatch(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) { ok = false; break; }
                         }
                         if (ok) {
-                            double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+                            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
                             ret = [NSString stringWithFormat:@"%d;;%d;;%llu;;%.3f;;%.3f", ax, ay, (unsigned long long)ageMs, totalMs, totalMs];
                             return;
                         }
                     }
                 }
             }
-            double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"-1;;-1;;%llu;;%.3f;;%.3f", (unsigned long long)ageMs, totalMs, totalMs];
             return;
         }
 
         blockErr = zx_frameError(@"1;;unknown_color_frame_mode\r\n");
-    });
+    }();
     if (blockErr) {
         if (error) *error = blockErr;
         return nil;
@@ -806,23 +855,48 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
     uint64_t maxAgeMs = ([data count] >= 4) ? (uint64_t)MAX(0, [data[3] longLongValue]) : kDefaultFrameTtlMs;
     bool autoRelease = ([data count] >= 5) ? ([data[4] intValue] != 0) : false;
 
-    __block NSString *ret = nil;
-    __block NSError *blockErr = nil;
+    NSString *ret = nil;
+    NSError *blockErr = nil;
+    TLinkImageWork work(gImageCompute);
+    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return nil; }
+    ZXFrameRef snapshot;
+    __block ZXFrameRef admittedFrame;
+    __block unordered_map<uint32_t, ZXImageRef> admittedImages;
+    NSArray<NSString *> *ops = [opsRaw componentsSeparatedByString:@"@@"];
+    for (NSString *opRaw in ops) {
+        if (TLinkNativeStopped()) return nil;
+        NSArray<NSString *> *fields = [opRaw componentsSeparatedByString:@","];
+        if ([fields count] >= 2 && [[fields[0] lowercaseString] isEqualToString:@"img"]) {
+            admittedImages.emplace((uint32_t)[fields[1] intValue], ZXImageRef());
+            if (admittedImages.size() > kMaxImageObjects) {
+                if (error) *error = zx_frameError(@"1;;image_not_found\r\n");
+                return nil;
+            }
+        }
+    }
     TLinkNativeDispatchSync(zx_imageQueue(), ^{
-        uint64_t nowMs = zx_nowMs();
-        zx_cleanupFramesLocked(nowMs);
-        auto fit = gFrameStore.find(frameId);
-        if (fit == gFrameStore.end()) {
+        zx_cleanupFramesLocked(zx_nowMs());
+        auto it = gFrameStore.find(frameId);
+        if (it != gFrameStore.end()) admittedFrame = it->second;
+        for (auto &entry : admittedImages) {
+            auto image = gImageStore.find(entry.first);
+            if (image != gImageStore.end()) entry.second = image->second;
+        }
+        zx_rearmFrameExpiryLocked();
+    });
+    snapshot = std::move(admittedFrame);
+    [&] {
+        const uint64_t nowMs = zx_nowMs();
+        if (!snapshot) {
             blockErr = zx_frameError(@"1;;frame_not_found\r\n");
             return;
         }
-        ZXFrameObject &frame = fit->second;
+        const ZXFrameObject &frame = *snapshot;
         if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
         uint64_t ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
-        CFAbsoluteTime total0 = CFAbsoluteTimeGetCurrent();
+        CFAbsoluteTime total0 = TLinkImageNowSeconds();
         NSMutableArray<NSString *> *results = [NSMutableArray array];
 
-        NSArray<NSString *> *ops = [opsRaw componentsSeparatedByString:@"@@"];
         for (NSString *opRaw in ops) {
             if (TLinkNativeStopped()) return;
             if (!opRaw || [opRaw length] == 0) continue;
@@ -834,8 +908,8 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
                 if ([fields count] < 9) { blockErr = zx_frameError(@"1;;batch img format should be img,image_id,x,y,w,h,acceptable,scale,pixel_skip\r\n"); return; }
                 if (!frame.hasGray || frame.gray.empty()) { blockErr = zx_frameError(@"1;;frame_missing_gray\r\n"); return; }
                 uint32_t imageId = (uint32_t)[fields[1] intValue];
-                auto iit = gImageStore.find(imageId);
-                if (iit == gImageStore.end() || iit->second.gray.empty()) { blockErr = zx_frameError(@"1;;image_not_found\r\n"); return; }
+                auto iit = admittedImages.find(imageId);
+                if (iit == admittedImages.end() || !iit->second || iit->second->gray.empty()) { blockErr = zx_frameError(@"1;;image_not_found\r\n"); return; }
 
                 int workX = zx_coordToPixel([fields[2] doubleValue], frame.scale, pointCoord);
                 int workY = zx_coordToPixel([fields[3] doubleValue], frame.scale, pointCoord);
@@ -851,14 +925,14 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
                 double acceptable = [fields[6] doubleValue];
                 float scale = [fields[7] floatValue];
                 int pixelSkip = [fields[8] intValue];
-                CFAbsoluteTime op0 = CFAbsoluteTimeGetCurrent();
+                CFAbsoluteTime op0 = TLinkImageNowSeconds();
                 cv::Rect roi(workX, workY, workW, workH);
                 cv::Mat region = frame.gray(roi);
                 int mx = -1, my = -1, mw = 0, mh = 0;
                 double score = 0.0;
-                bool match = zx_findTemplateSAD(region, iit->second.gray, acceptable, scale, scale, 1.0f, pixelSkip,
+                bool match = zx_findTemplateSAD(region, iit->second->gray, acceptable, scale, scale, 1.0f, pixelSkip,
                                                 &mx, &my, &mw, &mh, &score);
-                double opMs = (CFAbsoluteTimeGetCurrent() - op0) * 1000.0;
+                double opMs = (TLinkImageNowSeconds() - op0) * 1000.0;
                 if (!match) {
                     [results addObject:[NSString stringWithFormat:@"img:-1,-1,0,0,-1,-1,%.4f,%.3f", score, opMs]];
                 } else {
@@ -874,7 +948,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
             if ([kind isEqualToString:@"pick_many"]) {
                 if ([fields count] < 2) { blockErr = zx_frameError(@"1;;batch pick_many format should be pick_many,x,y|x,y\r\n"); return; }
                 if (!frame.hasBGRA || frame.bgra.empty()) { blockErr = zx_frameError(@"1;;frame_missing_bgra\r\n"); return; }
-                CFAbsoluteTime op0 = CFAbsoluteTimeGetCurrent();
+                CFAbsoluteTime op0 = TLinkImageNowSeconds();
                 NSArray<NSString *> *items = [fields[1] componentsSeparatedByString:@"|"];
                 NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithCapacity:[items count]];
                 for (NSString *item in items) {
@@ -889,7 +963,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
                     zx_readBGRA(frame, x, y, &r, &g, &b);
                     [parts addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
                 }
-                double opMs = (CFAbsoluteTimeGetCurrent() - op0) * 1000.0;
+                double opMs = (TLinkImageNowSeconds() - op0) * 1000.0;
                 [results addObject:[NSString stringWithFormat:@"pick_many:%@,%.3f", [parts componentsJoinedByString:@"|"], opMs]];
                 continue;
             }
@@ -898,12 +972,15 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
             return;
         }
 
-        double totalMs = (CFAbsoluteTimeGetCurrent() - total0) * 1000.0;
+        double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
         ret = [NSString stringWithFormat:@"%@;;%llu;;%.3f", [results componentsJoinedByString:@"@@"], (unsigned long long)ageMs, totalMs];
         if (autoRelease) {
-            gFrameStore.erase(frameId);
+            TLinkNativeDispatchSync(zx_imageQueue(), ^{
+                gFrameStore.erase(frameId); // IDs are never reused; admitted readers retain their snapshot.
+                zx_rearmFrameExpiryLocked();
+            });
         }
-    });
+    }();
     if (blockErr) {
         if (error) *error = blockErr;
         return nil;
@@ -922,22 +999,24 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
                                   uint64_t *outAgeMs,
                                   NSError **error)
 {
-    __block bool ok = false;
-    __block NSError *blockErr = nil;
-    __block cv::Mat copied;
-    __block uint64_t ageMs = 0;
+    bool ok = false;
+    NSError *blockErr = nil;
+    cv::Mat copied;
+    uint64_t ageMs = 0;
     bool pointCoord = zx_stringIsPointCoord(coord ?: @"");
 
-    TLinkNativeDispatchSync(zx_imageQueue(), ^{
-        uint64_t nowMs = zx_nowMs();
-        zx_cleanupFramesLocked(nowMs);
-        auto fit = gFrameStore.find(frameId);
-        if (fit == gFrameStore.end()) {
+    TLinkImageWork work(gImageCompute);
+    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return false; }
+    ZXFrameRef snapshot;
+    snapshot = zx_snapshotFrame(frameId);
+    [&] {
+        const uint64_t nowMs = zx_nowMs();
+        if (!snapshot) {
             blockErr = zx_frameError(@"1;;frame_not_found\r\n");
             return;
         }
 
-        ZXFrameObject &frame = fit->second;
+        const ZXFrameObject &frame = *snapshot;
         if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
         ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
 
@@ -964,7 +1043,7 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
         }
 
         if (frame.hasBGRA && !frame.bgra.empty()) {
-            cv::Mat bgra(frame.height, frame.width, CV_8UC4, frame.bgra.data(), frame.bytesPerRow);
+            cv::Mat bgra(frame.height, frame.width, CV_8UC4, const_cast<uint8_t *>(frame.bgra.data()), frame.bytesPerRow);
             cv::Mat region = bgra(roi);
             cv::cvtColor(region, copied, COLOR_BGRA2GRAY);
             ok = !copied.empty();
@@ -972,7 +1051,7 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
         }
 
         blockErr = zx_frameError(@"1;;frame_missing_gray_bgra\r\n");
-    });
+    }();
 
     if (!ok) {
         if (error) *error = blockErr ?: zx_frameError(@"1;;ocr_region_copy_failed\r\n");
@@ -987,65 +1066,101 @@ bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
 @implementation Image
 @end
 
-static uint32_t zx_storeImageLocked(const ZXImageObject &image)
-{
-    if (gImageStore.size() >= kMaxImageObjects) {
-        return 0;
-    }
-    uint32_t imageId = gNextImageId++;
-    if (imageId == 0) imageId = gNextImageId++;
-    ZXImageObject obj = image;
-    obj.imageId = imageId;
-    obj.w = obj.gray.cols;
-    obj.h = obj.gray.rows;
-    if (obj.createdAtMs == 0) obj.createdAtMs = zx_nowMs();
-    obj.released = false;
-    gImageStore[imageId] = obj;
-    return imageId;
-}
-
+// BEGIN image store core (serialized by zx_imageQueue).
 static void zx_cleanupFramesLocked(uint64_t nowMs)
 {
-    std::vector<uint32_t> removeIds;
-    for (auto const &kv : gFrameStore) {
-        const ZXFrameObject &f = kv.second;
-        if (nowMs >= f.expiresAtMs || nowMs - f.createdAtMs > kHardFrameTtlMs) {
-            removeIds.push_back(kv.first);
-        }
-    }
-    for (uint32_t fid : removeIds) {
-        gFrameStore.erase(fid);
+    for (auto it = gFrameStore.begin(); it != gFrameStore.end();) {
+        if (nowMs >= it->second->expiresAtMs) it = gFrameStore.erase(it);
+        else ++it;
     }
 }
 
 static void zx_trimFramesLocked(void)
 {
     while (gFrameStore.size() >= kMaxFrameObjects) {
-        uint32_t oldestId = 0;
-        uint64_t oldestMs = UINT64_MAX;
-        for (auto const &kv : gFrameStore) {
-            if (kv.second.createdAtMs < oldestMs) {
-                oldestMs = kv.second.createdAtMs;
-                oldestId = kv.first;
-            }
+        auto oldest = gFrameStore.begin();
+        for (auto it = gFrameStore.begin(); it != gFrameStore.end(); ++it) {
+            if (it->second->createdAtMs < oldest->second->createdAtMs ||
+                (it->second->createdAtMs == oldest->second->createdAtMs && it->first < oldest->first)) oldest = it;
         }
-        if (oldestId == 0) break;
-        gFrameStore.erase(oldestId);
+        gFrameStore.erase(oldest);
     }
 }
 
-static uint32_t zx_storeFrameLocked(const ZXFrameObject &frame)
+static uint32_t zx_storeImageLocked(std::shared_ptr<ZXImageObject> image)
 {
-    uint64_t nowMs = zx_nowMs();
+    if (!image || !image->charge || image->gray.empty() || gImageStore.size() >= kMaxImageObjects) return 0;
+    const uint32_t imageId = TLinkImageNextId(gNextImageId);
+    if (!imageId) return 0;
+    image->imageId = imageId;
+    gImageStore.emplace(imageId, std::move(image));
+    return imageId;
+}
+
+static uint32_t zx_storeFrameLocked(std::shared_ptr<ZXFrameObject> frame)
+{
+    const uint64_t nowMs = zx_nowMs();
     zx_cleanupFramesLocked(nowMs);
+    if (!frame || !frame->charge || nowMs >= frame->expiresAtMs || !zx_rearmFrameExpiryLocked()) return 0;
+    const uint32_t frameId = TLinkImageNextId(gNextFrameId);
+    if (!frameId) return 0;
     zx_trimFramesLocked();
-    uint32_t frameId = gNextFrameId++;
-    if (frameId == 0) frameId = gNextFrameId++;
-    ZXFrameObject stored = frame;
-    stored.frameId = frameId;
-    gFrameStore[frameId] = stored;
+    frame->frameId = frameId;
+    gFrameStore.emplace(frameId, std::move(frame));
+    zx_rearmFrameExpiryLocked();
     return frameId;
 }
+// END image store core.
+
+// BEGIN image store dispatch adapter.
+static dispatch_source_t gFrameExpiryTimer;
+static bool zx_rearmFrameExpiryLocked(void)
+{
+    if (!gFrameExpiryTimer) {
+        gFrameExpiryTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, zx_imageQueue());
+        if (!gFrameExpiryTimer) return false;
+        dispatch_source_set_event_handler(gFrameExpiryTimer, ^{
+            zx_cleanupFramesLocked(zx_nowMs());
+            zx_rearmFrameExpiryLocked();
+        });
+        dispatch_resume(gFrameExpiryTimer);
+    }
+    uint64_t earliest = UINT64_MAX;
+    for (const auto &entry : gFrameStore) earliest = std::min(earliest, entry.second->expiresAtMs);
+    const uint64_t now = zx_nowMs();
+    const uint64_t delay = earliest <= now ? 0 : std::min(earliest - now, kHardFrameTtlMs);
+    dispatch_source_set_timer(gFrameExpiryTimer,
+        gFrameStore.empty() ? DISPATCH_TIME_FOREVER : dispatch_time(DISPATCH_TIME_NOW, (int64_t)delay * NSEC_PER_MSEC),
+        DISPATCH_TIME_FOREVER, NSEC_PER_MSEC);
+    return true;
+}
+
+static ZXFrameRef zx_snapshotFrame(uint32_t frameId)
+{
+    __block ZXFrameRef snapshot;
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
+        zx_cleanupFramesLocked(zx_nowMs());
+        auto it = gFrameStore.find(frameId);
+        if (it != gFrameStore.end()) snapshot = it->second;
+        zx_rearmFrameExpiryLocked();
+    });
+    return snapshot;
+}
+
+static std::shared_ptr<TLinkImageCharge> zx_reservePayload(TLinkImageKind kind, size_t bytes)
+{
+    __block std::shared_ptr<TLinkImageCharge> charge;
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
+        if (kind == TLinkImageKind::Frame) {
+            zx_cleanupFramesLocked(zx_nowMs());
+            zx_trimFramesLocked();
+            if (!zx_rearmFrameExpiryLocked()) return;
+        } else if (gImageStore.size() >= kMaxImageObjects) return;
+        charge = gImageMemory.reserve(kind, bytes);
+    });
+    return charge;
+}
+// END image store dispatch adapter.
 
 static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData)
 {
@@ -1082,9 +1197,10 @@ static bool zx_frameTooOld(const ZXFrameObject &frame, uint64_t maxAgeMs, uint64
 static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, int *outW, int *outH, int *outBpr)
 {
     if (!img) return false;
+    size_t pixels = 0;
+    if (!TLinkImagePixels(CGImageGetWidth(img), CGImageGetHeight(img), kMaxImagePixels, &pixels)) return false;
     int width = (int)CGImageGetWidth(img);
     int height = (int)CGImageGetHeight(img);
-    if (width <= 0 || height <= 0) return false;
     int bytesPerRow = width * 4;
     out.assign((size_t)bytesPerRow * (size_t)height, 0);
 
@@ -1159,6 +1275,49 @@ static inline void zx_readBGRA(const ZXFrameObject &frame, int x, int y, int *r,
     if (r) *r = p[2];
 }
 
+// Decode the same bounded byte sequence whose dimensions were checked. OpenCV keeps
+// its legacy IMREAD_GRAYSCALE semantics; ImageIO is metadata-only preflight.
+static cv::Mat zx_decodeBoundedImage(NSString *path, std::shared_ptr<TLinkImageCharge> &charge, NSError **error)
+{
+    static const NSUInteger maxEncodedBytes = 32 * 1024 * 1024;
+    NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:path];
+    if (!file) return cv::Mat();
+    NSData *encoded = nil;
+    @try { encoded = [file readDataOfLength:maxEncodedBytes + 1]; }
+    @catch (NSException *exception) { (void)exception; }
+    @finally { [file closeFile]; }
+    if (!encoded.length || encoded.length > maxEncodedBytes) {
+        if (error) *error = zx_frameError(@"-1;;image_encoded_limit_or_read_failed\r\n");
+        return cv::Mat();
+    }
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)encoded,
+        (__bridge CFDictionaryRef)@{(__bridge NSString *)kCGImageSourceShouldCache:@(false)});
+    NSDictionary *properties = source ? CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, nullptr)) : nil;
+    if (source) CFRelease(source);
+    const unsigned long long width = [properties[(__bridge NSString *)kCGImagePropertyPixelWidth] unsignedLongLongValue];
+    const unsigned long long height = [properties[(__bridge NSString *)kCGImagePropertyPixelHeight] unsignedLongLongValue];
+    size_t pixels = 0;
+    if (width > 8192 || height > 8192 || !TLinkImagePixels((size_t)width, (size_t)height, kMaxImagePixels, &pixels)) {
+        if (error) *error = zx_frameError(@"-1;;image_pixel_limit_or_invalid_metadata\r\n");
+        return cv::Mat();
+    }
+    charge = zx_reservePayload(TLinkImageKind::Image, pixels);
+    if (!charge) {
+        if (error) *error = zx_frameError(@"-1;;image_memory_budget\r\n");
+        return cv::Mat();
+    }
+    cv::Mat bytes(1, (int)encoded.length, CV_8UC1, const_cast<void *>(encoded.bytes));
+    cv::Mat gray = cv::imdecode(bytes, IMREAD_GRAYSCALE);
+    // OpenCV may apply EXIF rotation while ImageIO reports encoded dimensions.
+    const bool sameDimensions = gray.cols == (int)width && gray.rows == (int)height;
+    const bool rotatedDimensions = gray.cols == (int)height && gray.rows == (int)width;
+    if (gray.empty() || (!sameDimensions && !rotatedDimensions)) {
+        if (error) *error = zx_frameError(@"-1;;image_decode_dimension_mismatch\r\n");
+        return cv::Mat();
+    }
+    return gray;
+}
+
 NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
@@ -1170,6 +1329,8 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
     }
     int action = [data[0] intValue];
     if (action == 1) {
+        TLinkImageWork work(gImageCompute);
+        if (!work) { if (error) *error = zx_frameError(@"-1;;image_compute_busy\r\n"); return nil; }
         if ([data count] < 5) {
             if (error) {
                 *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image capture format should be action;;x;;y;;w;;h\r\n"}];
@@ -1206,6 +1367,14 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
             }
             return nil;
         }
+        size_t pixels = 0;
+        auto charge = TLinkImagePixels(CGImageGetWidth(cropped), CGImageGetHeight(cropped), kMaxImagePixels, &pixels)
+            ? zx_reservePayload(TLinkImageKind::Image, pixels) : nullptr;
+        if (!charge) {
+            CGImageRelease(cropped);
+            if (error) *error = zx_frameError(@"-1;;image_pixel_or_memory_limit\r\n");
+            return nil;
+        }
         NSError *convErr = nil;
         Mat gray = zx_cvMatGrayFromCGImage(cropped, &convErr);
         CGImageRelease(cropped);
@@ -1216,16 +1385,18 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
             return nil;
         }
 
-        ZXImageObject image;
-        image.gray = gray;
-        image.w = gray.cols;
-        image.h = gray.rows;
+        auto pendingImage = std::make_shared<ZXImageObject>();
+        ZXImageObject &image = *pendingImage;
+        image.charge = std::move(charge);
+        image.gray = std::move(gray);
+        image.w = image.gray.cols;
+        image.h = image.gray.rows;
         image.createdAtMs = zx_nowMs();
         image.ttlMs = 0;
         zx_applyImageOwner(image, data, 5);
         __block uint32_t imageId = 0;
         TLinkNativeDispatchSync(zx_imageQueue(), ^{
-            imageId = zx_storeImageLocked(image);
+            imageId = zx_storeImageLocked(pendingImage);
         });
         if (imageId == 0) {
             if (error) {
@@ -1233,9 +1404,11 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
             }
             return nil;
         }
-        return [NSString stringWithFormat:@"%u;;%d;;%d", imageId, gray.cols, gray.rows];
+        return [NSString stringWithFormat:@"%u;;%d;;%d", imageId, image.w, image.h];
     }
     else if (action == 2) {
+        TLinkImageWork work(gImageCompute);
+        if (!work) { if (error) *error = zx_frameError(@"-1;;image_compute_busy\r\n"); return nil; }
         if ([data count] < 2) {
             if (error) {
                 *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image open format should be action;;path\r\n"}];
@@ -1249,23 +1422,27 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
             }
             return nil;
         }
-        Mat gray = imread([path UTF8String], IMREAD_GRAYSCALE);
+        std::shared_ptr<TLinkImageCharge> charge;
+        NSError *decodeError = nil;
+        Mat gray = zx_decodeBoundedImage(path, charge, &decodeError);
         if (gray.empty()) {
             if (error) {
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to read image. Path: %@\r\n", path]}];
+                *error = decodeError ?: [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to read image. Path: %@\r\n", path]}];
             }
             return nil;
         }
-        ZXImageObject image;
-        image.gray = gray;
-        image.w = gray.cols;
-        image.h = gray.rows;
+        auto pendingImage = std::make_shared<ZXImageObject>();
+        ZXImageObject &image = *pendingImage;
+        image.charge = std::move(charge);
+        image.gray = std::move(gray);
+        image.w = image.gray.cols;
+        image.h = image.gray.rows;
         image.createdAtMs = zx_nowMs();
         image.ttlMs = 0;
         zx_applyImageOwner(image, data, 2);
         __block uint32_t imageId = 0;
         TLinkNativeDispatchSync(zx_imageQueue(), ^{
-            imageId = zx_storeImageLocked(image);
+            imageId = zx_storeImageLocked(pendingImage);
         });
         if (imageId == 0) {
             if (error) {
@@ -1273,7 +1450,7 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
             }
             return nil;
         }
-        return [NSString stringWithFormat:@"%u;;%d;;%d", imageId, gray.cols, gray.rows];
+        return [NSString stringWithFormat:@"%u;;%d;;%d", imageId, image.w, image.h];
     }
     else if (action == 3) {
         if ([data count] < 2) {
@@ -1290,11 +1467,9 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
                     std::string runtime = zx_stringFromPart(data, 4, "");
                     std::vector<uint32_t> ids;
                     for (auto const &kv : gImageStore) {
-                        if (zx_ownerMatchesImage(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                        if (zx_ownerMatchesImage(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
                     }
                     for (uint32_t iid : ids) {
-                        auto it = gImageStore.find(iid);
-                        if (it != gImageStore.end()) it->second.released = true;
                         removed += gImageStore.erase(iid);
                     }
                 } else {
@@ -1308,11 +1483,9 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
                     std::string runtime = zx_stringFromPart(data, 4, "");
                     std::vector<uint32_t> ids;
                     for (auto const &kv : gImageStore) {
-                        if (zx_ownerMatchesImage(kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
+                        if (zx_ownerMatchesImage(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
                     }
                     for (uint32_t iid : ids) {
-                        auto it = gImageStore.find(iid);
-                        if (it != gImageStore.end()) it->second.released = true;
                         removed += gImageStore.erase(iid);
                     }
                 }
@@ -1322,13 +1495,12 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
                 if (it != gImageStore.end()) {
                     bool allowed = true;
                     if ([data count] >= 5) {
-                        allowed = zx_ownerMatchesImage(it->second,
+                        allowed = zx_ownerMatchesImage(*it->second,
                                                        zx_stringFromPart(data, 2, ""),
                                                        zx_stringFromPart(data, 3, ""),
                                                        zx_stringFromPart(data, 4, ""));
                     }
                     if (allowed) {
-                        it->second.released = true;
                         removed = gImageStore.erase(imageId);
                     }
                 }
@@ -1345,6 +1517,9 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
 
 NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
 {
+    TLinkImageWork work(gImageCompute);
+    if (!work) { if (error) *error = zx_frameError(@"-1;;image_compute_busy\r\n"); return nil; }
+
     NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
     if ([data count] < 10) {
         if (error) {
@@ -1363,7 +1538,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     float scaleStep = [data[8] floatValue];
     int pixelSkip = [data[9] intValue];
 
-    __block ZXImageObject templObj;
+    __block ZXImageRef templObj;
     __block bool found = false;
     TLinkNativeDispatchSync(zx_imageQueue(), ^{
         auto it = gImageStore.find(templateId);
@@ -1372,7 +1547,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
             found = true;
         }
     });
-    if (!found || templObj.gray.empty()) {
+    if (!found || !templObj || templObj->gray.empty()) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Template image object not found.\r\n"}];
         }
@@ -1416,7 +1591,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
 
     int mx = -1, my = -1, mw = 0, mh = 0;
     double score = 0.0;
-    BOOL match = zx_findTemplateSAD(imgGray, templObj.gray, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip,
+    BOOL match = zx_findTemplateSAD(imgGray, templObj->gray, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip,
                                    &mx, &my, &mw, &mh, &score);
     if (!match) {
         // Provide best score to help tuning acceptable threshold.
