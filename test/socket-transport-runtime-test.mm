@@ -65,10 +65,22 @@ static void processTaskWithContext(UInt8 *bytes, size_t n, CFWriteStreamRef stre
     } else if (n >= 2 && memcmp(bytes, "61", 2) == 0) notifyClient((UInt8 *)"0;;7;;123\r\n", stream);
 }
 static void sendHardwareKeyEventFromRawData(UInt8 *, NSError **) {}
-#define NSLog(...) do { ++ipcLogs; } while (0)
+// Preserve NSLog argument evaluation and format checking, including elapsed time.
+static NSMutableArray<NSString *> *ipcLogMessages;
+static void captureIPCLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+static void captureIPCLog(NSString *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    ++ipcLogs;
+    [ipcLogMessages addObject:message];
+}
+#define NSLog(...) captureIPCLog(__VA_ARGS__)
 #include "IPCHandlerUnderTest.inc"
 #undef NSLog
 static void ipcFixtures() {
+    ipcLogMessages = [NSMutableArray array];
     (void)kTLinkautoIPCPortName; (void)kTLinkautoIPCReadyMarkerPath; (void)kTLinkautoTweakLoadedMarkerPath;
     const uint8_t exact[] = {'T','A','S','K',':',':','1','0'};
     CFDataRef input = CFDataCreate(nullptr, exact, sizeof(exact));
@@ -82,6 +94,12 @@ static void ipcFixtures() {
     };
     assert([request("TASK::61sequence") isEqualToString:@"0;;7;;123\r\n"] && !ipcLogs);
     assert([request("TASK::48big") isEqualToString:@"1;;ipc_response_too_large\r\n"]);
+    const size_t previousLogs = ipcLogs;
+    assert([request("TASK::77private-selector") isEqualToString:@"0\r\n"]);
+    assert(ipcLogs == previousLogs + 2);
+    assert([ipcLogMessages.lastObject containsString:@"IPC UI tree task=77 response in "]);
+    assert([ipcLogMessages.lastObject hasSuffix:@"bytes=0"]);
+    for (NSString *message in ipcLogMessages) assert(![message containsString:@"private-selector"]);
 }
 static ZXClientContext *client(int *peer) {
     int pair[2]; assert(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);

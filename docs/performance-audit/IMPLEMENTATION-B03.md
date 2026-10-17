@@ -75,3 +75,9 @@ The root workflow includes a macOS ASan/UBSan harness that compiles the actual c
 5. Measure task-10 CPU/allocations, socket queue residence, output syscall counts, response p50/p95/p99, RSS, backpressure wakeups and energy against B02. SpringBoard callback HOL, licensing internals and event-poll cancellation still require C04/B05/B06 qualification.
 
 Next implementation group: **B04 — H264 backpressure/batching/pacing**. OCR cache/pixel work remains C01.
+
+## macOS harness build correction - 2026-10-17
+
+User CI at aec55dd passed the prior native/macOS suites and the portable socket-output test, then stopped compiling the B03 Foundation harness under -Werror. The extracted accept callback initialized only four of CFStreamClientContext's five fields. Production now value-initializes the entire context with {}. The test's NSLog macro discarded its arguments, making the real callback's timing variable appear unused; its replacement forwards all arguments to a format-checked capture function. The harness additionally checks the UI-tree timing summary and selector redaction, while retaining the no-log assertions for touch/ACK. No warning category is disabled and production IPC timing behavior is unchanged.
+
+Windows cannot execute the Foundation harness; the corrected macOS compile/runtime and final root artifacts still need CI confirmation.

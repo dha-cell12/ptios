@@ -1499,7 +1499,7 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
             CFReadStreamOpen(readStreamRef);
             CFWriteStreamOpen(writeStreamRef);
 
-            CFStreamClientContext context = {0, NULL, NULL, NULL };
+            CFStreamClientContext context = {};
 
             CFOptionFlags events = kCFStreamEventHasBytesAvailable | kCFStreamEventEndEncountered | kCFStreamEventErrorOccurred;
             if (!CFReadStreamSetClient(readStreamRef, events, readStream, &context)) {
