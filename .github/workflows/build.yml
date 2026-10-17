@@ -63,6 +63,7 @@ jobs:
           node scripts/check-event-channel-safety.mjs
           node scripts/check-ocr-safety.mjs
           node scripts/check-template-safety.mjs
+          node scripts/check-vision-safety.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
           node scripts/check-stream-rtc-control-v2.mjs

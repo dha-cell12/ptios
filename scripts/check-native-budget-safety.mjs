@@ -27,8 +27,9 @@ assert.match(task, /@finally \{ zx_performSingleTouch\(TOUCH_UP/g);
 assert.match(task, /if \(!completed\) ownedTouches.release/);
 assert.match(tess, /shouldCancelImageRecognitionForTesseract/);
 assert.match(tess, /@finally \{ tesseract.delegate = nil; tesseract.image = nil; \}/);
-assert.match(vision, /nativeBudget->stopped\(\)\) \[activeRequest cancel\]/);
-assert.match(vision, /@finally \{ if \(monitor\) dispatch_source_cancel\(monitor\); inProgress = false; \}/);
+assert.match(vision, /current&&current->stopped\(\)\)\[activeRequest cancel\]/);
+assert.match(vision, /@finally[\s\S]*dispatch_source_cancel\(monitor\);dispatch_sync\(monitorQueue/);
+assert.match(vision, /@synchronized\(self\)\{inProgress=false;\}/);
 assert.match(ax, /estimatedJSONBytes \+= rowBytes/);
 for (const source of [image, tess, ax]) {
   assert.match(source, /TLinkNativeDispatchSync\(/);

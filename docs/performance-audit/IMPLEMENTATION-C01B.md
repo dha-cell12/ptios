@@ -1,7 +1,7 @@
 # C01b — bounded legacy template matching
 
 Date: 2026-10-17. Baseline: user accepted the C01a build at `1b4b382`.
-Status: **source implemented; new macOS/iOS build and device qualification pending.**
+Status: **corrected build accepted by user at `4e6ef06` before C01c1 on 2026-10-18; device qualification pending.** This report does not replace independent inspection of macOS sanitizer logs or device measurements.
 
 ## Scope and behavior
 

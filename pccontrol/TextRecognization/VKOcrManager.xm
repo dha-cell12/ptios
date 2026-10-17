@@ -1,3 +1,5 @@
+#include <climits>
+#include "../../shared/TLinkVisionPolicy.h"
 #include "../../shared/TLinkNativeDispatch.h"
 #import "VKOcrManager.h"
 #ifndef ZX_DAEMON
@@ -10,8 +12,8 @@
 {
     BOOL inProgress;
 
-    VNRequest* requestResult;
-    NSError* errorResult;
+    TLinkVisionContextPtr context;
+    NSString *setupFailure;
 
     VNImageRequestHandler* requestHandler;
     VNRecognizeTextRequest* request;
@@ -25,6 +27,16 @@
     self = [super init];
     if (self)
     {
+        context=TLinkVisionSlot();
+        if(!context)context=std::make_shared<TLinkVisionContext>(TLinkCurrentNativeBudget());
+        if(!context->admitted()){setupFailure=@"vision_busy";return self;}
+        if(context->stopped()){setupFailure=@"vision_cancelled_or_timed_out";return self;}
+        if(!image||!std::isfinite(image.extent.origin.x)||!std::isfinite(image.extent.origin.y)||
+            !std::isfinite(image.extent.size.width)||!std::isfinite(image.extent.size.height)||
+            image.extent.size.width<=0||image.extent.size.height<=0||image.extent.size.width>8192||image.extent.size.height>8192||
+            std::ceil(image.extent.size.width)*std::ceil(image.extent.size.height)>8388608) {
+            setupFailure=@"vision_roi_invalid_or_too_large";return self;
+        }
         int after = kCGImagePropertyOrientationUp;
         if (orientation == 4)
         {
@@ -48,42 +60,17 @@
 
 
 
-        // check whether width/height is too large
-        if (aarea.size.width + aarea.origin.x > imageWidth)
-        {
-            aarea.size.width = imageWidth - aarea.origin.x;
+        TLinkVisionROI roi;
+        if(!image||!TLinkVisionPlan(imageWidth,imageHeight,aarea.origin.x,aarea.origin.y,aarea.size.width,aarea.size.height,roi)) {
+            setupFailure=@"vision_roi_invalid_or_too_large";return self;
         }
-        if (aarea.size.height + aarea.origin.y > imageHeight)
-        {
-            aarea.size.height = imageHeight - aarea.origin.y;
-        }
-        if (aarea.size.width == 0)
-        {
-            aarea.size.width = imageWidth - aarea.origin.x;
-        }
-        if (aarea.size.height == 0)
-        {
-            aarea.size.height = imageHeight - aarea.origin.y;
-        }
+        recognizeRect=CGRectMake(roi.x,roi.y,roi.width,roi.height);
+        CGRect crop=CGRectMake(image.extent.origin.x+roi.x,image.extent.origin.y+imageHeight-roi.y-roi.height,roi.width,roi.height);
+        requestHandler=[[VNImageRequestHandler alloc] initWithCIImage:[image imageByCroppingToRect:crop] options:nil];
+        // Read synchronous results directly; no request -> completion -> manager cycle.
+        request=[[VNRecognizeTextRequest alloc] init];
 
-        recognizeRect = aarea;
-
-        if (aarea.origin.x != 0 || aarea.origin.y != 0 || aarea.size.width != 0 || aarea.size.height != 0)
-        {
-            CGFloat y = imageHeight - aarea.origin.y - aarea.size.height;
-            requestHandler = [[VNImageRequestHandler alloc] initWithCIImage:[image imageByCroppingToRect:CGRectMake(aarea.origin.x, y, aarea.size.width, aarea.size.height)] options:nil];
-        }
-        else
-        {
-            requestHandler = [[VNImageRequestHandler alloc] initWithCIImage:image options:nil];
-        }
-
-        request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *request, NSError *error){
-            requestResult = request;
-            errorResult = error;
-        }];
-
-        // may cause crash
+        // Preserve the legacy Vision revision selection by OS version.
         if (SYSTEM_VERSION_LESS_THAN(@"14.0"))
         {
             request.revision = 1;
@@ -111,95 +98,92 @@
 Return the string from a area
 */
 - (NSString*)recognize:(NSError**)error{
-    if (inProgress)
-    {
-        NSLog(@"com.tlinkauto.springboard: cannot start recognize text from this instance: %@ because another task is running.", self);
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Cannot start recognize text from this instance: %@ because another task is running.\r\n", self]}];
-        return nil;
+    @synchronized(self) {
+        if(inProgress){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_instance_busy\r\n"}];return nil;}
+        inProgress=true;
     }
-    if (TLinkNativeStopped()) return nil;
-    inProgress = true;
-    dispatch_source_t monitor = nil;
-    auto nativeBudget = TLinkCurrentNativeBudget();
-    if (nativeBudget) {
-        VNRecognizeTextRequest *activeRequest = request;
-        monitor = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
-        if (monitor) {
-            dispatch_source_set_timer(monitor, dispatch_time(DISPATCH_TIME_NOW, 0), 10 * NSEC_PER_MSEC, NSEC_PER_MSEC);
-            dispatch_source_set_event_handler(monitor, ^{ if (nativeBudget->stopped()) [activeRequest cancel]; });
-            dispatch_resume(monitor);
-        }
-    }
+    dispatch_source_t monitor=nil;dispatch_queue_t monitorQueue=nil;
     @try {
-
-    NSError *err = nil;
-    [requestHandler performRequests:@[request] error:&err];
-
-    if (TLinkNativeStopped()) return nil;
-    if (err)
-    {
-        NSLog(@"com.tlinkauto.springboard: error happened while performing ocr. %@", err);
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Error happened while performing ocr. Error: %@\r\n", err]}];
-        return nil;
+        if(!context||setupFailure||context->stopped()) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+                userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n",setupFailure?:(context?@"vision_cancelled_or_timed_out":@"vision_not_initialized")]}];
+            return nil;
+        }
+        std::weak_ptr<TLinkVisionContext> budget=context;
+        VNRecognizeTextRequest *activeRequest=request;
+        monitorQueue=dispatch_queue_create("com.tlinkauto.vision.cancel",DISPATCH_QUEUE_SERIAL);
+        monitor=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,monitorQueue);
+        if(!monitor){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_monitor_failed\r\n"}];return nil;}
+        dispatch_source_set_timer(monitor,dispatch_time(DISPATCH_TIME_NOW,0),10*NSEC_PER_MSEC,NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(monitor,^{auto current=budget.lock();if(current&&current->stopped())[activeRequest cancel];});
+        dispatch_resume(monitor);
+        NSError *failure=nil;
+        BOOL performed=[requestHandler performRequests:@[request] error:&failure];
+        if(context->stopped()) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_cancelled_or_timed_out\r\n"}];return nil;
+        }
+        if(!performed||failure) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_perform_failed\r\n"}];return nil;
+        }
+        NSArray *observations=request.results;
+        if(observations.count>4096) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_observation_limit\r\n"}];return nil;
+        }
+        NSMutableArray<NSString *> *lines=[NSMutableArray array];size_t bytes=0;
+        for(VNRecognizedTextObservation *observation in observations) {
+            if(context->stopped())break;
+            VNRecognizedText *text=[observation topCandidates:1].firstObject;
+            if(!text||text.string.length==0)continue;
+            VNRectangleObservation *box=[text boundingBoxForRange:NSMakeRange(0,text.string.length) error:nil];
+            if(!box)continue;
+            float width=(box.topRight.x-box.topLeft.x)*recognizeRect.size.width;
+            float height=fabs(box.topLeft.y-box.bottomLeft.y)*recognizeRect.size.height;
+            float x=box.topLeft.x*recognizeRect.size.width+recognizeRect.origin.x;
+            float y=(1-box.topLeft.y)*recognizeRect.size.height+recognizeRect.origin.y;
+            if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(width)||!std::isfinite(height)||
+                fabs(x)>INT_MAX/2||fabs(y)>INT_MAX/2||fabs(width)>INT_MAX/2||fabs(height)>INT_MAX/2)continue;
+            const size_t textBytes=[text.string lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            if(textBytes>1048576-bytes){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_output_limit\r\n"}];return nil;}
+            NSString *line=[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d",text.string,(int)x,(int)y,(int)width,(int)height];
+            bytes+=[line lengthOfBytesUsingEncoding:NSUTF8StringEncoding]+(lines.count?2:0);
+            if(!context->outputAllowed(bytes)){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_output_limit\r\n"}];return nil;}
+            [lines addObject:line];
+        }
+        if(context->stopped()){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_cancelled_or_timed_out\r\n"}];return nil;}
+        return [lines componentsJoinedByString:@";;"];
+    } @catch(NSException *exception) {
+        (void)exception;if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_operation_failed\r\n"}];return nil;
+    } @finally {
+        if(monitor){dispatch_source_cancel(monitor);dispatch_sync(monitorQueue,^{});}
+        @synchronized(self){inProgress=false;}
     }
-    
-    NSMutableArray<NSString*>* stringList = [[NSMutableArray alloc] init];
-
-    NSUInteger outputBytes = 0;
-    for (VNRecognizedTextObservation* i in requestResult.results)
-    {
-        if (TLinkNativeStopped()) return nil;
-        NSArray<VNRecognizedText *> *candidates = [i topCandidates:1];
-        if (candidates.count == 0) continue;
-        VNRecognizedText* text = candidates[0];
-        NSString* textString = [text string];
-
-        VNRectangleObservation* boundingBox = [text boundingBoxForRange:NSMakeRange(0, [textString length]) error:nil];
-
-        //test = [self drawTextRectangle:CGRectMake(100, 100, 100, 100) andText:@"test"];
-
-        float rectWidth = (boundingBox.topRight.x - boundingBox.topLeft.x) * recognizeRect.size.width;
-        float rectHeight = abs(boundingBox.topLeft.y - boundingBox.bottomLeft.y) * recognizeRect.size.height;
-        float rectx = boundingBox.topLeft.x * recognizeRect.size.width + recognizeRect.origin.x;
-        float recty = (1 - boundingBox.topLeft.y) * recognizeRect.size.height + recognizeRect.origin.y;
-
-        NSString* outputString = [NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d", textString, (int)rectx, (int)recty, (int)rectWidth, (int)rectHeight];
-
-        outputBytes += [outputString lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 2;
-        if (!TLinkNativeOutputAllowed(outputBytes)) return nil;
-        [stringList addObject:outputString];
-    }
-
-    return [stringList componentsJoinedByString:@";;"];
-    } @finally { if (monitor) dispatch_source_cancel(monitor); inProgress = false; }
 }
 
 /*
 Return area that contain text
 */
 - (NSArray*)areasOfText {
-
+    return request.results?:@[];
 }
 
 #ifndef ZX_DAEMON
 - (void)outputDebugImage:(NSString*)imagePath error:(NSError**)error{
-    inProgress = true;
-
-    NSError* err = nil;
-    UIImage* test = [self drawDebugOutputfromArray:requestResult.results error:&err];
-
-    if (err)
-    {
-        NSLog(@"com.tlinkauto.springboard: error while outputing debug image.");
-        return;
-    }
-
-    [[NSFileManager defaultManager] createDirectoryAtPath:[imagePath stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
-
-    [UIImageJPEGRepresentation(test, 0.7) writeToFile:imagePath atomically:true];
-    inProgress = false;
-
-    //[test writeJPEGRepresentationOfImage];
+    @synchronized(self){if(inProgress){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_instance_busy\r\n"}];return;}inProgress=true;}
+    @try {
+        if(!context||setupFailure) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n",setupFailure?:@"vision_not_initialized"]}];return;
+        }
+        if(context->stopped())return;
+        NSError *failure=nil;
+        UIImage *image=[self drawDebugOutputfromArray:request.results error:&failure];
+        if(failure){if(error)*error=failure;return;}
+        if(!image||context->stopped()) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:context->stopped()?@"-1;;vision_cancelled_or_timed_out\r\n":@"-1;;vision_debug_render_failed\r\n"}];return;
+        }
+        [[NSFileManager defaultManager] createDirectoryAtPath:[imagePath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:&failure];
+        if(!failure){NSData *data=UIImageJPEGRepresentation(image,0.7);if(!data||![data writeToFile:imagePath options:NSDataWritingAtomic error:&failure]){if(!failure)failure=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_debug_write_failed\r\n"}];}}
+        if(failure&&error)*error=failure;
+    } @finally {@synchronized(self){inProgress=false;}}
 }
 
 - (void)drawRectangle:(CGRect)rect inContext:(CGContextRef)ctx withColor:(UIColor*)color {
@@ -226,9 +210,8 @@ Return area that contain text
 
 
 -(UIImage *)drawDebugOutputfromArray:(NSArray<VNRecognizedTextObservation*>*)arr error:(NSError**)error{
+    if(arr.count>4096){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_observation_limit\r\n"}];return nil;}
     // reformat rect (don't know why there is size differnt here)
-    CGFloat scale = [Screen getScale];
-    CGRect screenBounds = [Screen getBounds];
 
     UIImage* image = [[UIImage alloc] initWithCIImage:img];
     
@@ -238,13 +221,15 @@ Return area that contain text
     CGRect wholeImageRect = CGRectMake(0, 0, imageAbsoluteWidth, imageAbsoluteHeight);
 
     // begin a graphics context of sufficient size
-    UIGraphicsBeginImageContextWithOptions(image.size, NO, 0); // CGSizeMake(imageAbsoluteWidth, imageAbsoluteHeight)
+    UIGraphicsBeginImageContextWithOptions(image.size, false, 1);
+    @try { // CGSizeMake(imageAbsoluteWidth, imageAbsoluteHeight)
  
 	// draw original image into the context
 	[image drawInRect:wholeImageRect];
  
 	// get the context for CoreGraphics
 	CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if(!ctx){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_debug_context_failed\r\n"}];return nil;}
  
     // draw match rectangle
     [self drawRectangle:recognizeRect inContext:ctx withColor:[UIColor redColor]];
@@ -254,26 +239,29 @@ Return area that contain text
 
     for (VNRecognizedTextObservation* i in arr)
     {
-        VNRecognizedText* text = [i topCandidates:1][0];
+        if(context->stopped())return nil;
+        VNRecognizedText* text = [i topCandidates:1].firstObject;
+        if(!text||text.string.length==0)continue;
         NSString* textString = [text string];
             
         NSError *err = nil;
         VNRectangleObservation* boundingBox = [text boundingBoxForRange:NSMakeRange(0, [textString length]) error:&err];
 
-        if (err)
+        if (err || !boundingBox)
         {
             NSLog(@"com.tlinkauto.springboard: unable to output debug image for text recognization. Error: %@", err);
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to output debug image for text recognization. Error: %@", err]}];
+            if(error)*error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Unable to output debug image for text recognization. Error: %@", err]}];
             return nil;
         }
 
         //test = [self drawTextRectangle:CGRectMake(100, 100, 100, 100) andText:@"test"];
 
         float rectWidth = (boundingBox.topRight.x - boundingBox.topLeft.x) * recognizeRect.size.width;
-        float rectHeight = abs(boundingBox.topLeft.y - boundingBox.bottomLeft.y) * recognizeRect.size.height;
+        float rectHeight = fabs(boundingBox.topLeft.y - boundingBox.bottomLeft.y) * recognizeRect.size.height;
         float rectx = boundingBox.topLeft.x * recognizeRect.size.width + recognizeRect.origin.x;
         float recty = (1 - boundingBox.topLeft.y) * recognizeRect.size.height + recognizeRect.origin.y;
 
+        if(!std::isfinite(rectx)||!std::isfinite(recty)||!std::isfinite(rectWidth)||!std::isfinite(rectHeight))continue;
         CGRect rect = CGRectMake(rectx, recty, rectWidth, rectHeight);
         //NSLog(@"com.tlinkauto.springboard: rect: recognizeRect: %f, boundingBox: %f", recognizeRect.origin.y, boundingBox.topLeft.y);
         // draw text rectangles
@@ -299,12 +287,17 @@ Return area that contain text
 	UIImage *retImage = UIGraphicsGetImageFromCurrentImageContext();
  
 	// free the context
-	UIGraphicsEndImageContext();
-
 	return retImage;
+    } @finally {UIGraphicsEndImageContext();}
 }
 
 
+
+
+#else
+- (void)outputDebugImage:(NSString*)imagePath error:(NSError**)error{ }
+- (UIImage *)drawDebugOutputfromArray:(NSArray*)arr error:(NSError**)error{ return nil; }
+#endif
 - (void)setMinimumHeight:(float)height {
     request.minimumTextHeight = height;
 }
@@ -325,9 +318,4 @@ Return area that contain text
     request.usesLanguageCorrection = correct;
 }
 
-
-#else
-- (void)outputDebugImage:(NSString*)imagePath error:(NSError**)error{ }
-- (UIImage *)drawDebugOutputfromArray:(NSArray*)arr error:(NSError**)error{ return nil; }
-#endif
 @end

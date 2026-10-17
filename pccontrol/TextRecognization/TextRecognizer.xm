@@ -1,3 +1,4 @@
+#include "../../shared/TLinkVisionPolicy.h"
 #include "../../shared/TLinkNativeBudget.h"
 #include "TextRecognizer.h"
 #import "VKOcrManager.h"
@@ -5,7 +6,7 @@
 #include "../Common.h"
 #include "../AlertBox.h"
 
-NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error)
+static NSString* performTextRecognizerTextFromRawDataImpl(UInt8* eventData, NSError** error)
 {
     if (SYSTEM_VERSION_LESS_THAN(@"13.0"))
     {
@@ -57,7 +58,7 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         NSArray *customWords = [customWordsData componentsSeparatedByString:@",,"];
 
         // parse minimum_height part
-        if (minimumHeight <= 0)
+        if (minimumHeight <= 0 && std::isfinite(minimumHeight))
         {
             minimumHeight = 1.0f / 32.0f;
         }
@@ -70,6 +71,15 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         // parse languages part
         NSArray *languages = [languagesData componentsSeparatedByString:@",,"];
 
+        if(!std::isfinite(recognizeRect.origin.x)||!std::isfinite(recognizeRect.origin.y)||
+            !std::isfinite(recognizeRect.size.width)||!std::isfinite(recognizeRect.size.height)||
+            recognizeRect.origin.x<0||recognizeRect.origin.y<0||recognizeRect.size.width<0||recognizeRect.size.height<0||
+            !std::isfinite(minimumHeight)||minimumHeight>1) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_parameters_invalid\r\n"}];return nil;
+        }
+        if(TLinkVisionSlot()->stopped()) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_cancelled_or_timed_out\r\n"}];return nil;
+        }
         // screen shot
         CGImageRef screenshot = [Screen createScreenShotCGImageRef];
 
@@ -87,7 +97,7 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
         // set properties
         if ([customWords count] > 1 || ![customWords[0] isEqualToString:@""])
         {
-            NSLog(@"com.tlinkauto.springboard: custom words set. Count: %d", [customWords count]);
+            NSLog(@"com.tlinkauto.springboard: custom words set. Count: %lu", (unsigned long)[customWords count]);
             [ocrManager setCustomWords:customWords];
         }
         [ocrManager setMinimumHeight:minimumHeight];
@@ -101,7 +111,7 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
 
         NSString* result = [ocrManager recognize:error];
 
-        if (!TLinkNativeStopped() && debugPath && ![debugPath isEqualToString:@""])
+        if (result && !TLinkVisionSlot()->stopped() && debugPath && ![debugPath isEqualToString:@""])
         {
             [ocrManager outputDebugImage:debugPath error:error];
         }
@@ -141,6 +151,29 @@ NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error
     {
         NSLog(@"com.tlinkauto.springboard: Text recognition unknown task type");
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Text recognition unknown task type\r\n"}];
+        return nil;
+    }
+}
+
+NSString* performTextRecognizerTextFromRawData(UInt8* eventData, NSError** error) {
+    auto context=std::make_shared<TLinkVisionContext>(TLinkCurrentNativeBudget());TLinkVisionScope scope(context);
+    if(!context->admitted()||context->stopped()) {
+        if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+            userInfo:@{NSLocalizedDescriptionKey:context->admitted()?@"-1;;vision_cancelled_or_timed_out\r\n":@"-1;;vision_busy\r\n"}];
+        return nil;
+    }
+    @try {
+        NSString *result=performTextRecognizerTextFromRawDataImpl(eventData,error);
+        if(context->stopped()) {
+            if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+                userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_cancelled_or_timed_out\r\n"}];
+            return nil;
+        }
+        return result;
+    } @catch(NSException *exception) {
+        (void)exception;
+        if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+            userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_operation_failed\r\n"}];
         return nil;
     }
 }

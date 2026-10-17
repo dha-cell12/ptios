@@ -8,7 +8,7 @@ Phần lớn nhận xét có cơ sở ở mã nguồn hiện tại và dùng đ�
 
 Đã đối chiếu 130 mã nhận xét trong FINDINGS (24 P0, 78 P1, 28 P2), các luồng gọi và cấu hình build liên quan. Đây là kiểm tra tĩnh; chưa chạy build iOS, Instruments hoặc tái hiện trên thiết bị. BENCHMARK-S002 đến BENCHMARK-S011 là kế hoạch đo, không phải kết quả đo. Chưa có cơ sở cam kết tỷ lệ giảm CPU/pin/RAM.
 
-Cập nhật triển khai 17/10/2026: A01–C01a đã triển khai và người dùng báo build pass; còn xác minh thiết bị. C01b đã triển khai source cho legacy TemplateMatch rootfull/roothide: cache theo byte gồm reader đang giữ ảnh, preflight file/pixel/pyramid, giới hạn tries, budget hợp tác 8 giây và 256 triệu phép so sánh. 36 contract, 14 runner native và 528 grep workflow TrollStore pass trên Windows; nhánh Foundation/ImageIO mới và build iOS chờ CI. Thuật toán task 21 của production TrollStore không đổi. Chi tiết: IMPLEMENTATION-C01.md và IMPLEMENTATION-C01B.md. Tiếp theo C01c (Vision/color/frame reuse và matcher ảnh hiện đại còn lại).
+Cập nhật triển khai 18/10/2026: A01–C01b đã triển khai và người dùng báo build pass; còn xác minh thiết bị. C01c1 đã triển khai source lifecycle Vision rootfull/roothide: bỏ retain cycle completion, budget hợp tác 8 giây từ handler, tối đa hai context, giới hạn ROI/output, cancellation monitor và cleanup debug bằng finally. 36 contract và 15 runner native pass trên Windows; fixture macOS mới và build iOS chờ CI. OCR production TrollStore giữ nguyên. Chi tiết: IMPLEMENTATION-C01C1.md. Tiếp theo C01c2 ColorPicker, rồi frame reuse/matcher ảnh hiện đại và phần queue isolation còn lại.
 
 ## Phạm vi triển khai đã chốt
 
@@ -60,7 +60,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 
 | Nhóm | Mã chính | Công việc và giới hạn |
 |---|---|---|
-| C01 | P0-10, P0-11, P1-25, P1-27, P1-28, P1-29, P1-30, P1-31, P1-32, P1-33, P1-34, P1-35, P1-36, P1-37, P1-38, P1-39 | **C01a build pass theo người dùng; C01b legacy template đã triển khai source, chờ build/device: IMPLEMENTATION-C01.md và IMPLEMENTATION-C01B.md. C01c còn lại.** OCR/template/color: cache/pixel/scale/tries budget; deadline gồm queue/preprocess/compute; dọn lỗi Vision/ColorPicker; frame reuse; cấu hình OpenCV một lần nếu phù hợp. Không tăng OCR parallelism trước memory budget. |
+| C01 | P0-10, P0-11, P1-25, P1-27, P1-28, P1-29, P1-30, P1-31, P1-32, P1-33, P1-34, P1-35, P1-36, P1-37, P1-38, P1-39 | **C01a/C01b build pass theo người dùng; C01c1 Vision lifecycle đã triển khai source, chờ build/device: IMPLEMENTATION-C01C1.md. C01c2 color/frame reuse/matcher còn lại.** OCR/template/color: cache/pixel/scale/tries budget; deadline gồm queue/preprocess/compute; dọn lỗi Vision/ColorPicker; frame reuse; cấu hình OpenCV một lần nếu phù hợp. Không tăng OCR parallelism trước memory budget. |
 | C02 | P0-12, P0-13, P1-04, P1-05, P1-40, P1-41 | Typed native API dùng chung; helper transport theo event; config snapshot; dedupe có byte cap; gesture absolute deadline. Giữ ordering, reconnect/dedupe và không lặp side effect. |
 | C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58 | Logger bounded/batch; buffered readLine giữ seek/EOF; compact history/lock ngắn/log retention; status snapshot; xử lý commit lỗi/journal recovery; encoder theo protocol. Chốt durability trước thay journal format. |
 | C04 | P0-19, P1-62, P1-63 | VPN rootfull khỏi IPC callback đồng bộ dài; deadline bao các bước; admission/coalescing; cache capability bất biến. Không chỉ kéo outer timeout lên 30s rồi giữ nguyên HOL. |
