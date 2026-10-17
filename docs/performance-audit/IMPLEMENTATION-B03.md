@@ -81,3 +81,5 @@ Next implementation group: **B04 — H264 backpressure/batching/pacing**. OCR ca
 User CI at aec55dd passed the prior native/macOS suites and the portable socket-output test, then stopped compiling the B03 Foundation harness under -Werror. The extracted accept callback initialized only four of CFStreamClientContext's five fields. Production now value-initializes the entire context with {}. The test's NSLog macro discarded its arguments, making the real callback's timing variable appear unused; its replacement forwards all arguments to a format-checked capture function. The harness additionally checks the UI-tree timing summary and selector redaction, while retaining the no-log assertions for touch/ACK. No warning category is disabled and production IPC timing behavior is unchanged.
 
 Windows cannot execute the Foundation harness; the corrected macOS compile/runtime and final root artifacts still need CI confirmation.
+
+User reported the corrected B03 build passed at `a54251b` before B04. Device qualification remains pending.

@@ -7,6 +7,9 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <atomic>
+#include <mutex>
+#include "TLinkH264Timing.h"
 
 NSString * const TLinkAdaptiveStreamingSchemaV1 = @"adaptive_streaming_v1";
 
@@ -31,7 +34,7 @@ static void TLinkAdaptiveEnsureRoot(void) {
     [[NSFileManager defaultManager] createDirectoryAtPath:TLinkAdaptiveRoot()
                               withIntermediateDirectories:YES
                                                attributes:@{NSFilePosixPermissions: @0750}
-                                                    error:nil];
+                                                    error:NULL];
     chmod(TLinkAdaptiveRoot().fileSystemRepresentation, 0750);
     lchown(TLinkAdaptiveRoot().fileSystemRepresentation, 501, 501);
 }
@@ -54,7 +57,7 @@ static void TLinkAdaptiveReleaseLock(int fd) {
 
 static NSMutableDictionary *TLinkAdaptiveReadState(void) {
     NSData *data = [NSData dataWithContentsOfFile:TLinkAdaptiveStatePath()];
-    id value = data.length > 0 ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
+    id value = data.length > 0 ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL] : nil;
     if ([value isKindOfClass:[NSDictionary class]] && [value[@"sessions"] isKindOfClass:[NSDictionary class]]) {
         return [value mutableCopy];
     }
@@ -63,7 +66,7 @@ static NSMutableDictionary *TLinkAdaptiveReadState(void) {
 
 static BOOL TLinkAdaptiveWriteState(NSDictionary *state) {
     if (![NSJSONSerialization isValidJSONObject:state]) return NO;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:state options:0 error:nil];
+    NSData *data = [NSJSONSerialization dataWithJSONObject:state options:0 error:NULL];
     if (!data || ![data writeToFile:TLinkAdaptiveStatePath() atomically:YES]) return NO;
     chmod(TLinkAdaptiveStatePath().fileSystemRepresentation, 0640);
     lchown(TLinkAdaptiveStatePath().fileSystemRepresentation, 501, 501);
@@ -125,7 +128,7 @@ NSDictionary *TLinkAdaptiveStreamingSubmitFeedback(NSString *runtime,
     }
     NSData *data = [[NSData alloc] initWithBase64EncodedString:base64Body options:0];
     id raw = data.length <= kTLinkAdaptiveFeedbackMaxBytes
-        ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
     if (![raw isKindOfClass:[NSDictionary class]]) {
         if (error) *error = @"adaptive_feedback_invalid";
         return @{};
@@ -179,13 +182,13 @@ NSDictionary *TLinkAdaptiveStreamingSubmitFeedback(NSString *runtime,
     return @{ @"schema": TLinkAdaptiveStreamingSchemaV1, @"state": @"accepted", @"port": @(port), @"received_at_ms": @(now) };
 }
 
-NSDictionary *TLinkAdaptiveStreamingDecision(NSString *runtime,
+static NSDictionary *TLinkAdaptiveDecision(NSString *runtime,
                                               NSInteger port,
                                               NSInteger baseFPS,
                                               NSInteger minimumFPS,
                                               NSInteger baseBitrate,
                                               NSInteger thermalFPS,
-                                              NSInteger thermalBitrate) {
+                                              NSInteger thermalBitrate, NSString *sessionID) {
     uint64_t now = TLinkAdaptiveNowMs();
     NSMutableDictionary *result = [NSMutableDictionary dictionary];
     @synchronized (TLinkAdaptiveProcessLock()) {
@@ -193,6 +196,10 @@ NSDictionary *TLinkAdaptiveStreamingDecision(NSString *runtime,
         if (fd < 0) return @{ @"level": @0, @"level_name": @"high", @"target_fps": @(thermalFPS), @"target_bitrate": @(thermalBitrate), @"reason": @"state_lock_failed", @"changed": @false };
         NSMutableDictionary *state = TLinkAdaptiveReadState();
         NSMutableDictionary *session = TLinkAdaptiveSession(state, runtime, port, YES);
+        if (sessionID && ![session[@"session_id"] isEqual:sessionID]) {
+            TLinkAdaptiveReleaseLock(fd);
+            return @{@"target_fps": @(minimumFPS), @"target_bitrate": @200000, @"reason": @"session_changed"};
+        }
         NSDictionary *feedback = [session[@"feedback"] isKindOfClass:[NSDictionary class]] ? session[@"feedback"] : nil;
         uint64_t feedbackAt = [feedback[@"received_at_ms"] unsignedLongLongValue];
         BOOL fresh = feedback && now >= feedbackAt && now - feedbackAt <= kTLinkAdaptiveFeedbackFreshMs;
@@ -269,13 +276,22 @@ NSDictionary *TLinkAdaptiveStreamingDecision(NSString *runtime,
     return result;
 }
 
-void TLinkAdaptiveStreamingSessionStarted(NSString *runtime, NSInteger port, NSString *profile,
-                                          NSInteger width, NSInteger height, NSInteger baseFPS, NSInteger baseBitrate) {
+NSDictionary *TLinkAdaptiveStreamingDecision(NSString *runtime, NSInteger port, NSInteger baseFPS, NSInteger minimumFPS,
+                                             NSInteger baseBitrate, NSInteger thermalFPS, NSInteger thermalBitrate) {
+    return TLinkAdaptiveDecision(runtime, port, baseFPS, minimumFPS, baseBitrate, thermalFPS, thermalBitrate, nil);
+}
+NSDictionary *TLinkAdaptiveStreamingDecisionForSession(NSString *runtime, NSInteger port, NSInteger baseFPS, NSInteger minimumFPS,
+                                             NSInteger baseBitrate, NSInteger thermalFPS, NSInteger thermalBitrate, NSString *sessionID) {
+    return TLinkAdaptiveDecision(runtime, port, baseFPS, minimumFPS, baseBitrate, thermalFPS, thermalBitrate, sessionID);
+}
+
+void TLinkAdaptiveStreamingSessionStartedForSession(NSString *runtime, NSInteger port, NSString *profile,
+                                          NSInteger width, NSInteger height, NSInteger baseFPS, NSInteger baseBitrate, NSString *sessionID) {
     @synchronized (TLinkAdaptiveProcessLock()) {
         int fd = TLinkAdaptiveAcquireLock(); if (fd < 0) return;
         NSMutableDictionary *state = TLinkAdaptiveReadState();
         NSMutableDictionary *session = TLinkAdaptiveSession(state, runtime, port, YES);
-        [session addEntriesFromDictionary:@{ @"active": @true, @"profile": profile ?: @"unknown",
+        [session addEntriesFromDictionary:@{ @"session_id": sessionID, @"active": @true, @"profile": profile ?: @"unknown",
             @"width": @(width), @"height": @(height), @"base_fps": @(baseFPS),
             @"base_bitrate": @(baseBitrate), @"started_at_ms": @(TLinkAdaptiveNowMs()),
             @"ended_at_ms": @0, @"end_reason": @"", @"level": @0, @"level_name": @"high",
@@ -288,11 +304,17 @@ void TLinkAdaptiveStreamingSessionStarted(NSString *runtime, NSInteger port, NSS
     }
 }
 
-void TLinkAdaptiveStreamingSessionEnded(NSString *runtime, NSInteger port, NSString *reason) {
+void TLinkAdaptiveStreamingSessionStarted(NSString *runtime, NSInteger port, NSString *profile,
+                                        NSInteger width, NSInteger height, NSInteger baseFPS, NSInteger baseBitrate) {
+    TLinkAdaptiveStreamingSessionStartedForSession(runtime, port, profile, width, height, baseFPS, baseBitrate, NSUUID.UUID.UUIDString);
+}
+
+static void TLinkAdaptiveEndSession(NSString *runtime, NSInteger port, NSString *reason, NSString *sessionID) {
     @synchronized (TLinkAdaptiveProcessLock()) {
         int fd = TLinkAdaptiveAcquireLock(); if (fd < 0) return;
         NSMutableDictionary *state = TLinkAdaptiveReadState();
         NSMutableDictionary *session = TLinkAdaptiveSession(state, runtime, port, YES);
+        if (sessionID && ![session[@"session_id"] isEqual:sessionID]) { TLinkAdaptiveReleaseLock(fd); return; }
         session[@"active"] = @false; session[@"ended_at_ms"] = @(TLinkAdaptiveNowMs());
         session[@"end_reason"] = reason ?: @"closed";
         TLinkAdaptiveWriteState(state); NSDictionary *copy = [session copy]; TLinkAdaptiveReleaseLock(fd);
@@ -300,18 +322,68 @@ void TLinkAdaptiveStreamingSessionEnded(NSString *runtime, NSInteger port, NSStr
     }
 }
 
-void TLinkAdaptiveStreamingRecordRecovery(NSString *runtime, NSInteger port, NSString *reason, BOOL succeeded) {
+void TLinkAdaptiveStreamingSessionEnded(NSString *runtime, NSInteger port, NSString *reason) {
+    TLinkAdaptiveEndSession(runtime, port, reason, nil);
+}
+void TLinkAdaptiveStreamingSessionEndedForSession(NSString *runtime, NSInteger port, NSString *reason, NSString *sessionID) {
+    TLinkAdaptiveEndSession(runtime, port, reason, sessionID);
+}
+
+static void TLinkAdaptiveRecordRecoveryCounts(NSString *runtime, NSInteger port, NSString *reason,
+                                             uint64_t successes, uint64_t failures, BOOL lastSucceeded) {
     @synchronized (TLinkAdaptiveProcessLock()) {
         int fd = TLinkAdaptiveAcquireLock(); if (fd < 0) return;
         NSMutableDictionary *state = TLinkAdaptiveReadState();
         NSMutableDictionary *session = TLinkAdaptiveSession(state, runtime, port, YES);
-        NSString *counter = succeeded ? @"recovery_count" : @"recovery_failure_count";
-        session[counter] = @([session[counter] unsignedLongLongValue] + 1);
+        const uint64_t oldSuccesses = [session[@"recovery_count"] unsignedLongLongValue];
+        const uint64_t oldFailures = [session[@"recovery_failure_count"] unsignedLongLongValue];
+        session[@"recovery_count"] = @(oldSuccesses + std::min(successes, UINT64_MAX - oldSuccesses));
+        session[@"recovery_failure_count"] = @(oldFailures + std::min(failures, UINT64_MAX - oldFailures));
         session[@"last_recovery_at_ms"] = @(TLinkAdaptiveNowMs());
         session[@"last_recovery_reason"] = reason ?: @"unknown";
         TLinkAdaptiveWriteState(state); NSDictionary *copy = [session copy]; TLinkAdaptiveReleaseLock(fd);
-        TLinkAdaptivePublishChange(copy, succeeded ? @"self_healed" : @"recovery_failed", reason ?: @"unknown");
+        TLinkAdaptivePublishChange(copy, lastSucceeded ? @"self_healed" : @"recovery_failed", reason ?: @"unknown");
     }
+}
+void TLinkAdaptiveStreamingRecordRecovery(NSString *runtime, NSInteger port, NSString *reason, BOOL succeeded) {
+    TLinkAdaptiveRecordRecoveryCounts(runtime, port, reason, succeeded ? 1 : 0, succeeded ? 0 : 1, succeeded);
+}
+// A bounded, coalesced mailbox: twelve runtime/port keys, one worker, no I/O
+// while holding the mailbox lock. Intermediate event rows may be coalesced.
+void TLinkAdaptiveStreamingRecordRecoveryAsync(NSString *runtime, NSInteger port, NSString *reason, BOOL succeeded) {
+    if (port < 7001 || port > 7006 || (![@"rootfull" isEqual:runtime] && ![@"trollstore" isEqual:runtime])) return;
+    reason = reason.length > 256 ? [reason substringToIndex:256] : reason;
+    static NSObject *mailboxLock;
+    static NSMutableDictionary *pending;
+    static BOOL busy = NO;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ mailboxLock = [NSObject new]; pending = [NSMutableDictionary dictionary]; });
+    @synchronized (mailboxLock) {
+        NSString *key = TLinkAdaptiveKey(runtime, port);
+        NSDictionary *old = pending[key];
+        uint64_t successes = [old[@"successes"] unsignedLongLongValue], failures = [old[@"failures"] unsignedLongLongValue];
+        if (succeeded && successes < UINT64_MAX) ++successes;
+        if (!succeeded && failures < UINT64_MAX) ++failures;
+        pending[key] = @{@"runtime": runtime, @"port": @(port), @"reason": reason ?: @"unknown",
+                         @"successes": @(successes), @"failures": @(failures), @"succeeded": @(succeeded)};
+        if (busy) return;
+        busy = YES;
+    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        for (;;) {
+            @autoreleasepool {
+                NSDictionary *batch;
+                @synchronized (mailboxLock) {
+                    if (!pending.count) { busy = NO; return; }
+                    batch = [pending copy]; [pending removeAllObjects];
+                }
+                for (NSDictionary *entry in batch.allValues) {
+                    TLinkAdaptiveRecordRecoveryCounts(entry[@"runtime"], [entry[@"port"] integerValue], entry[@"reason"],
+                        [entry[@"successes"] unsignedLongLongValue], [entry[@"failures"] unsignedLongLongValue], [entry[@"succeeded"] boolValue]);
+                }
+            }
+        }
+    });
 }
 
 NSDictionary *TLinkAdaptiveStreamingStatus(NSString *runtime) {
@@ -336,3 +408,53 @@ NSDictionary *TLinkAdaptiveStreamingStatus(NSString *runtime) {
             @"sessions": sessions, @"device_validated": @false };
     }
 }
+
+// One process-wide decision job. A blocked disk lock cannot accumulate queued
+// samplers as clients reconnect; a new stream uses its own numeric fallback.
+static std::atomic_bool gAdaptiveDecisionBusy(false);
+@implementation TLinkAdaptiveStreamingSampler {
+    NSDictionary *(^_decision)(void);
+    std::mutex _snapshotLock;
+    int _fps, _bitrate, _minimumFPS;
+    uint64_t _publishedAt, _nextRequest;
+    std::atomic_bool _closed;
+}
+- (instancetype)initWithFPS:(int)fps minimumFPS:(int)minimumFPS bitrate:(int)bitrate decision:(NSDictionary *(^)(void))decision {
+    self = [super init];
+    if (self) {
+        _decision = [decision copy]; _fps = fps; _minimumFPS = minimumFPS; _bitrate = bitrate;
+        _publishedAt = TLinkH264NowNs(); _nextRequest = 0; _closed.store(false);
+    }
+    return self;
+}
+- (void)readTargetFPS:(int *)fps bitrate:(int *)bitrate {
+    const uint64_t now = TLinkH264NowNs();
+    { // Only numeric fields under this lock; never I/O/JSON/thermal queries.
+        std::lock_guard<std::mutex> lock(_snapshotLock);
+        const bool stale = now >= _publishedAt && now - _publishedAt >= 3000000000ULL;
+        *fps = stale ? _minimumFPS : _fps; *bitrate = stale ? 200000 : _bitrate;
+    }
+    // One capture-thread reader per sampler owns _nextRequest.
+    if (_closed.load() || now < _nextRequest) return;
+    _nextRequest = now + 1000000000ULL;
+    bool expected = false;
+    if (!gAdaptiveDecisionBusy.compare_exchange_strong(expected, true)) return;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        @autoreleasepool { @try {
+            if (!self->_closed.load()) {
+                NSDictionary *value = self->_decision();
+                const int nextFPS = [value[@"target_fps"] intValue], nextBitrate = [value[@"target_bitrate"] intValue];
+                if (![value[@"reason"] isEqual:@"state_lock_failed"] && ![value[@"reason"] isEqual:@"session_changed"] &&
+                    nextFPS > 0 && nextFPS <= 120 && nextBitrate >= 200000 && nextBitrate <= 50000000) {
+                    std::lock_guard<std::mutex> lock(self->_snapshotLock);
+                    if (!self->_closed.load()) {
+                        self->_fps = nextFPS; self->_bitrate = nextBitrate; self->_publishedAt = TLinkH264NowNs();
+                    }
+                }
+            }
+        } @catch (NSException *exception) { (void)exception; }
+          @finally { gAdaptiveDecisionBusy.store(false); } }
+    });
+}
+- (void)invalidate { _closed.store(true); }
+@end

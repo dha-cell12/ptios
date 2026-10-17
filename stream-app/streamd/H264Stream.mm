@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <os/lock.h>
+#include "../../shared/TLinkH264Socket.h"
 #include <stdarg.h>
 static void ZXH264Log(const char *fmt, ...)
 {
@@ -277,23 +278,8 @@ static inline void appendAnnexBHeaderToCF(CFMutableDataRef data) {
     CFDataAppendBytes(data, header, 4);
 }
 
-static bool sendAll(int fd, const uint8_t *buf, size_t len) {
-    size_t sent = 0;
-    while (sent < len) {
-#ifdef MSG_NOSIGNAL
-        ssize_t r = send(fd, buf + sent, len - sent, MSG_NOSIGNAL);
-#else
-        ssize_t r = send(fd, buf + sent, len - sent, 0);
-#endif
-        if (r > 0) {
-            sent += (size_t)r;
-        } else if (r < 0 && errno == EINTR) {
-            continue;
-        } else {
-            return false;
-        }
-    }
-    return true;
+static bool sendAll(TLinkH264Socket &writer, const uint8_t *buf, size_t len) {
+    return writer.send(buf, len);
 }
 
 static uint64_t zx_htonll(uint64_t v) {
@@ -306,7 +292,7 @@ static uint64_t zx_now_us(void) {
     return (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000000.0);
 }
 
-static bool writeRawAnnexBFrame(int fd,
+static bool writeRawAnnexBFrame(TLinkH264Socket &writer,
                                 const uint8_t *payload,
                                 size_t len,
                                 bool key,
@@ -336,7 +322,7 @@ static bool writeRawAnnexBFrame(int fd,
     memcpy(header + 40, &deviceSendNet, sizeof(deviceSendNet));
     memcpy(header + 48, &lenNet, sizeof(lenNet));
 
-    return sendAll(fd, header, sizeof(header)) && sendAll(fd, payload, len);
+    return sendAll(writer, header, sizeof(header)) && sendAll(writer, payload, len);
 }
 
 static uint32_t mpegCrc32(const uint8_t *data, size_t len) {
@@ -452,7 +438,7 @@ static NSData *buildPMT(uint8_t cc) {
 
 #pragma mark - TS packet writer
 
-static bool writeTSPackets(int fd,
+static bool writeTSPackets(TLinkH264Socket &writer,
                            uint16_t pid,
                            const uint8_t *payload,
                            size_t len,
@@ -461,6 +447,8 @@ static bool writeTSPackets(int fd,
                            uint64_t pts90k,
                            uint8_t *cc) {
     size_t off = 0;
+    uint8_t batch[64 * 188];
+    size_t buffered = 0;
 
     while (off < len) {
         uint8_t pkt[188] = {0};
@@ -513,11 +501,16 @@ static bool writeTSPackets(int fd,
             memcpy(pkt + 4, payload + off, copy);
         }
 
-        if (!sendAll(fd, pkt, 188)) return false;
+        memcpy(batch + buffered, pkt, sizeof(pkt));
+        buffered += sizeof(pkt);
+        if (buffered == sizeof(batch)) {
+            if (!sendAll(writer, batch, buffered)) return false;
+            buffered = 0;
+        }
         off += copy;
     }
 
-    return true;
+    return buffered == 0 || sendAll(writer, batch, buffered);
 }
 
 #pragma mark - Per-frame C context (NO ObjC bridging)
@@ -730,16 +723,31 @@ static CVPixelBufferRef createEncoderPixelBuffer(VTCompressionSessionRef encoder
 
 #pragma mark - Stream loop
 
-static void sendTables(int fd, uint8_t *patCC, uint8_t *pmtCC) {
+static bool sendTables(TLinkH264Socket &writer, uint8_t *patCC, uint8_t *pmtCC) {
     NSData *pat = buildPAT((*patCC)++);
     NSData *pmt = buildPMT((*pmtCC)++);
-    (void)sendAll(fd, (const uint8_t *)pat.bytes, 188);
-    (void)sendAll(fd, (const uint8_t *)pmt.bytes, 188);
+    uint8_t tables[376];
+    memcpy(tables, pat.bytes, 188); memcpy(tables + 188, pmt.bytes, 188);
+    return sendAll(writer, tables, sizeof(tables));
 }
+
+// BEGIN H264 client release.
+static void zx_releaseStreamClient(int fd) {
+    shutdown(fd, SHUT_RDWR);
+    close(fd);
+    int exp = fd;
+    atomic_compare_exchange_strong(&gActiveClientFd, &exp, -1);
+}
+// END H264 client release.
 
 static void streamLoop(int fd, const ZXH264Profile *profile) {
     @autoreleasepool {
         setClientSocketOptions(fd);
+        TLinkH264Socket writer(fd);
+        TLinkH264Pacer pacer(TLinkH264NowNs());
+        uint64_t streamOrigin = TLinkH264NowNs();
+        TLinkAdaptiveStreamingSampler *sampler = nil;
+        NSString *sessionID = NSUUID.UUID.UUIDString;
 
         // Declare everything early to avoid goto / jump init problems
         VTCompressionSessionRef enc = NULL;
@@ -753,7 +761,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
         int desiredBitrate = profile->averageBitrate;
         int currentEncFps = profile->targetFPS;
         double streamSeconds = 0.0;
-        CFAbsoluteTime nextLicenseCheck = CFAbsoluteTimeGetCurrent() + 5.0;
+        double nextLicenseCheck = TLinkH264NowNs() / 1e9 + 5.0;
         NSString *endReason = @"client_closed";
         int encoderRecoveryCount = 0;
         int consecutiveSuccessfulFrames = 0;
@@ -771,18 +779,31 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
         if (running && !profile->rawAnnexB) {
             // Send PAT/PMT immediately to help ffmpeg detect TS packet size
-            sendTables(fd, &patCC, &pmtCC);
+            writer.begin();
+            if (!sendTables(writer, &patCC, &pmtCC)) { running = false; endReason = @"socket_send_failed"; }
         }
 
         if (running) {
-            TLinkAdaptiveStreamingSessionStarted(@"trollstore", profile->port, zx_profileName(profile),
+            TLinkAdaptiveStreamingSessionStartedForSession(@"trollstore", profile->port, zx_profileName(profile),
                                                  profile->width, profile->height,
-                                                 profile->targetFPS, profile->averageBitrate);
+                                                 profile->targetFPS, profile->averageBitrate, sessionID);
+        }
+
+        if (running) {
+            desiredFPS = MAX(profile->minFPS, zx_maxFpsForThermalState(profile->targetFPS));
+            desiredBitrate = zx_maxBitrateForThermalState(profile->averageBitrate);
+            sampler = [[TLinkAdaptiveStreamingSampler alloc] initWithFPS:desiredFPS minimumFPS:profile->minFPS bitrate:desiredBitrate decision:^{
+                int thermalFPS = MAX(profile->minFPS, zx_maxFpsForThermalState(profile->targetFPS));
+                int thermalBitrate = zx_maxBitrateForThermalState(profile->averageBitrate);
+                return TLinkAdaptiveStreamingDecisionForSession(@"trollstore", profile->port, profile->targetFPS, profile->minFPS,
+                                                     profile->averageBitrate, thermalFPS, thermalBitrate, sessionID);
+            }];
+            streamOrigin = TLinkH264NowNs(); pacer = TLinkH264Pacer(streamOrigin);
         }
 
         while (running) {
             @autoreleasepool {
-                CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+                double now = TLinkH264NowNs() / 1e9;
                 if (now >= nextLicenseCheck) {
                     nextLicenseCheck = now + 5.0;
                     NSString *licenseError = nil;
@@ -796,30 +817,16 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     }
                 }
 
-                // Thermal-aware FPS throttle (checked periodically).
-                if ((frame % 20) == 0) {
-                    desiredFPS = zx_maxFpsForThermalState(profile->targetFPS);
-                    if (desiredFPS < profile->minFPS) {
-                        desiredFPS = profile->minFPS;
-                    }
-                    if (currentFPS > desiredFPS) {
-                        currentFPS = desiredFPS;
-                    }
-
-                    desiredBitrate = zx_maxBitrateForThermalState(profile->averageBitrate);
-                    NSDictionary *adaptive = TLinkAdaptiveStreamingDecision(
-                        @"trollstore", profile->port, profile->targetFPS, profile->minFPS,
-                        profile->averageBitrate, desiredFPS, desiredBitrate);
-                    desiredFPS = [adaptive[@"target_fps"] intValue];
-                    desiredBitrate = [adaptive[@"target_bitrate"] intValue];
-                    if (desiredBitrate != currentBitrate || desiredFPS != currentEncFps) {
-                        currentBitrate = desiredBitrate;
-                        currentEncFps = desiredFPS;
-                        zx_applyEncoderRate(enc, desiredFPS, desiredBitrate);
-                    }
+                // Capture reads a numeric snapshot and requests a coalesced refresh;
+                // no file lock, JSON parse or thermal query runs on this thread.
+                [sampler readTargetFPS:&desiredFPS bitrate:&desiredBitrate];
+                if (currentFPS > desiredFPS) currentFPS = desiredFPS;
+                if (desiredBitrate != currentBitrate || desiredFPS != currentEncFps) {
+                    currentBitrate = desiredBitrate; currentEncFps = desiredFPS;
+                    zx_applyEncoderRate(enc, desiredFPS, desiredBitrate);
                 }
-
-                CFAbsoluteTime frameStart = CFAbsoluteTimeGetCurrent();
+                const uint64_t frameStartNs = TLinkH264NowNs();
+                streamSeconds = (frameStartNs - streamOrigin) / 1e9;
                 uint64_t captureStartUs = zx_now_us();
                 if (!SCCaptureScreenIntoPixelBuffer(pb)) {
                     // Rebuild cached surfaces and the accelerator once before
@@ -831,7 +838,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                         endReason = @"capture_pipeline_failed";
                         break;
                     }
-                    TLinkAdaptiveStreamingRecordRecovery(
+                    TLinkAdaptiveStreamingRecordRecoveryAsync(
                         @"trollstore", profile->port, @"capture_pipeline_reset", YES);
                 }
                 uint64_t captureDoneUs = zx_now_us();
@@ -840,9 +847,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 if (!f) {
                     // Drop frame if pool exhausted.
                     // Keep pacing consistent.
-                    double budget = 1.0 / (double)currentFPS;
-                    streamSeconds += budget;
-                    usleep((useconds_t)(budget * 1000000.0));
+                    TLinkH264WaitFrame(pacer, (unsigned)currentFPS);
                     frame++;
                     continue;
                 }
@@ -883,11 +888,12 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                         if (enc) {
                             forceNextKeyframe = true;
                             zx_applyEncoderRate(enc, desiredFPS, desiredBitrate);
-                            TLinkAdaptiveStreamingRecordRecovery(@"trollstore", profile->port, @"encode_submit_failed", YES);
+                            TLinkAdaptiveStreamingRecordRecoveryAsync(@"trollstore", profile->port, @"encode_submit_failed", YES);
+                            TLinkH264WaitFrame(pacer, (unsigned)currentFPS);
                             continue;
                         }
                     }
-                    TLinkAdaptiveStreamingRecordRecovery(@"trollstore", profile->port, @"encode_submit_failed", NO);
+                    TLinkAdaptiveStreamingRecordRecoveryAsync(@"trollstore", profile->port, @"encode_submit_failed", NO);
                     running = false; endReason = @"encoder_recovery_exhausted"; break;
                 }
                 forceNextKeyframe = false;
@@ -906,13 +912,14 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                         if (enc) {
                             forceNextKeyframe = true;
                             zx_applyEncoderRate(enc, desiredFPS, desiredBitrate);
-                            TLinkAdaptiveStreamingRecordRecovery(@"trollstore", profile->port, @"encode_timeout", YES);
+                            TLinkAdaptiveStreamingRecordRecoveryAsync(@"trollstore", profile->port, @"encode_timeout", YES);
+                            TLinkH264WaitFrame(pacer, (unsigned)currentFPS);
                             continue;
                         }
                     }
                     if (enc) { VTCompressionSessionInvalidate(enc); CFRelease(enc); enc = NULL; }
                     if (!frameReleased) releaseFrameCtx(f);
-                    TLinkAdaptiveStreamingRecordRecovery(@"trollstore", profile->port, @"encode_timeout", NO);
+                    TLinkAdaptiveStreamingRecordRecoveryAsync(@"trollstore", profile->port, @"encode_timeout", NO);
                     running = false; endReason = @"encoder_recovery_exhausted"; break;
                 }
 
@@ -926,9 +933,10 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
 
                 uint64_t pts = (uint64_t)(streamSeconds * 90000.0);
                 bool ok = true;
+                writer.begin(); // One progress/absolute deadline across this complete access unit.
 
                 if (profile->rawAnnexB) {
-                    ok = writeRawAnnexBFrame(fd,
+                    ok = writeRawAnnexBFrame(writer,
                                              (const uint8_t *)CFDataGetBytePtr(f->data),
                                              (size_t)hlen,
                                              f->key,
@@ -939,7 +947,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 } else {
                     // Resend PAT/PMT on keyframes.
                     if (f->key) {
-                        sendTables(fd, &patCC, &pmtCC);
+                        ok = sendTables(writer, &patCC, &pmtCC);
                     }
 
                     uint8_t pes[14] = {
@@ -956,7 +964,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                     };
 
                     bool addPCR = ((frame % kPCRIntervalFrames) == 0);
-                    ok = writeTSPackets(fd,
+                    if (ok) ok = writeTSPackets(writer,
                                         kTSVideoPid,
                                         pes,
                                         sizeof(pes),
@@ -965,7 +973,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                                         pts,
                                         &vidCC);
                     if (ok) {
-                        ok = writeTSPackets(fd,
+                        ok = writeTSPackets(writer,
                                             kTSVideoPid,
                                             (const uint8_t *)CFDataGetBytePtr(f->data),
                                             (size_t)hlen,
@@ -988,7 +996,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 if (consecutiveSuccessfulFrames >= 300 && encoderRecoveryCount != 0) {
                     encoderRecoveryCount = 0;
                     consecutiveSuccessfulFrames = 0;
-                    TLinkAdaptiveStreamingRecordRecovery(
+                    TLinkAdaptiveStreamingRecordRecoveryAsync(
                         @"trollstore", profile->port, @"encoder_recovery_budget_reset", YES);
                 }
 
@@ -999,7 +1007,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 }
 
                 double budget = 1.0 / (double)currentFPS;
-                double elapsed = CFAbsoluteTimeGetCurrent() - frameStart;
+                double elapsed = (TLinkH264NowNs() - frameStartNs) / 1e9;
                 if (elapsed > budget * 1.2 && currentFPS > profile->minFPS) {
                     currentFPS--;
                 }
@@ -1007,10 +1015,7 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
                 if (elapsed < budget * 0.7 && currentFPS < desiredFPS) {
                     currentFPS++;
                 }
-                streamSeconds += 1.0 / (double)currentFPS;
-                if (elapsed < budget) {
-                    usleep((useconds_t)((budget - elapsed) * 1000000.0));
-                }
+                TLinkH264WaitFrame(pacer, (unsigned)currentFPS);
             }
         }
 
@@ -1021,13 +1026,9 @@ static void streamLoop(int fd, const ZXH264Profile *profile) {
             CFRelease(enc);
         }
 
-        TLinkAdaptiveStreamingSessionEnded(@"trollstore", profile->port, endReason);
-
-        shutdown(fd, SHUT_RDWR);
-        close(fd);
-
-        int exp = fd;
-        atomic_compare_exchange_strong(&gActiveClientFd, &exp, -1);
+        [sampler invalidate];
+        zx_releaseStreamClient(fd); // Do not hold the viewer slot during state-file persistence.
+        TLinkAdaptiveStreamingSessionEndedForSession(@"trollstore", profile->port, endReason, sessionID);
     }
 }
 
@@ -1062,7 +1063,13 @@ void startH264StreamServer(void) {
 
             while (1) {
                 int c = accept(s, NULL, NULL);
-                if (c < 0) { ZXH264Log("accept failed port=%d errno=%d", profile->port, errno); continue; }
+                if (c < 0) {
+                    const int error = errno;
+                    if (error == EINTR || error == ECONNABORTED) continue;
+                    if (error == EBADF || error == EINVAL || error == ENOTSOCK) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    continue;
+                }
 
                 NSString *licenseError = nil;
                 if (!TLinkLicenseFeatureAllowed(@"stream", &licenseError)) {
@@ -1088,6 +1095,7 @@ void startH264StreamServer(void) {
                     streamLoop(c, profile);
                 });
             }
+            close(s);
         });
     };
 
