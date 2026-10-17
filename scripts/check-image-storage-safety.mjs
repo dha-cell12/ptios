@@ -36,7 +36,26 @@ for (const name of ['handleFrameCaptureTaskFromRawData', 'handleFindImageTaskFro
   'handleColorInFrameTaskFromRawData', 'handleFrameBatchTaskFromRawData', 'zx_copyFrameGrayRegionForOCR']) {
   assert.match(bodyAfter(source.indexOf(name + '(')), /TLinkImageWork work\(gImageCompute\)/, `${name} needs compute admission`);
 }
+// Inspect each function's own __block locals: C++ lambdas cannot capture them.
+// The portable core alone cannot diagnose this Objective-C++ language restriction.
+const admissionFixtures = {};
+for (const [label, name] of [['Find', 'handleFindImageInFrameTaskFromRawData'], ['Batch', 'handleFrameBatchTaskFromRawData']]) {
+  const body = bodyAfter(source.indexOf(name + '('));
+  const blockLocals = [...body.matchAll(/__block\s+[^;]+?\b(\w+)\s*;/g)].map(match => match[1]);
+  for (const lambda of body.matchAll(/\[&\]\s*\{/g)) {
+    const computeBody = bodyAfter(lambda.index, body);
+    for (const local of blockLocals) assert.doesNotMatch(computeBody, new RegExp(`\\b${local}\\b`),
+      `${name}: C++ lambda must not capture __block local ${local}`);
+  }
+  const first = body.indexOf('    NSString *ret = nil;'), compute = body.indexOf('    [&] {', first);
+  assert.ok(first >= 0 && compute > first);
+  admissionFixtures[`Image${label}AdmissionUnderTest.inc`] = body.slice(first, compute);
+  const lookup = body.slice(compute).match(/^\s*auto iit = \w+\.find\(imageId\);/m);
+  assert.ok(lookup, `${name}: missing production compute lookup`);
+  admissionFixtures[`Image${label}LookupUnderTest.inc`] = lookup[0];
+}
 const fixtures = {
+  ...admissionFixtures,
   'ImagePayloadUnderTest.inc': section('// BEGIN immutable image payload types', '// END immutable image payload types.'),
   'ImageGlobalsUnderTest.inc': section('// BEGIN image store globals', '// END image store globals.'),
   'ImageCoreUnderTest.inc': section('// BEGIN image store core', '// END image store core.'),

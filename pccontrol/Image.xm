@@ -602,6 +602,7 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
         zx_rearmFrameExpiryLocked();
     });
     snapshot = std::move(admittedFrame);
+    const auto images = std::move(admittedImages);
     [&] {
         const uint64_t nowMs = zx_nowMs();
         if (!snapshot) {
@@ -614,8 +615,8 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
             return;
         }
         if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
-        auto iit = admittedImages.find(imageId);
-        if (iit == admittedImages.end() || iit->second->gray.empty()) {
+        auto iit = images.find(imageId);
+        if (iit == images.end() || iit->second->gray.empty()) {
             blockErr = zx_frameError(@"1;;image_not_found\r\n");
             return;
         }
@@ -885,6 +886,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
         zx_rearmFrameExpiryLocked();
     });
     snapshot = std::move(admittedFrame);
+    const auto images = std::move(admittedImages);
     [&] {
         const uint64_t nowMs = zx_nowMs();
         if (!snapshot) {
@@ -908,8 +910,8 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
                 if ([fields count] < 9) { blockErr = zx_frameError(@"1;;batch img format should be img,image_id,x,y,w,h,acceptable,scale,pixel_skip\r\n"); return; }
                 if (!frame.hasGray || frame.gray.empty()) { blockErr = zx_frameError(@"1;;frame_missing_gray\r\n"); return; }
                 uint32_t imageId = (uint32_t)[fields[1] intValue];
-                auto iit = admittedImages.find(imageId);
-                if (iit == admittedImages.end() || !iit->second || iit->second->gray.empty()) { blockErr = zx_frameError(@"1;;image_not_found\r\n"); return; }
+                auto iit = images.find(imageId);
+                if (iit == images.end() || !iit->second || iit->second->gray.empty()) { blockErr = zx_frameError(@"1;;image_not_found\r\n"); return; }
 
                 int workX = zx_coordToPixel([fields[2] doubleValue], frame.scale, pointCoord);
                 int workY = zx_coordToPixel([fields[3] doubleValue], frame.scale, pointCoord);

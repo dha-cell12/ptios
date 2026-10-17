@@ -22,6 +22,26 @@ static Mat imdecode(const Mat &input, int) {
 static const int IMREAD_GRAYSCALE = 0;
 #include "ImageErrorUnderTest.inc"
 #include "ImageDecoderUnderTest.inc"
+// Compile the actual handler admission/transfer and lookup statements together:
+// __block maps belong to Objective-C blocks; compute uses ordinary C++ locals.
+static NSString *findAdmissionFixture(uint32_t frameId, uint32_t imageId, NSError **error) {
+#include "ImageFindAdmissionUnderTest.inc"
+    (void)blockErr;
+    [&] {
+#include "ImageFindLookupUnderTest.inc"
+        if (snapshot && iit != images.end() && iit->second) ret = @"admitted";
+    }();
+    return ret;
+}
+static NSString *batchAdmissionFixture(uint32_t frameId, uint32_t imageId, NSString *opsRaw, NSError **error) {
+#include "ImageBatchAdmissionUnderTest.inc"
+    (void)blockErr;
+    [&] {
+#include "ImageBatchLookupUnderTest.inc"
+        if (snapshot && iit != images.end() && iit->second) ret = @"admitted";
+    }();
+    return ret;
+}
 static void decodeFixtures(NSString *directory) {
     NSString *path = [directory stringByAppendingPathComponent:@"small.png"];
     NSMutableData *encoded = [NSMutableData data];
@@ -60,8 +80,11 @@ static uint32_t publishFrame(std::shared_ptr<ZXFrameObject> value) {
     dispatch_sync(zx_imageQueue(), ^{ result = zx_storeFrameLocked(value); });
     return result;
 }
-static void publishImage(std::shared_ptr<ZXImageObject> value) {
-    dispatch_sync(zx_imageQueue(), ^{ assert(zx_storeImageLocked(value)); });
+static uint32_t publishImage(std::shared_ptr<ZXImageObject> value) {
+    __block uint32_t result = 0;
+    dispatch_sync(zx_imageQueue(), ^{ result = zx_storeImageLocked(value); });
+    assert(result);
+    return result;
 }
 static void barrier() { dispatch_sync(zx_imageQueue(), ^{}); }
 int main(int argc, char **argv) {
@@ -84,6 +107,15 @@ int main(int argc, char **argv) {
         assert(dispatch_semaphore_wait(expired, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0);
         reader.reset(); assert(gImageMemory.stats().frames == 0);
         id = publishFrame(frameFixture(zx_nowMs(), kHardFrameTtlMs)); assert(id);
+        fputs("Image runtime: Objective-C block to C++ lambda snapshot transfer\n", stderr);
+        const uint32_t imageId = publishImage(imageFixture());
+        NSError *admissionError = nil;
+        NSString *ops = [NSString stringWithFormat:@"img,%u,0,0,8,8,0.9,1,0", imageId];
+        assert([findAdmissionFixture(id, imageId, &admissionError) isEqualToString:@"admitted"] && !admissionError);
+        assert([batchAdmissionFixture(id, imageId, ops, &admissionError) isEqualToString:@"admitted"] && !admissionError);
+        assert(!findAdmissionFixture(id, imageId + 1, &admissionError));
+        NSString *missingOps = [NSString stringWithFormat:@"img,%u,0,0,8,8,0.9,1,0", imageId + 1];
+        assert(!batchAdmissionFixture(id, imageId + 1, missingOps, &admissionError));
         // A worker deliberately holds a snapshot without occupying the store queue.
         dispatch_semaphore_t admitted = dispatch_semaphore_create(0), finish = dispatch_semaphore_create(0), done = dispatch_semaphore_create(0);
         const uint32_t heldId = id;
