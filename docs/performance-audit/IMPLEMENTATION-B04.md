@@ -70,3 +70,5 @@ Both CI logs now compile the H264 runtime fixture, then time out in its network 
 A new portable regression compiles the actual adapter with only fcntl/send/poll doubled. It checks initially blocking/already nonblocking sockets, preservation of existing flags, failed F_GETFL/F_SETFL with zero sends, and exact short-write/EAGAIN behavior. This regression and the 3,000-case H264 suite pass on Windows, as do all 36 existing source-contract checks.
 
 The macOS fixture checks the real O_NONBLOCK flag and bounded stalled send for each runtime. Its read side is also nonblocking: exact table reads have a shared 5s deadline, the concurrent TS receiver has a 15s deadline including EOF, and each network stage has a stderr marker. The outer 120s runner limit is unchanged. The corrected Darwin socket/adaptive execution and iOS artifacts still require CI confirmation.
+
+User reported the corrected B04 build passed at `303b5be` before B05a. Device performance qualification remains pending.

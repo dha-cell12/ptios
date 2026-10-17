@@ -23,6 +23,10 @@
 #include <unistd.h>
 #include <atomic>
 #include <mach/mach_time.h>
+#include <mutex>
+#include <condition_variable>
+#include <dispatch/dispatch.h>
+#include "TLinkLicenseHotState.h"
 
 static NSString *const kTLinkLicenseDirectory = @"/var/mobile/Library/TLinkauto/license";
 static NSString *const kTLinkLicenseLease = @"/var/mobile/Library/TLinkauto/license/lease.json";
@@ -38,12 +42,8 @@ static const NSTimeInterval kTLinkLicenseClockSkewToleranceSeconds = 60.0;
 static const NSTimeInterval kTLinkLicenseClockRollbackToleranceSeconds = 300.0;
 static const char *kTLinkLicenseDarwinNotification = "com.tlinkauto.license.changed";
 static NSDictionary *sTLinkLicenseFeatureStatus = nil;
-static NSTimeInterval sTLinkLicenseFeatureStatusAt = 0;
-static uint64_t sTLinkLicenseFeatureGeneration = 0;
-static NSTimeInterval sTLinkLicenseGenerationCheckedAt = 0;
-static int sTLinkLicenseNotificationToken = 0;
-static const NSTimeInterval kTLinkLicenseGenerationPollInterval = 0.25;
 static std::atomic<uint64_t> sTLinkLicenseFeatureCheckCount(0);
+static std::atomic<uint64_t> sTLinkLicenseColdCheckCount(0);
 static std::atomic<uint64_t> sTLinkLicenseFeatureCacheHitCount(0);
 static std::atomic<uint64_t> sTLinkLicenseFeatureCacheMissCount(0);
 static std::atomic<uint64_t> sTLinkLicenseGenerationPollCount(0);
@@ -71,22 +71,6 @@ static void TLinkLicenseUpdateMaximum(std::atomic<uint64_t> &maximum, uint64_t v
     while (value > current &&
            !maximum.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
     }
-}
-
-static dispatch_queue_t TLinkLicenseCacheQueue(void)
-{
-    static dispatch_queue_t queue;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        queue = dispatch_queue_create("com.tlinkauto.license-verifier-cache", DISPATCH_QUEUE_SERIAL);
-        notify_register_dispatch(kTLinkLicenseDarwinNotification,
-                                 &sTLinkLicenseNotificationToken,
-                                 dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
-                                 ^(__unused int token) {
-            TLinkLicenseInvalidateCache();
-        });
-    });
-    return queue;
 }
 
 NSString *TLinkLicenseDirectoryPath(void)
@@ -1324,45 +1308,141 @@ NSDictionary *TLinkLicenseStatusDictionary(void)
 #endif
 }
 
+// BEGIN license hot-cache adapter.
+static std::mutex sTLinkLicenseSnapshotLock;
+static std::condition_variable sTLinkLicenseSnapshotChanged;
+static TLinkLicenseHotState sTLinkLicenseHotState;
+static dispatch_queue_t sTLinkLicenseRefreshQueue, sTLinkLicenseProbeQueue;
+static dispatch_source_t sTLinkLicenseProbeTimer;
+static uint64_t sTLinkLicenseLastUse = 0;
+static double sTLinkLicenseSnapshotWall = 0;
+static bool sTLinkLicenseProbeArmed = false;
+static unsigned sTLinkLicenseColdWaiters = 0;
+static int sTLinkLicenseNotificationToken = 0;
+
+static NSDictionary *TLinkLicensePendingSnapshot(void) {
+    return @{@"enforcement_enabled": @YES, @"licensed": @NO, @"features": @[],
+             @"state": @"verification_pending", @"error": @"license_verification_pending", @"source": @"memory_snapshot"};
+}
+// Snapshot mutex is held only while enqueueing/publishing metadata, never during verification.
+static void TLinkLicenseRequestRefreshLocked(uint64_t now) {
+    TLinkLicenseHotState::Ticket ticket;
+    if (!sTLinkLicenseHotState.begin(now, ticket)) return;
+    dispatch_async(sTLinkLicenseRefreshQueue, ^{
+        @autoreleasepool {
+            uint64_t started = mach_absolute_time(), before = 0, after = 0;
+            const double verificationWall = NSDate.date.timeIntervalSince1970;
+            NSDictionary *status = nil;
+            @try {
+                before = TLinkLicenseGeneration();
+                status = TLinkLicenseStatusDictionary(); // Full existing authority/signature/checkpoint path.
+                after = TLinkLicenseGeneration();
+            } @catch (NSException *exception) { (void)exception; status = nil; }
+            const uint64_t elapsed = TLinkLicenseElapsedNanoseconds(started);
+            const bool coherent = status != nil &&
+                [status[@"license_generation"] respondsToSelector:@selector(unsignedLongLongValue)] &&
+                [status[@"license_generation"] unsignedLongLongValue] == after;
+            {
+                std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
+                if (sTLinkLicenseHotState.finish(ticket, before, after, TLinkLicenseHotNowNs(), coherent)) {
+                    sTLinkLicenseFeatureStatus = [status copy];
+                    sTLinkLicenseSnapshotWall = verificationWall;
+                }
+            }
+            sTLinkLicenseFeatureCacheMissCount.fetch_add(1, std::memory_order_relaxed);
+            sTLinkLicenseStatusRefreshTotalNs.fetch_add(elapsed, std::memory_order_relaxed);
+            TLinkLicenseUpdateMaximum(sTLinkLicenseStatusRefreshMaxNs, elapsed);
+            sTLinkLicenseSnapshotChanged.notify_all();
+        }
+    });
+}
+static void TLinkLicenseInitializeHotCache(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sTLinkLicenseRefreshQueue = dispatch_queue_create("com.tlinkauto.license-refresh", DISPATCH_QUEUE_SERIAL);
+        sTLinkLicenseProbeQueue = dispatch_queue_create("com.tlinkauto.license-generation", DISPATCH_QUEUE_SERIAL);
+        sTLinkLicenseProbeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, sTLinkLicenseProbeQueue);
+        dispatch_source_set_timer(sTLinkLicenseProbeTimer, DISPATCH_TIME_FOREVER, NSEC_PER_SEC / 4, NSEC_PER_SEC / 40);
+        dispatch_source_set_event_handler(sTLinkLicenseProbeTimer, ^{
+            @autoreleasepool {
+                {
+                    std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
+                    uint64_t now = TLinkLicenseHotNowNs();
+                    if (now >= sTLinkLicenseLastUse && now - sTLinkLicenseLastUse >= 10000000000ULL) {
+                        sTLinkLicenseProbeArmed = false;
+                        dispatch_source_set_timer(sTLinkLicenseProbeTimer, DISPATCH_TIME_FOREVER, NSEC_PER_SEC / 4, NSEC_PER_SEC / 40);
+                        return;
+                    }
+                }
+                uint64_t generation = TLinkLicenseGeneration(); // Independent of the verifier worker.
+                sTLinkLicenseGenerationPollCount.fetch_add(1, std::memory_order_relaxed);
+                {
+                    std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
+                    uint64_t now = TLinkLicenseHotNowNs();
+                    sTLinkLicenseHotState.observe(generation, now);
+                    TLinkLicenseRequestRefreshLocked(now);
+                }
+                sTLinkLicenseSnapshotChanged.notify_all();
+            }
+        });
+        dispatch_resume(sTLinkLicenseProbeTimer);
+        notify_register_dispatch(kTLinkLicenseDarwinNotification, &sTLinkLicenseNotificationToken,
+            dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(int token) {
+                (void)token; TLinkLicenseInvalidateCache();
+            });
+    });
+}
+static NSDictionary *TLinkLicenseReadSnapshot(BOOL waitForCold, BOOL *warmHit) {
+    TLinkLicenseInitializeHotCache();
+    std::unique_lock<std::mutex> lock(sTLinkLicenseSnapshotLock);
+    uint64_t now = TLinkLicenseHotNowNs(); sTLinkLicenseLastUse = now;
+    if (!sTLinkLicenseProbeArmed) {
+        sTLinkLicenseProbeArmed = true;
+        dispatch_source_set_timer(sTLinkLicenseProbeTimer, DISPATCH_TIME_NOW, NSEC_PER_SEC / 4, NSEC_PER_SEC / 40);
+    }
+    TLinkLicenseRequestRefreshLocked(now);
+    if (warmHit) *warmHit = sTLinkLicenseHotState.usable(now) && sTLinkLicenseFeatureStatus != nil;
+    if (!sTLinkLicenseHotState.usable(now) && waitForCold && sTLinkLicenseColdWaiters < 16) {
+        ++sTLinkLicenseColdWaiters;
+        // condition_variable releases the snapshot mutex; cold callers share one job.
+        sTLinkLicenseSnapshotChanged.wait_for(lock, std::chrono::seconds(3), [] {
+            return sTLinkLicenseHotState.usable(TLinkLicenseHotNowNs());
+        });
+        --sTLinkLicenseColdWaiters; now = TLinkLicenseHotNowNs();
+    }
+    if (!sTLinkLicenseHotState.usable(now) || !sTLinkLicenseFeatureStatus) return TLinkLicensePendingSnapshot();
+    NSDictionary *status = sTLinkLicenseFeatureStatus;
+    if ([status[@"enforcement_enabled"] boolValue] && [status[@"licensed"] boolValue]) {
+        double wall = NSDate.date.timeIntervalSince1970;
+        double offline = [status[@"offline_until"] doubleValue], expiry = [status[@"license_expires_at"] doubleValue];
+        if (!TLinkLicenseSnapshotTimeAllowed(wall, sTLinkLicenseSnapshotWall, offline, expiry)) {
+            return @{@"enforcement_enabled": @YES, @"licensed": @NO, @"features": @[],
+                @"state": @"expired", @"error": @"license_snapshot_expired_or_clock_rollback", @"source": @"memory_snapshot"};
+        }
+    }
+    return status;
+}
+NSDictionary *TLinkLicenseCachedStatusDictionary(void) { return TLinkLicenseReadSnapshot(NO, NULL); }
+void TLinkLicenseInvalidateCache(void) {
+    TLinkLicenseInitializeHotCache();
+    {
+        std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
+        sTLinkLicenseHotState.invalidate(); sTLinkLicenseFeatureStatus = nil;
+        if (sTLinkLicenseProbeArmed) TLinkLicenseRequestRefreshLocked(TLinkLicenseHotNowNs());
+    }
+    sTLinkLicenseSnapshotChanged.notify_all();
+}
 BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error)
 {
     uint64_t checkStartedAt = mach_absolute_time();
-    __block NSDictionary *status = nil;
-    __block BOOL cacheMiss = NO;
-    __block uint64_t refreshNs = 0;
-    dispatch_sync(TLinkLicenseCacheQueue(), ^{
-        NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-        uint64_t generation = sTLinkLicenseFeatureGeneration;
-        if (!sTLinkLicenseFeatureStatus ||
-            now - sTLinkLicenseGenerationCheckedAt >= kTLinkLicenseGenerationPollInterval) {
-            generation = TLinkLicenseGeneration();
-            sTLinkLicenseGenerationPollCount.fetch_add(1, std::memory_order_relaxed);
-            sTLinkLicenseGenerationCheckedAt = now;
-        }
-        if (!sTLinkLicenseFeatureStatus ||
-            sTLinkLicenseFeatureGeneration != generation ||
-            now - sTLinkLicenseFeatureStatusAt >= 5.0) {
-            uint64_t refreshStartedAt = mach_absolute_time();
-            sTLinkLicenseFeatureStatus = TLinkLicenseStatusDictionary();
-            refreshNs = TLinkLicenseElapsedNanoseconds(refreshStartedAt);
-            cacheMiss = YES;
-            sTLinkLicenseFeatureStatusAt = now;
-            sTLinkLicenseFeatureGeneration = generation;
-        }
-        status = sTLinkLicenseFeatureStatus;
-    });
+    BOOL warmHit = NO;
+    NSDictionary *status = TLinkLicenseReadSnapshot(YES, &warmHit);
+    if (warmHit) sTLinkLicenseFeatureCacheHitCount.fetch_add(1, std::memory_order_relaxed);
+    else sTLinkLicenseColdCheckCount.fetch_add(1, std::memory_order_relaxed);
     uint64_t elapsedNs = TLinkLicenseElapsedNanoseconds(checkStartedAt);
     sTLinkLicenseFeatureCheckCount.fetch_add(1, std::memory_order_relaxed);
     sTLinkLicenseFeatureCheckTotalNs.fetch_add(elapsedNs, std::memory_order_relaxed);
     TLinkLicenseUpdateMaximum(sTLinkLicenseFeatureCheckMaxNs, elapsedNs);
-    if (cacheMiss) {
-        sTLinkLicenseFeatureCacheMissCount.fetch_add(1, std::memory_order_relaxed);
-        sTLinkLicenseStatusRefreshTotalNs.fetch_add(refreshNs, std::memory_order_relaxed);
-        TLinkLicenseUpdateMaximum(sTLinkLicenseStatusRefreshMaxNs, refreshNs);
-    } else {
-        sTLinkLicenseFeatureCacheHitCount.fetch_add(1, std::memory_order_relaxed);
-    }
-
     if (![status[@"enforcement_enabled"] boolValue]) return YES;
     if (![status[@"licensed"] boolValue]) {
         if (error) *error = status[@"error"] ?: @"license_required";
@@ -1378,6 +1458,8 @@ BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error)
     return NO;
 }
 
+// END license hot-cache adapter.
+
 NSDictionary *TLinkLicensePerformanceDictionary(void)
 {
     uint64_t checks = sTLinkLicenseFeatureCheckCount.load(std::memory_order_relaxed);
@@ -1387,8 +1469,17 @@ NSDictionary *TLinkLicensePerformanceDictionary(void)
     return @{
         @"feature_check_count": @(checks),
         @"cache_hit_count": @(sTLinkLicenseFeatureCacheHitCount.load(std::memory_order_relaxed)),
-        @"cache_miss_count": @(misses),
+        @"cache_miss_count": @(misses), // Legacy field now counts completed background refreshes.
+        @"completed_refresh_count": @(misses),
+        @"cold_check_count": @(sTLinkLicenseColdCheckCount.load(std::memory_order_relaxed)),
+        @"metrics_version": @2,
+        @"idle_probe_stop_ms": @10000,
         @"cache_ttl_ms": @5000,
+        @"refresh_after_ms": @4000,
+        @"generation_max_age_ms": @500,
+        @"cold_wait_limit_ms": @3000,
+        @"cold_waiter_limit": @16,
+        @"refresh_single_flight": @YES,
         @"generation_poll_interval_ms": @250,
         @"generation_poll_count": @(sTLinkLicenseGenerationPollCount.load(std::memory_order_relaxed)),
         @"feature_check_average_us": @(checks > 0 ? ((double)totalNs / (double)checks) / 1000.0 : 0),
@@ -1397,14 +1488,4 @@ NSDictionary *TLinkLicensePerformanceDictionary(void)
         @"status_refresh_max_ms": @((double)sTLinkLicenseStatusRefreshMaxNs.load(std::memory_order_relaxed) / 1000000.0),
         @"measurement": @"mach_absolute_time",
     };
-}
-
-void TLinkLicenseInvalidateCache(void)
-{
-    dispatch_sync(TLinkLicenseCacheQueue(), ^{
-        sTLinkLicenseFeatureStatus = nil;
-        sTLinkLicenseFeatureStatusAt = 0;
-        sTLinkLicenseFeatureGeneration = 0;
-        sTLinkLicenseGenerationCheckedAt = 0;
-    });
 }

@@ -13,6 +13,8 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include "../shared/TLinkLicenseHotState.h"
+static TLinkLicenseAuthorityAdmission sAuthorityAdmission;
 
 static const NSUInteger kTLinkLicenseAuthorityMaxRequest = 4096;
 
@@ -111,7 +113,6 @@ static void TLinkLicenseAuthorityHandleClient(int client)
     }
     if (request.length == 0 ||
         request.length >= kTLinkLicenseAuthorityMaxRequest) {
-        close(client);
         return;
     }
     NSString *line = [[NSString alloc]
@@ -129,7 +130,6 @@ static void TLinkLicenseAuthorityHandleClient(int client)
         bytes += sent;
         remaining -= (NSUInteger)sent;
     }
-    close(client);
 }
 
 static void TLinkLicenseAuthorityRunServer(void)
@@ -171,10 +171,13 @@ static void TLinkLicenseAuthorityRunServer(void)
             if (errno == EINTR) continue;
             break;
         }
+        // Admission precedes dispatch: backlog is not a bound on active workers.
+        if (!sAuthorityAdmission.acquire()) { close(client); continue; }
         dispatch_async(
             dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
                 @autoreleasepool {
-                    TLinkLicenseAuthorityHandleClient(client);
+                    @try { TLinkLicenseAuthorityHandleClient(client); }
+                    @finally { close(client); sAuthorityAdmission.release(); }
                 }
             });
     }

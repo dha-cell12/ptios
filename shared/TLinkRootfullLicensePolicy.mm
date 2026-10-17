@@ -120,7 +120,7 @@ static NSString *TLinkRootfullLicenseDeniedResponse(NSString *subject,
                                                     NSString *feature,
                                                     NSString *licenseError)
 {
-    NSDictionary *status = TLinkLicenseStatusDictionary();
+    NSDictionary *status = TLinkLicenseCachedStatusDictionary();
     NSString *state = TLinkRootfullLicenseToken(status[@"state"], @"invalid");
     NSString *error = TLinkRootfullLicenseToken(licenseError.length > 0
                                                 ? licenseError

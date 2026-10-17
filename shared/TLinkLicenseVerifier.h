@@ -14,6 +14,8 @@ FOUNDATION_EXPORT NSString *TLinkInstalledApplicationBundlePath(void);
 FOUNDATION_EXPORT NSString *TLinkBundledExecutablePath(NSString *name);
 FOUNDATION_EXPORT NSDictionary *TLinkLicenseConfiguration(void);
 FOUNDATION_EXPORT NSDictionary *TLinkLicenseStatusDictionary(void);
+// Memory snapshot only; stale/unavailable state is fail-closed. Does not force fresh diagnostics.
+FOUNDATION_EXPORT NSDictionary *TLinkLicenseCachedStatusDictionary(void);
 FOUNDATION_EXPORT BOOL TLinkLicenseFeatureAllowed(NSString *feature, NSString **error);
 FOUNDATION_EXPORT NSData *TLinkLicenseCreateDeviceSignature(
     NSData *message,
