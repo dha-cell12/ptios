@@ -1,4 +1,5 @@
 #include "../shared/TLinkNativeDispatch.h"
+#include <new>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -22,6 +23,16 @@ static Mat imdecode(const Mat &input, int) {
 static const int IMREAD_GRAYSCALE = 0;
 #include "ImageErrorUnderTest.inc"
 #include "ImageDecoderUnderTest.inc"
+#include "../shared/TLinkFrameVisionPolicy.h"
+static bool failFrameProvider=false,failFrameImage=false;
+static CGDataProviderRef FixtureFrameProvider(void *info,const void *data,size_t bytes,CGDataProviderReleaseDataCallback release){
+    if(failFrameProvider){failFrameProvider=false;return NULL;}return CGDataProviderCreateWithData(info,data,bytes,release);
+}
+static CGImageRef FixtureFrameImage(size_t width,size_t height,size_t bits,size_t pixelBits,size_t stride,CGColorSpaceRef color,CGBitmapInfo flags,CGDataProviderRef provider,const CGFloat *decode,bool interpolate,CGColorRenderingIntent intent){
+    if(failFrameImage){failFrameImage=false;return NULL;}return CGImageCreate(width,height,bits,pixelBits,stride,color,flags,provider,decode,interpolate,intent);
+}
+#include "FrameVisionUnderTest.inc"
+
 // Compile the actual handler admission/transfer and lookup statements together:
 // __block maps belong to Objective-C blocks; compute uses ordinary C++ locals.
 static NSString *findAdmissionFixture(uint32_t frameId, uint32_t imageId, NSError **error) {
@@ -87,11 +98,34 @@ static uint32_t publishImage(std::shared_ptr<ZXImageObject> value) {
     return result;
 }
 static void barrier() { dispatch_sync(zx_imageQueue(), ^{}); }
+static void releaseFrame(uint32_t id){NSString *value=[NSString stringWithFormat:@"%u",id];(void)handleFrameReleaseTaskFromRawData((UInt8 *)value.UTF8String,NULL);}
+static void frameVisionFixtures(){
+    fputs("Image runtime: actual immutable Vision provider survives store release and balances failed creation\n",stderr);
+    auto frame=frameFixture(zx_nowMs(),5000);for(size_t i=0;i<frame->bgra.size();++i)frame->bgra[i]=uint8_t(i);
+    uint32_t id=publishFrame(frame);std::weak_ptr<const ZXFrameObject> weak=frame;frame.reset();
+    NSError *error=nil;CGRect roi=CGRectZero;uint64_t age=0;
+    CGImageRef image=TLinkCreateVisionImageFromFrame(id,CGRectMake(1,1,2,2),@"point",5000,&roi,&age,&error);
+    assert(image&&!error&&roi.origin.x==2&&roi.origin.y==2&&roi.size.width==4&&roi.size.height==4);
+    CFDataRef data=CGDataProviderCopyData(CGImageGetDataProvider(image));assert(data&&CFDataGetLength(data)==256&&CFDataGetBytePtr(data)[17]==17);CFRelease(data);
+    releaseFrame(id);assert(!weak.expired()&&gImageMemory.stats().frames==256);CGImageRelease(image);assert(weak.expired()&&gImageMemory.stats().total==0);
+    id=publishFrame(frameFixture(zx_nowMs(),5000));
+    failFrameProvider=true;error=nil;assert(!TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error)&&[error.localizedDescription containsString:@"vision_frame_provider_failed"]);
+    failFrameImage=true;error=nil;assert(!TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error)&&[error.localizedDescription containsString:@"vision_frame_image_failed"]);
+    releaseFrame(id);assert(gImageMemory.stats().total==0);
+    id=publishFrame(frameFixture(zx_nowMs()-2000,5000));error=nil;
+    assert(!TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",1000,NULL,NULL,&error)&&[error.localizedDescription containsString:@"vision_frame_expired"]);
+    error=nil;image=TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error);assert(image&&!error);CGImageRelease(image);releaseFrame(id);
+    frame=frameFixture(zx_nowMs(),5000);frame->hasBGRA=false;id=publishFrame(frame);frame.reset();error=nil;
+    assert(!TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error)&&[error.localizedDescription containsString:@"vision_frame_missing_bgra"]);releaseFrame(id);
+    assert(gImageMemory.stats().total==0);
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     @autoreleasepool {
         fputs("Image runtime: bounded file/ImageIO preflight fixtures\n", stderr);
         decodeFixtures([NSString stringWithUTF8String:argv[1]]);
+        frameVisionFixtures();
         assert(kDefaultFrameTtlMs == 1000 && kMaxImagePixels > 0);
         { TLinkImageWork work(gImageCompute); assert(work); }
         fputs("Image runtime: idle expiry and held readers\n", stderr);

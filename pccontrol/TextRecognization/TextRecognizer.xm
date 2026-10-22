@@ -1,3 +1,5 @@
+#include "../../shared/TLinkFrameVisionPolicy.h"
+#import "../FrameVision.h"
 #include "../../shared/TLinkVisionPolicy.h"
 #include "../../shared/TLinkNativeBudget.h"
 #include "TextRecognizer.h"
@@ -25,7 +27,7 @@ static NSString* performTextRecognizerTextFromRawDataImpl(UInt8* eventData, NSEr
 
     int task = [data[0] intValue];
 
-    if (task == TASK_TEXT_FROM_AREA) // format: 1;;x1,y1,x2,y2;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path
+    if (task == TASK_TEXT_FROM_AREA || task == TASK_TEXT_FROM_FRAME) // format: 1;;x1,y1,x2,y2;;custom_words;;minimum_height;;level;;languages;;correct;;debug_path
     {
         if ([data count] < 8)
         {
@@ -80,8 +82,20 @@ static NSString* performTextRecognizerTextFromRawDataImpl(UInt8* eventData, NSEr
         if(TLinkVisionSlot()->stopped()) {
             if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_cancelled_or_timed_out\r\n"}];return nil;
         }
-        // screen shot
-        CGImageRef screenshot = [Screen createScreenShotCGImageRef];
+        // Subtask 6 explicitly selects an admitted frame. No capture fallback.
+        CGImageRef screenshot=NULL;int orientation=1;
+        if(task==TASK_TEXT_FROM_FRAME){
+            uint32_t frameId=0,maxAgeMs=0;
+            if(data.count!=11||!TLinkFrameVisionUnsigned([data[8] UTF8String],INT_MAX,frameId)||!frameId||
+                !TLinkFrameVisionUnsigned([data[10] UTF8String],5000,maxAgeMs)||
+                (![data[9] isEqualToString:@"pixel"]&&![data[9] isEqualToString:@"point"])){
+                if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_frame_parameters_invalid\r\n"}];return nil;
+            }
+            screenshot=TLinkCreateVisionImageFromFrame(frameId,recognizeRect,data[9],maxAgeMs,&recognizeRect,NULL,error);
+            if(!screenshot)return nil;
+        }else{
+            screenshot=[Screen createScreenShotCGImageRef];
+        }
 
         if (!screenshot) {
             if (error) *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
@@ -89,7 +103,8 @@ static NSString* performTextRecognizerTextFromRawDataImpl(UInt8* eventData, NSEr
             return nil;
         }
         @try {
-        int orientation = [Screen getScreenOrientation];
+        // Frame pixels already define their own canvas; never apply live orientation.
+        if(task==TASK_TEXT_FROM_AREA)orientation=[Screen getScreenOrientation];
 
         // init
         VKOcrManager* ocrManager = [[VKOcrManager alloc] initWithCGImage:screenshot area:recognizeRect orientation:orientation];

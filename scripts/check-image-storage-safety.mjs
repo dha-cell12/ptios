@@ -57,6 +57,8 @@ for (const [label, name] of [['Find', 'handleFindImageInFrameTaskFromRawData'], 
 const fixtures = {
   ...admissionFixtures,
   'ImagePayloadUnderTest.inc': section('// BEGIN immutable image payload types', '// END immutable image payload types.'),
+  'FrameVisionUnderTest.inc': section('// BEGIN frame Vision provider.', '// END frame Vision provider.')
+    .replaceAll('CGDataProviderCreateWithData(', 'FixtureFrameProvider(').replaceAll('CGImageCreate(', 'FixtureFrameImage('),
   'ImageGlobalsUnderTest.inc': section('// BEGIN image store globals', '// END image store globals.'),
   'ImageCoreUnderTest.inc': section('// BEGIN image store core', '// END image store core.'),
   'ImageDispatchUnderTest.inc': section('// BEGIN image store dispatch adapter.', '// END image store dispatch adapter.'),

@@ -5,14 +5,17 @@
 #import <Vision/Vision.h>
 #include <dispatch/dispatch.h>
 #include <climits>
+#include <new>
 #include <cassert>
 #include <cstdio>
 #include <thread>
+#include <string>
 #include "../shared/TLinkNativeBudget.h"
 static std::atomic<uint64_t> offset{0};
 static std::shared_ptr<TLinkNativeCancellation> cancelDuringPerform;
 static uint64_t FixtureNow(){return TLinkNativeNowNs()+offset.load();}
 #include "VisionPolicyUnderTest.h"
+#include "../shared/TLinkFrameVisionPolicy.h"
 #include "VisionHeaderUnderTest.h"
 #define SYSTEM_VERSION_LESS_THAN(value) false
 #include "VisionUnderTest.inc"
@@ -83,7 +86,22 @@ static void inject(VKOcrManager *manager,FixtureHandler **handlerOut,FixtureRequ
     [manager setValue:handler forKey:@"requestHandler"];[manager setValue:request forKey:@"request"];
     *handlerOut=handler;*requestOut=request;
 }
-static std::atomic<unsigned> captures{0},providers{0};
+namespace cv {struct Mat {};}
+#include "VisionFramePayload.inc"
+static ZXFrameRef selectedFrame;
+static TLinkImageComputeGate gImageCompute;
+static TLinkImageMemory frameMemory(1024*1024,0,1024*1024);
+static uint64_t zx_nowMs(){return FixtureNow()/1000000;}
+static ZXFrameRef zx_snapshotFrame(uint32_t id){return id==1?selectedFrame:ZXFrameRef();}
+static NSError *zx_frameError(NSString *message){return [NSError errorWithDomain:@"fixture.frame" code:999 userInfo:@{NSLocalizedDescriptionKey:message}];}
+#include "VisionFrameProvider.inc"
+static void selectFrame(){
+    auto value=std::make_shared<ZXFrameObject>();value->width=100;value->height=80;value->bytesPerRow=400;value->scale=2;
+    value->createdAtMs=zx_nowMs();value->expiresAtMs=value->createdAtMs+5000;value->hasBGRA=true;value->hasGray=false;
+    value->charge=frameMemory.reserve(TLinkImageKind::Frame,32000);assert(value->charge);value->bgra.resize(32000,255);selectedFrame=value;
+}
+static bool dropFrameDuringInit=false;
+static std::atomic<unsigned> captures{0},providers{0},orientationReads{0};
 static bool expireCapture=false,failCapture=false;
 @interface Screen:NSObject
 + (CGImageRef)createScreenShotCGImageRef;
@@ -100,20 +118,21 @@ static bool expireCapture=false,failCapture=false;
     CGImageRef image=CGImageCreate(100,80,8,32,400,rgb,kCGImageAlphaNoneSkipLast|kCGBitmapByteOrderDefault,provider,NULL,false,kCGRenderingIntentDefault);
     CGColorSpaceRelease(rgb);CGDataProviderRelease(provider);assert(image);return image;
 }
-+ (int)getScreenOrientation{return 1;}
++ (int)getScreenOrientation{orientationReads.fetch_add(1);return 1;}
 @end
 @interface FixtureTaskManager:VKOcrManager
 @end
 @implementation FixtureTaskManager
 - (id)initWithCGImage:(CGImageRef)image area:(CGRect)area orientation:(int)orientation {
     self=[super initWithCGImage:image area:area orientation:orientation];
-    if(self){FixtureHandler *handler=nil;FixtureRequest *request=nil;inject(self,&handler,&request);}
+    if(self){FixtureHandler *handler=nil;FixtureRequest *request=nil;inject(self,&handler,&request);if(dropFrameDuringInit){selectedFrame.reset();assert(frameMemory.stats().frames==32000);}}
     return self;
 }
 @end
 static void showAlertBox(NSString *title,NSString *message,int code){}
 #define TASK_TEXT_FROM_AREA 1
 #define TASK_GET_SUPPORTED_LANGUAGE_LIST 2
+#define TASK_TEXT_FROM_FRAME 6
 #include "TextRecognizerUnderTest.inc"
 int main(){@autoreleasepool{
     fputs("Vision Foundation: actual manager, CI crop, error/exception recovery and weak lifetime\n",stderr);
@@ -182,6 +201,27 @@ int main(){@autoreleasepool{
         expireCapture=true;error=nil;assert(!performTextRecognizerTextFromRawData((UInt8 *)good,&error)&&[error.localizedDescription containsString:@"vision_cancelled_or_timed_out"]);offset=0;
     }
     assert(providers==0);
+    fputs("Vision Foundation: explicit frame selection, scaled ROI, no recapture/orientation lookup and held provider\n",stderr);
+    @autoreleasepool{
+        selectFrame();unsigned before=captures.load(),orientations=orientationReads.load();
+        const char *frameRequest="6;;5,,10,,25,,20;;;;0.03;;0;;;;0;;;;1;;point;;5000";
+        NSError *error=nil;assert([performTextRecognizerTextFromRawData((UInt8 *)frameRequest,&error) isEqualToString:@"hello,,22,,30,,25,,20"]&&!error);
+        assert(captures==before&&orientationReads==orientations);
+        dropFrameDuringInit=true;error=nil;assert([performTextRecognizerTextFromRawData((UInt8 *)frameRequest,&error) isEqualToString:@"hello,,22,,30,,25,,20"]&&!error);dropFrameDuringInit=false;
+        assert(!selectedFrame&&captures==before&&orientationReads==orientations);
+        error=nil;assert(!performTextRecognizerTextFromRawData((UInt8 *)frameRequest,&error)&&[error.localizedDescription containsString:@"vision_frame_not_found"]&&captures==before);
+        const char *invalid="6;;0,,0,,0,,0;;;;0.03;;0;;;;0;;;;0;;pixel;;5000";
+        error=nil;assert(!performTextRecognizerTextFromRawData((UInt8 *)invalid,&error)&&[error.localizedDescription containsString:@"vision_frame_parameters_invalid"]&&captures==before);
+    }
+    assert(frameMemory.stats().total==0);
+    @autoreleasepool{
+        selectFrame();auto expired=std::make_shared<ZXFrameObject>();expired->width=100;expired->height=80;expired->scale=2;expired->bytesPerRow=400;expired->hasBGRA=false;expired->hasGray=false;
+        expired->createdAtMs=zx_nowMs()-2000;expired->expiresAtMs=zx_nowMs()+3000;selectedFrame=expired;
+        unsigned before=captures.load();NSError *error=nil;
+        const char *old="6;;0,,0,,0,,0;;;;0.03;;0;;;;0;;;;1;;pixel;;1000";
+        assert(!performTextRecognizerTextFromRawData((UInt8 *)old,&error)&&[error.localizedDescription containsString:@"vision_frame_expired"]&&captures==before);selectedFrame.reset();
+    }
+    assert(frameMemory.stats().total==0);
     // Every fixture manager and timer callback has released its admission slot.
     {TLinkVisionContext a({}),b({}),c({});assert(a.admitted()&&b.admitted()&&!c.admitted());}
     puts("Vision Foundation passed: production init/crop/recognize, empty candidates, box coordinates, 200 error/exception recoveries, manager deallocation, observation/output caps, busy admission, active timeout cancellation and parent cancellation. UIKit debug drawing and real OCR execution remain device checks.");

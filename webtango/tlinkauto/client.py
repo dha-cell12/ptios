@@ -722,6 +722,40 @@ class TLinkauto:
 
         return True, string_info_list
 
+    def ocr_from_frame(self, frame_id, region=(0, 0, 0, 0), coord="pixel", max_age_ms=1000,
+                       custom_words=None, minimum_height="", recognition_level=0,
+                       languages=None, auto_correct=0, debug_image_path=""):
+        """Rootfull/roothide Vision on an explicit task-66 BGRA frame (task 27.6).
+
+        Coordinates are resolved on the stored frame canvas. Results are absolute
+        frame pixels even for point input. Missing/expired frames never recapture.
+        Keep the frame's TTL and max_age_ms large enough to admit this call.
+        """
+        if isinstance(frame_id, bool) or not isinstance(frame_id, int) or not 0 < frame_id <= 2147483647:
+            raise ValueError("frame_id must be a positive signed 32-bit frame id")
+        if coord not in ("pixel", "point") or len(region) != 4:
+            raise ValueError("coord must be pixel/point and region must contain x,y,width,height")
+        if isinstance(max_age_ms, bool) or not isinstance(max_age_ms, int) or not 0 <= max_age_ms <= 5000:
+            raise ValueError("max_age_ms must be an integer in 0..5000 (0 uses the 1000 ms default)")
+        self.s.send(datahandler.format_socket_data(
+            tasktypes.TASK_TEXT_RECOGNIZER, 6, ",,".join(map(str, region)),
+            ",,".join(map(str, custom_words or [])), minimum_height, recognition_level,
+            ",,".join(map(str, languages or [])), auto_correct, debug_image_path,
+            frame_id, coord, max_age_ms))
+        # TLinkautoTransport receives complete v0 lines / v1 responses.
+        ok, result = datahandler.decode_socket_data(self.s.recv(1024 * 1024))
+        if not ok:
+            return False, result
+        observations = []
+        for raw in result:
+            if not raw:
+                continue
+            fields = raw.split(",,")
+            if len(fields) != 5:
+                return False, "Invalid Vision frame observation response"
+            observations.append(dict(zip(("text", "x", "y", "width", "height"), fields)))
+        return True, observations
+
     def get_supported_ocr_languages(self, recognition_level):
         """Get languages that can be recognized by ocr
 

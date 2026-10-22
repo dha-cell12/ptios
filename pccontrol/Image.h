@@ -2,6 +2,7 @@
 #define IMAGE_H
 
 #import <Foundation/Foundation.h>
+#import "FrameVision.h"
 #include <stdint.h>
 
 #ifdef __cplusplus

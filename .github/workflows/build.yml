@@ -65,6 +65,7 @@ jobs:
           node scripts/check-template-safety.mjs
           node scripts/check-vision-safety.mjs
           node scripts/check-color-safety.mjs
+          node scripts/check-frame-vision-safety.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
           node scripts/check-stream-rtc-control-v2.mjs

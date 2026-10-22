@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
-const [source,header,policy,task]=await Promise.all(['pccontrol/TextRecognization/VKOcrManager.xm','pccontrol/TextRecognization/VKOcrManager.h','shared/TLinkVisionPolicy.h','pccontrol/TextRecognization/TextRecognizer.xm'].map(read));
+const [source,header,policy,task,image]=await Promise.all(['pccontrol/TextRecognization/VKOcrManager.xm','pccontrol/TextRecognization/VKOcrManager.h','shared/TLinkVisionPolicy.h','pccontrol/TextRecognization/TextRecognizer.xm','pccontrol/Image.xm'].map(read));
 assert.doesNotMatch(source,/initWithCompletionHandler:|topCandidates:1\]\[0\]/);
 assert.match(source,/@finally \{UIGraphicsEndImageContext\(\);\}/);
 assert.match(source,/dispatch_source_cancel\(monitor\);dispatch_sync\(monitorQueue/);
@@ -16,6 +16,9 @@ const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-vision-
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
  await writeFile(join(temp,'VisionPolicyUnderTest.h'),policy.replaceAll('TLinkNativeNowNs()','FixtureNow()'));
+ const section=(a,b)=>image.slice(image.indexOf(a),image.indexOf(b,image.indexOf(a)));
+ await writeFile(join(temp,'VisionFramePayload.inc'),section('// BEGIN immutable image payload types','// END immutable image payload types.'));
+ await writeFile(join(temp,'VisionFrameProvider.inc'),section('// BEGIN frame Vision provider.','// END frame Vision provider.'));
  await writeFile(join(temp,'VisionHeaderUnderTest.h'),header.replace('#import <UIKit/UIKit.h>','@class UIImage;'));
  await writeFile(join(temp,'VisionUnderTest.inc'),source.replace(/^#(?:include|import)[^\n]*\n/gm,''));
  await writeFile(join(temp,'TextRecognizerUnderTest.inc'),task.replace(/^#(?:include|import)[^\n]*\n/gm,'').replaceAll('[VKOcrManager alloc]','[FixtureTaskManager alloc]'));

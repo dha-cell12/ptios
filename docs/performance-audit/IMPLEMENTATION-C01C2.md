@@ -1,7 +1,7 @@
 # C01c2 — bounded legacy color operations
 
 Baseline: `528655c`; the user reported the C01c1 build passed before this slice.
-Status: **source implemented; new macOS/iOS build and device qualification pending**.
+Status: **build accepted by the user at `5ae231b` before C01c3a; device qualification pending**. This does not replace independent inspection of CI logs or device measurements.
 
 ## Scope and resulting behavior
 
@@ -57,4 +57,4 @@ Both workflows run `check-color-safety.mjs`. On macOS its ASan/UBSan branch comp
 3. Exercise invalid pre/post-capture coordinates, oversized ROI/source, malformed/huge tables, count 512/513, invalid numbers/modes and INT_MIN/INT_MAX inputs. Check explicit errors, no partial success and recovery.
 4. Stress concurrent calls, low memory and native cancellation during capture/render/scan. Verify scope cleanup and no retained screenshot after failed validation. Use Allocations/VM Tracker and Instruments to measure RSS, latency, CPU and opaque-operation overrun; do not infer savings from source limits.
 
-Remaining C01c3: explicit frame-backed reuse for Vision/color and remaining modern image matcher work. Legacy commands still capture a fresh full display per request; this slice does not complete P1-28/P1-32/P1-39 capture reuse or upstream queue isolation. The whole C01 group remains open.
+C01c3a now implements explicit root Vision frame selection; see [IMPLEMENTATION-C01C3A.md](IMPLEMENTATION-C01C3A.md). Remaining C01c3b covers frame-color validation/scan budgets and modern image matcher work. Legacy commands still capture a fresh full display per request; this slice does not complete P1-28/P1-32/P1-39 capture reuse or upstream queue isolation. The whole C01 group remains open.

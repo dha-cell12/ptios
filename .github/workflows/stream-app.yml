@@ -31,6 +31,9 @@ on:
       - 'test/vision-runtime-test.mm'
       - 'test/color-*.cpp'
       - 'test/color-runtime-test.mm'
+      - 'test/frame-vision-*.cpp'
+      - 'test/frame-vision-client-test.py'
+      - 'webtango/tlinkauto/client.py'
       - 'test/fixtures/color-match-legacy-v1.inc'
       - 'test/fixtures/template-sad-legacy-v1.inc'
       - 'test/fixtures/zoom-*.json'
@@ -70,6 +73,9 @@ on:
       - 'test/vision-runtime-test.mm'
       - 'test/color-*.cpp'
       - 'test/color-runtime-test.mm'
+      - 'test/frame-vision-*.cpp'
+      - 'test/frame-vision-client-test.py'
+      - 'webtango/tlinkauto/client.py'
       - 'test/fixtures/color-match-legacy-v1.inc'
       - 'test/fixtures/template-sad-legacy-v1.inc'
       - 'test/fixtures/zoom-*.json'
@@ -316,6 +322,7 @@ jobs:
           node scripts/check-template-safety.mjs
           node scripts/check-vision-safety.mjs
           node scripts/check-color-safety.mjs
+          node scripts/check-frame-vision-safety.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
           node scripts/check-stream-rtc-control-v2.mjs
