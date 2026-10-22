@@ -3,6 +3,14 @@
 #include <cstdio>
 #include <thread>
 int main(){
+    const double coordinateLimit=static_cast<double>(INT_MAX/2);
+    assert(TLinkVisionCoordinateValid(coordinateLimit)&&TLinkVisionCoordinateValid(-coordinateLimit));
+    assert(!TLinkVisionCoordinateValid(coordinateLimit+.25)&&!TLinkVisionCoordinateValid(-coordinateLimit-.25));
+    const float roundedLimit=static_cast<float>(INT_MAX/2);
+    assert(!TLinkVisionCoordinateValid(roundedLimit));
+    assert(TLinkVisionCoordinateValid(std::nextafter(roundedLimit,0.0f)));
+    assert(!TLinkVisionCoordinateValid(std::numeric_limits<double>::quiet_NaN()));
+    assert(!TLinkVisionCoordinateValid(std::numeric_limits<double>::infinity()));
     TLinkVisionROI roi;
     assert(TLinkVisionPlan(100,80,10,20,0,0,roi)&&roi.width==90&&roi.height==60);
     assert(TLinkVisionPlan(100,80,10,20,1000,1000,roi)&&roi.width==90&&roi.height==60);
@@ -33,5 +41,5 @@ int main(){
     for(unsigned n=0;n<8;++n)threads.emplace_back([]{for(unsigned i=0;i<10000;++i){auto ctx=std::make_shared<TLinkVisionContext>(TLinkNativeBudgetPtr{});TLinkVisionScope scope(ctx);assert(TLinkVisionSlot()==ctx);}});
     for(auto &thread:threads)thread.join();
     {TLinkVisionContext a({}),b({}),c({});assert(a.admitted()&&b.admitted()&&!c.admitted());}
-    puts("Vision policy passed: 100k ROI plans, pixel/axis/output boundaries, eight-second/parent cancellation, nested TLS and 80k concurrent admission lifecycles.");
+    puts("Vision policy passed: exact double/float coordinate boundaries, 100k ROI plans, pixel/axis/output boundaries, eight-second/parent cancellation, nested TLS and 80k concurrent admission lifecycles.");
 }

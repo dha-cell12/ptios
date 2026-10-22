@@ -66,7 +66,7 @@
         }
         recognizeRect=CGRectMake(roi.x,roi.y,roi.width,roi.height);
         CGRect crop=CGRectMake(image.extent.origin.x+roi.x,image.extent.origin.y+imageHeight-roi.y-roi.height,roi.width,roi.height);
-        requestHandler=[[VNImageRequestHandler alloc] initWithCIImage:[image imageByCroppingToRect:crop] options:nil];
+        requestHandler=[[VNImageRequestHandler alloc] initWithCIImage:[image imageByCroppingToRect:crop] options:@{}];
         // Read synchronous results directly; no request -> completion -> manager cycle.
         request=[[VNRecognizeTextRequest alloc] init];
 
@@ -140,8 +140,8 @@ Return the string from a area
             float height=fabs(box.topLeft.y-box.bottomLeft.y)*recognizeRect.size.height;
             float x=box.topLeft.x*recognizeRect.size.width+recognizeRect.origin.x;
             float y=(1-box.topLeft.y)*recognizeRect.size.height+recognizeRect.origin.y;
-            if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(width)||!std::isfinite(height)||
-                fabs(x)>INT_MAX/2||fabs(y)>INT_MAX/2||fabs(width)>INT_MAX/2||fabs(height)>INT_MAX/2)continue;
+            if(!TLinkVisionCoordinateValid(x)||!TLinkVisionCoordinateValid(y)||
+                !TLinkVisionCoordinateValid(width)||!TLinkVisionCoordinateValid(height))continue;
             const size_t textBytes=[text.string lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
             if(textBytes>1048576-bytes){if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;vision_output_limit\r\n"}];return nil;}
             NSString *line=[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d",text.string,(int)x,(int)y,(int)width,(int)height];

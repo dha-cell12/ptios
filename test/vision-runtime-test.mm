@@ -128,7 +128,11 @@ int main(){@autoreleasepool{
         FixtureObservation *empty=[FixtureObservation new];empty.candidates=@[];handler.output=@[empty,observation(@"hello")];
         value=[manager recognize:&error];assert(!error&&[value isEqualToString:@"hello,,22,,30,,25,,20"]);
         FixtureObservation *missingBox=observation(@"no box");((FixtureText *)missingBox.candidates.firstObject).box=nil;
-        handler.output=@[empty,missingBox,observation(@"hello")];error=nil;
+        FixtureObservation *roundedBox=observation(@"rounded limit");
+        FixtureBox *boundary=((FixtureText *)roundedBox.candidates.firstObject).box;
+        boundary.topLeft=CGPointMake((static_cast<double>(INT_MAX/2)+1.0-10.0)/50.0,.75);
+        boundary.topRight=CGPointMake(boundary.topLeft.x+.5,.75);
+        handler.output=@[empty,missingBox,roundedBox,observation(@"hello")];error=nil;
         assert([[manager recognize:&error] isEqualToString:@"hello,,22,,30,,25,,20"]&&!error);
         handler.mode=5;error=nil;assert(![manager recognize:&error]&&[error.localizedDescription containsString:@"vision_perform_failed"]);
         for(unsigned n=0;n<200;++n){

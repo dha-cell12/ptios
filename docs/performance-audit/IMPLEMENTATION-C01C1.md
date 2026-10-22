@@ -35,6 +35,12 @@ Debug output guards empty candidates and failed boxes, uses a scale-1 graphics c
 
 No new internal autorelease pool surrounds NSError out parameters. The strong error/pool correction from C01b remains intact.
 
+## SDK warning correction — 2026-10-23
+
+The user reported both workflows stopped compiling the macOS Vision fixture under `-Werror`: `VNImageRequestHandler` requires a nonnull options dictionary, and newer Clang additionally diagnoses the rounded conversion of `INT_MAX/2` in the float coordinate comparisons. Production now passes an empty dictionary (`@{}`) for default options. A shared finite/magnitude guard widens coordinates to double before comparing against the exactly represented conservative integer threshold; float coordinate calculation and ordinary result formatting remain unchanged.
+
+Portable regressions cover the exact positive/negative threshold, fractional values beyond it, the float value rounded up from that threshold, the preceding float, NaN and infinity. The actual-manager macOS fixture also includes a box whose calculated float coordinate rounds past the threshold and must be skipped. `-Werror`, ASan and UBSan remain enabled. Portable Vision/native-budget/color checks pass on Windows; corrected Apple SDK compilation and Foundation execution remain pending CI.
+
 ## Validation and required acceptance
 
 Windows validation passes **36 source-contract runners, 15 native runners A01–C01c1 and 528 TrollStore source grep assertions**.

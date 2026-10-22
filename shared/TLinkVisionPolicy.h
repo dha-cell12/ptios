@@ -3,6 +3,11 @@
 #include "TLinkNativeBudget.h"
 #include "TLinkImageStorage.h"
 #include <cmath>
+#include <climits>
+// Widen before comparison: INT_MAX/2 is exact in double, but rounds up in float.
+inline bool TLinkVisionCoordinateValid(double value) {
+    return std::isfinite(value)&&std::fabs(value)<=static_cast<double>(INT_MAX/2);
+}
 struct TLinkVisionROI { double x=0,y=0,width=0,height=0; };
 inline bool TLinkVisionPlan(double iw,double ih,double x,double y,double width,double height,TLinkVisionROI &out) {
     if(!std::isfinite(iw)||!std::isfinite(ih)||iw<=0||ih<=0||iw>8192||ih>8192||std::ceil(iw)*std::ceil(ih)>8388608 ||
