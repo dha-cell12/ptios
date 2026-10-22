@@ -42,6 +42,7 @@ public:
 enum class TLinkNativeStop { None, Cancelled, Deadline, OutputLimit };
 class TLinkNativeBudget {
     std::shared_ptr<TLinkNativeCancellation> cancellation_;
+    std::shared_ptr<TLinkNativeBudget> parent_;
     uint64_t deadline_;
     size_t outputLimit_;
     bool cleanup_, capture_;
@@ -52,11 +53,19 @@ public:
     TLinkNativeBudget(std::shared_ptr<TLinkNativeCancellation> cancellation, uint64_t deadline,
                       size_t outputLimit, bool cleanup = false, bool capture = false)
       : cancellation_(std::move(cancellation)), deadline_(deadline), outputLimit_(outputLimit), cleanup_(cleanup), capture_(capture) {}
+    // A task-local deadline shares cancellation/output with its caller without
+    // shortening the caller or moving its response into a different sink.
+    TLinkNativeBudget(uint64_t deadline, std::shared_ptr<TLinkNativeBudget> parent)
+      : cancellation_(parent ? parent->cancellation_ : std::shared_ptr<TLinkNativeCancellation>{}), parent_(std::move(parent)),
+        deadline_(deadline), outputLimit_(parent_ ? parent_->outputLimit() : 1024*1024), cleanup_(false), capture_(parent_ && parent_->capturesResponse()) {
+        if (parent_ && parent_->deadline()) deadline_ = deadline_ ? std::min(deadline_, parent_->deadline()) : parent_->deadline();
+    }
     uint64_t deadline() const { return deadline_; }
     bool cleanup() const { return cleanup_; }
     bool capturesResponse() const { return capture_; }
     size_t outputLimit() const { return outputLimit_; }
     TLinkNativeStop reason() const {
+        if (parent_) { const auto inherited=parent_->reason(); if(inherited!=TLinkNativeStop::None)return inherited; }
         if (overflow_.load(std::memory_order_acquire)) return TLinkNativeStop::OutputLimit;
         if (!cleanup_) {
             if (cancellation_ && cancellation_->cancelled()) return TLinkNativeStop::Cancelled;
@@ -66,6 +75,7 @@ public:
     }
     bool stopped() const { return reason() != TLinkNativeStop::None; }
     bool outputAllowed(size_t bytes) {
+        if (parent_) return parent_->outputAllowed(bytes);
         std::lock_guard<std::mutex> lock(responseMutex_);
         if (outputLimit_ && (response_.size() > outputLimit_ || bytes > outputLimit_ - response_.size())) {
             overflow_.store(true, std::memory_order_release); return false;
@@ -75,6 +85,7 @@ public:
     // The caller owns a NUL-terminated message. Scan at most remaining+1 bytes, and admit
     // the complete chunk before appending. Never return a silently truncated success.
     int appendCString(const uint8_t *bytes) {
+        if (parent_) return parent_->appendCString(bytes);
         if (!bytes || !capture_ || !outputLimit_) return -1;
         std::lock_guard<std::mutex> lock(responseMutex_);
         if (overflow_.load(std::memory_order_acquire)) return -1;
@@ -91,7 +102,7 @@ public:
         return static_cast<int>(length);
     }
     // Read only after all synchronous producers have returned. The scope owns the buffer.
-    const std::vector<uint8_t> &response() const { return response_; }
+    const std::vector<uint8_t> &response() const { return parent_ ? parent_->response() : response_; }
     bool waitNs(uint64_t duration) {
         if (stopped()) return false;
         const uint64_t now = TLinkNativeNowNs();

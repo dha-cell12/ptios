@@ -1,7 +1,7 @@
 # C01c3b — frame-color and modern image request bounds
 
 Date: 2026-10-23 (Asia/Bangkok). Baseline: `71de52b`; the user reported the C01c3a build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build and storage-fixture correction accepted by the user at `74e656f`; device qualification pending**. The next source slice is [C01d1 ingress/IPC deadlines](IMPLEMENTATION-C01D1.md), with its new macOS/iOS CI and device checks pending.
 
 ## Scope
 

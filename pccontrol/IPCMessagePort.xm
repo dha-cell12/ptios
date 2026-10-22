@@ -1,3 +1,4 @@
+#include "../shared/TLinkC01Ingress.h"
 #include "IPCMessagePort.h"
 #import "TLinkDiagnostic.h"
 #include "IPCConstants.h"
@@ -25,6 +26,17 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
         CFIndex length = CFDataGetLength(data);
         if (!bytes || length <= 0) {
             return NULL;
+        }
+
+        uint64_t ingressDeadline=0;
+        if(msgid==TLinkC01IPCMessage){
+            TLinkC01Envelope envelope;
+            const auto result=TLinkC01Decode(bytes,size_t(length),envelope);
+            if(result!=TLinkC01DecodeResult::Valid){
+                const char *failure=result==TLinkC01DecodeResult::Expired?"1;;c01_request_expired\r\n":"1;;c01_ipc_envelope_invalid\r\n";
+                return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)failure,strlen(failure));
+            }
+            bytes=envelope.payload;length=CFIndex(envelope.length);ingressDeadline=envelope.deadline;
         }
 
         // Task 10 has no response body. Keep its byte/length path out of NSString,
@@ -74,7 +86,7 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                     return NULL;
                 }
                 const double startTime = TLinkNativeNowNs() / 1e9;
-                auto budget = std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{}, 0, 1024 * 1024, false, true);
+                auto budget = std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{}, ingressDeadline, 1024 * 1024, false, true);
                 TLinkNativeBudgetScope responseScope(budget);
                 UInt8 placeholder[1] = {0}; // notifyClient writes to the budget, never to this placeholder.
                 CFWriteStreamRef responseStream = CFWriteStreamCreateWithBuffer(kCFAllocatorDefault, placeholder, sizeof(placeholder));
@@ -91,6 +103,10 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                 if (budget->reason() == TLinkNativeStop::OutputLimit) {
                     const char *failure = "1;;ipc_response_too_large\r\n";
                     return CFDataCreate(kCFAllocatorDefault, (const UInt8 *)failure, strlen(failure));
+                }
+                if(budget->stopped()){
+                    const char *failure="1;;c01_request_expired\r\n";
+                    return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)failure,strlen(failure));
                 }
                 if (redactUITree) {
                     NSLog(@"### com.tlinkauto.springboard: IPC UI tree task=%ld response in %.3fs bytes=%ld",

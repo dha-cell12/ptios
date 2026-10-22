@@ -1,3 +1,4 @@
+#include "../shared/TLinkC01Ingress.h"
 #include "Task.h"
 #import "../shared/TLinkAccessibilityTree.h"
 #import "TLinkDiagnostic.h"
@@ -874,6 +875,7 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
         return;
     }
     TLinkNativeBudgetScope taskScope(TLinkTaskBudget(context));
+    TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget(buff,actualLength,TLinkCurrentNativeBudget()));
     const size_t eventDataLength = actualLength - 2;
     
     //NSLog(@"### com.tlinkauto.springboard: task type: %d. Data: %s", getTaskType(buff), buff);

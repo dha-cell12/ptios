@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <string>
 #include "../shared/TLinkNativeBudget.h"
+#include "../shared/TLinkC01Ingress.h"
 #include "../shared/TLinkSocketOutput.h"
 #include "../shared/TLinkIPCPolicy.h"
 #import "../shared/TLinkEventChannel.h"
@@ -40,6 +41,10 @@ static NSData *zx_handleLegacyRequestBytes(const char *payload) {
     NSString *s = [NSString stringWithUTF8String:payload];
     @synchronized(taskCalls) { [taskCalls addObject:s]; }
     if ([s isEqualToString:@"99slow"]) { dispatch_semaphore_signal(taskStarted); dispatch_semaphore_wait(taskFinish, DISPATCH_TIME_FOREVER); }
+    if ([s isEqualToString:@"69wait"]) {
+        assert(TLinkCurrentNativeBudget()&&TLinkCurrentNativeBudget()->deadline());
+        dispatch_semaphore_signal(taskStarted);assert(!TLinkNativeWaitNs(20000000000ULL));
+    }
     if ([s isEqualToString:@"48large"]) return [NSMutableData dataWithLength:1024 * 1024 + 1];
     return [[NSString stringWithFormat:@"0;;%@\r\n", s] dataUsingEncoding:NSUTF8StringEncoding];
 }
@@ -58,7 +63,9 @@ static uint64_t zx_socketNowMs() { return socketClock.load(std::memory_order_acq
 #include "SocketAcceptUnderTest.inc"
 static size_t ipcTaskCalls = 0, ipcLogs = 0, ipcLength = 0;
 static bool ipcNullStream = false;
+static uint64_t ipcDeadline=0;
 static void processTaskWithContext(UInt8 *bytes, size_t n, CFWriteStreamRef stream, id) {
+    ipcDeadline=TLinkCurrentNativeBudget()?TLinkCurrentNativeBudget()->deadline():0;
     ++ipcTaskCalls; ipcLength = n; ipcNullStream = !stream;
     if (n >= 5 && memcmp(bytes, "48big", 5) == 0) {
         std::string huge(1024 * 1024 + 1, 'x'); notifyClient((UInt8 *)huge.c_str(), stream);
@@ -100,6 +107,19 @@ static void ipcFixtures() {
     assert([ipcLogMessages.lastObject containsString:@"IPC UI tree task=77 response in "]);
     assert([ipcLogMessages.lastObject hasSuffix:@"bytes=0"]);
     for (NSString *message in ipcLogMessages) assert(![message containsString:@"private-selector"]);
+    const char *payload="TASK::69fixture";const uint64_t deadline=TLinkNativeDeadline(1);
+    auto encoded=TLinkC01Encode((const uint8_t *)payload,strlen(payload),deadline);
+    auto bounded=[&](const std::vector<uint8_t> &bytes)->NSString *{
+        CFDataRef data=CFDataCreate(NULL,bytes.data(),CFIndex(bytes.size()));
+        CFDataRef reply=handleIPCMessage(NULL,TLinkC01IPCMessage,data,NULL);CFRelease(data);assert(reply);
+        NSData *owned=CFBridgingRelease(reply);return [[NSString alloc] initWithData:owned encoding:NSUTF8StringEncoding];
+    };
+    const size_t previousCalls=ipcTaskCalls;
+    assert([bounded(encoded) isEqualToString:@"0\r\n"]&&ipcDeadline==deadline&&ipcTaskCalls==previousCalls+1);
+    encoded=TLinkC01Encode((const uint8_t *)payload,strlen(payload),TLinkNativeNowNs()-1);
+    assert([bounded(encoded) containsString:@"c01_request_expired"]&&ipcTaskCalls==previousCalls+1);
+    encoded[0]^=1;assert([bounded(encoded) containsString:@"c01_ipc_envelope_invalid"]&&ipcTaskCalls==previousCalls+1);
+
 }
 static ZXClientContext *client(int *peer) {
     int pair[2]; assert(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
@@ -154,6 +174,18 @@ int main() {
     dispatch_semaphore_signal(taskFinish); drainTasks();
     NSString *ordered = [[NSString alloc] initWithData:receive(aPeer) encoding:NSUTF8StringEncoding];
     assert([ordered isEqualToString:@"0;;99slow\r\n0;;60next\r\n"]);
+    fputs("Socket runtime: C01 deadline starts before queue, plus disconnect cancellation\n",stderr);
+    feed(a,text(@"99slow\n"));assert(dispatch_semaphore_wait(taskStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    feed(b,text(@"69expired\n"));
+    dispatch_semaphore_t age=dispatch_semaphore_create(0);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3100*NSEC_PER_MSEC),dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0),^{dispatch_semaphore_signal(age);});
+    assert(dispatch_semaphore_wait(age,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    dispatch_semaphore_signal(taskFinish);drainTasks();
+    @synchronized(taskCalls){assert(![taskCalls containsObject:@"69expired"]);}
+    NSString *expiredReply=[[NSString alloc] initWithData:receive(bPeer) encoding:NSUTF8StringEncoding];assert([expiredReply isEqualToString:@"1;;c01_request_expired\r\n"]);(void)receive(aPeer);
+    int cancelPeer;ZXClientContext *cancelClient=client(&cancelPeer);feed(cancelClient,text(@"69wait\n"));
+    assert(dispatch_semaphore_wait(taskStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    auto cancellation=cancelClient->c01Cancellation;assert(cancellation);dispose(cancelClient,cancelPeer);drainTasks();assert(cancellation->cancelled());
     // Actual JSON parser/frame encoder and explicit oversized-result fallback.
     int jsonPeer; ZXClientContext *jsonClient = client(&jsonPeer);
     feed(jsonClient, zx_frameJSONResponse(@{@"id": @42, @"task": @48, @"args": @[@"large"]}));

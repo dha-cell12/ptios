@@ -60,7 +60,10 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - C01c3b validation: 36 source-contract runners, 18 native runners and 528 TrollStore source grep assertions pass on Windows, including 3000 frozen full matcher oracle cases and >600k-pixel rounding cases. New actual Foundation/CoreGraphics handler/parser/batch fixture is added to both workflows; macOS/iOS CI and real OpenCV/device qualification remain pending. Details: `IMPLEMENTATION-C01C3B.md`.
 
 - C01c3b CI correction: root macOS compilation reported three unused wire validators in `ImageErrorUnderTest.inc`. The storage runner now extracts only `zx_frameError`, ending before the typed wire-admission section. A cross-platform fixture-boundary assertion prevents accidental validator inclusion; full validators remain exercised by the modern-image handler fixture. Production behavior, `-Werror` and sanitizers are unchanged. Storage and modern-image portable runners pass again on Windows, including 3000 matcher oracle cases. Corrected macOS/iOS CI remains pending.
-- Next: C01d review/implementation of remaining upstream queue/deadline boundaries before closing C01 source work. Build reports do not replace device qualification.
+- User reported the C01c3b build and storage-fixture correction at `74e656f` passed before C01d1; device qualification remains pending.
+- C01d1: root C01 request deadlines now begin before daemon FIFO admission and survive IPC-owner transfers and a bounded/versioned CF envelope. Direct daemon/root task entries cap before license; task-local scopes preserve parent output/cancel without mutating parent deadlines. Disconnect cancels local C01 work, and expired queued work is skipped. Existing FIFO and cleanup contracts stay in place.
+- C01d1 validation: 36 source-contract runners, 19 native runners and 528 TrollStore source grep assertions pass on Windows, including sink/deadline/token/envelope regressions. New actual task-entry/IPC-sender Foundation fixture and expanded socket/CF callback queue/expiry/disconnect tests await macOS/iOS CI and device qualification. Details: `IMPLEMENTATION-C01D1.md`.
+- Next: C01d2 isolation and late-work cleanup at remaining synchronous queue/IPC/capture/engine/file boundaries. C01 is not marked complete; build reports do not replace device qualification.
 
 ## Primary target
 

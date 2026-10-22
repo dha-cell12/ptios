@@ -1,3 +1,5 @@
+#include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkNativeDispatch.h"
 // TODO: multiple client write back support
 
 #include "SocketServer.h"
@@ -50,6 +52,7 @@ typedef NS_ENUM(uint8_t, ZXWireProtocol) {
 @public
     TLinkSocketOutput output;
     std::atomic_bool closed;
+    std::shared_ptr<TLinkNativeCancellation> c01Cancellation;
 }
 @property(nonatomic, assign) CFReadStreamRef readStream;
 @property(nonatomic, assign) CFWriteStreamRef writeStream;
@@ -169,6 +172,7 @@ static void zx_cleanupClient(CFReadStreamRef readStream)
     ZXClientContext *ctx = [socketClients objectForKey:key];
     if (ctx) {
         ctx->closed.store(true, std::memory_order_release);
+        if(ctx->c01Cancellation){ctx->c01Cancellation->cancel();ctx->c01Cancellation.reset();}
         ctx->output.clear(gOutputBytes);
         CFWriteStreamRef writeStream = NULL;
         @synchronized (ctx) {
@@ -425,8 +429,12 @@ static bool shouldWaitForResponse(int taskType)
     }
 }
 
+// BEGIN C01 IPC sender.
 static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
 {
+    auto budget=TLinkCurrentNativeBudget();
+    auto expired=[]()->CFDataRef{const char *line="1;;c01_request_expired\r\n";return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)line,strlen(line));};
+    if(budget&&budget->stopped())return expired();
     CFDataRef responseData = NULL;
     if (access(kTLinkautoIPCReadyMarkerPath, F_OK) != 0) {
         NSLog(@"### com.tlinkauto.tlinkautod: IPC ready marker missing.");
@@ -453,11 +461,13 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
             CFDataRef pingData = CFDataCreate(kCFAllocatorDefault,
                                               (const UInt8 *)kTLinkautoIPCCommandPing,
                                               strlen(kTLinkautoIPCCommandPing));
+            const auto pingTimeout=TLinkC01IPCTimeouts(budget,2.0);
+            if(pingTimeout.send<=0||pingTimeout.receive<=0){if(pingData)CFRelease(pingData);return expired();}
             SInt32 pingResult = CFMessagePortSendRequest(remotePort,
                                                          1,
                                                          pingData,
-                                                         2.0,
-                                                         2.0,
+                                                         pingTimeout.send,
+                                                         pingTimeout.receive,
                                                          kCFRunLoopDefaultMode,
                                                          NULL);
             if (pingData) {
@@ -476,18 +486,25 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
         }
     }
 
-    CFDataRef messageData = CFDataCreate(kCFAllocatorDefault, (const UInt8 *)payload, strlen(payload));
+    if(budget&&budget->stopped())return expired();
+    const size_t payloadLength=strlen(payload);
+    const bool bounded=waitForResponse&&budget&&budget->deadline()&&TLinkC01IPCPayload((const uint8_t *)payload,payloadLength);
+    auto envelope=bounded?TLinkC01Encode((const uint8_t *)payload,payloadLength,budget->deadline()):std::vector<uint8_t>();
+    if(bounded&&envelope.empty())return expired(); // No retry as unbounded legacy work.
+    CFDataRef messageData = CFDataCreate(kCFAllocatorDefault,bounded?envelope.data():(const UInt8 *)payload,
+        CFIndex(bounded?envelope.size():payloadLength));
     bool hotPathPayload = zx_isHotPathPayload(payload);
     if (!hotPathPayload) {
         NSLog(@"### com.tlinkauto.tlinkautod: IPC send payload: %s", payload);
     }
     CFDataRef *responseTarget = waitForResponse ? &responseData : NULL;
-    const CFTimeInterval sendTimeout = waitForResponse ? 5.0 : 1.5;
+    const auto sendTimeout = TLinkC01IPCTimeouts(budget,waitForResponse ? 5.0 : 1.5);
+    if(sendTimeout.send<=0||sendTimeout.receive<=0){if(messageData)CFRelease(messageData);return expired();}
     SInt32 result = CFMessagePortSendRequest(remotePort,
-                                             waitForResponse ? 1 : TLinkIPCNoReplyMessage,
+                                             bounded ? TLinkC01IPCMessage : (waitForResponse ? 1 : TLinkIPCNoReplyMessage),
                                              messageData,
-                                             sendTimeout,
-                                             sendTimeout,
+                                             sendTimeout.send,
+                                             sendTimeout.receive,
                                              kCFRunLoopDefaultMode,
                                              responseTarget);
     if (result != kCFMessagePortSuccess) {
@@ -503,8 +520,11 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
     if (messageData) {
         CFRelease(messageData);
     }
+    if(budget&&budget->stopped()){if(responseData)CFRelease(responseData);return expired();}
     return responseData;
 }
+
+// END C01 IPC sender.
 
 // ------------------------------
 // Daemon-side handlers for heavy tasks (21)
@@ -548,7 +568,7 @@ static NSString *zx_ipcCaptureScreenshotToPath(NSString *path, NSString **errStr
 
     NSString *taskPayload = [NSString stringWithFormat:@"%s29%s1;;%@", kTLinkautoIPCCommandTaskPrefix, "", path];
     __block CFDataRef responseData = NULL;
-    dispatch_sync(ipcQueue(), ^{
+    TLinkNativeDispatchSync(ipcQueue(), ^{
         responseData = sendIPCMessage([taskPayload UTF8String], true);
     });
     NSString *resp = zx_ipcResponseToString(responseData);
@@ -571,7 +591,7 @@ static int zx_ipcGetFrontmostOrientation(void)
 {
     NSString *taskPayload = [NSString stringWithFormat:@"%s35", kTLinkautoIPCCommandTaskPrefix];
     __block CFDataRef responseData = NULL;
-    dispatch_sync(ipcQueue(), ^{
+    TLinkNativeDispatchSync(ipcQueue(), ^{
         responseData = sendIPCMessage([taskPayload UTF8String], true);
     });
     NSString *resp = zx_ipcResponseToString(responseData);
@@ -623,6 +643,7 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 
     zx_logf("Task21 template=%s maxTry=%d acceptable=%.3f scale=%.3f", [templatePath UTF8String], maxTryTimes, acceptableValue, scaleRation);
 
+    if(TLinkNativeStopped())return (char *)strdup("1;;c01_request_expired\r\n");
     NSString *tmpPath = zx_makeTempScreenshotPath();
     NSString *errString = nil;
     NSString *shotPath = zx_ipcCaptureScreenshotToPath(tmpPath, &errString);
@@ -634,12 +655,13 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 
     for (int i = 0; i < 3; i++) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
-        usleep(40000);
+        if(!TLinkNativeWaitNs(40000000)){zx_safeUnlink(shotPath);return (char *)strdup("1;;c01_request_expired\r\n");}
     }
     struct stat st;
     long long fsz = (stat([shotPath fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
     zx_logf("Task21 screenshot path=%s size=%lld", [shotPath UTF8String], fsz);
 
+    if(TLinkNativeStopped()){zx_safeUnlink(shotPath);return (char *)strdup("1;;c01_request_expired\r\n");}
     NSError *err = nil;
     TemplateMatch *tm = [[TemplateMatch alloc] init];
     [tm setAcceptableValue:acceptableValue];
@@ -650,6 +672,7 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
     CGRect r = [tm templateMatchWithPath:shotPath templatePath:templatePath error:&err];
     zx_logf("Task21 end match (opencv)");
     zx_safeUnlink(shotPath);
+    if(TLinkNativeStopped())return (char *)strdup("1;;c01_request_expired\r\n");
 
     if (err) {
         zx_logf("Task21 match error: %s", [[err localizedDescription] UTF8String]);
@@ -790,7 +813,7 @@ static BOOL zx_uiTreeDispatchTap(NSDictionary *element)
                          [point[@"x"] doubleValue] * pointScale,
                          [point[@"y"] doubleValue] * pointScale];
     __block CFDataRef responseData = NULL;
-    dispatch_sync(ipcQueue(), ^{
+    TLinkNativeDispatchSync(ipcQueue(), ^{
         responseData = sendIPCMessage([command UTF8String], true);
     });
     if (!responseData) return false;
@@ -962,6 +985,8 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
     if (!buffer) {
         return nil;
     }
+    TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget((const uint8_t *)buffer,strlen(buffer),TLinkCurrentNativeBudget()));
+    if(TLinkNativeStopped())return zx_dataFromCString("1;;c01_request_expired\r\n");
     const int taskType = getTaskTypeFromBuffer(buffer);
     if (taskType >= 77 && taskType <= 81) {
         zx_logf("received UI tree task=%d payload_redacted=1", taskType);
@@ -984,6 +1009,8 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
                 [licenseDenial UTF8String] ?: "license_required");
         return zx_dataFromCString([licenseDenial UTF8String]);
     }
+
+    if(TLinkNativeStopped())return zx_dataFromCString("1;;c01_request_expired\r\n");
 
     if (taskType == 95) {
         NSString *body = strlen(buffer) > 2 ? [NSString stringWithUTF8String:buffer + 2] : @"";
@@ -1049,7 +1076,7 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
             ? true
             : shouldWaitForResponse(taskType);
         __block CFDataRef responseData = NULL;
-        dispatch_sync(ipcQueue(), ^{
+        TLinkNativeDispatchSync(ipcQueue(), ^{
             responseData = sendIPCMessage([payloadString UTF8String], waitForResponse);
         });
         if (!waitForResponse && taskType == 10) {
@@ -1159,13 +1186,25 @@ static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requ
         zx_cleanupClient(ctx.readStream); // No accepted action/ambiguous success on overload.
         return;
     }
+    TLinkNativeBudgetPtr requestBudget;
+    const uint8_t *task=(const uint8_t *)payload.UTF8String;
+    const size_t taskLength=[payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    if(TLinkC01DurationNs(task,taskLength)){
+        auto token=std::make_shared<TLinkNativeCancellation>();ctx->c01Cancellation=token;
+        auto parent=std::make_shared<TLinkNativeBudget>(token,0,1024*1024);
+        requestBudget=TLinkC01TaskBudget(task,taskLength,parent);
+    }
     ctx.requestPending = true; ++gPendingTasks;
     dispatch_async(zx_taskQueue(), ^{
         @autoreleasepool {
+            TLinkNativeBudgetScope ingressScope(requestBudget);
             NSData *response = nil;
             if (!ctx->closed.load(std::memory_order_acquire)) {
                 NSData *legacy = nil;
-                @try { legacy = zx_handleLegacyRequestBytes([payload UTF8String]); }
+                @try {
+                    legacy=TLinkNativeStopped()?zx_dataFromCString("1;;c01_request_expired\r\n"):zx_handleLegacyRequestBytes([payload UTF8String]);
+                    if(TLinkNativeStopped())legacy=zx_dataFromCString("1;;c01_request_expired\r\n");
+                }
                 @catch (NSException *exception) { (void)exception; legacy = zx_dataFromCString("1;;request_failed\r\n"); }
                 if (legacy.length > 1024 * 1024) legacy = zx_dataFromCString("1;;response_too_large\r\n");
                 if (!json) response = legacy;
@@ -1174,6 +1213,7 @@ static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requ
             dispatch_async(socketQueue(), ^{
                 --gPendingTasks;
                 if (!ctx->closed.load(std::memory_order_acquire)) {
+                    ctx->c01Cancellation.reset();
                     ctx.requestPending = false;
                     if (response.length) zx_writeAll(ctx.writeStream, response);
                     zx_processClientBuffer(ctx);
