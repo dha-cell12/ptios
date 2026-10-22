@@ -33,8 +33,12 @@ on:
       - 'test/color-runtime-test.mm'
       - 'test/frame-vision-*.cpp'
       - 'test/frame-vision-client-test.py'
+      - 'test/modern-image-*.cpp'
+      - 'test/modern-image-*.h'
+      - 'test/frame-color-runtime-test.mm'
       - 'webtango/tlinkauto/client.py'
       - 'test/fixtures/color-match-legacy-v1.inc'
+      - 'test/fixtures/image-matcher-legacy-v1.inc'
       - 'test/fixtures/template-sad-legacy-v1.inc'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
@@ -75,8 +79,12 @@ on:
       - 'test/color-runtime-test.mm'
       - 'test/frame-vision-*.cpp'
       - 'test/frame-vision-client-test.py'
+      - 'test/modern-image-*.cpp'
+      - 'test/modern-image-*.h'
+      - 'test/frame-color-runtime-test.mm'
       - 'webtango/tlinkauto/client.py'
       - 'test/fixtures/color-match-legacy-v1.inc'
+      - 'test/fixtures/image-matcher-legacy-v1.inc'
       - 'test/fixtures/template-sad-legacy-v1.inc'
       - 'test/fixtures/zoom-*.json'
       - 'test/fixtures/secure-pairing-*.json'
@@ -323,6 +331,7 @@ jobs:
           node scripts/check-vision-safety.mjs
           node scripts/check-color-safety.mjs
           node scripts/check-frame-vision-safety.mjs
+          node scripts/check-modern-image-safety.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
           node scripts/check-stream-rtc-control-v2.mjs

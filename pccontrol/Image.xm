@@ -1,3 +1,4 @@
+#include "../shared/TLinkModernImagePolicy.h"
 #include "../shared/TLinkFrameVisionPolicy.h"
 #include <new>
 #include "../shared/TLinkOCRPolicy.h"
@@ -66,13 +67,7 @@ using ZXFrameRef = std::shared_ptr<const ZXFrameObject>;
 using ZXImageRef = std::shared_ptr<const ZXImageObject>;
 // END immutable image payload types.
 
-typedef struct {
-    int dx;
-    int dy;
-    int r;
-    int g;
-    int b;
-} ZXPointColor;
+using ZXPointColor = TLinkColorPoint;
 
 static dispatch_queue_t zx_imageQueue(void)
 {
@@ -112,6 +107,70 @@ static NSError *zx_frameError(NSString *message)
                                code:999
                            userInfo:@{NSLocalizedDescriptionKey:message ?: @"1;;frame_error\r\n"}];
 }
+
+// BEGIN typed frame/image wire admission.
+static bool zx_wireInt(NSArray *data,NSUInteger index,int &value) {
+    return index<data.count && TLinkColorInt([data[index] UTF8String],value);
+}
+static bool zx_wireDouble(NSArray *data,NSUInteger index,double &value) {
+    return index<data.count && TLinkColorDouble([data[index] UTF8String],value);
+}
+static bool zx_frameOptions(NSArray *data,NSUInteger coordIndex,NSUInteger ageIndex) {
+    if(data.count>coordIndex){NSString *coord=[data[coordIndex] lowercaseString];if(![coord isEqualToString:@"pixel"]&&![coord isEqualToString:@"point"])return false;}
+    int age=0;return data.count<=ageIndex || (zx_wireInt(data,ageIndex,age)&&age>=0&&age<=5000);
+}
+static bool zx_frameColorInputs(NSArray *data) {
+    int id=0;if(!zx_wireInt(data,0,id)||id<=0||data.count<2)return false;
+    NSString *mode=[data[1] lowercaseString];
+    NSUInteger required=0,coord=0,age=0;std::vector<NSUInteger> integers,doubles;
+    if([mode isEqualToString:@"pick"]){required=4;coord=4;age=5;doubles={2,3};}
+    else if([mode isEqualToString:@"pick_many"]){required=3;coord=3;age=4;}
+    else if([mode isEqualToString:@"search_single"]){required=13;coord=13;age=14;doubles={2,3,4,5};integers={6,7,8,9,10,11,12};}
+    else if([mode isEqualToString:@"is_colors"]){required=5;coord=5;age=6;integers={3};doubles={4};}
+    else if([mode isEqualToString:@"find_multi_point"]){required=10;coord=10;age=11;integers={7,9};doubles={2,3,4,5,8};}
+    else return false;
+    if(data.count<required||!zx_frameOptions(data,coord,age))return false;
+    for(auto index:integers){int v=0;if(!zx_wireInt(data,index,v))return false;}
+    for(auto index:doubles){double v=0;if(!zx_wireDouble(data,index,v)||std::fabs(v)>double(INT_MAX)-1)return false;}
+    if([mode isEqualToString:@"search_single"]){
+        for(NSUInteger i=6;i<12;++i)if(!TLinkColorRGB([data[i] intValue]))return false;
+        if([data[6] intValue]>[data[7] intValue]||[data[8] intValue]>[data[9] intValue]||[data[10] intValue]>[data[11] intValue])return false;
+        if([data[12] intValue]<0||[data[12] intValue]>1023)return false;
+    }
+    if([mode isEqualToString:@"is_colors"]&&!TLinkColorMode([data[3] intValue],[data[4] doubleValue]))return false;
+    if([mode isEqualToString:@"find_multi_point"]&&(!TLinkColorMode([data[7] intValue],[data[8] doubleValue])||[data[9] intValue]<0||[data[9] intValue]>1023))return false;
+    return true;
+}
+static bool zx_imageInputs(NSArray *data,bool frame) {
+    const NSUInteger shift=frame?1:0;int value=0;
+    if(data.count<10+shift||!zx_wireInt(data,0,value)||value<=0)return false;
+    if(frame&&(!zx_wireInt(data,1,value)||value<=0))return false;
+    for(NSUInteger i=1+shift;i<=4+shift;++i)if(!zx_wireInt(data,i,value))return false;
+    double acceptable=0,low=0,high=0,step=0;
+    if(!zx_wireDouble(data,5+shift,acceptable)||!zx_wireDouble(data,6+shift,low)||!zx_wireDouble(data,7+shift,high)||!zx_wireDouble(data,8+shift,step)||!zx_wireInt(data,9+shift,value))return false;
+    if(!TLinkModernImageParameters(acceptable,float(low),float(high),float(step),value))return false;
+    // Bound the float traversal before capture/queue work, including non-progressing steps.
+    if(std::fabs(high-low)/step>63)return false;
+    return !frame||zx_frameOptions(data,11,12);
+}
+static bool zx_frameBatchInputs(NSArray *data) {
+    int id=0;if(data.count<2||!zx_wireInt(data,0,id)||id<=0||!zx_frameOptions(data,2,3)||[data[1] length]>65536)return false;
+    if(data.count>4&&(!zx_wireInt(data,4,id)||(id!=0&&id!=1)))return false;
+    NSArray *ops=[data[1] componentsSeparatedByString:@"@@"];if(ops.count>64)return false;
+    for(NSString *op in ops){
+        if(op.length==0)continue;
+        NSArray *fields=[op componentsSeparatedByString:@","];NSString *kind=[fields[0] lowercaseString];
+        if([kind isEqualToString:@"img"]){
+            if(fields.count!=9||!zx_wireInt(fields,1,id)||id<=0)return false;
+            for(NSUInteger i=2;i<8;++i){double value=0;if(!zx_wireDouble(fields,i,value)||std::fabs(value)>double(INT_MAX)-1)return false;}
+            if(!zx_wireInt(fields,8,id)||!TLinkModernImageParameters([fields[6] doubleValue],[fields[7] floatValue],[fields[7] floatValue],1,id))return false;
+        }else if([kind isEqualToString:@"pick_many"]){
+            if(fields.count!=2||[fields[1] length]>32768||[[fields[1] componentsSeparatedByString:@"|"] count]>512)return false;
+        }else return false;
+    }
+    return true;
+}
+// END typed frame/image wire admission.
 
 static std::string zx_stringFromPart(NSArray *data, NSUInteger index, const char *fallback)
 {
@@ -243,6 +302,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
                                     int step, int *bestX, int *bestY)
 {
     auto nativeBudget = TLinkCurrentNativeBudget();
+    auto request = TLinkModernImageSlot();
     const int w = templ.cols;
     const int h = templ.rows;
 
@@ -269,6 +329,7 @@ static long long zx_sad_match_region(const Mat &img, const Mat &templ,
             long long sad = 0;
             for (int ty = 0; ty < h; ty++) {
                 if ((ty & 31) == 0 && nativeBudget && nativeBudget->stopped()) return LLONG_MAX;
+                if (request && !request->consume(size_t(w))) return LLONG_MAX;
                 const unsigned char *imgRow = img.ptr<unsigned char>(y + ty) + x;
                 const unsigned char *tRow = templ.ptr<unsigned char>(ty);
                 for (int tx = 0; tx < w; tx++) {
@@ -308,11 +369,16 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
         return false;
     }
 
-    float r = 1.0f;
-    long long pixels = (long long)img.cols * (long long)img.rows;
-    if (pixels > 600000) {
-        r = 0.5f;
-    }
+    auto request = TLinkModernImageSlot();
+    if (!request) request = std::make_shared<TLinkModernImageRequest>(TLinkCurrentNativeBudget());
+    TLinkModernImageScope requestScope(request);
+    if (request->stopped()) return false;
+    TLinkModernImagePlan plan;
+    if (!TLinkModernImageParameters(acceptable,scaleMin,scaleMax,scaleStep,pixelSkip) ||
+        !TLinkModernImageMakePlan(img.cols,img.rows,templ.cols,templ.rows,scaleMin,scaleMax,scaleStep,
+            [](double value){ return cvRound(value); },plan)) return request->fail("image_scale_plan_invalid_or_too_large");
+    if (!request->reserve(plan.bytes)) return false;
+    float r = plan.ratio;
 
     Mat imgWork = img;
     if (r != 1.0f) {
@@ -325,17 +391,9 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
     double bestOverallScore = -1.0;
     int bestX = -1, bestY = -1, bestW = 0, bestH = 0;
 
-    if (scaleStep <= 0.0f) {
-        scaleStep = 0.1f;
-    }
-    if (scaleMax < scaleMin) {
-        float tmp = scaleMax;
-        scaleMax = scaleMin;
-        scaleMin = tmp;
-    }
-
-    for (float s = scaleMax; s >= scaleMin - 0.0001f; s -= scaleStep) {
-        if (TLinkNativeStopped()) return false;
+    for (const auto &scale : plan.scales) {
+        if (request->stopped()) return false;
+        const float s = scale.factor;
         Mat templScaled;
         if (fabsf(s - 1.0f) < 0.0001f) {
             templScaled = templ;
@@ -346,6 +404,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
         if (templScaled.empty()) {
             continue;
         }
+        if (request->stopped()) return false;
         Mat templWork = templScaled;
         if (r != 1.0f) {
             cv::resize(templScaled, templWork, cv::Size(0, 0), r, r, cv::INTER_AREA);
@@ -356,6 +415,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
             continue;
         }
 
+        if (request->stopped()) return false;
         int bx = 0, by = 0;
         long long bestSad = zx_sad_match_region(imgWork, templWork,
                                                0, 0,
@@ -364,6 +424,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
                                                coarseStep,
                                                &bx, &by);
 
+        if (request->stopped()) return false;
         int refineRadius = coarseStep * 2;
         int rbx = bx, rby = by;
         long long refinedSad = zx_sad_match_region(imgWork, templWork,
@@ -371,6 +432,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
                                                    bx + refineRadius, by + refineRadius,
                                                    1,
                                                    &rbx, &rby);
+        if (request->stopped()) return false;
         if (refinedSad < bestSad) {
             bestSad = refinedSad;
             bx = rbx;
@@ -570,11 +632,16 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
 
 NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 {
+    auto request = std::make_shared<TLinkModernImageRequest>(TLinkCurrentNativeBudget());
+    TLinkModernImageScope requestScope(request);
+    if(request->stopped()){if(error)*error=zx_frameError(@"-1;;template_cancelled_or_timed_out\r\n");return nil;}
+
     NSArray<NSString *> *data = zx_splitEventData(eventData);
     if ([data count] < 11) {
         if (error) *error = zx_frameError(@"1;;Find image in frame format should be frame_id;;image_id;;x;;y;;w;;h;;acceptable;;scale_min;;scale_max;;scale_step;;pixel_skip[;;coord;;max_age_ms]\r\n");
         return nil;
     }
+    if(!zx_imageInputs(data,true)){if(error)*error=zx_frameError(@"-1;;invalid_image_parameters\r\n");return nil;}
     uint32_t frameId = (uint32_t)[data[0] intValue];
     uint32_t imageId = (uint32_t)[data[1] intValue];
     int rx = [data[2] intValue];
@@ -623,17 +690,19 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
             blockErr = zx_frameError(@"1;;image_not_found\r\n");
             return;
         }
+        if(frame.gray.cols!=frame.width||frame.gray.rows!=frame.height){blockErr=zx_frameError(@"1;;frame_geometry_invalid\r\n");return;}
         uint64_t ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
         int workX = zx_coordToPixel(rx, frame.scale, pointCoord);
         int workY = zx_coordToPixel(ry, frame.scale, pointCoord);
         int workW = zx_coordToPixel(rw, frame.scale, pointCoord);
         int workH = zx_coordToPixel(rh, frame.scale, pointCoord);
+        if(workX==INT_MIN||workY==INT_MIN||workW==INT_MIN||workH==INT_MIN){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
         if (workX < 0) workX = 0;
         if (workY < 0) workY = 0;
         if (workX >= frame.width) workX = frame.width - 1;
         if (workY >= frame.height) workY = frame.height - 1;
-        if (workW <= 0 || workX + workW > frame.width) workW = frame.width - workX;
-        if (workH <= 0 || workY + workH > frame.height) workH = frame.height - workY;
+        if (workW <= 0 || workW > frame.width - workX) workW = frame.width - workX;
+        if (workH <= 0 || workH > frame.height - workY) workH = frame.height - workY;
 
         CFAbsoluteTime total0 = TLinkImageNowSeconds();
         cv::Rect roi(workX, workY, workW, workH);
@@ -654,6 +723,7 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
         ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f;;%llu;;%.3f;;%.3f",
                absX, absY, mw, mh, cx, cy, score, (unsigned long long)ageMs, totalMs, totalMs];
     }();
+    if (request->stopped()) blockErr = zx_frameError([NSString stringWithFormat:@"-1;;%s\r\n",request->error()]);
     if (blockErr) {
         if (error) *error = blockErr;
         return nil;
@@ -663,11 +733,14 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
 
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 {
+    TLinkColorRequest request(TLinkCurrentNativeBudget());
+    if(!request.admitted()){if(error)*error=zx_frameError(@"1;;color_compute_busy\r\n");return nil;}
     NSArray<NSString *> *data = zx_splitEventData(eventData);
     if ([data count] < 2) {
         if (error) *error = zx_frameError(@"1;;Color in frame format should be frame_id;;mode;;...\r\n");
         return nil;
     }
+    if(!zx_frameColorInputs(data)){if(error)*error=zx_frameError(@"1;;invalid_frame_color_parameters\r\n");return nil;}
     uint32_t frameId = (uint32_t)[data[0] intValue];
     NSString *mode = [[data[1] lowercaseString] copy];
 
@@ -688,6 +761,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             blockErr = zx_frameError(@"1;;frame_missing_bgra\r\n");
             return;
         }
+        if(!TLinkFrameColorGeometry(frame.width,frame.height,frame.bytesPerRow,frame.bgra.size())){blockErr=zx_frameError(@"1;;frame_geometry_invalid\r\n");return;}
         uint64_t ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
         CFAbsoluteTime total0 = TLinkImageNowSeconds();
 
@@ -700,6 +774,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             int y = zx_coordToPixel([data[3] doubleValue], frame.scale, pointCoord);
             if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
             int r = 0, g = 0, b = 0;
+            if(!request.consume())return;
             zx_readBGRA(frame, x, y, &r, &g, &b);
             double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%llu;;%.3f;;%.3f", r, g, b, (unsigned long long)ageMs, totalMs, totalMs];
@@ -712,16 +787,22 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             uint64_t maxAgeMs = ([data count] >= 5) ? (uint64_t)MAX(0, [data[4] longLongValue]) : kDefaultFrameTtlMs;
             if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
 
+            if([data[2] length]>32768){blockErr=zx_frameError(@"1;;point_table_limit\r\n");return;}
             NSArray<NSString *> *items = [data[2] componentsSeparatedByString:@"|"];
+            if(items.count>512){blockErr=zx_frameError(@"1;;point_table_limit\r\n");return;}
             NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithCapacity:[items count]];
             for (NSString *item in items) {
                 if (!item || [item length] == 0) continue;
                 NSArray<NSString *> *xy = [item componentsSeparatedByString:@","];
                 if ([xy count] != 2) { blockErr = zx_frameError(@"1;;invalid_pick_many_point\r\n"); return; }
-                int x = zx_coordToPixel([xy[0] doubleValue], frame.scale, pointCoord);
-                int y = zx_coordToPixel([xy[1] doubleValue], frame.scale, pointCoord);
+                double px=0,py=0;int x=0,y=0;
+                if(!TLinkColorDouble([xy[0] UTF8String],px)||!TLinkColorDouble([xy[1] UTF8String],py)||
+                   !TLinkFrameColorCoordinate(px,frame.scale,pointCoord,x)||!TLinkFrameColorCoordinate(py,frame.scale,pointCoord,y)){
+                    blockErr=zx_frameError(@"1;;invalid_pick_many_point\r\n");return;
+                }
                 if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
                 int r = 0, g = 0, b = 0;
+                if(!request.consume())return;
                 zx_readBGRA(frame, x, y, &r, &g, &b);
                 [parts addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
             }
@@ -739,19 +820,20 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             int y = zx_coordToPixel([data[3] doubleValue], frame.scale, pointCoord);
             int w = zx_coordToPixel([data[4] doubleValue], frame.scale, pointCoord);
             int h = zx_coordToPixel([data[5] doubleValue], frame.scale, pointCoord);
+            if(x==INT_MIN||y==INT_MIN||w==INT_MIN||h==INT_MIN){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
             int rmin = [data[6] intValue], rmax = [data[7] intValue];
             int gmin = [data[8] intValue], gmax = [data[9] intValue];
             int bmin = [data[10] intValue], bmax = [data[11] intValue];
             int step = [data[12] intValue] + 1;
-            if (step <= 0) step = 1;
             if (x < 0) x = 0; if (y < 0) y = 0;
             if (x >= frame.width) x = frame.width - 1; if (y >= frame.height) y = frame.height - 1;
-            if (w <= 0 || x + w > frame.width) w = frame.width - x;
-            if (h <= 0 || y + h > frame.height) h = frame.height - y;
+            if (w <= 0 || w > frame.width - x) w = frame.width - x;
+            if (h <= 0 || h > frame.height - y) h = frame.height - y;
             for (int cy = 0; cy < h; cy += step) {
-                if (TLinkNativeStopped()) return;
+                if (request.stopped()) return;
                 const uint8_t *row = frame.bgra.data() + (size_t)(y + cy) * (size_t)frame.bytesPerRow;
                 for (int cx = 0; cx < w; cx += step) {
+                    if(!request.consume())return;
                     const uint8_t *p = row + (size_t)(x + cx) * 4;
                     int b = p[0], g = p[1], r = p[2];
                     if (r >= rmin && r <= rmax && g >= gmin && g <= gmax && b >= bmin && b <= bmax) {
@@ -781,6 +863,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
                 int y = zx_coordToPixel(pc.dy, frame.scale, pointCoord);
                 if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { matched = false; break; }
                 int r = 0, g = 0, b = 0;
+                if(!request.consume())return;
                 zx_readBGRA(frame, x, y, &r, &g, &b);
                 if (!zx_bgraColorMatch(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) { matched = false; break; }
             }
@@ -798,29 +881,34 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             int regionY = zx_coordToPixel([data[3] doubleValue], frame.scale, pointCoord);
             int regionW = zx_coordToPixel([data[4] doubleValue], frame.scale, pointCoord);
             int regionH = zx_coordToPixel([data[5] doubleValue], frame.scale, pointCoord);
+            if(regionX==INT_MIN||regionY==INT_MIN||regionW==INT_MIN||regionH==INT_MIN){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
             std::vector<ZXPointColor> points;
             if (!zx_parsePointTableVector(data[6], points, &blockErr)) return;
             int colorMode = [data[7] intValue];
             double value = [data[8] doubleValue];
             int step = [data[9] intValue] + 1;
-            if (step <= 0) step = 1;
             if (regionX < 0) regionX = 0; if (regionY < 0) regionY = 0;
             if (regionX >= frame.width) regionX = frame.width - 1; if (regionY >= frame.height) regionY = frame.height - 1;
-            if (regionW <= 0 || regionX + regionW > frame.width) regionW = frame.width - regionX;
-            if (regionH <= 0 || regionY + regionH > frame.height) regionH = frame.height - regionY;
-            int minDx = INT_MAX, minDy = INT_MAX, maxDx = INT_MIN, maxDy = INT_MIN;
-            for (const ZXPointColor &pc : points) { if (pc.dx < minDx) minDx = pc.dx; if (pc.dy < minDy) minDy = pc.dy; if (pc.dx > maxDx) maxDx = pc.dx; if (pc.dy > maxDy) maxDy = pc.dy; }
-            int axStart = MAX(regionX, -minDx);
-            int ayStart = MAX(regionY, -minDy);
-            int axEnd = MIN(regionX + regionW - 1, frame.width - 1 - maxDx);
-            int ayEnd = MIN(regionY + regionH - 1, frame.height - 1 - maxDy);
+            if (regionW <= 0 || regionW > frame.width - regionX) regionW = frame.width - regionX;
+            if (regionH <= 0 || regionH > frame.height - regionY) regionH = frame.height - regionY;
+            for(auto &pc:points){int dx=0,dy=0;
+                if(!TLinkFrameColorCoordinate(pc.dx,frame.scale,pointCoord,dx)||!TLinkFrameColorCoordinate(pc.dy,frame.scale,pointCoord,dy)){
+                    blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;
+                }pc.dx=dx;pc.dy=dy;
+            }
+            TLinkColorRect region;region.x=regionX;region.y=regionY;region.width=regionW;region.height=regionH;
+            TLinkColorRect anchors,crop;
+            const bool hasAnchors=TLinkColorAnchors(frame.width,frame.height,region,points,anchors,crop);
+            const int axStart=anchors.x,ayStart=anchors.y;
+            const int axEnd=hasAnchors?anchors.x+anchors.width-1:-1,ayEnd=hasAnchors?anchors.y+anchors.height-1:-1;
             if (axStart <= axEnd && ayStart <= ayEnd) {
                 for (int ay = ayStart; ay <= ayEnd; ay += step) {
-                    if (TLinkNativeStopped()) return;
+                    if (request.stopped()) return;
                     for (int ax = axStart; ax <= axEnd; ax += step) {
                         bool ok = true;
                         for (const ZXPointColor &pc : points) {
                             int r = 0, g = 0, b = 0;
+                            if(!request.consume())return;
                             zx_readBGRA(frame, ax + pc.dx, ay + pc.dy, &r, &g, &b);
                             if (!zx_bgraColorMatch(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) { ok = false; break; }
                         }
@@ -839,6 +927,7 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 
         blockErr = zx_frameError(@"1;;unknown_color_frame_mode\r\n");
     }();
+    if(request.stopped())blockErr=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",request.error()]);
     if (blockErr) {
         if (error) *error = blockErr;
         return nil;
@@ -848,11 +937,16 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 
 NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
 {
+    auto request = std::make_shared<TLinkModernImageRequest>(TLinkCurrentNativeBudget());
+    TLinkModernImageScope requestScope(request);
+    if(request->stopped()){if(error)*error=zx_frameError(@"-1;;template_cancelled_or_timed_out\r\n");return nil;}
+
     NSArray<NSString *> *data = zx_splitEventData(eventData);
     if ([data count] < 2) {
         if (error) *error = zx_frameError(@"1;;Frame batch format should be frame_id;;op@@op...[;;coord;;max_age_ms;;auto_release]\r\n");
         return nil;
     }
+    if(!zx_frameBatchInputs(data)){if(error)*error=zx_frameError(@"1;;invalid_frame_batch_parameters\r\n");return nil;}
     uint32_t frameId = (uint32_t)[data[0] intValue];
     NSString *opsRaw = data[1];
     bool pointCoord = ([data count] >= 3) ? zx_stringIsPointCoord(data[2]) : false;
@@ -868,7 +962,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
     __block unordered_map<uint32_t, ZXImageRef> admittedImages;
     NSArray<NSString *> *ops = [opsRaw componentsSeparatedByString:@"@@"];
     for (NSString *opRaw in ops) {
-        if (TLinkNativeStopped()) return nil;
+        if(request->stopped()){if(error)*error=zx_frameError([NSString stringWithFormat:@"-1;;%s\r\n",request->error()]);return nil;}
         NSArray<NSString *> *fields = [opRaw componentsSeparatedByString:@","];
         if ([fields count] >= 2 && [[fields[0] lowercaseString] isEqualToString:@"img"]) {
             admittedImages.emplace((uint32_t)[fields[1] intValue], ZXImageRef());
@@ -903,7 +997,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
         NSMutableArray<NSString *> *results = [NSMutableArray array];
 
         for (NSString *opRaw in ops) {
-            if (TLinkNativeStopped()) return;
+            if (request->stopped()) return;
             if (!opRaw || [opRaw length] == 0) continue;
             NSArray<NSString *> *fields = [opRaw componentsSeparatedByString:@","];
             if ([fields count] < 1) { blockErr = zx_frameError(@"1;;invalid_batch_op\r\n"); return; }
@@ -916,16 +1010,18 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
                 auto iit = images.find(imageId);
                 if (iit == images.end() || !iit->second || iit->second->gray.empty()) { blockErr = zx_frameError(@"1;;image_not_found\r\n"); return; }
 
+                if(frame.gray.cols!=frame.width||frame.gray.rows!=frame.height){blockErr=zx_frameError(@"1;;frame_geometry_invalid\r\n");return;}
                 int workX = zx_coordToPixel([fields[2] doubleValue], frame.scale, pointCoord);
                 int workY = zx_coordToPixel([fields[3] doubleValue], frame.scale, pointCoord);
                 int workW = zx_coordToPixel([fields[4] doubleValue], frame.scale, pointCoord);
                 int workH = zx_coordToPixel([fields[5] doubleValue], frame.scale, pointCoord);
+                if(workX==INT_MIN||workY==INT_MIN||workW==INT_MIN||workH==INT_MIN){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
                 if (workX < 0) workX = 0;
                 if (workY < 0) workY = 0;
                 if (workX >= frame.width) workX = frame.width - 1;
                 if (workY >= frame.height) workY = frame.height - 1;
-                if (workW <= 0 || workX + workW > frame.width) workW = frame.width - workX;
-                if (workH <= 0 || workY + workH > frame.height) workH = frame.height - workY;
+                if (workW <= 0 || workW > frame.width - workX) workW = frame.width - workX;
+                if (workH <= 0 || workH > frame.height - workY) workH = frame.height - workY;
 
                 double acceptable = [fields[6] doubleValue];
                 float scale = [fields[7] floatValue];
@@ -938,6 +1034,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
                 bool match = zx_findTemplateSAD(region, iit->second->gray, acceptable, scale, scale, 1.0f, pixelSkip,
                                                 &mx, &my, &mw, &mh, &score);
                 double opMs = (TLinkImageNowSeconds() - op0) * 1000.0;
+                if(request->stopped())return;
                 if (!match) {
                     [results addObject:[NSString stringWithFormat:@"img:-1,-1,0,0,-1,-1,%.4f,%.3f", score, opMs]];
                 } else {
@@ -953,6 +1050,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
             if ([kind isEqualToString:@"pick_many"]) {
                 if ([fields count] < 2) { blockErr = zx_frameError(@"1;;batch pick_many format should be pick_many,x,y|x,y\r\n"); return; }
                 if (!frame.hasBGRA || frame.bgra.empty()) { blockErr = zx_frameError(@"1;;frame_missing_bgra\r\n"); return; }
+                if(!TLinkFrameColorGeometry(frame.width,frame.height,frame.bytesPerRow,frame.bgra.size())){blockErr=zx_frameError(@"1;;frame_geometry_invalid\r\n");return;}
                 CFAbsoluteTime op0 = TLinkImageNowSeconds();
                 NSArray<NSString *> *items = [fields[1] componentsSeparatedByString:@"|"];
                 NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithCapacity:[items count]];
@@ -961,8 +1059,12 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
                     NSArray<NSString *> *xy = [item componentsSeparatedByString:@":"];
                     if ([xy count] != 2) xy = [item componentsSeparatedByString:@"/"];
                     if ([xy count] != 2) { blockErr = zx_frameError(@"1;;invalid_batch_pick_many_point\r\n"); return; }
-                    int x = zx_coordToPixel([xy[0] doubleValue], frame.scale, pointCoord);
-                    int y = zx_coordToPixel([xy[1] doubleValue], frame.scale, pointCoord);
+                    double px=0,py=0;int x=0,y=0;
+                    if(!TLinkColorDouble([xy[0] UTF8String],px)||!TLinkColorDouble([xy[1] UTF8String],py)||
+                       !TLinkFrameColorCoordinate(px,frame.scale,pointCoord,x)||!TLinkFrameColorCoordinate(py,frame.scale,pointCoord,y)){
+                        blockErr=zx_frameError(@"1;;invalid_batch_pick_many_point\r\n");return;
+                    }
+                    if(!request->consume(1))return;
                     if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
                     int r = 0, g = 0, b = 0;
                     zx_readBGRA(frame, x, y, &r, &g, &b);
@@ -979,6 +1081,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
 
         double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
         ret = [NSString stringWithFormat:@"%@;;%llu;;%.3f", [results componentsJoinedByString:@"@@"], (unsigned long long)ageMs, totalMs];
+        if(request->stopped())return;
         if (autoRelease) {
             TLinkNativeDispatchSync(zx_imageQueue(), ^{
                 gFrameStore.erase(frameId); // IDs are never reused; admitted readers retain their snapshot.
@@ -986,6 +1089,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error)
             });
         }
     }();
+    if (request->stopped()) blockErr = zx_frameError([NSString stringWithFormat:@"-1;;%s\r\n",request->error()]);
     if (blockErr) {
         if (error) *error = blockErr;
         return nil;
@@ -1237,16 +1341,15 @@ static bool zx_stringIsPointCoord(NSString *coord)
 
 static int zx_coordToPixel(double value, double scale, bool pointCoord)
 {
-    double v = pointCoord ? value * scale : value;
-    if (v < 0.0) v = 0.0;
-    return (int)llround(v);
+    int result=INT_MIN;
+    return TLinkFrameColorCoordinate(value,scale,pointCoord,result) ? result : INT_MIN;
 }
 
 static bool zx_frameTooOld(const ZXFrameObject &frame, uint64_t maxAgeMs, uint64_t nowMs, NSError **error)
 {
     uint64_t age = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
     if (maxAgeMs == 0) maxAgeMs = kDefaultFrameTtlMs;
-    if (age > maxAgeMs) {
+    if (nowMs >= frame.expiresAtMs || age > maxAgeMs) {
         if (error) {
             *error = zx_frameError([NSString stringWithFormat:@"1;;frame_expired;;%llu\r\n", (unsigned long long)age]);
         }
@@ -1301,30 +1404,24 @@ static inline bool zx_bgraColorMatch(int r, int g, int b, int tr, int tg, int tb
 
 static bool zx_parsePointTableVector(NSString *tableStr, std::vector<ZXPointColor> &points, NSError **error)
 {
-    if (!tableStr || [tableStr length] == 0) {
-        if (error) *error = zx_frameError(@"1;;point_table_empty\r\n");
-        return false;
+    points.clear();
+    if (!tableStr || tableStr.length==0 || tableStr.length>32768) {
+        if(error)*error=zx_frameError(@"1;;point_table_limit_or_empty\r\n");return false;
     }
-    NSArray<NSString *> *items = [tableStr componentsSeparatedByString:@"|"];
-    for (NSString *item in items) {
-        if (!item || [item length] == 0) continue;
-        NSArray<NSString *> *parts = [item componentsSeparatedByString:@",,"];
-        if ([parts count] != 5) {
-            if (error) *error = zx_frameError(@"1;;invalid_point_table\r\n");
-            return false;
-        }
+    NSArray<NSString *> *items=[tableStr componentsSeparatedByString:@"|"];
+    if(items.count>512){if(error)*error=zx_frameError(@"1;;point_table_limit\r\n");return false;}
+    for(NSString *item in items){
+        if(item.length==0)continue;
+        NSArray<NSString *> *parts=[item componentsSeparatedByString:@",,"];
         ZXPointColor pc;
-        pc.dx = [parts[0] intValue];
-        pc.dy = [parts[1] intValue];
-        pc.r = [parts[2] intValue];
-        pc.g = [parts[3] intValue];
-        pc.b = [parts[4] intValue];
+        if(parts.count!=5 || !TLinkColorInt([parts[0] UTF8String],pc.dx) || !TLinkColorInt([parts[1] UTF8String],pc.dy) ||
+           !TLinkColorInt([parts[2] UTF8String],pc.r) || !TLinkColorInt([parts[3] UTF8String],pc.g) || !TLinkColorInt([parts[4] UTF8String],pc.b) ||
+           !TLinkColorRGB(pc.r)||!TLinkColorRGB(pc.g)||!TLinkColorRGB(pc.b)){
+            if(error)*error=zx_frameError(@"1;;invalid_point_table\r\n");return false;
+        }
         points.push_back(pc);
     }
-    if (points.empty()) {
-        if (error) *error = zx_frameError(@"1;;point_table_empty\r\n");
-        return false;
-    }
+    if(points.empty()){if(error)*error=zx_frameError(@"1;;point_table_empty\r\n");return false;}
     return true;
 }
 
@@ -1578,6 +1675,10 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
 
 NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
 {
+    auto request = std::make_shared<TLinkModernImageRequest>(TLinkCurrentNativeBudget());
+    TLinkModernImageScope requestScope(request);
+    if(request->stopped()){if(error)*error=zx_frameError(@"-1;;template_cancelled_or_timed_out\r\n");return nil;}
+
     TLinkImageWork work(gImageCompute);
     if (!work) { if (error) *error = zx_frameError(@"-1;;image_compute_busy\r\n"); return nil; }
 
@@ -1588,6 +1689,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
         }
         return nil;
     }
+    if(!zx_imageInputs(data,false)){if(error)*error=zx_frameError(@"-1;;invalid_image_parameters\r\n");return nil;}
     uint32_t templateId = (uint32_t)[data[0] intValue];
     int rx = [data[1] intValue];
     int ry = [data[2] intValue];
@@ -1615,6 +1717,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
         return nil;
     }
 
+    if(request->stopped()){if(error)*error=zx_frameError(@"-1;;template_cancelled_or_timed_out\r\n");return nil;}
     CGImageRef screen = [Screen createScreenShotCGImageRef];
     if (!screen) {
         if (error) {
@@ -1622,27 +1725,45 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
         }
         return nil;
     }
+    struct ImageOwner {
+        CGImageRef image;
+        explicit ImageOwner(CGImageRef value):image(value){}
+        ~ImageOwner(){reset();}
+        void reset(){if(image){CGImageRelease(image);image=NULL;}}
+        ImageOwner(const ImageOwner &)=delete;ImageOwner &operator=(const ImageOwner &)=delete;
+    };
+    ImageOwner screenOwner(screen);
+    size_t pixels=0;
+    if(!TLinkImagePixels(CGImageGetWidth(screen),CGImageGetHeight(screen),8388608,&pixels)){
+        screenOwner.reset();if(error)*error=zx_frameError(@"-1;;image_source_pixel_limit\r\n");return nil;
+    }
     int sw = (int)CGImageGetWidth(screen);
     int sh = (int)CGImageGetHeight(screen);
     if (rx < 0) rx = 0;
     if (ry < 0) ry = 0;
     if (rx >= sw) rx = sw - 1;
     if (ry >= sh) ry = sh - 1;
-    if (rw <= 0 || rx + rw > sw) rw = sw - rx;
-    if (rh <= 0 || ry + rh > sh) rh = sh - ry;
+    if (rw <= 0 || rw > sw - rx) rw = sw - rx;
+    if (rh <= 0 || rh > sh - ry) rh = sh - ry;
 
+    TLinkModernImagePlan plan;
+    if(!TLinkModernImageMakePlan(rw,rh,templObj->gray.cols,templObj->gray.rows,scaleMin,scaleMax,scaleStep,
+       [](double value){return cvRound(value);},plan)||!request->reserve(plan.bytes)||request->stopped()){
+        screenOwner.reset();if(error)*error=zx_frameError(@"-1;;image_preparation_limit_or_cancelled\r\n");return nil;
+    }
     CGRect cropRect = CGRectMake(rx, ry, rw, rh);
     CGImageRef cropped = CGImageCreateWithImageInRect(screen, cropRect);
-    CGImageRelease(screen);
+    screenOwner.reset();
     if (!cropped) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to crop screenshot.\r\n"}];
         }
         return nil;
     }
+    ImageOwner cropOwner(cropped);
     NSError *convErr = nil;
     Mat imgGray = zx_cvMatGrayFromCGImage(cropped, &convErr);
-    CGImageRelease(cropped);
+    cropOwner.reset();
     if (imgGray.empty()) {
         if (error) {
             *error = convErr ?: [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to convert screenshot to mat.\r\n"}];
@@ -1654,6 +1775,7 @@ NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
     double score = 0.0;
     BOOL match = zx_findTemplateSAD(imgGray, templObj->gray, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip,
                                    &mx, &my, &mw, &mh, &score);
+    if(request->stopped()){if(error)*error=zx_frameError([NSString stringWithFormat:@"-1;;%s\r\n",request->error()]);return nil;}
     if (!match) {
         // Provide best score to help tuning acceptable threshold.
         return [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f", score];

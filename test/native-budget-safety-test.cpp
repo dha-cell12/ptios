@@ -1,5 +1,6 @@
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkTemplatePolicy.h"
+#include "../shared/TLinkModernImagePolicy.h"
 #include <cassert>
 #include <climits>
 #include <cmath>
@@ -16,6 +17,7 @@ struct Mat {
     Mat(int c, int r, unsigned char value) : cols(c), rows(r), bytes(size_t(c) * size_t(r), value) {}
     template<class T> const T *ptr(int row) const { return reinterpret_cast<const T *>(bytes.data() + size_t(row) * size_t(cols)); }
 };
+static int cvRound(double value){return int(std::nearbyint(value));}
 #include "ImageSadUnderTest.inc"
 #include "TemplateSadUnderTest.inc"
 // Image.h undefines these OpenCV-conflicting macros. Compile the full scale helper

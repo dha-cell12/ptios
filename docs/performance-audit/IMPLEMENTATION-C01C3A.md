@@ -1,7 +1,7 @@
 # C01c3a — explicit frame-backed root Vision
 
 Date: 2026-10-23 (Asia/Bangkok). Baseline: `5ae231b`; user reported the C01c2 build plus Vision SDK warning corrections passed before this slice.
-Status: **source implemented; new macOS/iOS build and device qualification pending**.
+Status: **build accepted by the user at `71de52b`; device qualification pending**. Frame-color and modern matcher bounds are implemented in the next slice, [IMPLEMENTATION-C01C3B.md](IMPLEMENTATION-C01C3B.md), with its new CI/device checks pending.
 
 ## Scope
 

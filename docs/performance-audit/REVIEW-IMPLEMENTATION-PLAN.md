@@ -8,7 +8,7 @@ Phần lớn nhận xét có cơ sở ở mã nguồn hiện tại và dùng đ�
 
 Đã đối chiếu 130 mã nhận xét trong FINDINGS (24 P0, 78 P1, 28 P2), các luồng gọi và cấu hình build liên quan. Đây là kiểm tra tĩnh; chưa chạy build iOS, Instruments hoặc tái hiện trên thiết bị. BENCHMARK-S002 đến BENCHMARK-S011 là kế hoạch đo, không phải kết quả đo. Chưa có cơ sở cam kết tỷ lệ giảm CPU/pin/RAM.
 
-Cập nhật triển khai C01c3a (23/10/2026): A01–C01c2 và sửa warning SDK Vision đã được người dùng báo build pass; còn xác minh thiết bị. C01c3a đã triển khai source Vision root theo frame qua task 27.6: kiểm tra TTL/max-age, ROI theo scale đã lưu, provider giữ snapshot/byte charge qua release và không capture bù. Đã thêm client Python ocr_from_frame. 36 contract, 17 runner native và 528 grep workflow pass trên Windows; fixture macOS mở rộng và build iOS chờ CI. Chi tiết: IMPLEMENTATION-C01C3A.md. Tiếp theo C01c3b frame-color/matcher budgets; upstream queue isolation còn lại.
+Cập nhật triển khai C01c3b (23/10/2026): người dùng báo build A01–C01c3a pass (`71de52b`); còn xác minh thiết bị. C01c3b bổ sung validation/budget task màu theo frame, offset có dấu/theo scale, plan scale và scratch/work budget cho matcher 49/68/70, cùng giới hạn batch. 36 contract, 18 runner native và 528 grep workflow pass trên Windows; fixture macOS mới và build iOS chờ CI. Chi tiết: IMPLEMENTATION-C01C3B.md. Tiếp theo C01d rà soát/triển khai ranh giới queue/deadline còn lại. Không đánh dấu toàn bộ C01 hoàn tất.
 
 ## Phạm vi triển khai đã chốt
 
@@ -60,7 +60,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 
 | Nhóm | Mã chính | Công việc và giới hạn |
 |---|---|---|
-| C01 | P0-10, P0-11, P1-25, P1-27, P1-28, P1-29, P1-30, P1-31, P1-32, P1-33, P1-34, P1-35, P1-36, P1-37, P1-38, P1-39 | **C01a–C01c2 build pass theo người dùng; C01c3a Vision frame đã triển khai source, chờ build/device: IMPLEMENTATION-C01C3A.md. C01c3b frame-color/matcher còn lại.** OCR/template/color: cache/pixel/scale/tries budget; deadline gồm queue/preprocess/compute; dọn lỗi Vision/ColorPicker; frame reuse; cấu hình OpenCV một lần nếu phù hợp. Không tăng OCR parallelism trước memory budget. |
+| C01 | P0-10, P0-11, P1-25, P1-27, P1-28, P1-29, P1-30, P1-31, P1-32, P1-33, P1-34, P1-35, P1-36, P1-37, P1-38, P1-39 | **C01a–C01c3a build pass theo người dùng; C01c3b frame-color/matcher đã triển khai source, chờ CI/device: IMPLEMENTATION-C01C3B.md. C01d queue/deadline còn lại.** OCR/template/color: cache/pixel/scale/tries budget; deadline gồm queue/preprocess/compute; dọn lỗi Vision/ColorPicker; frame reuse; cấu hình OpenCV một lần nếu phù hợp. Không tăng OCR parallelism trước memory budget. |
 | C02 | P0-12, P0-13, P1-04, P1-05, P1-40, P1-41 | Typed native API dùng chung; helper transport theo event; config snapshot; dedupe có byte cap; gesture absolute deadline. Giữ ordering, reconnect/dedupe và không lặp side effect. |
 | C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58 | Logger bounded/batch; buffered readLine giữ seek/EOF; compact history/lock ngắn/log retention; status snapshot; xử lý commit lỗi/journal recovery; encoder theo protocol. Chốt durability trước thay journal format. |
 | C04 | P0-19, P1-62, P1-63 | VPN rootfull khỏi IPC callback đồng bộ dài; deadline bao các bước; admission/coalescing; cache capability bất biến. Không chỉ kéo outer timeout lên 30s rồi giữ nguyên HOL. |

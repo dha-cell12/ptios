@@ -1,5 +1,6 @@
 #include "../shared/TLinkNativeDispatch.h"
 #include <new>
+#include "../shared/TLinkModernImagePolicy.h"
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -45,6 +46,7 @@ static NSString *findAdmissionFixture(uint32_t frameId, uint32_t imageId, NSErro
     return ret;
 }
 static NSString *batchAdmissionFixture(uint32_t frameId, uint32_t imageId, NSString *opsRaw, NSError **error) {
+    auto request=std::make_shared<TLinkModernImageRequest>(TLinkNativeBudgetPtr{});
 #include "ImageBatchAdmissionUnderTest.inc"
     (void)blockErr;
     [&] {
