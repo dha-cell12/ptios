@@ -54,6 +54,10 @@ for (const [label, name] of [['Find', 'handleFindImageInFrameTaskFromRawData'], 
   assert.ok(lookup, `${name}: missing production compute lookup`);
   admissionFixtures[`Image${label}LookupUnderTest.inc`] = lookup[0];
 }
+// This fixture needs only the error constructor. Wire validators belong to the
+// modern-image handler fixture and would be unused under macOS -Werror here.
+const frameErrorHelper = section('static NSError *zx_frameError(', '// BEGIN typed frame/image wire admission.');
+assert.doesNotMatch(frameErrorHelper, /\bstatic\s+bool\s+zx_/, 'Storage error fixture must not import wire validators');
 const fixtures = {
   ...admissionFixtures,
   'ImagePayloadUnderTest.inc': section('// BEGIN immutable image payload types', '// END immutable image payload types.'),
@@ -63,7 +67,7 @@ const fixtures = {
   'ImageCoreUnderTest.inc': section('// BEGIN image store core', '// END image store core.'),
   'ImageDispatchUnderTest.inc': section('// BEGIN image store dispatch adapter.', '// END image store dispatch adapter.'),
   'ImageDecoderUnderTest.inc': decoder,
-  'ImageErrorUnderTest.inc': section('static NSError *zx_frameError(', 'static std::string zx_stringFromPart('),
+  'ImageErrorUnderTest.inc': frameErrorHelper,
   'ImageOwnerUnderTest.inc': section('static bool zx_ownerMatchFields(', 'static void zx_cleanupFramesLocked(uint64_t nowMs);\nstatic NSArray'),
   'ImageOwnerPartsUnderTest.inc': section('static std::string zx_stringFromPart(', 'static void zx_applyFrameOwner('),
   'ImageReleaseUnderTest.inc': section('NSString* handleFrameReleaseTaskFromRawData(', 'NSString* handleFindImageInFrameTaskFromRawData('),
