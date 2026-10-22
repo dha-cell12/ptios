@@ -1,557 +1,174 @@
 #include "ColorPicker.h"
 #include "Screen.h"
-#include "Image.h"
-#import <imgcodecs/ios.h>
-#import <mach/mach.h>
+#include "../shared/TLinkColorPolicy.h"
+#include <memory>
+#include <exception>
 
-
-#define COLOR_SEARCHER_SEARCH_SINGLE_POINT 1
-
-// Multi-point color operations
-#define COLOR_SEARCHER_IS_COLORS 2
-#define COLOR_SEARCHER_FIND_MULTI_POINT 3
-
-typedef struct {
-    int dx;
-    int dy;
-    int r;
-    int g;
-    int b;
-} ZXPointColor;
-
-static BOOL zx_parsePointTable(NSString *tableStr, NSMutableArray<NSValue *> *outPoints, NSError **error)
-{
-    if (!tableStr || [tableStr length] == 0) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table is empty.\r\n"}];
-        }
-        return false;
-    }
-
-    NSArray<NSString *> *items = [tableStr componentsSeparatedByString:@"|"];
-    for (NSString *item in items) {
-        if (!item || [item length] == 0) {
-            continue;
-        }
-        NSArray<NSString *> *parts = [item componentsSeparatedByString:@",,"];
-        if ([parts count] != 5) {
-            if (error) {
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid point table format. Expect dx,,dy,,r,,g,,b|...\r\n"}];
-            }
-            return false;
-        }
-        ZXPointColor pc;
-        pc.dx = [parts[0] intValue];
-        pc.dy = [parts[1] intValue];
-        pc.r = [parts[2] intValue];
-        pc.g = [parts[3] intValue];
-        pc.b = [parts[4] intValue];
-        [outPoints addObject:[NSValue valueWithBytes:&pc objCType:@encode(ZXPointColor)]];
-    }
-
-    if ([outPoints count] == 0) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point table has no valid points.\r\n"}];
-        }
-        return false;
-    }
-    return true;
+static void zx_colorError(NSError **error,const char *code){
+    if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%s\r\n",code]}];
 }
-
-static inline BOOL zx_colorMatch(int r, int g, int b, int tr, int tg, int tb, int mode, double value)
-{
-    int dr = abs(r - tr);
-    int dg = abs(g - tg);
-    int db = abs(b - tb);
-    if (mode == 1) {
-        int dev = (int)value;
-        return dr <= dev && dg <= dev && db <= dev;
-    }
-    double sim = 1.0 - ((double)dr + (double)dg + (double)db) / (3.0 * 255.0);
-    return sim >= value;
+struct ZXColorImage {
+    CGImageRef value;
+    explicit ZXColorImage(CGImageRef image):value(image){}
+    ~ZXColorImage(){if(value)CGImageRelease(value);}
+    ZXColorImage(const ZXColorImage &)=delete;ZXColorImage &operator=(const ZXColorImage &)=delete;
+};
+struct ZXColorSpace {CGColorSpaceRef value=CGColorSpaceCreateDeviceRGB();~ZXColorSpace(){if(value)CGColorSpaceRelease(value);}};
+struct ZXColorContext {CGContextRef value=nullptr;~ZXColorContext(){if(value)CGContextRelease(value);}};
+struct ZXColorFree {void operator()(uint8_t *p)const{free(p);}};
+struct ZXColorBuffer {
+    // Release bytes before their reservation, including error/exception paths.
+    std::shared_ptr<TLinkImageCharge> charge;
+    std::unique_ptr<uint8_t,ZXColorFree> bytes;
+    int width=0,height=0;
+};
+static bool zx_colorDimensions(CGImageRef image,int &width,int &height,NSError **error){
+    size_t pixels=0;
+    if(!image){zx_colorError(error,"color_capture_failed");return false;}
+    if(!TLinkImagePixels(CGImageGetWidth(image),CGImageGetHeight(image),8388608,&pixels)){zx_colorError(error,"color_source_pixel_limit");return false;}
+    width=int(CGImageGetWidth(image));height=int(CGImageGetHeight(image));return true;
 }
-
-static unsigned char *zx_copyRGBABufferFromCGImage(CGImageRef img, CGRect region, int *outW, int *outH)
-{
-    if (!img) {
-        return NULL;
+static bool zx_colorRender(CGImageRef image,const TLinkColorRect &region,TLinkColorRequest &request,ZXColorBuffer &out,NSError **error){
+    size_t pixels=0;int sw=0,sh=0;
+    if(!zx_colorDimensions(image,sw,sh,error))return false;
+    if(region.x<0||region.y<0||region.x>=sw||region.y>=sh||region.width>sw-region.x||region.height>sh-region.y||
+        !TLinkImagePixels(region.width>0?size_t(region.width):0,region.height>0?size_t(region.height):0,4194304,&pixels)){
+        zx_colorError(error,"color_roi_invalid_or_too_large");return false;
     }
-    int width = (int)region.size.width;
-    int height = (int)region.size.height;
-    if (width <= 0 || height <= 0) {
-        return NULL;
-    }
-
-    CGImageRef imageRef = CGImageCreateWithImageInRect(img, region);
-    if (!imageRef) {
-        return NULL;
-    }
-
-    int bytesPerElement = 4;
-    int bytesPerRow = bytesPerElement * width;
-    int totalBufferBytes = bytesPerRow * height;
-    unsigned char *buffer = (unsigned char *)malloc((size_t)totalBufferBytes);
-    if (!buffer) {
-        CGImageRelease(imageRef);
-        return NULL;
-    }
-    memset(buffer, 0, (size_t)totalBufferBytes);
-
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
-    CGContextRef context = CGBitmapContextCreate(buffer, width, height, 8, bytesPerRow, colorSpace, bitmapInfo);
-    CGColorSpaceRelease(colorSpace);
-    CGContextDrawImage(context, CGRectMake(0.f, 0.f, width, height), imageRef);
-    CGImageRelease(imageRef);
-    CGContextRelease(context);
-
-    if (outW) *outW = width;
-    if (outH) *outH = height;
-    return buffer;
+    if(request.stopped()){zx_colorError(error,request.error());return false;}
+    out.charge=TLinkColorMemory().reserve(TLinkImageKind::Frame,pixels*4);
+    if(!out.charge){zx_colorError(error,"color_memory_budget");return false;}
+    out.bytes.reset(static_cast<uint8_t *>(calloc(pixels,4)));
+    if(!out.bytes){zx_colorError(error,"color_allocation_failed");return false;}
+    ZXColorImage crop(CGImageCreateWithImageInRect(image,CGRectMake(region.x,region.y,region.width,region.height)));
+    if(!crop.value){zx_colorError(error,"color_crop_failed");return false;}
+    if(CGImageGetWidth(crop.value)!=size_t(region.width)||CGImageGetHeight(crop.value)!=size_t(region.height)){zx_colorError(error,"color_crop_geometry_changed");return false;}
+    ZXColorSpace color;
+    if(!color.value){zx_colorError(error,"color_space_failed");return false;}
+    ZXColorContext context;
+    context.value=CGBitmapContextCreate(out.bytes.get(),region.width,region.height,8,size_t(region.width)*4,color.value,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+    if(!context.value){zx_colorError(error,"color_context_failed");return false;}
+    CGContextDrawImage(context.value,CGRectMake(0,0,region.width,region.height),crop.value);
+    if(request.stopped()){zx_colorError(error,request.error());return false;}
+    out.width=region.width;out.height=region.height;return true;
 }
-
-void report_memory(void);
-
-
-using namespace cv;
-using namespace std;
-
-NSDictionary* getRGBFromRawData(UInt8 *eventData, NSError **error)
-{
-    NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
-    if ([data count] < 2)
-    {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to pick color. The data format should be \"x;;y\"\r\n"}];
-        return @{@"blue": @(-1), @"red": @(-1), @"green": @(-1)};
-    }
-    CGImageRef screen = [Screen createScreenShotCGImageRef];
-    
-    int x = [data[0] intValue];
-    int y = [data[1] intValue];
-
-    NSDictionary* result = [ColorPicker colorAtPositionFromCGImage:screen x:x andY:y];
-
-    CGImageRelease(screen);
-    return result;
-
+static NSArray<NSString *> *zx_colorPayload(UInt8 *data,NSError **error){
+    if(!data){zx_colorError(error,"color_payload_invalid");return nil;}
+    size_t length=strnlen(reinterpret_cast<const char *>(data),262145);
+    if(length>262144){zx_colorError(error,"color_payload_limit");return nil;}
+    NSString *text=[[NSString alloc] initWithBytes:data length:length encoding:NSUTF8StringEncoding];
+    if(!text){zx_colorError(error,"color_payload_invalid");return nil;}
+    return [text componentsSeparatedByString:@";;"];
 }
-
-NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error)
-{
-    NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
-    
-    int searchType = [data[0] intValue];
-    
-    if (searchType == COLOR_SEARCHER_SEARCH_SINGLE_POINT)
-    {
-        
-        if ([data count] < 12)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. The data format should be \"searchtype;;x;;y;;width;;height;;redMin;;redMax;;greenMin;;greenMax;;blueMin;;blueMax;;skip\"\r\n"}];
-            return @"";
-        }
-        CGImageRef screen = [Screen createScreenShotCGImageRef];
-
-        if (!screen)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Internal error! Screenshot is null.\r\n"}];
-            return @"";
-        }
-
-        size_t screenWidth = CGImageGetWidth(screen);
-        size_t screenHeight = CGImageGetHeight(screen);
-
-
-        int x = [data[1] intValue];
-        int y = [data[2] intValue];
-        int width =  [data[3] intValue];
-        int height =  [data[4] intValue];
-        int redMin = [data[5] intValue];
-        int redMax = [data[6] intValue];
-        int greenMin =  [data[7] intValue];
-        int greenMax =  [data[8] intValue];
-        int blueMin =  [data[9] intValue];
-        int blueMax =  [data[10] intValue];
-        int skip =  [data[11] intValue];
-
-        if (x > screenWidth)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;The range of the x coordinate should be less than the width of your screen. The width of your screen is %d. Your x: %d\r\n", screenWidth, x]}];
-            NSLog(@"com.tlinkauto.springboard: %@", *error);
-            return @"";
-        }
-        if (y > screenHeight)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;The range of the y coordinate should be less than the height of your screen. The height of your screen is %d. Your y: %d\r\n", screenHeight, y]}];
-            NSLog(@"com.tlinkauto.springboard: %@", *error);
-            return @"";
-        }
-        if (redMax < 0 || redMin < 0 || redMax > 255 || redMin > 255 || redMax < redMin)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max red rgb and min reb rgb should <= 255  && >= 0 and max red rgb should be <= red min rgb. You redMax: %d, redMin: %d\r\n", redMax, redMin]}];
-            NSLog(@"com.tlinkauto.springboard: %@", *error);
-            return @"";
-        }
-        if (greenMax < 0 || greenMin < 0 || greenMax > 255 || greenMin > 255 || greenMax < greenMin)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max green rgb and min green rgb should <= 255 && >= 0 and max green rgb should be <= green min rgb. You greenMax: %d, greenMin: %d\r\n", greenMax, greenMin]}];
-            NSLog(@"com.tlinkauto.springboard: %@", *error);
-            return @"";
-        }
-        if (blueMax < 0 || blueMin < 0 || blueMax > 255 || blueMin > 255 || blueMax < blueMin)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Max blue rgb and min blue rgb should <= 255 && >= 0  and max blue rgb should be <= blue min rgb. You blueMax: %d, blueMin: %d\r\n", blueMax, blueMin]}];
-            NSLog(@"com.tlinkauto.springboard: %@", *error);
-            return @"";
-        }
-        if (skip < 0)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Skip cannot be negative\r\n", skip]}];
-            NSLog(@"com.tlinkauto.springboard: %@", *error);
-            return @"";
-        }
-
-        if (width <= 0 || x + width > screenWidth)
-        {
-            width = screenWidth - x;
-        }    
-        if (height <= 0 || y + height > screenHeight)
-        {
-            height = screenHeight - y;
-        }
-    
-        NSString *result = [ColorPicker searchRGBFromCGImageRef:screen region:CGRectMake(x, y, width, height) redMin:redMin redMax:redMax greenMin:greenMin greenMax:greenMax blueMin:blueMin blueMax:blueMax skip:skip];
-        CGImageRelease(screen);
-
-        return result;
+static bool zx_colorInt(NSArray<NSString *> *parts,NSUInteger index,int &out){return index<parts.count&&TLinkColorInt(parts[index].UTF8String,out);}
+static bool zx_colorTable(NSString *table,std::vector<TLinkColorPoint> &points,NSError **error){
+    if(!table.length||[table lengthOfBytesUsingEncoding:NSUTF8StringEncoding]>131072){zx_colorError(error,"color_point_table_limit");return false;}
+    NSArray<NSString *> *items=[table componentsSeparatedByString:@"|"];
+    if(items.count>512){zx_colorError(error,"color_point_table_limit");return false;}
+    for(NSString *item in items){
+        if(!item.length)continue;
+        NSArray<NSString *> *parts=[item componentsSeparatedByString:@",,"];TLinkColorPoint point;
+        if(parts.count!=5||!zx_colorInt(parts,0,point.dx)||!zx_colorInt(parts,1,point.dy)||!zx_colorInt(parts,2,point.r)||!zx_colorInt(parts,3,point.g)||!zx_colorInt(parts,4,point.b)||
+            !TLinkColorRGB(point.r)||!TLinkColorRGB(point.g)||!TLinkColorRGB(point.b)){zx_colorError(error,"color_point_table_invalid");return false;}
+        points.push_back(point);
     }
-    else if (searchType == COLOR_SEARCHER_IS_COLORS)
-    {
-        if ([data count] < 4)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. The data format should be \"searchtype;;table;;mode;;value\"\r\n"}];
-            return @"";
-        }
-
-        NSString *tableStr = data[1];
-        int mode = [data[2] intValue];
-        double value = [data[3] doubleValue];
-        NSMutableArray<NSValue *> *points = [NSMutableArray array];
-        NSError *parseErr = nil;
-        if (!zx_parsePointTable(tableStr, points, &parseErr))
-        {
-            if (error) *error = parseErr;
-            return @"";
-        }
-
-        CGImageRef screen = [Screen createScreenShotCGImageRef];
-        if (!screen)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to check colors. Internal error! Screenshot is null.\r\n"}];
-            return @"";
-        }
-
-        int screenW = (int)CGImageGetWidth(screen);
-        int screenH = (int)CGImageGetHeight(screen);
-
-        int minX = INT_MAX, minY = INT_MAX, maxX = INT_MIN, maxY = INT_MIN;
-        for (NSValue *v in points) {
-            ZXPointColor pc;
-            [v getValue:&pc];
-            int x = pc.dx;
-            int y = pc.dy;
-            if (x < 0 || y < 0 || x >= screenW || y >= screenH) {
-                CGImageRelease(screen);
-                *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Point out of screen bounds.\r\n"}];
-                return @"";
-            }
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-        }
-
-        CGRect crop = CGRectMake(minX, minY, (maxX - minX + 1), (maxY - minY + 1));
-        int bufW = 0, bufH = 0;
-        unsigned char *buffer = zx_copyRGBABufferFromCGImage(screen, crop, &bufW, &bufH);
-        CGImageRelease(screen);
-        if (!buffer) {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
-            return @"";
-        }
-
-        BOOL matched = true;
-        for (NSValue *v in points) {
-            ZXPointColor pc;
-            [v getValue:&pc];
-            int lx = pc.dx - minX;
-            int ly = pc.dy - minY;
-            int base = (ly * bufW + lx) * 4;
-            int r = buffer[base];
-            int g = buffer[base + 1];
-            int b = buffer[base + 2];
-            if (!zx_colorMatch(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
-                matched = false;
-                break;
-            }
-        }
-        free(buffer);
-
-        return matched ? @"1" : @"0";
-    }
-    else if (searchType == COLOR_SEARCHER_FIND_MULTI_POINT)
-    {
-        if ([data count] < 9)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to find multi-point color. The data format should be \"searchtype;;x;;y;;width;;height;;table;;mode;;value;;skip\"\r\n"}];
-            return @"";
-        }
-
-        int regionX = [data[1] intValue];
-        int regionY = [data[2] intValue];
-        int regionW = [data[3] intValue];
-        int regionH = [data[4] intValue];
-        NSString *tableStr = data[5];
-        int mode = [data[6] intValue];
-        double value = [data[7] doubleValue];
-        int skip = [data[8] intValue];
-
-        NSMutableArray<NSValue *> *points = [NSMutableArray array];
-        NSError *parseErr = nil;
-        if (!zx_parsePointTable(tableStr, points, &parseErr))
-        {
-            if (error) *error = parseErr;
-            return @"";
-        }
-
-        CGImageRef screen = [Screen createScreenShotCGImageRef];
-        if (!screen)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Internal error! Screenshot is null.\r\n"}];
-            return @"";
-        }
-
-        int screenW = (int)CGImageGetWidth(screen);
-        int screenH = (int)CGImageGetHeight(screen);
-
-        if (regionX < 0) regionX = 0;
-        if (regionY < 0) regionY = 0;
-        if (regionX >= screenW) regionX = screenW - 1;
-        if (regionY >= screenH) regionY = screenH - 1;
-
-        if (regionW <= 0 || regionX + regionW > screenW) {
-            regionW = screenW - regionX;
-        }
-        if (regionH <= 0 || regionY + regionH > screenH) {
-            regionH = screenH - regionY;
-        }
-
-        int minDx = INT_MAX, minDy = INT_MAX, maxDx = INT_MIN, maxDy = INT_MIN;
-        for (NSValue *v in points) {
-            ZXPointColor pc;
-            [v getValue:&pc];
-            if (pc.dx < minDx) minDx = pc.dx;
-            if (pc.dy < minDy) minDy = pc.dy;
-            if (pc.dx > maxDx) maxDx = pc.dx;
-            if (pc.dy > maxDy) maxDy = pc.dy;
-        }
-
-        int axStart = MAX(regionX, -minDx);
-        int ayStart = MAX(regionY, -minDy);
-        int axEnd = MIN(regionX + regionW - 1, screenW - 1 - maxDx);
-        int ayEnd = MIN(regionY + regionH - 1, screenH - 1 - maxDy);
-        if (axStart > axEnd || ayStart > ayEnd) {
-            CGImageRelease(screen);
-            return @"-1;;-1";
-        }
-
-        int cropX = axStart + minDx;
-        int cropY = ayStart + minDy;
-        int cropW = (axEnd - axStart + 1) + (maxDx - minDx);
-        int cropH = (ayEnd - ayStart + 1) + (maxDy - minDy);
-        CGRect crop = CGRectMake(cropX, cropY, cropW, cropH);
-
-        int bufW = 0, bufH = 0;
-        unsigned char *buffer = zx_copyRGBABufferFromCGImage(screen, crop, &bufW, &bufH);
-        CGImageRelease(screen);
-        if (!buffer) {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to read screenshot buffer.\r\n"}];
-            return @"";
-        }
-
-        int step = skip + 1;
-        if (step <= 0) step = 1;
-        for (int ay = ayStart; ay <= ayEnd; ay += step) {
-            for (int ax = axStart; ax <= axEnd; ax += step) {
-                BOOL ok = true;
-                for (NSValue *v in points) {
-                    ZXPointColor pc;
-                    [v getValue:&pc];
-                    int px = ax + pc.dx;
-                    int py = ay + pc.dy;
-                    int lx = px - cropX;
-                    int ly = py - cropY;
-                    int base = (ly * bufW + lx) * 4;
-                    int r = buffer[base];
-                    int g = buffer[base + 1];
-                    int b = buffer[base + 2];
-                    if (!zx_colorMatch(r, g, b, pc.r, pc.g, pc.b, mode, value)) {
-                        ok = false;
-                        break;
-                    }
-                }
-                if (ok) {
-                    free(buffer);
-                    return [NSString stringWithFormat:@"%d;;%d", ax, ay];
-                }
-            }
-        }
-
-        free(buffer);
-        return @"-1;;-1";
-    }
-    else
-    {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unable to search color. Unknown search color task type.\r\n"}];
-        NSLog(@"com.tlinkauto.springboard: %@", *error);
-        return nil;
-    }
+    if(points.empty()){zx_colorError(error,"color_point_table_empty");return false;}return true;
 }
-
-
+template<class Operation> static id zx_colorRun(Operation operation,NSError **error){
+    try {
+        TLinkColorRequest request(TLinkCurrentNativeBudget());
+        if(!request.admitted()){zx_colorError(error,"color_compute_busy");return nil;}
+        if(request.stopped()){zx_colorError(error,request.error());return nil;}
+        @try {
+            id result=operation(request);
+            if(request.stopped()){zx_colorError(error,request.error());return nil;}
+            return result;
+        } @catch(NSException *exception){(void)exception;zx_colorError(error,"color_operation_failed");return nil;}
+    } catch(const std::exception &exception){(void)exception;zx_colorError(error,"color_operation_failed");return nil;}
+}
+static NSDictionary *zx_colorPick(CGImageRef image,int x,int y,TLinkColorRequest &request,NSError **error){
+    TLinkColorRect crop;crop.x=x;crop.y=y;crop.width=crop.height=1;ZXColorBuffer buffer;
+    if(!zx_colorRender(image,crop,request,buffer,error))return nil;
+    const uint8_t *p=buffer.bytes.get();return @{@"red":@(p[0]),@"green":@(p[1]),@"blue":@(p[2])};
+}
+static NSString *zx_colorRange(CGImageRef image,const TLinkColorRect &region,const TLinkColorPoint &low,const TLinkColorPoint &high,int skip,TLinkColorRequest &request,NSError **error){
+    ZXColorBuffer buffer;if(!zx_colorRender(image,region,request,buffer,error))return nil;
+    TLinkColorResult result;auto scan=TLinkColorRangeScan(buffer.bytes.get(),buffer.width,buffer.height,skip,low,high,request,result);
+    if(scan==TLinkColorScan::Stopped){zx_colorError(error,request.error());return nil;}
+    if(scan==TLinkColorScan::NoMatch)return @"-1;;-1;;-1;;-1;;-1";
+    return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d",region.x+result.x,region.y+result.y,result.r,result.g,result.b];
+}
+static CGImageRef zx_colorCapture(TLinkColorRequest &request,NSError **error){
+    if(request.stopped()){zx_colorError(error,request.error());return NULL;}
+    return [Screen createScreenShotCGImageRef];
+}
+NSDictionary* getRGBFromRawData(UInt8 *eventData,NSError **error){
+    return zx_colorRun([&](TLinkColorRequest &request)->id{
+        NSArray<NSString *> *parts=zx_colorPayload(eventData,error);if(!parts)return nil;int x=0,y=0;
+        if(!zx_colorInt(parts,0,x)||!zx_colorInt(parts,1,y)||x<0||y<0||x>=8192||y>=8192){zx_colorError(error,"color_parameters_invalid");return nil;}
+        ZXColorImage screen(zx_colorCapture(request,error));return zx_colorPick(screen.value,x,y,request,error);
+    },error);
+}
+NSString* searchRGBFromRawData(UInt8 *eventData,NSError **error){
+    return zx_colorRun([&](TLinkColorRequest &request)->id{
+        NSArray<NSString *> *parts=zx_colorPayload(eventData,error);if(!parts)return nil;
+        int action=0;if(!zx_colorInt(parts,0,action)||action<1||action>3){zx_colorError(error,"color_parameters_invalid");return nil;}
+        if(action==1){
+            int values[11];for(NSUInteger i=0;i<11;++i)if(!zx_colorInt(parts,i+1,values[i])){zx_colorError(error,"color_parameters_invalid");return nil;}
+            int x=values[0],y=values[1],width=values[2],height=values[3],skip=values[10];
+            if(x<0||y<0||x>=8192||y>=8192||skip<0||!TLinkColorRGB(values[4])||!TLinkColorRGB(values[5])||values[4]>values[5]||
+                !TLinkColorRGB(values[6])||!TLinkColorRGB(values[7])||values[6]>values[7]||!TLinkColorRGB(values[8])||!TLinkColorRGB(values[9])||values[8]>values[9]){zx_colorError(error,"color_parameters_invalid");return nil;}
+            ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;
+            if(!zx_colorDimensions(screen.value,sw,sh,error))return nil;
+            TLinkColorRect region;if(!TLinkColorRegion(sw,sh,x,y,width,height,false,region)){zx_colorError(error,"color_region_invalid");return nil;}
+            TLinkColorPoint low={0,0,values[4],values[6],values[8]},high={0,0,values[5],values[7],values[9]};
+            return zx_colorRange(screen.value,region,low,high,skip,request,error);
+        }
+        int x=0,y=0,width=0,height=0,mode=0,skip=0;double value=0;
+        if(parts.count<(action==2?4:9)){zx_colorError(error,"color_parameters_invalid");return nil;}
+        if(action==3&&(!zx_colorInt(parts,1,x)||!zx_colorInt(parts,2,y)||!zx_colorInt(parts,3,width)||!zx_colorInt(parts,4,height)||!zx_colorInt(parts,8,skip))){zx_colorError(error,"color_parameters_invalid");return nil;}
+        if(!zx_colorInt(parts,action==2?2:6,mode)||!TLinkColorDouble(parts[action==2?3:7].UTF8String,value)||skip<0||!TLinkColorMode(mode,value)){zx_colorError(error,"color_parameters_invalid");return nil;}
+        std::vector<TLinkColorPoint> points;if(!zx_colorTable(parts[action==2?1:5],points,error))return nil;
+        if(action==2)for(const auto &p:points)if(p.dx<0||p.dy<0||p.dx>=8192||p.dy>=8192){zx_colorError(error,"color_point_out_of_bounds");return nil;}
+        ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;if(!zx_colorDimensions(screen.value,sw,sh,error))return nil;
+        TLinkColorRect crop,anchors;
+        if(action==2){
+            int minX=sw,minY=sh,maxX=0,maxY=0;
+            for(const auto &p:points){if(p.dx<0||p.dy<0||p.dx>=sw||p.dy>=sh){zx_colorError(error,"color_point_out_of_bounds");return nil;}minX=std::min(minX,p.dx);minY=std::min(minY,p.dy);maxX=std::max(maxX,p.dx);maxY=std::max(maxY,p.dy);}
+            crop.x=minX;crop.y=minY;crop.width=maxX-minX+1;crop.height=maxY-minY+1;
+        }else{
+            TLinkColorRect region;if(!TLinkColorRegion(sw,sh,x,y,width,height,true,region)){zx_colorError(error,"color_region_invalid");return nil;}
+            if(!TLinkColorAnchors(sw,sh,region,points,anchors,crop))return @"-1;;-1";
+        }
+        ZXColorBuffer buffer;if(!zx_colorRender(screen.value,crop,request,buffer,error))return nil;
+        if(action==2){
+            for(const auto &p:points){if(!request.consume()){zx_colorError(error,request.error());return nil;}
+                const uint8_t *pixel=buffer.bytes.get()+(size_t(p.dy-crop.y)*buffer.width+size_t(p.dx-crop.x))*4;
+                if(!TLinkColorMatch(pixel[0],pixel[1],pixel[2],p,mode,value))return @"0";
+            }return @"1";
+        }
+        TLinkColorResult result;auto scan=TLinkColorMultiScan(buffer.bytes.get(),buffer.width,crop,anchors,points,mode,value,skip,request,result);
+        if(scan==TLinkColorScan::Stopped){zx_colorError(error,request.error());return nil;}
+        if(scan==TLinkColorScan::NoMatch)return @"-1;;-1";
+        return [NSString stringWithFormat:@"%d;;%d",result.x,result.y];
+    },error);
+}
 @implementation ColorPicker
-{
-
++ (NSDictionary *)colorAtPositionFromCGImage:(CGImageRef)image x:(int)x andY:(int)y {
+    NSDictionary *result=zx_colorRun([&](TLinkColorRequest &request)->id{return zx_colorPick(image,x,y,request,NULL);},NULL);
+    return result?:@{@"red":@(-1),@"green":@(-1),@"blue":@(-1)};
 }
-
-+ (NSDictionary *)colorAtPositionFromCGImage:(CGImageRef)img x:(int)x andY:(int)y {
-    CGRect sourceRect = CGRectMake(x, y, 1.f, 1.f);
-    CGImageRef imageRef = CGImageCreateWithImageInRect(img, sourceRect);
-    
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    unsigned char *buffer = (unsigned char *)malloc(4);
-    CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
-    CGContextRef context = CGBitmapContextCreate(buffer, 1, 1, 8, 4, colorSpace, bitmapInfo);
-    CGColorSpaceRelease(colorSpace);
-    CGContextDrawImage(context, CGRectMake(0.f, 0.f, 1.f, 1.f), imageRef);
-    CGImageRelease(imageRef);
-    CGContextRelease(context);
-    
-    uchar r = buffer[0];
-    uchar g = buffer[1];
-    uchar b = buffer[2];
-
-    free(buffer);
-    return @{@"blue": @(b), @"red": @(r), @"green": @(g)};
++ (NSString*)searchRGBFromCGImageRef:(CGImageRef)image region:(CGRect)rect redMin:(int)r0 redMax:(int)r1 greenMin:(int)g0 greenMax:(int)g1 blueMin:(int)b0 blueMax:(int)b1 skip:(int)skip {
+    NSString *result=zx_colorRun([&](TLinkColorRequest &request)->id{
+        if(!std::isfinite(rect.origin.x)||!std::isfinite(rect.origin.y)||!std::isfinite(rect.size.width)||!std::isfinite(rect.size.height)||
+            rect.origin.x<0||rect.origin.y<0||rect.origin.x>8192||rect.origin.y>8192||rect.size.width<0||rect.size.height<0||rect.size.width>8192||rect.size.height>8192||
+            rect.origin.x!=std::floor(rect.origin.x)||rect.origin.y!=std::floor(rect.origin.y)||rect.size.width!=std::floor(rect.size.width)||rect.size.height!=std::floor(rect.size.height)||
+            skip<0||!TLinkColorRGB(r0)||!TLinkColorRGB(r1)||r0>r1||!TLinkColorRGB(g0)||!TLinkColorRGB(g1)||g0>g1||!TLinkColorRGB(b0)||!TLinkColorRGB(b1)||b0>b1)return nil;
+        int sw=0,sh=0;if(!zx_colorDimensions(image,sw,sh,NULL))return nil;TLinkColorRect region;
+        if(!TLinkColorRegion(sw,sh,int(rect.origin.x),int(rect.origin.y),int(rect.size.width),int(rect.size.height),false,region))return nil;
+        TLinkColorPoint low={0,0,r0,g0,b0},high={0,0,r1,g1,b1};return zx_colorRange(image,region,low,high,skip,request,NULL);
+    },NULL);
+    return result?:@"-1;;-1;;-1;;-1;;-1";
 }
-
-/*
-+ (NSDictionary*) getRgbFromMat:(Mat)img x:(int)x y:(int)y {
-    //NSLog(@"com.tlinkauto.springboard: height: %d, width: %d, channels: %d. scale: %f", img.rows, img.cols, img.channels(), [Screen getScale]);
-
-    Vec3b intensity = img.at<Vec3b>(y, x);
-    // Don't know why. This version of opencv stores read at [0] rather than [2]
-    uchar blue = intensity.val[0];
-    uchar green = intensity.val[1];
-    uchar red = intensity.val[2];
-    //NSLog(@"com.tlinkauto.springboard: blue: %u, green: %u, red: %u.", blue, green, red);
-
-    NSDictionary *result = @{@"blue": @(blue), @"red": @(red), @"green": @(green)};
-    return result;
-}
-*/
-
-/*
-+ (NSString*) searchRGBFromMat:(Mat)img region:(CGRect)region redMin:(int)redMin redMax:(int)redMax greenMin:(int)greenMin greenMax:(int)greenMax blueMin:(int)blueMin blueMax:(int)blueMax skip:(int)skip {
-    //NSLog(@"com.tlinkauto.springboard: image height: %d, width: %d, channels: %d. scale: %f. Rect: %@. skip: %d. redSearch: (%d, %d), greenSearch: (%d, %d), blueSearch: (%d, %d)", img.rows, img.cols, img.channels(), [Screen getScale], NSStringFromCGRect(region), skip, redMin, redMax, greenMin, greenMax, blueMin, blueMax);
-    
-    int x = region.origin.x;
-    int y = region.origin.y;
-
-    int width = region.size.width;
-    int height = region.size.height;
-
-    int searchMaxX = x + width;
-    int searchMaxY = y + height;
-
-    for (int currentY = y; currentY <= searchMaxY; currentY += skip + 1)
-    {
-        for (int currentX = x; currentX <= searchMaxX; currentX += skip + 1)
-        {
-            Vec3b intensity = img.at<Vec3b>(currentY, currentX);
-            uchar blue = intensity.val[0];
-            uchar green = intensity.val[1];
-            uchar red = intensity.val[2];
-
-            //NSLog(@"com.tlinkauto.springboard: x: %d, y: %d, blue: %u, green: %u, red: %u.", currentX, currentY, blue, green, red);
-            if (red >= redMin && red <= redMax && green >= greenMin && green <= greenMax && blue >= blueMin && blue <= blueMax)
-            {
-                return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d", currentX, currentY, red, green, blue];
-            }
-        }
-    }
-
-    return @"-1;;-1;;-1";
-}
-*/
-
-+ (NSString*)searchRGBFromCGImageRef:(CGImageRef)img region:(CGRect)region redMin:(int)redMin redMax:(int)redMax greenMin:(int)greenMin greenMax:(int)greenMax blueMin:(int)blueMin blueMax:(int)blueMax skip:(int)skip {
-    int x = region.origin.x;
-    int y = region.origin.y; 
-    
-    int width = region.size.width;
-    int height = region.size.height;
-
-    CGImageRef imageRef = CGImageCreateWithImageInRect(img, region);
-    
-    int bytesPerElement = 4;
-    int bytesPerRow = bytesPerElement * width;
-    int totalBufferBytes = bytesPerRow * height;
-
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-
-    unsigned char *buffer = (unsigned char *)malloc(totalBufferBytes);
-    memset(buffer, 0, totalBufferBytes);
-
-    CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
-    CGContextRef context = CGBitmapContextCreate(buffer, width, height, 8, bytesPerRow, colorSpace, bitmapInfo);
-    CGColorSpaceRelease(colorSpace);
-    CGContextDrawImage(context, CGRectMake(0.f, 0.f, width, height), imageRef);
-    CGImageRelease(imageRef);
-    CGContextRelease(context);
-    
-    for (int currentY = 0; currentY < height; currentY += skip + 1)
-    {
-        for (int currentX = 0; currentX < width; currentX += skip + 1)
-        {
-            int baseAddress = (currentY * width + currentX) * 4;
-
-            if (baseAddress >= totalBufferBytes-3)
-            {
-                NSLog(@"com.tlinkauto.springboard: cannot search rgb from cgimage. Internal error. start coordinate on img: (%d, %d). current coordinate: (%d, %d), baseaddress: %d, totalBufferBytes: %d", x, y, currentX, currentY, baseAddress, totalBufferBytes);
-                return @"-1;;-1;;-1;;-1;;-1";
-            }
-
-            uchar red = buffer[baseAddress];
-            uchar green = buffer[baseAddress+1];
-            uchar blue = buffer[baseAddress+2];
-
-
-            //NSLog(@"com.tlinkauto.springboard: x: %d, y: %d, blue: %u, green: %u, red: %u.", currentX, currentY, blue, green, red);
-            if (red >= redMin && red <= redMax && green >= greenMin && green <= greenMax && blue >= blueMin && blue <= blueMax)
-            {
-                free(buffer);
-                return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d", x+currentX, y+currentY, red, green, blue];
-            }
-        }
-    }
-    
-
-    free(buffer);
-    return @"-1;;-1;;-1;;-1;;-1";
-}
-
-
-
-
 @end

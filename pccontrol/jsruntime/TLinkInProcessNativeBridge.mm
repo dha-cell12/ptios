@@ -148,9 +148,9 @@ static NSString *TLinkautoJSEncodePointColorTable(NSArray *points)
         int g = [dict[@"green"] respondsToSelector:@selector(intValue)] ? [dict[@"green"] intValue] : [dict[@"g"] intValue];
         int b = [dict[@"blue"] respondsToSelector:@selector(intValue)] ? [dict[@"blue"] intValue] : [dict[@"b"] intValue];
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return nil;
-        [encoded addObject:[NSString stringWithFormat:@"%.0f;;%.0f;;%d;;%d;;%d", x, y, r, g, b]];
+        [encoded addObject:[NSString stringWithFormat:@"%.0f,,%.0f,,%d,,%d,,%d", x, y, r, g, b]];
     }
-    return [encoded componentsJoinedByString:@",,"];
+    return [encoded componentsJoinedByString:@"|"];
 }
 
 static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *result)
@@ -1093,21 +1093,9 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSArray *points = [args count] > 0 ? [args objectAtIndex:0] : @[];
         NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
         
-        // Inline TLinkautoJSEncodePointColorTable
-        NSMutableString *table = [NSMutableString string];
-        for (NSUInteger i = 0; i < [points count]; i++) {
-            NSDictionary *pt = points[i];
-            if (![pt isKindOfClass:[NSDictionary class]]) return [TLinkJSNativeResponse responseWithError:@"Invalid point colors" code:@-1];
-            double px = [pt[@"x"] respondsToSelector:@selector(doubleValue)] ? [pt[@"x"] doubleValue] : 0;
-            double py = [pt[@"y"] respondsToSelector:@selector(doubleValue)] ? [pt[@"y"] doubleValue] : 0;
-            int r = [pt[@"red"] respondsToSelector:@selector(intValue)] ? [pt[@"red"] intValue] : 0;
-            int g = [pt[@"green"] respondsToSelector:@selector(intValue)] ? [pt[@"green"] intValue] : 0;
-            int b = [pt[@"blue"] respondsToSelector:@selector(intValue)] ? [pt[@"blue"] intValue] : 0;
-            if (i > 0) [table appendString:@",,"];
-            [table appendFormat:@"%.0f;;%.0f;;%d;;%d;;%d", px, py, r, g, b];
-        }
-        if ([table length] == 0) return [TLinkJSNativeResponse responseWithError:@"requires 1-512 point colors" code:@-1];
-        
+        NSString *table=TLinkautoJSEncodePointColorTable(points);
+        if(!table)return [TLinkJSNativeResponse responseWithError:@"requires 1-512 valid point colors" code:@-1];
+
         if ([method isEqualToString:TLinkJSNativeMethodIsColors]) {
             int mode = [options[@"mode"] respondsToSelector:@selector(intValue)] ? [options[@"mode"] intValue] : 1;
             double value = [options[@"value"] respondsToSelector:@selector(doubleValue)] ? [options[@"value"] doubleValue] : ([options[@"tolerance"] respondsToSelector:@selector(doubleValue)] ? [options[@"tolerance"] doubleValue] : 0);

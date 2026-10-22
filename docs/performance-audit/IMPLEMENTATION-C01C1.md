@@ -1,7 +1,7 @@
 # C01c1 — root Vision lifecycle and cooperative request limits
 
 Date: 2026-10-18 (Asia/Bangkok). Baseline: `4e6ef06`; user reported the corrected C01b build passed before this slice.
-Status: **source implemented; new macOS/iOS build and device qualification pending**.
+Status: **build accepted by the user at `528655c` before C01c2; device qualification pending**. This report does not replace independent inspection of macOS sanitizer logs or device measurements.
 
 ## Scope
 
@@ -51,4 +51,4 @@ The new macOS fixture has **not run on this Windows host**. Required acceptance:
 4. Request debug output on success, empty observations, failed box/context and unwritable paths. Verify balanced graphics contexts, scale-1 image dimensions, bounded rendering by source geometry, explicit errors and cleanup after exceptions.
 5. Use Allocations/VM Tracker across repeated requests to confirm manager/request/source release after caller cleanup; distinguish Vision persistent caches from an adapter retain cycle. Retain a manager deliberately to verify its admission semantics.
 
-Next: C01c2 legacy color validation/ownership/scan budgets; then remaining frame-backed reuse and modern image matcher work. The whole C01 group remains open.
+C01c2 legacy color validation/ownership/scan budgets are now source implemented; see [IMPLEMENTATION-C01C2.md](IMPLEMENTATION-C01C2.md). Next: C01c3 remaining explicit frame-backed reuse and modern image matcher work. The whole C01 group remains open.

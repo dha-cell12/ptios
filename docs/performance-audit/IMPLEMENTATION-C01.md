@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. The user reported the C01a build at `1b4b382` passed before C01b. This does not replace device qualification or independent inspection of the macOS test log.
 
-Status: **C01a build accepted by user; device acceptance pending.** Rootfull/roothide Tesseract and the production TrollStore post-scale preflight are in scope. TouchPOC is excluded. **C01b build was accepted by the user at `4e6ef06`**, with device qualification pending; see [IMPLEMENTATION-C01B.md](IMPLEMENTATION-C01B.md). **C01c1 root Vision lifecycle source is implemented**, pending new build/device checks; see [IMPLEMENTATION-C01C1.md](IMPLEMENTATION-C01C1.md). Remaining C01 work is not marked complete. Next slice: **C01c2 — legacy color validation/ownership/scan budgets**, followed by remaining frame reuse and modern image matcher work.
+Status: **C01a build accepted by user; device acceptance pending.** Rootfull/roothide Tesseract and the production TrollStore post-scale preflight are in scope. TouchPOC is excluded. **C01b build was accepted by the user at `4e6ef06`**, with device qualification pending; see [IMPLEMENTATION-C01B.md](IMPLEMENTATION-C01B.md). **C01c1 root Vision lifecycle build was accepted by the user at `528655c`**, with device qualification pending; see [IMPLEMENTATION-C01C1.md](IMPLEMENTATION-C01C1.md). **C01c2 legacy color source is implemented**, pending new build/device checks; see [IMPLEMENTATION-C01C2.md](IMPLEMENTATION-C01C2.md). Remaining C01 work is not marked complete. Next slice: **C01c3 — explicit frame-backed Vision/color reuse and remaining modern image matcher work**.
 
 ## C01a: bounded Tesseract request state
 
