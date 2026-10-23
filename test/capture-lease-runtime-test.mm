@@ -46,7 +46,7 @@ static void processTaskWithContext(UInt8 *bytes,size_t length,CFWriteStreamRef s
 }
 static void sendHardwareKeyEventFromRawData(UInt8 *,NSError **) {assert(false);}
 #include "OwnedIPCHandler.inc"
-static dispatch_queue_t ipcQueue(){static dispatch_queue_t queue=dispatch_queue_create("test.owned.capture.ipc",DISPATCH_QUEUE_SERIAL);return queue;}
+#include "OwnedIPCQueues.inc"
 static dispatch_queue_t springboardQueue(){static dispatch_queue_t queue=dispatch_queue_create("test.owned.capture.springboard",DISPATCH_QUEUE_SERIAL);return queue;}
 static bool lateReply=false,foreignReply=false;
 static CFDataRef sendIPCMessage(const char *payload,bool wait){
@@ -138,7 +138,7 @@ static void posixCases(){
     }
 }
 int main(){@autoreleasepool{
-    (void)kTLinkautoIPCPortName;(void)kTLinkautoIPCReadyMarkerPath;makePNG();posixCases();
+    (void)kTLinkautoIPCPortName;(void)kTLinkautoC01IPCPortName;(void)kTLinkautoIPCReadyMarkerPath;makePNG();posixCases();
     NSString *templatePath=[zx_makeTempScreenshotPath() stringByAppendingString:@".fixture"];assert([encodedPNG writeToFile:templatePath atomically:NO]);
     assert([invoke(templatePath) isEqualToString:@"0;;1.00;;2.00;;3.00;;4.00\r\n"]);gone(lastCapturePath);assert(matchCalls==1);
     failMatch=true;assert([invoke(templatePath) containsString:@"match_failed"]);gone(lastCapturePath);failMatch=false;

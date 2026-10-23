@@ -176,8 +176,62 @@ void startIPCServer()
     NSLog(@"### com.tlinkauto.springboard: IPC message port started.");
 }
 
+// BEGIN C01 isolated IPC receiver.
+static CFDataRef handleC01IPCMessage(CFMessagePortRef local,SInt32 msgid,CFDataRef data,void *info)
+{
+    auto failure=[](const char *line)->CFDataRef{return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)line,strlen(line));};
+    if(msgid!=TLinkC01IPCMessage||!data)return failure("1;;c01_ipc_envelope_required\r\n");
+    TLinkC01Envelope envelope;
+    const auto decoded=TLinkC01Decode(CFDataGetBytePtr(data),size_t(CFDataGetLength(data)),envelope);
+    if(decoded!=TLinkC01DecodeResult::Valid)return failure(decoded==TLinkC01DecodeResult::Expired?
+        "1;;c01_request_expired\r\n":"1;;c01_ipc_envelope_invalid\r\n");
+    if(!TLinkC01IsolatedPayload(envelope.payload,envelope.length))return failure("1;;c01_ipc_task_not_allowed\r\n");
+    static_assert(kTLinkOwnedCaptureAction==4,"Private C01 capture action is contract v1");
+    static std::atomic_bool active{false};
+    TLinkC01IPCAdmission admission(active);
+    if(!admission.admitted())return failure("1;;c01_ipc_busy\r\n");
+    @autoreleasepool {
+        try {
+            @try {return handleIPCMessage(local,msgid,data,info);}
+            @catch(NSException *exception){(void)exception;return failure("1;;request_failed\r\n");}
+        } catch (...) {return failure("1;;request_failed\r\n");}
+    }
+}
+static bool zx_installC01IPCSource(CFStringRef name,CFMessagePortRef *port,CFRunLoopSourceRef *source)
+{
+    *port=NULL;*source=NULL;
+    CFMessagePortContext context={0,NULL,NULL,NULL,NULL};Boolean shouldFree=false;
+    *port=CFMessagePortCreateLocal(kCFAllocatorDefault,name,handleC01IPCMessage,&context,&shouldFree);
+    if(!*port)return false;
+    *source=CFMessagePortCreateRunLoopSource(kCFAllocatorDefault,*port,0);
+    if(!*source){CFMessagePortInvalidate(*port);CFRelease(*port);*port=NULL;return false;}
+    CFRunLoopAddSource(CFRunLoopGetCurrent(),*source,kCFRunLoopCommonModes);
+    return true;
+}
+// END C01 isolated IPC receiver.
+static void startC01IPCServerOnBackgroundThread()
+{
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSThread *thread=[[NSThread alloc] initWithBlock:^{
+            @autoreleasepool {
+                CFMessagePortRef port=NULL;CFRunLoopSourceRef source=NULL;
+                if(!zx_installC01IPCSource(kTLinkautoC01IPCPortName,&port,&source)){
+                    NSLog(@"### com.tlinkauto.springboard: C01 IPC source unavailable.");return;
+                }
+                CFRunLoopRun();
+                CFRunLoopRemoveSource(CFRunLoopGetCurrent(),source,kCFRunLoopCommonModes);
+                CFRelease(source);CFMessagePortInvalidate(port);CFRelease(port);
+            }
+        }];
+        thread.name=@"com.tlinkauto.springboard.c01-ipc";
+        [thread start];
+    });
+}
+
 void startIPCServerOnBackgroundThread()
 {
+    startC01IPCServerOnBackgroundThread();
     if (ipcThreadStarted) {
         NSLog(@"### com.tlinkauto.springboard: IPC server thread already started.");
         return;

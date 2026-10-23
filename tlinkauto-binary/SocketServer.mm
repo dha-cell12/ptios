@@ -287,6 +287,7 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
 
 // Reference: https://www.jianshu.com/p/9353105a9129
 
+// BEGIN C01 IPC owner queues.
 static dispatch_queue_t ipcQueue()
 {
     static dispatch_queue_t queue;
@@ -296,6 +297,20 @@ static dispatch_queue_t ipcQueue()
     });
     return queue;
 }
+
+static dispatch_queue_t zx_c01IPCQueue()
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{queue=dispatch_queue_create("com.tlinkauto.tlinkautod.ipc.c01",DISPATCH_QUEUE_SERIAL);});
+    return queue;
+}
+static dispatch_queue_t zx_ipcRequestQueue(const char *payload,bool reply)
+{
+    const bool isolated=payload&&TLinkC01PrivateIPC((const uint8_t *)payload,strlen(payload),reply,TLinkCurrentNativeBudget());
+    return isolated?zx_c01IPCQueue():ipcQueue();
+}
+// END C01 IPC owner queues.
 
 static bool zx_isHotPathPayload(const char *payload)
 {
@@ -433,28 +448,34 @@ static bool shouldWaitForResponse(int taskType)
 // BEGIN C01 IPC sender.
 static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
 {
+    if(!payload)return NULL;
     auto budget=TLinkCurrentNativeBudget();
+    const size_t payloadLength=strlen(payload);
+    const bool bounded=TLinkC01PrivateIPC((const uint8_t *)payload,payloadLength,waitForResponse,budget);
+    auto unavailable=[]()->CFDataRef{const char *line="1;;c01_ipc_unavailable\r\n";return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)line,strlen(line));};
     auto expired=[]()->CFDataRef{const char *line="1;;c01_request_expired\r\n";return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)line,strlen(line));};
     if(budget&&budget->stopped())return expired();
     CFDataRef responseData = NULL;
-    if (access(kTLinkautoIPCReadyMarkerPath, F_OK) != 0) {
+    if (!bounded && access(kTLinkautoIPCReadyMarkerPath, F_OK) != 0) {
         NSLog(@"### com.tlinkauto.tlinkautod: IPC ready marker missing.");
         return NULL;
     }
-    static CFMessagePortRef remotePort = NULL;
+    // Each cache slot is used only on its corresponding serial sender queue.
+    static CFMessagePortRef remotePorts[2] = {NULL,NULL};
+    CFMessagePortRef &remotePort=remotePorts[bounded?1:0];
     if (remotePort && !CFMessagePortIsValid(remotePort)) {
         CFRelease(remotePort);
         remotePort = NULL;
     }
     if (!remotePort) {
-        remotePort = CFMessagePortCreateRemote(kCFAllocatorDefault, kTLinkautoIPCPortName);
+        remotePort = CFMessagePortCreateRemote(kCFAllocatorDefault, bounded?kTLinkautoC01IPCPortName:kTLinkautoIPCPortName);
     }
     if (!remotePort) {
         NSLog(@"### com.tlinkauto.tlinkautod: unable to find SpringBoard IPC port.");
-        return NULL;
+        return bounded?unavailable():NULL;
     }
 
-    bool pingRequired = waitForResponse && strcmp(payload, kTLinkautoIPCCommandPing) != 0;
+    bool pingRequired = !bounded && waitForResponse && strcmp(payload, kTLinkautoIPCCommandPing) != 0;
     if (pingRequired) {
         static CFAbsoluteTime lastPingSuccess = 0;
         CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
@@ -488,8 +509,6 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
     }
 
     if(budget&&budget->stopped())return expired();
-    const size_t payloadLength=strlen(payload);
-    const bool bounded=waitForResponse&&budget&&budget->deadline()&&TLinkC01IPCPayload((const uint8_t *)payload,payloadLength);
     auto envelope=bounded?TLinkC01Encode((const uint8_t *)payload,payloadLength,budget->deadline()):std::vector<uint8_t>();
     if(bounded&&envelope.empty())return expired(); // No retry as unbounded legacy work.
     CFDataRef messageData = CFDataCreate(kCFAllocatorDefault,bounded?envelope.data():(const UInt8 *)payload,
@@ -522,6 +541,7 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
         CFRelease(messageData);
     }
     if(budget&&budget->stopped()){if(responseData)CFRelease(responseData);return expired();}
+    if(bounded&&result!=kCFMessagePortSuccess){if(responseData)CFRelease(responseData);return unavailable();}
     return responseData;
 }
 
@@ -569,7 +589,7 @@ static NSString *zx_ipcCaptureScreenshotToPath(NSString *path, NSString **errStr
 
     NSString *taskPayload = [NSString stringWithFormat:@"%s29%d;;%@", kTLinkautoIPCCommandTaskPrefix, kTLinkOwnedCaptureAction, path];
     __block CFDataRef responseData = NULL;
-    TLinkNativeDispatchSync(ipcQueue(), ^{
+    TLinkNativeDispatchSync(zx_ipcRequestQueue(taskPayload.UTF8String,true), ^{
         responseData = sendIPCMessage([taskPayload UTF8String], true);
     });
     NSString *resp = zx_ipcResponseToString(responseData);
@@ -593,7 +613,7 @@ static int zx_ipcGetFrontmostOrientation(void)
 {
     NSString *taskPayload = [NSString stringWithFormat:@"%s35", kTLinkautoIPCCommandTaskPrefix];
     __block CFDataRef responseData = NULL;
-    TLinkNativeDispatchSync(ipcQueue(), ^{
+    TLinkNativeDispatchSync(zx_ipcRequestQueue(taskPayload.UTF8String,true), ^{
         responseData = sendIPCMessage([taskPayload UTF8String], true);
     });
     NSString *resp = zx_ipcResponseToString(responseData);
@@ -812,7 +832,7 @@ static BOOL zx_uiTreeDispatchTap(NSDictionary *element)
                          [point[@"x"] doubleValue] * pointScale,
                          [point[@"y"] doubleValue] * pointScale];
     __block CFDataRef responseData = NULL;
-    TLinkNativeDispatchSync(ipcQueue(), ^{
+    TLinkNativeDispatchSync(zx_ipcRequestQueue(command.UTF8String,true), ^{
         responseData = sendIPCMessage([command UTF8String], true);
     });
     if (!responseData) return false;
@@ -1075,7 +1095,7 @@ static NSData *zx_handleLegacyRequestBytes(const char *buffer)
             ? true
             : shouldWaitForResponse(taskType);
         __block CFDataRef responseData = NULL;
-        TLinkNativeDispatchSync(ipcQueue(), ^{
+        TLinkNativeDispatchSync(zx_ipcRequestQueue(payloadString.UTF8String,waitForResponse), ^{
             responseData = sendIPCMessage([payloadString UTF8String], waitForResponse);
         });
         if (!waitForResponse && taskType == 10) {

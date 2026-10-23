@@ -52,3 +52,7 @@ Next C01 boundary: IPC completion/owner isolation and safe late-result ownership
 - **The expanded macOS fixture and final iOS builds were not run on this Windows host.** It uses controlled task handlers and does not establish real-device capture, OpenCV, license-service or SpringBoard scheduling latency.
 
 Device acceptance: build both root runtimes and daemon binaries; pipeline image and ordinary commands on one client; run independent clients in both lane directions; saturate two image slots and 14 ordinary slots; disconnect queued/active work and check subsequent recovery. Separately block downstream IPC and record its remaining head-of-line delay. Verify frame/image reader lifetimes, capture after acknowledged touch, normal error/reply fields, screenshot lease cleanup and idle wakeups. Record queue residence, latency and RSS against C01d2a without treating a build pass as performance acceptance.
+
+## C01d2c checkpoint — 2026-10-23
+
+The user reported the C01d2b build at `c0ed279` passed before C01d2c. Device qualification remains pending. `IMPLEMENTATION-C01D2C.md` adds a private synchronous C01 sender/receiver channel and documents remote callback ownership after sender timeout. Shared main-thread/engine/service contention and crash retention remain open.

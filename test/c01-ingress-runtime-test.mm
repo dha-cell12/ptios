@@ -35,14 +35,16 @@ static NSString *invoke(const char *wire,TLinkTaskExecutionContext *ctx){
 }
 static unsigned sends=0,taskSends=0;static SInt32 lastMessage=0;static double lastSend=0,lastReceive=0;
 static std::vector<uint8_t> lastBytes;
-static bool portValid=true,denyRemote=false,unknownEnvelope=false;
-static int FixtureAccess(const char *,int){return 0;}
+static bool portValid=true,denyRemote=false,unknownEnvelope=false,missingMarker=false,denyPrivate=false;
+static CFStringRef lastPortName=NULL;static unsigned markerChecks=0;
+static int FixtureAccess(const char *,int){++markerChecks;return missingMarker?-1:0;}
 static CFDataRef FixturePortCallback(CFMessagePortRef,SInt32,CFDataRef,void *){return NULL;}
-static CFMessagePortRef FixtureRemote(CFAllocatorRef,CFStringRef){
-    if(denyRemote)return NULL;
+static CFMessagePortRef FixtureRemote(CFAllocatorRef,CFStringRef name){
+    lastPortName=name;
+    if(denyRemote||(denyPrivate&&CFEqual(name,kTLinkautoC01IPCPortName)))return NULL;
     CFMessagePortContext portContext={0,NULL,NULL,NULL,NULL};Boolean shouldFree=false;
-    NSString *name=[@"test.c01.ingress." stringByAppendingString:NSUUID.UUID.UUIDString];
-    return CFMessagePortCreateLocal(kCFAllocatorDefault,(__bridge CFStringRef)name,FixturePortCallback,&portContext,&shouldFree);
+    NSString *fixtureName=[@"test.c01.ingress." stringByAppendingString:NSUUID.UUID.UUIDString];
+    return CFMessagePortCreateLocal(kCFAllocatorDefault,(__bridge CFStringRef)fixtureName,FixturePortCallback,&portContext,&shouldFree);
 }
 static Boolean FixtureValid(CFMessagePortRef port){if(!portValid){CFMessagePortInvalidate(port);return false;}return CFMessagePortIsValid(port);}
 static SInt32 FixtureSend(CFMessagePortRef,SInt32 message,CFDataRef data,CFTimeInterval send,CFTimeInterval receive,CFStringRef,CFDataRef *response){
@@ -67,6 +69,7 @@ int main(){@autoreleasepool{
     auto parent=std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},TLinkNativeDeadline(3),128);
     {
         TLinkNativeBudgetScope scope(parent);assert([ownedReply(sendIPCMessage("TASK::69fixture",true)) hasPrefix:@"0;;"]);
+        assert(CFEqual(lastPortName,kTLinkautoC01IPCPortName)&&markerChecks==0);
         assert(lastMessage==TLinkC01IPCMessage&&lastSend>0&&lastReceive>0&&lastSend+lastReceive<=3);
         TLinkC01Envelope envelope;assert(TLinkC01Decode(lastBytes.data(),lastBytes.size(),envelope)==TLinkC01DecodeResult::Valid&&envelope.deadline==parent->deadline());
         assert([ownedReply(sendIPCMessage("TASK::291;;/tmp/fixture.png",true)) hasPrefix:@"0;;"]&&lastMessage==TLinkC01IPCMessage);
@@ -76,6 +79,13 @@ int main(){@autoreleasepool{
     assert(!sendIPCMessage("TASK::10fixture",false)&&lastMessage==2&&lastSend==1.5);
     parent=std::make_shared<TLinkNativeBudget>(TLinkNativeNowNs()-1,TLinkNativeBudgetPtr{});
     {TLinkNativeBudgetScope scope(parent);before=sends;assert([ownedReply(sendIPCMessage("TASK::69fixture",true)) containsString:@"c01_request_expired"]&&sends==before);}
+    missingMarker=true;
+    {TLinkNativeBudgetScope scope(std::make_shared<TLinkNativeBudget>(TLinkNativeDeadline(3),TLinkNativeBudgetPtr{}));assert([ownedReply(sendIPCMessage("TASK::69fixture",true)) hasPrefix:@"0;;"]);}
+    assert(!sendIPCMessage(kTLinkautoIPCCommandPing,true));missingMarker=false;
+    portValid=false;denyPrivate=true;
+    {TLinkNativeBudgetScope scope(std::make_shared<TLinkNativeBudget>(TLinkNativeDeadline(3),TLinkNativeBudgetPtr{}));
+        before=taskSends;assert([ownedReply(sendIPCMessage("TASK::69fixture",true)) containsString:@"c01_ipc_unavailable"]&&taskSends==before&&CFEqual(lastPortName,kTLinkautoC01IPCPortName));}
+    portValid=true;assert([ownedReply(sendIPCMessage("TASK::61fixture",true)) hasPrefix:@"0;;"]);
     portValid=false;denyRemote=true;assert(!sendIPCMessage(kTLinkautoIPCCommandPing,true));
     puts("C01 Foundation passed: actual root task-entry before/after license, parent sink/deadline preservation, cleanup exemption, actual IPC envelope/timeouts and no legacy retry.");
 }}

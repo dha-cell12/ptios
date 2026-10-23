@@ -22,6 +22,7 @@ const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-owned-c
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
  const fixtures={
+  'OwnedIPCQueues.inc':section(socket,'// BEGIN C01 IPC owner queues.','// END C01 IPC owner queues.'),
   'OwnedWriter.inc':writer,
   'OwnedScreenshotHandler.inc':section(screen,'NSString* handleScreenshotTaskFromRawData(','void handleScreenKeepTaskFromRawData('),
   'OwnedScreenshotConstants.h':[...header.matchAll(/^#define SCREENSHOT_TASK_[^\n]+/gm)].map(match=>match[0]).join('\n'),

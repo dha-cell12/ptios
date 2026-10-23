@@ -34,6 +34,28 @@ inline bool TLinkC01IPCPayload(const uint8_t *bytes,size_t length) {
     // Private helpers invoked by daemon task 21 inherit that same request deadline.
     return (bytes[6]=='2'&&bytes[7]=='9')||(bytes[6]=='3'&&bytes[7]=='5');
 }
+// Dedicated port v1 accepts read-only C01 work and task-21's owned capture /
+// orientation helpers. Ordinary screenshot/album mutations stay on the legacy port.
+inline bool TLinkC01IsolatedPayload(const uint8_t *bytes,size_t length) {
+    if(!TLinkC01IPCPayload(bytes,length))return false;
+    if(TLinkC01DurationNs(bytes+6,length-6))return true;
+    return (length==8&&std::memcmp(bytes+6,"35",2)==0)||
+        (length>11&&std::memcmp(bytes,"TASK::294;;",11)==0);
+}
+inline bool TLinkC01PrivateIPC(const uint8_t *bytes,size_t length,bool reply,TLinkNativeBudgetPtr budget) {
+    return reply&&budget&&budget->deadline()&&TLinkC01IPCPayload(bytes,length);
+}
+// A nested framework run loop must not reenter another private image handler.
+class TLinkC01IPCAdmission {
+    std::atomic_bool &active_;bool admitted_;
+public:
+    explicit TLinkC01IPCAdmission(std::atomic_bool &active):active_(active),admitted_(false){
+        bool expected=false;admitted_=active_.compare_exchange_strong(expected,true,std::memory_order_acq_rel);
+    }
+    bool admitted()const{return admitted_;}
+    ~TLinkC01IPCAdmission(){if(admitted_)active_.store(false,std::memory_order_release);}
+    TLinkC01IPCAdmission(const TLinkC01IPCAdmission &)=delete;TLinkC01IPCAdmission &operator=(const TLinkC01IPCAdmission &)=delete;
+};
 inline std::vector<uint8_t> TLinkC01Encode(const uint8_t *payload,size_t length,uint64_t deadline) {
     if(!deadline||!TLinkC01IPCPayload(payload,length))return {};
     std::vector<uint8_t> bytes(TLinkC01IPCHeaderBytes+length);

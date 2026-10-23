@@ -47,6 +47,17 @@ int main(){
         std::thread worker([&]{waitingEntered.store(true);assert(!running->waitNs(60000000000ULL));});
         while(!waitingEntered.load())std::this_thread::yield();cancel->cancel();worker.join();assert(running->reason()==TLinkNativeStop::Cancelled);
     }
+    for(const char *s:{"TASK::69pick","TASK::271;;x","TASK::276;;x","TASK::21template","TASK::294;;owned.png","TASK::35"}){
+        assert(TLinkC01IsolatedPayload(wire(s),strlen(s)));
+        assert(TLinkC01PrivateIPC(wire(s),strlen(s),true,sibling));
+        assert(!TLinkC01PrivateIPC(wire(s),strlen(s),false,sibling)&&!TLinkC01PrivateIPC(wire(s),strlen(s),true,{}));
+    }
+    for(const char *s:{"TASK::291;;legacy.png","TASK::292;;album.png","TASK::293","TASK::35extra","TASK::10","TASK::67","TASK::275","CMD_PING"})
+        assert(!TLinkC01IsolatedPayload(wire(s),strlen(s)));
+    {std::atomic_bool active{false};{TLinkC01IPCAdmission owner(active);assert(owner.admitted());
+        TLinkC01IPCAdmission nested(active);assert(!nested.admitted()&&active.load());}assert(!active.load());
+        try{TLinkC01IPCAdmission owner(active);assert(owner.admitted());throw 1;}catch(int){}assert(!active.load());
+    }
     const uint64_t now=90000000000ULL;
     for(const char *s:{"TASK::69pick;;1","TASK::271;;x","TASK::276;;x","TASK::21template","TASK::291;;file","TASK::35"}){
         auto bytes=TLinkC01Encode(wire(s),strlen(s),now+3000000000ULL);assert(bytes.size()==strlen(s)+12);

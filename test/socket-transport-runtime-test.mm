@@ -157,6 +157,7 @@ static void drainTasks(unsigned turns = 4) {
 static void dispose(ZXClientContext *ctx, int fd) { dispatch_sync(socketQueue(), ^{ zx_cleanupClient(ctx.readStream); }); close(fd); }
 int main() {
  @autoreleasepool {
+    (void)kTLinkautoC01IPCPortName;
     fputs("Socket runtime: bounded IPC/no-reply/ACK\n", stderr); ipcFixtures();
     (void)&TCPServerAcceptCallBack;
     socketClients = [NSMutableDictionary dictionary]; taskCalls = [NSMutableArray array];
