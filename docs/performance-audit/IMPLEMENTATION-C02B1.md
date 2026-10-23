@@ -41,3 +41,7 @@ The numeric request has default duration 50 ms, finger 0 and default swipe steps
 Build rootfull/roothide and exercise JS tap/swipe/longPress with observe/enforced licensing, revoked/expired/offline snapshots, stop during authorization/wait/DOWN, native exceptions and limited output caps. Compare coordinates around decimal/fixed-point boundaries, signed zero, extreme finite values and duration half-ties. Record allocations, native-call latency, endpoint timing and stop-to-UP against C02a. A successful build does not establish a measured performance win.
 
 After this checkpoint, continue structured gesture/zoom/batch or other measured hot methods while preserving their preflight, diagnostics, ordering and rollback contracts. P0-12 event-driven helper RPC, P1-40 configuration snapshot and P1-41 byte-bounded replay/dedupe remain separate work. C01 device acceptance also remains open.
+
+## CI correction — boolean macros (2026-10-24)
+
+The iOS Task.xm build reported unexpected `@` and undeclared `NO` in the new typed entry. `Image.h` undefines YES/NO for OpenCV after Task.xm's early fallback definitions. The typed entry now uses `@(true)`/`@(false)` and C++ false arguments, with unchanged result/context semantics. The native runner rejects YES/NO identifiers in this entry on every host, and its actual Foundation fixture compiles that entry with both macros explicitly undefined before restoring the fixture's prior definitions. Strict warnings and sanitizers remain enabled. Corrected macOS/iOS CI remains pending on this Windows host.

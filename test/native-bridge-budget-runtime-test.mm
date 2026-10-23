@@ -126,7 +126,14 @@ static BOOL TLinkRootfullLicenseTaskAllowed(NSInteger task,NSString **denial){
     if(!licenseAllowed && denial)*denial=@"-1;;license_required task=62\r\n";
     return licenseAllowed;
 }
+// Match Image.h: OpenCV leaves these macros undefined in production Task.xm.
+#pragma push_macro("YES")
+#pragma push_macro("NO")
+#undef YES
+#undef NO
 #include "NativeTouchEntryUnderTest.inc"
+#pragma pop_macro("NO")
+#pragma pop_macro("YES")
 static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 1024 * 1024) {
     auto context = [TLinkTaskExecutionContext new];
     context.cancellationToken = [TLinkCancellationToken new];

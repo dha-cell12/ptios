@@ -100,6 +100,9 @@ try {
   assert.match(entry,/TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)/);
   assert.match(entry,/budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed[\s\S]*budget->stopped\(\)[\s\S]*zx_executeNativeTap/);
   assert.doesNotMatch(entry,/processTaskWithContext|CFWriteStreamCreate|appendCString/);
+  assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
+  const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
+  assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
     const runtime = join(temp, "native-bridge-runtime-test");

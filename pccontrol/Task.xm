@@ -467,7 +467,7 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
 // BEGIN typed touch task entry.
 static NSDictionary *zx_typedTouchFailure(NSString *code)
 {
-    return @{@"ok":@NO,@"raw":[NSString stringWithFormat:@"1;;%@\r\n",code],@"parts":@[@"1",code]};
+    return @{@"ok":@(false),@"raw":[NSString stringWithFormat:@"1;;%@\r\n",code],@"parts":@[@"1",code]};
 }
 static NSDictionary *zx_typedTouchStopped(const TLinkNativeBudgetPtr &budget)
 {
@@ -481,16 +481,16 @@ static NSDictionary *zx_typedTouchStopped(const TLinkNativeBudgetPtr &budget)
 static NSDictionary *zx_typedTouchReply(NSString *raw,const TLinkNativeBudgetPtr &budget)
 {
     if(!budget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||budget->stopped())return zx_typedTouchStopped(budget);
-    if([raw isEqualToString:@"0\r\n"])return @{@"ok":@YES,@"raw":@"0\r\n",@"parts":@[@"0"]};
+    if([raw isEqualToString:@"0\r\n"])return @{@"ok":@(true),@"raw":@"0\r\n",@"parts":@[@"0"]};
     // Compatibility fields are parsed only on the error/denial path.
     NSArray *parts=[[raw stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"];
-    return @{@"ok":@NO,@"raw":raw,@"parts":parts};
+    return @{@"ok":@(false),@"raw":raw,@"parts":parts};
 }
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request,TLinkTaskExecutionContext *context)
 {
     const int taskType=TLinkNativeTouchTask(request.kind);
     if(!taskType)return zx_typedTouchFailure(@"invalid_touch_request");
-    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,NO,NO);
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
     auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
     @try {try {
         if(budget->stopped())return zx_typedTouchStopped(budget);
