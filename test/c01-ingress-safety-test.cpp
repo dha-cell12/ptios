@@ -4,6 +4,18 @@
 #include <string>
 static const uint8_t *wire(const char *text){return reinterpret_cast<const uint8_t *>(text);}
 int main(){
+    // Capacity is reserved in both directions, including closed or expired jobs
+    // until their actual worker completion. Invalid counters fail closed.
+    assert(TLinkC01ImagePendingLimit==2&&TLinkC01OrdinaryPendingLimit==14);
+    for(size_t total=0;total<=20;++total)for(size_t images=0;images<=20;++images){
+        if(images>total||images>2||(images<=total&&total-images>14)||total>=16){assert(!TLinkC01LaneAvailable(false,total,images)&&!TLinkC01LaneAvailable(true,total,images));continue;}
+        if(images>=2)assert(!TLinkC01LaneAvailable(true,total,images));
+        if(total-images>=14)assert(!TLinkC01LaneAvailable(false,total,images));
+    }
+    assert(TLinkC01LaneAvailable(true,0,0)&&TLinkC01LaneAvailable(false,0,0));
+    assert(TLinkC01LaneAvailable(false,2,2)&&!TLinkC01LaneAvailable(true,2,2));
+    assert(TLinkC01LaneAvailable(true,14,0)&&!TLinkC01LaneAvailable(false,14,0));
+    assert(TLinkC01LaneAvailable(true,15,1)&&TLinkC01LaneAvailable(false,15,2));
     for(const char *s:{"23","28","69","91"})assert(TLinkC01DurationNs(wire(s),2)==3000000000ULL);
     for(const char *s:{"21","49","68","70","271;;","276;;"})assert(TLinkC01DurationNs(wire(s),strlen(s))==8000000000ULL);
     for(const char *s:{"","6","10","18","272","275","67","483;;1","95"})assert(!TLinkC01DurationNs(wire(s),strlen(s)));
@@ -56,5 +68,5 @@ int main(){
     }
     {TLinkNativeBudgetScope first(parent);{TLinkNativeBudgetScope second(child);assert(TLinkCurrentNativeBudget()==child);}assert(TLinkCurrentNativeBudget()==parent);}
     assert(!TLinkCurrentNativeBudget());
-    puts("C01 ingress passed: classification, non-extending deadlines, shared output/cancel, cleanup isolation, bounded envelope/fuzz and IPC time allocation.");
+    puts("C01 ingress passed: reserved 2/14 lane admission, invalid counter boundaries, classification, non-extending deadlines, shared output/cancel, cleanup isolation, bounded envelope/fuzz and IPC time allocation.");
 }

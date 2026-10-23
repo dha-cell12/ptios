@@ -39,3 +39,7 @@ C01d2b still needs to address unrelated synchronous owner-queue interference wit
 - **The macOS fixture and final iOS builds were not run on this Windows host.** Actual UIKit capture, real OpenCV behavior, device permissions and performance remain pending.
 
 Device acceptance: exercise task 21 against a warm/cold capture, kept screen, timeout while capture/encoding runs, disconnect during matching, normal/error paths and service restart. Inspect only the test request's UUID marker/PNG after late work finishes. Verify legacy screenshot actions and successful task-21 reply fields, then measure opaque overrun separately from cleanup correctness.
+
+## C01d2b checkpoint — 2026-10-23
+
+The user reported the C01d2a build at `c224451` passed before C01d2b. Device qualification remains pending. `IMPLEMENTATION-C01D2B.md` adds the bounded daemon image lane; shared IPC isolation and process-crash retention remain open.

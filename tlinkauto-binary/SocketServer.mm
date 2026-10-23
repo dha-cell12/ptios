@@ -91,8 +91,8 @@ static void zx_rearmOutput(void);
 static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requestId, bool json, bool fireAndForget);
 static size_t gOutputBytes = 0;
 static size_t gPendingTasks = 0;
+static size_t gPendingImageTasks = 0;
 static const size_t kZXMaxClients = 64;
-static const size_t kZXMaxPendingTasks = 16;
 
 static NSData *zx_eventChannelResponse(NSString *body)
 {
@@ -1171,6 +1171,16 @@ static dispatch_queue_t zx_taskQueue(void)
     });
     return queue;
 }
+static dispatch_queue_t zx_imageTaskQueue(void)
+{
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_autorelease_frequency(DISPATCH_QUEUE_SERIAL, DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
+        queue = dispatch_queue_create("com.tlinkauto.tlinkautod.image-tasks", attr);
+    });
+    return queue;
+}
 static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requestId, bool json, bool fireAndForget)
 {
     if (!ctx || ctx->closed.load(std::memory_order_acquire)) return;
@@ -1181,36 +1191,44 @@ static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requ
                                         : zx_dataFromCString("0;;daemon\r\n"));
         return;
     }
-    if (gPendingTasks >= kZXMaxPendingTasks) {
-        zx_cleanupClient(ctx.readStream); // No accepted action/ambiguous success on overload.
+    const uint8_t *task=(const uint8_t *)payload.UTF8String;
+    const size_t taskLength=[payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    const bool imageTask=TLinkC01DurationNs(task,taskLength)!=0;
+    if (!TLinkC01LaneAvailable(imageTask,gPendingTasks,gPendingImageTasks)) {
+        zx_cleanupClient(ctx.readStream); // Rejected work never enters either owner queue.
         return;
     }
     TLinkNativeBudgetPtr requestBudget;
-    const uint8_t *task=(const uint8_t *)payload.UTF8String;
-    const size_t taskLength=[payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-    if(TLinkC01DurationNs(task,taskLength)){
+    if(imageTask){
         auto token=std::make_shared<TLinkNativeCancellation>();ctx->c01Cancellation=token;
         auto parent=std::make_shared<TLinkNativeBudget>(token,0,1024*1024);
         requestBudget=TLinkC01TaskBudget(task,taskLength,parent);
     }
     ctx.requestPending = true; ++gPendingTasks;
-    dispatch_async(zx_taskQueue(), ^{
+    if(imageTask)++gPendingImageTasks;
+    // Per-client parsing stays paused until completion. Each lane is serial;
+    // independent clients in different lanes need not finish in admission order.
+    dispatch_queue_t workQueue=imageTask?zx_imageTaskQueue():zx_taskQueue();
+    dispatch_async(workQueue, ^{
         @autoreleasepool {
             TLinkNativeBudgetScope ingressScope(requestBudget);
             NSData *response = nil;
             if (!ctx->closed.load(std::memory_order_acquire)) {
                 NSData *legacy = nil;
-                @try {
-                    legacy=TLinkNativeStopped()?zx_dataFromCString("1;;c01_request_expired\r\n"):zx_handleLegacyRequestBytes([payload UTF8String]);
-                    if(TLinkNativeStopped())legacy=zx_dataFromCString("1;;c01_request_expired\r\n");
-                }
-                @catch (NSException *exception) { (void)exception; legacy = zx_dataFromCString("1;;request_failed\r\n"); }
+                try {
+                    @try {
+                        legacy=TLinkNativeStopped()?zx_dataFromCString("1;;c01_request_expired\r\n"):zx_handleLegacyRequestBytes([payload UTF8String]);
+                        if(TLinkNativeStopped())legacy=zx_dataFromCString("1;;c01_request_expired\r\n");
+                    }
+                    @catch (NSException *exception) { (void)exception; legacy = zx_dataFromCString("1;;request_failed\r\n"); }
+                } catch (...) { legacy = zx_dataFromCString("1;;request_failed\r\n"); }
                 if (legacy.length > 1024 * 1024) legacy = zx_dataFromCString("1;;response_too_large\r\n");
                 if (!json) response = legacy;
                 else if (!fireAndForget) response = zx_frameJSONResponse(zx_jsonResponseFromLegacy(legacy, requestId));
             }
             dispatch_async(socketQueue(), ^{
                 --gPendingTasks;
+                if(imageTask)--gPendingImageTasks;
                 if (!ctx->closed.load(std::memory_order_acquire)) {
                     ctx->c01Cancellation.reset();
                     ctx.requestPending = false;

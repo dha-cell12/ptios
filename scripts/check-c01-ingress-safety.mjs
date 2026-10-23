@@ -9,7 +9,10 @@ const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n'
 const [socket,task,ipc,runtimeSource]=await Promise.all(['tlinkauto-binary/SocketServer.mm','pccontrol/Task.xm','pccontrol/IPCMessagePort.xm','test/c01-ingress-runtime-test.mm'].map(read));
 function section(text,a,b){const start=text.indexOf(a),end=text.indexOf(b,start+a.length);assert.ok(start>=0&&end>start,a);return text.slice(start,end);}
 const work=section(socket,'// BEGIN socket work adapter.','// END socket work adapter.');
-assert.ok(work.indexOf('TLinkC01TaskBudget(')<work.indexOf('dispatch_async(zx_taskQueue()'));
+assert.ok(work.indexOf('TLinkC01TaskBudget(')<work.indexOf('dispatch_async(workQueue,'));
+assert.ok(work.indexOf('TLinkC01LaneAvailable(')<work.indexOf('TLinkC01TaskBudget('));
+assert.match(work,/workQueue=imageTask\?zx_imageTaskQueue\(\):zx_taskQueue\(\)/);
+assert.match(work,/if\(imageTask\)--gPendingImageTasks/);
 assert.match(work,/TLinkNativeBudgetScope ingressScope\(requestBudget\)/);
 assert.match(socket,/c01Cancellation->cancel\(\)/);assert.doesNotMatch(socket,/dispatch_sync\(ipcQueue\(\)/);
 const entry=section(task,'void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef writeStreamRef, TLinkTaskExecutionContext *context)\n{','    //for touching');

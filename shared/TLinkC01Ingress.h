@@ -3,6 +3,14 @@
 #include "TLinkNativeBudget.h"
 static const int TLinkC01IPCMessage=3;
 static const size_t TLinkC01IPCHeaderBytes=12;
+// Socket-queue-owned admission: reserve capacity in both serial lanes. Counts
+// include running, queued and completion-pending work, even after disconnect.
+static const size_t TLinkC01ImagePendingLimit=2;
+static const size_t TLinkC01OrdinaryPendingLimit=14;
+inline bool TLinkC01LaneAvailable(bool image,size_t pending,size_t images) {
+    if(images>pending||images>TLinkC01ImagePendingLimit||pending-images>TLinkC01OrdinaryPendingLimit||pending>=TLinkC01ImagePendingLimit+TLinkC01OrdinaryPendingLimit)return false;
+    return image?images<TLinkC01ImagePendingLimit:pending-images<TLinkC01OrdinaryPendingLimit;
+}
 // Classification only; existing task parsers/license gates remain authoritative.
 inline uint64_t TLinkC01DurationNs(const uint8_t *task,size_t length) {
     if(!task||length<2||task[0]<'0'||task[0]>'9'||task[1]<'0'||task[1]>'9')return 0;

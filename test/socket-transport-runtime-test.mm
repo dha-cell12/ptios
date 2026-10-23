@@ -14,6 +14,7 @@
 #include <cstring>
 #include <cstdio>
 #include <string>
+#include <stdexcept>
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
@@ -36,12 +37,15 @@ static NSData *zx_frameJSONResponse(NSDictionary *);
 static void zx_logf(const char *, ...) {}
 static NSData *zx_dataFromCString(const char *s) { return s ? [NSData dataWithBytes:s length:strlen(s)] : nil; }
 static BOOL TLinkRootfullLicenseTaskAllowed(int, NSString **) { return true; }
-static dispatch_semaphore_t taskStarted, taskFinish;
+static dispatch_semaphore_t taskStarted, taskFinish, imageStarted, imageFinish;
 static NSMutableArray *taskCalls;
 static NSData *zx_handleLegacyRequestBytes(const char *payload) {
     NSString *s = [NSString stringWithUTF8String:payload];
     @synchronized(taskCalls) { [taskCalls addObject:s]; }
     if ([s isEqualToString:@"99slow"]) { dispatch_semaphore_signal(taskStarted); dispatch_semaphore_wait(taskFinish, DISPATCH_TIME_FOREVER); }
+    if ([s isEqualToString:@"21slow"]) { dispatch_semaphore_signal(imageStarted); dispatch_semaphore_wait(imageFinish, DISPATCH_TIME_FOREVER); }
+    if ([s isEqualToString:@"69objcThrow"]) @throw [NSException exceptionWithName:@"ImageFixture" reason:@"controlled failure" userInfo:nil];
+    if ([s isEqualToString:@"69cppThrow"]) throw std::runtime_error("controlled image failure");
     if ([s isEqualToString:@"69wait"]) {
         assert(TLinkCurrentNativeBudget()&&TLinkCurrentNativeBudget()->deadline());
         dispatch_semaphore_signal(taskStarted);assert(!TLinkNativeWaitNs(20000000000ULL));
@@ -148,7 +152,7 @@ static NSData *receive(int fd) {
     return result;
 }
 static void drainTasks(unsigned turns = 4) {
-    for (unsigned n = 0; n < turns; ++n) { dispatch_sync(zx_taskQueue(), ^{}); dispatch_sync(socketQueue(), ^{}); }
+    for (unsigned n = 0; n < turns; ++n) { dispatch_sync(zx_taskQueue(), ^{}); dispatch_sync(zx_imageTaskQueue(), ^{}); dispatch_sync(socketQueue(), ^{}); }
 }
 static void dispose(ZXClientContext *ctx, int fd) { dispatch_sync(socketQueue(), ^{ zx_cleanupClient(ctx.readStream); }); close(fd); }
 int main() {
@@ -157,6 +161,7 @@ int main() {
     (void)&TCPServerAcceptCallBack;
     socketClients = [NSMutableDictionary dictionary]; taskCalls = [NSMutableArray array];
     taskStarted = dispatch_semaphore_create(0); taskFinish = dispatch_semaphore_create(0);
+    imageStarted = dispatch_semaphore_create(0); imageFinish = dispatch_semaphore_create(0);
     fputs("Socket runtime: actual eight deferred polls cancel through production cleanup\n",stderr);
     NSMutableArray *eventClients = [NSMutableArray array]; std::vector<int> eventPeers;
     for (unsigned n = 0; n < 8; ++n) { int peer; ZXClientContext *event = client(&peer); [eventClients addObject:event]; eventPeers.push_back(peer); feed(event,text(@"950;;25000;;8;;*\n")); }
@@ -167,26 +172,47 @@ int main() {
     assert([TLinkEventChannelStatus()[@"active_polls"] intValue] == 0);
     int aPeer, bPeer; ZXClientContext *a = client(&aPeer), *b = client(&bPeer);
     fputs("Socket runtime: FIFO work and independent daemon ping\n", stderr);
-    feed(a, text(@"99slow\n60next\n"));
+    feed(a, text(@"99slow\n69mixed\n60next\n"));
     assert(dispatch_semaphore_wait(taskStarted, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0);
     feed(b, text(@"CMD_PING\n"));
     assert([[[NSString alloc] initWithData:receive(bPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;daemon\r\n"]);
-    @synchronized(taskCalls) { assert(taskCalls.count == 1); }
+    feed(b,text(@"69independent\n"));
+    dispatch_sync(zx_imageTaskQueue(),^{});dispatch_sync(socketQueue(),^{});
+    assert([[[NSString alloc] initWithData:receive(bPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;69independent\r\n"]);
+    @synchronized(taskCalls) { assert(taskCalls.count == 2 && ![taskCalls containsObject:@"69mixed"]); }
     dispatch_semaphore_signal(taskFinish); drainTasks();
     NSString *ordered = [[NSString alloc] initWithData:receive(aPeer) encoding:NSUTF8StringEncoding];
-    assert([ordered isEqualToString:@"0;;99slow\r\n0;;60next\r\n"]);
+    assert([ordered isEqualToString:@"0;;99slow\r\n0;;69mixed\r\n0;;60next\r\n"]);
     fputs("Socket runtime: C01 deadline starts before queue, plus disconnect cancellation\n",stderr);
-    feed(a,text(@"99slow\n"));assert(dispatch_semaphore_wait(taskStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    feed(a,text(@"21slow\n60afterImage\n"));assert(dispatch_semaphore_wait(imageStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
     feed(b,text(@"69expired\n"));
+    int independentPeer;ZXClientContext *independent=client(&independentPeer);feed(independent,text(@"60duringImage\n"));
+    dispatch_sync(zx_taskQueue(),^{});dispatch_sync(socketQueue(),^{});
+    assert([[[NSString alloc] initWithData:receive(independentPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;60duringImage\r\n"]);
+    @synchronized(taskCalls){assert(![taskCalls containsObject:@"60afterImage"]);}
+    dispose(independent,independentPeer);
     dispatch_semaphore_t age=dispatch_semaphore_create(0);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3100*NSEC_PER_MSEC),dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0),^{dispatch_semaphore_signal(age);});
     assert(dispatch_semaphore_wait(age,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
-    dispatch_semaphore_signal(taskFinish);drainTasks();
-    @synchronized(taskCalls){assert(![taskCalls containsObject:@"69expired"]);}
+    dispatch_semaphore_signal(imageFinish);drainTasks();
+    @synchronized(taskCalls){assert(![taskCalls containsObject:@"69expired"]&&[taskCalls containsObject:@"60afterImage"]);}
     NSString *expiredReply=[[NSString alloc] initWithData:receive(bPeer) encoding:NSUTF8StringEncoding];assert([expiredReply isEqualToString:@"1;;c01_request_expired\r\n"]);(void)receive(aPeer);
     int cancelPeer;ZXClientContext *cancelClient=client(&cancelPeer);feed(cancelClient,text(@"69wait\n"));
     assert(dispatch_semaphore_wait(taskStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
     auto cancellation=cancelClient->c01Cancellation;assert(cancellation);dispose(cancelClient,cancelPeer);drainTasks();assert(cancellation->cancelled());
+    fputs("Socket runtime: reserved image capacity, queued cancellation and exception recovery\n",stderr);
+    feed(a,text(@"21slow\n"));assert(dispatch_semaphore_wait(imageStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    int queuedPeer;ZXClientContext *queued=client(&queuedPeer);feed(queued,text(@"69queuedCancelled\n"));
+    auto queuedCancellation=queued->c01Cancellation;dispose(queued,queuedPeer);assert(queuedCancellation->cancelled());
+    int rejectedPeer;ZXClientContext *rejected=client(&rejectedPeer);feed(rejected,text(@"69rejected\n"));
+    dispatch_sync(socketQueue(),^{assert(rejected->closed.load()&&gPendingImageTasks==2&&gPendingTasks==2);});close(rejectedPeer);
+    feed(b,text(@"60reservedOrdinary\n"));dispatch_sync(zx_taskQueue(),^{});dispatch_sync(socketQueue(),^{});
+    assert([[[NSString alloc] initWithData:receive(bPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;60reservedOrdinary\r\n"]);
+    dispatch_semaphore_signal(imageFinish);drainTasks();(void)receive(aPeer);
+    @synchronized(taskCalls){assert(![taskCalls containsObject:@"69queuedCancelled"]&&![taskCalls containsObject:@"69rejected"]);}
+    dispatch_sync(socketQueue(),^{assert(!gPendingTasks&&!gPendingImageTasks);});
+    feed(a,text(@"69objcThrow\n69cppThrow\n69recovered\n"));drainTasks(8);
+    assert([[[NSString alloc] initWithData:receive(aPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"1;;request_failed\r\n1;;request_failed\r\n0;;69recovered\r\n"]);
     // Actual JSON parser/frame encoder and explicit oversized-result fallback.
     int jsonPeer; ZXClientContext *jsonClient = client(&jsonPeer);
     feed(jsonClient, zx_frameJSONResponse(@{@"id": @42, @"task": @48, @"args": @[@"large"]}));
@@ -233,13 +259,20 @@ int main() {
     (void)receive(aPeer); dispose(a, aPeer);
     fputs("Socket runtime: bounded work admission and queued disconnect\n", stderr);
     NSMutableArray *limited = [NSMutableArray array]; std::vector<int> peers;
-    for (unsigned n = 0; n < 17; ++n) { int fd; [limited addObject:client(&fd)]; peers.push_back(fd); }
+    for (unsigned n = 0; n < 15; ++n) { int fd; [limited addObject:client(&fd)]; peers.push_back(fd); }
     feed(limited[0], text(@"99slow\n"));
     assert(dispatch_semaphore_wait(taskStarted, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0);
-    for (unsigned n = 1; n < 17; ++n) feed(limited[n], text(@"60bounded\n"));
-    dispatch_sync(socketQueue(), ^{ ZXClientContext *rejected = limited[16]; assert(gPendingTasks == 16 && rejected->closed.load()); });
+    for (unsigned n = 1; n < 15; ++n) feed(limited[n], text(@"60bounded\n"));
+    dispatch_sync(socketQueue(), ^{ ZXClientContext *overflow = limited[14]; assert(gPendingTasks == 14 && !gPendingImageTasks && overflow->closed.load()); });
+    int imagePeer;ZXClientContext *image=client(&imagePeer);feed(image,text(@"21slow\n"));
+    assert(dispatch_semaphore_wait(imageStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    int secondImagePeer;ZXClientContext *secondImage=client(&secondImagePeer);feed(secondImage,text(@"69reservedImage\n"));
+    dispatch_sync(socketQueue(),^{assert(gPendingTasks==16&&gPendingImageTasks==2&&!secondImage->closed.load());});
+    dispatch_semaphore_signal(imageFinish);dispatch_sync(zx_imageTaskQueue(),^{});dispatch_sync(socketQueue(),^{});
+    assert([[[NSString alloc] initWithData:receive(secondImagePeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;69reservedImage\r\n"]);
+    (void)receive(imagePeer);dispose(image,imagePeer);dispose(secondImage,secondImagePeer);
     dispatch_semaphore_signal(taskFinish); drainTasks(20);
-    for (unsigned n = 0; n < 17; ++n) dispose(limited[n], peers[n]);
+    for (unsigned n = 0; n < 15; ++n) dispose(limited[n], peers[n]);
     // Output failure closes cleanly and stale queued read events retain their CF object.
     a = client(&aPeer); close(aPeer);
     dispatch_sync(socketQueue(), ^{ zx_writeAll(a.writeStream, text(@"closed")); assert(a->closed.load()); });
@@ -247,9 +280,9 @@ int main() {
     dispatch_sync(socketQueue(), ^{ readStream(b.readStream, kCFStreamEventEndEncountered, nullptr); readStream(b.readStream, kCFStreamEventEndEncountered, nullptr); });
     dispatch_sync(socketQueue(), ^{}); close(bPeer);
     dispatch_sync(socketQueue(), ^{
-        assert(!socketClients.count && !gOutputBytes && !gPendingTasks);
+        assert(!socketClients.count && !gOutputBytes && !gPendingTasks && !gPendingImageTasks);
         if (gOutputTimer) { dispatch_source_cancel(gOutputTimer); gOutputTimer = nil; }
     });
-    puts("Socket runtime passed: actual IPC callback, parser, FIFO work, disconnect, nonblocking output, JSON errors and stale read cleanup.");
+    puts("Socket runtime passed: actual IPC callback, parser, two bounded serial lanes, mixed per-client FIFO, reserved admission, expiry/errors/disconnect, nonblocking output, JSON errors and stale read cleanup.");
  }
 }

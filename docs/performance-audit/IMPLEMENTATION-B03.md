@@ -83,3 +83,7 @@ User CI at aec55dd passed the prior native/macOS suites and the portable socket-
 Windows cannot execute the Foundation harness; the corrected macOS compile/runtime and final root artifacts still need CI confirmation.
 
 User reported the corrected B03 build passed at `a54251b` before B04. Device qualification remains pending.
+
+## C01d2b checkpoint — 2026-10-23
+
+C01d2b changes the shared ordinary executor into two serial lanes (2 C01 image slots and 14 ordinary slots, combined 16). Per-client FIFO remains, but different clients across lanes no longer share global FIFO/completion order. See `IMPLEMENTATION-C01D2B.md` for the intentional ordering/admission change and remaining shared IPC boundaries.
