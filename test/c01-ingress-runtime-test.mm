@@ -3,6 +3,7 @@
 #import "../pccontrol/TLinkTaskContext.h"
 #import "../pccontrol/SocketServer.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkIPCPolicy.h"
 #include "../tlinkauto-binary/IPCConstants.h"
 #include <cassert>
 #include <atomic>

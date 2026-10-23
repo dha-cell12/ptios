@@ -63,3 +63,7 @@ No hard three/eight-second socket SLA, forced remote cancellation, total process
 - Both workflows include the new runner and its fixture paths. macOS branches retain strict warnings, ASan and UBSan. **New macOS fixtures, final iOS builds and device tests were not run on this Windows host.**
 
 Device qualification should cover a slow preceding task, cold license/engine state, daemon/SpringBoard queue contention, script and external socket calls, disconnect during compute versus IPC, coherent/mixed service versions, and late task-21 screenshot cleanup. Record actual queue residence, stop/response latency and capture/engine work after expiry; report opaque overrun separately from cooperative checks.
+
+## CI fixture dependency correction
+
+- C01d1 CI correction: both root and TrollStore macOS jobs reported `TLinkIPCNoReplyMessage` undeclared in the extracted sender fixture. Added its production `shared/TLinkIPCPolicy.h` import to the runtime fixture. The ingress runner now compiles sender message IDs against that fixture's own portable imports on every host, catching missing shared dependencies on Windows as well. Ingress, socket and native-budget portable runners pass on Windows; a negative probe confirms the compiler rejects the omitted policy import. Production behavior, strict warnings and sanitizers are unchanged; corrected macOS/iOS CI remains pending.
