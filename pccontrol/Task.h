@@ -112,6 +112,12 @@
 
 #import "TLinkTaskContext.h"
 
+#ifdef __cplusplus
+#include "../shared/TLinkNativeTouchRequest.h"
+// Licensed numeric entry; preserves task context, deadlines and compatibility result fields.
+NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request, TLinkTaskExecutionContext *context);
+#endif
+
 // Compatibility entry point: buff must be a complete NUL-terminated task string.
 void processTaskLegacy(UInt8 *buff, CFWriteStreamRef writeStreamRef = NULL);
 // actualLength excludes the terminator. Non-touch handlers also require a NUL-terminated body.

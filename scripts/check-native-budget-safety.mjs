@@ -90,7 +90,16 @@ try {
   await writeFile(join(temp, "NativePressUnderTest.inc"), press);
   await writeFile(join(temp, "NativeGesturesUnderTest.inc"),
     between(task, "static std::atomic<uint64_t> sTLinkZoomAttemptCount", "static NSDictionary *zx_zoomDiagnostics") +
-    between(task, "static int zx_clampTouchCoord", "// === runShell drain/timeout support"));
+    between(task, "static int zx_clampTouchCoord", "// BEGIN typed touch task entry."));
+  await writeFile(join(temp, "NativeTouchEntryUnderTest.inc"),between(task,"// BEGIN typed touch task entry.","// END typed touch task entry."));
+  const typedTouch=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodTap])","    else if ([method isEqualToString:TLinkJSNativeMethodGesture])");
+  assert.doesNotMatch(typedTouch,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  assert.equal([...typedTouch.matchAll(/TLinkExecuteNativeTouch\(touch,context\)/g)].length,3);
+  await writeFile(join(temp,"NativeTouchBridgeUnderTest.inc"),typedTouch);
+  const entry=between(task,"// BEGIN typed touch task entry.","// END typed touch task entry.");
+  assert.match(entry,/TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)/);
+  assert.match(entry,/budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed[\s\S]*budget->stopped\(\)[\s\S]*zx_executeNativeTap/);
+  assert.doesNotMatch(entry,/processTaskWithContext|CFWriteStreamCreate|appendCString/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
     const runtime = join(temp, "native-bridge-runtime-test");

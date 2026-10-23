@@ -1,3 +1,4 @@
+#include "../shared/TLinkNativeTouchRequest.h"
 // Actual bridge, context, response writer and gestures; hardware/task/UI doubles only.
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -13,11 +14,14 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <stdexcept>
 #include <vector>
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
 static TLinkTaskExecutionContext *observed;
+NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &,TLinkTaskExecutionContext *);
+static BOOL TLinkautoJSIsFiniteNumber(double value){return isfinite(value);}
 static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef stream, TLinkTaskExecutionContext *context) {
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
@@ -59,6 +63,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeRequestPreludeUnderTest.inc"
     if (false) {}
 #include "NativePressUnderTest.inc"
+#include "NativeTouchBridgeUnderTest.inc"
     else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey]) {
         NSString *payload = [NSString stringWithFormat:@"30%d;;%d", [args[0] intValue], [args[1] intValue]];
         return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:payload context:context]];
@@ -79,6 +84,7 @@ enum { TOUCH_UP = 0, TOUCH_DOWN = 1, TOUCH_MOVE = 2,
 static std::vector<TLinkTouchPoint> injected;
 static TLinkCancellationToken *touchToken;
 static int cancelAt;
+static int throwAt=0;static bool throwCpp=false;
 static bool fakeTiming = false;
 static uint64_t fakeNow = 0, frameWork = 0, oversleep = 0;
 static unsigned fakeWaits = 0;
@@ -87,6 +93,10 @@ static bool performTouchFrame(const TLinkTouchPoint *points, int count) {
     assert(TLinkValidateTouchFrame(points, count));
     if (fakeTiming) {frameTimes.push_back(fakeNow);fakeNow += frameWork;}
     for (int i = 0; i < count; ++i) injected.push_back(points[i]);
+    if (throwAt>0 && int(injected.size())==throwAt) {
+        if(throwCpp)throw std::runtime_error("touch test");
+        [NSException raise:@"TouchTest" format:@"injection throws"];
+    }
     if (cancelAt > 0 && int(injected.size()) >= cancelAt) [touchToken cancel];
     return true;
 }
@@ -106,6 +116,17 @@ static bool touchWaitNs(uint64_t ns){
 #include "NativeGesturesUnderTest.inc"
 #undef TLinkNativeNowNs
 #undef TLinkNativeWaitNs
+static bool licenseAllowed=true,stopInLicense=false;
+static int licenseCalls=0,lastLicenseTask=0;
+static TLinkNativeBudgetPtr licenseBudget;
+static BOOL TLinkRootfullLicenseTaskAllowed(NSInteger task,NSString **denial){
+    ++licenseCalls;lastLicenseTask=int(task);licenseBudget=TLinkCurrentNativeBudget();
+    assert(TLinkCurrentNativeBudget() && !TLinkCurrentNativeBudget()->capturesResponse());
+    if(stopInLicense)[touchToken cancel];
+    if(!licenseAllowed && denial)*denial=@"-1;;license_required task=62\r\n";
+    return licenseAllowed;
+}
+#include "NativeTouchEntryUnderTest.inc"
 static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 1024 * 1024) {
     auto context = [TLinkTaskExecutionContext new];
     context.cancellationToken = [TLinkCancellationToken new];
@@ -165,6 +186,72 @@ static void timingCases() {
     zx_performSingleTouch(TOUCH_UP, 19, 1e30, 9999.89);
     assert(injected.back().x == 9999 && injected.back().y == 9999);
     puts("Actual gesture timing passed: typed frames, consumed DOWN/work/oversleep, scheduled final point, ordered overdue frames, exact endpoint and final-frame cancellation cleanup.");
+}
+static void typedTouchCases(TLinkInProcessNativeBridge *bridge) {
+    const int wireCalls=calls;
+    const auto resetTouch=[](TLinkTaskExecutionContext *context){
+        injected.clear();frameTimes.clear();fakeNow=1000000;frameWork=7000000;oversleep=2000000;fakeWaits=0;
+        touchToken=context.cancellationToken;cancelAt=0;throwAt=0;licenseAllowed=true;stopInLicense=false;
+    };
+    const auto invoke=[bridge](NSString *method,NSArray *args,TLinkTaskExecutionContext *context)->NSDictionary *{
+        auto request=[[TLinkJSNativeRequest alloc] initWithMethod:method arguments:args];
+        auto response=[bridge executeRequest:request context:context error:nil];
+        assert(response.ok && !TLinkCurrentNativeBudget());return response.value;
+    };
+    fakeTiming=true;
+    // Compare actual new bridge branches with the old NSString encoder plus
+    // actual RAW adapter/executor, including rounding and floatValue boundaries.
+    for(unsigned trial=0;trial<160;++trial){
+        const double x=trial<8?std::vector<double>{-1e308,-0.005,0.945,0.95,1.005,9999.89,1e30,1e308}[trial]:double(trial)*123.4567-500;
+        const double y=double(trial)*0.00495+0.945;
+        const bool swipe=trial%3==1,longPress=trial%3==2;
+        NSString *method=swipe?TLinkJSNativeMethodSwipe:(longPress?TLinkJSNativeMethodLongPress:TLinkJSNativeMethodTap);
+        const double duration=double(trial%17)+0.5;
+        NSArray *args=swipe?@[@(x),@(y),@75.125,@87.955,@(duration)]:(longPress?@[@(x),@(y),@(duration)]:@[@(x),@(y)]);
+        auto context=parent();resetTouch(context);
+        NSDictionary *result=invoke(method,args,context);
+        const auto expectedPoints=injected;const auto expectedTimes=frameTimes;
+        assert(lastLicenseTask==(swipe?63:62) && licenseBudget->response().empty() && licenseBudget->response().capacity()==0);
+        resetTouch(context);NSError *error=nil;
+        NSString *wire=swipe?[NSString stringWithFormat:@"%.2f;;%.2f;;%.2f;;%.2f;;%.0f",x,y,75.125,87.955,duration]:
+            (longPress?[NSString stringWithFormat:@"%.2f;;%.2f;;%.0f",x,y,duration]:[NSString stringWithFormat:@"%.2f;;%.2f",x,y]);
+        {TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,NO,NO) nativeBudget]);
+         if(swipe)zx_handleNativeSwipe((UInt8 *)wire.UTF8String,&error);else zx_handleNativeTap((UInt8 *)wire.UTF8String,&error);}
+        NSString *raw=error.localizedDescription?:@"0\r\n";
+        assert([result[@"raw"] isEqualToString:raw] && [result[@"ok"] boolValue]==(error==nil));
+        assert(expectedPoints.size()==injected.size() && expectedTimes==frameTimes);
+        for(size_t j=0;j<injected.size();++j)assert(injected[j].type==expectedPoints[j].type&&injected[j].index==expectedPoints[j].index&&
+            injected[j].x==expectedPoints[j].x&&injected[j].y==expectedPoints[j].y);
+    }
+    auto context=parent();resetTouch(context);licenseAllowed=false;
+    NSDictionary *result=invoke(TLinkJSNativeMethodTap,@[@20,@30],context);
+    assert(![result[@"ok"] boolValue] && [result[@"raw"] isEqualToString:@"-1;;license_required task=62\r\n"] && injected.empty());
+    context=parent();resetTouch(context);stopInLicense=true;
+    failure(invoke(TLinkJSNativeMethodTap,@[@20,@30],context),@"AbortError");assert(injected.empty());
+    context=parent();resetTouch(context);[context.cancellationToken cancel];const int gates=licenseCalls;
+    failure(invoke(TLinkJSNativeMethodSwipe,@[@20,@30,@80,@90,@500],context),@"AbortError");assert(injected.empty()&&licenseCalls==gates);
+    context=parent();resetTouch(context);[context setNativeBudget:std::make_shared<TLinkNativeBudget>(nullptr,TLinkNativeNowNs()-1,1024)];
+    failure(invoke(TLinkJSNativeMethodTap,@[@20,@30],context),@"TimeoutError");assert(injected.empty()&&licenseCalls==gates);
+    context=parent();resetTouch(context);cancelAt=1;
+    failure(invoke(TLinkJSNativeMethodLongPress,@[@20,@30,@60000],context),@"AbortError");
+    assert(injected.size()==2 && injected.back().type==TOUCH_UP);
+    for(bool cpp:{false,true}){
+        context=parent();resetTouch(context);throwAt=1;throwCpp=cpp;
+        failure(invoke(TLinkJSNativeMethodTap,@[@20,@30],context),@"native_exception");
+        assert(injected.size()==2 && injected.back().type==TOUCH_UP);
+    }
+    context=parent(1,3);resetTouch(context);assert([invoke(TLinkJSNativeMethodTap,@[@20,@30],context)[@"ok"] boolValue]);
+    context=parent(1,2);resetTouch(context);failure(invoke(TLinkJSNativeMethodTap,@[@20,@30],context),@"response_too_large");
+    assert(injected.size()==2&&injected.back().type==TOUCH_UP);
+    context=parent();resetTouch(context);TLinkNativeTouchRequest invalid;invalid.finger=20;
+    result=TLinkExecuteNativeTouch(invalid,context);assert(![result[@"ok"] boolValue]&&injected.empty());
+    invalid.kind=static_cast<TLinkNativeTouchKind>(9);const int previous=licenseCalls;
+    failure(TLinkExecuteNativeTouch(invalid,context),@"invalid_touch_request");assert(injected.empty()&&licenseCalls==previous);
+    fakeTiming=false;context=parent(0.01);resetTouch(context);
+    failure(invoke(TLinkJSNativeMethodLongPress,@[@20,@30,@60000],context),@"TimeoutError");
+    assert(injected.size()==2 && injected.back().type==TOUCH_UP);
+    assert(calls==wireCalls && !TLinkCurrentNativeBudget());licenseBudget.reset();touchToken=nil;cancelAt=0;
+    puts("Typed touch actual bridge/entry passed: 160 legacy-wire/frame/timestamp cases, task 62/63 gates, gate-time cancellation, pre-expiry, output caps, NS/C++ exceptions, owned UP, no raw dispatch or response-buffer allocation.");
 }
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";
@@ -260,5 +347,6 @@ int main() { @autoreleasepool {
       assert(zx_handleNativeTap((UInt8 *)"20;;30;;0;;0", &error) && injected.size() == 2);
       assert(zx_clampTouchCoord(1e30) == 99999); }
     timingCases();
+    typedTouchCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

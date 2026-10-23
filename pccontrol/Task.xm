@@ -162,6 +162,16 @@ static bool zx_nativeTouchArguments(CGFloat x, CGFloat y, int finger, int durati
         userInfo:@{NSLocalizedDescriptionKey:@"-1;;Invalid native touch coordinates, finger or duration.\r\n"}];
     return false;
 }
+static bool zx_executeNativeTap(CGFloat x, CGFloat y, int durationMs, int finger, NSError **err)
+{
+    if (!zx_nativeTouchArguments(x, y, finger, durationMs, err) || !zx_nativeContinue(err)) return false;
+    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
+    @try {
+        zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
+        if (!timeline.wait(1, 1)) return zx_nativeContinue(err);
+        return true;
+    } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
+}
 static bool zx_handleNativeTap(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
@@ -172,26 +182,11 @@ static bool zx_handleNativeTap(UInt8 *eventData, NSError **err)
     CGFloat x = [parts[0] floatValue], y = [parts[1] floatValue];
     int durationMs = parts.count >= 3 ? [parts[2] intValue] : 50;
     int finger = parts.count >= 4 ? [parts[3] intValue] : 0;
-    if (!zx_nativeTouchArguments(x, y, finger, durationMs, err) || !zx_nativeContinue(err)) return false;
-    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
-    @try {
-        zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
-        if (!timeline.wait(1, 1)) return zx_nativeContinue(err);
-        return true;
-    } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
+    return zx_executeNativeTap(x, y, durationMs, finger, err);
 }
-static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
+
+static bool zx_executeNativeSwipe(CGFloat x1, CGFloat y1, CGFloat x2, CGFloat y2, int durationMs, int finger, int steps, NSError **err)
 {
-    NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
-    if (parts.count < 5) {
-        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native swipe format: x1;;y1;;x2;;y2;;duration_ms[;;finger;;steps]\r\n"}];
-        return false;
-    }
-    CGFloat x1 = [parts[0] floatValue], y1 = [parts[1] floatValue];
-    CGFloat x2 = [parts[2] floatValue], y2 = [parts[3] floatValue];
-    int durationMs = [parts[4] intValue];
-    int finger = parts.count >= 6 ? [parts[5] intValue] : 0;
-    int steps = parts.count >= 7 ? [parts[6] intValue] : durationMs / 16;
     if (!zx_nativeTouchArguments(x1, y1, finger, durationMs, err) ||
         !zx_nativeTouchArguments(x2, y2, finger, durationMs, err) || !zx_nativeContinue(err)) return false;
     steps = MAX(2, MIN(steps, 120));
@@ -210,6 +205,20 @@ static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
         x = x2; y = y2;
         return true;
     } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
+}
+static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
+{
+    NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
+    if (parts.count < 5) {
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native swipe format: x1;;y1;;x2;;y2;;duration_ms[;;finger;;steps]\r\n"}];
+        return false;
+    }
+    CGFloat x1 = [parts[0] floatValue], y1 = [parts[1] floatValue];
+    CGFloat x2 = [parts[2] floatValue], y2 = [parts[3] floatValue];
+    int durationMs = [parts[4] intValue];
+    int finger = parts.count >= 6 ? [parts[5] intValue] : 0;
+    int steps = parts.count >= 7 ? [parts[6] intValue] : durationMs / 16;
+    return zx_executeNativeSwipe(x1, y1, x2, y2, durationMs, finger, steps, err);
 }
 
 static bool zx_parseGesturePoint(NSString *text, CGFloat *x, CGFloat *y)
@@ -454,6 +463,52 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
         if (!completed) ownedTouches.release([](const uint8_t *bytes, size_t length) { return performTouchFromRawData(bytes, length); });
     }
 }
+
+// BEGIN typed touch task entry.
+static NSDictionary *zx_typedTouchFailure(NSString *code)
+{
+    return @{@"ok":@NO,@"raw":[NSString stringWithFormat:@"1;;%@\r\n",code],@"parts":@[@"1",code]};
+}
+static NSDictionary *zx_typedTouchStopped(const TLinkNativeBudgetPtr &budget)
+{
+    switch(budget->reason()) {
+        case TLinkNativeStop::Cancelled:return zx_typedTouchFailure(@"AbortError");
+        case TLinkNativeStop::Deadline:return zx_typedTouchFailure(@"TimeoutError");
+        case TLinkNativeStop::OutputLimit:return zx_typedTouchFailure(@"response_too_large");
+        default:return zx_typedTouchFailure(@"native_failed");
+    }
+}
+static NSDictionary *zx_typedTouchReply(NSString *raw,const TLinkNativeBudgetPtr &budget)
+{
+    if(!budget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||budget->stopped())return zx_typedTouchStopped(budget);
+    if([raw isEqualToString:@"0\r\n"])return @{@"ok":@YES,@"raw":@"0\r\n",@"parts":@[@"0"]};
+    // Compatibility fields are parsed only on the error/denial path.
+    NSArray *parts=[[raw stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"];
+    return @{@"ok":@NO,@"raw":raw,@"parts":parts};
+}
+NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request,TLinkTaskExecutionContext *context)
+{
+    const int taskType=TLinkNativeTouchTask(request.kind);
+    if(!taskType)return zx_typedTouchFailure(@"invalid_touch_request");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,NO,NO);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try {
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(taskType,&denial))
+            return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        // License refresh may wait for IPC; recheck before committing an action.
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;
+        if(request.kind==TLinkNativeTouchKind::Tap)
+            zx_executeNativeTap(request.x1,request.y1,request.durationMs,request.finger,&error);
+        else zx_executeNativeSwipe(request.x1,request.y1,request.x2,request.y2,request.durationMs,request.finger,
+            request.steps?request.steps:request.durationMs/16,&error);
+        return zx_typedTouchReply(error.localizedDescription?:@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+// END typed touch task entry.
 
 // === runShell drain/timeout support (Group A) ===
 

@@ -22,4 +22,8 @@ try{
  :['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',binary]);run(binary,[]);
  run(process.env.PYTHON||(windows?'python':'python3'),['-B',join(root,'test/frame-vision-client-test.py')]);
  console.log('Actual frame provider/store lifetime and Vision task integration are compiled by the image-storage/vision macOS suites; not run on Windows.');
-}finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-frame-vision-'));await rm(temp,{recursive:true,force:true});}
+}finally{
+ assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-frame-vision-'));
+ // Windows can briefly retain the just-exited test image (e.g. scanner handles).
+ await rm(temp,{recursive:true,force:true,maxRetries:10,retryDelay:100});
+}

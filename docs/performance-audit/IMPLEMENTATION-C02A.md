@@ -55,3 +55,7 @@ This is cooperative scheduling, not a hard completion deadline or a real-time HI
 Build rootfull and roothide, then compare task-62/63/64/65, in-process JS and helper-driven calls at 100/500/1000/5000 ms with 30/60/120 steps. Record actual frame timestamps and p50/p95/p99 endpoint error, CPU/allocations and stop-to-UP latency. Test cancellation during DOWN, waits, final MOVE and overloaded injection, including two/three fingers and fingers 0/19. Verify RAW/task-10/61 payload/reply and active-finger behavior remain compatible.
 
 After the C02a build checkpoint, continue the structured in-process request/task entry for P0-13 without bypassing context/license/output/cleanup gates. P0-12 event-driven helper transport, P1-40 immutable policy snapshots and P1-41 byte-bounded replay/dedupe remain open, including reconnect ordering and no repeated side effects. C02 is not marked complete by this internal-frame slice; C01 device acceptance also remains open.
+
+## Following checkpoint
+
+The user reported the C02a build at `72fef91` passed before C02b1. Real HID/timing/performance qualification remains open. The next implemented slice is `IMPLEMENTATION-C02B1.md`, covering structured tap/swipe/longPress requests.

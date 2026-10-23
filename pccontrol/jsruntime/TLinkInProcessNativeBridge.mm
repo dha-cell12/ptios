@@ -316,9 +316,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
             return [TLinkJSNativeResponse responseWithError:@"tap(x, y) requires finite numbers" code:@-1];
         }
-        NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f", x, y];
-        NSDictionary *res = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_TAP, payload] context:context];
-        return [TLinkJSNativeResponse responseWithValue:res];
+        TLinkNativeTouchRequest touch;touch.x1=TLinkNativeTouchJSCoordinate(x);touch.y1=TLinkNativeTouchJSCoordinate(y);
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeTouch(touch,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodSwipe]) {
         double x1 = [[args objectAtIndex:0] doubleValue];
@@ -331,11 +330,11 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
             !TLinkautoJSIsFiniteNumber(duration)) {
             return [TLinkJSNativeResponse responseWithError:@"swipe(...) requires finite numbers" code:@-1];
         }
-        if (duration < 0) duration = 0;
-        if (duration > 60000) duration = 60000;
-        NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.2f;;%.2f;;%.0f", x1, y1, x2, y2, duration];
-        NSDictionary *res = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_SWIPE, payload] context:context];
-        return [TLinkJSNativeResponse responseWithValue:res];
+        TLinkNativeTouchRequest touch;touch.kind=TLinkNativeTouchKind::Swipe;
+        touch.x1=TLinkNativeTouchJSCoordinate(x1);touch.y1=TLinkNativeTouchJSCoordinate(y1);
+        touch.x2=TLinkNativeTouchJSCoordinate(x2);touch.y2=TLinkNativeTouchJSCoordinate(y2);
+        touch.durationMs=TLinkNativeTouchJSDuration(duration);
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeTouch(touch,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodLongPress]) {
         double x = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : 0;
@@ -344,10 +343,9 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(duration)) {
             return [TLinkJSNativeResponse responseWithError:@"longPress(x, y, duration) requires finite numbers" code:@-1];
         }
-        if (duration < 0) duration = 0;
-        if (duration > 60000) duration = 60000;
-        NSString *payload = [NSString stringWithFormat:@"%.2f;;%.2f;;%.0f", x, y, duration];
-        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_TAP, payload] context:context]];
+        TLinkNativeTouchRequest touch;touch.x1=TLinkNativeTouchJSCoordinate(x);touch.y1=TLinkNativeTouchJSCoordinate(y);
+        touch.durationMs=TLinkNativeTouchJSDuration(duration);
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeTouch(touch,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodGesture]) {
         NSArray *points = [args count] > 0 ? [args objectAtIndex:0] : @[];

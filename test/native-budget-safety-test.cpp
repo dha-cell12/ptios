@@ -1,3 +1,4 @@
+#include "../shared/TLinkNativeTouchRequest.h"
 #include "../shared/TLinkGestureTiming.h"
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkTemplatePolicy.h"
@@ -42,6 +43,33 @@ static TLinkNativeBudgetPtr makeBudget(std::shared_ptr<TLinkNativeCancellation> 
 static int append(const TLinkNativeBudgetPtr &b, const std::string &s) {
     return b->appendCString(reinterpret_cast<const uint8_t *>(s.c_str()));
 }
+static void testTypedTouchCompatibility() {
+    assert(TLinkNativeTouchTask(TLinkNativeTouchKind::Tap)==62 && TLinkNativeTouchTask(TLinkNativeTouchKind::Swipe)==63);
+    assert(TLinkNativeTouchTask(static_cast<TLinkNativeTouchKind>(9))==0);
+    TLinkNativeTouchRequest request;assert(request.durationMs==50 && request.finger==0 && request.steps==0);
+    for(double value:{-1e308,-1e30,-9999.9,-0.005,-0.0,0.005,0.945,0.95,1.005,1234.89,9999.89,9999.9,1e30,1e308}){
+        char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.2f",value);
+        const double expected=double(std::strtof(legacy,nullptr));
+        const double actual=TLinkNativeTouchJSCoordinate(value);
+        assert(actual==expected && std::signbit(actual)==std::signbit(expected));
+    }
+    uint32_t random=719;
+    for(int i=0;i<100000;++i){
+        random=random*1664525U+1013904223U;
+        const double value=(double(random)-2147483648.0)/997.0;
+        char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.2f",value);
+        assert(TLinkNativeTouchJSCoordinate(value)==double(std::strtof(legacy,nullptr)));
+    }
+    for(double value:{-100.0,0.0,0.5,1.5,2.5,15.5,16.5,59999.5,60000.0,1e30}){
+        const double clamped=value<0?0:(value>60000?60000:value);
+        char legacy[32];std::snprintf(legacy,sizeof(legacy),"%.0f",clamped);
+        assert(TLinkNativeTouchJSDuration(value)==std::strtol(legacy,nullptr,10));
+    }
+    assert(std::isnan(TLinkNativeTouchJSCoordinate(NAN)) && std::isinf(TLinkNativeTouchJSCoordinate(INFINITY)));
+    assert(TLinkNativeTouchJSDuration(NAN)==-1 && TLinkNativeTouchJSDuration(INFINITY)==-1);
+    char tiny[1];assert(!TLinkNativeTouchDecimal(tiny,sizeof(tiny),2,123));
+    puts("Typed touch request passed: task allowlist, 100k legacy decimal/float cases, signed zero/overflow and duration clamp/rounding.");
+}
 static void testGestureTimeline() {
     for (unsigned intervals = 1; intervals <= 512; ++intervals) {
         const uint64_t duration = 60000000001ULL, start = 700;
@@ -75,6 +103,7 @@ static void testGestureTimeline() {
     puts("Gesture timing policy passed: 1..512 intervals, exact endpoint/remainder, overflow, consumed frame work/oversleep and overdue cancellation/deadline.");
 }
 int main() {
+    testTypedTouchCompatibility();
     testGestureTimeline();
     auto b = makeBudget({}, 0, 1024);
     assert(b->response().capacity() == 0);
