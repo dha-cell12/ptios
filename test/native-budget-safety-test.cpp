@@ -45,20 +45,24 @@ static int append(const TLinkNativeBudgetPtr &b, const std::string &s) {
 }
 static void testTypedTouchCompatibility() {
     assert(TLinkNativeTouchTask(TLinkNativeTouchKind::Tap)==62 && TLinkNativeTouchTask(TLinkNativeTouchKind::Swipe)==63);
+    assert(TLinkNativeTouchTask(TLinkNativeTouchKind::Gesture)==64 && TLinkNativeTouchTask(TLinkNativeTouchKind::Zoom)==64);
     assert(TLinkNativeTouchTask(static_cast<TLinkNativeTouchKind>(9))==0);
     TLinkNativeTouchRequest request;assert(request.durationMs==50 && request.finger==0 && request.steps==0);
     for(double value:{-1e308,-1e30,-9999.9,-0.005,-0.0,0.005,0.945,0.95,1.005,1234.89,9999.89,9999.9,1e30,1e308}){
         char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.2f",value);
         const double expected=double(std::strtof(legacy,nullptr));
-        const double actual=TLinkNativeTouchJSCoordinate(value);
-        assert(actual==expected && std::signbit(actual)==std::signbit(expected));
+        size_t bytes=0;const double actual=TLinkNativeTouchJSCoordinate(value,&bytes);
+        assert(actual==expected && std::signbit(actual)==std::signbit(expected) && bytes==std::strlen(legacy));
+        const double wide=TLinkNativeTouchJSZoomNumber(value);
+        assert(wide==std::strtod(legacy,nullptr) && std::signbit(wide)==std::signbit(expected));
     }
     uint32_t random=719;
     for(int i=0;i<100000;++i){
         random=random*1664525U+1013904223U;
         const double value=(double(random)-2147483648.0)/997.0;
         char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.2f",value);
-        assert(TLinkNativeTouchJSCoordinate(value)==double(std::strtof(legacy,nullptr)));
+        size_t bytes=0;assert(TLinkNativeTouchJSCoordinate(value,&bytes)==double(std::strtof(legacy,nullptr)) && bytes==std::strlen(legacy));
+        assert(TLinkNativeTouchJSZoomNumber(value)==std::strtod(legacy,nullptr));
     }
     for(double value:{-100.0,0.0,0.5,1.5,2.5,15.5,16.5,59999.5,60000.0,1e30}){
         const double clamped=value<0?0:(value>60000?60000:value);
@@ -67,8 +71,14 @@ static void testTypedTouchCompatibility() {
     }
     assert(std::isnan(TLinkNativeTouchJSCoordinate(NAN)) && std::isinf(TLinkNativeTouchJSCoordinate(INFINITY)));
     assert(TLinkNativeTouchJSDuration(NAN)==-1 && TLinkNativeTouchJSDuration(INFINITY)==-1);
+    for(int number:{INT_MIN,-100,-1,0,1,19,60000,INT_MAX}){
+        char legacy[32];std::snprintf(legacy,sizeof(legacy),"%d",number);assert(TLinkNativeTouchIntegerBytes(number)==std::strlen(legacy));
+        const size_t cap=8192-6-std::strlen(legacy)-3;
+        assert(TLinkNativeGestureInputFits(cap,number,300));assert(!TLinkNativeGestureInputFits(cap+1,number,300));
+    }
+    assert(!TLinkNativeGestureInputFits(SIZE_MAX,19,60000));
     char tiny[1];assert(!TLinkNativeTouchDecimal(tiny,sizeof(tiny),2,123));
-    puts("Typed touch request passed: task allowlist, 100k legacy decimal/float cases, signed zero/overflow and duration clamp/rounding.");
+    puts("Typed touch request passed: task allowlist, 100k legacy decimal float/double/byte cases, signed zero/overflow, gesture input cap and duration clamp/rounding.");
 }
 static void testGestureTimeline() {
     for (unsigned intervals = 1; intervals <= 512; ++intervals) {

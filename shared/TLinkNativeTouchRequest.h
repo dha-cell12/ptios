@@ -3,19 +3,25 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <vector>
 #include <locale.h>
 #ifdef __APPLE__
 #include <xlocale.h>
 #endif
 // Numeric task boundary; the shared executor performs argument validation.
-enum class TLinkNativeTouchKind { Tap, Swipe };
+enum class TLinkNativeTouchKind { Tap, Swipe, Gesture, Zoom };
+struct TLinkNativeGesturePoint {double x,y;};
 struct TLinkNativeTouchRequest {
     TLinkNativeTouchKind kind=TLinkNativeTouchKind::Tap;
     double x1=0,y1=0,x2=0,y2=0;
-    int durationMs=50,finger=0,steps=0;
+    int durationMs=50,finger=0,steps=0,fingerCount=2;
+    double startRadius=0,endRadius=0,angleDegrees=0;
+    std::vector<TLinkNativeGesturePoint> points;
 };
 inline int TLinkNativeTouchTask(TLinkNativeTouchKind kind) {
-    switch(kind){case TLinkNativeTouchKind::Tap:return 62;case TLinkNativeTouchKind::Swipe:return 63;}return 0;
+    switch(kind){case TLinkNativeTouchKind::Tap:return 62;case TLinkNativeTouchKind::Swipe:return 63;case TLinkNativeTouchKind::Gesture:case TLinkNativeTouchKind::Zoom:return 64;}return 0;
 }
 // Preserve NSString %.2f -> floatValue and %.0f -> intValue compatibility
 // without allocating a request string or mutating the process/thread locale.
@@ -41,18 +47,30 @@ inline bool TLinkNativeTouchDecimal(char *out,size_t size,int precision,double v
 #endif
     return count>0&&size_t(count)<size;
 }
-inline double TLinkNativeTouchJSCoordinate(double value) {
+inline double TLinkNativeTouchJSNumber(double value,bool narrow,size_t *encodedBytes=nullptr) {
+    if(encodedBytes)*encodedBytes=0;
     if(!std::isfinite(value))return value;
     char text[384];if(!TLinkNativeTouchDecimal(text,sizeof(text),2,value))return NAN;
+    if(encodedBytes)*encodedBytes=std::strlen(text);
 #ifdef _WIN32
-    const auto locale=TLinkNativeTouchLocale();
-    return locale?double(_strtof_l(text,nullptr,locale)):NAN;
+    const auto locale=TLinkNativeTouchLocale();if(!locale)return NAN;
+    return narrow?double(_strtof_l(text,nullptr,locale)):_strtod_l(text,nullptr,locale);
 #elif defined(__APPLE__)
-    const auto locale=TLinkNativeTouchLocale();
-    return locale?double(strtof_l(text,nullptr,locale)):NAN;
+    const auto locale=TLinkNativeTouchLocale();if(!locale)return NAN;
+    return narrow?double(strtof_l(text,nullptr,locale)):strtod_l(text,nullptr,locale);
 #else
-    return double(std::strtof(text,nullptr));
+    return narrow?double(std::strtof(text,nullptr)):std::strtod(text,nullptr);
 #endif
+}
+inline double TLinkNativeTouchJSCoordinate(double value,size_t *encodedBytes=nullptr){return TLinkNativeTouchJSNumber(value,true,encodedBytes);}
+inline double TLinkNativeTouchJSZoomNumber(double value){return TLinkNativeTouchJSNumber(value,false);}
+inline size_t TLinkNativeTouchIntegerBytes(int value){
+    uint32_t magnitude=value<0?0U-uint32_t(value):uint32_t(value);size_t bytes=value<0?2:1;
+    while(magnitude>=10){magnitude/=10;++bytes;}return bytes;
+}
+inline bool TLinkNativeGestureInputFits(size_t pointBytes,int finger,int duration){
+    const size_t overhead=6+TLinkNativeTouchIntegerBytes(finger)+TLinkNativeTouchIntegerBytes(duration);
+    return pointBytes<=8192-overhead;
 }
 inline int TLinkNativeTouchJSDuration(double value) {
     if(!std::isfinite(value))return -1;

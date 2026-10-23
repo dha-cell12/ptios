@@ -135,6 +135,25 @@ static NSString *TLinkautoJSEncodeGesturePoints(NSArray *points)
     return [encoded componentsJoinedByString:@"|"];
 }
 
+// Numeric equivalent of the legacy point encoder; still used only after shape
+// and original-value finite checks, with the same decimal/float conversion.
+static bool TLinkautoJSDecodeGesturePoints(NSArray *points,std::vector<TLinkNativeGesturePoint> &out,size_t &encodedBytes)
+{
+    if(![points isKindOfClass:[NSArray class]]||points.count<2||points.count>512)return false;
+    out.reserve(points.count);encodedBytes=0;
+    for(id item in points){
+        double x=0,y=0;
+        if([item isKindOfClass:[NSArray class]]&&[item count]>=2){NSArray *pair=item;x=[pair[0] doubleValue];y=[pair[1] doubleValue];}
+        else if([item isKindOfClass:[NSDictionary class]]){NSDictionary *dict=item;x=[dict[@"x"] doubleValue];y=[dict[@"y"] doubleValue];}
+        else return false;
+        if(!TLinkautoJSIsFiniteNumber(x)||!TLinkautoJSIsFiniteNumber(y))return false;
+        size_t xBytes=0,yBytes=0;
+        out.push_back({TLinkNativeTouchJSCoordinate(x,&xBytes),TLinkNativeTouchJSCoordinate(y,&yBytes)});
+        encodedBytes+=xBytes+yBytes+2; // comma plus separator; no trailing separator
+    }
+    --encodedBytes;return true;
+}
+
 static NSString *TLinkautoJSEncodePointColorTable(NSArray *points)
 {
     if (![points isKindOfClass:[NSArray class]] || [points count] == 0 || [points count] > 512) return nil;
@@ -350,14 +369,13 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
     else if ([method isEqualToString:TLinkJSNativeMethodGesture]) {
         NSArray *points = [args count] > 0 ? [args objectAtIndex:0] : @[];
         NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
-        NSString *encoded = TLinkautoJSEncodeGesturePoints(points);
-        if (!encoded) return [TLinkJSNativeResponse responseWithError:@"gesture(points, options) requires 2-512 points as [x,y] arrays or {x,y} objects" code:@-1];
-        int finger = TLinkautoJSIntOption(options, @"finger", 0);
-        int duration = TLinkautoJSIntOption(options, @"duration", TLinkautoJSIntOption(options, @"durationMs", 300));
-        if (duration < 0) duration = 0;
-        if (duration > 60000) duration = 60000;
-        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%@", finger, duration, encoded];
-        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_GESTURE, payload] context:context]];
+        TLinkNativeTouchRequest touch;touch.kind=TLinkNativeTouchKind::Gesture;size_t encodedBytes=0;
+        if(!TLinkautoJSDecodeGesturePoints(points,touch.points,encodedBytes))return [TLinkJSNativeResponse responseWithError:@"gesture(points, options) requires 2-512 points as [x,y] arrays or {x,y} objects" code:@-1];
+        touch.finger=TLinkautoJSIntOption(options,@"finger",0);
+        touch.durationMs=TLinkautoJSIntOption(options,@"duration",TLinkautoJSIntOption(options,@"durationMs",300));
+        touch.durationMs=MAX(0,MIN(touch.durationMs,60000));
+        if(!TLinkNativeGestureInputFits(encodedBytes,touch.finger,touch.durationMs))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeTouch(touch,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodZoom]) {
         double centerX = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : NAN;
@@ -371,15 +389,14 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
             !TLinkautoJSIsFiniteNumber(startRadius) || !TLinkautoJSIsFiniteNumber(endRadius)) {
             return [TLinkJSNativeResponse responseWithError:@"zoom(...) requires finite center and radius values" code:@-1];
         }
-        int durationMs = TLinkautoJSIntOption(options, @"durationMs", 300);
-        int fingerCount = TLinkautoJSIntOption(options, @"fingerCount", 2);
-        int steps = TLinkautoJSIntOption(options, @"steps", 20);
-        double angleDegrees = TLinkautoJSDoubleOption(options, @"angleDegrees", 0.0);
-        int baseFinger = TLinkautoJSIntOption(options, @"baseFinger", 0);
-        NSString *payload = [NSString stringWithFormat:@"zoom;;%.2f;;%.2f;;%.2f;;%.2f;;%d;;%d;;%d;;%.2f;;%d",
-                             centerX, centerY, startRadius, endRadius, durationMs,
-                             fingerCount, steps, angleDegrees, baseFinger];
-        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_GESTURE, payload] context:context]];
+        TLinkNativeTouchRequest touch;touch.kind=TLinkNativeTouchKind::Zoom;
+        touch.x1=TLinkNativeTouchJSZoomNumber(centerX);touch.y1=TLinkNativeTouchJSZoomNumber(centerY);
+        touch.startRadius=TLinkNativeTouchJSZoomNumber(startRadius);touch.endRadius=TLinkNativeTouchJSZoomNumber(endRadius);
+        touch.durationMs=TLinkautoJSIntOption(options,@"durationMs",300);
+        touch.fingerCount=TLinkautoJSIntOption(options,@"fingerCount",2);touch.steps=TLinkautoJSIntOption(options,@"steps",20);
+        touch.angleDegrees=TLinkNativeTouchJSZoomNumber(TLinkautoJSDoubleOption(options,@"angleDegrees",0.0));
+        touch.finger=TLinkautoJSIntOption(options,@"baseFinger",0);
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeTouch(touch,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodPickColor]) {
         double x = [args count] > 0 ? [[args objectAtIndex:0] doubleValue] : 0;

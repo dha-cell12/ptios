@@ -87,7 +87,8 @@ function assertZoomImplementation(label, source, names) {
   assert.match(source, /fingerCount != 2 && fingerCount != 3/);
   assert.match(source, /steps < 2 \|\| steps > 120/);
   assert.match(source, /startRadius <= 0\.0 \|\| endRadius <= 0\.0/);
-  assert.match(source, /baseFinger < 0 \|\| baseFinger \+ fingerCount > 20/);
+  if(label === "rootfull") assert.match(source,/baseFinger < 0 \|\| baseFinger > 20 - fingerCount/);
+  else assert.match(source, /baseFinger < 0 \|\| baseFinger \+ fingerCount > 20/);
   assert.match(source, /points\[finger\]\.x < 0\.0[\s\S]*points\[finger\]\.y >= screenHeight/);
   assert.match(source, /double t = \(double\)step \/ \(double\)\(steps - 1\)/);
   assert.match(source, /cos\(angle\) \* radius/);
@@ -170,7 +171,7 @@ assert.match(rootNativeRequestImplementation, /TLinkJSNativeMethodZoom = @"zoom"
 assert.match(rootDeviceHeader, /JSExportAs\(zoom,/);
 assert.match(rootRuntime, /TLinkJSNativeMethodGesture, TLinkJSNativeMethodZoom/);
 assert.match(rootRuntime, /- \(NSDictionary \*\)zoom:\(double\)centerX[\s\S]*TLinkJSNativeMethodZoom/);
-assert.match(rootBridge, /\[method isEqualToString:TLinkJSNativeMethodZoom\][\s\S]*?TASK_NATIVE_GESTURE/);
+assert.match(rootBridge, /\[method isEqualToString:TLinkJSNativeMethodZoom\][\s\S]*?TLinkNativeTouchKind::Zoom[\s\S]*?TLinkExecuteNativeTouch/);
 assert.match(rootJSHelper, /device\[@"zoom"\]/);
 assert.match(rootJSHelper, /\[method isEqualToString:@"zoom"\] \? 7\.0 : 5\.0/);
 assert.match(trollServer, /device\[@"zoom"\][\s\S]*?TLinkScriptTaskResult\(weakSession, 64, payload\)/);

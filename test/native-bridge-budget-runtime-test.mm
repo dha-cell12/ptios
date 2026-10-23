@@ -21,7 +21,6 @@ static int calls, releases;
 static std::string lastPayload;
 static TLinkTaskExecutionContext *observed;
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &,TLinkTaskExecutionContext *);
-static BOOL TLinkautoJSIsFiniteNumber(double value){return isfinite(value);}
 static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef stream, TLinkTaskExecutionContext *context) {
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
@@ -123,7 +122,7 @@ static BOOL TLinkRootfullLicenseTaskAllowed(NSInteger task,NSString **denial){
     ++licenseCalls;lastLicenseTask=int(task);licenseBudget=TLinkCurrentNativeBudget();
     assert(TLinkCurrentNativeBudget() && !TLinkCurrentNativeBudget()->capturesResponse());
     if(stopInLicense)[touchToken cancel];
-    if(!licenseAllowed && denial)*denial=@"-1;;license_required task=62\r\n";
+    if(!licenseAllowed && denial)*denial=[NSString stringWithFormat:@"-1;;license_required task=%ld\r\n",(long)task];
     return licenseAllowed;
 }
 // Match Image.h: OpenCV leaves these macros undefined in production Task.xm.
@@ -230,7 +229,61 @@ static void typedTouchCases(TLinkInProcessNativeBridge *bridge) {
         for(size_t j=0;j<injected.size();++j)assert(injected[j].type==expectedPoints[j].type&&injected[j].index==expectedPoints[j].index&&
             injected[j].x==expectedPoints[j].x&&injected[j].y==expectedPoints[j].y);
     }
+    const auto zoomState=[](){return std::vector<uint64_t>{
+        sTLinkZoomAttemptCount.load(),sTLinkZoomSuccessCount.load(),sTLinkZoomValidationRejectedCount.load(),
+        sTLinkZoomDispatchExceptionCount.load(),sTLinkZoomCleanupCount.load(),sTLinkZoomCancelledCount.load(),sTLinkZoomFrameCount.load(),
+        uint64_t(sTLinkZoomLastResult.load()),uint64_t(sTLinkZoomLastDirection.load()),uint64_t(sTLinkZoomLastFingerCount.load()),
+        uint64_t(sTLinkZoomLastSteps.load()),uint64_t(sTLinkZoomLastDurationMs.load())};};
+    const auto parity=[&](NSString *method,NSArray *args,NSString *wire){
+        auto context=parent(30);resetTouch(context);const int gatesBefore=licenseCalls;
+        const auto before=zoomState();NSDictionary *result=invoke(method,args,context);const auto after=zoomState();
+        const auto expectedPoints=injected;const auto expectedTimes=frameTimes;
+        if(wire.length+2>8192){failure(result,@"input_too_large");assert(injected.empty()&&licenseCalls==gatesBefore);return;}
+        assert(lastLicenseTask==64 && licenseCalls==gatesBefore+1 && licenseBudget->response().capacity()==0);
+        resetTouch(context);NSError *error=nil;const auto rawBefore=zoomState();
+        {TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,NO,NO) nativeBudget]);zx_handleNativeGesture((UInt8 *)wire.UTF8String,&error);}
+        const auto rawAfter=zoomState();NSString *raw=error.localizedDescription?:@"0\r\n";
+        assert([result[@"raw"] isEqualToString:raw]&&[result[@"ok"] boolValue]==(error==nil));
+        assert([result[@"parts"] isEqualToArray:[[raw stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"]]);
+        assert(expectedPoints.size()==injected.size()&&expectedTimes==frameTimes);
+        for(size_t j=0;j<injected.size();++j)assert(injected[j].type==expectedPoints[j].type&&injected[j].index==expectedPoints[j].index&&injected[j].x==expectedPoints[j].x&&injected[j].y==expectedPoints[j].y);
+        for(size_t j=0;j<after.size();++j)assert(j<7?after[j]-before[j]==rawAfter[j]-rawBefore[j]:after[j]==rawAfter[j]);
+    };
+    const auto gesture=[&](NSArray *points,NSDictionary *options){
+        NSString *encoded=TLinkautoJSEncodeGesturePoints(points);assert(encoded);
+        const int finger=TLinkautoJSIntOption(options,@"finger",0);
+        int duration=TLinkautoJSIntOption(options,@"duration",TLinkautoJSIntOption(options,@"durationMs",300));
+        if(duration<0)duration=0;if(duration>60000)duration=60000;
+        NSString *wire=[NSString stringWithFormat:@"%d;;%d;;%@",finger,duration,encoded];
+        parity(TLinkJSNativeMethodGesture,@[points,options],wire);
+    };
+    for(unsigned trial=0;trial<80;++trial){
+        NSMutableArray *points=[NSMutableArray array];
+        for(unsigned j=0;j<2+trial%9;++j){double x=double(trial)*1.005+double(j)*0.945,y=double(j)*10.005-1;
+            [points addObject:j%2?@{@"x":@(x),@"y":@(y)}:@[@(x),@(y)]];}
+        gesture(points,@{@"durationMs":@(trial%31),@"finger":@(trial%2?19:0)});
+    }
+    gesture(@[@{@"y":@20},@[@40.945,@50.005]],@{});
+    gesture(@[@[@1e308,@20],@[@30,@40]],@{@"duration":@0});
+    gesture(@[@[@20,@30],@[@40,@50]],@{@"finger":@20,@"duration":@0});
+    gesture(@[@[@20,@30],@[@40,@50]],@{@"duration":@-10});
+    gesture(@[@[@20,@30],@[@40,@50]],@{@"duration":@60001});
+    NSMutableArray *many=[NSMutableArray array];for(unsigned j=0;j<512;++j)[many addObject:@[@1234.56,@5678.90]];
+    many[0]=@[@0,@0];many[1]=@[@12.56,@5678.90];
+    assert(TLinkautoJSEncodeGesturePoints(many).length+9==8192);gesture(many,@{@"finger":@19,@"duration":@0});
+    many[1]=@[@123.56,@5678.90];assert(TLinkautoJSEncodeGesturePoints(many).length+9==8193);gesture(many,@{@"finger":@19,@"duration":@0});
+    const auto zoom=[&](double x,double y,double first,double last,NSDictionary *options){
+        int duration=TLinkautoJSIntOption(options,@"durationMs",300),fingers=TLinkautoJSIntOption(options,@"fingerCount",2),steps=TLinkautoJSIntOption(options,@"steps",20),finger=TLinkautoJSIntOption(options,@"baseFinger",0);
+        double angle=TLinkautoJSDoubleOption(options,@"angleDegrees",0.0);
+        NSString *wire=[NSString stringWithFormat:@"zoom;;%.2f;;%.2f;;%.2f;;%.2f;;%d;;%d;;%d;;%.2f;;%d",x,y,first,last,duration,fingers,steps,angle,finger];
+        parity(TLinkJSNativeMethodZoom,@[@(x),@(y),@(first),@(last),options],wire);
+    };
+    for(unsigned trial=0;trial<40;++trial)zoom(250.005,500.945,20.125,80.955,@{@"durationMs":@(50+trial*10),@"steps":@(2+trial%9),@"fingerCount":@(2+trial%2),@"angleDegrees":@(double(trial)*7.125-140),@"baseFinger":@(trial%2?17:18)});
+    zoom(250,500,20,80,@{});zoom(250,500,80,20,@{@"fingerCount":@3,@"steps":@120,@"durationMs":@5000});
+    for(NSDictionary *bad in @[@{@"durationMs":@49},@{@"durationMs":@5001},@{@"fingerCount":@1},@{@"fingerCount":@4},@{@"steps":@1},@{@"steps":@121},@{@"angleDegrees":@361},@{@"angleDegrees":@(NAN)},@{@"angleDegrees":@(INFINITY)},@{@"baseFinger":@-1},@{@"baseFinger":@(INT_MAX)},@{@"baseFinger":@19}])zoom(250,500,20,80,bad);
+    zoom(250,500,0,80,@{});zoom(250,500,20,20,@{});zoom(0,500,20,80,@{});
     auto context=parent();resetTouch(context);licenseAllowed=false;
+
     NSDictionary *result=invoke(TLinkJSNativeMethodTap,@[@20,@30],context);
     assert(![result[@"ok"] boolValue] && [result[@"raw"] isEqualToString:@"-1;;license_required task=62\r\n"] && injected.empty());
     context=parent();resetTouch(context);stopInLicense=true;
@@ -247,6 +300,24 @@ static void typedTouchCases(TLinkInProcessNativeBridge *bridge) {
         failure(invoke(TLinkJSNativeMethodTap,@[@20,@30],context),@"native_exception");
         assert(injected.size()==2 && injected.back().type==TOUCH_UP);
     }
+    for(NSString *method:@[TLinkJSNativeMethodGesture,TLinkJSNativeMethodZoom]){
+        NSArray *args=[method isEqualToString:TLinkJSNativeMethodZoom]?@[@250,@500,@20,@80,@{@"durationMs":@50,@"steps":@2,@"fingerCount":@3}]:@[@[@[@20,@30],@[@40,@50]],@{@"duration":@0,@"finger":@19}];
+        context=parent();resetTouch(context);licenseAllowed=false;NSDictionary *denied=invoke(method,args,context);
+        assert(![denied[@"ok"] boolValue]&&lastLicenseTask==64&&injected.empty());
+        context=parent();resetTouch(context);stopInLicense=true;failure(invoke(method,args,context),@"AbortError");assert(injected.empty());
+        context=parent();resetTouch(context);cancelAt=[method isEqualToString:TLinkJSNativeMethodZoom]?3:1;
+        failure(invoke(method,args,context),@"AbortError");
+        const size_t fingers=[method isEqualToString:TLinkJSNativeMethodZoom]?3:1;
+        assert(injected.size()==fingers*2);for(size_t j=0;j<fingers;++j)assert(injected[injected.size()-1-j].type==TOUCH_UP);
+        for(bool cpp:{false,true}){context=parent();resetTouch(context);throwAt=int(fingers*2);throwCpp=cpp;
+            NSDictionary *thrown=invoke(method,args,context);assert(![thrown[@"ok"] boolValue]);
+            if(!cpp&&fingers==3)assert([thrown[@"raw"] containsString:@"zoom_dispatch_exception"]);else failure(thrown,@"native_exception");
+            assert(injected.size()==fingers*3);for(size_t j=0;j<fingers;++j)assert(injected[injected.size()-1-j].type==TOUCH_UP);
+        }
+    }
+    context=parent();resetTouch(context);const int noGate=licenseCalls;
+    auto malformed=[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodGesture arguments:@[@[@[@1]],@{}]];
+    assert(![bridge executeRequest:malformed context:context error:nil].ok&&injected.empty()&&licenseCalls==noGate);
     context=parent(1,3);resetTouch(context);assert([invoke(TLinkJSNativeMethodTap,@[@20,@30],context)[@"ok"] boolValue]);
     context=parent(1,2);resetTouch(context);failure(invoke(TLinkJSNativeMethodTap,@[@20,@30],context),@"response_too_large");
     assert(injected.size()==2&&injected.back().type==TOUCH_UP);
@@ -258,7 +329,7 @@ static void typedTouchCases(TLinkInProcessNativeBridge *bridge) {
     failure(invoke(TLinkJSNativeMethodLongPress,@[@20,@30,@60000],context),@"TimeoutError");
     assert(injected.size()==2 && injected.back().type==TOUCH_UP);
     assert(calls==wireCalls && !TLinkCurrentNativeBudget());licenseBudget.reset();touchToken=nil;cancelAt=0;
-    puts("Typed touch actual bridge/entry passed: 160 legacy-wire/frame/timestamp cases, task 62/63 gates, gate-time cancellation, pre-expiry, output caps, NS/C++ exceptions, owned UP, no raw dispatch or response-buffer allocation.");
+    puts("Typed touch actual bridge/entry passed: 160 legacy-wire/frame/timestamp cases, typed gesture/zoom wire/frame/timestamp/diagnostic parity, 8192/8193-byte ingress, task 62/63/64 gates, gate-time cancellation, pre-expiry, output caps, NS/C++ exceptions, owned UP, no raw dispatch or response-buffer allocation.");
 }
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";

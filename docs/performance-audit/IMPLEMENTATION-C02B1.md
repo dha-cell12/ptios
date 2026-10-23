@@ -45,3 +45,7 @@ After this checkpoint, continue structured gesture/zoom/batch or other measured 
 ## CI correction — boolean macros (2026-10-24)
 
 The iOS Task.xm build reported unexpected `@` and undeclared `NO` in the new typed entry. `Image.h` undefines YES/NO for OpenCV after Task.xm's early fallback definitions. The typed entry now uses `@(true)`/`@(false)` and C++ false arguments, with unchanged result/context semantics. The native runner rejects YES/NO identifiers in this entry on every host, and its actual Foundation fixture compiles that entry with both macros explicitly undefined before restoring the fixture's prior definitions. Strict warnings and sanitizers remain enabled. Corrected macOS/iOS CI remains pending on this Windows host.
+
+## Following checkpoint
+
+The user reported the corrected build at `c4b8611` passed before C02b2. Device/performance qualification remains pending. `IMPLEMENTATION-C02B2.md` extends the structured entry to point gestures and zoom; batch remains separate.

@@ -25,7 +25,7 @@ assert.match(task, /TLinkNativeBudgetScope taskScope\(TLinkTaskBudget\(context\)
 assert.match(task, /License refresh may wait for IPC; recheck before committing an action/);
 assert.match(task, /@finally \{ zx_performSingleTouch\(TOUCH_UP/g);
 assert.match(task, /TLinkGestureTimeline timeline/);
-assert.match(task, /timeline\.wait\(unsigned\(i\), unsigned\(pointTexts.count - 1\)\)/);
+assert.match(task, /timeline\.wait\(unsigned\(i\),unsigned\(points.size\(\)-1\)\)/);
 const numericTouches = task.slice(task.indexOf("static void zx_performSingleTouch"), task.indexOf("static NSArray<NSString *> *zx_splitTaskParts"));
 assert.match(numericTouches, /performTouchFrame\(&point, 1\)/);
 assert.match(numericTouches, /performTouchFrame\(frame, count\)/);
@@ -77,10 +77,14 @@ try {
   const rawBridge = between(bridge, "// BEGIN bounded native dispatch", "// END bounded native dispatch.");
   const press = between(bridge, "    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey])",
     "    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake])");
-  const helpers = between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
+  const typedTouch=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodTap])","    else if ([method isEqualToString:TLinkJSNativeMethodPickColor])");
+  const helpers = between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
+    between(bridge,"static double TLinkautoJSDoubleOption","static NSString *TLinkautoJSStringOption") +
+    between(bridge,"static NSString *TLinkautoJSEncodeGesturePoints","static NSString *TLinkautoJSEncodePointColorTable") +
+    between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSStringContainsAny") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
-  for (const name of new Set([...`${rawBridge}\n${press}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -92,14 +96,15 @@ try {
     between(task, "static std::atomic<uint64_t> sTLinkZoomAttemptCount", "static NSDictionary *zx_zoomDiagnostics") +
     between(task, "static int zx_clampTouchCoord", "// BEGIN typed touch task entry."));
   await writeFile(join(temp, "NativeTouchEntryUnderTest.inc"),between(task,"// BEGIN typed touch task entry.","// END typed touch task entry."));
-  const typedTouch=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodTap])","    else if ([method isEqualToString:TLinkJSNativeMethodGesture])");
   assert.doesNotMatch(typedTouch,/executeRawPayload|stringWithFormat|CFWriteStream/);
-  assert.equal([...typedTouch.matchAll(/TLinkExecuteNativeTouch\(touch,context\)/g)].length,3);
+  assert.equal([...typedTouch.matchAll(/TLinkExecuteNativeTouch\(touch,context\)/g)].length,5);
   await writeFile(join(temp,"NativeTouchBridgeUnderTest.inc"),typedTouch);
   const entry=between(task,"// BEGIN typed touch task entry.","// END typed touch task entry.");
   assert.match(entry,/TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)/);
   assert.match(entry,/budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed[\s\S]*budget->stopped\(\)[\s\S]*zx_executeNativeTap/);
   assert.doesNotMatch(entry,/processTaskWithContext|CFWriteStreamCreate|appendCString/);
+  assert.match(entry,/zx_executeNativeGesture\(request.points/);assert.match(entry,/zx_zoomBegin\(\);zx_executeNativeZoom/);
+  assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"/);

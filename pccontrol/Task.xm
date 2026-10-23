@@ -284,7 +284,7 @@ static void zx_zoomPoints(CGPoint *points,
     }
 }
 
-static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
+static void zx_zoomBegin()
 {
     sTLinkZoomAttemptCount.fetch_add(1, std::memory_order_relaxed);
     sTLinkZoomLastAtMs.store(zx_zoomNowMs(), std::memory_order_relaxed);
@@ -293,22 +293,16 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
     sTLinkZoomLastFingerCount.store(0, std::memory_order_relaxed);
     sTLinkZoomLastSteps.store(0, std::memory_order_relaxed);
     sTLinkZoomLastDurationMs.store(0, std::memory_order_relaxed);
-    if (parts.count < 8 || parts.count > 10) {
-        return zx_zoomError(err, @"zoom_bad_payload expected=zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]");
-    }
-
-    double centerX = 0.0, centerY = 0.0, startRadius = 0.0, endRadius = 0.0, angleDegrees = 0.0;
-    int durationMs = 0, fingerCount = 0, steps = 0, baseFinger = 0;
-    if (!zx_parseZoomNumber(parts[1], &centerX)) return zx_zoomError(err, @"zoom_invalid_number field=center_x");
-    if (!zx_parseZoomNumber(parts[2], &centerY)) return zx_zoomError(err, @"zoom_invalid_number field=center_y");
-    if (!zx_parseZoomNumber(parts[3], &startRadius)) return zx_zoomError(err, @"zoom_invalid_number field=start_radius");
-    if (!zx_parseZoomNumber(parts[4], &endRadius)) return zx_zoomError(err, @"zoom_invalid_number field=end_radius");
-    if (!zx_parseZoomInteger(parts[5], &durationMs)) return zx_zoomError(err, @"zoom_invalid_number field=duration_ms");
-    if (!zx_parseZoomInteger(parts[6], &fingerCount)) return zx_zoomError(err, @"zoom_invalid_number field=finger_count");
-    if (!zx_parseZoomInteger(parts[7], &steps)) return zx_zoomError(err, @"zoom_invalid_number field=steps");
-    if (parts.count >= 9 && !zx_parseZoomNumber(parts[8], &angleDegrees)) return zx_zoomError(err, @"zoom_invalid_number field=angle_degrees");
-    if (parts.count >= 10 && !zx_parseZoomInteger(parts[9], &baseFinger)) return zx_zoomError(err, @"zoom_invalid_number field=base_finger");
-
+}
+static bool zx_executeNativeZoom(const TLinkNativeTouchRequest &request,NSError **err)
+{
+    const double centerX=request.x1,centerY=request.y1,startRadius=request.startRadius,endRadius=request.endRadius,angleDegrees=request.angleDegrees;
+    const int durationMs=request.durationMs,fingerCount=request.fingerCount,steps=request.steps,baseFinger=request.finger;
+    if(!isfinite(centerX))return zx_zoomError(err,@"zoom_invalid_number field=center_x");
+    if(!isfinite(centerY))return zx_zoomError(err,@"zoom_invalid_number field=center_y");
+    if(!isfinite(startRadius))return zx_zoomError(err,@"zoom_invalid_number field=start_radius");
+    if(!isfinite(endRadius))return zx_zoomError(err,@"zoom_invalid_number field=end_radius");
+    if(!isfinite(angleDegrees))return zx_zoomError(err,@"zoom_invalid_number field=angle_degrees");
     sTLinkZoomLastDirection.store(endRadius > startRadius ? 1 : (endRadius < startRadius ? -1 : 0), std::memory_order_relaxed);
     sTLinkZoomLastFingerCount.store(fingerCount, std::memory_order_relaxed);
     sTLinkZoomLastSteps.store(steps, std::memory_order_relaxed);
@@ -320,7 +314,7 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
     if (startRadius <= 0.0 || endRadius <= 0.0) return zx_zoomError(err, @"zoom_radius_invalid positive_required=1");
     if (startRadius == endRadius) return zx_zoomError(err, @"zoom_radius_unchanged");
     if (angleDegrees < -360.0 || angleDegrees > 360.0) return zx_zoomError(err, @"zoom_angle_out_of_range min=-360 max=360");
-    if (baseFinger < 0 || baseFinger + fingerCount > 20) return zx_zoomError(err, @"zoom_finger_range_invalid allowed=0..19");
+    if (baseFinger < 0 || baseFinger > 20 - fingerCount) return zx_zoomError(err, @"zoom_finger_range_invalid allowed=0..19");
 
     CGFloat screenWidth = [Screen getScreenWidth];
     CGFloat screenHeight = [Screen getScreenHeight];
@@ -376,6 +370,56 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
     return true;
 }
 
+static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
+{
+    zx_zoomBegin();
+    if (parts.count < 8 || parts.count > 10) {
+        return zx_zoomError(err, @"zoom_bad_payload expected=zoom;;center_x;;center_y;;start_radius;;end_radius;;duration_ms;;finger_count;;steps[;;angle_degrees;;base_finger]");
+    }
+
+    double centerX = 0.0, centerY = 0.0, startRadius = 0.0, endRadius = 0.0, angleDegrees = 0.0;
+    int durationMs = 0, fingerCount = 0, steps = 0, baseFinger = 0;
+    if (!zx_parseZoomNumber(parts[1], &centerX)) return zx_zoomError(err, @"zoom_invalid_number field=center_x");
+    if (!zx_parseZoomNumber(parts[2], &centerY)) return zx_zoomError(err, @"zoom_invalid_number field=center_y");
+    if (!zx_parseZoomNumber(parts[3], &startRadius)) return zx_zoomError(err, @"zoom_invalid_number field=start_radius");
+    if (!zx_parseZoomNumber(parts[4], &endRadius)) return zx_zoomError(err, @"zoom_invalid_number field=end_radius");
+    if (!zx_parseZoomInteger(parts[5], &durationMs)) return zx_zoomError(err, @"zoom_invalid_number field=duration_ms");
+    if (!zx_parseZoomInteger(parts[6], &fingerCount)) return zx_zoomError(err, @"zoom_invalid_number field=finger_count");
+    if (!zx_parseZoomInteger(parts[7], &steps)) return zx_zoomError(err, @"zoom_invalid_number field=steps");
+    if (parts.count >= 9 && !zx_parseZoomNumber(parts[8], &angleDegrees)) return zx_zoomError(err, @"zoom_invalid_number field=angle_degrees");
+    if (parts.count >= 10 && !zx_parseZoomInteger(parts[9], &baseFinger)) return zx_zoomError(err, @"zoom_invalid_number field=base_finger");
+
+    TLinkNativeTouchRequest request;request.kind=TLinkNativeTouchKind::Zoom;
+    request.x1=centerX;request.y1=centerY;request.startRadius=startRadius;request.endRadius=endRadius;
+    request.durationMs=durationMs;request.fingerCount=fingerCount;request.steps=steps;request.angleDegrees=angleDegrees;request.finger=baseFinger;
+    return zx_executeNativeZoom(request,err);
+}
+
+static bool zx_executeNativeGesture(const std::vector<TLinkNativeGesturePoint> &points,int durationMs,int finger,NSError **err)
+{
+    if (points.size() < 2) {
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native gesture requires at least two points.\r\n"}];
+        return false;
+    }
+    if (!zx_nativeContinue(err)) return false;
+    if (points.size() > 512) {
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Gesture requires at most 512 points.\r\n"}];
+        return false;
+    }
+    for(const auto &point:points)if(!zx_nativeTouchArguments(point.x,point.y,finger,durationMs,err))return false;
+    CGFloat x=points[0].x,y=points[0].y;
+    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
+    @try {
+        zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
+        for(size_t i=1;i<points.size();++i){
+            if(!timeline.wait(unsigned(i),unsigned(points.size()-1)))return zx_nativeContinue(err);
+            x=points[i].x;y=points[i].y;
+            zx_performSingleTouch(TOUCH_MOVE,finger,x,y);
+            if(!zx_nativeContinue(err))return false;
+        }
+        return true;
+    } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
+}
 static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
 {
     NSArray<NSString *> *parts = zx_splitTaskParts(eventData);
@@ -399,6 +443,7 @@ static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
         if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Gesture requires at most 512 points.\r\n"}];
         return false;
     }
+    std::vector<TLinkNativeGesturePoint> points;points.reserve(pointTexts.count);
     CGFloat x = 0, y = 0;
     for (NSString *text in pointTexts) {
         if (!zx_parseGesturePoint(text, &x, &y)) {
@@ -406,19 +451,9 @@ static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
             return false;
         }
         if (!zx_nativeTouchArguments(x, y, finger, durationMs, err)) return false;
+        points.push_back({x,y});
     }
-    zx_parseGesturePoint(pointTexts[0], &x, &y);
-    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
-    @try {
-        zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
-        for (NSUInteger i = 1; i < pointTexts.count; ++i) {
-            if (!timeline.wait(unsigned(i), unsigned(pointTexts.count - 1))) return zx_nativeContinue(err);
-            zx_parseGesturePoint(pointTexts[i], &x, &y);
-            zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
-            if (!zx_nativeContinue(err)) return false;
-        }
-        return true;
-    } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
+    return zx_executeNativeGesture(points,durationMs,finger,err);
 }
 
 static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
@@ -502,8 +537,10 @@ NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request,TLi
         NSError *error=nil;
         if(request.kind==TLinkNativeTouchKind::Tap)
             zx_executeNativeTap(request.x1,request.y1,request.durationMs,request.finger,&error);
-        else zx_executeNativeSwipe(request.x1,request.y1,request.x2,request.y2,request.durationMs,request.finger,
+        else if(request.kind==TLinkNativeTouchKind::Swipe)zx_executeNativeSwipe(request.x1,request.y1,request.x2,request.y2,request.durationMs,request.finger,
             request.steps?request.steps:request.durationMs/16,&error);
+        else if(request.kind==TLinkNativeTouchKind::Gesture)zx_executeNativeGesture(request.points,request.durationMs,request.finger,&error);
+        else {zx_zoomBegin();zx_executeNativeZoom(request,&error);}
         return zx_typedTouchReply(error.localizedDescription?:@"0\r\n",budget);
     }catch(...){return zx_typedTouchFailure(@"native_exception");}}
     @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
