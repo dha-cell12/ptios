@@ -92,7 +92,8 @@ function assertZoomImplementation(label, source, names) {
   assert.match(source, /double t = \(double\)step \/ \(double\)\(steps - 1\)/);
   assert.match(source, /cos\(angle\) \* radius/);
   assert.match(source, /sin\(angle\) \* radius/);
-  assert.match(source, /durationMs \* 1000 \/ \(steps - 1\)/);
+  if (label === "rootfull") assert.match(source, /timeline\.wait\(unsigned\(step\), unsigned\(steps - 1\)\)/);
+  else assert.match(source, /durationMs \* 1000 \/ \(steps - 1\)/);
   assert.match(source, names.downFrame);
   assert.match(source, names.moveFrame);
   assert.match(source, names.upFrame);
@@ -127,9 +128,14 @@ for (const [label, source, frameName, rawName] of [
   const end = source.indexOf("\n}\n", start) + 3;
   const frame = source.slice(start, end);
   assert.ok(start >= 0 && end > start, `${label} multi-touch frame helper is missing`);
-  assert.match(frame, /stringWithFormat:@"%d", count/);
   assert.match(frame, /for \(int i = 0; i < count; i\+\+\)/);
-  assert.match(frame, new RegExp(`${rawName}\\(`));
+  if (label === "rootfull") {
+    assert.match(frame, /performTouchFrame\(frame, count\)/);
+    assert.doesNotMatch(frame, /stringWithFormat|appendFormat|UTF8String|performTouchFromRawData/);
+  } else {
+    assert.match(frame, /stringWithFormat:@"%d", count/);
+    assert.match(frame, new RegExp(`${rawName}\\(`));
+  }
 }
 
 assert.match(rootTouch, /for \(int i = 0; i < touchCount; i\+\+\)/);

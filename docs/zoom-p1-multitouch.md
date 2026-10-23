@@ -33,6 +33,13 @@ interpolated between the two requested radii while center and angle stay fixed.
 The interval is `duration_ms / (steps - 1)`, so requested duration measures
 from the down frame to the final move. The up frame follows immediately.
 
+Later rootfull/roothide C02a changes use absolute monotonic targets for these
+intervals and submit numeric internal frames to the same HID injector. Work and
+oversleep consume the next interval instead of accumulating; late frames remain
+ordered without skipping. This does not change the Zoom wire, radial geometry or
+frame counts. TrollStore keeps the historical implementation described here.
+See `performance-audit/IMPLEMENTATION-C02A.md` for scope and device checks.
+
 ## Validation and cleanup
 
 Before the first down frame, both runtimes strictly parse and validate every

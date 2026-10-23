@@ -170,13 +170,11 @@ static bool appendChildEvent(IOHIDEventRef parent, int type, int index, float x,
 }
 
 /**
-Perform touch events with data received from socket
+Perform a fully validated numeric frame; wire and internal callers share ownership/state handling.
 */
-bool performTouchFromRawData(const UInt8 *eventData, size_t eventDataLength)
+bool performTouchFrame(const TLinkTouchPoint *points, int touchCount)
 {
-    TLinkTouchPoint points[kTLinkTouchMaxCount];
-    int touchCount = 0;
-    if (!TLinkParseTouchPayload(eventData, eventDataLength, points, &touchCount)) return false;
+    if (!TLinkValidateTouchFrame(points, touchCount)) return false;
 
     IOHIDEventRef parent = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, mach_absolute_time(), 3, 99, 1, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0);
     if (!parent) return false;
@@ -224,6 +222,14 @@ bool performTouchFromRawData(const UInt8 *eventData, size_t eventDataLength)
     postIOHIDEvent(parent);
     CFRelease(parent);
     return true;
+}
+
+// The external/RAW protocol is an adapter into the same validated typed injector.
+bool performTouchFromRawData(const UInt8 *eventData, size_t eventDataLength)
+{
+    TLinkTouchPoint points[kTLinkTouchMaxCount];
+    int touchCount = 0;
+    return TLinkParseTouchPayload(eventData, eventDataLength, points, &touchCount) && performTouchFrame(points, touchCount);
 }
 
 /**

@@ -1,6 +1,7 @@
 // Compiles both production touch injectors against a retain-counted HID test double.
 // This checks our ownership bookkeeping; private-API retain semantics still need device validation.
 #include <cassert>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -93,6 +94,12 @@ static void postIOHIDEvent(Event *event) {
 #define POCPerformTouchFromRawData performTouchFromRawData
 #endif
 #include "TouchInjectionUnderTest.inc"
+#ifndef TLINK_TEST_TROLLSTORE
+using CGFloat = double;
+struct CGPoint {CGFloat x, y;};
+static std::atomic<uint64_t> sTLinkZoomFrameCount{0};
+#include "TaskTouchHelpersUnderTest.inc"
+#endif
 
 static std::string field(int type, int index, int x = 12345, int y = 67890) {
     char buffer[32];
@@ -237,11 +244,74 @@ static void testLongRun() {
     assert(dispatchCount == 100002 && liveEvents == 0);
 }
 
+#ifndef TLINK_TEST_TROLLSTORE
+static void testTypedFrames() {
+    reset();
+    const TLinkTouchPoint valid[] = {{TOUCH_DOWN, 0, 0, 9999}, {TOUCH_MOVE, 19, 1234, 6789}};
+    assert(performTouchFrame(valid, 2) && liveEvents == 0);
+    int before[MAX_FINGER_INDEX][4];std::memcpy(before, eventsToAppend, sizeof(before));
+    const int attempts = createAttempts, dispatched = dispatchCount;
+    assert(!performTouchFrame(nullptr, 1) && !performTouchFrame(valid, 0) && !performTouchFrame(valid, -1));
+    assert(!performTouchFrame(valid, 10) && !performTouchFrame(valid, INT32_MAX));
+    for (const auto &bad : std::vector<TLinkTouchPoint>{{-1,0,0,0},{3,0,0,0},{1,-1,0,0},{1,20,0,0},
+        {1,0,-1,0},{1,0,0,-1},{1,0,10000,0},{1,0,0,10000}}) {
+        TLinkTouchPoint frame[] = {valid[0], bad};assert(!performTouchFrame(frame, 2));
+    }
+    assert(attempts == createAttempts && dispatched == dispatchCount && std::memcmp(before, eventsToAppend, sizeof(before)) == 0);
+    // The wire injector is a thin adapter: preserve order, duplicate fingers,
+    // integer-pixel quantization, active-state commit and normalized HID values.
+    uint32_t random = 1979;
+    const auto next = [&random]() -> uint32_t {random = random * 1664525U + 1013904223U;return random;};
+    for (int trial = 0; trial < 3000; ++trial) {
+        const int count = 1 + int(next() % 9);TLinkTouchPoint frame[kTLinkTouchMaxCount];std::string wire(1, char('0' + count));
+        for (int i = 0; i < count; ++i) {
+            int type = int(next() % 3), index = int(next() % 20), x = int(next() % 100000), y = int(next() % 100000);
+            frame[i] = {type, index, x / 10, y / 10};wire += field(type, index, x, y);
+        }
+        reset();assert(inject(wire));const auto expected = lastFrame;
+        int expectedState[MAX_FINGER_INDEX][4];std::memcpy(expectedState, eventsToAppend, sizeof(expectedState));
+        reset();assert(performTouchFrame(frame, count) && liveEvents == 0 && lastFrame.size() == expected.size());
+        for (size_t i = 0; i < expected.size(); ++i) {
+            assert(lastFrame[i].type == expected[i].type && lastFrame[i].index == expected[i].index &&
+                lastFrame[i].x == expected[i].x && lastFrame[i].y == expected[i].y);
+        }
+        assert(std::memcmp(expectedState, eventsToAppend, sizeof(expectedState)) == 0);
+    }
+    for (int failure = 1; failure <= 3; ++failure) {
+        reset();failAt = failure;assert(!performTouchFrame(valid, 2) && liveEvents == 0 && dispatchCount == 0);
+        for (const auto &state : eventsToAppend) assert(state[EVENT_VALID_INDEX] == NOT_VALID);
+    }
+    // Compile the actual Task numeric helpers on every host, including concrete
+    // fixed-point boundaries and all fingers in each synchronized zoom frame.
+    reset();
+    zx_performSingleTouch(TOUCH_DOWN, 19, -1, 0.95);
+    assert(lastFrame.size() == 1 && lastFrame[0].index == 19 && lastFrame[0].x == 0 && lastFrame[0].y == 1.0f / device_screen_height);
+    zx_performSingleTouch(TOUCH_UP, 19, 1e30, 9999.89);
+    assert(lastFrame[0].x == 9999.0f / device_screen_width && lastFrame[0].y == 9999.0f / device_screen_height);
+    const CGPoint points[] = {{0.049, 0.95}, {1234.89, 5678.91}, {9999.9, -100}};
+    zx_performTouchFrame(TOUCH_DOWN, 17, points, 3);
+    assert(lastFrame.size() == 3 && sTLinkZoomFrameCount.load() == 1);
+    assert(lastFrame[0].index == 17 && lastFrame[0].x == 0 && lastFrame[0].y == 1.0f / device_screen_height);
+    assert(lastFrame[1].index == 18 && lastFrame[1].x == 1234.0f / device_screen_width && lastFrame[1].y == 5678.0f / device_screen_height);
+    assert(lastFrame[2].index == 19 && lastFrame[2].x == 9999.0f / device_screen_width && lastFrame[2].y == 0);
+    zx_performTouchFrame(TOUCH_UP, 17, points, 3);
+    const int heldCount = dispatchCount;zx_performTouchFrame(TOUCH_DOWN, 0, nullptr, 2);zx_performTouchFrame(TOUCH_DOWN, 0, points, 10);
+    assert(dispatchCount == heldCount && liveEvents == 0);
+    reset();TLinkTouchPoint point = {TOUCH_DOWN, 19, 9999, 0};assert(performTouchFrame(&point, 1));
+    point.type = TOUCH_MOVE;for (int i = 0; i < 100000; ++i) assert(performTouchFrame(&point, 1) && liveEvents == 0);
+    point.type = TOUCH_UP;assert(performTouchFrame(&point, 1) && liveEvents == 0);
+    puts("Typed touch passed: all-or-nothing validation, 3000 wire/HID parity frames, allocation rollback and 100k numeric frames.");
+}
+#endif
+
 int main() {
     testValidAndState();
     testMalformed();
     testGuardedTruncation();
     testAllocationFailures();
     testLongRun();
+#ifndef TLINK_TEST_TROLLSTORE
+    testTypedFrames();
+#endif
     std::puts("Touch safety OK: guarded truncation, invalid frames, 0/19 fingers, allocation rollback, 100k-frame ownership");
 }

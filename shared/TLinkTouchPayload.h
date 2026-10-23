@@ -18,6 +18,19 @@ struct TLinkTouchPoint {
     int y;
 };
 
+// Validate the entire typed frame before allocation or active-finger state changes.
+// Duplicate indices retain the legacy sequential semantics.
+static inline bool TLinkValidateTouchFrame(const TLinkTouchPoint *points, int count)
+{
+    if (!points || count < 1 || count > kTLinkTouchMaxCount) return false;
+    for (int i = 0; i < count; ++i) {
+        const TLinkTouchPoint &point = points[i];
+        if (point.type < 0 || point.type > 2 || point.index < 0 || point.index >= kTLinkTouchMaxFingerCount ||
+            point.x < 0 || point.x > 9999 || point.y < 0 || point.y > 9999) return false;
+    }
+    return true;
+}
+
 static inline bool TLinkParseTouchPayload(const uint8_t *data, size_t length,
                                          TLinkTouchPoint (&points)[kTLinkTouchMaxCount],
                                          int *touchCount)

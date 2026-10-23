@@ -24,6 +24,12 @@ assert.match(socket, /capturesResponse\(\)\) return budget->appendCString\(msg\)
 assert.match(task, /TLinkNativeBudgetScope taskScope\(TLinkTaskBudget\(context\)\)/);
 assert.match(task, /License refresh may wait for IPC; recheck before committing an action/);
 assert.match(task, /@finally \{ zx_performSingleTouch\(TOUCH_UP/g);
+assert.match(task, /TLinkGestureTimeline timeline/);
+assert.match(task, /timeline\.wait\(unsigned\(i\), unsigned\(pointTexts.count - 1\)\)/);
+const numericTouches = task.slice(task.indexOf("static void zx_performSingleTouch"), task.indexOf("static NSArray<NSString *> *zx_splitTaskParts"));
+assert.match(numericTouches, /performTouchFrame\(&point, 1\)/);
+assert.match(numericTouches, /performTouchFrame\(frame, count\)/);
+assert.doesNotMatch(numericTouches, /stringWithFormat|appendFormat|UTF8String|performTouchFromRawData/);
 assert.match(task, /if \(!completed\) ownedTouches.release/);
 assert.match(tess, /shouldCancelImageRecognitionForTesseract/);
 assert.match(tess, /@finally \{ tesseract.delegate = nil; tesseract.image = nil; \}/);

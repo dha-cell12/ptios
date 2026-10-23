@@ -79,14 +79,33 @@ enum { TOUCH_UP = 0, TOUCH_DOWN = 1, TOUCH_MOVE = 2,
 static std::vector<TLinkTouchPoint> injected;
 static TLinkCancellationToken *touchToken;
 static int cancelAt;
-static bool performTouchFromRawData(const UInt8 *bytes, size_t length) {
-    TLinkTouchPoint points[kTLinkTouchMaxCount]; int count = 0;
-    assert(TLinkParseTouchPayload(bytes, length, points, &count));
+static bool fakeTiming = false;
+static uint64_t fakeNow = 0, frameWork = 0, oversleep = 0;
+static unsigned fakeWaits = 0;
+static std::vector<uint64_t> frameTimes;
+static bool performTouchFrame(const TLinkTouchPoint *points, int count) {
+    assert(TLinkValidateTouchFrame(points, count));
+    if (fakeTiming) {frameTimes.push_back(fakeNow);fakeNow += frameWork;}
     for (int i = 0; i < count; ++i) injected.push_back(points[i]);
     if (cancelAt > 0 && int(injected.size()) >= cancelAt) [touchToken cancel];
     return true;
 }
+static bool performTouchFromRawData(const UInt8 *bytes, size_t length) {
+    TLinkTouchPoint points[kTLinkTouchMaxCount]; int count = 0;
+    assert(TLinkParseTouchPayload(bytes, length, points, &count));return performTouchFrame(points, count);
+}
+static uint64_t touchClockNow(){return fakeTiming ? fakeNow : TLinkNativeNowNs();}
+static bool touchWaitNs(uint64_t ns){
+    if (!fakeTiming) return TLinkNativeWaitNs(ns);
+    ++fakeWaits;fakeNow += ns + oversleep;return !TLinkNativeStopped();
+}
+// Controlled clock/wait only; compile the actual timeline and gesture bodies.
+#define TLinkNativeNowNs touchClockNow
+#define TLinkNativeWaitNs touchWaitNs
+#include "../shared/TLinkGestureTiming.h"
 #include "NativeGesturesUnderTest.inc"
+#undef TLinkNativeNowNs
+#undef TLinkNativeWaitNs
 static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 1024 * 1024) {
     auto context = [TLinkTaskExecutionContext new];
     context.cancellationToken = [TLinkCancellationToken new];
@@ -104,6 +123,7 @@ static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload
     TLinkNativeBudgetScope scope([call nativeBudget]);
     NSError *error = nil;
     assert(!handler((UInt8 *)payload.UTF8String, &error) && error);
+    assert([error.localizedDescription containsString:@"AbortError"]);
     assert(injected.size() >= size_t(fingerCount * 2));
     for (int i = 0; i < fingerCount; ++i) {
         assert(injected[size_t(i)].type == TOUCH_DOWN);
@@ -111,6 +131,40 @@ static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload
     }
     const auto count = injected.size();
     assert(!handler((UInt8 *)payload.UTF8String, &error) && injected.size() == count);
+}
+static void timingCases() {
+    fakeTiming = true;
+    const auto run = [](bool (*handler)(UInt8 *, NSError **), const char *payload, uint64_t work = 7000000) {
+        injected.clear();frameTimes.clear();touchToken = nil;cancelAt = 0;
+        fakeNow = 1000000;frameWork = work;oversleep = 2000000;fakeWaits = 0;
+        TLinkNativeBudgetScope scope([TLinkNativeCallContext(parent(), NO, NO) nativeBudget]);
+        NSError *error = nil;assert(handler((UInt8 *)payload, &error) && !error);
+    };
+    run(zx_handleNativeTap, "20;;30;;100;;19");
+    assert(frameTimes.size() == 2 && frameTimes[0] == 1000000 && frameTimes[1] == 103000000);
+    run(zx_handleNativeSwipe, "20;;30;;80;;90;;100;;19;;10");
+    assert(frameTimes.size() == 11 && frameTimes[0] == 1000000);
+    for (unsigned i = 1; i <= 10; ++i) assert(frameTimes[i] == 3000000 + uint64_t(i) * 10000000);
+    assert(injected.back().type == TOUCH_UP && injected.back().x == 80 && injected.back().y == 90);
+    run(zx_handleNativeGesture, "19;;90;;20,30|40,50|60,70|80,90");
+    assert(frameTimes.size() == 5 && frameTimes[0] == 1000000 && frameTimes[1] == 33000000 && frameTimes[2] == 63000000 &&
+        frameTimes[3] == 93000000 && frameTimes[4] == 100000000);
+    run(zx_handleNativeGesture, "zoom;;250;;500;;20;;80;;90;;3;;4");
+    assert(frameTimes.size() == 5 && frameTimes[1] == 33000000 && frameTimes[2] == 63000000 && frameTimes[3] == 93000000 && frameTimes[4] == 100000000);
+    assert(injected.size() == 15); // all three fingers in DOWN, three MOVEs and UP
+    run(zx_handleNativeSwipe, "20;;30;;80;;90;;100;;19;;10", 40000000);
+    assert(fakeWaits == 0 && frameTimes.size() == 11);
+    for (unsigned i = 0; i <= 10; ++i) assert(frameTimes[i] == 1000000 + uint64_t(i) * 40000000);
+    // Last-point cancellation must still return failure and issue owned UP.
+    checkGesture(zx_handleNativeGesture, @"19;;0;;20,30|40,50", 1, 2);
+    checkGesture(zx_handleNativeGesture, @"zoom;;250;;500;;20;;80;;50;;2;;2", 2, 4);
+    fakeTiming = false;touchToken = nil;cancelAt = 0;injected.clear();
+    // Concrete old fixed-point boundaries, including finite clamping.
+    zx_performSingleTouch(TOUCH_DOWN, 19, -1, 0.95);
+    assert(injected.back().index == 19 && injected.back().x == 0 && injected.back().y == 1);
+    zx_performSingleTouch(TOUCH_UP, 19, 1e30, 9999.89);
+    assert(injected.back().x == 9999 && injected.back().y == 9999);
+    puts("Actual gesture timing passed: typed frames, consumed DOWN/work/oversleep, scheduled final point, ordered overdue frames, exact endpoint and final-frame cancellation cleanup.");
 }
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";
@@ -197,7 +251,7 @@ int main() { @autoreleasepool {
     assert(releases == beforePress + 3 && lastPayload == "300;;1");
     checkGesture(zx_handleNativeTap, @"20;;30;;60000;;19", 1, 1);
     checkGesture(zx_handleNativeSwipe, @"20;;30;;80;;90;;5000;;19;;120", 1, 2);
-    checkGesture(zx_handleNativeGesture, @"19;;5000;;20,30|40,50|60,70", 1, 2);
+    checkGesture(zx_handleNativeGesture, @"19;;500;;20,30|40,50|60,70", 1, 2);
     checkGesture(zx_handleNativeGesture, @"zoom;;250;;500;;20;;80;;5000;;2;;120", 2, 2);
     checkGesture(zx_handleNativeBatch, @"1011190020000300", 1, 1); // abort after final raw DOWN still releases
     injected.clear(); touchToken = nil; cancelAt = 0;
@@ -205,5 +259,6 @@ int main() { @autoreleasepool {
       NSError *error = nil;
       assert(zx_handleNativeTap((UInt8 *)"20;;30;;0;;0", &error) && injected.size() == 2);
       assert(zx_clampTouchCoord(1e30) == 99999); }
+    timingCases();
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

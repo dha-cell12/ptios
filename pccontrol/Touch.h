@@ -15,6 +15,9 @@
 
 #include "../shared/TLinkTouchPayload.h"
 
+// Integer-pixel internal API; same frame/count/finger/coordinate domain as legacy wire.
+bool performTouchFrame(const TLinkTouchPoint *points, int touchCount);
+
 // Length excludes the NUL terminator. Invalid frames are rejected before any HID/state change.
 bool performTouchFromRawData(const UInt8 *eventData, size_t eventDataLength);
 

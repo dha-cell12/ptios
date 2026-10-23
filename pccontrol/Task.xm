@@ -1,3 +1,4 @@
+#include "../shared/TLinkGestureTiming.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "Task.h"
 #import "../shared/TLinkAccessibilityTree.h"
@@ -119,32 +120,22 @@ static int zx_clampTouchCoord(CGFloat value)
     return fixed;
 }
 
-static NSString *zx_touchPayload(int type, int finger, CGFloat x, CGFloat y)
-{
-    if (finger < 0) finger = 0;
-    if (finger > 99) finger = 99;
-    return [NSString stringWithFormat:@"1%d%02d%05d%05d", type, finger, zx_clampTouchCoord(x), zx_clampTouchCoord(y)];
-}
-
+// Internal numeric frames preserve legacy fixed-point rounding then integer-pixel
+// truncation, without NSString formatting/UTF-8 conversion and wire reparsing.
 static void zx_performSingleTouch(int type, int finger, CGFloat x, CGFloat y)
 {
-    NSString *payload = zx_touchPayload(type, finger, x, y);
-    performTouchFromRawData((const UInt8 *)[payload UTF8String],
-                            [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
+    const TLinkTouchPoint point = {type, finger, zx_clampTouchCoord(x) / 10, zx_clampTouchCoord(y) / 10};
+    performTouchFrame(&point, 1);
 }
 
 static void zx_performTouchFrame(int type, int baseFinger, const CGPoint *points, int count)
 {
-    NSMutableString *payload = [NSMutableString stringWithFormat:@"%d", count];
+    if (!points || count < 1 || count > kTLinkTouchMaxCount) return;
+    TLinkTouchPoint frame[kTLinkTouchMaxCount];
     for (int i = 0; i < count; i++) {
-        [payload appendFormat:@"%d%02d%05d%05d",
-                              type,
-                              baseFinger + i,
-                              zx_clampTouchCoord(points[i].x),
-                              zx_clampTouchCoord(points[i].y)];
+        frame[i] = {type, baseFinger + i, zx_clampTouchCoord(points[i].x) / 10, zx_clampTouchCoord(points[i].y) / 10};
     }
-    performTouchFromRawData((const UInt8 *)[payload UTF8String],
-                            [payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
+    performTouchFrame(frame, count);
     sTLinkZoomFrameCount.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -182,9 +173,10 @@ static bool zx_handleNativeTap(UInt8 *eventData, NSError **err)
     int durationMs = parts.count >= 3 ? [parts[2] intValue] : 50;
     int finger = parts.count >= 4 ? [parts[3] intValue] : 0;
     if (!zx_nativeTouchArguments(x, y, finger, durationMs, err) || !zx_nativeContinue(err)) return false;
+    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
     @try {
         zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
-        if (!TLinkNativeWaitNs((uint64_t)durationMs * 1000000)) return zx_nativeContinue(err);
+        if (!timeline.wait(1, 1)) return zx_nativeContinue(err);
         return true;
     } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
 }
@@ -204,17 +196,17 @@ static bool zx_handleNativeSwipe(UInt8 *eventData, NSError **err)
         !zx_nativeTouchArguments(x2, y2, finger, durationMs, err) || !zx_nativeContinue(err)) return false;
     steps = MAX(2, MIN(steps, 120));
     CGFloat x = x1, y = y1;
+    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
     @try {
         zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
-        const uint64_t waitNs = (uint64_t)durationMs * 1000000 / steps;
         for (int i = 1; i < steps; ++i) {
-            if (!TLinkNativeWaitNs(waitNs)) return zx_nativeContinue(err);
+            if (!timeline.wait(unsigned(i), unsigned(steps))) return zx_nativeContinue(err);
             CGFloat t = (CGFloat)i / steps;
             x = x1 + (x2 - x1) * t; y = y1 + (y2 - y1) * t;
             if (!zx_nativeContinue(err)) return false;
             zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
         }
-        if (!TLinkNativeWaitNs(waitNs)) return zx_nativeContinue(err);
+        if (!timeline.wait(unsigned(steps), unsigned(steps))) return zx_nativeContinue(err);
         x = x2; y = y2;
         return true;
     } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }
@@ -340,19 +332,20 @@ static bool zx_handleNativeZoom(NSArray<NSString *> *parts, NSError **err)
     }
 
     bool fingersDown = false;
+    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
     @try {
         zx_zoomPoints(points, fingerCount, centerX, centerY, startRadius, angleDegrees);
         if (!zx_nativeContinue(err)) { sTLinkZoomCancelledCount.fetch_add(1); sTLinkZoomLastResult.store(4); return false; }
         zx_performTouchFrame(TOUCH_DOWN, baseFinger, points, fingerCount);
         fingersDown = true;
 
-        int sleepPerIntervalUs = durationMs * 1000 / (steps - 1);
         for (int step = 1; step < steps; step++) {
-            if (!TLinkNativeWaitNs((uint64_t)sleepPerIntervalUs * 1000)) { sTLinkZoomCancelledCount.fetch_add(1); sTLinkZoomLastResult.store(4); return zx_nativeContinue(err); }
+            if (!timeline.wait(unsigned(step), unsigned(steps - 1))) { sTLinkZoomCancelledCount.fetch_add(1); sTLinkZoomLastResult.store(4); return zx_nativeContinue(err); }
             double t = (double)step / (double)(steps - 1);
             double radius = startRadius + (endRadius - startRadius) * t;
             zx_zoomPoints(points, fingerCount, centerX, centerY, radius, angleDegrees);
             zx_performTouchFrame(TOUCH_MOVE, baseFinger, points, fingerCount);
+            if (!zx_nativeContinue(err)) { sTLinkZoomCancelledCount.fetch_add(1); sTLinkZoomLastResult.store(4); return false; }
         }
         zx_performTouchFrame(TOUCH_UP, baseFinger, points, fingerCount);
         fingersDown = false;
@@ -406,14 +399,14 @@ static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
         if (!zx_nativeTouchArguments(x, y, finger, durationMs, err)) return false;
     }
     zx_parseGesturePoint(pointTexts[0], &x, &y);
+    const TLinkGestureTimeline timeline(TLinkNativeNowNs(), uint64_t(durationMs) * 1000000);
     @try {
         zx_performSingleTouch(TOUCH_DOWN, finger, x, y);
-        const uint64_t waitNs = (uint64_t)durationMs * 1000000 / (pointTexts.count - 1);
         for (NSUInteger i = 1; i < pointTexts.count; ++i) {
-            if (!zx_nativeContinue(err)) return false;
+            if (!timeline.wait(unsigned(i), unsigned(pointTexts.count - 1))) return zx_nativeContinue(err);
             zx_parseGesturePoint(pointTexts[i], &x, &y);
             zx_performSingleTouch(TOUCH_MOVE, finger, x, y);
-            if (!TLinkNativeWaitNs(waitNs)) return zx_nativeContinue(err);
+            if (!zx_nativeContinue(err)) return false;
         }
         return true;
     } @finally { zx_performSingleTouch(TOUCH_UP, finger, x, y); }

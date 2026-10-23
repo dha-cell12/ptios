@@ -25,6 +25,8 @@ assert.ok(trollChildrenStart >= 0 && trollChildrenEnd > trollChildrenStart && tr
 const trollInjection = trollTouch.slice(trollChildrenStart, trollChildrenEnd) + trollTouch.slice(trollPerformStart, trollPerformEnd);
 assert.match(trollServer, /touch_ack_bad_payload/);
 assert.match(trollServer, /POCPerformTouchFromRawData[\s\S]*lengthOfBytesUsingEncoding:NSUTF8StringEncoding/);
+assert.match(injection, /bool performTouchFrame\(const TLinkTouchPoint \*points, int touchCount\)/);
+assert.match(injection, /TLinkValidateTouchFrame\(points, touchCount\)/);
 assert.match(injection, /bool performTouchFromRawData\(const UInt8 \*eventData, size_t eventDataLength\)/);
 assert.match(task, /actualLength < 2/);
 assert.doesNotMatch(task, /processTaskWithContext\(buff, SIZE_MAX/);
@@ -37,6 +39,10 @@ assert.match(bridge, /processTaskWithContext[\s\S]*\[payloadData length\] - 1/);
 const tempRoot = resolve(tmpdir());
 const temp = await mkdtemp(join(tempRoot, "tlink-touch-safety-"));
 try {
+  const helpersStart = task.indexOf("static int zx_clampTouchCoord(");
+  const helpersEnd = task.indexOf("static NSArray<NSString *> *zx_splitTaskParts", helpersStart);
+  assert.ok(helpersStart >= 0 && helpersEnd > helpersStart);
+  await writeFile(join(temp, "TaskTouchHelpersUnderTest.inc"), task.slice(helpersStart, helpersEnd));
   for (const [runtime, code, troll] of [["rootfull", injection, false], ["TrollStore", trollInjection, true]]) {
     await writeFile(join(temp, "TouchInjectionUnderTest.inc"), code);
     console.log(`Testing ${runtime} production touch injection`);

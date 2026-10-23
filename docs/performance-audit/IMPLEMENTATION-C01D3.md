@@ -65,3 +65,7 @@ Directory and candidate descriptors are scope-owned, including exceptions. Work 
 Build both root runtimes/binaries, then kill the daemon during preparation, matching and an opaque SpringBoard callback. Verify active holders are skipped, proven tagged orphans disappear after the next eligible trigger, unknown/legacy evidence survives, and the following capture succeeds. Exercise overlapping cleanup from both binaries, restricted filesystems, fork/exec descriptor lifetime, many unrelated `/tmp` entries and capture after acknowledged touch. Record metadata/lock/xattr overhead and idle wakeups against C01d2c; do not infer a performance gain from the build result.
 
 C01 source slices now include bounded engine/ingress/IPC and proven crash-retention recovery. C01 is not marked fully accepted without macOS/iOS/device qualification. After the C01d3 build checkpoint, the next implementation group is C02 (typed native API/helper transport); remaining device benchmark probes and conservative retention cases stay documented here.
+
+## Following checkpoint
+
+The user reported the C01d3 build at `f8155bc` passed before C02a. This is a build checkpoint; root/mobile permission, crash/restart timing and performance qualification remain open. The next implemented slice is `IMPLEMENTATION-C02A.md`.

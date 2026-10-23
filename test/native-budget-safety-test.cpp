@@ -1,3 +1,4 @@
+#include "../shared/TLinkGestureTiming.h"
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkTemplatePolicy.h"
 #include "../shared/TLinkModernImagePolicy.h"
@@ -41,7 +42,40 @@ static TLinkNativeBudgetPtr makeBudget(std::shared_ptr<TLinkNativeCancellation> 
 static int append(const TLinkNativeBudgetPtr &b, const std::string &s) {
     return b->appendCString(reinterpret_cast<const uint8_t *>(s.c_str()));
 }
+static void testGestureTimeline() {
+    for (unsigned intervals = 1; intervals <= 512; ++intervals) {
+        const uint64_t duration = 60000000001ULL, start = 700;
+        TLinkGestureTimeline timeline(start, duration);uint64_t previous = start;
+        for (unsigned step = 0; step <= intervals; ++step) {
+            const auto target = timeline.target(step, intervals);
+            assert(target >= previous && target == start + duration * step / intervals);
+            assert(timeline.remaining(target, step, intervals) == 0);
+            assert(timeline.remaining(target + 1, step, intervals) == 0);
+            assert(timeline.remaining(target - 1, step, intervals) == 1);
+            previous = target;
+        }
+        assert(timeline.target(intervals, intervals) == start + duration);
+    }
+    assert(TLinkGestureTimeline(10, 0).target(1, 1) == 10);
+    assert(TLinkGestureTimeline(10, UINT64_MAX).target(UINT32_MAX, UINT32_MAX) == UINT64_MAX);
+    assert(TLinkGestureTimeline(0, UINT64_MAX).target(UINT32_MAX, UINT32_MAX) == UINT64_MAX);
+    assert(TLinkGestureTimeline(15, 20).target(99, 2) == 35 && TLinkGestureTimeline(15, 20).target(1, 0) == 15);
+    // Synthetic 7 ms frame work + 2 ms oversleep does not accumulate across
+    // ten 10 ms targets; endpoint stays at 102 ms rather than 190 ms.
+    TLinkGestureTimeline timeline(0, 100000000);uint64_t clock = 7000000;
+    for (unsigned step = 1; step <= 10; ++step) {
+        clock += timeline.remaining(clock, step, 10) + 2000000;
+        assert(clock == uint64_t(step) * 10000000 + 2000000);clock += 7000000;
+    }
+    assert(timeline.remaining(200000000, 1, 10) == 0);
+    auto token = std::make_shared<TLinkNativeCancellation>();token->cancel();
+    {TLinkNativeBudgetScope scope(makeBudget(token));assert(!timeline.wait(0, 1));}
+    auto expired = std::make_shared<TLinkNativeBudget>(nullptr, TLinkNativeNowNs() - 1, 64);
+    {TLinkNativeBudgetScope scope(expired);assert(!timeline.wait(0, 1));}
+    puts("Gesture timing policy passed: 1..512 intervals, exact endpoint/remainder, overflow, consumed frame work/oversleep and overdue cancellation/deadline.");
+}
 int main() {
+    testGestureTimeline();
     auto b = makeBudget({}, 0, 1024);
     assert(b->response().capacity() == 0);
     assert(append(b, "0;;") == 3);
