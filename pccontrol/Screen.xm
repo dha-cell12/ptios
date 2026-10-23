@@ -1,3 +1,5 @@
+#include "../shared/TLinkCaptureLeasePOSIX.h"
+#include "../shared/TLinkImageStorage.h"
 #include "Screen.h"
 #include "Common.h"
 #include <limits.h>
@@ -9,6 +11,25 @@
 #import "headers/IOSurface/IOSurface.h"
 #include "headers/IOSurface/CoreSurface.h"
 #import <Photos/Photos.h>
+
+// BEGIN owned screenshot write adapter.
+static bool zx_ownedCaptureContinue(NSError **error)
+{
+    auto owner=TLinkCaptureReceiverSlot();
+    if(owner&&owner->valid())return true;
+    if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey:@"-1;;owned_capture_lease_missing_or_expired\r\n"}];
+    return false;
+}
+static bool zx_writeOwnedCapture(NSString *path,NSData *encoded,NSError **error)
+{
+    auto owner=TLinkCaptureReceiverSlot();
+    if(owner&&owner->matches(path.UTF8String)&&owner->write(encoded.bytes,encoded.length))return true;
+    if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999
+        userInfo:@{NSLocalizedDescriptionKey:@"-1;;owned_capture_cancelled_or_write_failed\r\n"}];
+    return false;
+}
+// END owned screenshot write adapter.
 
 OBJC_EXTERN void CARenderServerRenderDisplay(kern_return_t a, CFStringRef b, IOSurfaceRef surface, int x, int y);
 OBJC_EXTERN kern_return_t IOSurfaceLock(IOSurfaceRef buffer, IOSurfaceLockOptions options, uint32_t *seed);
@@ -337,11 +358,15 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         targetPath = [getDocumentRoot() stringByAppendingPathComponent:@"screenshot.png"];
     }
 
+    auto owned=TLinkCaptureReceiverSlot();
+    if(owned&&(!owned->matches(targetPath.UTF8String)||!owned->valid())){
+        if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;owned_capture_lease_missing_or_expired\r\n"}];return nil;
+    }
     BOOL shouldReuseKeep = NO;
     @synchronized([Screen class]) {
         shouldReuseKeep = gKeepEnabled;
     }
-    if (shouldReuseKeep && CGRectIsEmpty(region) && [[NSFileManager defaultManager] fileExistsAtPath:kTLinkautoKeepPngPath])
+    if (!owned && shouldReuseKeep && CGRectIsEmpty(region) && [[NSFileManager defaultManager] fileExistsAtPath:kTLinkautoKeepPngPath])
     {
         [[NSFileManager defaultManager] removeItemAtPath:targetPath error:nil];
         NSError *copyErr = nil;
@@ -365,6 +390,12 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         return nil;
     }
 
+    if(owned&&!zx_ownedCaptureContinue(error)){CGImageRelease(screenshotRef);return nil;}
+    size_t ownedPixels=0;
+    if(owned&&!TLinkImagePixels(CGImageGetWidth(screenshotRef),CGImageGetHeight(screenshotRef),8388608,&ownedPixels)){
+        CGImageRelease(screenshotRef);
+        if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;owned_capture_pixel_limit\r\n"}];return nil;
+    }
     CGSize imageSize = CGSizeMake(CGImageGetWidth(screenshotRef), CGImageGetHeight(screenshotRef));
     CGRect bounds = CGRectMake(0, 0, imageSize.width, imageSize.height);
     CGRect targetRegion = CGRectIsEmpty(region) ? bounds : CGRectIntersection(bounds, region);
@@ -397,13 +428,17 @@ static CGImageRef zx_captureScreenCGImageRef(void)
         return nil;
     }
 
-    UIImage *image = [UIImage imageWithCGImage:outputRef];
-    CGImageRelease(outputRef);
+    UIImage *image=nil;
+    @try {image=[UIImage imageWithCGImage:outputRef];}
+    @finally {CGImageRelease(outputRef);}
 
+    if(owned&&!zx_ownedCaptureContinue(error))return nil;
     NSString *ext = [[targetPath pathExtension] lowercaseString];
     NSData *encoded = ([ext isEqualToString:@"jpg"] || [ext isEqualToString:@"jpeg"])
         ? UIImageJPEGRepresentation(image, 0.75)
         : UIImagePNGRepresentation(image);
+
+    if(owned)return zx_writeOwnedCapture(targetPath,encoded,error)?targetPath:nil;
 
     NSString *parentDir = [targetPath stringByDeletingLastPathComponent];
     if ([parentDir length] > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir])
@@ -575,7 +610,7 @@ NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error)
     }
 
     int action = [data[0] intValue];
-    if (action == SCREENSHOT_TASK_CAPTURE)
+    if (action == SCREENSHOT_TASK_CAPTURE || action == kTLinkOwnedCaptureAction)
     {
         if ([data count] < 2)
         {
@@ -589,6 +624,12 @@ NSString* handleScreenshotTaskFromRawData(UInt8 *eventData, NSError **error)
         }
 
         NSString *filePath = data[1];
+        if(action==kTLinkOwnedCaptureAction){
+            auto owner=TLinkCaptureReceiverSlot();
+            if([data count]!=2||!owner||!owner->matches(filePath.UTF8String)||!owner->valid()){
+                if(error)*error=[NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;owned_capture_requires_ipc_lease\r\n"}];return nil;
+            }
+        }
         CGRect region = CGRectZero;
         if ([data count] >= 6)
         {

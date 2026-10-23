@@ -67,3 +67,7 @@ Device qualification should cover a slow preceding task, cold license/engine sta
 ## CI fixture dependency correction
 
 - C01d1 CI correction: both root and TrollStore macOS jobs reported `TLinkIPCNoReplyMessage` undeclared in the extracted sender fixture. Added its production `shared/TLinkIPCPolicy.h` import to the runtime fixture. The ingress runner now compiles sender message IDs against that fixture's own portable imports on every host, catching missing shared dependencies on Windows as well. Ingress, socket and native-budget portable runners pass on Windows; a negative probe confirms the compiler rejects the omitted policy import. Production behavior, strict warnings and sanitizers are unchanged; corrected macOS/iOS CI remains pending.
+
+## Following checkpoint
+
+The user reported the corrected C01d1 build at `eec10d2` passed before C01d2a. Device qualification remains pending. The ordinary late screenshot-write race described above is addressed by `IMPLEMENTATION-C01D2A.md`; queue isolation, opaque overrun and process-crash retention remain open.

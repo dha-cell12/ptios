@@ -1,3 +1,4 @@
+#include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "IPCMessagePort.h"
 #import "TLinkDiagnostic.h"
@@ -88,6 +89,17 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                 const double startTime = TLinkNativeNowNs() / 1e9;
                 auto budget = std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{}, ingressDeadline, 1024 * 1024, false, true);
                 TLinkNativeBudgetScope responseScope(budget);
+                std::unique_ptr<TLinkCaptureReceiverLease> ownedCapture;
+                NSString *ownedPrefix=[NSString stringWithFormat:@"29%d;;",kTLinkOwnedCaptureAction];
+                if(msgid==TLinkC01IPCMessage&&[rawTask hasPrefix:ownedPrefix]){
+                    NSString *path=[rawTask substringFromIndex:ownedPrefix.length];
+                    ownedCapture.reset(new TLinkCaptureReceiverLease(path.UTF8String,budget));
+                    if(!ownedCapture->valid()){
+                        const char *failure="1;;owned_capture_lease_missing_or_expired\r\n";
+                        return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)failure,strlen(failure));
+                    }
+                }
+                TLinkCaptureReceiverScope captureScope(ownedCapture.get());
                 UInt8 placeholder[1] = {0}; // notifyClient writes to the budget, never to this placeholder.
                 CFWriteStreamRef responseStream = CFWriteStreamCreateWithBuffer(kCFAllocatorDefault, placeholder, sizeof(placeholder));
                 if (!responseStream || !CFWriteStreamOpen(responseStream)) {
@@ -98,7 +110,10 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
                 @try {
                     processTaskWithContext((UInt8 *)[rawTask UTF8String],
                                            [rawTask lengthOfBytesUsingEncoding:NSUTF8StringEncoding], responseStream, nil);
-                } @finally { CFWriteStreamClose(responseStream); CFRelease(responseStream); }
+                } @finally {
+                    CFWriteStreamClose(responseStream);CFRelease(responseStream);
+                    if(ownedCapture)ownedCapture->finish();
+                }
                 const auto &response = budget->response();
                 if (budget->reason() == TLinkNativeStop::OutputLimit) {
                     const char *failure = "1;;ipc_response_too_large\r\n";

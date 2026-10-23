@@ -16,6 +16,7 @@
 #include <string>
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkSocketOutput.h"
 #include "../shared/TLinkIPCPolicy.h"
 #import "../shared/TLinkEventChannel.h"

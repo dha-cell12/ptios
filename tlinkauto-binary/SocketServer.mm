@@ -1,3 +1,4 @@
+#include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "../shared/TLinkNativeDispatch.h"
 // TODO: multiple client write back support
@@ -350,7 +351,7 @@ static bool shouldRouteToSpringBoard(int taskType)
         case 25: // TASK_GET_DEVICE_INFO
         case 26: // TASK_TOUCH_INDICATOR
 
-        // ✅ FIX: OCR must always route to SpringBoard (Vision stable there)
+        // âœ… FIX: OCR must always route to SpringBoard (Vision stable there)
         case 27: // TASK_TEXT_RECOGNIZER
 
         case 28: // TASK_COLOR_SEARCHER
@@ -566,7 +567,7 @@ static NSString *zx_ipcCaptureScreenshotToPath(NSString *path, NSString **errStr
         return nil;
     }
 
-    NSString *taskPayload = [NSString stringWithFormat:@"%s29%s1;;%@", kTLinkautoIPCCommandTaskPrefix, "", path];
+    NSString *taskPayload = [NSString stringWithFormat:@"%s29%d;;%@", kTLinkautoIPCCommandTaskPrefix, kTLinkOwnedCaptureAction, path];
     __block CFDataRef responseData = NULL;
     TLinkNativeDispatchSync(ipcQueue(), ^{
         responseData = sendIPCMessage([taskPayload UTF8String], true);
@@ -580,8 +581,9 @@ static NSString *zx_ipcCaptureScreenshotToPath(NSString *path, NSString **errStr
     if ([resp hasPrefix:@"0;;"]) {
         NSString *p = [resp substringFromIndex:3];
         p = [p stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if ([p length] == 0) return path;
-        return p;
+        if ([p length] == 0 || [p isEqualToString:path]) return path;
+        if(errString)*errString=@"1;;owned_capture_reply_path_mismatch\r\n";
+        return nil;
     }
     if (errString) *errString = resp;
     return nil;
@@ -607,12 +609,6 @@ static NSString *zx_makeTempScreenshotPath(void)
 {
     NSString *uuid = [[NSUUID UUID] UUIDString];
     return [NSString stringWithFormat:@"/tmp/tlinkautod_capture_%@.png", uuid];
-}
-
-static void zx_safeUnlink(NSString *path)
-{
-    if (!path) return;
-    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
 }
 
 #ifdef ZX_DAEMON
@@ -645,42 +641,45 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
 
     if(TLinkNativeStopped())return (char *)strdup("1;;c01_request_expired\r\n");
     NSString *tmpPath = zx_makeTempScreenshotPath();
-    NSString *errString = nil;
-    NSString *shotPath = zx_ipcCaptureScreenshotToPath(tmpPath, &errString);
-    if (!shotPath) {
-        zx_logf("Task21 screenshot capture failed: %s", errString ? [errString UTF8String] : "(no err)");
-        zx_safeUnlink(tmpPath);
-        return zx_strdup_nsstring(errString ?: @"-1;;Failed to capture screenshot.\r\n");
-    }
+    TLinkCaptureClientLease captureLease(tmpPath.UTF8String);
+    if(!captureLease.valid())return (char *)strdup("1;;owned_capture_lease_create_failed\r\n");
+    @try {
+        NSString *errString = nil;
+        NSString *shotPath = zx_ipcCaptureScreenshotToPath(tmpPath, &errString);
+        if (!shotPath) {
+            zx_logf("Task21 screenshot capture failed: %s", errString ? [errString UTF8String] : "(no err)");
+            return zx_strdup_nsstring(errString ?: @"-1;;Failed to capture screenshot.\r\n");
+        }
 
-    for (int i = 0; i < 3; i++) {
-        if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
-        if(!TLinkNativeWaitNs(40000000)){zx_safeUnlink(shotPath);return (char *)strdup("1;;c01_request_expired\r\n");}
-    }
-    struct stat st;
-    long long fsz = (stat([shotPath fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
-    zx_logf("Task21 screenshot path=%s size=%lld", [shotPath UTF8String], fsz);
+        for (int i = 0; i < 3; i++) {
+            if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
+            if(!TLinkNativeWaitNs(40000000)){return (char *)strdup("1;;c01_request_expired\r\n");}
+        }
+        struct stat st;
+        long long fsz = (stat([shotPath fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
+        zx_logf("Task21 screenshot path=%s size=%lld", [shotPath UTF8String], fsz);
 
-    if(TLinkNativeStopped()){zx_safeUnlink(shotPath);return (char *)strdup("1;;c01_request_expired\r\n");}
-    NSError *err = nil;
-    TemplateMatch *tm = [[TemplateMatch alloc] init];
-    [tm setAcceptableValue:acceptableValue];
-    [tm setMaxTryTimes:maxTryTimes];
-    [tm setScaleRation:scaleRation];
+        if(TLinkNativeStopped()){return (char *)strdup("1;;c01_request_expired\r\n");}
+        NSError *err = nil;
+        TemplateMatch *tm = [[TemplateMatch alloc] init];
+        [tm setAcceptableValue:acceptableValue];
+        [tm setMaxTryTimes:maxTryTimes];
+        [tm setScaleRation:scaleRation];
 
-    zx_logf("Task21 start match (opencv) screenshot=%s template=%s", [shotPath UTF8String], [templatePath UTF8String]);
-    CGRect r = [tm templateMatchWithPath:shotPath templatePath:templatePath error:&err];
-    zx_logf("Task21 end match (opencv)");
-    zx_safeUnlink(shotPath);
-    if(TLinkNativeStopped())return (char *)strdup("1;;c01_request_expired\r\n");
+        zx_logf("Task21 start match (opencv) screenshot=%s template=%s", [shotPath UTF8String], [templatePath UTF8String]);
+        CGRect r = [tm templateMatchWithPath:shotPath templatePath:templatePath error:&err];
+        zx_logf("Task21 end match (opencv)");
 
-    if (err) {
-        zx_logf("Task21 match error: %s", [[err localizedDescription] UTF8String]);
-        return zx_strdup_nsstring([err localizedDescription]);
-    }
-    zx_logf("Task21 match rect x=%.2f y=%.2f w=%.2f h=%.2f", r.origin.x, r.origin.y, r.size.width, r.size.height);
-    NSString *resp = [NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n", r.origin.x, r.origin.y, r.size.width, r.size.height];
-    return zx_strdup_nsstring(resp);
+        if(TLinkNativeStopped())return (char *)strdup("1;;c01_request_expired\r\n");
+
+        if (err) {
+            zx_logf("Task21 match error: %s", [[err localizedDescription] UTF8String]);
+            return zx_strdup_nsstring([err localizedDescription]);
+        }
+        zx_logf("Task21 match rect x=%.2f y=%.2f w=%.2f h=%.2f", r.origin.x, r.origin.y, r.size.width, r.size.height);
+        NSString *resp = [NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n", r.origin.x, r.origin.y, r.size.width, r.size.height];
+        return zx_strdup_nsstring(resp);
+    } @finally {captureLease.cancel();}
 }
 #endif
 

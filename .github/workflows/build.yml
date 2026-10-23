@@ -68,6 +68,7 @@ jobs:
           node scripts/check-frame-vision-safety.mjs
           node scripts/check-modern-image-safety.mjs
           node scripts/check-c01-ingress-safety.mjs
+          node scripts/check-owned-capture-safety.mjs
           node scripts/check-adaptive-streaming-v1.mjs
           node scripts/check-stream-capture-pipeline-v2.mjs
           node scripts/check-stream-rtc-control-v2.mjs
