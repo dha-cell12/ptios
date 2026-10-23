@@ -11,40 +11,56 @@ inline bool TLinkCaptureLeasePath(const std::string &path) {
         else if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))return false;
     }return true;
 }
+inline bool TLinkCaptureSweepName(const std::string &name,std::string &output) {
+    const std::string suffix=".lease.owner.v1";
+    if(name.size()<=suffix.size()||name.compare(name.size()-suffix.size(),suffix.size(),suffix)!=0)return false;
+    output=name.substr(0,name.size()-suffix.size());return TLinkCaptureLeasePath("/tmp/"+output);
+}
+struct TLinkCaptureSweepBudget {
+    static const size_t EntryLimit=4096,CandidateLimit=64;
+    size_t entries=0,candidates=0;uint64_t deadline;
+    explicit TLinkCaptureSweepBudget(uint64_t start):deadline(start+25000000ULL){}
+    bool entry(uint64_t now){if(now>=deadline||entries>=EntryLimit)return false;++entries;return true;}
+    bool candidate(){if(candidates>=CandidateLimit)return false;++candidates;return true;}
+};
 struct TLinkCaptureFileID {uint64_t device=0,inode=0;};
 inline bool TLinkCaptureSameID(TLinkCaptureFileID a,TLinkCaptureFileID b){return a.device==b.device&&a.inode==b.inode;}
 // IO operations are nonrecursive, bounded path/descriptor operations. Production
 // uses POSIX; the portable race/fault harness supplies the same ownership boundary.
 template<class IO> class TLinkCaptureClient {
-    std::string path_,marker_;TLinkCaptureFileID identity_;bool active_=false;
+    std::string path_,marker_;TLinkCaptureFileID identity_;int lease_=-1;bool active_=false;
 public:
     explicit TLinkCaptureClient(std::string path):path_(std::move(path)),marker_(path_+".lease") {
-        active_=TLinkCaptureLeasePath(path_)&&IO::absent(path_)&&IO::createMarker(marker_,identity_);
+        if(TLinkCaptureLeasePath(path_)&&IO::absent(path_))lease_=IO::createMarker(marker_,identity_);
+        active_=lease_>=0;
     }
     bool valid()const{return active_;}
+    bool ownsOutput()const{return active_&&IO::ownsOutput(path_,identity_);}
     void cancel(){
         if(!active_)return;active_=false;
-        if(IO::sameMarker(marker_,identity_)){IO::removeMarker(marker_,identity_);IO::removePrivateOutput(path_);}
+        if(IO::sameMarker(marker_,identity_)){IO::removeMarker(marker_,identity_);IO::removePrivateOutput(path_,identity_);}
+        IO::releaseMarker(lease_,path_,identity_);lease_=-1;
     }
     ~TLinkCaptureClient(){cancel();}
     TLinkCaptureClient(const TLinkCaptureClient &)=delete;TLinkCaptureClient &operator=(const TLinkCaptureClient &)=delete;
 };
 template<class IO> class TLinkCaptureReceiver {
     std::string path_,marker_;TLinkCaptureFileID markerID_,outputID_;
-    TLinkNativeBudgetPtr budget_;int fd_=-1;bool valid_=false,created_=false,committed_=false,attempted_=false;
+    TLinkNativeBudgetPtr budget_;int fd_=-1,lease_=-1;bool valid_=false,created_=false,committed_=false,attempted_=false,finished_=false;
     void closeFile(){if(fd_>=0){const int fd=fd_;fd_=-1;if(!IO::close(fd))committed_=false;}}
 public:
     TLinkCaptureReceiver(std::string path,TLinkNativeBudgetPtr budget):path_(std::move(path)),marker_(path_+".lease"),budget_(std::move(budget)) {
-        valid_=TLinkCaptureLeasePath(path_)&&IO::marker(marker_,markerID_)&&live();
+        if(TLinkCaptureLeasePath(path_))lease_=IO::acquireMarker(marker_,markerID_);
+        valid_=lease_!=-1&&live();
     }
     // Marker identity and budget determine liveness independently of committed output.
     bool live()const{return (!budget_||!budget_->stopped())&&IO::sameMarker(marker_,markerID_);}
-    bool valid()const{return valid_&&live();}
+    bool valid()const{return valid_&&!finished_&&live();}
     bool matches(const char *path)const{return path&&path_==path;}
     bool write(const void *bytes,size_t length){
         if(attempted_)return false;attempted_=true;
         if(!valid()||!bytes||!length||length>32*1024*1024)return false;
-        fd_=IO::createOutput(path_,outputID_);if(fd_<0)return false;created_=true;
+        fd_=IO::createOutput(path_,outputID_,markerID_);if(fd_<0)return false;created_=true;
         const auto *data=static_cast<const uint8_t *>(bytes);size_t offset=0;
         while(offset<length){
             if(!live()){finish();return false;}
@@ -58,8 +74,10 @@ public:
         if(!committed_)finish();return committed_;
     }
     void finish(){
+        if(finished_)return;finished_=true;
         if(fd_>=0){committed_=false;closeFile();}
         if(created_&&(!committed_||!live())){IO::removeOutput(path_,outputID_);created_=false;}
+        IO::releaseMarker(lease_,path_,markerID_);lease_=-1;
     }
     ~TLinkCaptureReceiver(){finish();}
     TLinkCaptureReceiver(const TLinkCaptureReceiver &)=delete;TLinkCaptureReceiver &operator=(const TLinkCaptureReceiver &)=delete;

@@ -13,4 +13,7 @@
 
 void socketServer();
 
+// Bounded, coalesced screenshot-orphan sweep; no periodic timer.
+void scheduleCaptureLeaseCleanup();
+
 #endif

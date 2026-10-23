@@ -112,6 +112,7 @@ int main(int argc, char *argv[], char *envp[]) {
 int runDaemon()
 {
     NSLog(@"com.tlinkauto.tlinkautob: tlinkautod daemon starting.");
+    scheduleCaptureLeaseCleanup();
     socketServer();
     return 0;
 }

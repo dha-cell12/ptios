@@ -88,6 +88,7 @@ static void zx_logf(const char *,...) {}
     return CGRectMake(1,2,3,4);
 }
 @end
+static void scheduleCaptureLeaseCleanup(){} // Controlled scheduling boundary; the POSIX sweep has its own isolated-directory harness.
 #include "OwnedDaemonTask.inc"
 static void makePNG(){
     uint8_t pixels[64];memset(pixels,255,sizeof(pixels));
@@ -100,7 +101,7 @@ static void makePNG(){
     CFRelease(destination);CGImageRelease(image);CGContextRelease(context);CGColorSpaceRelease(space);encodedPNG=[data copy];
 }
 static bool exists(const std::string &path){struct stat st;return lstat(path.c_str(),&st)==0;}
-static void gone(NSString *path){assert(path&& !exists(path.UTF8String)&& !exists(std::string(path.UTF8String)+".lease"));}
+static void gone(NSString *path){assert(path&& !exists(path.UTF8String)&& !exists(std::string(path.UTF8String)+".lease")&& !exists(std::string(path.UTF8String)+".lease.owner.v1"));}
 static NSString *invoke(NSString *templatePath){
     auto budget=std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},TLinkNativeDeadline(3),1024);
     TLinkNativeBudgetScope scope(budget);
@@ -124,8 +125,8 @@ static void posixCases(){
     assert(!exists(marker));
     // Replacement output identity survives receiver cleanup; unlink never descends into directories.
     {TLinkCaptureClientLease client(output);TLinkCaptureReceiverLease receiver(output,{});assert(receiver.write(encodedPNG.bytes,encodedPNG.length));
-        client.cancel();assert(mkdir(output.c_str(),0700)==0);receiver.finish();assert(exists(output));assert(rmdir(output.c_str())==0);}
-    {TLinkCaptureClientLease client(output);assert(client.valid());assert(mkdir(output.c_str(),0700)==0);client.cancel();assert(exists(output));assert(rmdir(output.c_str())==0);}
+        client.cancel();assert(mkdir(output.c_str(),0700)==0);receiver.finish();assert(exists(output));assert(rmdir(output.c_str())==0);assert(unlink((marker+".owner.v1").c_str())==0);}
+    {TLinkCaptureClientLease client(output);assert(client.valid());assert(mkdir(output.c_str(),0700)==0);client.cancel();assert(exists(output));assert(rmdir(output.c_str())==0);assert(unlink((marker+".owner.v1").c_str())==0);}
     assert(!exists(output)&&!exists(marker));
     std::vector<uint8_t> bytes(256*1024,71);
     for(unsigned n=0;n<64;++n){
@@ -163,7 +164,8 @@ int main(){@autoreleasepool{
     // CF callback resumes and refuses to publish the PNG prepared by a late capture.
     captureStarted=dispatch_semaphore_create(0);captureFinish=dispatch_semaphore_create(0);captureDone=dispatch_semaphore_create(0);
     holdCapture=lateReply=true;const unsigned matchesBefore=matchCalls;
-    assert([invoke(templatePath) containsString:@"no_response"]);gone(lastCapturePath);
+    assert([invoke(templatePath) containsString:@"no_response"]);assert(!exists(lastCapturePath.UTF8String)&&!exists(std::string(lastCapturePath.UTF8String)+".lease"));
+    assert(exists(std::string(lastCapturePath.UTF8String)+".lease.owner.v1"));
     dispatch_semaphore_signal(captureFinish);assert(dispatch_semaphore_wait(captureDone,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
     gone(lastCapturePath);assert(matchCalls==matchesBefore);holdCapture=lateReply=false;
     dispatch_sync(springboardQueue(),^{});assert(unlink(templatePath.fileSystemRepresentation)==0);encodedPNG=nil;lastCapturePath=nil;lastRequestedPath=nil;

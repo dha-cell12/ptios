@@ -11,7 +11,9 @@ function section(text,a,b){const start=text.indexOf(a),end=text.indexOf(b,start+
 const task21=section(socket,'static char *handleTemplateMatchTaskInDaemon(const char *buffer)\n{','\n#endif');
 assert.ok(task21.indexOf('TLinkCaptureClientLease')<task21.indexOf('zx_ipcCaptureScreenshotToPath('));
 assert.match(task21,/@finally \{captureLease.cancel\(\);\}/);assert.doesNotMatch(socket,/zx_safeUnlink/);
-assert.match(socket,/owned_capture_reply_path_mismatch/);assert.match(ipc,/ownedCapture->finish\(\)/);
+assert.match(socket,/owned_capture_reply_path_mismatch/);assert.match(task21,/captureLease\.ownsOutput\(\)/);
+assert.match(task21,/scheduleCaptureLeaseCleanup\(\)/);
+const startup=await read('tlinkauto-binary/main.mm');assert.match(startup,/scheduleCaptureLeaseCleanup\(\);\s*socketServer\(\)/);assert.match(ipc,/ownedCapture->finish\(\)/);
 const writer=section(screen,'// BEGIN owned screenshot write adapter.','// END owned screenshot write adapter.');
 const method=section(screen,'+ (NSString*)screenShotToPath:','+ (PHAssetCollection');
 assert.match(method,/!owned && shouldReuseKeep/);assert.ok(method.indexOf('if(owned)return zx_writeOwnedCapture')<method.indexOf('NSString *parentDir'));
@@ -41,5 +43,8 @@ try{
   run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer',
    '-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-framework','ImageIO','-I',temp,
    join(root,'test/capture-lease-runtime-test.mm'),'-x','objective-c++',join(root,'pccontrol/SocketResponder.xm'),'-o',runtime]);run(runtime,[]);
- }else console.log('macOS actual daemon/CF callback/screenshot adapter with real PNG/POSIX lease tests wired to CI; not run on Windows.');
+  const cleanup=join(temp,'capture-cleanup');
+  run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',
+   join(root,'test/capture-lease-cleanup-test.cpp'),'-o',cleanup]);run(cleanup,[]);
+ }else console.log('macOS actual daemon/CF/PNG and POSIX flock/xattr/crash-recovery fixtures wired to CI; not run on Windows.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-owned-capture-'));await rm(temp,{recursive:true,force:true});}

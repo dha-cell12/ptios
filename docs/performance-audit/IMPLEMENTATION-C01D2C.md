@@ -56,3 +56,7 @@ C01 remains open. Next: crash-retention cleanup/qualification for private screen
 - **The new macOS CF fixture and final iOS builds were not run on this Windows host.** Actual Mach service registration/lookup under both root runtimes, UI/engine thread behavior, cold launch/restart, accuracy, resource use and device latency require qualification.
 
 Device acceptance: deploy matching daemon/tweak versions; test both binaries/root runtimes, private-port absence/startup, legacy compatibility and separate-port recovery. Block ordinary callback work and run C01 queries, then reverse the direction; distinguish receiver isolation from shared main-thread/engine contention. Timeout/cancel during capture/encoding/recognition and verify late-result rejection, held-reader/lease cleanup and subsequent recovery. Check one private callback at a time, no idle polling, unchanged same-client successful request ordering, no-reply touch and licensing behavior. Record latency, queue residence, RSS/thread overhead and energy against C01d2b.
+
+## C01d3 checkpoint — 2026-10-23
+
+The user reported the C01d2c build at `9396ef2` passed before C01d3. Device qualification remains pending. `IMPLEMENTATION-C01D3.md` adds shared descriptor ownership, output identity proof and bounded recovery of proven abandoned screenshots; it preserves unproven/legacy evidence and does not add a hard deletion deadline.

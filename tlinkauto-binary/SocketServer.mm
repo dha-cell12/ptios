@@ -1,3 +1,4 @@
+#include "../shared/TLinkCaptureCleanup.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "../shared/TLinkNativeDispatch.h"
@@ -547,6 +548,21 @@ static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
 
 // END C01 IPC sender.
 
+// BEGIN capture cleanup scheduling.
+void scheduleCaptureLeaseCleanup()
+{
+    static std::atomic_bool pending{false};static std::atomic<uint64_t> next{0};
+    const uint64_t now=TLinkNativeNowNs();if(now<next.load(std::memory_order_acquire))return;
+    bool expected=false;if(!pending.compare_exchange_strong(expected,true,std::memory_order_acq_rel))return;
+    if(TLinkNativeNowNs()<next.load(std::memory_order_acquire)){pending.store(false,std::memory_order_release);return;}
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND,0), ^{
+        @autoreleasepool {try{(void)TLinkCaptureSweepDirectory("/tmp");}catch(...){}}
+        next.store(TLinkNativeNowNs()+5000000000ULL,std::memory_order_release);
+        pending.store(false,std::memory_order_release);
+    });
+}
+// END capture cleanup scheduling.
+
 // ------------------------------
 // Daemon-side handlers for heavy tasks (21)
 // Strategy: ask SpringBoard to capture a screenshot via task 29, then process locally.
@@ -660,6 +676,7 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
     zx_logf("Task21 template=%s maxTry=%d acceptable=%.3f scale=%.3f", [templatePath UTF8String], maxTryTimes, acceptableValue, scaleRation);
 
     if(TLinkNativeStopped())return (char *)strdup("1;;c01_request_expired\r\n");
+    scheduleCaptureLeaseCleanup();
     NSString *tmpPath = zx_makeTempScreenshotPath();
     TLinkCaptureClientLease captureLease(tmpPath.UTF8String);
     if(!captureLease.valid())return (char *)strdup("1;;owned_capture_lease_create_failed\r\n");
@@ -675,6 +692,7 @@ static char *handleTemplateMatchTaskInDaemon(const char *buffer)
             if ([[NSFileManager defaultManager] fileExistsAtPath:shotPath]) break;
             if(!TLinkNativeWaitNs(40000000)){return (char *)strdup("1;;c01_request_expired\r\n");}
         }
+        if(!captureLease.ownsOutput())return (char *)strdup("1;;owned_capture_proof_missing\r\n");
         struct stat st;
         long long fsz = (stat([shotPath fileSystemRepresentation], &st) == 0) ? (long long)st.st_size : -1;
         zx_logf("Task21 screenshot path=%s size=%lld", [shotPath UTF8String], fsz);
