@@ -25,7 +25,7 @@ Every new PNG receives `com.tlinkauto.capture-owner.v1` xattr containing the sam
 
 ## Normal cancellation and final release
 
-Cancellation still removes the matching marker first so late writes fail the existing liveness checkpoints. It removes only a proof-matching regular output, then attempts a nonblocking exclusive upgrade of its owner descriptor. If another daemon/receiver holder remains, the sidecar is retained and the caller closes only its own descriptor. An actual receiver cannot lose its ownership lock merely because its sender timed out or crashed.
+Cancellation still removes the matching marker first so late writes fail the existing liveness checkpoints. It removes only a proof-matching regular output, then explicitly drops its finished shared lock and attempts a nonblocking exclusive lock on its owner descriptor. If another daemon/receiver holder remains, the sidecar is retained and the caller closes only its own descriptor. An actual receiver cannot lose its ownership lock merely because its sender timed out or crashed.
 
 The last holder can acquire exclusive ownership and retire the marker/output/sidecar after revalidating their identities. A committed output is retained while the daemon's matcher still holds its shared lock. Receiver finish becomes idempotent and cannot accept more writes after releasing its descriptor. Foreign replacements and directories are retained rather than recursively removed.
 
@@ -69,3 +69,11 @@ C01 source slices now include bounded engine/ingress/IPC and proven crash-retent
 ## Following checkpoint
 
 The user reported the C01d3 build at `f8155bc` passed before C02a. This is a build checkpoint; root/mobile permission, crash/restart timing and performance qualification remain open. The next implemented slice is `IMPLEMENTATION-C02A.md`.
+
+## CI correction — concurrent release (2026-10-24)
+
+The user reported `capture-lease-runtime-test.mm` failing at `client.valid()` in its repeated same-path lifecycle test. The previous iteration checked only PNG/marker removal and could leave `.lease.owner.v1` behind. Two concurrent finishers could both fail their EX/NB upgrade while retaining SH, then both close without retiring the sidecar. XNU's nonblocking conflict path returns before its shared-lock removal path; see [Apple's lock implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_lockf.c).
+
+`releaseMarker` now explicitly unlocks after all caller work is complete, then tries EX/NB. Existing readers still prevent cleanup; a winning sweeper or changed owner entry remains protected by proof/inode revalidation. Unlock failure closes the descriptor and defers recovery. No waiting, spin/retry, force unlink or relaxed ownership rule is added.
+
+A new portable harness compiles the actual production release body against a deterministic retained-SH lock model. It checks concurrent finishers, one exclusive cleaner, a third active reader, proof mismatch, unlock failure and balanced closes. A negative probe of the previous production body deterministically leaves the sidecar; the corrected body passes. All 36 source-contract runners, the 100k lease runner, C01 ingress and socket transport runners also pass on Windows. The Foundation lifecycle now checks the sidecar before same-path reuse, and the isolated POSIX fixture adds 256 paired concurrent releases with all files gone after join. Those actual Darwin/Foundation branches were not run on this Windows host and await corrected CI.

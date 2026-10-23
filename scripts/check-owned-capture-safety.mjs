@@ -33,11 +33,16 @@ try{
   'OwnedDaemonPath.inc':section(socket,'static NSString *zx_makeTempScreenshotPath(','#ifdef ZX_DAEMON'),
   'OwnedDaemonTask.inc':task21,
  };
+ const posix=await read('shared/TLinkCaptureLeasePOSIX.h');
+ fixtures['CaptureReleaseUnderTest.inc']=section(posix,'    static void releaseMarker(','    static int createMarker(');
  for(const [name,body] of Object.entries(fixtures))await writeFile(join(temp,name),body);
  const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
  const binary=join(temp,windows?'capture-lease.exe':'capture-lease'),file=join(root,'test/capture-lease-safety-test.cpp');
- run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]
- :['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',binary]);run(binary,[]);
+ run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',`/I${temp}`,file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]
+ :['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread','-I',temp,file,'-o',binary]);run(binary,[]);
+ const release=join(temp,windows?'capture-release.exe':'capture-release'),releaseFile=join(root,'test/capture-lease-release-test.cpp');
+ run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',`/I${temp}`,releaseFile,`/Fe${release}`,`/Fo${join(temp,'release.obj')}`]
+ :['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread','-I',temp,releaseFile,'-o',release]);run(release,[]);
  if(process.platform==='darwin'){
   const runtime=join(temp,'owned-capture-runtime');
   run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer',

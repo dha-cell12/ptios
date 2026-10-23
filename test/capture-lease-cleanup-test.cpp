@@ -39,6 +39,16 @@ int main(){
         int receiver=TLinkCapturePOSIX::acquireMarker(value+".lease",id);assert(receiver>=0);assert(kill(child,SIGKILL)==0);waitChild(child,true);
         sweep=scan(fixture.root.c_str());assert(sweep.busy==1&&exists(value+".lease"));
         output(value,id);TLinkCapturePOSIX::releaseMarker(receiver,value,id);gone(value);
+        // Finished daemon/receiver holders release concurrently. No sweep is
+        // needed before reuse; explicit SH unlock avoids retained-upgrade races.
+        for(unsigned n=0;n<256;++n){
+            value=fixture.path();fd=lease(value,id);receiver=TLinkCapturePOSIX::acquireMarker(value+".lease",id);assert(receiver>=0);output(value,id);
+            TLinkCapturePOSIX::removeMarker(value+".lease",id);
+            std::atomic<unsigned> ready{0};std::atomic<bool> start{false};
+            const auto finish=[&](int held){ready.fetch_add(1);while(!start.load())std::this_thread::yield();TLinkCapturePOSIX::releaseMarker(held,value,id);};
+            std::thread first(finish,fd),second(finish,receiver);
+            while(ready.load()!=2)std::this_thread::yield();start.store(true);first.join();second.join();gone(value);
+        }
         // Legacy files have no versioned owner sidecar and are never swept.
         value=fixture.path();assert(close(plain(value+".lease"))==0&&close(plain(value))==0);
         sweep=scan(fixture.root.c_str());assert(sweep.candidates==0&&exists(value)&&exists(value+".lease"));
@@ -88,5 +98,5 @@ int main(){
         sweep=scan(fixture.root.c_str());assert(exists(guardHard+".lease")&&exists(guardAlias)&&exists(unsafe+".lease.owner.v1"));
     }
     assert(descriptors()==before);
-    puts("Capture cleanup POSIX passed: real flock/xattr proof, process exit/SIGKILL, held receiver after owner death, concurrent sweepers, legacy/foreign/partial evidence preserved, nonrecursive unlink and zero live fixture descriptors/files.");
+    puts("Capture cleanup POSIX passed: real flock/xattr proof, process exit/SIGKILL, held receiver after owner death, 256 paired concurrent releases, concurrent sweepers, legacy/foreign/partial evidence preserved, nonrecursive unlink and zero live fixture descriptors/files.");
 }

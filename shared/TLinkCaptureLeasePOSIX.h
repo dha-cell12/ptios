@@ -76,7 +76,11 @@ struct TLinkCapturePOSIX {
     }
     static void releaseMarker(int fd,const std::string &output,TLinkCaptureFileID id){
         if(fd<0)return;const std::string markerName=output+".lease",ownerName=ownerPath(markerName);
-        if(flock(fd,LOCK_EX|LOCK_NB)==0){TLinkCaptureFileID recorded;
+        // Work is finished before releaseMarker. Drop our SH explicitly: Darwin
+        // can retain it after a failed EX/NB upgrade, so two concurrent finishers
+        // could otherwise both fail the upgrade before either closes its fd.
+        // A sweeper may win in this gap; retireAt still revalidates the owner inode.
+        if(flock(fd,LOCK_UN)==0&&flock(fd,LOCK_EX|LOCK_NB)==0){TLinkCaptureFileID recorded;
             if(readProof(fd,recorded)&&TLinkCaptureSameID(recorded,id))retireAt(AT_FDCWD,output.c_str(),markerName.c_str(),ownerName.c_str(),fd,id);
         }::close(fd);
     }

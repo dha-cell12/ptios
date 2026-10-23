@@ -135,7 +135,9 @@ static void posixCases(){
         std::thread writer([&]{TLinkCaptureReceiverLease receiver(output,{});
             dispatch_semaphore_signal(ready);receiver.write(bytes.data(),bytes.size());receiver.finish();});
         assert(dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
-        client.cancel();writer.join();assert(!exists(output)&&!exists(marker));
+        client.cancel();writer.join();
+        // Check the complete lease before reusing this path in the next cycle.
+        assert(!exists(output)&&!exists(marker)&&!exists(marker+".owner.v1"));
     }
 }
 int main(){@autoreleasepool{
