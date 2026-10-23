@@ -545,6 +545,40 @@ NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request,TLi
     }catch(...){return zx_typedTouchFailure(@"native_exception");}}
     @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
 }
+NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &requests,TLinkTaskExecutionContext *context)
+{
+    if(requests.size()>256)return zx_typedTouchFailure(@"invalid_touch_request");
+    for(const auto &request:requests)if(request.kind!=TLinkNativeTouchKind::Tap&&request.kind!=TLinkNativeTouchKind::Swipe&&
+        request.kind!=TLinkNativeTouchKind::Gesture)return zx_typedTouchFailure(@"invalid_touch_request");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try {
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        // Task 65 owns the authorization boundary; individual batch commands
+        // execute in order under this one budget, with no retry after effects.
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_NATIVE_BATCH,&denial))
+            return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(requests.empty())return zx_typedTouchReply(@"-1;;Native batch format: command||command, command starts with 10/62/63/64.\r\n",budget);
+        NSError *error=nil;
+        for(const auto &request:requests) {
+            if(!zx_nativeContinue(&error))break;
+            bool ok=false;
+            if(request.kind==TLinkNativeTouchKind::Tap)
+                ok=zx_executeNativeTap(request.x1,request.y1,request.durationMs,request.finger,&error);
+            else if(request.kind==TLinkNativeTouchKind::Swipe)
+                ok=zx_executeNativeSwipe(request.x1,request.y1,request.x2,request.y2,request.durationMs,request.finger,
+                    request.steps?request.steps:request.durationMs/16,&error);
+            else ok=zx_executeNativeGesture(request.points,request.durationMs,request.finger,&error);
+            // Each executor releases its owned DOWN in finally, including throws.
+            if(!ok)return zx_typedTouchReply(error.localizedDescription?:@"1;;native_failed\r\n",budget);
+        }
+        if(!error)zx_nativeContinue(&error);
+        return zx_typedTouchReply(error.localizedDescription?:@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
 // END typed touch task entry.
 
 // === runShell drain/timeout support (Group A) ===

@@ -78,13 +78,18 @@ try {
   const press = between(bridge, "    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey])",
     "    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake])");
   const typedTouch=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodTap])","    else if ([method isEqualToString:TLinkJSNativeMethodPickColor])");
+  const batchBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodBatch])","    else if ([method isEqualToString:TLinkJSNativeMethodRunShell])");
+  const structuredBatch=between(batchBridge,"        if(structured) {","        NSMutableArray<NSString *> *wireCommands");
+  assert.doesNotMatch(structuredBatch,/executeRawPayload|componentsJoinedByString|CFWriteStream|UTF8String/);
+  assert.match(structuredBatch,/input.fits\(\)[\s\S]*TLinkExecuteNativeTouchBatch\(touches,context\)/);
+  await writeFile(join(temp,"NativeBatchBridgeUnderTest.inc"),batchBridge);
   const helpers = between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
     between(bridge,"static double TLinkautoJSDoubleOption","static NSString *TLinkautoJSStringOption") +
     between(bridge,"static NSString *TLinkautoJSEncodeGesturePoints","static NSString *TLinkautoJSEncodePointColorTable") +
     between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
-    between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSStringContainsAny") +
+    between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -103,6 +108,11 @@ try {
   assert.match(entry,/TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)/);
   assert.match(entry,/budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed[\s\S]*budget->stopped\(\)[\s\S]*zx_executeNativeTap/);
   assert.doesNotMatch(entry,/processTaskWithContext|CFWriteStreamCreate|appendCString/);
+  const batchEntry=entry.slice(entry.indexOf('NSDictionary *TLinkExecuteNativeTouchBatch'));
+  assert.match(batchEntry,/TLinkRootfullLicenseTaskAllowed\(TASK_NATIVE_BATCH,&denial\)/);
+  assert.equal([...batchEntry.matchAll(/TLinkRootfullLicenseTaskAllowed/g)].length,1);
+  assert.doesNotMatch(batchEntry,/TLinkExecuteNativeTouch\(|zx_handleNative|processTaskWithContext/);
+
   assert.match(entry,/zx_executeNativeGesture\(request.points/);assert.match(entry,/zx_zoomBegin\(\);zx_executeNativeZoom/);
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');

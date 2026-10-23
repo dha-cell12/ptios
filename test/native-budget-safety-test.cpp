@@ -77,6 +77,20 @@ static void testTypedTouchCompatibility() {
         assert(TLinkNativeGestureInputFits(cap,number,300));assert(!TLinkNativeGestureInputFits(cap+1,number,300));
     }
     assert(!TLinkNativeGestureInputFits(SIZE_MAX,19,60000));
+    for(double value:{-0.0,0.0,0.5,1.5,2.5,59999.5,60000.0}){
+        char legacy[32];std::snprintf(legacy,sizeof(legacy),"%.0f",value);
+        size_t bytes=0;assert(TLinkNativeTouchJSDuration(value,&bytes)==std::strtol(legacy,nullptr,10)&&bytes==std::strlen(legacy));
+    }
+    TLinkNativeBatchInputSize empty;assert(empty.bytes()==2&&empty.fits());
+    TLinkNativeBatchInputSize exact;exact.append(4000);exact.append(4188);assert(exact.bytes()==8192&&exact.fits());
+    exact.append(0);assert(exact.bytes()==8193&&!exact.fits());exact.append(SIZE_MAX);assert(exact.bytes()==8193);
+    TLinkNativeBatchInputSize overflow;overflow.append(SIZE_MAX);assert(!overflow.fits()&&overflow.bytes()==8193);
+    for(size_t trial=0;trial<10000;++trial){
+        TLinkNativeBatchInputSize batch;size_t expected=2;
+        for(size_t i=0;i<256;++i){const size_t bytes=(trial+i*17)%513;expected+=bytes+(i?2:0);batch.append(bytes);
+            assert(batch.fits()==(expected<=8192)&&batch.bytes()==(expected<=8192?expected:8193));}
+    }
+
     char tiny[1];assert(!TLinkNativeTouchDecimal(tiny,sizeof(tiny),2,123));
     puts("Typed touch request passed: task allowlist, 100k legacy decimal float/double/byte cases, signed zero/overflow, gesture input cap and duration clamp/rounding.");
 }

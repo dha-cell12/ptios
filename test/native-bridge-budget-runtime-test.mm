@@ -21,6 +21,9 @@ static int calls, releases;
 static std::string lastPayload;
 static TLinkTaskExecutionContext *observed;
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &,TLinkTaskExecutionContext *);
+static bool zx_handleNativeBatch(UInt8 *,NSError **);
+enum {TASK_NATIVE_BATCH=65};
 static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef stream, TLinkTaskExecutionContext *context) {
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
@@ -31,6 +34,10 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     }
     if ([mode isEqualToString:@"cancelHardwareDown"] && lastPayload == "301;;1") {
         [context.cancellationToken cancel]; notifyClient((UInt8 *)"0\r\n", stream); return;
+    }
+    if([mode isEqualToString:@"batchRuntime"]&&lastPayload.compare(0,2,"65")==0){
+        NSError *error=nil;zx_handleNativeBatch(bytes+2,&error);
+        notifyClient((UInt8 *)[(error.localizedDescription?:@"0\r\n") UTF8String],stream);return;
     }
     if ([mode isEqualToString:@"chunks"]) {
         notifyClient((UInt8 *)"0;;", stream);
@@ -63,6 +70,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     if (false) {}
 #include "NativePressUnderTest.inc"
 #include "NativeTouchBridgeUnderTest.inc"
+#include "NativeBatchBridgeUnderTest.inc"
     else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey]) {
         NSString *payload = [NSString stringWithFormat:@"30%d;;%d", [args[0] intValue], [args[1] intValue]];
         return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:payload context:context]];
@@ -331,6 +339,110 @@ static void typedTouchCases(TLinkInProcessNativeBridge *bridge) {
     assert(calls==wireCalls && !TLinkCurrentNativeBudget());licenseBudget.reset();touchToken=nil;cancelAt=0;
     puts("Typed touch actual bridge/entry passed: 160 legacy-wire/frame/timestamp cases, typed gesture/zoom wire/frame/timestamp/diagnostic parity, 8192/8193-byte ingress, task 62/63/64 gates, gate-time cancellation, pre-expiry, output caps, NS/C++ exceptions, owned UP, no raw dispatch or response-buffer allocation.");
 }
+// Frozen pre-C02b3 object encoder plus the production RAW task-65 executor.
+static NSString *legacyBatchWire(NSArray *commands){
+    NSMutableArray *wire=[NSMutableArray array];
+    for(NSDictionary *cmd in commands){
+        NSString *type=[cmd[@"type"] lowercaseString];
+        if([type isEqualToString:@"tap"])[wire addObject:[NSString stringWithFormat:@"62%.2f;;%.2f;;%.0f",
+            [cmd[@"x"] doubleValue],[cmd[@"y"] doubleValue],cmd[@"duration"]?[cmd[@"duration"] doubleValue]:50.0]];
+        else if([type isEqualToString:@"swipe"])[wire addObject:[NSString stringWithFormat:@"63%.2f;;%.2f;;%.2f;;%.2f;;%.0f",
+            [cmd[@"x1"] doubleValue],[cmd[@"y1"] doubleValue],[cmd[@"x2"] doubleValue],[cmd[@"y2"] doubleValue],cmd[@"duration"]?[cmd[@"duration"] doubleValue]:300.0]];
+        else {
+            int duration=cmd[@"duration"]?[cmd[@"duration"] intValue]:(cmd[@"durationMs"]?[cmd[@"durationMs"] intValue]:300);
+            duration=MAX(0,MIN(60000,duration));
+            [wire addObject:[NSString stringWithFormat:@"64%d;;%d;;%@",cmd[@"finger"]?[cmd[@"finger"] intValue]:0,duration,TLinkautoJSEncodeGesturePoints(cmd[@"points"])]];
+        }
+    }
+    return [wire componentsJoinedByString:@"||"];
+}
+static void typedBatchCases(TLinkInProcessNativeBridge *bridge){
+    const auto reset=[](TLinkTaskExecutionContext *context){
+        injected.clear();frameTimes.clear();fakeNow=1000000;frameWork=7000000;oversleep=2000000;fakeWaits=0;
+        touchToken=context.cancellationToken;cancelAt=0;throwAt=0;licenseAllowed=true;stopInLicense=false;
+    };
+    const auto invoke=[bridge](NSArray *commands,TLinkTaskExecutionContext *context){
+        auto request=[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodBatch arguments:@[commands]];
+        auto response=[bridge executeRequest:request context:context error:nil];assert(!TLinkCurrentNativeBudget());return response;
+    };
+    const auto parity=[&](NSArray *commands,NSUInteger exactBytes=0){
+        auto context=parent(30);reset(context);const int rawBefore=calls,gates=licenseCalls;
+        auto response=invoke(commands,context);assert(response.ok&&calls==rawBefore);
+        NSDictionary *result=response.value;NSString *wire=legacyBatchWire(commands);
+        if(exactBytes)assert(wire.length+2==exactBytes);
+        if(wire.length+2>8192){failure(result,@"input_too_large");assert(licenseCalls==gates&&injected.empty());return;}
+        assert(licenseCalls==gates+1&&lastLicenseTask==65&&licenseBudget->response().capacity()==0);
+        const auto points=injected;const auto times=frameTimes;
+        reset(context);NSError *error=nil;
+        {TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,NO,NO) nativeBudget]);zx_handleNativeBatch((UInt8 *)wire.UTF8String,&error);}
+        NSString *raw=error.localizedDescription?:@"0\r\n";
+        assert([result[@"raw"] isEqualToString:raw]&&[result[@"ok"] boolValue]==(error==nil));
+        assert([result[@"parts"] isEqualToArray:[[raw stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"]]);
+        assert(points.size()==injected.size()&&times==frameTimes);
+        for(size_t i=0;i<points.size();++i)assert(points[i].type==injected[i].type&&points[i].index==injected[i].index&&points[i].x==injected[i].x&&points[i].y==injected[i].y);
+    };
+    fakeTiming=true;
+    NSDictionary *tap=@{@"type":@"tap",@"x":@20,@"y":@30,@"duration":@0};
+    NSDictionary *swipe=@{@"type":@"swipe",@"x1":@40,@"y1":@50,@"x2":@80,@"y2":@90,@"duration":@16};
+    NSDictionary *gesture=@{@"type":@"gesture",@"points":@[@[@20,@30],@[@40,@50]],@"durationMs":@0,@"finger":@19};
+    NSArray *normal=@[tap,swipe,gesture,tap];
+    for(unsigned trial=0;trial<120;++trial){
+        const double x=trial%13?double(trial)*0.945:-1e308;
+        parity(@[@{@"type":@"TAP",@"x":@(x),@"y":@(-0.0),@"duration":@(trial?double(trial%17)+0.5:-0.0)},swipe,
+            @{@"type":@"gesture",@"points":@[@{},@[@40.945,@50.005]],@"duration":@(int(trial)-60),@"finger":@(trial%21)},tap]);
+    }
+    parity(@[]);parity(@[@{@"type":@"tap"},@{@"type":@"swipe"}]);
+    NSMutableArray *many=[NSMutableArray array];for(unsigned i=0;i<256;++i)[many addObject:tap];parity(many);
+    // Two bounded gesture plans total exactly 8192/8193 legacy characters.
+    NSMutableArray *first=[NSMutableArray array],*second=[NSMutableArray array];
+    for(unsigned i=0;i<512;++i)[first addObject:@[@0,@0]];
+    for(unsigned i=0;i<300;++i)[second addObject:@[@0,@0]];
+    for(unsigned extra=0;extra<2;++extra){second[0]=@[@(extra?1e55:1e54),@0];
+        parity(@[@{@"type":@"gesture",@"duration":@0,@"points":first},@{@"type":@"gesture",@"duration":@0,@"points":second}],8192+extra);}
+    auto context=parent();reset(context);const int gates=licenseCalls,wireCalls=calls;
+    // Validate every JS shape before size rejection or the first side effect.
+    [many addObject:tap];assert(!invoke(many,context).ok&&injected.empty()&&licenseCalls==gates);
+    for(NSArray *bad:@[@[tap,@{@"type":@"unknown"}],@[tap,@{@"type":@"tap",@"x":@(NAN)}],
+        @[tap,@{@"type":@"swipe",@"y2":@(INFINITY)}],@[tap,@{@"type":@"gesture",@"points":@[@[]]}],
+        @[@{@"type":@"gesture",@"points":first},@{@"type":@"gesture",@"points":first},@{@"type":@"unknown"}]]){
+        auto response=invoke(bad,context);assert(!response.ok&&injected.empty()&&licenseCalls==gates&&calls==wireCalls);
+    }
+    context=parent();reset(context);licenseAllowed=false;
+    auto result=invoke(normal,context).value;
+    assert([result[@"raw"] isEqualToString:@"-1;;license_required task=65\r\n"]&&injected.empty());
+    context=parent();reset(context);stopInLicense=true;failure(invoke(normal,context).value,@"AbortError");assert(injected.empty());
+    context=parent();reset(context);[context.cancellationToken cancel];const int noGate=licenseCalls;
+    failure(invoke(normal,context).value,@"AbortError");assert(injected.empty()&&licenseCalls==noGate);
+    context=parent();reset(context);[context setNativeBudget:std::make_shared<TLinkNativeBudget>(nullptr,TLinkNativeNowNs()-1,1024)];
+    failure(invoke(normal,context).value,@"TimeoutError");assert(injected.empty()&&licenseCalls==noGate);
+    // Cancellation/throws on the second command never start the third, and UP
+    // for the active command precedes return. Also cancel between commands.
+    for(int boundary:{2,3}){context=parent();reset(context);cancelAt=boundary;
+        failure(invoke(normal,context).value,@"AbortError");assert(injected.size()==size_t(boundary==2?2:4)&&injected.back().type==TOUCH_UP);}
+    for(bool cpp:{false,true}){context=parent();reset(context);throwAt=3;throwCpp=cpp;
+        failure(invoke(normal,context).value,@"native_exception");assert(injected.size()==4&&injected.back().type==TOUCH_UP);}
+    context=parent(1,3);reset(context);assert([invoke(normal,context).value[@"ok"] boolValue]);
+    context=parent(1,2);reset(context);failure(invoke(normal,context).value,@"response_too_large");assert(injected.back().type==TOUCH_UP);
+    context=parent();reset(context);std::vector<TLinkNativeTouchRequest> invalid(257);
+    const int beforeInvalid=licenseCalls;failure(TLinkExecuteNativeTouchBatch(invalid,context),@"invalid_touch_request");
+    invalid.resize(1);invalid[0].kind=TLinkNativeTouchKind::Zoom;failure(TLinkExecuteNativeTouchBatch(invalid,context),@"invalid_touch_request");assert(licenseCalls==beforeInvalid&&injected.empty());
+    fakeTiming=false;context=parent(0.05);reset(context);
+    failure(invoke(@[tap,@{@"type":@"swipe",@"duration":@60000},tap],context).value,@"TimeoutError");
+    assert(injected.size()==4&&injected.back().type==TOUCH_UP);fakeTiming=true;
+    // RAW/mixed, string/negative/extreme duration and embedded-NUL compatibility.
+    mode=@"batchRuntime";
+    for(id duration:@[@-1,@60001,@(1e100),@"16"]){context=parent();reset(context);const int before=calls;
+        auto result=invoke(@[@{@"type":@"tap",@"x":@20,@"y":@30,@"duration":duration}],context);
+        assert(result.ok&&calls==before+1&&lastPayload.find("652620.00;;30.00;;")==0);}
+    context=parent();reset(context);const int beforeRaw=calls;
+    auto fallback=invoke(@[tap,@"62",tap],context);assert(fallback.ok&&![fallback.value[@"ok"] boolValue]&&calls==beforeRaw+1&&injected.size()==2);
+    context=parent();reset(context);unichar zero=0;NSString *nul=[@"62" stringByAppendingString:[NSString stringWithCharacters:&zero length:1]];
+    const int beforeNul=calls;failure(invoke(@[tap,nul],context).value,@"invalid_payload");assert(injected.empty()&&calls==beforeNul);
+    context=parent();reset(context);const int beforeDelimiter=calls;
+    assert(!invoke(@[tap,@"62||62"],context).ok&&calls==beforeDelimiter&&injected.empty());
+    mode=@"echo";fakeTiming=false;cancelAt=0;throwAt=0;touchToken=nil;licenseBudget.reset();
+    puts("Typed batch actual bridge/entry passed: legacy task-65 frame/timestamp/reply parity, 256 commands, exact 8192/8193 ingress, full JS prevalidation, one license gate, first failure, cancellation/exception UP, output cap and RAW compatibility.");
+}
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";
     auto context = parent();
@@ -426,5 +538,6 @@ int main() { @autoreleasepool {
       assert(zx_clampTouchCoord(1e30) == 99999); }
     timingCases();
     typedTouchCases(bridge);
+    typedBatchCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

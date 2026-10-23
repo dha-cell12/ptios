@@ -72,10 +72,25 @@ inline bool TLinkNativeGestureInputFits(size_t pointBytes,int finger,int duratio
     const size_t overhead=6+TLinkNativeTouchIntegerBytes(finger)+TLinkNativeTouchIntegerBytes(duration);
     return pointBytes<=8192-overhead;
 }
-inline int TLinkNativeTouchJSDuration(double value) {
+// ASCII object batches use the same 8192-character ingress cap as task 65.
+// Saturation keeps size arithmetic bounded while later JS shape errors are checked.
+class TLinkNativeBatchInputSize {
+    size_t bytes_=2,count_=0;
+public:
+    void append(size_t commandBytes) {
+        const size_t separator=count_++?2:0;
+        if(bytes_>8192||commandBytes>8192-bytes_||separator>8192-bytes_-commandBytes)bytes_=8193;
+        else bytes_+=commandBytes+separator;
+    }
+    bool fits()const{return bytes_<=8192;}
+    size_t bytes()const{return bytes_;}
+};
+inline int TLinkNativeTouchJSDuration(double value,size_t *encodedBytes=nullptr) {
+    if(encodedBytes)*encodedBytes=0;
     if(!std::isfinite(value))return -1;
     value=value<0?0:(value>60000?60000:value);
     char text[16];if(!TLinkNativeTouchDecimal(text,sizeof(text),0,value))return -1;
+    if(encodedBytes)*encodedBytes=std::strlen(text);
     return int(std::strtol(text,nullptr,10));
 }
 #endif

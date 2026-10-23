@@ -39,3 +39,7 @@ C02a timing is retained: wait before each point/zoom MOVE using the original mon
 Build rootfull/roothide in observe/enforced modes and exercise JS and RAW task 64 with the same paths/radial plans. Compare frame coordinates/order/count, returned error/parts, diagnostic counters and final-UP state. Cover exact input-size boundaries, 512 points, authorization expiry/cancellation, exception paths, two/three fingers and a following gesture after each failure. Record allocation counts, call latency, endpoint error and stop-to-UP versus C02b1; no measured performance gain is claimed from source/tests alone.
 
 After C02b2's checkpoint, continue structured batch while preserving whole-input validation, sequential order, first failure and owned cleanup. P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded replay remain open, as do other measured P0-13 methods and C01 device acceptance.
+
+## Following checkpoint
+
+The user reported C02b2 build `4d1ce08` passed before C02b3. Structured object batches are tracked in `IMPLEMENTATION-C02B3.md`; C02b2 device qualification remains pending.
