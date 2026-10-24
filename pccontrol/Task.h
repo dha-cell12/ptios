@@ -117,6 +117,8 @@
 #include "../shared/TLinkNativeColorRequest.h"
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
+#include "../shared/TLinkNativeFrameColors.h"
+NSDictionary *TLinkExecuteNativeFrameColors(const TLinkNativeFrameColorsRequest &request,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeFrameSearch(const TLinkNativeFrameSearchRequest &request,TLinkTaskExecutionContext *context);
 // Licensed numeric entry; preserves task context, deadlines and compatibility result fields.
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request, TLinkTaskExecutionContext *context);

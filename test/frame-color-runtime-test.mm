@@ -4,6 +4,7 @@
 #include "../shared/TLinkModernImagePolicy.h"
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
+#include "../shared/TLinkNativeFrameColors.h"
 #include <cassert>
 #include <cstdio>
 #include <unordered_map>
@@ -167,6 +168,45 @@ static void numericFrameSearchCases(const shared_ptr<ZXFrameObject> &frame){
     assert(captures==beforeCapture);frame->createdAtMs=created;frame->expiresAtMs=expires;freezeColorClock=false;
     puts("Numeric frame search Foundation passed: 216 RAW/numeric ROI/scale/skip cases, hit/miss, parameter/frame/TTL/coordinate precedence, admissions, held reader/cancel cleanup and no recapture.");
 }
+static void numericFrameColorsCases(const shared_ptr<ZXFrameObject> &frame){
+    const auto created=frame->createdAtMs,expires=frame->expiresAtMs;freezeColorClock=true;
+    frame->createdAtMs=colorClock-10;frame->expiresAtMs=colorClock+5000;const unsigned beforeCapture=captures;
+    const auto check=[](const TLinkNativeFrameColorsRequest &r,NSString *table,NSString *threshold){
+        NSString *coord=r.frame.validCoord?(r.frame.pointCoord?@"point":@"pixel"):@"typo";
+        NSString *wire=[NSString stringWithFormat:@"%d;;is_colors;;%@;;%d;;%@;;%@;;%d",r.frame.frameId,table,r.mode,threshold,coord,r.frame.maxAgeMs];
+        NSError *rawError=nil,*numericError=nil;NSString *raw=color(wire,&rawError);TLinkNativeFrameColorsValue result;
+        const bool ok=testFrameColors(r,result,&numericError);assert(ok==(raw!=nil));
+        if(ok){NSString *expected=[NSString stringWithFormat:@"%d;;%llu;;%.3f;;%.3f",result.matched?1:0,(unsigned long long)result.ageMs,result.totalMs,result.totalMs];assert([raw isEqualToString:expected]);}
+        else assert([rawError.localizedDescription isEqualToString:numericError.localizedDescription]);
+    };
+    for(bool point:{false,true})for(int mode:{0,1})for(double x:{-1e308,double(INT_MIN),-1.5,-0.5,-0.0,0.5,1.5,2.5,double(INT_MAX),double(INT_MAX)+0.5,1e308})for(unsigned t=0;t<5;++t){
+        double value=mode?std::vector<double>{-0.00004,0,0.99995,255.00004,255.00006}[t]:std::vector<double>{-0.00006,-0.00004,0.99995,1,1.00006}[t];
+        TLinkNativeFrameColorsRequest r;r.frame.frameId=1;r.frame.maxAgeMs=5000;r.frame.pointCoord=point;r.mode=mode;r.append(x,1.5,4,2,2);r.append(0,0,0,0,0);
+        NSString *threshold=[NSString stringWithFormat:@"%.4f",value],*table=[NSString stringWithFormat:@"%.0f,,%.0f,,4,,2,,2|0,,0,,0,,0,,0",x,1.5];
+        r.toleranceUnits=threshold.length;r.toleranceValid=TLinkColorDouble(threshold.UTF8String,r.tolerance);check(r,table,threshold);
+    }
+    TLinkNativeFrameColorsRequest r;r.frame.frameId=1;r.frame.maxAgeMs=5000;r.append(0,0,0,0,0);
+    NSMutableString *table=[NSMutableString stringWithString:@"0,,0,,0,,0,,0"];
+    for(unsigned i=1;i<512;++i){r.append(0,0,0,0,0);[table appendString:@"|0,,0,,0,,0,,0"];}
+    check(r,table,@"0.0000");r.append(0,0,0,0,0);[table appendString:@"|0,,0,,0,,0,,0"];check(r,table,@"0.0000");
+    r=TLinkNativeFrameColorsRequest{};r.frame.frameId=1;r.frame.maxAgeMs=5000;r.append(0,0,255,0,0);r.append(0,0,999,0,0);
+    NSString *bad=@"0,,0,,255,,0,,0|0,,0,,999,,0,,0";check(r,bad,@"0.0000"); // parse the late invalid RGB before returning an early mismatch
+    frame->expiresAtMs=colorClock;check(r,bad,@"0.0000");frame->expiresAtMs=colorClock+5000;
+    frame->hasBGRA=false;check(r,bad,@"0.0000");frame->hasBGRA=true;frame->bgra.resize(319);check(r,bad,@"0.0000");frame->bgra.resize(320);
+    r.frame.frameId=999;check(r,bad,@"0.0000");r.frame.validCoord=false;check(r,bad,@"0.0000");r.frame.validCoord=true;r.frame.frameId=1;
+    r.mode=2;check(r,bad,@"0.0000");r.mode=1;r.frame.maxAgeMs=5001;check(r,bad,@"0.0000");
+    r=TLinkNativeFrameColorsRequest{};r.frame.frameId=1;r.append(0,0,0,0,0);frame->createdAtMs=colorClock-1001;r.frame.maxAgeMs=0;check(r,@"0,,0,,0,,0,,0",@"0.0000");r.frame.maxAgeMs=5000;check(r,@"0,,0,,0,,0,,0",@"0.0000");frame->createdAtMs=colorClock-10;
+    {TLinkColorRequest first({}),second({});check(r,@"0,,0,,0,,0,,0",@"0.0000");}
+    {TLinkImageWork first(gImageCompute),second(gImageCompute);check(r,@"0,,0,,0,,0,,0",@"0.0000");}
+    TLinkNativeFrameColorsValue result;NSError *error=nil;eraseOnSnapshot=true;
+    assert(testFrameColors(r,result,&error)&&gFrameStore.count(1)==0&&result.matched);eraseOnSnapshot=false;gFrameStore[1]=frame;
+    auto cancel=make_shared<TLinkNativeCancellation>();auto budget=make_shared<TLinkNativeBudget>(cancel,0,4096);cancelOnSnapshot=cancel;
+    {TLinkNativeBudgetScope scope(budget);assert(!testFrameColors(r,result,&error)&&[error.localizedDescription containsString:@"cancelled_or_timed_out"]);}cancelOnSnapshot.reset();
+    {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
+    {TLinkImageWork first(gImageCompute),second(gImageCompute);assert(first&&second);}
+    assert(captures==beforeCapture);frame->createdAtMs=created;frame->expiresAtMs=expires;freezeColorClock=false;
+    puts("Numeric frame colors Foundation passed: 220 RAW/numeric cases, strict INT/RGB and four-decimal mode boundaries, full-table/TTL error order, 512/513, admissions, held reader/cancel cleanup and no recapture.");
+}
 int main(){@autoreleasepool{
     fputs("Frame color/modern image: actual wire handlers, controlled CV/capture and real Foundation/CoreGraphics\n",stderr);
     auto frame=make_shared<ZXFrameObject>();frame->width=8;frame->height=8;frame->bytesPerRow=40;frame->scale=2;
@@ -199,5 +239,6 @@ int main(){@autoreleasepool{
     numericFramePickCases(frame);
     numericFramePickManyCases(frame);
     numericFrameSearchCases(frame);
+    numericFrameColorsCases(frame);
     puts("Frame color/modern image Foundation passed: five color modes, signed offsets, strict numbers, padded stride, point scale, TTL, exact replies, batch sharing and pre-cancel cleanup.");
 }}

@@ -35,6 +35,8 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error);
 #ifdef __cplusplus
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
+#include "../shared/TLinkNativeFrameColors.h"
+bool testFrameColors(const TLinkNativeFrameColorsRequest &request,TLinkNativeFrameColorsValue &value,NSError **error);
 bool searchFrameColor(const TLinkNativeFrameSearchRequest &request,TLinkNativeFrameSearchValue &value,NSError **error);
 bool readFramePixel(const TLinkNativeFramePickRequest &pick, TLinkNativeFramePickValue &value, NSError **error);
 bool readFramePixels(const TLinkNativeFramePickManyRequest &pick, TLinkNativeFramePickManyValue &value, NSError **error);

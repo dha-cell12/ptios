@@ -1,6 +1,7 @@
 #include "../shared/TLinkModernImagePolicy.h"
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
+#include "../shared/TLinkNativeFrameColors.h"
 #include <cassert>
 #include <cstdio>
 #include <functional>
@@ -76,7 +77,51 @@ static void frameSearchPolicyCases(){
     {TLinkColorRequest work(expired);assert(TLinkFrameSearchScan(bgra.data(),8,8,40,1,r,work,found)==TLinkFrameSearchStatus::Stopped);}
     puts("Frame search policy passed: 10k frozen BGRA scan/ROI/skip/scale cases, exact 8192/8193 wire accounting, parameter extremes and work/cancel/deadline bounds.");
 }
+#include "fixtures/frame-colors-legacy-v1.inc"
+static void frameColorsPolicyCases(){
+    std::vector<uint8_t> bgra(40*8,0xee);for(int y=0;y<8;++y)for(int x=0;x<8;++x){size_t at=size_t(y)*40+size_t(x)*4;bgra[at]=uint8_t(x);bgra[at+1]=uint8_t(y);bgra[at+2]=uint8_t(x+y);}
+    for(unsigned i=0;i<10000;++i){
+        TLinkNativeFrameColorsRequest r;r.frame.frameId=1;r.frame.pointCoord=bool(i%2);r.mode=int(i%2);
+        char threshold[384];std::snprintf(threshold,sizeof(threshold),"%.4f",r.mode?double(i%256):double(i%10001)/10000.0);
+        r.toleranceUnits=std::strlen(threshold);r.toleranceValid=TLinkColorDouble(threshold,r.tolerance);
+        std::string table;
+        for(unsigned j=0;j<i%8+1;++j){
+            double x=double(int((i+j)%19)-3)*0.5,y=double((i+j)%9)*0.5;
+            if(i%113==0)x=double(INT_MIN);if(i%127==0)x=double(INT_MAX);
+            const int red=int((i+j)%16),green=int((i+j)%8),blue=int(j%8);
+            r.append(x,y,red,green,blue);char row[800];std::snprintf(row,sizeof(row),"%.0f,,%.0f,,%d,,%d,,%d",x,y,red,green,blue);
+            if(j)table+='|';table+=row;
+        }
+        assert(!TLinkFrameColorsTableError(r)&&r.tableUnits==table.size()&&TLinkFrameColorsParameters(r));
+        const double scale=std::vector<double>{0.5,1,2,3.25,16}[i%5];bool matched=false;
+        {TLinkColorRequest work({});assert(TLinkFrameColorsEvaluate(bgra.data(),8,8,40,scale,r.points,r.frame.pointCoord,r.mode,r.tolerance,work,matched));}
+        assert(matched==legacyFrameColors(bgra.data(),8,8,40,scale,r.points,r.frame.pointCoord,r.mode,r.tolerance));
+        char suffix[80];std::snprintf(suffix,sizeof(suffix),";;%d;;%s;;;;%d",r.mode,threshold,r.frame.maxAgeMs);
+        const size_t base=std::strlen("691;;is_colors;;")+table.size()+std::strlen(suffix),maxCoord=8192-base;
+        assert(TLinkFrameColorsInputFits(r,maxCoord)&&!TLinkFrameColorsInputFits(r,maxCoord+1));
+    }
+    for(double x:{-1e308,double(INT_MIN)-0.5,double(INT_MIN),-1.5,-0.5,-0.0,0.5,1.5,double(INT_MAX),double(INT_MAX)+0.5,1e308}){
+        char text[384];std::snprintf(text,sizeof(text),"%.0f",x);int parsed=0;const bool expected=TLinkColorInt(text,parsed);
+        TLinkNativeFrameColorsRequest r;r.append(x,0,1,2,3);assert(r.tableValid==expected);
+        if(expected)assert(r.points[0].dx==parsed);else assert(std::string(TLinkFrameColorsTableError(r))=="invalid_point_table");
+    }
+    TLinkNativeFrameColorsRequest r;r.frame.frameId=1;for(unsigned i=0;i<512;++i)r.append(0,0,0,0,0);
+    assert(r.points.size()==512&&!TLinkFrameColorsTableError(r)&&TLinkFrameColorsInputFits(r,5));r.append(0,0,0,0,0);
+    assert(r.points.size()==512&&r.pointCount==513&&std::string(TLinkFrameColorsTableError(r))=="point_table_limit");
+    r=TLinkNativeFrameColorsRequest{};r.frame.frameId=1;r.append(0,0,-1,0,0);assert(std::string(TLinkFrameColorsTableError(r))=="invalid_point_table");
+    for(unsigned i=0;i<512;++i)r.append(1e308,-1e308,INT_MIN,INT_MAX,0);
+    assert(r.tableUnits==32769&&!TLinkFrameColorsInputFits(r,0)&&std::string(TLinkFrameColorsTableError(r))=="point_table_limit_or_empty");
+    r=TLinkNativeFrameColorsRequest{};r.frame.frameId=1;r.append(0,0,0,0,0);
+    assert(!TLinkFrameColorsInputFits(r,SIZE_MAX));r.tableUnits=SIZE_MAX;assert(!TLinkFrameColorsInputFits(r,0));r.tableUnits=13;r.toleranceUnits=SIZE_MAX;assert(!TLinkFrameColorsInputFits(r,0));
+    r.toleranceUnits=6;r.mode=2;assert(!TLinkFrameColorsParameters(r));r.mode=1;r.tolerance=255.0001;assert(!TLinkFrameColorsParameters(r));r.mode=0;r.tolerance=1.0001;assert(!TLinkFrameColorsParameters(r));r.tolerance=-0.0001;assert(!TLinkFrameColorsParameters(r));r.tolerance=-0.0;assert(TLinkFrameColorsParameters(r));r.toleranceValid=false;assert(!TLinkFrameColorsParameters(r));
+    std::vector<TLinkColorPoint> points(2,TLinkColorPoint{0,0,0,0,0});bool matched=false;
+    {TLinkColorRequest work({},TLinkNativeNowNs(),1);assert(!TLinkFrameColorsEvaluate(bgra.data(),8,8,40,1,points,false,1,0,work,matched)&&work.stopped());}
+    auto token=std::make_shared<TLinkNativeCancellation>();token->cancel();auto parent=std::make_shared<TLinkNativeBudget>(token,0,4096);
+    {TLinkColorRequest work(parent);TLinkFrameColorsEvaluate(bgra.data(),8,8,40,1,points,false,1,0,work,matched);assert(work.stopped());}
+    puts("Frame colors policy passed: 10k frozen mode/scale/stride comparisons and exact wire limits, strict signed integers/RGB, 512/513 and saturated tables, mode/tolerance and work/cancel bounds.");
+}
 int main(){
+    frameColorsPolicyCases();
     frameSearchPolicyCases();
     frameManyPolicyCases();
     for(double v:{-1e308,-2147483647.0,-1.5,-0.5,-0.0,0.5,1.5,2.5,2147483646.0,2147483647.0,1e308}){

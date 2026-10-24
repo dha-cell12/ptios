@@ -1,7 +1,7 @@
 # C02b7 — structured frame color search
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `650a4f4`; the user reported the C02b6 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user at `d6147de`; device qualification pending**.
 Finding: **P0-13, frameFindColor portion**. Other frame color methods/helper transport remain open.
 
 ## Result and scope

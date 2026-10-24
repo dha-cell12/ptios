@@ -826,6 +826,28 @@ bool searchFrameColor(const TLinkNativeFrameSearchRequest &search,TLinkNativeFra
 }
 // END numeric frame color search.
 
+// BEGIN numeric frame color comparison.
+bool testFrameColors(const TLinkNativeFrameColorsRequest &check,TLinkNativeFrameColorsValue &value,NSError **error){
+    TLinkColorRequest request(TLinkCurrentNativeBudget());
+    if(!request.admitted()){if(error)*error=zx_frameError(@"1;;color_compute_busy\r\n");return false;}
+    if(!TLinkFrameColorsParameters(check)){if(error)*error=zx_frameError(@"1;;invalid_frame_color_parameters\r\n");return false;}
+    TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return false;}
+    ZXFrameRef snapshot=zx_snapshotFrame(uint32_t(check.frame.frameId));NSError *failure=nil;bool ok=false;
+    [&] {
+        const uint64_t nowMs=zx_nowMs();if(!zx_framePickBGRA(snapshot,&failure))return;
+        const ZXFrameObject &frame=*snapshot;value.ageMs=nowMs>=frame.createdAtMs?nowMs-frame.createdAtMs:0;
+        const double started=TLinkImageNowSeconds();
+        if(zx_frameTooOld(frame,uint64_t(check.frame.maxAgeMs),nowMs,&failure))return;
+        if(const char *code=TLinkFrameColorsTableError(check)){failure=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",code]);return;}
+        if(!TLinkFrameColorsEvaluate(frame.bgra.data(),frame.width,frame.height,size_t(frame.bytesPerRow),frame.scale,check.points,check.frame.pointCoord,check.mode,check.tolerance,request,value.matched))return;
+        value.totalMs=(TLinkImageNowSeconds()-started)*1000.0;ok=true;
+    }();
+    if(request.stopped())failure=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",request.error()]);
+    if(failure){if(error)*error=failure;return false;}return ok;
+}
+// END numeric frame color comparison.
+
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     TLinkColorRequest request(TLinkCurrentNativeBudget());
@@ -918,16 +940,8 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             if (!zx_parsePointTableVector(data[2], points, &blockErr)) return;
             int colorMode = [data[3] intValue];
             double value = [data[4] doubleValue];
-            bool matched = true;
-            for (const ZXPointColor &pc : points) {
-                int x = zx_coordToPixel(pc.dx, frame.scale, pointCoord);
-                int y = zx_coordToPixel(pc.dy, frame.scale, pointCoord);
-                if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { matched = false; break; }
-                int r = 0, g = 0, b = 0;
-                if(!request.consume())return;
-                zx_readBGRA(frame, x, y, &r, &g, &b);
-                if (!zx_bgraColorMatch(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) { matched = false; break; }
-            }
+            bool matched=false;
+            if(!TLinkFrameColorsEvaluate(frame.bgra.data(),frame.width,frame.height,size_t(frame.bytesPerRow),frame.scale,points,pointCoord,colorMode,value,request,matched))return;
             double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"%d;;%llu;;%.3f;;%.3f", matched ? 1 : 0, (unsigned long long)ageMs, totalMs, totalMs];
             return;

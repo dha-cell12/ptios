@@ -108,6 +108,13 @@ try {
   assert.doesNotMatch(frameSearchEntry,/processTaskWithContext|CFWriteStream|componentsSeparatedByString|\b(?:YES|NO)\b/);
   await writeFile(join(temp,"NativeFrameSearchBridge.inc"),frameSearchBridge);
   await writeFile(join(temp,"NativeFrameSearchEntry.inc"),frameSearchEntry);
+  const frameColorsBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFrameIsColors])","    else if ([method isEqualToString:TLinkJSNativeMethodFrameFindMultiColor])");
+  const frameColorsEntry=between(task,"// BEGIN typed frame colors task entry.","// END typed frame colors task entry.");
+  assert.doesNotMatch(frameColorsBridge,/executeRawPayload|componentsSeparatedByString|componentsJoinedByString|TLinkautoJSEncodePointColorTable/);
+  assert.match(frameColorsEntry,/TLinkC01TaskBudget[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_COLOR_IN_FRAME,&denial\)[\s\S]*testFrameColors/);
+  assert.doesNotMatch(frameColorsEntry,/processTaskWithContext|CFWriteStream|componentsSeparatedByString|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeFrameColorsBridge.inc"),frameColorsBridge);
+  await writeFile(join(temp,"NativeFrameColorsEntry.inc"),frameColorsEntry);
   const batchBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodBatch])","    else if ([method isEqualToString:TLinkJSNativeMethodRunShell])");
   const structuredBatch=between(batchBridge,"        if(structured) {","        NSMutableArray<NSString *> *wireCommands");
   assert.doesNotMatch(structuredBatch,/executeRawPayload|componentsJoinedByString|CFWriteStream|UTF8String/);
@@ -115,6 +122,7 @@ try {
   await writeFile(join(temp,"NativeBatchBridgeUnderTest.inc"),batchBridge);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
+    between(bridge,"static NSString *TLinkautoJSEncodePointColorTable","static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError") +
     between(bridge,"static double TLinkautoJSDoubleOption","static NSString *TLinkautoJSStringOption") +
     between(bridge,"static NSString *TLinkautoJSStringOption","static NSString *TLinkautoJSOwnerField") +
     between(bridge,"static NSString *TLinkautoJSEncodeGesturePoints","static NSString *TLinkautoJSEncodePointColorTable") +
@@ -122,7 +130,7 @@ try {
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
     between(bridge,"static BOOL TLinkautoJSValidToken","static BOOL TLinkautoJSValidProtocolString") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
