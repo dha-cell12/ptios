@@ -1,7 +1,7 @@
 # C02b10 — structured live color-range search
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `036c2b7`; the user reported the C02b9 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b11 (`6c9b095`); device qualification pending**.
 Finding: **P0-13, live findColor portion**. Live isColors/findMultiColor, image/OCR adapters and helper transport remain open.
 
 ## Result and scope
@@ -39,3 +39,7 @@ No hard completion deadline, process-RSS bound or measured allocation/latency im
 Build rootfull/roothide observe/enforced variants. Compare JS findColor with RAW task 28/action 1 for half-rounded ROI, negative/zero/large extents, RGB bounds, skip including INT_MAX, first hit/miss, exact replies and error/admission ordering. Check capture/render faults, authorization expiry, caller stop/output limits, resource recovery and one fresh capture per admitted valid request. Measure allocation rate and latency separately from capture cost.
 
 Continue live isColors/findMultiColor and other measured P0-13 methods, P0-12 event-driven helper RPC, P1-40 config snapshots and P1-41 byte-bounded dedupe. C01/C02 device and performance acceptance remains open.
+
+## Following checkpoint
+
+The user reported C02b10 build `6c9b095` passed before C02b11. Live isColors is tracked in `IMPLEMENTATION-C02B11.md`. This records the user report; no independent macOS/device execution was performed on this host.

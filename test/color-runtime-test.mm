@@ -11,6 +11,7 @@ static std::atomic<uint64_t> offset{0};
 static uint64_t FixtureNow(){return TLinkNativeNowNs()+offset.load();}
 #include "ColorPolicyUnderTest.h"
 #include "../shared/TLinkNativeColorRange.h"
+#include "../shared/TLinkNativeColorPoints.h"
 #include "ColorHeaderUnderTest.h"
 static bool failAllocate=false,failCrop=false,failSpace=false,failContext=false,throwDraw=false,expireDraw=false,expireCapture=false,failCapture=false;
 static unsigned buffers=0,providers=0,captures=0;
@@ -69,9 +70,38 @@ static void numericRangeCases(){
     {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
     puts("Numeric live range Foundation passed: 180 RAW/numeric ROI/skip cases, signed/overflow extents, hit/miss/parameter order, capture/graphics faults, NSError lifetime, busy/memory/cancel recovery and zero retained buffers.");
 }
+static void numericPointsCases(){
+    const auto check=[](const TLinkNativeColorPointsRequest &r,NSString *table,NSString *threshold){
+        NSString *wire=[NSString stringWithFormat:@"2;;%@;;%d;;%@",table,r.mode,threshold];NSError *rawError=nil,*numericError=nil;NSString *raw=search(wire,&rawError);bool matched=false;
+        const bool ok=testRGBPoints(r,matched,&numericError);assert(ok==(raw!=nil));
+        if(ok)assert([raw isEqualToString:matched?@"1":@"0"]);else assert([rawError.localizedDescription isEqualToString:numericError.localizedDescription]);settled();
+    };
+    for(double x:{-1e308,double(INT_MIN),-1.5,-0.5,-0.0,0.5,1.5,7.5,8191.5,double(INT_MAX),1e308})for(int mode:{0,1})for(unsigned n=0;n<5;++n){
+        const double value=mode?std::vector<double>{-0.00004,0,0.99995,255.00004,255.00006}[n]:std::vector<double>{-0.00006,-0.00004,0.99995,1,1.00006}[n];
+        TLinkNativeColorPointsRequest r;r.mode=mode;r.append(x,1.5,10,20,30);r.append(0,0,10,20,30);
+        NSString *threshold=[NSString stringWithFormat:@"%.4f",value];r.toleranceUnits=threshold.length;r.toleranceValid=TLinkColorDouble(threshold.UTF8String,r.tolerance);
+        check(r,[NSString stringWithFormat:@"%.0f,,%.0f,,10,,20,,30|0,,0,,10,,20,,30",x,1.5],threshold);
+    }
+    TLinkNativeColorPointsRequest r;NSMutableString *table=[NSMutableString string];
+    for(unsigned i=0;i<512;++i){r.append(0,0,10,20,30);if(i)[table appendString:@"|"];[table appendString:@"0,,0,,10,,20,,30"];}
+    check(r,table,@"0.0000");r.append(0,0,10,20,30);[table appendString:@"|0,,0,,10,,20,,30"];check(r,table,@"0.0000");
+    r=TLinkNativeColorPointsRequest{};r.append(0,0,11,20,30);r.append(0,0,999,0,0);const unsigned beforeInvalid=captures;check(r,@"0,,0,,11,,20,,30|0,,0,,999,,0,,0",@"0.0000");assert(captures==beforeInvalid);
+    r=TLinkNativeColorPointsRequest{};r.append(0,0,11,20,30);r.append(8,0,10,20,30);check(r,@"0,,0,,11,,20,,30|8,,0,,10,,20,,30",@"0.0000"); // full source bounds before early mismatch
+    r=TLinkNativeColorPointsRequest{};r.append(0,0,10,20,30);bool matched=false;
+    bool *faults[]={&failAllocate,&failCrop,&failSpace,&failContext,&throwDraw,&expireDraw,&expireCapture,&failCapture};
+    NSString *codes[]={@"color_allocation_failed",@"color_crop_failed",@"color_space_failed",@"color_context_failed",@"color_operation_failed",@"color_cancelled_or_timed_out",@"color_cancelled_or_timed_out",@"color_capture_failed"};
+    for(unsigned n=0;n<8;++n){NSError *retained=nil;@autoreleasepool{*faults[n]=true;assert(!testRGBPoints(r,matched,&retained));}assert([retained.localizedDescription containsString:codes[n]]);offset=0;settled();}
+    {TLinkColorRequest first({}),second({});const unsigned before=captures;r.mode=2;NSError *error=nil;assert(!testRGBPoints(r,matched,&error)&&[error.localizedDescription containsString:@"color_compute_busy"]&&captures==before);}r.mode=1;settled();
+    {auto hold=TLinkColorMemory().reserve(TLinkImageKind::Frame,32*1024*1024);assert(hold);NSError *error=nil;assert(!testRGBPoints(r,matched,&error)&&[error.localizedDescription containsString:@"color_memory_budget"]);}settled();
+    {auto token=std::make_shared<TLinkNativeCancellation>();auto budget=std::make_shared<TLinkNativeBudget>(token,0,4096);TLinkNativeBudgetScope scope(budget);cancelOnDraw=token;NSError *error=nil;
+        assert(!testRGBPoints(r,matched,&error)&&[error.localizedDescription containsString:@"color_cancelled_or_timed_out"]);cancelOnDraw.reset();const unsigned before=captures;error=nil;assert(!testRGBPoints(r,matched,&error)&&captures==before);}settled();
+    {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
+    puts("Numeric live points Foundation passed: 110 RAW/numeric cases, scalar mode boundaries, full-table/pre/post-capture bounds, 512/513, graphics faults/NSError lifetime, busy/memory/cancel recovery and zero retained buffers.");
+}
 int main(){@autoreleasepool{
     fixtureImage=image(8,6);
     numericRangeCases();
+    numericPointsCases();
     fputs("Color Foundation: actual parser, RGBA conversion, encoder and wire results\n",stderr);
     NSError *error=nil;NSDictionary *rgb=getRGBFromRawData((UInt8 *)"2;;1",&error);
     assert(!error&&[rgb[@"red"] intValue]==10&&[rgb[@"green"] intValue]==20&&[rgb[@"blue"] intValue]==30);settled();

@@ -188,6 +188,22 @@ static bool TLinkautoJSDecodePointColors(NSArray *points,TLinkNativeFrameColorsR
     return true;
 }
 
+static bool TLinkautoJSDecodeLivePointColors(NSArray *points,TLinkNativeColorPointsRequest &out)
+{
+    if(![points isKindOfClass:[NSArray class]]||points.count==0||points.count>512)return false;
+    out.points.reserve(points.count);
+    for(id item in points){
+        if(![item isKindOfClass:[NSDictionary class]])return false;
+        NSDictionary *dict=item;double x=[dict[@"x"] doubleValue],y=[dict[@"y"] doubleValue];
+        int r=[dict[@"red"] respondsToSelector:@selector(intValue)]?[dict[@"red"] intValue]:[dict[@"r"] intValue];
+        int g=[dict[@"green"] respondsToSelector:@selector(intValue)]?[dict[@"green"] intValue]:[dict[@"g"] intValue];
+        int b=[dict[@"blue"] respondsToSelector:@selector(intValue)]?[dict[@"blue"] intValue]:[dict[@"b"] intValue];
+        if(!TLinkautoJSIsFiniteNumber(x)||!TLinkautoJSIsFiniteNumber(y))return false;
+        out.append(x,y,r,g,b);
+    }
+    return true;
+}
+
 static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *result)
 {
     NSArray *parts = result[@"parts"];
@@ -1181,49 +1197,47 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeColorRange(search,context)];
     }
 
-    else if ([method isEqualToString:TLinkJSNativeMethodIsColors] || [method isEqualToString:TLinkJSNativeMethodFindMultiColor]) {
-        NSArray *points = [args count] > 0 ? [args objectAtIndex:0] : @[];
-        NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};
-        
+    else if ([method isEqualToString:TLinkJSNativeMethodIsColors]) {
+        NSArray *points=[args count]>0?[args objectAtIndex:0]:@[];
+        NSDictionary *options=[args count]>1?[args objectAtIndex:1]:@{};
+        TLinkNativeColorPointsRequest check;
+        if(!TLinkautoJSDecodeLivePointColors(points,check))return [TLinkJSNativeResponse responseWithError:@"requires 1-512 valid point colors" code:@-1];
+        check.mode=[options[@"mode"] respondsToSelector:@selector(intValue)]?[options[@"mode"] intValue]:1;
+        double value=[options[@"value"] respondsToSelector:@selector(doubleValue)]?[options[@"value"] doubleValue]:([options[@"tolerance"] respondsToSelector:@selector(doubleValue)]?[options[@"tolerance"] doubleValue]:0);
+        // Preserve the legacy four-decimal, signed-zero and nonfinite scalar spelling.
+        NSString *threshold=[NSString stringWithFormat:@"%.4f",value];check.toleranceUnits=threshold.length;
+        check.toleranceValid=TLinkColorDouble(threshold.UTF8String,check.tolerance);
+        if(!TLinkNativeColorPointsInputFits(check))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeColorPoints(check,context)];
+    }
+    else if ([method isEqualToString:TLinkJSNativeMethodFindMultiColor]) {
+        NSArray *points=[args count]>0?[args objectAtIndex:0]:@[];
+        NSDictionary *options=[args count]>1?[args objectAtIndex:1]:@{};
         NSString *table=TLinkautoJSEncodePointColorTable(points);
         if(!table)return [TLinkJSNativeResponse responseWithError:@"requires 1-512 valid point colors" code:@-1];
-
-        if ([method isEqualToString:TLinkJSNativeMethodIsColors]) {
-            int mode = [options[@"mode"] respondsToSelector:@selector(intValue)] ? [options[@"mode"] intValue] : 1;
-            double value = [options[@"value"] respondsToSelector:@selector(doubleValue)] ? [options[@"value"] doubleValue] : ([options[@"tolerance"] respondsToSelector:@selector(doubleValue)] ? [options[@"tolerance"] doubleValue] : 0);
-            NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%@;;%d;;%.4f", TASK_COLOR_SEARCHER, table, mode, value] context:context];
-            NSArray *parts = result[@"parts"];
-            if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
-            BOOL matched = [parts[1] intValue] != 0;
-            NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
-            res[@"matched"] = @(matched);
-            res[@"value"] = @(matched);
-            return [TLinkJSNativeResponse responseWithValue:res];
-        } else {
-            double x = [options[@"x"] respondsToSelector:@selector(doubleValue)] ? [options[@"x"] doubleValue] : 0;
-            double y = [options[@"y"] respondsToSelector:@selector(doubleValue)] ? [options[@"y"] doubleValue] : 0;
-            double width = [options[@"width"] respondsToSelector:@selector(doubleValue)] ? [options[@"width"] doubleValue] : 0;
-            double height = [options[@"height"] respondsToSelector:@selector(doubleValue)] ? [options[@"height"] doubleValue] : 0;
-            int mode = [options[@"mode"] respondsToSelector:@selector(intValue)] ? [options[@"mode"] intValue] : 1;
-            double value = [options[@"value"] respondsToSelector:@selector(doubleValue)] ? [options[@"value"] doubleValue] : ([options[@"tolerance"] respondsToSelector:@selector(doubleValue)] ? [options[@"tolerance"] doubleValue] : 0);
-            int skip = [options[@"skip"] respondsToSelector:@selector(intValue)] ? [options[@"skip"] intValue] : 0;
-            if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
-                return [TLinkJSNativeResponse responseWithError:@"findMultiColor(options) requires finite x/y/width/height" code:@-1];
-            }
-            NSString *payload = [NSString stringWithFormat:@"3;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d", x, y, width, height, table, mode, value, skip];
-            NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_SEARCHER, payload] context:context];
-            NSArray *parts = result[@"parts"];
-            if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:result];
-            int foundX = [parts[1] intValue];
-            int foundY = [parts[2] intValue];
-            NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
-            res[@"matched"] = @(foundX >= 0 && foundY >= 0);
-            res[@"x"] = @(foundX);
-            res[@"y"] = @(foundY);
-            return [TLinkJSNativeResponse responseWithValue:res];
+        double x = [options[@"x"] respondsToSelector:@selector(doubleValue)] ? [options[@"x"] doubleValue] : 0;
+        double y = [options[@"y"] respondsToSelector:@selector(doubleValue)] ? [options[@"y"] doubleValue] : 0;
+        double width = [options[@"width"] respondsToSelector:@selector(doubleValue)] ? [options[@"width"] doubleValue] : 0;
+        double height = [options[@"height"] respondsToSelector:@selector(doubleValue)] ? [options[@"height"] doubleValue] : 0;
+        int mode = [options[@"mode"] respondsToSelector:@selector(intValue)] ? [options[@"mode"] intValue] : 1;
+        double value = [options[@"value"] respondsToSelector:@selector(doubleValue)] ? [options[@"value"] doubleValue] : ([options[@"tolerance"] respondsToSelector:@selector(doubleValue)] ? [options[@"tolerance"] doubleValue] : 0);
+        int skip = [options[@"skip"] respondsToSelector:@selector(intValue)] ? [options[@"skip"] intValue] : 0;
+        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
+            return [TLinkJSNativeResponse responseWithError:@"findMultiColor(options) requires finite x/y/width/height" code:@-1];
         }
+        NSString *payload = [NSString stringWithFormat:@"3;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d", x, y, width, height, table, mode, value, skip];
+        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_SEARCHER, payload] context:context];
+        NSArray *parts = result[@"parts"];
+        if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:result];
+        int foundX = [parts[1] intValue];
+        int foundY = [parts[2] intValue];
+        NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
+        res[@"matched"] = @(foundX >= 0 && foundY >= 0);
+        res[@"x"] = @(foundX);
+        res[@"y"] = @(foundY);
+        return [TLinkJSNativeResponse responseWithValue:res];
     }
-    
+
     return [TLinkJSNativeResponse responseWithError:[NSString stringWithFormat:@"Unimplemented method: %@", method] code:@-1];
 }
 

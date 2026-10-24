@@ -633,6 +633,28 @@ NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &r
 }
 // END typed color range task entry.
 
+// BEGIN typed color points task entry.
+NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest &request,TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto replyBudget=[call nativeBudget];TLinkNativeBudgetScope callScope(replyBudget);
+    static_assert(TASK_COLOR_SEARCHER==28,"color search task classification changed");const uint8_t task[]={'2','8'};
+    TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget(task,sizeof(task),replyBudget));
+    @try {try {
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_COLOR_SEARCHER,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",replyBudget);
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSError *error=nil;bool matched=false;
+        if(!testRGBPoints(request,matched,&error))return zx_typedTouchReply(error.localizedDescription?:@"-1;;color_operation_failed\r\n",replyBudget);
+        NSString *flag=matched?@"1":@"0",*raw=[NSString stringWithFormat:@"0;;%@\r\n",flag];
+        if(!replyBudget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        return @{@"ok":@(true),@"raw":raw,@"parts":@[@"0",flag],@"matched":@(matched),@"value":@(matched)};
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+// END typed color points task entry.
+
 // BEGIN typed frame pick task entry.
 NSDictionary *TLinkExecuteNativeFramePick(const TLinkNativeFramePickRequest &request,TLinkTaskExecutionContext *context)
 {

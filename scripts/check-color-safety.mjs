@@ -16,7 +16,7 @@ assert.ok(encoderStart>=0&&encoderEnd>encoderStart,'point-color encoder fixture 
 const encoder=bridge.slice(encoderStart,encoderEnd+3);
 // This C++11 ColorPicker fixture needs only the legacy encoder, independently of frame bridge types.
 assert.equal((encoder.match(/^static /gm)||[]).length,1,'color fixture must contain one complete encoder');
-assert.doesNotMatch(encoder,/TLinkautoJSDecodePointColors|TLinkNativeFrameColorsRequest/);
+assert.doesNotMatch(encoder,/TLinkautoJSDecode(?:Live)?PointColors|TLinkNative(?:FrameColors|ColorPoints)Request/);
 assert.match(encoder,/%.0f,,%.0f,,%d,,%d,,%d/);assert.match(encoder,/componentsJoinedByString:@"\|"/);
 assert.doesNotMatch(bridge,/Inline TLinkautoJSEncodePointColorTable/);
 assert.match(header,/#include "\.\.\/shared\/TLinkNativeColorRange\.h"/);
@@ -24,6 +24,9 @@ assert.match(source,/zx_colorRangeScreen\(search,request,result,error\)/);
 assert.match(source,/bool searchRGBRange[\s\S]*zx_colorRun/);
 const numericRuntime=await read('test/color-runtime-test.mm');
 assert.ok(numericRuntime.indexOf('#include "ColorPolicyUnderTest.h"')<numericRuntime.indexOf('#include "../shared/TLinkNativeColorRange.h"'),'fixture clock policy must load before the numeric range header');
+assert.match(source,/bool testRGBPoints[\s\S]*TLinkNativeColorPointsTableError[\s\S]*zx_colorPointsScreen/);
+assert.match(header,/#include "\.\.\/shared\/TLinkNativeColorPoints\.h"/);
+assert.ok(numericRuntime.indexOf('#include "ColorPolicyUnderTest.h"')<numericRuntime.indexOf('#include "../shared/TLinkNativeColorPoints.h"'),'fixture clock policy must load before the numeric points header');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-color-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

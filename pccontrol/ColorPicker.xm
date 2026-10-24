@@ -127,6 +127,23 @@ bool searchRGBRange(const TLinkNativeColorRangeRequest &search,TLinkColorResult 
         return zx_colorRangeScreen(search,request,value,error)?@"":nil;
     },error)!=nil;
 }
+static bool zx_colorPointsScreen(const std::vector<TLinkColorPoint> &points,int mode,double tolerance,TLinkColorRequest &request,bool &matched,NSError **error){
+    TLinkColorRect crop;
+    if(!TLinkNativeColorPointsBounds(points,8192,8192,crop)){zx_colorError(error,"color_point_out_of_bounds");return false;}
+    ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;
+    if(!zx_colorDimensions(screen.value,sw,sh,error))return false;
+    if(!TLinkNativeColorPointsBounds(points,sw,sh,crop)){zx_colorError(error,"color_point_out_of_bounds");return false;}
+    ZXColorBuffer buffer;if(!zx_colorRender(screen.value,crop,request,buffer,error))return false;
+    if(!TLinkNativeColorPointsCompare(buffer.bytes.get(),buffer.width,crop,points,mode,tolerance,request,matched)){zx_colorError(error,request.error());return false;}
+    return true;
+}
+bool testRGBPoints(const TLinkNativeColorPointsRequest &check,bool &matched,NSError **error){
+    return zx_colorRun([&](TLinkColorRequest &request)->id{
+        if(!TLinkNativeColorPointsParameters(check)){zx_colorError(error,"color_parameters_invalid");return nil;}
+        if(const char *code=TLinkNativeColorPointsTableError(check)){zx_colorError(error,code);return nil;}
+        return zx_colorPointsScreen(check.points,check.mode,check.tolerance,request,matched,error)?@"":nil;
+    },error)!=nil;
+}
 NSDictionary* getRGBAtPosition(int x,int y,NSError **error){
     return zx_colorRun([&](TLinkColorRequest &request)->id{return zx_colorPickScreen(x,y,request,error);},error);
 }
@@ -154,24 +171,15 @@ NSString* searchRGBFromRawData(UInt8 *eventData,NSError **error){
         if(action==3&&(!zx_colorInt(parts,1,x)||!zx_colorInt(parts,2,y)||!zx_colorInt(parts,3,width)||!zx_colorInt(parts,4,height)||!zx_colorInt(parts,8,skip))){zx_colorError(error,"color_parameters_invalid");return nil;}
         if(!zx_colorInt(parts,action==2?2:6,mode)||!TLinkColorDouble(parts[action==2?3:7].UTF8String,value)||skip<0||!TLinkColorMode(mode,value)){zx_colorError(error,"color_parameters_invalid");return nil;}
         std::vector<TLinkColorPoint> points;if(!zx_colorTable(parts[action==2?1:5],points,error))return nil;
-        if(action==2)for(const auto &p:points)if(p.dx<0||p.dy<0||p.dx>=8192||p.dy>=8192){zx_colorError(error,"color_point_out_of_bounds");return nil;}
+        if(action==2){
+            bool matched=false;if(!zx_colorPointsScreen(points,mode,value,request,matched,error))return nil;
+            return matched?@"1":@"0";
+        }
         ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;if(!zx_colorDimensions(screen.value,sw,sh,error))return nil;
-        TLinkColorRect crop,anchors;
-        if(action==2){
-            int minX=sw,minY=sh,maxX=0,maxY=0;
-            for(const auto &p:points){if(p.dx<0||p.dy<0||p.dx>=sw||p.dy>=sh){zx_colorError(error,"color_point_out_of_bounds");return nil;}minX=std::min(minX,p.dx);minY=std::min(minY,p.dy);maxX=std::max(maxX,p.dx);maxY=std::max(maxY,p.dy);}
-            crop.x=minX;crop.y=minY;crop.width=maxX-minX+1;crop.height=maxY-minY+1;
-        }else{
-            TLinkColorRect region;if(!TLinkColorRegion(sw,sh,x,y,width,height,true,region)){zx_colorError(error,"color_region_invalid");return nil;}
-            if(!TLinkColorAnchors(sw,sh,region,points,anchors,crop))return @"-1;;-1";
-        }
+        TLinkColorRect crop,anchors,region;
+        if(!TLinkColorRegion(sw,sh,x,y,width,height,true,region)){zx_colorError(error,"color_region_invalid");return nil;}
+        if(!TLinkColorAnchors(sw,sh,region,points,anchors,crop))return @"-1;;-1";
         ZXColorBuffer buffer;if(!zx_colorRender(screen.value,crop,request,buffer,error))return nil;
-        if(action==2){
-            for(const auto &p:points){if(!request.consume()){zx_colorError(error,request.error());return nil;}
-                const uint8_t *pixel=buffer.bytes.get()+(size_t(p.dy-crop.y)*buffer.width+size_t(p.dx-crop.x))*4;
-                if(!TLinkColorMatch(pixel[0],pixel[1],pixel[2],p,mode,value))return @"0";
-            }return @"1";
-        }
         TLinkColorResult result;auto scan=TLinkColorMultiScan(buffer.bytes.get(),buffer.width,crop,anchors,points,mode,value,skip,request,result);
         if(scan==TLinkColorScan::Stopped){zx_colorError(error,request.error());return nil;}
         if(scan==TLinkColorScan::NoMatch)return @"-1;;-1";

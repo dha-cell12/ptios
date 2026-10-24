@@ -9,6 +9,8 @@
 #undef YES
 #import <opencv.hpp>
 #include "../shared/TLinkNativeColorRange.h"
+#include "../shared/TLinkNativeColorPoints.h"
+bool testRGBPoints(const TLinkNativeColorPointsRequest &request,bool &matched,NSError **error);
 bool searchRGBRange(const TLinkNativeColorRangeRequest &request,TLinkColorResult &value,NSError **error);
 #endif
 
