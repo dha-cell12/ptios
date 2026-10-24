@@ -37,6 +37,14 @@ No measured allocation/latency/RSS reduction or hard completion deadline is clai
 - Native-budget dependency extraction places the finite-number helper before both point-color encoders/decoders. Standards-conforming assert preprocessing passes all three runtime fixtures with a rejecting negative control.
 - **Foundation/macOS execution, ASan/UBSan, iOS builds and device measurements were not run on this Windows host.** Both production workflows already invoke the expanded fixtures; their new branches await CI/device qualification.
 
+## CI fixture correction (2026-10-25)
+
+Root macOS CI reported an unknown TLinkNativeFrameColorsRequest type in ColorEncoderUnderTest.inc. The ColorPicker runner extracted the legacy encoder through the next OCR helper; C02b8 inserted the numeric frame decoder inside that interval. Its unrelated type/member references therefore entered the standalone C++11 color fixture.
+
+The runner now extracts only the complete legacy encoder function and asserts on every host that the result contains one function and no frame decoder/type dependency. The actual frame decoder remains exercised by the native-budget bridge fixture, where its header and declaration order are present. Production behavior, C++11 color-fixture settings, strict warnings and sanitizers are unchanged.
+
+After the correction, the color runner passes 100k predicate comparisons, 5000 scan golden cases, 80k admission/byte lifecycles and the new fixture-isolation assertions on Windows. The native-budget portable/dependency runner also passes. Foundation/macOS compilation and iOS CI still require the corrected workflow run; they were not executed on this host.
+
 ## Acceptance and next slice
 
 Build rootfull/roothide observe/enforced variants. Compare JS/RAW frameIsColors on the same frame for integer rounding, RGB aliases, both modes, four-decimal boundaries/nonfinite values, duplicate and out-of-bounds points, complete-table error precedence, TTL, exact reply fields, authorization/cancellation/output caps and recovery. Verify no recapture, retained reader or admission. Measure allocation rate and latency independently of frame creation.

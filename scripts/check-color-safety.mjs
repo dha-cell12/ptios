@@ -10,7 +10,13 @@ const [source,header,policy,bridge]=await Promise.all(['pccontrol/ColorPicker.xm
 assert.doesNotMatch(source,/NSValue|getValue:|using namespace cv/);
 assert.match(source,/ZXColorImage screen\(zx_colorCapture\(request,error\)\)/);
 assert.ok(source.indexOf('out.charge=')<source.indexOf('out.bytes.reset('));
-const encoder=bridge.slice(bridge.indexOf('static NSString *TLinkautoJSEncodePointColorTable('),bridge.indexOf('static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError('));
+const encoderStart=bridge.indexOf('static NSString *TLinkautoJSEncodePointColorTable(');
+const encoderEnd=bridge.indexOf('\n}\n',encoderStart);
+assert.ok(encoderStart>=0&&encoderEnd>encoderStart,'point-color encoder fixture boundary is missing');
+const encoder=bridge.slice(encoderStart,encoderEnd+3);
+// This C++11 ColorPicker fixture needs only the legacy encoder, independently of frame bridge types.
+assert.equal((encoder.match(/^static /gm)||[]).length,1,'color fixture must contain one complete encoder');
+assert.doesNotMatch(encoder,/TLinkautoJSDecodePointColors|TLinkNativeFrameColorsRequest/);
 assert.match(encoder,/%.0f,,%.0f,,%d,,%d,,%d/);assert.match(encoder,/componentsJoinedByString:@"\|"/);
 assert.doesNotMatch(bridge,/Inline TLinkautoJSEncodePointColorTable/);
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-color-'));
