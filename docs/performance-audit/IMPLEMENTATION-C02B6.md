@@ -1,7 +1,7 @@
 # C02b6 — structured multi-point frame color
 
 Date: 2026-10-24 (Asia/Bangkok). Baseline: `1d710aa`; the user reported the corrected C02b5 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user at `650a4f4`; device qualification pending**.
 Finding: **P0-13, framePickColors portion**. Other typed methods/helper transport remain open.
 
 ## Result and scope

@@ -3,6 +3,7 @@
 #include "../shared/TLinkNativeDispatch.h"
 #include "../shared/TLinkModernImagePolicy.h"
 #include "../shared/TLinkNativeFramePick.h"
+#include "../shared/TLinkNativeFrameSearch.h"
 #include <cassert>
 #include <cstdio>
 #include <unordered_map>
@@ -130,6 +131,42 @@ static void numericFramePickManyCases(const shared_ptr<ZXFrameObject> &frame){
     assert(captures==beforeCapture);frame->createdAtMs=created;frame->expiresAtMs=expires;freezeColorClock=false;
     puts("Numeric frame pick-many Foundation passed: 120 RAW/numeric list cases, 512/513 counts, first failure and snapshot/geometry/TTL precedence, admissions, held-reader/cancel cleanup and no recapture.");
 }
+static void numericFrameSearchCases(const shared_ptr<ZXFrameObject> &frame){
+    const auto created=frame->createdAtMs,expires=frame->expiresAtMs;freezeColorClock=true;
+    frame->createdAtMs=colorClock-10;frame->expiresAtMs=colorClock+5000;const unsigned beforeCapture=captures;
+    const auto check=[](const TLinkNativeFrameSearchRequest &r){
+        NSString *coord=r.frame.validCoord?(r.frame.pointCoord?@"point":@"pixel"):@"typo";
+        NSString *wire=[NSString stringWithFormat:@"%d;;search_single;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d;;%@;;%d",r.frame.frameId,r.x,r.y,r.width,r.height,r.redMin,r.redMax,r.greenMin,r.greenMax,r.blueMin,r.blueMax,r.skip,coord,r.frame.maxAgeMs];
+        NSError *rawError=nil,*numericError=nil;NSString *raw=color(wire,&rawError);TLinkNativeFrameSearchValue result;
+        const bool ok=searchFrameColor(r,result,&numericError);assert(ok==(raw!=nil));
+        if(ok){NSString *expected=[NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d;;%llu;;%.3f;;%.3f",result.x,result.y,result.red,result.green,result.blue,(unsigned long long)result.ageMs,result.totalMs,result.totalMs];assert([raw isEqualToString:expected]);}
+        else assert([rawError.localizedDescription isEqualToString:numericError.localizedDescription]);
+    };
+    for(bool point:{false,true})for(double x:{-1e308,-1.5,-0.5,-0.0,0.5,1.5,7.5,2147483646.0,1e308})for(int skip:{0,1,7,1023})for(double width:{-1.0,0.0,3.5}){
+        TLinkNativeFrameSearchRequest r;r.frame.frameId=1;r.frame.maxAgeMs=5000;r.frame.pointCoord=point;r.setRegion(x,0.5,width,0);r.skip=skip;
+        r.redMin=r.redMax=5;r.greenMin=r.greenMax=3;r.blueMin=r.blueMax=2;check(r);
+    }
+    TLinkNativeFrameSearchRequest r;r.frame.frameId=1;r.frame.maxAgeMs=5000;check(r);r.redMin=r.redMax=255;check(r);r.redMin=0;r.redMax=255;
+    for(int skip:{-1,1024,INT_MAX}){r.skip=skip;check(r);}r.skip=0;
+    r.redMax=256;check(r);r.redMax=255;r.greenMin=20;r.greenMax=19;check(r);r.greenMin=0;r.greenMax=255;
+    r.frame.frameId=999;check(r);r.frame.validCoord=false;check(r);r.frame.validCoord=true;r.frame.frameId=1;
+    r.frame.maxAgeMs=5001;check(r);r.frame.maxAgeMs=5000;
+    r.frame.pointCoord=true;r.setRegion(double(INT_MAX)-1,0,0,0);check(r);
+    frame->expiresAtMs=colorClock;check(r);frame->expiresAtMs=colorClock+5000;
+    frame->hasBGRA=false;check(r);frame->hasBGRA=true;
+    frame->bgra.resize(319);check(r);frame->bgra.resize(320);
+    r.frame.pointCoord=false;r.setRegion(0,0,0,0);frame->createdAtMs=colorClock-1001;r.frame.maxAgeMs=0;check(r);r.frame.maxAgeMs=5000;check(r);frame->createdAtMs=colorClock-10;
+    {TLinkColorRequest first({}),second({});check(r);}
+    {TLinkImageWork first(gImageCompute),second(gImageCompute);check(r);}
+    TLinkNativeFrameSearchValue result;NSError *error=nil;eraseOnSnapshot=true;
+    assert(searchFrameColor(r,result,&error)&&gFrameStore.count(1)==0&&result.x==0);eraseOnSnapshot=false;gFrameStore[1]=frame;
+    auto cancel=make_shared<TLinkNativeCancellation>();auto budget=make_shared<TLinkNativeBudget>(cancel,0,4096);cancelOnSnapshot=cancel;
+    {TLinkNativeBudgetScope scope(budget);assert(!searchFrameColor(r,result,&error)&&[error.localizedDescription containsString:@"cancelled_or_timed_out"]);}cancelOnSnapshot.reset();
+    {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
+    {TLinkImageWork first(gImageCompute),second(gImageCompute);assert(first&&second);}
+    assert(captures==beforeCapture);frame->createdAtMs=created;frame->expiresAtMs=expires;freezeColorClock=false;
+    puts("Numeric frame search Foundation passed: 216 RAW/numeric ROI/scale/skip cases, hit/miss, parameter/frame/TTL/coordinate precedence, admissions, held reader/cancel cleanup and no recapture.");
+}
 int main(){@autoreleasepool{
     fputs("Frame color/modern image: actual wire handlers, controlled CV/capture and real Foundation/CoreGraphics\n",stderr);
     auto frame=make_shared<ZXFrameObject>();frame->width=8;frame->height=8;frame->bytesPerRow=40;frame->scale=2;
@@ -161,5 +198,6 @@ int main(){@autoreleasepool{
     assert(TLinkModernImageMemory().stats().total==0);
     numericFramePickCases(frame);
     numericFramePickManyCases(frame);
+    numericFrameSearchCases(frame);
     puts("Frame color/modern image Foundation passed: five color modes, signed offsets, strict numbers, padded stride, point scale, TTL, exact replies, batch sharing and pre-cancel cleanup.");
 }}

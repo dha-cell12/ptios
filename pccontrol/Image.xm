@@ -803,6 +803,29 @@ bool readFramePixels(const TLinkNativeFramePickManyRequest &pick,TLinkNativeFram
 }
 // END numeric frame color pick-many.
 
+// BEGIN numeric frame color search.
+bool searchFrameColor(const TLinkNativeFrameSearchRequest &search,TLinkNativeFrameSearchValue &value,NSError **error) {
+    TLinkColorRequest request(TLinkCurrentNativeBudget());
+    if(!request.admitted()){if(error)*error=zx_frameError(@"1;;color_compute_busy\r\n");return false;}
+    if(!TLinkFrameSearchParameters(search)){if(error)*error=zx_frameError(@"1;;invalid_frame_color_parameters\r\n");return false;}
+    TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return false;}
+    ZXFrameRef snapshot=zx_snapshotFrame(uint32_t(search.frame.frameId));NSError *failure=nil;bool ok=false;
+    [&] {
+        const uint64_t nowMs=zx_nowMs();if(!zx_framePickBGRA(snapshot,&failure))return;
+        const ZXFrameObject &frame=*snapshot;value.ageMs=nowMs>=frame.createdAtMs?nowMs-frame.createdAtMs:0;
+        const double started=TLinkImageNowSeconds();
+        if(zx_frameTooOld(frame,uint64_t(search.frame.maxAgeMs),nowMs,&failure))return;
+        const auto status=TLinkFrameSearchScan(frame.bgra.data(),frame.width,frame.height,size_t(frame.bytesPerRow),frame.scale,search,request,value);
+        if(status==TLinkFrameSearchStatus::CoordinateInvalid){failure=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
+        if(status==TLinkFrameSearchStatus::Stopped)return;
+        value.totalMs=(TLinkImageNowSeconds()-started)*1000.0;ok=true;
+    }();
+    if(request.stopped())failure=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",request.error()]);
+    if(failure){if(error)*error=failure;return false;}return ok;
+}
+// END numeric frame color search.
+
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     TLinkColorRequest request(TLinkCurrentNativeBudget());
@@ -873,35 +896,16 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             bool pointCoord = ([data count] >= 14) ? zx_stringIsPointCoord(data[13]) : false;
             uint64_t maxAgeMs = ([data count] >= 15) ? (uint64_t)MAX(0, [data[14] longLongValue]) : kDefaultFrameTtlMs;
             if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
-            int x = zx_coordToPixel([data[2] doubleValue], frame.scale, pointCoord);
-            int y = zx_coordToPixel([data[3] doubleValue], frame.scale, pointCoord);
-            int w = zx_coordToPixel([data[4] doubleValue], frame.scale, pointCoord);
-            int h = zx_coordToPixel([data[5] doubleValue], frame.scale, pointCoord);
-            if(x==INT_MIN||y==INT_MIN||w==INT_MIN||h==INT_MIN){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
-            int rmin = [data[6] intValue], rmax = [data[7] intValue];
-            int gmin = [data[8] intValue], gmax = [data[9] intValue];
-            int bmin = [data[10] intValue], bmax = [data[11] intValue];
-            int step = [data[12] intValue] + 1;
-            if (x < 0) x = 0; if (y < 0) y = 0;
-            if (x >= frame.width) x = frame.width - 1; if (y >= frame.height) y = frame.height - 1;
-            if (w <= 0 || w > frame.width - x) w = frame.width - x;
-            if (h <= 0 || h > frame.height - y) h = frame.height - y;
-            for (int cy = 0; cy < h; cy += step) {
-                if (request.stopped()) return;
-                const uint8_t *row = frame.bgra.data() + (size_t)(y + cy) * (size_t)frame.bytesPerRow;
-                for (int cx = 0; cx < w; cx += step) {
-                    if(!request.consume())return;
-                    const uint8_t *p = row + (size_t)(x + cx) * 4;
-                    int b = p[0], g = p[1], r = p[2];
-                    if (r >= rmin && r <= rmax && g >= gmin && g <= gmax && b >= bmin && b <= bmax) {
-                        double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
-                        ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d;;%llu;;%.3f;;%.3f", x + cx, y + cy, r, g, b, (unsigned long long)ageMs, totalMs, totalMs];
-                        return;
-                    }
-                }
-            }
-            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
-            ret = [NSString stringWithFormat:@"-1;;-1;;-1;;-1;;-1;;%llu;;%.3f;;%.3f", (unsigned long long)ageMs, totalMs, totalMs];
+            TLinkNativeFrameSearchRequest search;search.frame.pointCoord=pointCoord;
+            search.x=[data[2] doubleValue];search.y=[data[3] doubleValue];search.width=[data[4] doubleValue];search.height=[data[5] doubleValue];
+            search.redMin=[data[6] intValue];search.redMax=[data[7] intValue];search.greenMin=[data[8] intValue];search.greenMax=[data[9] intValue];
+            search.blueMin=[data[10] intValue];search.blueMax=[data[11] intValue];search.skip=[data[12] intValue];
+            TLinkNativeFrameSearchValue found;
+            const auto status=TLinkFrameSearchScan(frame.bgra.data(),frame.width,frame.height,size_t(frame.bytesPerRow),frame.scale,search,request,found);
+            if(status==TLinkFrameSearchStatus::CoordinateInvalid){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
+            if(status==TLinkFrameSearchStatus::Stopped)return;
+            double totalMs=(TLinkImageNowSeconds()-total0)*1000.0;
+            ret=[NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d;;%llu;;%.3f;;%.3f",found.x,found.y,found.red,found.green,found.blue,(unsigned long long)ageMs,totalMs,totalMs];
             return;
         }
 

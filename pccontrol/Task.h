@@ -116,6 +116,8 @@
 #include "../shared/TLinkNativeTouchRequest.h"
 #include "../shared/TLinkNativeColorRequest.h"
 #include "../shared/TLinkNativeFramePick.h"
+#include "../shared/TLinkNativeFrameSearch.h"
+NSDictionary *TLinkExecuteNativeFrameSearch(const TLinkNativeFrameSearchRequest &request,TLinkTaskExecutionContext *context);
 // Licensed numeric entry; preserves task context, deadlines and compatibility result fields.
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request, TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &requests, TLinkTaskExecutionContext *context);

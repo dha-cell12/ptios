@@ -809,12 +809,17 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         double x = TLinkautoJSDoubleOption(options, @"x", 0), y = TLinkautoJSDoubleOption(options, @"y", 0), width = TLinkautoJSDoubleOption(options, @"width", 0), height = TLinkautoJSDoubleOption(options, @"height", 0);
         NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
         if (!TLinkautoJSValidToken(coord) || !TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) return [TLinkJSNativeResponse responseWithError:@"frameFindColor options require finite x/y/width/height and valid coord" code:@-1];
-        NSString *payload = [NSString stringWithFormat:@"%d;;search_single;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d;;%@;;%d", frameId, x, y, width, height, TLinkautoJSIntOption(options, @"redMin", TLinkautoJSIntOption(options, @"rMin", 0)), TLinkautoJSIntOption(options, @"redMax", TLinkautoJSIntOption(options, @"rMax", 255)), TLinkautoJSIntOption(options, @"greenMin", TLinkautoJSIntOption(options, @"gMin", 0)), TLinkautoJSIntOption(options, @"greenMax", TLinkautoJSIntOption(options, @"gMax", 255)), TLinkautoJSIntOption(options, @"blueMin", TLinkautoJSIntOption(options, @"bMin", 0)), TLinkautoJSIntOption(options, @"blueMax", TLinkautoJSIntOption(options, @"bMax", 255)), TLinkautoJSIntOption(options, @"skip", 0), coord, TLinkautoJSIntOption(options, @"maxAgeMs", 1000)];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 9) return [TLinkJSNativeResponse responseWithValue:result];
-        int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue], foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY), @"red": @([TLinkautoJSSafeStringPart(parts, 3) intValue]), @"green": @([TLinkautoJSSafeStringPart(parts, 4) intValue]), @"blue": @([TLinkautoJSSafeStringPart(parts, 5) intValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 6) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 7) doubleValue])})];
+        TLinkNativeFrameSearchRequest search;search.frame.frameId=frameId;
+        search.setRegion(x,y,width,height);
+        search.redMin=TLinkautoJSIntOption(options,@"redMin",TLinkautoJSIntOption(options,@"rMin",0));search.redMax=TLinkautoJSIntOption(options,@"redMax",TLinkautoJSIntOption(options,@"rMax",255));
+        search.greenMin=TLinkautoJSIntOption(options,@"greenMin",TLinkautoJSIntOption(options,@"gMin",0));search.greenMax=TLinkautoJSIntOption(options,@"greenMax",TLinkautoJSIntOption(options,@"gMax",255));
+        search.blueMin=TLinkautoJSIntOption(options,@"blueMin",TLinkautoJSIntOption(options,@"bMin",0));search.blueMax=TLinkautoJSIntOption(options,@"blueMax",TLinkautoJSIntOption(options,@"bMax",255));
+        search.skip=TLinkautoJSIntOption(options,@"skip",0);search.frame.maxAgeMs=TLinkautoJSIntOption(options,@"maxAgeMs",1000);
+        if(!TLinkFrameSearchInputFits(search,coord.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        NSData *coordData=[coord dataUsingEncoding:NSUTF8StringEncoding];
+        if(!coordData||(coordData.length&&memchr(coordData.bytes,0,coordData.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *space=[coord lowercaseString];search.frame.pointCoord=[space isEqualToString:@"point"];search.frame.validCoord=search.frame.pointCoord||[space isEqualToString:@"pixel"];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrameSearch(search,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFrameIsColors] || [method isEqualToString:TLinkJSNativeMethodFrameFindMultiColor]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;

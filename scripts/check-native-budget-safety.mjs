@@ -101,6 +101,13 @@ try {
   assert.doesNotMatch(frameManyEntry,/processTaskWithContext|CFWriteStream|componentsSeparatedByString|\b(?:YES|NO)\b/);
   await writeFile(join(temp,"NativeFrameManyBridge.inc"),frameManyBridge);
   await writeFile(join(temp,"NativeFrameManyEntry.inc"),frameManyEntry);
+  const frameSearchBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFrameFindColor])","    else if ([method isEqualToString:TLinkJSNativeMethodFrameIsColors]");
+  const frameSearchEntry=between(task,"// BEGIN typed frame search task entry.","// END typed frame search task entry.");
+  assert.doesNotMatch(frameSearchBridge,/executeRawPayload|stringWithFormat|componentsSeparatedByString/);
+  assert.match(frameSearchEntry,/TLinkC01TaskBudget[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_COLOR_IN_FRAME,&denial\)[\s\S]*searchFrameColor/);
+  assert.doesNotMatch(frameSearchEntry,/processTaskWithContext|CFWriteStream|componentsSeparatedByString|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeFrameSearchBridge.inc"),frameSearchBridge);
+  await writeFile(join(temp,"NativeFrameSearchEntry.inc"),frameSearchEntry);
   const batchBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodBatch])","    else if ([method isEqualToString:TLinkJSNativeMethodRunShell])");
   const structuredBatch=between(batchBridge,"        if(structured) {","        NSMutableArray<NSString *> *wireCommands");
   assert.doesNotMatch(structuredBatch,/executeRawPayload|componentsJoinedByString|CFWriteStream|UTF8String/);
@@ -115,7 +122,7 @@ try {
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
     between(bridge,"static BOOL TLinkautoJSValidToken","static BOOL TLinkautoJSValidProtocolString") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
