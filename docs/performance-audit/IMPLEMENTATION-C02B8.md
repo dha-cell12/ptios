@@ -1,7 +1,7 @@
 # C02b8 — structured frame point-color comparison
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `d6147de`; the user reported the C02b7 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **corrected build reported passed by the user before C02b9 (`fc1b96a`); device qualification pending**.
 Finding: **P0-13, frameIsColors portion**. frameFindMultiColor and other typed methods/helper transport remain open.
 
 ## Result and scope
@@ -43,7 +43,7 @@ Root macOS CI reported an unknown TLinkNativeFrameColorsRequest type in ColorEnc
 
 The runner now extracts only the complete legacy encoder function and asserts on every host that the result contains one function and no frame decoder/type dependency. The actual frame decoder remains exercised by the native-budget bridge fixture, where its header and declaration order are present. Production behavior, C++11 color-fixture settings, strict warnings and sanitizers are unchanged.
 
-After the correction, the color runner passes 100k predicate comparisons, 5000 scan golden cases, 80k admission/byte lifecycles and the new fixture-isolation assertions on Windows. The native-budget portable/dependency runner also passes. Foundation/macOS compilation and iOS CI still require the corrected workflow run; they were not executed on this host.
+After the correction, the color runner passes 100k predicate comparisons, 5000 scan golden cases, 80k admission/byte lifecycles and the new fixture-isolation assertions on Windows. The native-budget portable/dependency runner also passes. The user subsequently reported the corrected build passed (`fc1b96a`) before C02b9. macOS/iOS execution was not independently performed on this host; device qualification remains pending.
 
 ## Acceptance and next slice
 

@@ -3,6 +3,7 @@
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
 #include "../shared/TLinkNativeFrameColors.h"
+#include "../shared/TLinkNativeFrameMulti.h"
 #include "../shared/TLinkModernImagePolicy.h"
 #include "../shared/TLinkColorPolicy.h"
 #include "../shared/TLinkC01Ingress.h"
@@ -39,6 +40,8 @@ NSDictionary *TLinkExecuteNativeFrameSearch(const TLinkNativeFrameSearchRequest 
 static void frameSearchLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeFrameColors(const TLinkNativeFrameColorsRequest &,TLinkTaskExecutionContext *);
 static void frameColorsLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+NSDictionary *TLinkExecuteNativeFrameMulti(const TLinkNativeFrameMultiRequest &,TLinkTaskExecutionContext *);
+static void frameMultiLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef stream, TLinkTaskExecutionContext *context) {
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
@@ -61,6 +64,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     if([mode isEqualToString:@"frameManyRuntime"]&&lastPayload.compare(0,2,"69")==0){frameManyLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameSearchRuntime"]&&lastPayload.compare(0,2,"69")==0){frameSearchLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameColorsRuntime"]&&lastPayload.compare(0,2,"69")==0){frameColorsLegacyTask(bytes,length,stream);return;}
+    if([mode isEqualToString:@"frameMultiRuntime"]&&lastPayload.compare(0,2,"69")==0){frameMultiLegacyTask(bytes,length,stream);return;}
     if ([mode isEqualToString:@"chunks"]) {
         notifyClient((UInt8 *)"0;;", stream);
         notifyClient((UInt8 *)"12345", stream);
@@ -83,6 +87,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeHelpersUnderTest.inc"
 @interface TLinkInProcessNativeBridge : NSObject
 - (TLinkJSNativeResponse *)legacyFrameColors:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyFrameMulti:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameSearch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameMany:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (NSDictionary *)executeRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context;
@@ -90,6 +95,12 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 @end
 @implementation TLinkInProcessNativeBridge
 #include "NativeBridgeUnderTest.inc"
+- (TLinkJSNativeResponse *)legacyFrameMulti:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-frame-multi-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyFrameColors:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -118,6 +129,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeFrameManyBridge.inc"
 #include "NativeFrameSearchBridge.inc"
 #include "NativeFrameColorsBridge.inc"
+#include "NativeFrameMultiBridge.inc"
 #include "NativeBatchBridgeUnderTest.inc"
     else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey]) {
         NSString *payload = [NSString stringWithFormat:@"30%d;;%d", [args[0] intValue], [args[1] intValue]];
@@ -298,6 +310,42 @@ static void frameColorsLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef st
     if(!frameColorsValues(r,value,&error)){notifyClient((UInt8 *)error.localizedDescription.UTF8String,stream);return;}
     NSString *raw=[NSString stringWithFormat:@"0;;%d;;%llu;;%.3f;;%.3f\r\n",value.matched?1:0,(unsigned long long)value.ageMs,value.totalMs,value.totalMs];notifyClient((UInt8 *)raw.UTF8String,stream);
 }
+static unsigned frameMultiReads=0;
+static bool frameMultiValues(const TLinkNativeFrameMultiRequest &search,TLinkNativeFrameMultiValue &value,NSError **error){
+    NSString *code=TLinkFrameMultiParameters(search)?frameReadError:@"invalid_frame_color_parameters";TLinkColorRect region;
+    if(!code&&!TLinkFrameMultiRegion(8,8,2,search,region))code=@"frame_coordinate_invalid";
+    if(!code){if(const char *tableError=TLinkFrameColorsTableError(search.colors))code=[NSString stringWithUTF8String:tableError];}
+    auto points=search.colors.points;
+    if(!code&&!TLinkFrameMultiOffsets(points,2,search.colors.frame.pointCoord))code=@"frame_coordinate_invalid";
+    if(!code){
+        std::vector<uint8_t> bgra(40*8,0xee);for(int y=0;y<8;++y)for(int x=0;x<8;++x){size_t at=size_t(y)*40+size_t(x)*4;bgra[at]=uint8_t(x);bgra[at+1]=uint8_t(y);bgra[at+2]=uint8_t(x+y);}
+        TLinkColorRequest work({});if(!TLinkFrameMultiScan(bgra.data(),8,8,40,region,points,search.colors.mode,search.colors.tolerance,search.skip,work,value))code=@"color_cancelled_or_timed_out";
+    }
+    if(code){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"1;;%@\r\n",code]}];return false;}
+    value.ageMs=7;value.totalMs=1.23456;return true;
+}
+static bool findFrameColors(const TLinkNativeFrameMultiRequest &search,TLinkNativeFrameMultiValue &value,NSError **error){
+    ++frameMultiReads;frameBudget=TLinkCurrentNativeBudget();assert(frameBudget&&!frameBudget->capturesResponse());
+    if(frameReadFault==1)[NSException raise:@"FrameMultiFixture" format:@"read throws"];
+    if(frameReadFault==2)throw std::runtime_error("frame multi fixture");
+    const bool ok=frameMultiValues(search,value,error);if(cancelFrameRead)[touchToken cancel];return ok;
+}
+static void frameMultiLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
+    NSString *payload=[[NSString alloc] initWithBytes:bytes+2 length:length-2 encoding:NSUTF8StringEncoding];
+    NSArray *fields=[payload componentsSeparatedByString:@";;"];assert(fields.count==12&&[fields[1] isEqualToString:@"find_multi_point"]);
+    TLinkNativeFrameMultiRequest r;r.colors.frame.frameId=[fields[0] intValue];r.colors.frame.maxAgeMs=[fields[11] intValue];r.colors.mode=[fields[7] intValue];r.skip=[fields[9] intValue];
+    r.x=[fields[2] doubleValue];r.y=[fields[3] doubleValue];r.width=[fields[4] doubleValue];r.height=[fields[5] doubleValue];
+    r.colors.toleranceValid=TLinkColorDouble([fields[8] UTF8String],r.colors.tolerance);r.colors.toleranceUnits=[fields[8] length];
+    NSString *coord=[fields[10] lowercaseString];r.colors.frame.pointCoord=[coord isEqualToString:@"point"];r.colors.frame.validCoord=r.colors.frame.pointCoord||[coord isEqualToString:@"pixel"];
+    NSString *table=fields[6];r.colors.tableUnits=table.length;NSArray *rows=[table componentsSeparatedByString:@"|"];r.colors.pointCount=rows.count;
+    for(NSString *row in rows){NSArray *parts=[row componentsSeparatedByString:@",,"];assert(parts.count==5);TLinkColorPoint point={};
+        const bool valid=TLinkColorInt([parts[0] UTF8String],point.dx)&&TLinkColorInt([parts[1] UTF8String],point.dy)&&TLinkColorInt([parts[2] UTF8String],point.r)&&TLinkColorInt([parts[3] UTF8String],point.g)&&TLinkColorInt([parts[4] UTF8String],point.b)&&TLinkColorRGB(point.r)&&TLinkColorRGB(point.g)&&TLinkColorRGB(point.b);
+        r.colors.tableValid=r.colors.tableValid&&valid;r.colors.points.push_back(point);
+    }
+    TLinkNativeFrameMultiValue value;NSError *error=nil;
+    if(!frameMultiValues(r,value,&error)){notifyClient((UInt8 *)error.localizedDescription.UTF8String,stream);return;}
+    NSString *raw=[NSString stringWithFormat:@"0;;%d;;%d;;%llu;;%.3f;;%.3f\r\n",value.x,value.y,(unsigned long long)value.ageMs,value.totalMs,value.totalMs];notifyClient((UInt8 *)raw.UTF8String,stream);
+}
 // Match Image.h: OpenCV leaves these macros undefined in production Task.xm.
 #pragma push_macro("YES")
 #pragma push_macro("NO")
@@ -309,6 +357,7 @@ static void frameColorsLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef st
 #include "NativeFrameManyEntry.inc"
 #include "NativeFrameSearchEntry.inc"
 #include "NativeFrameColorsEntry.inc"
+#include "NativeFrameMultiEntry.inc"
 #pragma pop_macro("NO")
 #pragma pop_macro("YES")
 static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 1024 * 1024) {
@@ -937,6 +986,73 @@ static void typedFrameColorsCases(TLinkInProcessNativeBridge *bridge){
     assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
     puts("Typed frame colors actual bridge/entry passed: 160 frozen JS/RAW cases, aliases/defaults/full table preflight, 512/513 and exact ingress/Unicode/NUL, scalar rounding/nonfinite modes, one task-69 gate, C01/caller deadlines, faults/output and no typed RAW dispatch.");
 }
+static void typedFrameMultiCases(TLinkInProcessNativeBridge *bridge){
+    const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameReadFault=0;frameReadError=nil;cancelFrameRead=false;};
+    const auto request=[](int id,NSArray *points,NSDictionary *options)->TLinkJSNativeRequest *{return [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodFrameFindMultiColor arguments:@[@(id),points,options]];};
+    const auto invoke=[bridge,request](int id,NSArray *points,NSDictionary *options,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{
+        TLinkJSNativeResponse *result=[bridge executeRequest:request(id,points,options) context:context error:nil];assert(!TLinkCurrentNativeBudget());return result;
+    };
+    const auto compare=[bridge,request,invoke,reset](int id,NSArray *points,NSDictionary *options,NSString *backendError){
+        mode=@"frameMultiRuntime";auto legacyContext=parent(30);reset(legacyContext);frameReadError=backendError;const int beforeLegacy=calls;
+        TLinkJSNativeResponse *legacy=[bridge legacyFrameMulti:request(id,points,options) context:legacyContext];const int dispatched=calls-beforeLegacy;assert(dispatched==0||dispatched==1);
+        auto context=parent(30);reset(context);frameReadError=backendError;const int beforeTyped=calls,beforeGate=licenseCalls;const unsigned beforeRead=frameMultiReads;
+        const uint64_t before=TLinkNativeNowNs();TLinkJSNativeResponse *typed=invoke(id,points,options,context);const uint64_t after=TLinkNativeNowNs();assert(typed.ok==legacy.ok);
+        if(typed.ok){if(![typed.value isEqual:legacy.value])std::fprintf(stderr,"frame multi parity: legacy %s, typed %s\n",[[legacy.value description] UTF8String],[[typed.value description] UTF8String]);assert([typed.value isEqual:legacy.value]);}
+        else assert([typed.errorMessage isEqualToString:legacy.errorMessage]&&[typed.errorCode isEqual:legacy.errorCode]);
+        assert(calls==beforeTyped&&licenseCalls==beforeGate+dispatched&&frameMultiReads==beforeRead+dispatched);
+        if(dispatched){assert(lastLicenseTask==69&&frameBudget==licenseBudget&&!frameBudget->capturesResponse()&&frameBudget->response().capacity()==0);
+            assert(frameBudget->deadline()>=before+3000000000ULL&&frameBudget->deadline()<=after+3000000000ULL);}
+        assert(!TLinkCurrentNativeBudget());
+    };
+    for(unsigned i=0;i<160;++i){
+        const double x=i<9?std::vector<double>{-1e308,double(INT_MIN),-1.5,-0.5,-0.0,0.5,1.5,double(INT_MAX),1e308}[i]:double(int(i%17)-3)*0.5;
+        const int modeValue=int(i%2);const double threshold=modeValue?std::vector<double>{0,0.99995,255.00004,255.00006}[i%4]:std::vector<double>{0.99995,0.8,1.00006,-0.00004}[i%4];
+        compare(1,@[@{@"x":@(x),@"y":@1.5,@"r":@4,@"g":@2,@"b":@2},@{}],@{@"coord":i%3?@"pixel":@"PoInT",@"mode":@(modeValue),@"value":@(threshold),@"maxAgeMs":@5000,@"x":@(double(int(i%9)-2)*0.5),@"y":@(-0.0),@"width":@(i%5),@"height":@0,@"skip":@(i%4)},nil);
+    }
+    NSArray *points=@[@{}],*missPoints=@[@{@"red":@255}],*badTable=@[@{@"red":@255},@{@"red":@999}];
+    compare(1,points,@{},nil);compare(1,missPoints,@{},nil);compare(1,badTable,@{},nil);
+    compare(1,@[@{@"red":@1,@"r":@0}],@{},nil);compare(1,@[@{@"red":[NSNull null],@"r":@0}],@{},nil);
+    for(NSArray *bad:@[@[],@[@[]],@[@1],@[@{@"x":@(NAN)}],@[@{@"y":@(INFINITY)}]])compare(1,bad,@{},nil);
+    compare(0,points,@{},nil);compare(-1,points,@{},nil);
+    NSMutableArray *many=[NSMutableArray array];for(unsigned i=0;i<512;++i)[many addObject:@{}];compare(1,many,@{},nil);[many addObject:@{}];compare(1,many,@{},nil);
+    [many removeAllObjects];for(unsigned i=0;i<40;++i)[many addObject:@{@"x":@(1e308)}];compare(1,many,@{},nil);[many addObject:@[]];compare(1,many,@{},nil);
+    for(NSDictionary *options:@[@{@"mode":@2},@{@"mode":@0,@"value":@(-0.00004)},@{@"mode":@1,@"value":@255.00004},@{@"mode":@0,@"tolerance":@1},@{@"mode":@0,@"value":@0.75,@"tolerance":@1},@{@"value":@(NAN)},@{@"value":@(-NAN)},@{@"value":@(INFINITY)},@{@"value":@(-INFINITY)},@{@"value":@(1e308)},@{@"maxAgeMs":@-1},@{@"maxAgeMs":@5001},@{@"maxAgeMs":@0}])compare(1,points,options,nil);
+    unichar nul=0,high=0xd800,low=0xdc00;unichar pair[]={0xd83d,0xde00};NSString *nulString=[NSString stringWithCharacters:&nul length:1];
+    for(NSString *coord:@[nulString,[@"pi" stringByAppendingString:nulString],[NSString stringWithCharacters:&high length:1],[NSString stringWithCharacters:&low length:1],[NSString stringWithCharacters:pair length:2],@"điểm",@"",@"pixel;;x",@"pixel\r",@"pixel\n"])compare(1,points,@{@"coord":coord},nil);
+    for(double threshold:{0.0,-0.0,-0.00004,0.99995,255.00004,1e308,double(NAN),double(-NAN),double(INFINITY),double(-INFINITY)}){
+        NSString *scalar=[NSString stringWithFormat:@"%.4f",threshold];
+        NSString *emptyWire=[NSString stringWithFormat:@"691;;find_multi_point;;0;;0;;0;;0;;0,,0,,0,,0,,0;;1;;%@;;0;;;;1000",scalar];const NSUInteger maxCoord=8192-emptyWire.length;
+        for(unsigned extra=0;extra<2;++extra){
+            NSString *coord=[@"x" stringByPaddingToLength:maxCoord+extra withString:@"x" startingAtIndex:0];compare(1,points,@{@"coord":coord,@"value":@(threshold)},nil);
+            coord=[nulString stringByPaddingToLength:maxCoord+extra withString:@"x" startingAtIndex:0];compare(1,points,@{@"coord":coord,@"value":@(threshold)},nil);
+        }
+    }
+    for(NSDictionary *options:@[@{@"x":@(NAN)},@{@"height":@(INFINITY)},@{@"skip":@-1},@{@"skip":@1024},@{@"skip":@1023},@{@"coord":@"point",@"width":@(double(INT_MAX)-1)},@{@"x":@(-100),@"y":@100},@{@"x":@2,@"y":@2,@"width":@1,@"height":@1}])compare(1,points,options,nil);
+    compare(1,@[@{@"x":@-1,@"red":@2,@"green":@2}],@{@"coord":@"point",@"x":@1,@"y":@1,@"width":@1,@"height":@1,@"mode":@0,@"value":@1},nil);
+    compare(1,@[@{@"x":@(INT_MAX)},@{@"red":@999}],@{@"coord":@"point"},nil);
+    compare(1,badTable,@{@"coord":@"point",@"width":@(double(INT_MAX)-1)},nil);
+    for(NSString *code:@[@"frame_not_found",@"frame_missing_bgra",@"frame_geometry_invalid",@"frame_expired",@"color_compute_busy",@"image_compute_busy"])compare(1,badTable,@{},code);
+    const int wireCalls=calls;auto context=parent();reset(context);NSDictionary *miss=invoke(1,missPoints,@{},context).value;
+    assert([miss[@"ok"] boolValue]&&![miss[@"matched"] boolValue]&&[miss[@"x"] intValue]==-1&&[miss[@"y"] intValue]==-1&&!miss[@"value"]);
+    context=parent();reset(context);licenseAllowed=false;const unsigned noRead=frameMultiReads;
+    NSDictionary *denied=invoke(1,points,@{},context).value;assert([denied[@"raw"] isEqualToString:@"-1;;license_required task=69\r\n"]&&frameMultiReads==noRead);
+    context=parent();reset(context);stopInLicense=true;failure(invoke(1,points,@{},context).value,@"AbortError");assert(frameMultiReads==noRead);
+    context=parent();reset(context);[context.cancellationToken cancel];const int noGate=licenseCalls;
+    failure(invoke(1,points,@{},context).value,@"AbortError");assert(licenseCalls==noGate&&frameMultiReads==noRead);
+    context=parent();reset(context);[context setNativeBudget:std::make_shared<TLinkNativeBudget>(nullptr,TLinkNativeNowNs()-1,4096)];
+    failure(invoke(1,points,@{},context).value,@"TimeoutError");assert(licenseCalls==noGate&&frameMultiReads==noRead);
+    context=parent(30);reset(context);licenseDelayMs=3100;auto caller=std::make_shared<TLinkNativeBudget>([context.cancellationToken nativeCancellation],TLinkNativeDeadline(30),4096);[context setNativeBudget:caller];
+    NSDictionary *expired=invoke(1,points,@{},context).value;assert([expired[@"raw"] isEqualToString:@"1;;native_cancelled_or_timed_out\r\n"]&&!caller->stopped()&&frameMultiReads==noRead);
+    context=parent();reset(context);cancelFrameRead=true;failure(invoke(1,points,@{},context).value,@"AbortError");
+    for(int fault:{1,2}){context=parent();reset(context);frameReadFault=fault;failure(invoke(1,points,@{},context).value,@"native_exception");}
+    for(NSArray *list:@[points,missPoints]){
+        context=parent();reset(context);NSDictionary *success=invoke(1,list,@{},context).value;const NSUInteger bytes=[success[@"raw"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        context=parent(1,bytes);reset(context);assert([invoke(1,list,@{},context).value[@"ok"] boolValue]);
+        context=parent(1,bytes-1);reset(context);failure(invoke(1,list,@{},context).value,@"response_too_large");
+    }
+    assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
+    puts("Typed frame multi actual bridge/entry passed: 160 frozen JS/RAW ROI/offset/skip cases, aliases/defaults/full table preflight, 512/513 and exact ingress/Unicode/NUL, ROI/table/offset precedence, scalar modes, one task-69 gate, C01/caller deadlines, faults/output and no typed RAW dispatch.");
+}
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";
     auto context = parent();
@@ -1038,5 +1154,6 @@ int main() { @autoreleasepool {
     typedFramePickManyCases(bridge);
     typedFrameSearchCases(bridge);
     typedFrameColorsCases(bridge);
+    typedFrameMultiCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

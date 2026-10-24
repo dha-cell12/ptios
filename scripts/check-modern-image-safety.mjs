@@ -14,7 +14,8 @@ assert.ok(scale.indexOf('request->reserve(')<scale.indexOf('cv::resize('));
 assert.match(sad,/request->consume\(size_t\(w\)\)/);
 const color=section('// BEGIN numeric frame color pick.','NSString* handleFrameBatchTaskFromRawData');
 assert.match(color,/TLinkColorRequest request/);assert.match(color,/zx_frameColorInputs/);
-assert.match(color,/TLinkColorAnchors/);assert.match(color,/request.consume/);
+assert.match(color,/TLinkFrameMultiScan/);
+assert.match(await readFile(join(root,'shared/TLinkNativeFrameMulti.h'),'utf8'),/TLinkColorAnchors/);assert.match(color,/request.consume/);
 assert.doesNotMatch(color,/-minDx|\[data\[12\] intValue\] \+ 1;[\s\S]*?if \(step <= 0\)/);
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-modern-image-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
@@ -29,7 +30,7 @@ try{
  await writeFile(join(temp,'FrameColorHelpers.inc'),
   section('static NSError *zx_frameError(','static std::string zx_stringFromPart(')+
   section('static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData)\n{','static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, int *outW, int *outH, int *outBpr)\n{')+
-  section('static inline bool zx_bgraColorMatch(int r, int g, int b, int tr, int tg, int tb, int mode, double value)\n{','// Decode the same bounded byte sequence'));
+  section('static bool zx_parsePointTableVector(NSString *tableStr, std::vector<ZXPointColor> &points, NSError **error)\n{','// Decode the same bounded byte sequence'));
  const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
  const binary=join(temp,windows?'modern-image.exe':'modern-image'),file=join(root,'test/modern-image-safety-test.cpp');
  run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',`/I${temp}`,file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]

@@ -2,6 +2,7 @@
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
 #include "../shared/TLinkNativeFrameColors.h"
+#include "../shared/TLinkNativeFrameMulti.h"
 #include <cassert>
 #include <cstdio>
 #include <functional>
@@ -120,7 +121,44 @@ static void frameColorsPolicyCases(){
     {TLinkColorRequest work(parent);TLinkFrameColorsEvaluate(bgra.data(),8,8,40,1,points,false,1,0,work,matched);assert(work.stopped());}
     puts("Frame colors policy passed: 10k frozen mode/scale/stride comparisons and exact wire limits, strict signed integers/RGB, 512/513 and saturated tables, mode/tolerance and work/cancel bounds.");
 }
+#include "fixtures/frame-multi-legacy-v1.inc"
+static void frameMultiPolicyCases(){
+    std::vector<uint8_t> bgra(40*8,0xee);for(int y=0;y<8;++y)for(int x=0;x<8;++x){const size_t i=size_t(y)*40+size_t(x)*4;bgra[i]=uint8_t(x);bgra[i+1]=uint8_t(y);bgra[i+2]=uint8_t(x+y);}
+    for(unsigned i=0;i<10000;++i){
+        TLinkNativeFrameMultiRequest r;r.colors.frame.frameId=1;r.colors.frame.pointCoord=i%2!=0;r.colors.frame.maxAgeMs=int(i%5001);r.colors.mode=int(i%2);r.skip=int(i%11);
+        r.setRegion(double(int(i%19)-5)*0.5,double(int(i%13)-3)*0.5,double(int(i%17)-4)*0.5,double(int(i%9)-2)*0.5);
+        if(i%113==0)r.setRegion(double(INT_MAX)-1,0,0,0);
+        char threshold[80];std::snprintf(threshold,sizeof(threshold),"%.4f",r.colors.mode?double(i%6)+0.99995:double(i%5)*0.25);
+        r.colors.toleranceUnits=std::strlen(threshold);r.colors.toleranceValid=TLinkColorDouble(threshold,r.colors.tolerance);
+        std::string table;
+        for(unsigned j=0;j<i%8+1;++j){
+            double x=double(int((i+j)%7)-3)*0.5,y=double(int(j%5)-2)*0.5;
+            if(i%97==0)x=double(INT_MIN);if(i%127==0)y=double(INT_MAX);
+            const int red=int((i+j)%16),green=int((i+j)%8),blue=int(j%8);
+            r.colors.append(x,y,red,green,blue);char row[800];std::snprintf(row,sizeof(row),"%.0f,,%.0f,,%d,,%d,,%d",x,y,red,green,blue);if(j)table+='|';table+=row;
+        }
+        assert(TLinkFrameMultiParameters(r)&&!TLinkFrameColorsTableError(r.colors));
+        const double scale=std::vector<double>{0.5,1,2,3.25,16}[i%5];int oldX=-1,oldY=-1;
+        const bool oldValid=legacyFrameMulti(bgra.data(),8,8,40,scale,r,oldX,oldY);
+        TLinkColorRect region;auto points=r.colors.points;const bool valid=TLinkFrameMultiRegion(8,8,scale,r,region)&&TLinkFrameMultiOffsets(points,scale,r.colors.frame.pointCoord);
+        assert(valid==oldValid);if(valid){TLinkNativeFrameMultiValue value;TLinkColorRequest work({});assert(TLinkFrameMultiScan(bgra.data(),8,8,40,region,points,r.colors.mode,r.colors.tolerance,r.skip,work,value));assert(value.x==oldX&&value.y==oldY);}
+        char prefix[180],suffix[100];std::snprintf(prefix,sizeof(prefix),"69%d;;find_multi_point;;%.0f;;%.0f;;%.0f;;%.0f;;",r.colors.frame.frameId,r.x,r.y,r.width,r.height);
+        std::snprintf(suffix,sizeof(suffix),";;%d;;%s;;%d;;;;%d",r.colors.mode,threshold,r.skip,r.colors.frame.maxAgeMs);
+        const size_t base=std::strlen(prefix)+table.size()+std::strlen(suffix),maxCoord=8192-base;
+        assert(TLinkFrameMultiInputFits(r,maxCoord)&&!TLinkFrameMultiInputFits(r,maxCoord+1));
+    }
+    TLinkNativeFrameMultiRequest r;r.colors.frame.frameId=1;r.colors.append(0,0,0,0,0);
+    for(size_t huge:{SIZE_MAX,size_t(8193)}){assert(!TLinkFrameMultiInputFits(r,huge));r.regionUnits=huge;assert(!TLinkFrameMultiInputFits(r,0));r.regionUnits=4;r.colors.tableUnits=huge;assert(!TLinkFrameMultiInputFits(r,0));r.colors.tableUnits=12;r.colors.toleranceUnits=huge;assert(!TLinkFrameMultiInputFits(r,0));r.colors.toleranceUnits=6;}
+    r.skip=-1;assert(!TLinkFrameMultiParameters(r));r.skip=1024;assert(!TLinkFrameMultiParameters(r));r.skip=1023;assert(TLinkFrameMultiParameters(r));r.skip=0;
+    TLinkColorRect region;assert(TLinkFrameMultiRegion(8,8,2,r,region));std::vector<TLinkColorPoint> points{{0,0,255,0,0}};TLinkNativeFrameMultiValue out;
+    {TLinkColorRequest work({},TLinkNativeNowNs(),1);assert(!TLinkFrameMultiScan(bgra.data(),8,8,40,region,points,1,0,0,work,out)&&work.stopped());}
+    auto token=std::make_shared<TLinkNativeCancellation>();token->cancel();auto parent=std::make_shared<TLinkNativeBudget>(token,0,4096);
+    {TLinkColorRequest work(parent);assert(!TLinkFrameMultiScan(bgra.data(),8,8,40,region,points,1,0,0,work,out)&&work.stopped());}
+    {TLinkColorRequest work({},TLinkNativeNowNs()-3000000001ULL);assert(!TLinkFrameMultiScan(bgra.data(),8,8,40,region,points,1,0,0,work,out)&&work.stopped());}
+    puts("Frame multi policy passed: 10k frozen ROI/offset/mode/scale/stride/skip scans and exact wire limits, coordinate overflow, saturated ingress and deterministic work/cancel/deadline bounds.");
+}
 int main(){
+    frameMultiPolicyCases();
     frameColorsPolicyCases();
     frameSearchPolicyCases();
     frameManyPolicyCases();

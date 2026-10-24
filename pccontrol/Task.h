@@ -117,6 +117,8 @@
 #include "../shared/TLinkNativeColorRequest.h"
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
+#include "../shared/TLinkNativeFrameMulti.h"
+NSDictionary *TLinkExecuteNativeFrameMulti(const TLinkNativeFrameMultiRequest &request,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeFrameColors.h"
 NSDictionary *TLinkExecuteNativeFrameColors(const TLinkNativeFrameColorsRequest &request,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeFrameSearch(const TLinkNativeFrameSearchRequest &request,TLinkTaskExecutionContext *context);

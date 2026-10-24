@@ -856,22 +856,26 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrameColors(check,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFrameFindMultiColor]) {
-        int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;
-        NSArray *points = [args count] > 1 ? [args objectAtIndex:1] : @[];
-        NSDictionary *options = [args count] > 2 ? [args objectAtIndex:2] : @{};
-        NSString *table = TLinkautoJSEncodePointColorTable(points);
-        if (frameId <= 0 || !table) return [TLinkJSNativeResponse responseWithError:@"frame color method requires a frame id and point colors" code:@-1];
-        NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
-        if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
-        int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
-        double x = TLinkautoJSDoubleOption(options, @"x", 0), y = TLinkautoJSDoubleOption(options, @"y", 0), width = TLinkautoJSDoubleOption(options, @"width", 0), height = TLinkautoJSDoubleOption(options, @"height", 0);
-        if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) return [TLinkJSNativeResponse responseWithError:@"frameFindMultiColor options require finite x/y/width/height" code:@-1];
-        NSString *payload = [NSString stringWithFormat:@"%d;;find_multi_point;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%.4f;;%d;;%@;;%d", frameId, x, y, width, height, table, TLinkautoJSIntOption(options, @"mode", 1), TLinkautoJSDoubleOption(options, @"value", TLinkautoJSDoubleOption(options, @"tolerance", 0)), TLinkautoJSIntOption(options, @"skip", 0), coord, maxAgeMs];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 6) return [TLinkJSNativeResponse responseWithValue:result];
-        int foundX = [TLinkautoJSSafeStringPart(parts, 1) intValue], foundY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"matched": @(foundX >= 0 && foundY >= 0), @"x": @(foundX), @"y": @(foundY), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 3) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 4) doubleValue])})];
+        int frameId=[args count]>0?[[args objectAtIndex:0] intValue]:0;
+        NSArray *points=[args count]>1?[args objectAtIndex:1]:@[];
+        NSDictionary *options=[args count]>2?[args objectAtIndex:2]:@{};
+        TLinkNativeFrameMultiRequest search;const bool decoded=TLinkautoJSDecodePointColors(points,search.colors);
+        if(frameId<=0||!decoded)return [TLinkJSNativeResponse responseWithError:@"frame color method requires a frame id and point colors" code:@-1];
+        NSString *coord=TLinkautoJSStringOption(options,@"coord",@"pixel");
+        if(!TLinkautoJSValidToken(coord))return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
+        search.colors.frame.frameId=frameId;search.colors.frame.maxAgeMs=TLinkautoJSIntOption(options,@"maxAgeMs",1000);
+        double x=TLinkautoJSDoubleOption(options,@"x",0),y=TLinkautoJSDoubleOption(options,@"y",0),width=TLinkautoJSDoubleOption(options,@"width",0),height=TLinkautoJSDoubleOption(options,@"height",0);
+        if(!TLinkautoJSIsFiniteNumber(x)||!TLinkautoJSIsFiniteNumber(y)||!TLinkautoJSIsFiniteNumber(width)||!TLinkautoJSIsFiniteNumber(height))return [TLinkJSNativeResponse responseWithError:@"frameFindMultiColor options require finite x/y/width/height" code:@-1];
+        search.setRegion(x,y,width,height);search.colors.mode=TLinkautoJSIntOption(options,@"mode",1);
+        // Preserve the bounded scalar formatter's four decimals and nonfinite spelling.
+        NSString *threshold=[NSString stringWithFormat:@"%.4f",TLinkautoJSDoubleOption(options,@"value",TLinkautoJSDoubleOption(options,@"tolerance",0))];
+        search.colors.toleranceUnits=threshold.length;search.colors.toleranceValid=TLinkColorDouble(threshold.UTF8String,search.colors.tolerance);
+        search.skip=TLinkautoJSIntOption(options,@"skip",0);
+        if(!TLinkFrameMultiInputFits(search,coord.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        NSData *coordData=[coord dataUsingEncoding:NSUTF8StringEncoding];
+        if(!coordData||(coordData.length&&memchr(coordData.bytes,0,coordData.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *space=[coord lowercaseString];search.colors.frame.pointCoord=[space isEqualToString:@"point"];search.colors.frame.validCoord=search.colors.frame.pointCoord||[space isEqualToString:@"pixel"];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrameMulti(search,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFindImageInFrame]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;

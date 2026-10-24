@@ -226,7 +226,6 @@ static bool zx_stringIsPointCoord(NSString *coord);
 static int zx_coordToPixel(double value, double scale, bool pointCoord);
 static bool zx_frameTooOld(const ZXFrameObject &frame, uint64_t maxAgeMs, uint64_t nowMs, NSError **error);
 static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, int *outW, int *outH, int *outBpr);
-static inline bool zx_bgraColorMatch(int r, int g, int b, int tr, int tg, int tb, int mode, double value);
 static bool zx_parsePointTableVector(NSString *tableStr, std::vector<ZXPointColor> &points, NSError **error);
 static inline void zx_readBGRA(const ZXFrameObject &frame, int x, int y, int *r, int *g, int *b);
 
@@ -848,6 +847,32 @@ bool testFrameColors(const TLinkNativeFrameColorsRequest &check,TLinkNativeFrame
 }
 // END numeric frame color comparison.
 
+// BEGIN numeric frame multi search.
+bool findFrameColors(const TLinkNativeFrameMultiRequest &check,TLinkNativeFrameMultiValue &value,NSError **error){
+    TLinkColorRequest request(TLinkCurrentNativeBudget());
+    if(!request.admitted()){if(error)*error=zx_frameError(@"1;;color_compute_busy\r\n");return false;}
+    if(!TLinkFrameMultiParameters(check)){if(error)*error=zx_frameError(@"1;;invalid_frame_color_parameters\r\n");return false;}
+    TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return false;}
+    ZXFrameRef snapshot=zx_snapshotFrame(uint32_t(check.colors.frame.frameId));NSError *failure=nil;bool ok=false;
+    [&] {
+        const uint64_t nowMs=zx_nowMs();if(!zx_framePickBGRA(snapshot,&failure))return;
+        const ZXFrameObject &frame=*snapshot;value.ageMs=nowMs>=frame.createdAtMs?nowMs-frame.createdAtMs:0;
+        const double started=TLinkImageNowSeconds();
+        if(zx_frameTooOld(frame,uint64_t(check.colors.frame.maxAgeMs),nowMs,&failure))return;
+        TLinkColorRect region;
+        if(!TLinkFrameMultiRegion(frame.width,frame.height,frame.scale,check,region)){failure=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
+        if(const char *code=TLinkFrameColorsTableError(check.colors)){failure=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",code]);return;}
+        auto points=check.colors.points;
+        if(!TLinkFrameMultiOffsets(points,frame.scale,check.colors.frame.pointCoord)){failure=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
+        if(!TLinkFrameMultiScan(frame.bgra.data(),frame.width,frame.height,size_t(frame.bytesPerRow),region,points,check.colors.mode,check.colors.tolerance,check.skip,request,value))return;
+        value.totalMs=(TLinkImageNowSeconds()-started)*1000.0;ok=true;
+    }();
+    if(request.stopped())failure=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",request.error()]);
+    if(failure){if(error)*error=failure;return false;}return ok;
+}
+// END numeric frame multi search.
+
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     TLinkColorRequest request(TLinkCurrentNativeBudget());
@@ -952,51 +977,17 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             bool pointCoord = ([data count] >= 11) ? zx_stringIsPointCoord(data[10]) : false;
             uint64_t maxAgeMs = ([data count] >= 12) ? (uint64_t)MAX(0, [data[11] longLongValue]) : kDefaultFrameTtlMs;
             if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
-            int regionX = zx_coordToPixel([data[2] doubleValue], frame.scale, pointCoord);
-            int regionY = zx_coordToPixel([data[3] doubleValue], frame.scale, pointCoord);
-            int regionW = zx_coordToPixel([data[4] doubleValue], frame.scale, pointCoord);
-            int regionH = zx_coordToPixel([data[5] doubleValue], frame.scale, pointCoord);
-            if(regionX==INT_MIN||regionY==INT_MIN||regionW==INT_MIN||regionH==INT_MIN){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
+            TLinkNativeFrameMultiRequest search;search.colors.frame.pointCoord=pointCoord;
+            search.x=[data[2] doubleValue];search.y=[data[3] doubleValue];search.width=[data[4] doubleValue];search.height=[data[5] doubleValue];
+            TLinkColorRect region;
+            if(!TLinkFrameMultiRegion(frame.width,frame.height,frame.scale,search,region)){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
             std::vector<ZXPointColor> points;
-            if (!zx_parsePointTableVector(data[6], points, &blockErr)) return;
-            int colorMode = [data[7] intValue];
-            double value = [data[8] doubleValue];
-            int step = [data[9] intValue] + 1;
-            if (regionX < 0) regionX = 0; if (regionY < 0) regionY = 0;
-            if (regionX >= frame.width) regionX = frame.width - 1; if (regionY >= frame.height) regionY = frame.height - 1;
-            if (regionW <= 0 || regionW > frame.width - regionX) regionW = frame.width - regionX;
-            if (regionH <= 0 || regionH > frame.height - regionY) regionH = frame.height - regionY;
-            for(auto &pc:points){int dx=0,dy=0;
-                if(!TLinkFrameColorCoordinate(pc.dx,frame.scale,pointCoord,dx)||!TLinkFrameColorCoordinate(pc.dy,frame.scale,pointCoord,dy)){
-                    blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;
-                }pc.dx=dx;pc.dy=dy;
-            }
-            TLinkColorRect region;region.x=regionX;region.y=regionY;region.width=regionW;region.height=regionH;
-            TLinkColorRect anchors,crop;
-            const bool hasAnchors=TLinkColorAnchors(frame.width,frame.height,region,points,anchors,crop);
-            const int axStart=anchors.x,ayStart=anchors.y;
-            const int axEnd=hasAnchors?anchors.x+anchors.width-1:-1,ayEnd=hasAnchors?anchors.y+anchors.height-1:-1;
-            if (axStart <= axEnd && ayStart <= ayEnd) {
-                for (int ay = ayStart; ay <= ayEnd; ay += step) {
-                    if (request.stopped()) return;
-                    for (int ax = axStart; ax <= axEnd; ax += step) {
-                        bool ok = true;
-                        for (const ZXPointColor &pc : points) {
-                            int r = 0, g = 0, b = 0;
-                            if(!request.consume())return;
-                            zx_readBGRA(frame, ax + pc.dx, ay + pc.dy, &r, &g, &b);
-                            if (!zx_bgraColorMatch(r, g, b, pc.r, pc.g, pc.b, colorMode, value)) { ok = false; break; }
-                        }
-                        if (ok) {
-                            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
-                            ret = [NSString stringWithFormat:@"%d;;%d;;%llu;;%.3f;;%.3f", ax, ay, (unsigned long long)ageMs, totalMs, totalMs];
-                            return;
-                        }
-                    }
-                }
-            }
-            double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
-            ret = [NSString stringWithFormat:@"-1;;-1;;%llu;;%.3f;;%.3f", (unsigned long long)ageMs, totalMs, totalMs];
+            if(!zx_parsePointTableVector(data[6],points,&blockErr))return;
+            if(!TLinkFrameMultiOffsets(points,frame.scale,pointCoord)){blockErr=zx_frameError(@"1;;frame_coordinate_invalid\r\n");return;}
+            TLinkNativeFrameMultiValue found;
+            if(!TLinkFrameMultiScan(frame.bgra.data(),frame.width,frame.height,size_t(frame.bytesPerRow),region,points,[data[7] intValue],[data[8] doubleValue],[data[9] intValue],request,found))return;
+            double totalMs=(TLinkImageNowSeconds()-total0)*1000.0;
+            ret=[NSString stringWithFormat:@"%d;;%d;;%llu;;%.3f;;%.3f",found.x,found.y,(unsigned long long)ageMs,totalMs,totalMs];
             return;
         }
 
@@ -1462,19 +1453,6 @@ static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, 
     if (outH) *outH = height;
     if (outBpr) *outBpr = bytesPerRow;
     return true;
-}
-
-static inline bool zx_bgraColorMatch(int r, int g, int b, int tr, int tg, int tb, int mode, double value)
-{
-    int dr = abs(r - tr);
-    int dg = abs(g - tg);
-    int db = abs(b - tb);
-    if (mode == 1) {
-        int dev = (int)value;
-        return dr <= dev && dg <= dev && db <= dev;
-    }
-    double sim = 1.0 - ((double)dr + (double)dg + (double)db) / (3.0 * 255.0);
-    return sim >= value;
 }
 
 static bool zx_parsePointTableVector(NSString *tableStr, std::vector<ZXPointColor> &points, NSError **error)
