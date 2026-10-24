@@ -78,6 +78,14 @@ try {
   const press = between(bridge, "    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey])",
     "    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake])");
   const typedTouch=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodTap])","    else if ([method isEqualToString:TLinkJSNativeMethodPickColor])");
+  const colorBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodPickColor])","    else if ([method isEqualToString:TLinkJSNativeMethodScreenshotRegion])");
+  const colorEntry=between(task,"// BEGIN typed color task entry.","// END typed color task entry.");
+  assert.doesNotMatch(colorBridge,/executeRawPayload|stringWithFormat|componentsSeparatedByString/);
+  assert.match(colorBridge,/TLinkExecuteNativeColorPick\(pick,context\)/);
+  assert.match(colorEntry,/TLinkC01TaskBudget[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_COLOR_PICKER,&denial\)[\s\S]*getRGBAtPosition/);
+  assert.doesNotMatch(colorEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeColorBridgeUnderTest.inc"),colorBridge);
+  await writeFile(join(temp,"NativeColorEntryUnderTest.inc"),colorEntry);
   const batchBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodBatch])","    else if ([method isEqualToString:TLinkJSNativeMethodRunShell])");
   const structuredBatch=between(batchBridge,"        if(structured) {","        NSMutableArray<NSString *> *wireCommands");
   assert.doesNotMatch(structuredBatch,/executeRawPayload|componentsJoinedByString|CFWriteStream|UTF8String/);
@@ -89,7 +97,7 @@ try {
     between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -117,7 +125,7 @@ try {
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
-  assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"/);
+  assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
     const runtime = join(temp, "native-bridge-runtime-test");

@@ -114,9 +114,11 @@
 
 #ifdef __cplusplus
 #include "../shared/TLinkNativeTouchRequest.h"
+#include "../shared/TLinkNativeColorRequest.h"
 // Licensed numeric entry; preserves task context, deadlines and compatibility result fields.
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request, TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &requests, TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request, TLinkTaskExecutionContext *context);
 #endif
 
 // Compatibility entry point: buff must be a complete NUL-terminated task string.

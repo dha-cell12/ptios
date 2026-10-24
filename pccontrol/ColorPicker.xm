@@ -103,11 +103,18 @@ static CGImageRef zx_colorCapture(TLinkColorRequest &request,NSError **error){
     if(request.stopped()){zx_colorError(error,request.error());return NULL;}
     return [Screen createScreenShotCGImageRef];
 }
+static NSDictionary *zx_colorPickScreen(int x,int y,TLinkColorRequest &request,NSError **error){
+    if(x<0||y<0||x>=8192||y>=8192){zx_colorError(error,"color_parameters_invalid");return nil;}
+    ZXColorImage screen(zx_colorCapture(request,error));return zx_colorPick(screen.value,x,y,request,error);
+}
+NSDictionary* getRGBAtPosition(int x,int y,NSError **error){
+    return zx_colorRun([&](TLinkColorRequest &request)->id{return zx_colorPickScreen(x,y,request,error);},error);
+}
 NSDictionary* getRGBFromRawData(UInt8 *eventData,NSError **error){
     return zx_colorRun([&](TLinkColorRequest &request)->id{
         NSArray<NSString *> *parts=zx_colorPayload(eventData,error);if(!parts)return nil;int x=0,y=0;
-        if(!zx_colorInt(parts,0,x)||!zx_colorInt(parts,1,y)||x<0||y<0||x>=8192||y>=8192){zx_colorError(error,"color_parameters_invalid");return nil;}
-        ZXColorImage screen(zx_colorCapture(request,error));return zx_colorPick(screen.value,x,y,request,error);
+        if(!zx_colorInt(parts,0,x)||!zx_colorInt(parts,1,y)){zx_colorError(error,"color_parameters_invalid");return nil;}
+        return zx_colorPickScreen(x,y,request,error);
     },error);
 }
 NSString* searchRGBFromRawData(UInt8 *eventData,NSError **error){

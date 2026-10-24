@@ -1,4 +1,7 @@
 #include "../shared/TLinkNativeTouchRequest.h"
+#include "../shared/TLinkNativeColorRequest.h"
+#include "../shared/TLinkColorPolicy.h"
+#include "../shared/TLinkC01Ingress.h"
 // Actual bridge, context, response writer and gestures; hardware/task/UI doubles only.
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -23,7 +26,8 @@ static TLinkTaskExecutionContext *observed;
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &,TLinkTaskExecutionContext *);
 static bool zx_handleNativeBatch(UInt8 *,NSError **);
-enum {TASK_NATIVE_BATCH=65};
+enum {TASK_NATIVE_BATCH=65,TASK_COLOR_PICKER=23};
+NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &,TLinkTaskExecutionContext *);
 static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef stream, TLinkTaskExecutionContext *context) {
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
@@ -70,6 +74,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     if (false) {}
 #include "NativePressUnderTest.inc"
 #include "NativeTouchBridgeUnderTest.inc"
+#include "NativeColorBridgeUnderTest.inc"
 #include "NativeBatchBridgeUnderTest.inc"
     else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey]) {
         NSString *payload = [NSString stringWithFormat:@"30%d;;%d", [args[0] intValue], [args[1] intValue]];
@@ -125,13 +130,26 @@ static bool touchWaitNs(uint64_t ns){
 #undef TLinkNativeWaitNs
 static bool licenseAllowed=true,stopInLicense=false;
 static int licenseCalls=0,lastLicenseTask=0;
+static unsigned licenseDelayMs=0;
 static TLinkNativeBudgetPtr licenseBudget;
 static BOOL TLinkRootfullLicenseTaskAllowed(NSInteger task,NSString **denial){
     ++licenseCalls;lastLicenseTask=int(task);licenseBudget=TLinkCurrentNativeBudget();
     assert(TLinkCurrentNativeBudget() && !TLinkCurrentNativeBudget()->capturesResponse());
+    if(licenseDelayMs)std::this_thread::sleep_for(std::chrono::milliseconds(licenseDelayMs));
     if(stopInLicense)[touchToken cancel];
     if(!licenseAllowed && denial)*denial=[NSString stringWithFormat:@"-1;;license_required task=%ld\r\n",(long)task];
     return licenseAllowed;
+}
+static int colorCalls=0,colorFault=0;static bool cancelColor=false;static NSString *colorError=nil;
+static TLinkNativeBudgetPtr colorBudget;
+static NSDictionary *getRGBAtPosition(int x,int y,NSError **error){
+    ++colorCalls;colorBudget=TLinkCurrentNativeBudget();assert(colorBudget&&!colorBudget->capturesResponse());
+    if(colorFault==1)[NSException raise:@"ColorFixture" format:@"read throws"];
+    if(colorFault==2)throw std::runtime_error("color fixture");
+    NSString *code=(x<0||y<0||x>=8192||y>=8192)?@"color_parameters_invalid":colorError;
+    if(code){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n",code]}];return nil;}
+    if(cancelColor)[touchToken cancel];
+    return @{@"red":@(x%256),@"green":@(y%256),@"blue":@((x+y)%256)};
 }
 // Match Image.h: OpenCV leaves these macros undefined in production Task.xm.
 #pragma push_macro("YES")
@@ -139,6 +157,7 @@ static BOOL TLinkRootfullLicenseTaskAllowed(NSInteger task,NSString **denial){
 #undef YES
 #undef NO
 #include "NativeTouchEntryUnderTest.inc"
+#include "NativeColorEntryUnderTest.inc"
 #pragma pop_macro("NO")
 #pragma pop_macro("YES")
 static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 1024 * 1024) {
@@ -446,6 +465,60 @@ static void typedBatchCases(TLinkInProcessNativeBridge *bridge){
     mode=@"echo";fakeTiming=false;cancelAt=0;throwAt=0;touchToken=nil;licenseBudget.reset();
     puts("Typed batch actual bridge/entry passed: legacy task-65 frame/timestamp/reply parity, 256 commands, exact 8192/8193 ingress, full JS prevalidation, one license gate, first failure, cancellation/exception UP, output cap and RAW compatibility.");
 }
+static void typedColorCases(TLinkInProcessNativeBridge *bridge){
+    const auto reset=[](TLinkTaskExecutionContext *context){
+        touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;colorFault=0;cancelColor=false;colorError=nil;
+    };
+    const auto invoke=[bridge](double x,double y,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{
+        auto request=[[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodPickColor arguments:@[@(x),@(y)]];
+        TLinkJSNativeResponse *result=[bridge executeRequest:request context:context error:nil];assert(!TLinkCurrentNativeBudget());return result;
+    };
+    const int rawBefore=calls;
+    for(unsigned i=0;i<200;++i){
+        const double x=i<12?std::vector<double>{-1e308,-1.5,-0.5,-0.0,0.5,1.5,2.5,8191.49,8191.5,8192,2147483648.0,1e308}[i]:double(i)*47.125-8.5;
+        const double y=double(i)*0.5;auto context=parent(30);reset(context);const int gates=licenseCalls;
+        const uint64_t before=TLinkNativeNowNs();TLinkJSNativeResponse *response=invoke(x,y,context);assert(response.ok);
+        NSDictionary *result=response.value;assert(licenseCalls==gates+1&&lastLicenseTask==23&&colorBudget->response().capacity()==0);
+        const uint64_t after=TLinkNativeNowNs();
+        assert(colorBudget==licenseBudget&&colorBudget->deadline()>=before+3000000000ULL&&colorBudget->deadline()<=after+3000000000ULL);
+        NSString *wire=[NSString stringWithFormat:@"%.0f;;%.0f",x,y];NSArray *parts=[wire componentsSeparatedByString:@";;"];int px=0,py=0;
+        if(!TLinkColorInt([parts[0] UTF8String],px)||!TLinkColorInt([parts[1] UTF8String],py)||px<0||py<0||px>=8192||py>=8192){
+            assert([result[@"raw"] isEqualToString:@"-1;;color_parameters_invalid\r\n"]);continue;
+        }
+        NSString *expected=[NSString stringWithFormat:@"0;;%d;;%d;;%d\r\n",px%256,py%256,(px+py)%256];
+        assert([result[@"ok"] boolValue]&&[result[@"raw"] isEqualToString:expected]);
+        assert([result[@"parts"] isEqualToArray:[[expected stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"]]);
+        assert([result[@"red"] intValue]==px%256&&[result[@"green"] intValue]==py%256&&[result[@"blue"] intValue]==(px+py)%256);
+    }
+    auto context=parent();reset(context);const int noRead=colorCalls;
+    licenseAllowed=false;NSDictionary *denied=invoke(0,0,context).value;
+    assert([denied[@"raw"] isEqualToString:@"-1;;license_required task=23\r\n"]&&colorCalls==noRead);
+    context=parent();reset(context);stopInLicense=true;failure(invoke(0,0,context).value,@"AbortError");assert(colorCalls==noRead);
+    // A local C01 expiry keeps the caller live and retains the RAW task error.
+    context=parent(30);reset(context);licenseDelayMs=3100;
+    auto caller=std::make_shared<TLinkNativeBudget>([context.cancellationToken nativeCancellation],TLinkNativeDeadline(30),4096);
+    [context setNativeBudget:caller];const uint64_t callerDeadline=caller->deadline();
+    NSDictionary *expired=invoke(0,0,context).value;
+    assert([expired[@"raw"] isEqualToString:@"1;;native_cancelled_or_timed_out\r\n"]&&colorCalls==noRead);
+    assert(!caller->stopped()&&caller->deadline()==callerDeadline&&caller->response().capacity()==0);
+
+    context=parent();reset(context);[context.cancellationToken cancel];const int noGate=licenseCalls;
+    failure(invoke(0,0,context).value,@"AbortError");assert(colorCalls==noRead&&licenseCalls==noGate);
+    context=parent();reset(context);[context setNativeBudget:std::make_shared<TLinkNativeBudget>(nullptr,TLinkNativeNowNs()-1,4096)];
+    failure(invoke(0,0,context).value,@"TimeoutError");assert(colorCalls==noRead&&licenseCalls==noGate);
+    context=parent();reset(context);assert(!invoke(NAN,0,context).ok&&!invoke(0,INFINITY,context).ok);assert(colorCalls==noRead&&licenseCalls==noGate);
+    context=parent(0.25);reset(context);assert([invoke(0,0,context).value[@"ok"] boolValue]);assert(colorBudget->remainingSeconds(3)<0.3);
+    for(NSString *code:@[@"color_compute_busy",@"color_capture_failed",@"color_memory_budget",@"color_cancelled_or_timed_out"]){
+        context=parent();reset(context);colorError=code;NSDictionary *error=invoke(0,0,context).value;
+        assert([error[@"raw"] isEqualToString:[NSString stringWithFormat:@"-1;;%@\r\n",code]]&&![error[@"ok"] boolValue]);
+    }
+    context=parent();reset(context);cancelColor=true;failure(invoke(0,0,context).value,@"AbortError");
+    for(int fault:{1,2}){context=parent();reset(context);colorFault=fault;failure(invoke(0,0,context).value,@"native_exception");}
+    context=parent(1,12);reset(context);assert([invoke(0,0,context).value[@"ok"] boolValue]);
+    context=parent(1,11);reset(context);failure(invoke(0,0,context).value,@"response_too_large");
+    assert(calls==rawBefore&&!TLinkCurrentNativeBudget());colorBudget.reset();licenseBudget.reset();touchToken=nil;
+    puts("Typed color actual bridge/entry passed: 200 legacy decimal/reply/parts/RGB cases, task-23 authority, C01/parent deadline scope, invalid preflight, stop/fault/output bounds and no raw dispatch or response vector.");
+}
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";
     auto context = parent();
@@ -542,5 +615,6 @@ int main() { @autoreleasepool {
     timingCases();
     typedTouchCases(bridge);
     typedBatchCases(bridge);
+    typedColorCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

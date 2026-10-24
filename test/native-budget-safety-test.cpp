@@ -1,4 +1,6 @@
 #include "../shared/TLinkNativeTouchRequest.h"
+#include "../shared/TLinkNativeColorRequest.h"
+#include "../shared/TLinkColorPolicy.h"
 #include "../shared/TLinkGestureTiming.h"
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkTemplatePolicy.h"
@@ -91,7 +93,20 @@ static void testTypedTouchCompatibility() {
             assert(batch.fits()==(expected<=8192)&&batch.bytes()==(expected<=8192?expected:8193));}
     }
 
-    char tiny[1];assert(!TLinkNativeTouchDecimal(tiny,sizeof(tiny),2,123));
+    for(double value:{-1e308,-2147483649.0,-8192.0,-1.5,-0.5,-0.0,0.0,0.5,1.5,2.5,8190.5,8191.49,8191.5,8192.0,2147483648.0,1e308}){
+        char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.0f",value);int coordinate=-1;
+        const bool valid=TLinkColorInt(legacy,coordinate)&&coordinate>=0&&coordinate<8192;
+        assert(TLinkNativeColorJSCoordinate(value)==(valid?coordinate:-1));
+    }
+    for(unsigned i=0;i<100000;++i){
+        const double value=double(i)/6.0-17.5;char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.0f",value);int coordinate=-1;
+        const bool valid=TLinkColorInt(legacy,coordinate)&&coordinate>=0&&coordinate<8192;
+        assert(TLinkNativeColorJSCoordinate(value)==(valid?coordinate:-1));
+    }
+    assert(TLinkNativeColorJSCoordinate(NAN)==-1&&TLinkNativeColorJSCoordinate(INFINITY)==-1);
+    TLinkNativeColorPickRequest color(-0.5,8191.5);assert(color.x==0&&color.y==-1);
+    puts("Typed color coordinates passed: 100k legacy decimal/strict-integer cases, half ties, signed zero, bounds, finite overflow and nonfinite rejection.");
+    char tiny[1];assert(!TLinkNativeDecimal(tiny,sizeof(tiny),2,123));
     puts("Typed touch request passed: task allowlist, 100k legacy decimal float/double/byte cases, signed zero/overflow, gesture input cap and duration clamp/rounding.");
 }
 static void testGestureTimeline() {

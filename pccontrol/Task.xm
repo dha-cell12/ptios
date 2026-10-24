@@ -581,6 +581,34 @@ NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchReq
 }
 // END typed touch task entry.
 
+// BEGIN typed color task entry.
+NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request,TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto replyBudget=[call nativeBudget];TLinkNativeBudgetScope callScope(replyBudget);
+    // Match the RAW entry's task-local deadline, including license latency.
+    static_assert(TASK_COLOR_PICKER==23,"color task classification changed");
+    const uint8_t task[]={'2','3'};
+    TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget(task,sizeof(task),replyBudget));
+    @try {try {
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_COLOR_PICKER,&denial))
+            return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",replyBudget);
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSError *error=nil;NSDictionary *rgb=getRGBAtPosition(request.x,request.y,&error);
+        if(error)return zx_typedTouchReply(error.localizedDescription,replyBudget);
+        // Keep compatibility text/parts, but never parse a successful RGB reply.
+        int red=[rgb[@"red"] intValue],green=[rgb[@"green"] intValue],blue=[rgb[@"blue"] intValue];
+        NSString *r=[NSString stringWithFormat:@"%d",red],*g=[NSString stringWithFormat:@"%d",green],*b=[NSString stringWithFormat:@"%d",blue];
+        NSString *raw=[NSString stringWithFormat:@"0;;%@;;%@;;%@\r\n",r,g,b];
+        if(!replyBudget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        return @{@"ok":@(true),@"raw":raw,@"parts":@[@"0",r,g,b],@"red":@(red),@"green":@(green),@"blue":@(blue)};
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+// END typed color task entry.
+
 // === runShell drain/timeout support (Group A) ===
 
 static const NSUInteger kShellMaxCapturedOutputBytes = 768 * 1024;

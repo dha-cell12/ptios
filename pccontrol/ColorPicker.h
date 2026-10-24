@@ -10,6 +10,7 @@
 #import <opencv.hpp>
 #endif
 
+NSDictionary* getRGBAtPosition(int x, int y, NSError **error);
 NSDictionary* getRGBFromRawData(UInt8 *eventData, NSError **error);
 NSString* searchRGBFromRawData(UInt8 *eventData, NSError **error);
 

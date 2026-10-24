@@ -404,14 +404,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) {
             return [TLinkJSNativeResponse responseWithError:@"pickColor(x, y) requires finite numbers" code:@-1];
         }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%.0f;;%.0f", TASK_COLOR_PICKER, x, y] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 4) return [TLinkJSNativeResponse responseWithValue:result];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{
-            @"red": @([TLinkautoJSSafeStringPart(parts, 1) intValue]),
-            @"green": @([TLinkautoJSSafeStringPart(parts, 2) intValue]),
-            @"blue": @([TLinkautoJSSafeStringPart(parts, 3) intValue]),
-        })];
+        const TLinkNativeColorPickRequest pick(x,y);
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeColorPick(pick,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodScreenshotRegion]) {
         NSString *targetPath = [args count] > 0 ? [args objectAtIndex:0] : @"";

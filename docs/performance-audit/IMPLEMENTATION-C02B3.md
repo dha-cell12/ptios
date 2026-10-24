@@ -44,3 +44,7 @@ TrollStore macOS CI rejected `auto result=invoke(normal,context).value` with `-W
 ## CI correction - exact fallback wire expectation
 
 The macOS fixture reached the fallback-duration cases, then failed an incorrect hand-written prefix expectation: task 65 + task 62 + x=20.00 is `656220.00`, not `652620.00`. The fixture now compares the complete dispatched payload with task 65 plus the frozen pre-C02b3 object encoder for each negative/out-of-range/extreme/string duration case. Separate assertions retain response and exactly-one-dispatch checks. Production routing/parsing is unchanged. Windows native-budget portable coverage and production fixture extraction pass again; the corrected Foundation runtime still requires macOS CI.
+
+## Following checkpoint
+
+The user reported the corrected C02b3 build `9d18c75` passed before C02b4. The structured live color pick slice is tracked in `IMPLEMENTATION-C02B4.md`; batch device qualification remains pending.

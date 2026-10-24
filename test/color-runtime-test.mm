@@ -6,6 +6,7 @@
 #include <exception>
 #include <atomic>
 #include "../shared/TLinkNativeBudget.h"
+#include "../shared/TLinkNativeColorRequest.h"
 static std::atomic<uint64_t> offset{0};
 static uint64_t FixtureNow(){return TLinkNativeNowNs()+offset.load();}
 #include "ColorPolicyUnderTest.h"
@@ -51,6 +52,16 @@ int main(){@autoreleasepool{
     fputs("Color Foundation: actual parser, RGBA conversion, encoder and wire results\n",stderr);
     NSError *error=nil;NSDictionary *rgb=getRGBFromRawData((UInt8 *)"2;;1",&error);
     assert(!error&&[rgb[@"red"] intValue]==10&&[rgb[@"green"] intValue]==20&&[rgb[@"blue"] intValue]==30);settled();
+    for(double x:{-1e308,-1.5,-0.5,-0.0,0.5,1.5,2.5,7.49,7.5,8.0,8191.49,8191.5,1e308}){
+        for(double y:{-0.5,0.5,1.5,5.49,5.5}){
+            NSString *wire=[NSString stringWithFormat:@"%.0f;;%.0f",x,y];NSError *rawError=nil,*numericError=nil;
+            NSDictionary *rawRGB=getRGBFromRawData((UInt8 *)wire.UTF8String,&rawError);
+            const TLinkNativeColorPickRequest position(x,y);
+            NSDictionary *numericRGB=getRGBAtPosition(position.x,position.y,&numericError);
+            assert((rawRGB&&[rawRGB isEqualToDictionary:numericRGB])||(!rawRGB&&!numericRGB));
+            assert((!rawError&&!numericError)||[rawError.localizedDescription isEqualToString:numericError.localizedDescription]);settled();
+        }
+    }
     assert([search(@"1;;2;;1;;3;;2;;10;;10;;20;;20;;30;;30;;0",&error) isEqualToString:@"2;;1;;10;;20;;30"]&&!error);settled();
     assert([search(@"1;;0;;0;;0;;0;;40;;50;;20;;20;;30;;30;;2147483647",&error) isEqualToString:@"-1;;-1;;-1;;-1;;-1"]&&!error);settled();
     NSString *table=@"0,,0,,10,,20,,30|3,,2,,10,,20,,30";
@@ -78,6 +89,8 @@ int main(){@autoreleasepool{
     bool *faults[]={&failAllocate,&failCrop,&failSpace,&failContext,&throwDraw,&expireDraw,&expireCapture,&failCapture};
     NSString *codes[]={@"color_allocation_failed",@"color_crop_failed",@"color_space_failed",@"color_context_failed",@"color_operation_failed",@"color_cancelled_or_timed_out",@"color_cancelled_or_timed_out",@"color_capture_failed"};
     for(unsigned n=0;n<8;++n){NSError *retained=nil;@autoreleasepool{*faults[n]=true;(void)getRGBFromRawData((UInt8 *)"0;;0",&retained);}assert([retained.localizedDescription containsString:codes[n]]);offset=0;settled();}
+    for(unsigned n=0;n<8;++n){NSError *retained=nil;@autoreleasepool{*faults[n]=true;(void)getRGBAtPosition(0,0,&retained);}assert([retained.localizedDescription containsString:codes[n]]);offset=0;settled();}
+    {TLinkColorRequest first({}),second({});unsigned prior=captures;error=nil;assert(!getRGBAtPosition(-1,-1,&error)&&[error.localizedDescription containsString:@"color_compute_busy"]&&captures==prior);}settled();
     {auto hold=TLinkColorMemory().reserve(TLinkImageKind::Frame,32*1024*1024);assert(hold);error=nil;assert(!getRGBFromRawData((UInt8 *)"0;;0",&error)&&[error.localizedDescription containsString:@"color_memory_budget"]);}settled();
     {TLinkColorRequest first({}),second({});unsigned prior=captures;error=nil;assert(!getRGBFromRawData((UInt8 *)"0;;0",&error)&&[error.localizedDescription containsString:@"color_compute_busy"]&&captures==prior);}settled();
     {auto token=std::make_shared<TLinkNativeCancellation>();auto budget=std::make_shared<TLinkNativeBudget>(token,0,4096);TLinkNativeBudgetScope scope(budget);cancelOnDraw=token;error=nil;assert(!getRGBFromRawData((UInt8 *)"0;;0",&error)&&[error.localizedDescription containsString:@"color_cancelled_or_timed_out"]);cancelOnDraw.reset();unsigned prior=captures;error=nil;assert(!getRGBFromRawData((UInt8 *)"0;;0",&error)&&captures==prior);}settled();
