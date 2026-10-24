@@ -1,11 +1,37 @@
 #include "../shared/TLinkColorPolicy.h"
+#include "../shared/TLinkNativeColorRange.h"
 #include <cassert>
 #include <cstdio>
 #include <thread>
 #include "fixtures/color-match-legacy-v1.inc"
 static uint32_t randomValue=73;
 static unsigned randomByte(){randomValue=randomValue*1664525U+1013904223U;return randomValue>>24;}
+static void nativeRangePolicyCases(){
+    for(unsigned i=0;i<100000;++i){
+        const double values[]={double(int(i)-50000)*47.125,double(i%16385)*0.5,double(int(i%17)-8)*0.5,double(int(i%19)-9)*0.5};
+        int expected[4]={};bool valid=true;
+        for(unsigned j=0;j<4;++j){char text[384];std::snprintf(text,sizeof(text),"%.0f",values[j]);const bool parsed=TLinkColorInt(text,expected[j]);valid=valid&&parsed;}
+        TLinkNativeColorRangeRequest r;r.setRegion(values[0],values[1],values[2],values[3]);
+        assert(r.coordinatesValid==valid&&r.x==expected[0]&&r.y==expected[1]&&r.width==expected[2]&&r.height==expected[3]);
+        assert(TLinkNativeColorRangeParameters(r)==(valid&&expected[0]>=0&&expected[0]<8192&&expected[1]>=0&&expected[1]<8192));
+    }
+    for(double v:{-1e308,double(INT_MIN)-1,double(INT_MIN),-1.5,-0.5,-0.0,0.5,1.5,2.5,8191.49,8191.5,double(INT_MAX),double(INT_MAX)+0.5,1e308}){
+        int expected=0;char text[384];std::snprintf(text,sizeof(text),"%.0f",v);bool valid=TLinkColorInt(text,expected);
+        TLinkNativeColorRangeRequest r;r.setRegion(0,0,v,0);assert(r.coordinatesValid==valid);if(valid)assert(r.width==expected&&TLinkNativeColorRangeParameters(r));
+        r.setRegion(v,0,0,0);assert(TLinkNativeColorRangeParameters(r)==(valid&&expected>=0&&expected<8192));
+        char wire[2048];int units=std::snprintf(wire,sizeof(wire),"281;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d",v,v,v,v,INT_MIN,INT_MAX,INT_MIN,INT_MAX,INT_MIN,INT_MAX,INT_MAX);
+        assert(units>0&&size_t(units)<sizeof(wire)&&units<8192);
+    }
+    // 4 fixed finite doubles (at most 384 bytes each), 7 signed ints, task/action and separators.
+    static_assert(4*384+7*12+25<8192,"finite findColor request must fit legacy ingress");
+    TLinkNativeColorRangeRequest r;r.skip=INT_MAX;r.width=INT_MIN;r.height=INT_MAX;assert(TLinkNativeColorRangeParameters(r));
+    r.skip=-1;assert(!TLinkNativeColorRangeParameters(r));r.skip=0;r.redMin=-1;assert(!TLinkNativeColorRangeParameters(r));r.redMin=0;r.redMax=256;assert(!TLinkNativeColorRangeParameters(r));r.redMax=255;
+    r.greenMin=20;r.greenMax=19;assert(!TLinkNativeColorRangeParameters(r));r.greenMin=0;r.greenMax=255;r.blueMin=1;r.blueMax=0;assert(!TLinkNativeColorRangeParameters(r));
+    r=TLinkNativeColorRangeRequest{};r.setRegion(NAN,0,0,0);assert(!r.coordinatesValid&&!TLinkNativeColorRangeParameters(r));r.setRegion(0,0,INFINITY,0);assert(!r.coordinatesValid);
+    puts("Native live range policy passed: 100k frozen decimal/strict-int ROI cases, signed extents/half ties/overflow, RGB/skip admission and finite ingress ceiling.");
+}
 int main(){
+    nativeRangePolicyCases();
     int number=0;double value=0;
     assert(TLinkColorInt(" -2147483648 ",number)&&number==INT_MIN);assert(TLinkColorInt("+2147483647",number)&&number==INT_MAX);
     for(auto text:{"", "nan", "1.2", "2147483648", "-2147483649", "12junk"})assert(!TLinkColorInt(text,number));

@@ -1,7 +1,7 @@
 # C02b9 — structured frame multi-color search
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `fc1b96a`; the user reported the corrected C02b8 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b10 (`036c2b7`); device qualification pending**.
 Finding: **P0-13, frameFindMultiColor portion**. Other typed methods and helper transport remain open.
 
 ## Result and scope
@@ -42,3 +42,7 @@ No measured allocation/latency/RSS reduction or hard completion deadline is clai
 Build rootfull/roothide observe/enforced variants. Compare JS/RAW frameFindMultiColor on one frame for ROI rounding/clamping, signed offsets, point scale, both color modes, skip/first-hit/miss, invalid later rows and ROI/table/offset/TTL error precedence. Check exact response fields, input/output boundaries, task authorization, cancellation and recovery; verify no recapture or retained admission/reader. Measure allocation rate and latency independently of frame creation.
 
 Continue the remaining measured P0-13 methods, P0-12 event-driven helper RPC, P1-40 config snapshots and P1-41 byte-bounded dedupe. C01/C02 device and performance acceptance remains open.
+
+## Following checkpoint
+
+The user reported C02b9 build `036c2b7` passed before C02b10. Live findColor is tracked in `IMPLEMENTATION-C02B10.md`. This records the user report; no independent macOS/device execution was performed on this host.

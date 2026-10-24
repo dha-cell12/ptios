@@ -8,6 +8,8 @@
 #undef NO
 #undef YES
 #import <opencv.hpp>
+#include "../shared/TLinkNativeColorRange.h"
+bool searchRGBRange(const TLinkNativeColorRangeRequest &request,TLinkColorResult &value,NSError **error);
 #endif
 
 NSDictionary* getRGBAtPosition(int x, int y, NSError **error);

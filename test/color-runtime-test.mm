@@ -10,6 +10,7 @@
 static std::atomic<uint64_t> offset{0};
 static uint64_t FixtureNow(){return TLinkNativeNowNs()+offset.load();}
 #include "ColorPolicyUnderTest.h"
+#include "../shared/TLinkNativeColorRange.h"
 #include "ColorHeaderUnderTest.h"
 static bool failAllocate=false,failCrop=false,failSpace=false,failContext=false,throwDraw=false,expireDraw=false,expireCapture=false,failCapture=false;
 static unsigned buffers=0,providers=0,captures=0;
@@ -47,8 +48,30 @@ static NSString *search(NSString *payload,NSError **error){return searchRGBFromR
 static void rejected(NSString *payload,NSString *code,bool beforeCapture){
     NSError *error=nil;unsigned prior=captures;assert(!search(payload,&error)&&[error.localizedDescription containsString:code]);if(beforeCapture)assert(captures==prior);settled();
 }
+static void numericRangeCases(){
+    const auto check=[](double x,double y,double width,double height,int skip,int low,int high){
+        NSString *wire=[NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;0;;255;;0;;255;;%d",x,y,width,height,low,high,skip];
+        NSError *rawError=nil,*numericError=nil;NSString *raw=search(wire,&rawError);TLinkNativeColorRangeRequest r;r.setRegion(x,y,width,height);r.redMin=low;r.redMax=high;r.skip=skip;TLinkColorResult value;
+        const bool ok=searchRGBRange(r,value,&numericError);assert(ok==(raw!=nil));
+        if(ok){NSString *expected=[NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d",value.x,value.y,value.r,value.g,value.b];assert([raw isEqualToString:expected]);}
+        else assert([rawError.localizedDescription isEqualToString:numericError.localizedDescription]);settled();
+    };
+    for(double x:{-1e308,-1.5,-0.5,-0.0,0.5,1.5,7.49,7.5,8191.5,1e308})for(double width:{double(INT_MIN),-0.5,0.5,2.5,double(INT_MAX),1e308})for(int skip:{0,1,INT_MAX})check(x,0.5,width,0,skip,0,255);
+    check(0,0,0,0,0,11,255);check(0,0,0,0,-1,0,255);check(0,0,0,0,0,-1,255);check(0,0,0,0,0,20,19);
+    TLinkNativeColorRangeRequest r;r.setRegion(0,0,0,0);TLinkColorResult value;
+    bool *faults[]={&failAllocate,&failCrop,&failSpace,&failContext,&throwDraw,&expireDraw,&expireCapture,&failCapture};
+    NSString *codes[]={@"color_allocation_failed",@"color_crop_failed",@"color_space_failed",@"color_context_failed",@"color_operation_failed",@"color_cancelled_or_timed_out",@"color_cancelled_or_timed_out",@"color_capture_failed"};
+    for(unsigned n=0;n<8;++n){NSError *retained=nil;@autoreleasepool{*faults[n]=true;assert(!searchRGBRange(r,value,&retained));}assert([retained.localizedDescription containsString:codes[n]]);offset=0;settled();}
+    {TLinkColorRequest first({}),second({});const unsigned before=captures;r.x=-1;NSError *error=nil;assert(!searchRGBRange(r,value,&error)&&[error.localizedDescription containsString:@"color_compute_busy"]&&captures==before);}r.x=0;settled();
+    {auto hold=TLinkColorMemory().reserve(TLinkImageKind::Frame,32*1024*1024);assert(hold);NSError *error=nil;assert(!searchRGBRange(r,value,&error)&&[error.localizedDescription containsString:@"color_memory_budget"]);}settled();
+    {auto token=std::make_shared<TLinkNativeCancellation>();auto budget=std::make_shared<TLinkNativeBudget>(token,0,4096);TLinkNativeBudgetScope scope(budget);cancelOnDraw=token;NSError *error=nil;
+        assert(!searchRGBRange(r,value,&error)&&[error.localizedDescription containsString:@"color_cancelled_or_timed_out"]);cancelOnDraw.reset();const unsigned before=captures;error=nil;assert(!searchRGBRange(r,value,&error)&&captures==before);}settled();
+    {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
+    puts("Numeric live range Foundation passed: 180 RAW/numeric ROI/skip cases, signed/overflow extents, hit/miss/parameter order, capture/graphics faults, NSError lifetime, busy/memory/cancel recovery and zero retained buffers.");
+}
 int main(){@autoreleasepool{
     fixtureImage=image(8,6);
+    numericRangeCases();
     fputs("Color Foundation: actual parser, RGBA conversion, encoder and wire results\n",stderr);
     NSError *error=nil;NSDictionary *rgb=getRGBFromRawData((UInt8 *)"2;;1",&error);
     assert(!error&&[rgb[@"red"] intValue]==10&&[rgb[@"green"] intValue]==20&&[rgb[@"blue"] intValue]==30);settled();

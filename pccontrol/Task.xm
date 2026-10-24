@@ -609,6 +609,30 @@ NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &req
 }
 // END typed color task entry.
 
+// BEGIN typed color range task entry.
+NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &request,TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto replyBudget=[call nativeBudget];TLinkNativeBudgetScope callScope(replyBudget);
+    static_assert(TASK_COLOR_SEARCHER==28,"color search task classification changed");const uint8_t task[]={'2','8'};
+    TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget(task,sizeof(task),replyBudget));
+    @try {try {
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_COLOR_SEARCHER,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",replyBudget);
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSError *error=nil;TLinkColorResult value;
+        if(!searchRGBRange(request,value,&error))return zx_typedTouchReply(error.localizedDescription?:@"-1;;color_operation_failed\r\n",replyBudget);
+        NSString *x=[NSString stringWithFormat:@"%d",value.x],*y=[NSString stringWithFormat:@"%d",value.y];
+        NSString *r=[NSString stringWithFormat:@"%d",value.r],*g=[NSString stringWithFormat:@"%d",value.g],*b=[NSString stringWithFormat:@"%d",value.b];
+        NSString *raw=[NSString stringWithFormat:@"0;;%@;;%@;;%@;;%@;;%@\r\n",x,y,r,g,b];
+        if(!replyBudget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        return @{@"ok":@(true),@"raw":raw,@"parts":@[@"0",x,y,r,g,b],@"matched":@(value.x>=0&&value.y>=0),@"x":@(value.x),@"y":@(value.y),@"red":@(value.r),@"green":@(value.g),@"blue":@(value.b)};
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+// END typed color range task entry.
+
 // BEGIN typed frame pick task entry.
 NSDictionary *TLinkExecuteNativeFramePick(const TLinkNativeFramePickRequest &request,TLinkTaskExecutionContext *context)
 {

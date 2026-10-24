@@ -1176,23 +1176,11 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
             return [TLinkJSNativeResponse responseWithError:@"findColor(options) requires finite x/y/width/height" code:@-1];
         }
-        NSString *payload = [NSString stringWithFormat:@"1;;%.0f;;%.0f;;%.0f;;%.0f;;%d;;%d;;%d;;%d;;%d;;%d;;%d",
-                             x, y, width, height, redMin, redMax, greenMin, greenMax, blueMin, blueMax, skip];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_SEARCHER, payload] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 6) return [TLinkJSNativeResponse responseWithValue:result];
-        int foundX = [parts[1] intValue];
-        int foundY = [parts[2] intValue];
-        NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
-        res[@"matched"] = @(foundX >= 0 && foundY >= 0);
-        res[@"x"] = @(foundX);
-        res[@"y"] = @(foundY);
-        res[@"red"] = @([parts[3] intValue]);
-        res[@"green"] = @([parts[4] intValue]);
-        res[@"blue"] = @([parts[5] intValue]);
-        return [TLinkJSNativeResponse responseWithValue:res];
+        TLinkNativeColorRangeRequest search;search.setRegion(x,y,width,height);
+        search.redMin=redMin;search.redMax=redMax;search.greenMin=greenMin;search.greenMax=greenMax;search.blueMin=blueMin;search.blueMax=blueMax;search.skip=skip;
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeColorRange(search,context)];
     }
-    
+
     else if ([method isEqualToString:TLinkJSNativeMethodIsColors] || [method isEqualToString:TLinkJSNativeMethodFindMultiColor]) {
         NSArray *points = [args count] > 0 ? [args objectAtIndex:0] : @[];
         NSDictionary *options = [args count] > 1 ? [args objectAtIndex:1] : @{};

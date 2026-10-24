@@ -115,6 +115,8 @@
 #ifdef __cplusplus
 #include "../shared/TLinkNativeTouchRequest.h"
 #include "../shared/TLinkNativeColorRequest.h"
+#include "../shared/TLinkNativeColorRange.h"
+NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &request,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
 #include "../shared/TLinkNativeFrameMulti.h"

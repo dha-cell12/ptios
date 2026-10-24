@@ -92,12 +92,16 @@ static NSDictionary *zx_colorPick(CGImageRef image,int x,int y,TLinkColorRequest
     if(!zx_colorRender(image,crop,request,buffer,error))return nil;
     const uint8_t *p=buffer.bytes.get();return @{@"red":@(p[0]),@"green":@(p[1]),@"blue":@(p[2])};
 }
+static bool zx_colorRangeValue(CGImageRef image,const TLinkColorRect &region,const TLinkColorPoint &low,const TLinkColorPoint &high,int skip,TLinkColorRequest &request,TLinkColorResult &result,NSError **error){
+    ZXColorBuffer buffer;if(!zx_colorRender(image,region,request,buffer,error))return false;
+    const auto scan=TLinkColorRangeScan(buffer.bytes.get(),buffer.width,buffer.height,skip,low,high,request,result);
+    if(scan==TLinkColorScan::Stopped){zx_colorError(error,request.error());return false;}
+    if(scan==TLinkColorScan::NoMatch){result.x=result.y=result.r=result.g=result.b=-1;return true;}
+    result.x+=region.x;result.y+=region.y;return true;
+}
 static NSString *zx_colorRange(CGImageRef image,const TLinkColorRect &region,const TLinkColorPoint &low,const TLinkColorPoint &high,int skip,TLinkColorRequest &request,NSError **error){
-    ZXColorBuffer buffer;if(!zx_colorRender(image,region,request,buffer,error))return nil;
-    TLinkColorResult result;auto scan=TLinkColorRangeScan(buffer.bytes.get(),buffer.width,buffer.height,skip,low,high,request,result);
-    if(scan==TLinkColorScan::Stopped){zx_colorError(error,request.error());return nil;}
-    if(scan==TLinkColorScan::NoMatch)return @"-1;;-1;;-1;;-1;;-1";
-    return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d",region.x+result.x,region.y+result.y,result.r,result.g,result.b];
+    TLinkColorResult result;if(!zx_colorRangeValue(image,region,low,high,skip,request,result,error))return nil;
+    return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d",result.x,result.y,result.r,result.g,result.b];
 }
 static CGImageRef zx_colorCapture(TLinkColorRequest &request,NSError **error){
     if(request.stopped()){zx_colorError(error,request.error());return NULL;}
@@ -106,6 +110,22 @@ static CGImageRef zx_colorCapture(TLinkColorRequest &request,NSError **error){
 static NSDictionary *zx_colorPickScreen(int x,int y,TLinkColorRequest &request,NSError **error){
     if(x<0||y<0||x>=8192||y>=8192){zx_colorError(error,"color_parameters_invalid");return nil;}
     ZXColorImage screen(zx_colorCapture(request,error));return zx_colorPick(screen.value,x,y,request,error);
+}
+static bool zx_colorRangeScreen(const TLinkNativeColorRangeRequest &search,TLinkColorRequest &request,TLinkColorResult &value,NSError **error){
+    if(!TLinkNativeColorRangeParameters(search)){zx_colorError(error,"color_parameters_invalid");return false;}
+    ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;
+    if(!zx_colorDimensions(screen.value,sw,sh,error))return false;
+    TLinkColorRect region;
+    if(!TLinkColorRegion(sw,sh,search.x,search.y,search.width,search.height,false,region)){zx_colorError(error,"color_region_invalid");return false;}
+    const TLinkColorPoint low={0,0,search.redMin,search.greenMin,search.blueMin},high={0,0,search.redMax,search.greenMax,search.blueMax};
+    return zx_colorRangeValue(screen.value,region,low,high,search.skip,request,value,error);
+}
+bool searchRGBRange(const TLinkNativeColorRangeRequest &search,TLinkColorResult &value,NSError **error){
+    // The constant success token reuses the shared admission/stop/exception wrapper;
+    // numeric results never pass through a formatted string or reply parser.
+    return zx_colorRun([&](TLinkColorRequest &request)->id{
+        return zx_colorRangeScreen(search,request,value,error)?@"":nil;
+    },error)!=nil;
 }
 NSDictionary* getRGBAtPosition(int x,int y,NSError **error){
     return zx_colorRun([&](TLinkColorRequest &request)->id{return zx_colorPickScreen(x,y,request,error);},error);
@@ -123,15 +143,12 @@ NSString* searchRGBFromRawData(UInt8 *eventData,NSError **error){
         int action=0;if(!zx_colorInt(parts,0,action)||action<1||action>3){zx_colorError(error,"color_parameters_invalid");return nil;}
         if(action==1){
             int values[11];for(NSUInteger i=0;i<11;++i)if(!zx_colorInt(parts,i+1,values[i])){zx_colorError(error,"color_parameters_invalid");return nil;}
-            int x=values[0],y=values[1],width=values[2],height=values[3],skip=values[10];
-            if(x<0||y<0||x>=8192||y>=8192||skip<0||!TLinkColorRGB(values[4])||!TLinkColorRGB(values[5])||values[4]>values[5]||
-                !TLinkColorRGB(values[6])||!TLinkColorRGB(values[7])||values[6]>values[7]||!TLinkColorRGB(values[8])||!TLinkColorRGB(values[9])||values[8]>values[9]){zx_colorError(error,"color_parameters_invalid");return nil;}
-            ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;
-            if(!zx_colorDimensions(screen.value,sw,sh,error))return nil;
-            TLinkColorRect region;if(!TLinkColorRegion(sw,sh,x,y,width,height,false,region)){zx_colorError(error,"color_region_invalid");return nil;}
-            TLinkColorPoint low={0,0,values[4],values[6],values[8]},high={0,0,values[5],values[7],values[9]};
-            return zx_colorRange(screen.value,region,low,high,skip,request,error);
+            TLinkNativeColorRangeRequest search;search.x=values[0];search.y=values[1];search.width=values[2];search.height=values[3];
+            search.redMin=values[4];search.redMax=values[5];search.greenMin=values[6];search.greenMax=values[7];search.blueMin=values[8];search.blueMax=values[9];search.skip=values[10];
+            TLinkColorResult result;if(!zx_colorRangeScreen(search,request,result,error))return nil;
+            return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%d",result.x,result.y,result.r,result.g,result.b];
         }
+
         int x=0,y=0,width=0,height=0,mode=0,skip=0;double value=0;
         if(parts.count<(action==2?4:9)){zx_colorError(error,"color_parameters_invalid");return nil;}
         if(action==3&&(!zx_colorInt(parts,1,x)||!zx_colorInt(parts,2,y)||!zx_colorInt(parts,3,width)||!zx_colorInt(parts,4,height)||!zx_colorInt(parts,8,skip))){zx_colorError(error,"color_parameters_invalid");return nil;}
