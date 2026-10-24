@@ -408,7 +408,7 @@ static void typedBatchCases(TLinkInProcessNativeBridge *bridge){
         auto response=invoke(bad,context);assert(!response.ok&&injected.empty()&&licenseCalls==gates&&calls==wireCalls);
     }
     context=parent();reset(context);licenseAllowed=false;
-    auto result=invoke(normal,context).value;
+    NSDictionary *result=invoke(normal,context).value;
     assert([result[@"raw"] isEqualToString:@"-1;;license_required task=65\r\n"]&&injected.empty());
     context=parent();reset(context);stopInLicense=true;failure(invoke(normal,context).value,@"AbortError");assert(injected.empty());
     context=parent();reset(context);[context.cancellationToken cancel];const int noGate=licenseCalls;

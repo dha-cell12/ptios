@@ -36,3 +36,7 @@ Each common executor owns its DOWN/UP lifecycle with finally cleanup. Cancellati
 Build rootfull/roothide in observe/enforced modes. Compare JS object batches and task-65 wire batches on device for order, coordinates, final-UP state and exact replies. Cover a late invalid command, denial/cancellation, empty/256-command batches, size boundaries, exceptions and successful recovery after each failure. Measure allocations and batch latency against C02b2 before claiming a performance gain.
 
 Continue other measured P0-13 methods and P0-12 event-driven helper RPC, then P1-40 configuration snapshots and P1-41 byte-bounded dedupe. C01/C02 device acceptance remains open.
+
+## CI correction - explicit Objective-C result type
+
+TrollStore macOS CI rejected `auto result=invoke(normal,context).value` with `-Wauto-var-id`: the response value property is declared as `id`. The batch denial fixture now declares `NSDictionary *result` explicitly. Other auto declarations in this fixture resolve to concrete response/context types or C++ values. Production batch behavior, strict warnings and sanitizers are unchanged. Corrected macOS compilation/runtime and iOS builds remain pending; the Windows native-budget runner is rerun for portable coverage and fixture extraction.

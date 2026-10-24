@@ -93,6 +93,8 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - C02b3 / P0-13 partial: JS object batches prepare bounded numeric plans and use a single licensed task-65 entry, common touch executors, sequential first-failure execution and owned-UP cleanup. Preserve complete JS shape/finite validation before effects, exact legacy 8192-character accounting and empty-batch errors. RAW/mixed and nonstandard tap/swipe-duration batches keep the original compatibility path, selected before execution with no retry. Details: `IMPLEMENTATION-C02B3.md`.
 - C02b3 validation: all 36 source-contract runners, 20 native runners and 528 TrollStore workflow source grep assertions pass on Windows, including 10,000 bounded/saturating batch-size sequences and duration negative-zero accounting. Expanded actual Foundation batch/RAW parity, input-boundary, authorization, cancellation/deadline, exception/output-cap and fallback fixtures await macOS/iOS CI and device qualification. Continue other measured P0-13 methods, P0-12 helper transport, P1-40 config snapshots and P1-41 byte-bounded dedupe.
 
+- C02b3 CI correction: TrollStore macOS rejected the batch denial fixture's `auto` deduced from the response `id value` property (`-Wauto-var-id`). Use an explicit NSDictionary pointer; production behavior, strict warnings and sanitizers stay unchanged. Corrected macOS/iOS CI remains pending. Details: `IMPLEMENTATION-C02B3.md`.
+
 ## Primary target
 
 Performance-critical runtime remains `pccontrol` in SpringBoard, `tlinkauto-binary` ingress, `tlinkauto-jsd` helper where it is on a live JS call path, and selected `shared` dependencies.
