@@ -568,10 +568,18 @@ static void typedFramePickCases(TLinkInProcessNativeBridge *bridge){
     assert(!invoke(0,0,0,@{},context).ok&&!invoke(1,NAN,0,@{},context).ok&&!invoke(1,0,INFINITY,@{},context).ok);
     for(NSString *bad:@[@"pixel;;x",@"pixel\r",@"pixel\n"])assert(!invoke(1,0,0,@{@"coord":bad},context).ok);
     assert(frameReads==noRead&&licenseCalls==noGate);
-    unichar nul=0;NSString *nulCoord=[@"pi" stringByAppendingString:[NSString stringWithCharacters:&nul length:1]];
-    unichar surrogate=0xd800;NSString *invalidUTF=[NSString stringWithCharacters:&surrogate length:1];
+    unichar nul=0;NSString *nulToken=[NSString stringWithCharacters:&nul length:1];
+    NSString *nulCoord=[@"pi" stringByAppendingString:nulToken];
+    unichar high=0xd800,low=0xdc00;unichar pair[]={0xd83d,0xde00};
+    NSString *invalidHigh=[NSString stringWithCharacters:&high length:1],*invalidLow=[NSString stringWithCharacters:&low length:1];
+    NSString *paired=[NSString stringWithCharacters:pair length:2];
+    NSArray *encodingProbes=@[nulToken,nulCoord,[nulToken stringByAppendingString:@"pixel"],
+        [@"pi" stringByAppendingString:[nulToken stringByAppendingString:@"xel"]],invalidHigh,invalidLow,
+        [@"pi" stringByAppendingString:invalidHigh],paired,@"",@"điểm",
+        [nulToken stringByPaddingToLength:8169 withString:@"x" startingAtIndex:0],
+        [nulToken stringByPaddingToLength:8170 withString:@"x" startingAtIndex:0]];
     int oracleDispatches=0;
-    for(NSString *coord:@[nulCoord,invalidUTF]){
+    for(NSString *coord:encodingProbes){
         // Use the actual legacy formatter/transport as the oracle for Foundation string conversion.
         mode=@"frameEncodingOracle";const int beforeOracle=calls;
         NSString *wire=[NSString stringWithFormat:@"691;;pick;;0;;0;;%@;;1000",coord];
@@ -609,7 +617,7 @@ static void typedFramePickCases(TLinkInProcessNativeBridge *bridge){
     context=parent(1,successBytes);reset(context);assert([invoke(1,0,0,@{},context).value[@"ok"] boolValue]);
     context=parent(1,successBytes-1);reset(context);failure(invoke(1,0,0,@{},context).value,@"response_too_large");
     assert(calls==wireCalls+oracleDispatches&&!TLinkCurrentNativeBudget());frameBudget.reset();licenseBudget.reset();touchToken=nil;
-    puts("Typed frame pick actual bridge/entry passed: scalar/RGB/age/time/parts parity, exact 8192/8193 input, legacy NUL/UTF admission parity, one task-69 gate, C01/caller deadlines, faults/output and no raw dispatch.");
+    puts("Typed frame pick actual bridge/entry passed: scalar/RGB/age/time/parts parity, exact 8192/8193 input, 12 legacy NUL/UTF/size admission cases, one task-69 gate, C01/caller deadlines, faults/output and no raw dispatch.");
 }
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";

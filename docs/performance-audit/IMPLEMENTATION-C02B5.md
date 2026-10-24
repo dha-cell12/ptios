@@ -36,15 +36,15 @@ Opaque license calls and store/framework waits remain cooperative rather than pr
 - A one-off MSVC standards-conforming preprocessor check accepts assert argument boundaries in the native-bridge, color and frame-color runtime fixtures; its negative control rejects the original top-level Objective-C comma. This checks macro syntax, not Foundation compilation.
 - **New Foundation/macOS cases and iOS builds were not run on this Windows host.** Real frame coordinates, snapshot lifetime under device concurrency, allocation counts and latency require CI/device qualification.
 
-## CI fixture correction (2026-10-24)
+## CI encoding correction (2026-10-24)
 
-The reported macOS run aborts in the shared `failure` helper after the typed-color section. That places the failure in the frame-pick cases, but the supplied assertion does not identify the calling case or actual reply; the exact failing input is not yet confirmed.
+The initial generic assertion did not identify its caller. Adding the actual legacy encoding oracle and caller/expected/actual diagnostics exposed a production mismatch: RAW returns invalid_payload for a probe that the typed bridge admits through authorization and rejects later as invalid_frame_color_parameters. The fixture-only correction did not resolve that mismatch.
 
-The NUL/unpaired-UTF-16 probes previously hard-coded invalid_payload. They now replay the old formatter and the actual bounded RAW bridge to determine the legacy encoding decision on that Foundation runtime. A controlled task double returns invalid_frame_color_parameters only when transport admits these invalid coord tokens. The typed result must match the entire legacy dictionary, preserve the corresponding license/backend admission count, and perform no RAW dispatch itself. Other fixed error expectations remain strict. Production behavior is unchanged.
+The typed bridge now converts the bounded coord token using dataUsingEncoding:NSUTF8StringEncoding and rejects a failed conversion or an embedded zero byte with memchr, matching the RAW transport's actual operations. This replaces the canBeConvertedToEncoding/character-set prediction. The equivalent 8192-unit request cap still runs first, and encoding rejection still precedes license/backend admission. Only the bounded token is encoded; no aggregate request string or RAW dispatch is introduced.
 
-The shared failure helper now records the calling line, expected code and complete actual reply, and checks parts length before indexing. This makes a remaining mismatch actionable instead of reporting only the generic helper line.
+The Foundation oracle now covers 12 coord probes: NUL at different positions, unpaired high/low surrogates, a surrogate inside a token, a valid surrogate pair, empty/non-ASCII invalid coord names, and NUL-bearing 8192/8193-unit requests. Every typed result must match the entire legacy dictionary, retain the corresponding authorization/backend admission count and perform no RAW dispatch. Existing fixed error expectations remain strict. The shared failure helper retains caller line, expected code and actual reply diagnostics with checked parts indexing.
 
-Windows validation after this correction: native-budget portable tests and actual-source extraction pass; standards-conforming macro preprocessing passes for the native-bridge, color and frame-color fixtures, including its negative control. Foundation execution, ASan/UBSan and iOS builds still require macOS CI. This correction does not establish that the reported runtime failure is resolved until that CI run passes.
+Windows validation after the production correction: native-budget portable tests and actual-source extraction pass; standards-conforming macro preprocessing passes for the native-bridge, color and frame-color fixtures, including its negative control. Foundation execution, ASan/UBSan and iOS builds still require macOS CI; they were not run on this host.
 
 ## Acceptance and next slice
 

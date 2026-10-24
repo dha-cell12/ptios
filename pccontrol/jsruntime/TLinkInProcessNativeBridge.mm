@@ -760,7 +760,9 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         TLinkNativeFramePickRequest pick;pick.frameId=frameId;pick.maxAgeMs=maxAgeMs;size_t xBytes=0,yBytes=0;
         pick.x=TLinkNativeFrameJSCoordinate(x,&xBytes);pick.y=TLinkNativeFrameJSCoordinate(y,&yBytes);
         if(!TLinkFramePickInputFits(frameId,maxAgeMs,xBytes,yBytes,coord.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
-        if(![coord canBeConvertedToEncoding:NSUTF8StringEncoding]||[coord rangeOfCharacterFromSet:[NSCharacterSet characterSetWithRange:NSMakeRange(0,1)]].location!=NSNotFound)
+        // Match RAW's actual UTF-8 conversion and byte-level NUL rejection, on the bounded token only.
+        NSData *coordData=[coord dataUsingEncoding:NSUTF8StringEncoding];
+        if(!coordData||(coordData.length&&memchr(coordData.bytes,0,coordData.length)))
             return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
         NSString *space=[coord lowercaseString];pick.pointCoord=[space isEqualToString:@"point"];
         pick.validCoord=pick.pointCoord||[space isEqualToString:@"pixel"];
