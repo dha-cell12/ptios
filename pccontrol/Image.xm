@@ -767,6 +767,42 @@ bool readFramePixel(const TLinkNativeFramePickRequest &pick,TLinkNativeFramePick
 }
 // END numeric frame color pick.
 
+// BEGIN numeric frame color pick-many.
+static bool zx_framePickManyPixel(const ZXFrameObject &frame,double px,double py,bool pointCoord,TLinkColorRequest &request,TLinkNativeFrameColor &value,NSError **error) {
+    if(!TLinkFrameColorCoordinate(px,frame.scale,pointCoord,value.x)||!TLinkFrameColorCoordinate(py,frame.scale,pointCoord,value.y)){
+        if(error)*error=zx_frameError(@"1;;invalid_pick_many_point\r\n");return false;
+    }
+    if(value.x<0||value.y<0||value.x>=frame.width||value.y>=frame.height){if(error)*error=zx_frameError(@"1;;point_out_of_bounds\r\n");return false;}
+    if(!request.consume())return false;
+    zx_readBGRA(frame,value.x,value.y,&value.red,&value.green,&value.blue);return true;
+}
+bool readFramePixels(const TLinkNativeFramePickManyRequest &pick,TLinkNativeFramePickManyValue &value,NSError **error) {
+    TLinkColorRequest request(TLinkCurrentNativeBudget());
+    if(!request.admitted()){if(error)*error=zx_frameError(@"1;;color_compute_busy\r\n");return false;}
+    if(!TLinkFramePickParameters(pick.frame)){if(error)*error=zx_frameError(@"1;;invalid_frame_color_parameters\r\n");return false;}
+    TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return false;}
+    ZXFrameRef snapshot=zx_snapshotFrame(uint32_t(pick.frame.frameId));NSError *failure=nil;bool ok=false;
+    [&] {
+        const uint64_t nowMs=zx_nowMs();if(!zx_framePickBGRA(snapshot,&failure))return;
+        const ZXFrameObject &frame=*snapshot;value.ageMs=nowMs>=frame.createdAtMs?nowMs-frame.createdAtMs:0;
+        const double started=TLinkImageNowSeconds();
+        if(zx_frameTooOld(frame,uint64_t(pick.frame.maxAgeMs),nowMs,&failure))return;
+        if(pick.tableUnits>32768||pick.pointCount>512){failure=zx_frameError(@"1;;point_table_limit\r\n");return;}
+        if(!pick.pointCount||pick.pointCount!=pick.points.size()){failure=zx_frameError(@"1;;invalid_pick_many_point\r\n");return;}
+        value.colors.clear();value.colors.reserve(pick.pointCount);
+        for(const auto &point:pick.points){
+            TLinkNativeFrameColor pixel;
+            if(!zx_framePickManyPixel(frame,point.x,point.y,pick.frame.pointCoord,request,pixel,&failure))return;
+            value.colors.push_back(pixel);
+        }
+        value.totalMs=(TLinkImageNowSeconds()-started)*1000.0;ok=true;
+    }();
+    if(request.stopped())failure=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",request.error()]);
+    if(failure){if(error)*error=failure;return false;}return ok;
+}
+// END numeric frame color pick-many.
+
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     TLinkColorRequest request(TLinkCurrentNativeBudget());
@@ -819,16 +855,13 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
                 if (!item || [item length] == 0) continue;
                 NSArray<NSString *> *xy = [item componentsSeparatedByString:@","];
                 if ([xy count] != 2) { blockErr = zx_frameError(@"1;;invalid_pick_many_point\r\n"); return; }
-                double px=0,py=0;int x=0,y=0;
-                if(!TLinkColorDouble([xy[0] UTF8String],px)||!TLinkColorDouble([xy[1] UTF8String],py)||
-                   !TLinkFrameColorCoordinate(px,frame.scale,pointCoord,x)||!TLinkFrameColorCoordinate(py,frame.scale,pointCoord,y)){
+                double px=0,py=0;
+                if(!TLinkColorDouble([xy[0] UTF8String],px)||!TLinkColorDouble([xy[1] UTF8String],py)){
                     blockErr=zx_frameError(@"1;;invalid_pick_many_point\r\n");return;
                 }
-                if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
-                int r = 0, g = 0, b = 0;
-                if(!request.consume())return;
-                zx_readBGRA(frame, x, y, &r, &g, &b);
-                [parts addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d", x, y, r, g, b]];
+                TLinkNativeFrameColor pixel;
+                if(!zx_framePickManyPixel(frame,px,py,pointCoord,request,pixel,&blockErr))return;
+                [parts addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d",pixel.x,pixel.y,pixel.red,pixel.green,pixel.blue]];
             }
             double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
             ret = [NSString stringWithFormat:@"%@;;%llu;;%.3f;;%.3f", [parts componentsJoinedByString:@"|"], (unsigned long long)ageMs, totalMs, totalMs];

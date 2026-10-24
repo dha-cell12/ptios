@@ -773,7 +773,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSArray *points = [args count] > 1 ? [args objectAtIndex:1] : @[];
         NSDictionary *options = [args count] > 2 ? [args objectAtIndex:2] : @{};
         if (frameId <= 0 || ![points isKindOfClass:[NSArray class]] || [points count] == 0) return [TLinkJSNativeResponse responseWithError:@"framePickColors(frameId, points) requires a frame id and non-empty points array" code:@-1];
-        NSMutableArray<NSString *> *encoded = [NSMutableArray arrayWithCapacity:[points count]];
+        TLinkNativeFramePickManyRequest pick;pick.frame.frameId=frameId;
+        pick.points.reserve(points.count<512?points.count:512);
         for (id point in points) {
             double x = 0, y = 0;
             if ([point isKindOfClass:[NSArray class]] && [point count] >= 2) {
@@ -788,21 +789,18 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
             }
             else return [TLinkJSNativeResponse responseWithError:@"framePickColors points must be [x,y] arrays or {x,y} objects" code:@-1];
             if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y)) return [TLinkJSNativeResponse responseWithError:@"framePickColors points require finite coordinates" code:@-1];
-            [encoded addObject:[NSString stringWithFormat:@"%.0f,%.0f", x, y]];
+            pick.append(x,y);
         }
         NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
         if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
         int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
-        NSString *payload = [NSString stringWithFormat:@"%d;;pick_many;;%@;;%@;;%d", frameId, [encoded componentsJoinedByString:@"|"], coord, maxAgeMs];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 5) return [TLinkJSNativeResponse responseWithValue:result];
-        NSMutableArray *colors = [NSMutableArray array];
-        for (NSString *item in [TLinkautoJSSafeStringPart(parts, 1) componentsSeparatedByString:@"|"]) {
-            NSArray *fields = [item componentsSeparatedByString:@","];
-            if ([fields count] == 5) [colors addObject:@{@"x": @([fields[0] intValue]), @"y": @([fields[1] intValue]), @"red": @([fields[2] intValue]), @"green": @([fields[3] intValue]), @"blue": @([fields[4] intValue])}];
-        }
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"colors": colors, @"ageMs": @([TLinkautoJSSafeStringPart(parts, 2) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 3) doubleValue])})];
+        pick.frame.maxAgeMs=maxAgeMs;
+        if(!TLinkFramePickManyInputFits(frameId,maxAgeMs,pick.tableUnits,coord.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        NSData *coordData=[coord dataUsingEncoding:NSUTF8StringEncoding];
+        if(!coordData||(coordData.length&&memchr(coordData.bytes,0,coordData.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *space=[coord lowercaseString];pick.frame.pointCoord=[space isEqualToString:@"point"];
+        pick.frame.validCoord=pick.frame.pointCoord||[space isEqualToString:@"pixel"];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFramePickMany(pick,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFrameFindColor]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;

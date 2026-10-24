@@ -35,6 +35,7 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error);
 #ifdef __cplusplus
 #include "../shared/TLinkNativeFramePick.h"
 bool readFramePixel(const TLinkNativeFramePickRequest &pick, TLinkNativeFramePickValue &value, NSError **error);
+bool readFramePixels(const TLinkNativeFramePickManyRequest &pick, TLinkNativeFramePickManyValue &value, NSError **error);
 bool zx_copyFrameGrayRegionForOCR(uint32_t frameId,
                                   int rx,
                                   int ry,

@@ -1,12 +1,12 @@
 # C02b5 — structured single-pixel frame color
 
 Date: 2026-10-24 (Asia/Bangkok). Baseline: `5080765`; the user reported the corrected C02b4 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **corrected build reported passed by the user at `1d710aa`; device qualification pending**.
 Finding: **P0-13, framePickColor portion**. Multi-point frame color and other typed methods/helper transport remain open.
 
 ## Result and scope
 
-Root JS `framePickColor` now sends a numeric request through a licensed task-69 entry. It avoids aggregate request strings, UTF-8 request buffers, compatibility CF streams, raw task dispatch, captured response vectors and successful reply splitting. Compatibility raw/parts and RGB/ageMs/totalMs fields remain. Small output strings and a bounded scalar metadata conversion remain necessary for the old reply contract.
+Root JS `framePickColor` now sends a numeric request through a licensed task-69 entry. It avoids aggregate request strings, aggregate UTF-8 request buffers, compatibility CF streams, raw task dispatch, captured response vectors and successful reply splitting. Compatibility raw/parts and RGB/ageMs/totalMs fields remain. Small output strings and a bounded scalar metadata conversion remain necessary for the old reply contract.
 
 The numeric reader and RAW task-69 pick branch share BGRA/geometry validation and the pixel conversion/bounds/work/read helper. RAW parsing and all five color modes remain available. The reader holds the same immutable frame snapshot and never falls back to display capture. Production TrollStore and TouchPOC are unchanged.
 

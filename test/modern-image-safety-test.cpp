@@ -8,7 +8,37 @@ using BOOL=bool;
 #include "ModernSadUnderTest.inc"
 #include "ModernScaleUnderTest.inc"
 #include "fixtures/image-matcher-legacy-v1.inc"
+static void frameManyPolicyCases(){
+    for(unsigned trial=0;trial<10000;++trial){
+        TLinkNativeFramePickManyRequest request;std::string table;
+        const unsigned count=trial%530+1;
+        for(unsigned i=0;i<count;++i){
+            const double x=(trial%17==0)?1e308:double(int(i)-16)*47.125;
+            const double y=(i%7==0)?-0.0:double(i)*0.5;
+            char row[780];std::snprintf(row,sizeof(row),"%.0f,%.0f",x,y);
+            if(i)table+='|';table+=row;request.append(x,y);
+            if(i<512){char scalar[384];std::snprintf(scalar,sizeof(scalar),"%.0f",x);assert(request.points[i].x==std::strtod(scalar,nullptr));}
+        }
+        assert(request.points.size()==std::min(size_t(count),size_t(512))&&request.pointCount==std::min(size_t(count),size_t(513)));
+        assert(request.tableUnits==std::min(table.size(),size_t(32769)));
+        char prefix[100],suffix[100];std::snprintf(prefix,sizeof(prefix),"69%d;;pick_many;;",INT_MAX);
+        std::snprintf(suffix,sizeof(suffix),";;pixel;;%d",INT_MIN);
+        const size_t wireBytes=std::strlen(prefix)+table.size()+std::strlen(suffix);
+        assert(TLinkFramePickManyInputFits(INT_MAX,INT_MIN,request.tableUnits,5)==(wireBytes<=8192));
+    }
+    for(int id:{1,INT_MAX})for(int age:{INT_MIN,-1,0,1000,5000,INT_MAX}){
+        char wire[100];std::snprintf(wire,sizeof(wire),"69%d;;pick_many;;0,0;;",id);
+        char suffix[100];std::snprintf(suffix,sizeof(suffix),";;%d",age);
+        size_t maxCoord=8192-std::strlen(wire)-std::strlen(suffix);
+        assert(TLinkFramePickManyInputFits(id,age,3,maxCoord)&&!TLinkFramePickManyInputFits(id,age,3,maxCoord+1));
+    }
+    assert(!TLinkFramePickManyInputFits(1,1000,SIZE_MAX,0)&&!TLinkFramePickManyInputFits(1,1000,3,SIZE_MAX));
+    TLinkNativeFramePickManyRequest large;for(unsigned i=0;i<100000;++i)large.append(1e308,-1e308);
+    assert(large.points.size()==512&&large.pointCount==513&&large.tableUnits==32769);
+    puts("Frame pick-many policy passed: 10k frozen wire-length plans, 512/513 storage/count, 100k-point saturation and exact 8192/8193 caps.");
+}
 int main(){
+    frameManyPolicyCases();
     for(double v:{-1e308,-2147483647.0,-1.5,-0.5,-0.0,0.5,1.5,2.5,2147483646.0,2147483647.0,1e308}){
         char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.0f",v);size_t bytes=0;
         double rounded=TLinkNativeFrameJSCoordinate(v,&bytes);

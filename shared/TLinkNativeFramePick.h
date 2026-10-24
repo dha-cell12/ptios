@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <vector>
 // Same JS %.0f -> strict double value, without an aggregate request string.
 inline double TLinkNativeFrameJSCoordinate(double value,size_t *bytes=nullptr) {
     if(bytes)*bytes=0;
@@ -41,6 +42,33 @@ inline bool TLinkFramePickParameters(const TLinkNativeFramePickRequest &value) {
 }
 struct TLinkNativeFramePickValue {
     int red=0,green=0,blue=0;
+    uint64_t ageMs=0;
+    double totalMs=0;
+};
+struct TLinkNativeFramePoint { double x=0,y=0; };
+struct TLinkNativeFrameColor { int x=0,y=0,red=0,green=0,blue=0; };
+struct TLinkNativeFramePickManyRequest {
+    TLinkNativeFramePickRequest frame;
+    std::vector<TLinkNativeFramePoint> points;
+    size_t pointCount=0,tableUnits=0;
+    void append(double x,double y) {
+        if(pointCount==513&&tableUnits==32769)return;
+        size_t xBytes=0,yBytes=0;
+        TLinkNativeFramePoint point;point.x=TLinkNativeFrameJSCoordinate(x,&xBytes);point.y=TLinkNativeFrameJSCoordinate(y,&yBytes);
+        // Keep complete JS validation outside this bounded plan. Count/byte failures remain lazy.
+        size_t extra=xBytes+1+yBytes+(pointCount?1:0);
+        tableUnits=tableUnits>32768||extra>32768-tableUnits?32769:tableUnits+extra;
+        if(points.size()<512)points.push_back(point);
+        if(pointCount<513)++pointCount;
+    }
+};
+inline bool TLinkFramePickManyInputFits(int frame,int age,size_t tableUnits,size_t coordUnits) {
+    // 69 + frame;;pick_many;;table;;coord;;age
+    const size_t fixed=19+TLinkFramePickIntegerBytes(frame)+TLinkFramePickIntegerBytes(age);
+    return tableUnits<=8192-fixed&&coordUnits<=8192-fixed-tableUnits;
+}
+struct TLinkNativeFramePickManyValue {
+    std::vector<TLinkNativeFrameColor> colors;
     uint64_t ageMs=0;
     double totalMs=0;
 };

@@ -86,6 +86,50 @@ static void numericFramePickCases(const shared_ptr<ZXFrameObject> &frame){
     assert(captures==beforeCapture);frame->createdAtMs=created;frame->expiresAtMs=expires;freezeColorClock=false;
     puts("Numeric frame pick Foundation passed: 120 RAW/typed exact reply cases, padded stride/point scaling, TTL/default age, geometry/BGRA/missing frames, two admission gates, held snapshot after erase and no recapture.");
 }
+static void numericFramePickManyCases(const shared_ptr<ZXFrameObject> &frame){
+    const auto created=frame->createdAtMs,expires=frame->expiresAtMs;freezeColorClock=true;
+    frame->createdAtMs=colorClock-10;frame->expiresAtMs=colorClock+5000;const unsigned beforeCapture=captures;
+    const auto check=[](TLinkNativeFramePickManyRequest &pick,NSString *table){
+        NSString *coord=pick.frame.validCoord?(pick.frame.pointCoord?@"point":@"pixel"):@"typo";
+        NSString *wire=[NSString stringWithFormat:@"%d;;pick_many;;%@;;%@;;%d",pick.frame.frameId,table,coord,pick.frame.maxAgeMs];
+        NSError *rawError=nil,*numericError=nil;NSString *raw=color(wire,&rawError);TLinkNativeFramePickManyValue result;
+        const bool ok=readFramePixels(pick,result,&numericError);assert(ok==(raw!=nil));
+        if(ok){
+            NSMutableArray *rows=[NSMutableArray array];for(const auto &pixel:result.colors)[rows addObject:[NSString stringWithFormat:@"%d,%d,%d,%d,%d",pixel.x,pixel.y,pixel.red,pixel.green,pixel.blue]];
+            NSString *expected=[NSString stringWithFormat:@"%@;;%llu;;%.3f;;%.3f",[rows componentsJoinedByString:@"|"],(unsigned long long)result.ageMs,result.totalMs,result.totalMs];
+            assert([raw isEqualToString:expected]&&result.colors.size()==pick.pointCount);
+        }else assert([rawError.localizedDescription isEqualToString:numericError.localizedDescription]);
+    };
+    for(bool point:{false,true})for(double x:{-1e308,-1.5,-0.5,-0.0,0.5,1.5,2.5,3.49,3.5,7.5,2147483647.0,1e308})for(double y:{-0.5,0.5,1.5,3.49,5.5}){
+        TLinkNativeFramePickManyRequest pick;pick.frame.frameId=1;pick.frame.maxAgeMs=5000;pick.frame.pointCoord=point;pick.append(x,y);pick.append(0,0);
+        NSString *table=[NSString stringWithFormat:@"%.0f,%.0f|0,0",x,y];check(pick,table);
+    }
+    TLinkNativeFramePickManyRequest pick;pick.frame.frameId=1;pick.frame.maxAgeMs=5000;pick.append(0,0);
+    NSMutableString *table=[NSMutableString stringWithString:@"0,0"];
+    for(unsigned i=1;i<512;++i){pick.append(0,0);[table appendString:@"|0,0"];}
+    check(pick,table);pick.append(0,0);[table appendString:@"|0,0"];check(pick,table);
+    // Count and coordinate failures are deliberately after snapshot/geometry/TTL.
+    frame->expiresAtMs=colorClock;check(pick,table);frame->expiresAtMs=colorClock+5000;
+    frame->hasBGRA=false;check(pick,table);frame->hasBGRA=true;
+    frame->bgra.resize(319);check(pick,table);frame->bgra.resize(320);
+    pick.frame.frameId=999;check(pick,table);pick.frame.validCoord=false;check(pick,table);
+    pick.frame.frameId=1;pick.frame.validCoord=true;pick.frame.maxAgeMs=5001;check(pick,table);
+    pick=TLinkNativeFramePickManyRequest{};pick.frame.frameId=1;pick.append(-1,0);pick.append(1e308,0);check(pick,@"-1,0|1e308,0");
+    pick=TLinkNativeFramePickManyRequest{};pick.frame.frameId=1;pick.append(0,0);
+    frame->createdAtMs=colorClock-1001;check(pick,@"0,0");pick.frame.maxAgeMs=5000;check(pick,@"0,0");frame->createdAtMs=colorClock-10;
+    {TLinkColorRequest first({}),second({});check(pick,@"0,0");}
+    {TLinkImageWork first(gImageCompute),second(gImageCompute);check(pick,@"0,0");}
+    TLinkNativeFramePickManyValue result;NSError *error=nil;eraseOnSnapshot=true;
+    assert(readFramePixels(pick,result,&error)&&gFrameStore.count(1)==0&&result.colors.size()==1);eraseOnSnapshot=false;gFrameStore[1]=frame;
+    auto cancel=make_shared<TLinkNativeCancellation>();auto budget=make_shared<TLinkNativeBudget>(cancel,0,4096);cancelOnSnapshot=cancel;
+    {TLinkNativeBudgetScope scope(budget);assert(!readFramePixels(pick,result,&error)&&[error.localizedDescription containsString:@"cancelled_or_timed_out"]);}
+    cancelOnSnapshot.reset();
+    // Both slots must be available again after every failure and held-reader cleanup.
+    {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
+    {TLinkImageWork first(gImageCompute),second(gImageCompute);assert(first&&second);}
+    assert(captures==beforeCapture);frame->createdAtMs=created;frame->expiresAtMs=expires;freezeColorClock=false;
+    puts("Numeric frame pick-many Foundation passed: 120 RAW/numeric list cases, 512/513 counts, first failure and snapshot/geometry/TTL precedence, admissions, held-reader/cancel cleanup and no recapture.");
+}
 int main(){@autoreleasepool{
     fputs("Frame color/modern image: actual wire handlers, controlled CV/capture and real Foundation/CoreGraphics\n",stderr);
     auto frame=make_shared<ZXFrameObject>();frame->width=8;frame->height=8;frame->bytesPerRow=40;frame->scale=2;
@@ -116,5 +160,6 @@ int main(){@autoreleasepool{
      error=nil;assert(!batch(@"1;;pick_many,0:0;;pixel;;5000;;1",&error)&&error&&gFrameStore.count(1)==1);}
     assert(TLinkModernImageMemory().stats().total==0);
     numericFramePickCases(frame);
+    numericFramePickManyCases(frame);
     puts("Frame color/modern image Foundation passed: five color modes, signed offsets, strict numbers, padded stride, point scale, TTL, exact replies, batch sharing and pre-cancel cleanup.");
 }}

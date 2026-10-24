@@ -121,6 +121,7 @@ NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request, TL
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &requests, TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request, TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeFramePick(const TLinkNativeFramePickRequest &request, TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeFramePickMany(const TLinkNativeFramePickManyRequest &request, TLinkTaskExecutionContext *context);
 #endif
 
 // Compatibility entry point: buff must be a complete NUL-terminated task string.
