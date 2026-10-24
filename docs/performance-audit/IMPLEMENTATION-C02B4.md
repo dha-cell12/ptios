@@ -34,3 +34,9 @@ Keep the C01 child budget separate from the caller/reply budget. Local expiry re
 ## Acceptance and next slice
 
 Build rootfull/roothide in observe/enforced modes. Compare JS `pickColor` and RAW task 23 for fractional/negative/boundary coordinates, identical RGB and errors, capture failures, license expiry/cancellation and recovery. Measure per-call allocations and latency independently from fresh display capture. Continue frame color/other measured P0-13 methods and P0-12 helper transport, then P1-40 config snapshots and P1-41 byte-bounded dedupe. C01/C02 device acceptance remains open.
+
+## CI correction - assert macro argument boundary
+
+macOS Clang rejected the fault-reply assertion because the comma in an Objective-C stringWithFormat message appeared at the assert macro's top parenthesis level. Prepare the expected string before assert, preserving the exact reply and failure-status checks. Other assertions with formatted strings in the two affected fixtures are protected by ordinary C/C++ function-call parentheses. Production behavior, strict warnings and sanitizers are unchanged; corrected macOS/iOS CI remains pending.
+
+Validation after the correction: Windows native-budget portable checks and production fixture extraction pass. MSVC standards-conforming preprocessing rejects a negative control with the original comma and accepts all assert argument boundaries in both native-bridge and color runtime fixtures after stripping unavailable framework includes. This checks macro syntax only; Foundation compilation/execution still requires macOS CI.

@@ -510,7 +510,8 @@ static void typedColorCases(TLinkInProcessNativeBridge *bridge){
     context=parent(0.25);reset(context);assert([invoke(0,0,context).value[@"ok"] boolValue]);assert(colorBudget->remainingSeconds(3)<0.3);
     for(NSString *code:@[@"color_compute_busy",@"color_capture_failed",@"color_memory_budget",@"color_cancelled_or_timed_out"]){
         context=parent();reset(context);colorError=code;NSDictionary *error=invoke(0,0,context).value;
-        assert([error[@"raw"] isEqualToString:[NSString stringWithFormat:@"-1;;%@\r\n",code]]&&![error[@"ok"] boolValue]);
+        NSString *expected=[NSString stringWithFormat:@"-1;;%@\r\n",code];
+        assert([error[@"raw"] isEqualToString:expected]&&![error[@"ok"] boolValue]);
     }
     context=parent();reset(context);cancelColor=true;failure(invoke(0,0,context).value,@"AbortError");
     for(int fault:{1,2}){context=parent();reset(context);colorFault=fault;failure(invoke(0,0,context).value,@"native_exception");}

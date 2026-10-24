@@ -101,6 +101,8 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 - C02b4 / P0-13 partial: JS live pickColor uses a numeric licensed task-23 entry and the shared RAW/numeric ColorPicker core. Preserve decimal/strict-integer coordinates, busy/error order, C01 deadline before authorization, caller budget isolation and compatibility RGB/raw/parts fields, with no aggregate request/CF stream/raw dispatch/response-vector/success parsing. Details: `IMPLEMENTATION-C02B4.md`.
 - C02b4 validation: all 36 source-contract runners, 20 native runners and 528 TrollStore source grep assertions pass on Windows, including 100k coordinate parity cases and existing touch/batch/color policies. Expanded actual bridge/entry and ColorPicker/CoreGraphics Foundation fixtures await macOS/iOS CI; fresh capture, real coordinates, allocations/timing and device qualification remain pending. Continue frame color/other P0-13 methods, helper transport, config snapshots and bounded dedupe.
 
+- C02b4 CI correction: the Foundation fault-reply assertion placed an Objective-C formatting comma directly inside the assert macro. Move the expected string to a named variable and retain the exact reply/status assertion. Production code and strict warnings/sanitizers are unchanged; corrected macOS/iOS CI remains pending. Details: `IMPLEMENTATION-C02B4.md`.
+
 ## Primary target
 
 Performance-critical runtime remains `pccontrol` in SpringBoard, `tlinkauto-binary` ingress, `tlinkauto-jsd` helper where it is on a live JS call path, and selected `shared` dependencies.
