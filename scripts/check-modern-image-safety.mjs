@@ -12,7 +12,7 @@ const scale=section('static BOOL zx_findTemplateSAD','NSString* handleFrameCaptu
 assert.ok(scale.indexOf('TLinkModernImageMakePlan(')<scale.indexOf('cv::resize('));
 assert.ok(scale.indexOf('request->reserve(')<scale.indexOf('cv::resize('));
 assert.match(sad,/request->consume\(size_t\(w\)\)/);
-const color=section('NSString* handleColorInFrameTaskFromRawData','NSString* handleFrameBatchTaskFromRawData');
+const color=section('// BEGIN numeric frame color pick.','NSString* handleFrameBatchTaskFromRawData');
 assert.match(color,/TLinkColorRequest request/);assert.match(color,/zx_frameColorInputs/);
 assert.match(color,/TLinkColorAnchors/);assert.match(color,/request.consume/);
 assert.doesNotMatch(color,/-minDx|\[data\[12\] intValue\] \+ 1;[\s\S]*?if \(step <= 0\)/);
@@ -23,7 +23,7 @@ try{
  await writeFile(join(temp,'ModernScaleUnderTest.inc'),scale);
  await writeFile(join(temp,'FrameColorUnderTest.inc'),color);
  await writeFile(join(temp,'ModernPayload.inc'),section('// BEGIN immutable image payload types','// END immutable image payload types.'));
- await writeFile(join(temp,'ModernFindFrame.inc'),section('NSString* handleFindImageInFrameTaskFromRawData','NSString* handleColorInFrameTaskFromRawData'));
+ await writeFile(join(temp,'ModernFindFrame.inc'),section('NSString* handleFindImageInFrameTaskFromRawData','// BEGIN numeric frame color pick.'));
  await writeFile(join(temp,'ModernBatch.inc'),section('NSString* handleFrameBatchTaskFromRawData','bool zx_copyFrameGrayRegionForOCR'));
  await writeFile(join(temp,'ModernFindFresh.inc'),source.slice(source.indexOf('NSString* handleFindImageTaskFromRawData')));
  await writeFile(join(temp,'FrameColorHelpers.inc'),

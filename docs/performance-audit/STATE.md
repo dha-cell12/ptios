@@ -103,6 +103,10 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 
 - C02b4 CI correction: the Foundation fault-reply assertion placed an Objective-C formatting comma directly inside the assert macro. Move the expected string to a named variable and retain the exact reply/status assertion. Production code and strict warnings/sanitizers are unchanged; corrected macOS/iOS CI remains pending. Details: `IMPLEMENTATION-C02B4.md`.
 
+- User reported the corrected C02b4 build at `5080765` passed before C02b5; actual device qualification remains pending.
+- C02b5 / P0-13 partial: framePickColor uses a licensed numeric task-69 entry, shared RAW/numeric BGRA/pixel helpers and the same immutable frame snapshot. Preserve decimal coordinates, equivalent 8192-unit/NUL/UTF ingress, parameter/frame/TTL error order, C01/caller budget isolation, RGB/age/time/raw/parts and no recapture. Multi-point frame methods remain subsequent work. Details: `IMPLEMENTATION-C02B5.md`.
+- C02b5 validation: all 36 source-contract runners, 20 native runners and 528 TrollStore source grep assertions pass on Windows, including 100k coordinate/byte parity cases and boundary admission. Expanded actual bridge/entry/Image Foundation fixtures and new iOS builds await CI/device qualification. Macro preprocessing passes for all three related runtime fixtures. Continue framePickColors, other P0-13 methods, helper transport, config snapshots and bounded dedupe.
+
 ## Primary target
 
 Performance-critical runtime remains `pccontrol` in SpringBoard, `tlinkauto-binary` ingress, `tlinkauto-jsd` helper where it is on a live JS call path, and selected `shared` dependencies.

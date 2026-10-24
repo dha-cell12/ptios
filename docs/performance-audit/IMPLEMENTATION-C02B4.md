@@ -40,3 +40,7 @@ Build rootfull/roothide in observe/enforced modes. Compare JS `pickColor` and RA
 macOS Clang rejected the fault-reply assertion because the comma in an Objective-C stringWithFormat message appeared at the assert macro's top parenthesis level. Prepare the expected string before assert, preserving the exact reply and failure-status checks. Other assertions with formatted strings in the two affected fixtures are protected by ordinary C/C++ function-call parentheses. Production behavior, strict warnings and sanitizers are unchanged; corrected macOS/iOS CI remains pending.
 
 Validation after the correction: Windows native-budget portable checks and production fixture extraction pass. MSVC standards-conforming preprocessing rejects a negative control with the original comma and accepts all assert argument boundaries in both native-bridge and color runtime fixtures after stripping unavailable framework includes. This checks macro syntax only; Foundation compilation/execution still requires macOS CI.
+
+## Following checkpoint
+
+The user reported corrected C02b4 build `5080765` passed before C02b5. Structured single-pixel frame reads are tracked in `IMPLEMENTATION-C02B5.md`; C02b4 device qualification remains pending.

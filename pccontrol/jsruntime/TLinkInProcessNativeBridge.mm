@@ -757,11 +757,14 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
         if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
         int maxAgeMs = TLinkautoJSIntOption(options, @"maxAgeMs", 1000);
-        NSString *payload = [NSString stringWithFormat:@"%d;;pick;;%.0f;;%.0f;;%@;;%d", frameId, x, y, coord, maxAgeMs];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_COLOR_IN_FRAME, payload] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 7) return [TLinkJSNativeResponse responseWithValue:result];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"red": @([TLinkautoJSSafeStringPart(parts, 1) intValue]), @"green": @([TLinkautoJSSafeStringPart(parts, 2) intValue]), @"blue": @([TLinkautoJSSafeStringPart(parts, 3) intValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 4) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue])})];
+        TLinkNativeFramePickRequest pick;pick.frameId=frameId;pick.maxAgeMs=maxAgeMs;size_t xBytes=0,yBytes=0;
+        pick.x=TLinkNativeFrameJSCoordinate(x,&xBytes);pick.y=TLinkNativeFrameJSCoordinate(y,&yBytes);
+        if(!TLinkFramePickInputFits(frameId,maxAgeMs,xBytes,yBytes,coord.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        if(![coord canBeConvertedToEncoding:NSUTF8StringEncoding]||[coord rangeOfCharacterFromSet:[NSCharacterSet characterSetWithRange:NSMakeRange(0,1)]].location!=NSNotFound)
+            return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *space=[coord lowercaseString];pick.pointCoord=[space isEqualToString:@"point"];
+        pick.validCoord=pick.pointCoord||[space isEqualToString:@"pixel"];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFramePick(pick,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFramePickColors]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;

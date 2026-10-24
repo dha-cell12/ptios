@@ -731,6 +731,42 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
     return ret;
 }
 
+// BEGIN numeric frame color pick.
+static bool zx_framePickBGRA(const ZXFrameRef &snapshot,NSError **error) {
+    NSString *message=nil;
+    if(!snapshot)message=@"1;;frame_not_found\r\n";
+    else if(!snapshot->hasBGRA||snapshot->bgra.empty())message=@"1;;frame_missing_bgra\r\n";
+    else if(!TLinkFrameColorGeometry(snapshot->width,snapshot->height,snapshot->bytesPerRow,snapshot->bgra.size()))message=@"1;;frame_geometry_invalid\r\n";
+    if(message){if(error)*error=zx_frameError(message);return false;}return true;
+}
+static bool zx_framePickPixel(const ZXFrameObject &frame,double px,double py,bool pointCoord,TLinkColorRequest &request,TLinkNativeFramePickValue &value,NSError **error) {
+    int x=zx_coordToPixel(px,frame.scale,pointCoord),y=zx_coordToPixel(py,frame.scale,pointCoord);
+    if(x<0||y<0||x>=frame.width||y>=frame.height){if(error)*error=zx_frameError(@"1;;point_out_of_bounds\r\n");return false;}
+    if(!request.consume())return false;
+    zx_readBGRA(frame,x,y,&value.red,&value.green,&value.blue);return true;
+}
+bool readFramePixel(const TLinkNativeFramePickRequest &pick,TLinkNativeFramePickValue &value,NSError **error) {
+    TLinkColorRequest request(TLinkCurrentNativeBudget());
+    if(!request.admitted()){if(error)*error=zx_frameError(@"1;;color_compute_busy\r\n");return false;}
+    if(!TLinkFramePickParameters(pick)){if(error)*error=zx_frameError(@"1;;invalid_frame_color_parameters\r\n");return false;}
+    TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return false;}
+    ZXFrameRef snapshot=zx_snapshotFrame(uint32_t(pick.frameId));NSError *failure=nil;bool ok=false;
+    [&] {
+        const uint64_t nowMs=zx_nowMs();
+        if(!zx_framePickBGRA(snapshot,&failure))return;
+        const ZXFrameObject &frame=*snapshot;
+        value.ageMs=nowMs>=frame.createdAtMs?nowMs-frame.createdAtMs:0;
+        const double started=TLinkImageNowSeconds();
+        if(zx_frameTooOld(frame,uint64_t(pick.maxAgeMs),nowMs,&failure))return;
+        if(!zx_framePickPixel(frame,pick.x,pick.y,pick.pointCoord,request,value,&failure))return;
+        value.totalMs=(TLinkImageNowSeconds()-started)*1000.0;ok=true;
+    }();
+    if(request.stopped())failure=zx_frameError([NSString stringWithFormat:@"1;;%s\r\n",request.error()]);
+    if(failure){if(error)*error=failure;return false;}return ok;
+}
+// END numeric frame color pick.
+
 NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     TLinkColorRequest request(TLinkCurrentNativeBudget());
@@ -752,16 +788,8 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
     snapshot = zx_snapshotFrame(frameId);
     [&] {
         const uint64_t nowMs = zx_nowMs();
-        if (!snapshot) {
-            blockErr = zx_frameError(@"1;;frame_not_found\r\n");
-            return;
-        }
+        if(!zx_framePickBGRA(snapshot,&blockErr))return;
         const ZXFrameObject &frame = *snapshot;
-        if (!frame.hasBGRA || frame.bgra.empty()) {
-            blockErr = zx_frameError(@"1;;frame_missing_bgra\r\n");
-            return;
-        }
-        if(!TLinkFrameColorGeometry(frame.width,frame.height,frame.bytesPerRow,frame.bgra.size())){blockErr=zx_frameError(@"1;;frame_geometry_invalid\r\n");return;}
         uint64_t ageMs = nowMs >= frame.createdAtMs ? nowMs - frame.createdAtMs : 0;
         CFAbsoluteTime total0 = TLinkImageNowSeconds();
 
@@ -770,14 +798,10 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
             bool pointCoord = ([data count] >= 5) ? zx_stringIsPointCoord(data[4]) : false;
             uint64_t maxAgeMs = ([data count] >= 6) ? (uint64_t)MAX(0, [data[5] longLongValue]) : kDefaultFrameTtlMs;
             if (zx_frameTooOld(frame, maxAgeMs, nowMs, &blockErr)) return;
-            int x = zx_coordToPixel([data[2] doubleValue], frame.scale, pointCoord);
-            int y = zx_coordToPixel([data[3] doubleValue], frame.scale, pointCoord);
-            if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) { blockErr = zx_frameError(@"1;;point_out_of_bounds\r\n"); return; }
-            int r = 0, g = 0, b = 0;
-            if(!request.consume())return;
-            zx_readBGRA(frame, x, y, &r, &g, &b);
+            TLinkNativeFramePickValue pixel;
+            if(!zx_framePickPixel(frame,[data[2] doubleValue],[data[3] doubleValue],pointCoord,request,pixel,&blockErr))return;
             double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
-            ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%llu;;%.3f;;%.3f", r, g, b, (unsigned long long)ageMs, totalMs, totalMs];
+            ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%llu;;%.3f;;%.3f", pixel.red, pixel.green, pixel.blue, (unsigned long long)ageMs, totalMs, totalMs];
             return;
         }
 

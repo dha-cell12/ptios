@@ -1,4 +1,5 @@
 #include "../shared/TLinkModernImagePolicy.h"
+#include "../shared/TLinkNativeFramePick.h"
 #include <cassert>
 #include <cstdio>
 #include <functional>
@@ -8,6 +9,27 @@ using BOOL=bool;
 #include "ModernScaleUnderTest.inc"
 #include "fixtures/image-matcher-legacy-v1.inc"
 int main(){
+    for(double v:{-1e308,-2147483647.0,-1.5,-0.5,-0.0,0.5,1.5,2.5,2147483646.0,2147483647.0,1e308}){
+        char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.0f",v);size_t bytes=0;
+        double rounded=TLinkNativeFrameJSCoordinate(v,&bytes);
+        assert(rounded==std::strtod(legacy,nullptr)&&std::signbit(rounded)==std::signbit(std::strtod(legacy,nullptr))&&bytes==std::strlen(legacy));
+    }
+    for(unsigned i=0;i<100000;++i){
+        const double v=double(i)*47.125-1234.5;char legacy[384];std::snprintf(legacy,sizeof(legacy),"%.0f",v);size_t bytes=0;
+        assert(TLinkNativeFrameJSCoordinate(v,&bytes)==std::strtod(legacy,nullptr)&&bytes==std::strlen(legacy));
+    }
+    for(int frame:{1,INT_MAX})for(int age:{INT_MIN,-1,0,1000,5000,INT_MAX}){
+        char prefix[100];std::snprintf(prefix,sizeof(prefix),"69%d;;pick;;-0;;2;;",frame);
+        char suffix[100];std::snprintf(suffix,sizeof(suffix),";;%d",age);
+        size_t maxCoord=8192-std::strlen(prefix)-std::strlen(suffix);
+        assert(TLinkFramePickInputFits(frame,age,2,1,maxCoord)&&!TLinkFramePickInputFits(frame,age,2,1,maxCoord+1));
+    }
+    assert(!TLinkFramePickInputFits(1,1000,SIZE_MAX,1,5)&&!TLinkFramePickInputFits(1,1000,1,SIZE_MAX,5)&&!TLinkFramePickInputFits(1,1000,1,1,SIZE_MAX));
+    TLinkNativeFramePickRequest pick;pick.frameId=1;pick.x=-10;assert(TLinkFramePickParameters(pick));
+    pick.x=double(INT_MAX)-1;assert(TLinkFramePickParameters(pick));pick.x=INT_MAX;assert(!TLinkFramePickParameters(pick));
+    pick.x=0;pick.maxAgeMs=5001;assert(!TLinkFramePickParameters(pick));pick.maxAgeMs=0;assert(TLinkFramePickParameters(pick));
+    pick.validCoord=false;assert(!TLinkFramePickParameters(pick));
+    puts("Frame pick numeric policy passed: 100k legacy scalar/byte cases, signed zero/range admission and exact/saturating input caps.");
     TLinkModernImagePlan plan;auto round=[](double v){return cvRound(v);};
     assert(TLinkModernImageMakePlan(80,60,10,10,.5f,2,.1f,round,plan)&&plan.scales.size()<=64);
     assert(!TLinkModernImageMakePlan(80,60,10,10,.5f,2,.00001f,round,plan));

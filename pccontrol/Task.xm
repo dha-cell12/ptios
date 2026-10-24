@@ -609,6 +609,32 @@ NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &req
 }
 // END typed color task entry.
 
+// BEGIN typed frame pick task entry.
+NSDictionary *TLinkExecuteNativeFramePick(const TLinkNativeFramePickRequest &request,TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto replyBudget=[call nativeBudget];TLinkNativeBudgetScope callScope(replyBudget);
+    static_assert(TASK_COLOR_IN_FRAME==69,"frame color task classification changed");
+    const uint8_t task[]={'6','9'};
+    TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget(task,sizeof(task),replyBudget));
+    @try {try {
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_COLOR_IN_FRAME,&denial))
+            return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",replyBudget);
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSError *error=nil;TLinkNativeFramePickValue value;
+        if(!readFramePixel(request,value,&error))return zx_typedTouchReply(error.localizedDescription?:@"1;;frame_error\r\n",replyBudget);
+        NSString *r=[NSString stringWithFormat:@"%d",value.red],*g=[NSString stringWithFormat:@"%d",value.green],*b=[NSString stringWithFormat:@"%d",value.blue];
+        NSString *age=[NSString stringWithFormat:@"%llu",(unsigned long long)value.ageMs],*ms=[NSString stringWithFormat:@"%.3f",value.totalMs];
+        NSString *raw=[NSString stringWithFormat:@"0;;%@;;%@;;%@;;%@;;%@;;%@\r\n",r,g,b,age,ms,ms];
+        if(!replyBudget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        return @{@"ok":@(true),@"raw":raw,@"parts":@[@"0",r,g,b,age,ms,ms],@"red":@(value.red),@"green":@(value.green),@"blue":@(value.blue),@"ageMs":@(value.ageMs),@"totalMs":@([ms doubleValue])};
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+// END typed frame pick task entry.
+
 // === runShell drain/timeout support (Group A) ===
 
 static const NSUInteger kShellMaxCapturedOutputBytes = 768 * 1024;
