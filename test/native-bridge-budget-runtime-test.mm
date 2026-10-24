@@ -45,6 +45,10 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
         NSError *error=nil;zx_handleNativeBatch(bytes+2,&error);
         notifyClient((UInt8 *)[(error.localizedDescription?:@"0\r\n") UTF8String],stream);return;
     }
+    if([mode isEqualToString:@"frameEncodingOracle"]&&lastPayload.compare(0,2,"69")==0){
+        // These probes only use invalid coord tokens; legacy transport decides encoding admission.
+        notifyClient((UInt8 *)"1;;invalid_frame_color_parameters\r\n",stream);return;
+    }
     if ([mode isEqualToString:@"chunks"]) {
         notifyClient((UInt8 *)"0;;", stream);
         notifyClient((UInt8 *)"12345", stream);
@@ -182,8 +186,11 @@ static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 10
     context.ownerSessionId = @"session"; context.ownerRunId = @"run"; context.ownerRuntime = @"test";
     return context;
 }
-static void failure(NSDictionary *result, NSString *code) {
-    assert(![result[@"ok"] boolValue] && [result[@"parts"][1] isEqualToString:code]);
+static void failure(NSDictionary *result, NSString *code, unsigned callerLine = __builtin_LINE()) {
+    NSArray *parts=result[@"parts"];
+    const bool matches=![result[@"ok"] boolValue]&&parts.count>1&&[parts[1] isEqualToString:code];
+    if(!matches)std::fprintf(stderr,"native bridge failure at line %u: expected %s, received %s\n",callerLine,code.UTF8String ?: "(nil)",[[result description] UTF8String] ?: "(nil)");
+    assert(matches);
 }
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
@@ -560,11 +567,22 @@ static void typedFramePickCases(TLinkInProcessNativeBridge *bridge){
     auto context=parent();reset(context);const unsigned noRead=frameReads;const int noGate=licenseCalls;
     assert(!invoke(0,0,0,@{},context).ok&&!invoke(1,NAN,0,@{},context).ok&&!invoke(1,0,INFINITY,@{},context).ok);
     for(NSString *bad:@[@"pixel;;x",@"pixel\r",@"pixel\n"])assert(!invoke(1,0,0,@{@"coord":bad},context).ok);
-    unichar nul=0;NSString *nulCoord=[@"pi" stringByAppendingString:[NSString stringWithCharacters:&nul length:1]];
-    failure(invoke(1,0,0,@{@"coord":nulCoord},context).value,@"invalid_payload");
-    unichar surrogate=0xd800;NSString *invalidUTF=[NSString stringWithCharacters:&surrogate length:1];
-    failure(invoke(1,0,0,@{@"coord":invalidUTF},context).value,@"invalid_payload");
     assert(frameReads==noRead&&licenseCalls==noGate);
+    unichar nul=0;NSString *nulCoord=[@"pi" stringByAppendingString:[NSString stringWithCharacters:&nul length:1]];
+    unichar surrogate=0xd800;NSString *invalidUTF=[NSString stringWithCharacters:&surrogate length:1];
+    int oracleDispatches=0;
+    for(NSString *coord:@[nulCoord,invalidUTF]){
+        // Use the actual legacy formatter/transport as the oracle for Foundation string conversion.
+        mode=@"frameEncodingOracle";const int beforeOracle=calls;
+        NSString *wire=[NSString stringWithFormat:@"691;;pick;;0;;0;;%@;;1000",coord];
+        NSDictionary *legacy=[bridge executeRawPayload:wire context:parent()];
+        const int dispatched=calls-beforeOracle;assert(dispatched==0||dispatched==1);oracleDispatches+=dispatched;
+        mode=@"echo";context=parent();reset(context);
+        const int beforeGate=licenseCalls,beforeTyped=calls;const unsigned beforeRead=frameReads;
+        NSDictionary *result=invoke(1,0,0,@{@"coord":coord},context).value;
+        failure(result,legacy[@"parts"][1]);assert([result isEqualToDictionary:legacy]);
+        assert(calls==beforeTyped&&licenseCalls==beforeGate+dispatched&&frameReads==beforeRead+dispatched);
+    }
     for(unsigned extra=0;extra<2;++extra){context=parent();reset(context);const int beforeGate=licenseCalls;
         NSString *coord=[@"x" stringByPaddingToLength:8169+extra withString:@"x" startingAtIndex:0];
         NSString *wire=[NSString stringWithFormat:@"691;;pick;;0;;0;;%@;;1000",coord];assert(wire.length==8192+extra);
@@ -590,8 +608,8 @@ static void typedFramePickCases(TLinkInProcessNativeBridge *bridge){
     const NSUInteger successBytes=[@"0;;1;;2;;3;;7;;1.235;;1.235\r\n" length];
     context=parent(1,successBytes);reset(context);assert([invoke(1,0,0,@{},context).value[@"ok"] boolValue]);
     context=parent(1,successBytes-1);reset(context);failure(invoke(1,0,0,@{},context).value,@"response_too_large");
-    assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameBudget.reset();licenseBudget.reset();touchToken=nil;
-    puts("Typed frame pick actual bridge/entry passed: scalar/RGB/age/time/parts parity, exact 8192/8193 input, NUL/UTF preflight, one task-69 gate, C01/caller deadlines, faults/output and no raw dispatch.");
+    assert(calls==wireCalls+oracleDispatches&&!TLinkCurrentNativeBudget());frameBudget.reset();licenseBudget.reset();touchToken=nil;
+    puts("Typed frame pick actual bridge/entry passed: scalar/RGB/age/time/parts parity, exact 8192/8193 input, legacy NUL/UTF admission parity, one task-69 gate, C01/caller deadlines, faults/output and no raw dispatch.");
 }
 int main() { @autoreleasepool {
     auto bridge = [TLinkInProcessNativeBridge new]; mode = @"echo";

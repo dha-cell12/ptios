@@ -36,6 +36,16 @@ Opaque license calls and store/framework waits remain cooperative rather than pr
 - A one-off MSVC standards-conforming preprocessor check accepts assert argument boundaries in the native-bridge, color and frame-color runtime fixtures; its negative control rejects the original top-level Objective-C comma. This checks macro syntax, not Foundation compilation.
 - **New Foundation/macOS cases and iOS builds were not run on this Windows host.** Real frame coordinates, snapshot lifetime under device concurrency, allocation counts and latency require CI/device qualification.
 
+## CI fixture correction (2026-10-24)
+
+The reported macOS run aborts in the shared `failure` helper after the typed-color section. That places the failure in the frame-pick cases, but the supplied assertion does not identify the calling case or actual reply; the exact failing input is not yet confirmed.
+
+The NUL/unpaired-UTF-16 probes previously hard-coded invalid_payload. They now replay the old formatter and the actual bounded RAW bridge to determine the legacy encoding decision on that Foundation runtime. A controlled task double returns invalid_frame_color_parameters only when transport admits these invalid coord tokens. The typed result must match the entire legacy dictionary, preserve the corresponding license/backend admission count, and perform no RAW dispatch itself. Other fixed error expectations remain strict. Production behavior is unchanged.
+
+The shared failure helper now records the calling line, expected code and complete actual reply, and checks parts length before indexing. This makes a remaining mismatch actionable instead of reporting only the generic helper line.
+
+Windows validation after this correction: native-budget portable tests and actual-source extraction pass; standards-conforming macro preprocessing passes for the native-bridge, color and frame-color fixtures, including its negative control. Foundation execution, ASan/UBSan and iOS builds still require macOS CI. This correction does not establish that the reported runtime failure is resolved until that CI run passes.
+
 ## Acceptance and next slice
 
 Build rootfull/roothide in observe/enforced modes. Compare JS and RAW task-69 single-pixel reads from the same frame for point/pixel coordinates, fractional/negative/boundary values, age/TTL, exact reply fields, authorization/cancellation/output limits and recovery after failure. Verify no recapture and no retained reader/admission after return. Measure allocation/call latency against C02b4 independently of frame creation.
