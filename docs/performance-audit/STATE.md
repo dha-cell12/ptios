@@ -95,6 +95,8 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 
 - C02b3 CI correction: TrollStore macOS rejected the batch denial fixture's `auto` deduced from the response `id value` property (`-Wauto-var-id`). Use an explicit NSDictionary pointer; production behavior, strict warnings and sanitizers stay unchanged. Corrected macOS/iOS CI remains pending. Details: `IMPLEMENTATION-C02B3.md`.
 
+- C02b3 fallback-fixture correction: macOS reached the compatibility cases and found a transposed expected task prefix (`652620.00` instead of `656220.00`). Compare the complete payload against task 65 plus the frozen legacy encoder, preserving separate response/exactly-one-dispatch checks. Production code is unchanged. Windows native-budget checks pass again; corrected Foundation/macOS CI remains pending.
+
 ## Primary target
 
 Performance-critical runtime remains `pccontrol` in SpringBoard, `tlinkauto-binary` ingress, `tlinkauto-jsd` helper where it is on a live JS call path, and selected `shared` dependencies.

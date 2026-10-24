@@ -432,8 +432,11 @@ static void typedBatchCases(TLinkInProcessNativeBridge *bridge){
     // RAW/mixed, string/negative/extreme duration and embedded-NUL compatibility.
     mode=@"batchRuntime";
     for(id duration:@[@-1,@60001,@(1e100),@"16"]){context=parent();reset(context);const int before=calls;
-        auto result=invoke(@[@{@"type":@"tap",@"x":@20,@"y":@30,@"duration":duration}],context);
-        assert(result.ok&&calls==before+1&&lastPayload.find("652620.00;;30.00;;")==0);}
+        NSArray *commands=@[@{@"type":@"tap",@"x":@20,@"y":@30,@"duration":duration}];
+        NSString *expected=[@"65" stringByAppendingString:legacyBatchWire(commands)];
+        TLinkJSNativeResponse *result=invoke(commands,context);
+        assert(result.ok);assert(calls==before+1);
+        assert(lastPayload==expected.UTF8String);}
     context=parent();reset(context);const int beforeRaw=calls;
     auto fallback=invoke(@[tap,@"62",tap],context);assert(fallback.ok&&![fallback.value[@"ok"] boolValue]&&calls==beforeRaw+1&&injected.size()==2);
     context=parent();reset(context);unichar zero=0;NSString *nul=[@"62" stringByAppendingString:[NSString stringWithCharacters:&zero length:1]];

@@ -40,3 +40,7 @@ Continue other measured P0-13 methods and P0-12 event-driven helper RPC, then P1
 ## CI correction - explicit Objective-C result type
 
 TrollStore macOS CI rejected `auto result=invoke(normal,context).value` with `-Wauto-var-id`: the response value property is declared as `id`. The batch denial fixture now declares `NSDictionary *result` explicitly. Other auto declarations in this fixture resolve to concrete response/context types or C++ values. Production batch behavior, strict warnings and sanitizers are unchanged. Corrected macOS compilation/runtime and iOS builds remain pending; the Windows native-budget runner is rerun for portable coverage and fixture extraction.
+
+## CI correction - exact fallback wire expectation
+
+The macOS fixture reached the fallback-duration cases, then failed an incorrect hand-written prefix expectation: task 65 + task 62 + x=20.00 is `656220.00`, not `652620.00`. The fixture now compares the complete dispatched payload with task 65 plus the frozen pre-C02b3 object encoder for each negative/out-of-range/extreme/string duration case. Separate assertions retain response and exactly-one-dispatch checks. Production routing/parsing is unchanged. Windows native-budget portable coverage and production fixture extraction pass again; the corrected Foundation runtime still requires macOS CI.
