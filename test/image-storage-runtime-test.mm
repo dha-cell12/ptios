@@ -36,14 +36,14 @@ static CGImageRef FixtureFrameImage(size_t width,size_t height,size_t bits,size_
 
 // Compile the actual handler admission/transfer and lookup statements together:
 // __block maps belong to Objective-C blocks; compute uses ordinary C++ locals.
-static NSString *findAdmissionFixture(uint32_t frameId, uint32_t imageId, NSError **error) {
+static bool findAdmissionFixture(uint32_t frameId, uint32_t imageId, NSError **error) {
 #include "ImageFindAdmissionUnderTest.inc"
     (void)blockErr;
     [&] {
 #include "ImageFindLookupUnderTest.inc"
-        if (snapshot && iit != images.end() && iit->second) ret = @"admitted";
+        if (snapshot && iit != images.end() && iit->second) ok = true;
     }();
-    return ret;
+    return ok;
 }
 static NSString *batchAdmissionFixture(uint32_t frameId, uint32_t imageId, NSString *opsRaw, NSError **error) {
     auto request=std::make_shared<TLinkModernImageRequest>(TLinkNativeBudgetPtr{});
@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
         const uint32_t imageId = publishImage(imageFixture());
         NSError *admissionError = nil;
         NSString *ops = [NSString stringWithFormat:@"img,%u,0,0,8,8,0.9,1,0", imageId];
-        assert([findAdmissionFixture(id, imageId, &admissionError) isEqualToString:@"admitted"] && !admissionError);
+        assert(findAdmissionFixture(id, imageId, &admissionError) && !admissionError);
         assert([batchAdmissionFixture(id, imageId, ops, &admissionError) isEqualToString:@"admitted"] && !admissionError);
         assert(!findAdmissionFixture(id, imageId + 1, &admissionError));
         NSString *missingOps = [NSString stringWithFormat:@"img,%u,0,0,8,8,0.9,1,0", imageId + 1];

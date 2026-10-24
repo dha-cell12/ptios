@@ -629,36 +629,20 @@ NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
     return [NSString stringWithFormat:@"%lu", (unsigned long)removed];
 }
 
-NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **error)
-{
-    auto request = std::make_shared<TLinkModernImageRequest>(TLinkCurrentNativeBudget());
+// BEGIN numeric frame image match.
+bool matchImageInFrame(const TLinkNativeFrameImageRequest &search,TLinkNativeFrameImageValue &value,NSError **error){
+    auto request=TLinkModernImageSlot();if(!request)request=std::make_shared<TLinkModernImageRequest>(TLinkCurrentNativeBudget());
     TLinkModernImageScope requestScope(request);
-    if(request->stopped()){if(error)*error=zx_frameError(@"-1;;template_cancelled_or_timed_out\r\n");return nil;}
-
-    NSArray<NSString *> *data = zx_splitEventData(eventData);
-    if ([data count] < 11) {
-        if (error) *error = zx_frameError(@"1;;Find image in frame format should be frame_id;;image_id;;x;;y;;w;;h;;acceptable;;scale_min;;scale_max;;scale_step;;pixel_skip[;;coord;;max_age_ms]\r\n");
-        return nil;
-    }
-    if(!zx_imageInputs(data,true)){if(error)*error=zx_frameError(@"-1;;invalid_image_parameters\r\n");return nil;}
-    uint32_t frameId = (uint32_t)[data[0] intValue];
-    uint32_t imageId = (uint32_t)[data[1] intValue];
-    int rx = [data[2] intValue];
-    int ry = [data[3] intValue];
-    int rw = [data[4] intValue];
-    int rh = [data[5] intValue];
-    double acceptable = [data[6] doubleValue];
-    float scaleMin = [data[7] floatValue];
-    float scaleMax = [data[8] floatValue];
-    float scaleStep = [data[9] floatValue];
-    int pixelSkip = [data[10] intValue];
-    bool pointCoord = ([data count] >= 12) ? zx_stringIsPointCoord(data[11]) : false;
-    uint64_t maxAgeMs = ([data count] >= 13) ? (uint64_t)MAX(0, [data[12] longLongValue]) : kDefaultFrameTtlMs;
-
-    NSString *ret = nil;
+    if(request->stopped()){if(error)*error=zx_frameError(@"-1;;template_cancelled_or_timed_out\r\n");return false;}
+    if(!TLinkNativeFrameImageParameters(search)){if(error)*error=zx_frameError(@"-1;;invalid_image_parameters\r\n");return false;}
+    const uint32_t frameId=uint32_t(search.frameId),imageId=uint32_t(search.imageId);
+    const int rx=search.x,ry=search.y,rw=search.width,rh=search.height,pixelSkip=search.pixelSkip;
+    const double acceptable=search.acceptable;const float scaleMin=search.scaleMin,scaleMax=search.scaleMax,scaleStep=search.scaleStep;
+    const bool pointCoord=search.pointCoord;const uint64_t maxAgeMs=uint64_t(search.maxAgeMs);
+    bool ok=false;
     NSError *blockErr = nil;
     TLinkImageWork work(gImageCompute);
-    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return nil; }
+    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return false; }
     ZXFrameRef snapshot;
     __block ZXFrameRef admittedFrame;
     __block unordered_map<uint32_t, ZXImageRef> admittedImages;
@@ -711,23 +695,32 @@ NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData, NSError **erro
         bool match = zx_findTemplateSAD(region, iit->second->gray, acceptable, scaleMin, scaleMax, scaleStep, pixelSkip,
                                         &mx, &my, &mw, &mh, &score);
         double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
-        if (!match) {
-            ret = [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f;;%llu;;%.3f;;%.3f", score, (unsigned long long)ageMs, totalMs, totalMs];
-            return;
-        }
-        int absX = workX + mx;
-        int absY = workY + my;
-        double cx = absX + mw / 2.0;
-        double cy = absY + mh / 2.0;
-        ret = [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f;;%llu;;%.3f;;%.3f",
-               absX, absY, mw, mh, cx, cy, score, (unsigned long long)ageMs, totalMs, totalMs];
+        value.ageMs=ageMs;value.score=score;value.totalMs=totalMs;
+        value.x=match?workX+mx:-1;value.y=match?workY+my:-1;value.width=match?mw:0;value.height=match?mh:0;
+        value.centerX=match?value.x+mw/2.0:-1;value.centerY=match?value.y+mh/2.0:-1;ok=true;
     }();
     if (request->stopped()) blockErr = zx_frameError([NSString stringWithFormat:@"-1;;%s\r\n",request->error()]);
     if (blockErr) {
         if (error) *error = blockErr;
-        return nil;
+        return false;
     }
-    return ret;
+    return ok;
+}
+
+// END numeric frame image match.
+
+NSString* handleFindImageInFrameTaskFromRawData(UInt8 *eventData,NSError **error){
+    auto request=std::make_shared<TLinkModernImageRequest>(TLinkCurrentNativeBudget());TLinkModernImageScope requestScope(request);
+    if(request->stopped()){if(error)*error=zx_frameError(@"-1;;template_cancelled_or_timed_out\r\n");return nil;}
+    NSArray<NSString *> *data=zx_splitEventData(eventData);
+    if(data.count<11){if(error)*error=zx_frameError(@"1;;Find image in frame format should be frame_id;;image_id;;x;;y;;w;;h;;acceptable;;scale_min;;scale_max;;scale_step;;pixel_skip[;;coord;;max_age_ms]\r\n");return nil;}
+    if(!zx_imageInputs(data,true)){if(error)*error=zx_frameError(@"-1;;invalid_image_parameters\r\n");return nil;}
+    TLinkNativeFrameImageRequest search;search.frameId=[data[0] intValue];search.imageId=[data[1] intValue];
+    for(unsigned i=0;i<4;++i){search.regionPart(i,[data[i+2] UTF8String],[data[i+2] length]);search.scalarPart(i,[data[i+6] UTF8String],[data[i+6] length]);}
+    search.pixelSkip=[data[10] intValue];search.pointCoord=data.count>=12?zx_stringIsPointCoord(data[11]):false;search.maxAgeMs=data.count>=13?int(MAX(0,[data[12] longLongValue])):int(kDefaultFrameTtlMs);
+    TLinkNativeFrameImageValue value;if(!matchImageInFrame(search,value,error))return nil;
+    if(value.x<0||value.y<0)return [NSString stringWithFormat:@"-1;;-1;;0;;0;;-1;;-1;;%.4f;;%llu;;%.3f;;%.3f",value.score,(unsigned long long)value.ageMs,value.totalMs,value.totalMs];
+    return [NSString stringWithFormat:@"%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f;;%llu;;%.3f;;%.3f",value.x,value.y,value.width,value.height,value.centerX,value.centerY,value.score,(unsigned long long)value.ageMs,value.totalMs,value.totalMs];
 }
 
 // BEGIN numeric frame color pick.

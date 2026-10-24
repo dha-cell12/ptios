@@ -110,6 +110,14 @@ try {
   assert.doesNotMatch(colorMultiEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
   await writeFile(join(temp,"NativeColorMultiBridge.inc"),colorMultiBridge);
   await writeFile(join(temp,"NativeColorMultiEntry.inc"),colorMultiEntry);
+  const frameImageBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFindImageInFrame])","    else if ([method isEqualToString:TLinkJSNativeMethodOcrLanguages])");
+  const frameImageEntry=between(task,"// BEGIN typed frame image task entry.","// END typed frame image task entry.");
+  assert.doesNotMatch(frameImageBridge,/executeRawPayload|componentsSeparatedByString|componentsJoinedByString/);
+  assert.match(frameImageBridge,/TLinkNativeFrameImageInputFits[\s\S]*invalid_payload[\s\S]*TLinkExecuteNativeFrameImage/);
+  assert.match(frameImageEntry,/TLinkC01TaskBudget[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_FIND_IMAGE_IN_FRAME,&denial\)[\s\S]*matchImageInFrame/);
+  assert.doesNotMatch(frameImageEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeFrameImageBridge.inc"),frameImageBridge);
+  await writeFile(join(temp,"NativeFrameImageEntry.inc"),frameImageEntry);
   const framePickBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColor])","    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColors])");
   const framePickEntry=between(task,"// BEGIN typed frame pick task entry.","// END typed frame pick task entry.");
   assert.doesNotMatch(framePickBridge,/executeRawPayload|stringWithFormat|componentsSeparatedByString/);
@@ -163,7 +171,7 @@ try {
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
     between(bridge,"static BOOL TLinkautoJSValidToken","static BOOL TLinkautoJSValidProtocolString") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -191,7 +199,7 @@ try {
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
-  assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFramePickEntry.inc"/);
+  assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
     const runtime = join(temp, "native-bridge-runtime-test");

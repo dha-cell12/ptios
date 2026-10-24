@@ -32,14 +32,14 @@ assert.match(decoder, /readDataOfLength:maxEncodedBytes \+ 1/);
 assert.match(decoder, /CGImageSourceCopyPropertiesAtIndex[\s\S]*TLinkImagePixels[\s\S]*zx_reservePayload[\s\S]*cv::imdecode/);
 assert.match(decoder, /gray\.cols == \(int\)height && gray\.rows == \(int\)width/);
 assert.match(await readFile(join(root, 'pccontrol/Makefile'), 'utf8'), /pccontrol_FRAMEWORKS = [^\n]*ImageIO/);
-for (const name of ['handleFrameCaptureTaskFromRawData', 'handleFindImageTaskFromRawData', 'handleFindImageInFrameTaskFromRawData',
+for (const name of ['handleFrameCaptureTaskFromRawData', 'handleFindImageTaskFromRawData', 'matchImageInFrame',
   'handleColorInFrameTaskFromRawData', 'handleFrameBatchTaskFromRawData', 'zx_copyFrameGrayRegionForOCR']) {
   assert.match(bodyAfter(source.indexOf(name + '(')), /TLinkImageWork work\(gImageCompute\)/, `${name} needs compute admission`);
 }
 // Inspect each function's own __block locals: C++ lambdas cannot capture them.
 // The portable core alone cannot diagnose this Objective-C++ language restriction.
 const admissionFixtures = {};
-for (const [label, name] of [['Find', 'handleFindImageInFrameTaskFromRawData'], ['Batch', 'handleFrameBatchTaskFromRawData']]) {
+for (const [label, name] of [['Find', 'matchImageInFrame'], ['Batch', 'handleFrameBatchTaskFromRawData']]) {
   const body = bodyAfter(source.indexOf(name + '('));
   const blockLocals = [...body.matchAll(/__block\s+[^;]+?\b(\w+)\s*;/g)].map(match => match[1]);
   for (const lambda of body.matchAll(/\[&\]\s*\{/g)) {
@@ -47,7 +47,7 @@ for (const [label, name] of [['Find', 'handleFindImageInFrameTaskFromRawData'], 
     for (const local of blockLocals) assert.doesNotMatch(computeBody, new RegExp(`\\b${local}\\b`),
       `${name}: C++ lambda must not capture __block local ${local}`);
   }
-  const first = body.indexOf('    NSString *ret = nil;'), compute = body.indexOf('    [&] {', first);
+  const first = body.indexOf(label==='Find'?'    bool ok=false;':'    NSString *ret = nil;'), compute = body.indexOf('    [&] {', first);
   assert.ok(first >= 0 && compute > first);
   admissionFixtures[`Image${label}AdmissionUnderTest.inc`] = body.slice(first, compute);
   const lookup = body.slice(compute).match(/^\s*auto iit = \w+\.find\(imageId\);/m);
@@ -70,9 +70,10 @@ const fixtures = {
   'ImageErrorUnderTest.inc': frameErrorHelper,
   'ImageOwnerUnderTest.inc': section('static bool zx_ownerMatchFields(', 'static void zx_cleanupFramesLocked(uint64_t nowMs);\nstatic NSArray'),
   'ImageOwnerPartsUnderTest.inc': section('static std::string zx_stringFromPart(', 'static void zx_applyFrameOwner('),
-  'ImageReleaseUnderTest.inc': section('NSString* handleFrameReleaseTaskFromRawData(', 'NSString* handleFindImageInFrameTaskFromRawData('),
+  'ImageReleaseUnderTest.inc': section('NSString* handleFrameReleaseTaskFromRawData(', '// BEGIN numeric frame image match.'),
   'ImageQueueUnderTest.inc': 'static dispatch_queue_t zx_imageQueue() {' + bodyAfter(source.indexOf('static dispatch_queue_t zx_imageQueue(')) + '}\n',
 };
+assert.doesNotMatch(fixtures['ImageReleaseUnderTest.inc'],/matchImageInFrame|TLinkNativeFrameImageRequest/,'release fixture must not import the adjacent matcher');
 const tempRoot = resolve(tmpdir()), temp = await mkdtemp(join(tempRoot, 'tlink-image-storage-'));
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, encoding: 'utf8', timeout: 120000 });

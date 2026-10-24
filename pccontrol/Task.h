@@ -121,6 +121,8 @@
 NSDictionary *TLinkExecuteNativeColorMulti(const TLinkNativeColorMultiRequest &request,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest &request,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &request,TLinkTaskExecutionContext *context);
+#include "../shared/TLinkNativeFrameImage.h"
+NSDictionary *TLinkExecuteNativeFrameImage(const TLinkNativeFrameImageRequest &request,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
 #include "../shared/TLinkNativeFrameMulti.h"

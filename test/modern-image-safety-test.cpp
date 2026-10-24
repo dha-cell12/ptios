@@ -1,5 +1,6 @@
 #include "../shared/TLinkModernImagePolicy.h"
 #include "../shared/TLinkNativeFramePick.h"
+#include "../shared/TLinkNativeFrameImage.h"
 #include "../shared/TLinkNativeFrameSearch.h"
 #include "../shared/TLinkNativeFrameColors.h"
 #include "../shared/TLinkNativeFrameMulti.h"
@@ -157,7 +158,28 @@ static void frameMultiPolicyCases(){
     {TLinkColorRequest work({},TLinkNativeNowNs()-3000000001ULL);assert(!TLinkFrameMultiScan(bgra.data(),8,8,40,region,points,1,0,0,work,out)&&work.stopped());}
     puts("Frame multi policy passed: 10k frozen ROI/offset/mode/scale/stride/skip scans and exact wire limits, coordinate overflow, saturated ingress and deterministic work/cancel/deadline bounds.");
 }
+static void frameImagePolicyCases(){
+    for(unsigned n=0;n<10000;++n){
+        TLinkNativeFrameImageRequest r;r.frameId=int(n%2?1:INT_MAX);r.imageId=2;r.maxAgeMs=int(n%5001);r.pixelSkip=int(n%1025);
+        const double coordinates[]={n%73?double(int(n%19)-4)*.5:1e308,-0.0,double(int(n%15)-3)*.5,0};
+        const double scalars[]={double(n%10001)/10000.0,n%2?1.0:.01004,n%3?1.0:16.00004,n%5?.25:.00004};
+        std::string wire="68"+std::to_string(r.frameId)+";;2";int expected[4]={};bool valid=true;
+        for(unsigned i=0;i<4;++i){char text[384];std::snprintf(text,sizeof(text),"%.0f",coordinates[i]);r.regionPart(i,text,std::strlen(text));wire+=";;";wire+=text;const bool parsed=TLinkColorInt(text,expected[i]);valid=valid&&parsed;}
+        double decimal[4]={};for(unsigned i=0;i<4;++i){char text[384];std::snprintf(text,sizeof(text),"%.4f",scalars[i]);r.scalarPart(i,text,std::strlen(text));wire+=";;";wire+=text;assert(TLinkColorDouble(text,decimal[i]));}
+        char suffix[100];std::snprintf(suffix,sizeof(suffix),";;%d;;;;%d",r.pixelSkip,r.maxAgeMs);wire+=suffix;
+        const size_t limit=8192-wire.size();assert(TLinkNativeFrameImageInputFits(r,limit)&&!TLinkNativeFrameImageInputFits(r,limit+1));
+        const bool policy=valid&&TLinkModernImageParameters(decimal[0],float(decimal[1]),float(decimal[2]),float(decimal[3]),r.pixelSkip)&&std::fabs(decimal[2]-decimal[1])/decimal[3]<=63;
+        assert(r.coordinatesValid==valid&&TLinkNativeFrameImageParameters(r)==policy);
+        if(valid)assert(r.x==expected[0]&&r.y==expected[1]&&r.width==expected[2]&&r.height==expected[3]);
+    }
+    TLinkNativeFrameImageRequest r;r.frameId=r.imageId=1;assert(TLinkNativeFrameImageParameters(r));r.scalarPart(0,"nan",3);assert(!TLinkNativeFrameImageParameters(r));
+    r=TLinkNativeFrameImageRequest{};r.frameId=r.imageId=1;r.regionPart(0,"2147483648",10);assert(!TLinkNativeFrameImageParameters(r));
+    r=TLinkNativeFrameImageRequest{};r.frameId=r.imageId=1;r.maxAgeMs=5001;assert(!TLinkNativeFrameImageParameters(r));r.maxAgeMs=0;r.validCoord=false;assert(!TLinkNativeFrameImageParameters(r));
+    r.regionUnits=SIZE_MAX;assert(!TLinkNativeFrameImageInputFits(r,0));r.regionUnits=4;r.scalarUnits=SIZE_MAX;assert(!TLinkNativeFrameImageInputFits(r,0));r.scalarUnits=24;assert(!TLinkNativeFrameImageInputFits(r,SIZE_MAX));
+    puts("Frame image policy passed: 10k frozen decimal/int/float/admission cases, exact ingress accounting, signed/overflow ROI, scalar traversal and saturated limits.");
+}
 int main(){
+    frameImagePolicyCases();
     frameMultiPolicyCases();
     frameColorsPolicyCases();
     frameSearchPolicyCases();

@@ -1,7 +1,7 @@
 # C02b12 — structured live multi-color search
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `30789db`; the user reported the C02b11 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b13 (`404af5a`); device qualification pending**.
 Finding: **P0-13, live findMultiColor portion**. Image/OCR adapters and helper transport remain open.
 
 ## Result and scope
@@ -45,3 +45,7 @@ Final output bytes, denial, caller cancellation/deadline, local C01 expiry and n
 Build rootfull/roothide observe/enforced variants. Compare JS findMultiColor with RAW task 28/action 3 on unchanged screen content for ROI rounding/clamping, signed offsets/extents, full-table validation, both tolerance modes, skip including INT_MAX, first hit/miss/no anchors, exact replies/input/output bounds and error ordering. Verify one fresh capture per admitted valid request, no RGBA allocation on no anchors, authorization/cancellation and recovery. Measure bridge allocation/latency separately from capture cost.
 
 Continue remaining measured P0-13 image/OCR methods, P0-12 event-driven helper RPC, P1-40 config snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+## Following checkpoint
+
+The user reported C02b12 build `404af5a` passed before C02b13. Structured findImageInFrame is tracked in `IMPLEMENTATION-C02B13.md`. This records the user report; no independent macOS/device execution was performed on this host.

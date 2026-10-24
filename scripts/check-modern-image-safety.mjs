@@ -24,7 +24,7 @@ try{
  await writeFile(join(temp,'ModernScaleUnderTest.inc'),scale);
  await writeFile(join(temp,'FrameColorUnderTest.inc'),color);
  await writeFile(join(temp,'ModernPayload.inc'),section('// BEGIN immutable image payload types','// END immutable image payload types.'));
- await writeFile(join(temp,'ModernFindFrame.inc'),section('NSString* handleFindImageInFrameTaskFromRawData','// BEGIN numeric frame color pick.'));
+ await writeFile(join(temp,'ModernFindFrame.inc'),section('// BEGIN numeric frame image match.','// BEGIN numeric frame color pick.'));
  await writeFile(join(temp,'ModernBatch.inc'),section('NSString* handleFrameBatchTaskFromRawData','bool zx_copyFrameGrayRegionForOCR'));
  await writeFile(join(temp,'ModernFindFresh.inc'),source.slice(source.indexOf('NSString* handleFindImageTaskFromRawData')));
  await writeFile(join(temp,'FrameColorHelpers.inc'),

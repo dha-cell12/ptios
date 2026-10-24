@@ -882,12 +882,18 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (frameId <= 0 || imageId <= 0) return [TLinkJSNativeResponse responseWithError:@"findImageInFrame(frameId, imageId, options) requires positive ids" code:@-1];
         NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
         if (!TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"coord contains unsupported protocol delimiter" code:@-1];
-        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%.0f;;%.0f;;%.0f;;%.0f;;%.4f;;%.4f;;%.4f;;%.4f;;%d;;%@;;%d", frameId, imageId, TLinkautoJSDoubleOption(options, @"x", 0), TLinkautoJSDoubleOption(options, @"y", 0), TLinkautoJSDoubleOption(options, @"width", 0), TLinkautoJSDoubleOption(options, @"height", 0), TLinkautoJSDoubleOption(options, @"acceptable", 0.95), TLinkautoJSDoubleOption(options, @"scaleMin", 1.0), TLinkautoJSDoubleOption(options, @"scaleMax", 1.0), TLinkautoJSDoubleOption(options, @"scaleStep", 1.0), TLinkautoJSIntOption(options, @"pixelSkip", 0), coord, TLinkautoJSIntOption(options, @"maxAgeMs", 1000)];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_FIND_IMAGE_IN_FRAME, payload] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 11) return [TLinkJSNativeResponse responseWithValue:result];
-        int matchX = [TLinkautoJSSafeStringPart(parts, 1) intValue], matchY = [TLinkautoJSSafeStringPart(parts, 2) intValue];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"matched": @(matchX >= 0 && matchY >= 0), @"x": @(matchX), @"y": @(matchY), @"width": @([TLinkautoJSSafeStringPart(parts, 3) intValue]), @"height": @([TLinkautoJSSafeStringPart(parts, 4) intValue]), @"centerX": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]), @"centerY": @([TLinkautoJSSafeStringPart(parts, 6) doubleValue]), @"score": @([TLinkautoJSSafeStringPart(parts, 7) doubleValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 8) longLongValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 9) doubleValue])})];
+        TLinkNativeFrameImageRequest search;search.frameId=frameId;search.imageId=imageId;
+        // Bounded scalar strings preserve Foundation decimal/nonfinite spelling and input units.
+        const double region[]={TLinkautoJSDoubleOption(options,@"x",0),TLinkautoJSDoubleOption(options,@"y",0),TLinkautoJSDoubleOption(options,@"width",0),TLinkautoJSDoubleOption(options,@"height",0)};
+        for(unsigned i=0;i<4;++i){NSString *text=[NSString stringWithFormat:@"%.0f",region[i]];search.regionPart(i,text.UTF8String,text.length);}
+        const double scalars[]={TLinkautoJSDoubleOption(options,@"acceptable",.95),TLinkautoJSDoubleOption(options,@"scaleMin",1),TLinkautoJSDoubleOption(options,@"scaleMax",1),TLinkautoJSDoubleOption(options,@"scaleStep",1)};
+        for(unsigned i=0;i<4;++i){NSString *text=[NSString stringWithFormat:@"%.4f",scalars[i]];search.scalarPart(i,text.UTF8String,text.length);}
+        search.pixelSkip=TLinkautoJSIntOption(options,@"pixelSkip",0);search.maxAgeMs=TLinkautoJSIntOption(options,@"maxAgeMs",1000);
+        if(!TLinkNativeFrameImageInputFits(search,coord.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        NSData *coordData=[coord dataUsingEncoding:NSUTF8StringEncoding];
+        if(!coordData||(coordData.length&&memchr(coordData.bytes,0,coordData.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *space=[coord lowercaseString];search.pointCoord=[space isEqualToString:@"point"];search.validCoord=search.pointCoord||[space isEqualToString:@"pixel"];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrameImage(search,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodOcrLanguages]) {
         NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02dcheck_langs", TASK_OCR_TESSERACT_REGION] context:context];
