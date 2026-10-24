@@ -1,7 +1,7 @@
 # C02b11 — structured live point-color comparison
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `6c9b095`; the user reported the C02b10 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b12 (`30789db`); device qualification pending**.
 Finding: **P0-13, live isColors portion**. Live findMultiColor, image/OCR adapters and helper transport remain open.
 
 ## Result and scope
@@ -41,3 +41,7 @@ Output bytes are checked before success. Denial, parent cancellation/deadline, l
 Build rootfull/roothide observe/enforced variants. Compare JS isColors with RAW task 28/action 2 on unchanged screen content: coordinate rounding and bounds, RGB aliases, complete-table error precedence, both modes/four-decimal boundaries, match/mismatch, exact input/output boundaries, authorization/deadline/cancellation and resource recovery. Verify one fresh capture per valid call and measure bridge allocation/latency separately from capture cost.
 
 Continue live findMultiColor and other measured P0-13 methods, P0-12 event-driven helper RPC, P1-40 config snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+## Following checkpoint
+
+The user reported C02b11 build `30789db` passed before C02b12. Live findMultiColor is tracked in `IMPLEMENTATION-C02B12.md`; its production legacy encoder is moved into compatibility fixtures there. This records the user report; no independent macOS/device execution was performed on this host.

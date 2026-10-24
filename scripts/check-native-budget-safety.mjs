@@ -95,11 +95,6 @@ try {
   await writeFile(join(temp,"NativeColorRangeBridge.inc"),colorRangeBridge);
   await writeFile(join(temp,"NativeColorRangeEntry.inc"),colorRangeEntry);
   const colorPointsBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodIsColors])","    else if ([method isEqualToString:TLinkJSNativeMethodFindMultiColor])");
-  const legacyLive=await read('test/fixtures/native-live-colors-legacy-v1.inc');
-  const legacyMulti=legacyLive.slice(legacyLive.indexOf('            double x ='),legacyLive.lastIndexOf('        }\n    }'));
-  const retainedMulti=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFindMultiColor])",'    return [TLinkJSNativeResponse responseWithError:[NSString stringWithFormat:@"Unimplemented method:');
-  const retainedBody=retainedMulti.slice(retainedMulti.indexOf('        double x ='),retainedMulti.lastIndexOf('    }'));
-  assert.equal(retainedBody.replace(/\s+/g,''),legacyMulti.replace(/\s+/g,''),'retained live findMultiColor adapter body changed');
   const colorPointsEntry=between(task,"// BEGIN typed color points task entry.","// END typed color points task entry.");
   assert.doesNotMatch(colorPointsBridge,/executeRawPayload|TLinkautoJSEncodePointColorTable|componentsSeparatedByString|componentsJoinedByString/);
   assert.match(colorPointsBridge,/TLinkNativeColorPointsInputFits[\s\S]*TLinkExecuteNativeColorPoints/);
@@ -107,6 +102,14 @@ try {
   assert.doesNotMatch(colorPointsEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
   await writeFile(join(temp,"NativeColorPointsBridge.inc"),colorPointsBridge);
   await writeFile(join(temp,"NativeColorPointsEntry.inc"),colorPointsEntry);
+  const colorMultiBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFindMultiColor])",'    return [TLinkJSNativeResponse responseWithError:[NSString stringWithFormat:@"Unimplemented method:');
+  const colorMultiEntry=between(task,"// BEGIN typed color multi task entry.","// END typed color multi task entry.");
+  assert.doesNotMatch(colorMultiBridge,/executeRawPayload|TLinkautoJSEncodePointColorTable|componentsSeparatedByString|componentsJoinedByString/);
+  assert.match(colorMultiBridge,/TLinkNativeColorMultiInputFits[\s\S]*TLinkExecuteNativeColorMulti/);
+  assert.match(colorMultiEntry,/TLinkC01TaskBudget[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_COLOR_SEARCHER,&denial\)[\s\S]*searchRGBMulti/);
+  assert.doesNotMatch(colorMultiEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeColorMultiBridge.inc"),colorMultiBridge);
+  await writeFile(join(temp,"NativeColorMultiEntry.inc"),colorMultiEntry);
   const framePickBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColor])","    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColors])");
   const framePickEntry=between(task,"// BEGIN typed frame pick task entry.","// END typed frame pick task entry.");
   assert.doesNotMatch(framePickBridge,/executeRawPayload|stringWithFormat|componentsSeparatedByString/);
@@ -151,15 +154,16 @@ try {
   await writeFile(join(temp,"NativeBatchBridgeUnderTest.inc"),batchBridge);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
-    between(bridge,"static NSString *TLinkautoJSEncodePointColorTable","static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError") +
+    await read("test/fixtures/native-point-colors-encoder-legacy-v1.inc") +
+    between(bridge,"static bool TLinkautoJSDecodePointColors","static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError") +
     between(bridge,"static double TLinkautoJSDoubleOption","static NSString *TLinkautoJSStringOption") +
     between(bridge,"static NSString *TLinkautoJSStringOption","static NSString *TLinkautoJSOwnerField") +
-    between(bridge,"static NSString *TLinkautoJSEncodeGesturePoints","static NSString *TLinkautoJSEncodePointColorTable") +
+    between(bridge,"static NSString *TLinkautoJSEncodeGesturePoints","static bool TLinkautoJSDecodePointColors") +
     between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
     between(bridge,"static BOOL TLinkautoJSValidToken","static BOOL TLinkautoJSValidProtocolString") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -187,7 +191,7 @@ try {
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
-  assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeFramePickEntry.inc"/);
+  assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
     const runtime = join(temp, "native-bridge-runtime-test");

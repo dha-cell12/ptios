@@ -2,6 +2,7 @@
 #include "../shared/TLinkNativeColorRequest.h"
 #include "../shared/TLinkNativeColorRange.h"
 #include "../shared/TLinkNativeColorPoints.h"
+#include "../shared/TLinkNativeColorMulti.h"
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameSearch.h"
 #include "../shared/TLinkNativeFrameColors.h"
@@ -39,6 +40,8 @@ NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &,
 static void colorRangeLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest &,TLinkTaskExecutionContext *);
 static void colorPointsLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+NSDictionary *TLinkExecuteNativeColorMulti(const TLinkNativeColorMultiRequest &,TLinkTaskExecutionContext *);
+static void colorMultiLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeFramePick(const TLinkNativeFramePickRequest &,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeFramePickMany(const TLinkNativeFramePickManyRequest &,TLinkTaskExecutionContext *);
 static void frameManyLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
@@ -67,6 +70,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
         // These probes only use invalid coord tokens; legacy transport decides encoding admission.
         notifyClient((UInt8 *)"1;;invalid_frame_color_parameters\r\n",stream);return;
     }
+    if([mode isEqualToString:@"colorMultiRuntime"]&&lastPayload.compare(0,2,"28")==0){colorMultiLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"colorPointsRuntime"]&&lastPayload.compare(0,2,"28")==0){colorPointsLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"colorRangeRuntime"]&&lastPayload.compare(0,2,"28")==0){colorRangeLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameManyRuntime"]&&lastPayload.compare(0,2,"69")==0){frameManyLegacyTask(bytes,length,stream);return;}
@@ -97,6 +101,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyFrameColors:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyColorRange:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyLiveColors:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyLiveMulti:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameMulti:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameSearch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameMany:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
@@ -109,6 +114,12 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
 #include "fixtures/native-frame-multi-legacy-v1.inc"
+    return nil;
+}
+- (TLinkJSNativeResponse *)legacyLiveMulti:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-live-multi-legacy-v1.inc"
     return nil;
 }
 - (TLinkJSNativeResponse *)legacyLiveColors:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
@@ -149,6 +160,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeColorBridgeUnderTest.inc"
 #include "NativeColorRangeBridge.inc"
 #include "NativeColorPointsBridge.inc"
+#include "NativeColorMultiBridge.inc"
 #include "NativeFramePickBridge.inc"
 #include "NativeFrameManyBridge.inc"
 #include "NativeFrameSearchBridge.inc"
@@ -294,6 +306,41 @@ static void colorPointsLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef st
     }
     bool matched=false;NSError *error=nil;if(!colorPointsValues(r,matched,&error)){notifyClient((UInt8 *)error.localizedDescription.UTF8String,stream);return;}
     NSString *raw=[NSString stringWithFormat:@"0;;%d\r\n",matched?1:0];notifyClient((UInt8 *)raw.UTF8String,stream);
+}
+static unsigned colorMultiCalls=0;static int colorMultiFault=0;static bool cancelColorMulti=false;static NSString *colorMultiError=nil;
+static TLinkNativeBudgetPtr colorMultiBudget;
+static bool colorMultiValues(const TLinkNativeColorMultiRequest &search,TLinkColorResult &value,NSError **error){
+    NSString *code=[colorMultiError isEqualToString:@"color_compute_busy"]?colorMultiError:(TLinkNativeColorMultiParameters(search)?nil:@"color_parameters_invalid");
+    if(!code){if(const char *tableError=TLinkNativeColorPointsTableError(search.colors))code=[NSString stringWithUTF8String:tableError];}
+    if(!code)code=colorMultiError;
+    TLinkColorRect crop,anchors,region;
+    if(!code&&!TLinkColorRegion(8,6,search.x,search.y,search.width,search.height,true,region))code=@"color_region_invalid";
+    if(!code){value.x=value.y=-1;
+        if(TLinkColorAnchors(8,6,region,search.colors.points,anchors,crop)){
+            std::vector<uint8_t> rgba(size_t(crop.width)*crop.height*4);for(size_t i=0;i<rgba.size();i+=4){rgba[i]=10;rgba[i+1]=20;rgba[i+2]=30;rgba[i+3]=255;}
+            TLinkColorRequest work(TLinkCurrentNativeBudget());const auto status=TLinkColorMultiScan(rgba.data(),crop.width,crop,anchors,search.colors.points,search.colors.mode,search.colors.tolerance,search.skip,work,value);
+            if(status==TLinkColorScan::Stopped)code=@"color_cancelled_or_timed_out";else if(status==TLinkColorScan::NoMatch)value.x=value.y=-1;
+        }
+    }
+    if(code){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n",code]}];return false;}return true;
+}
+static bool searchRGBMulti(const TLinkNativeColorMultiRequest &search,TLinkColorResult &value,NSError **error){
+    ++colorMultiCalls;colorMultiBudget=TLinkCurrentNativeBudget();assert(colorMultiBudget&&!colorMultiBudget->capturesResponse());
+    if(colorMultiFault==1)[NSException raise:@"ColorMultiFixture" format:@"search throws"];
+    if(colorMultiFault==2)throw std::runtime_error("color multi fixture");
+    const bool ok=colorMultiValues(search,value,error);if(cancelColorMulti)[touchToken cancel];return ok;
+}
+static void colorMultiLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
+    NSString *payload=[[NSString alloc] initWithBytes:bytes+2 length:length-2 encoding:NSUTF8StringEncoding];NSArray *fields=[payload componentsSeparatedByString:@";;"];
+    assert(fields.count==9&&[fields[0] isEqualToString:@"3"]);TLinkNativeColorMultiRequest r;r.colors.mode=[fields[6] intValue];r.colors.toleranceUnits=[fields[7] length];r.colors.toleranceValid=TLinkColorDouble([fields[7] UTF8String],r.colors.tolerance);r.skip=[fields[8] intValue];
+    int *dest[]={&r.x,&r.y,&r.width,&r.height};for(unsigned i=0;i<4;++i){bool valid=TLinkColorInt([fields[i+1] UTF8String],*dest[i]);r.coordinatesValid=r.coordinatesValid&&valid;}
+    NSString *table=fields[5];r.colors.tableUnits=table.length;NSArray *rows=[table componentsSeparatedByString:@"|"];r.colors.pointCount=rows.count;
+    for(NSString *row in rows){NSArray *parts=[row componentsSeparatedByString:@",,"];assert(parts.count==5);TLinkColorPoint point={};
+        const bool valid=TLinkColorInt([parts[0] UTF8String],point.dx)&&TLinkColorInt([parts[1] UTF8String],point.dy)&&TLinkColorInt([parts[2] UTF8String],point.r)&&TLinkColorInt([parts[3] UTF8String],point.g)&&TLinkColorInt([parts[4] UTF8String],point.b)&&TLinkColorRGB(point.r)&&TLinkColorRGB(point.g)&&TLinkColorRGB(point.b);
+        r.colors.tableValid=r.colors.tableValid&&valid;r.colors.points.push_back(point);
+    }
+    TLinkColorResult value;NSError *error=nil;if(!colorMultiValues(r,value,&error)){notifyClient((UInt8 *)error.localizedDescription.UTF8String,stream);return;}
+    NSString *raw=[NSString stringWithFormat:@"0;;%d;;%d\r\n",value.x,value.y];notifyClient((UInt8 *)raw.UTF8String,stream);
 }
 static unsigned frameReads=0;static int frameReadFault=0;static bool cancelFrameRead=false;static NSString *frameReadError=nil;
 static TLinkNativeBudgetPtr frameBudget;static TLinkNativeFramePickRequest observedFramePick;
@@ -444,6 +491,7 @@ static void frameMultiLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef str
 #include "NativeColorEntryUnderTest.inc"
 #include "NativeColorRangeEntry.inc"
 #include "NativeColorPointsEntry.inc"
+#include "NativeColorMultiEntry.inc"
 #include "NativeFramePickEntry.inc"
 #include "NativeFrameManyEntry.inc"
 #include "NativeFrameSearchEntry.inc"
@@ -910,6 +958,62 @@ static void typedLiveColorsCases(TLinkInProcessNativeBridge *bridge){
     assert(calls==wireCalls&&!TLinkCurrentNativeBudget());colorPointsBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
     puts("Typed live points actual bridge/entry passed: 160 frozen JS/RAW cases, aliases/defaults/full table and pre/post-capture bounds, 512/513 and exact ingress, scalar modes, one task-28 gate, C01/caller/fault/output bounds and no typed RAW dispatch/response vector.");
 }
+static void typedLiveMultiCases(TLinkInProcessNativeBridge *bridge){
+    const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;colorMultiFault=0;colorMultiError=nil;cancelColorMulti=false;};
+    const auto request=[](NSArray *points,NSDictionary *options)->TLinkJSNativeRequest *{return [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodFindMultiColor arguments:@[points,options]];};
+    const auto invoke=[bridge,request](NSArray *points,NSDictionary *options,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{
+        TLinkJSNativeResponse *result=[bridge executeRequest:request(points,options) context:context error:nil];assert(!TLinkCurrentNativeBudget());return result;
+    };
+    const auto compare=[bridge,request,invoke,reset](NSArray *points,NSDictionary *options,NSString *backendError){
+        mode=@"colorMultiRuntime";auto oldContext=parent(30);reset(oldContext);colorMultiError=backendError;const int beforeOld=calls;
+        TLinkJSNativeResponse *legacy=[bridge legacyLiveMulti:request(points,options) context:oldContext];const int dispatched=calls-beforeOld;assert(dispatched==0||dispatched==1);
+        auto context=parent(30);reset(context);colorMultiError=backendError;const int before=calls,gates=licenseCalls;const unsigned reads=colorMultiCalls;
+        const uint64_t started=TLinkNativeNowNs();TLinkJSNativeResponse *typed=invoke(points,options,context);const uint64_t ended=TLinkNativeNowNs();assert(typed.ok==legacy.ok);
+        if(typed.ok){if(![typed.value isEqual:legacy.value])std::fprintf(stderr,"live multi parity: legacy %s, typed %s\n",[[legacy.value description] UTF8String],[[typed.value description] UTF8String]);assert([typed.value isEqual:legacy.value]);}
+        else assert([typed.errorMessage isEqualToString:legacy.errorMessage]&&[typed.errorCode isEqual:legacy.errorCode]);
+        assert(calls==before&&licenseCalls==gates+dispatched&&colorMultiCalls==reads+dispatched);
+        if(dispatched){assert(lastLicenseTask==28&&colorMultiBudget==licenseBudget&&!colorMultiBudget->capturesResponse()&&colorMultiBudget->response().capacity()==0);
+            assert(colorMultiBudget->deadline()>=started+3000000000ULL&&colorMultiBudget->deadline()<=ended+3000000000ULL);}
+    };
+    for(unsigned i=0;i<160;++i){
+        const double x=i<11?std::vector<double>{-1e308,double(INT_MIN),-1.5,-0.5,-0.0,0.5,1.5,7.5,8191.5,double(INT_MAX),1e308}[i]:double(int(i%23)-4)*0.5;
+        const int modeValue=int(i%2);const double threshold=modeValue?std::vector<double>{0,0.99995,255.00004,255.00006}[i%4]:std::vector<double>{0.99995,0.8,1.00006,-0.00004}[i%4];
+        compare(@[@{@"x":@(x),@"y":@1.5,@"r":@10,@"g":@20,@"b":@30},@{@"red":@10,@"green":@20,@"blue":@30}],@{@"mode":@(modeValue),@"value":@(threshold),@"x":@(double(int(i%17)-4)*0.5),@"width":@(double(int(i%9)-2)*0.5),@"height":@(-0.0),@"skip":@(i%11?int(i%4):INT_MAX)},nil);
+    }
+    NSArray *hit=@[@{@"red":@10,@"green":@20,@"blue":@30}],*miss=@[@{}],*badTable=@[@{},@{@"red":@999}];
+    compare(hit,@{},nil);compare(miss,@{},nil);compare(badTable,@{},nil);
+    compare(@[@{@"red":@11,@"r":@10,@"green":@20,@"blue":@30}],@{},nil);compare(@[@{@"red":[NSNull null],@"r":@10,@"g":@20,@"b":@30}],@{},nil);
+    compare(@[@{@"x":@"1.5",@"y":@"2.5",@"r":@"10",@"g":@20,@"b":@30}],@{},nil);
+    for(NSArray *bad:@[@[],@[@[]],@[@1],@[@{@"x":@(NAN)}],@[@{@"y":@(INFINITY)}]])compare(bad,@{},nil);
+    NSMutableArray *many=[NSMutableArray array];for(unsigned i=0;i<512;++i)[many addObject:@{}];compare(many,@{},nil);[many addObject:@{}];compare(many,@{},nil);
+    [many removeAllObjects];for(unsigned i=0;i<40;++i)[many addObject:@{@"x":@(1e308)}];compare(many,@{},nil);[many addObject:@[]];compare(many,@{},nil);
+    for(unsigned extra=0;extra<2;++extra){
+        [many removeAllObjects];for(unsigned i=0;i<512;++i)[many addObject:@{@"x":@(i<3?2e307:(i==3?(extra?2e74:2e73):0))}];
+        NSString *wire=[NSString stringWithFormat:@"283;;0;;0;;0;;0;;%@;;1;;0.0000;;0",TLinkautoJSEncodePointColorTable(many)];assert(wire.length==8192+extra);compare(many,@{},nil);
+    }
+    for(NSDictionary *options:@[@{@"mode":@2},@{@"mode":@0,@"value":@(-0.00004)},@{@"mode":@1,@"value":@255.00004},@{@"mode":@0,@"tolerance":@1},@{@"mode":@0,@"value":@0.75,@"tolerance":@1},@{@"value":@(NAN)},@{@"value":@(-NAN)},@{@"value":@(INFINITY)},@{@"value":@(-INFINITY)},@{@"value":@(1e308)},@{@"value":[NSNull null],@"tolerance":@1}])compare(hit,options,nil);
+    compare(badTable,@{@"mode":@2},nil);compare(@[@{},@{@"x":@8}],@{},nil);compare(@[@{@"x":@8192}],@{},nil);
+    compare(@[@{@"x":@-1},@{@"red":@999}],@{},nil);
+    for(NSString *code:@[@"color_compute_busy",@"color_capture_failed",@"color_source_pixel_limit",@"color_memory_budget",@"color_allocation_failed",@"color_crop_failed",@"color_context_failed",@"color_operation_failed",@"color_cancelled_or_timed_out"])compare(hit,@{},code);
+    compare(badTable,@{},@"color_compute_busy");compare(@[@{@"x":@8192}],@{},@"color_capture_failed");compare(@[@{@"x":@8}],@{},@"color_capture_failed");
+    for(NSDictionary *options:@[@{@"x":@(NAN)},@{@"height":@(INFINITY)},@{@"width":@(1e308)},@{@"x":@(INT_MIN),@"y":@(INT_MAX),@"width":@(INT_MIN),@"height":@(INT_MAX)},@{@"skip":@-1},@{@"skip":@(INT_MAX)},@{@"x":@"1.5",@"width":@"2.5"}])compare(hit,options,nil);
+    compare(@[@{@"x":@-1,@"y":@-1,@"red":@10,@"green":@20,@"blue":@30}],@{},nil);
+    compare(@[@{@"x":@(INT_MIN)},@{@"x":@(INT_MAX)}],@{},nil);compare(badTable,@{@"width":@(1e308)},nil);
+    const int wireCalls=calls;auto context=parent();reset(context);licenseAllowed=false;const unsigned noRead=colorMultiCalls;
+    NSDictionary *denied=invoke(hit,@{},context).value;assert([denied[@"raw"] isEqualToString:@"-1;;license_required task=28\r\n"]&&colorMultiCalls==noRead);
+    context=parent();reset(context);stopInLicense=true;failure(invoke(hit,@{},context).value,@"AbortError");assert(colorMultiCalls==noRead);
+    context=parent();reset(context);[context.cancellationToken cancel];const int gates=licenseCalls;failure(invoke(hit,@{},context).value,@"AbortError");assert(licenseCalls==gates&&colorMultiCalls==noRead);
+    context=parent();reset(context);[context setNativeBudget:std::make_shared<TLinkNativeBudget>(nullptr,TLinkNativeNowNs()-1,4096)];failure(invoke(hit,@{},context).value,@"TimeoutError");assert(licenseCalls==gates&&colorMultiCalls==noRead);
+    context=parent(30);reset(context);licenseDelayMs=3100;auto caller=std::make_shared<TLinkNativeBudget>([context.cancellationToken nativeCancellation],TLinkNativeDeadline(30),4096);[context setNativeBudget:caller];const uint64_t deadline=caller->deadline();
+    NSDictionary *expired=invoke(hit,@{},context).value;assert([expired[@"raw"] isEqualToString:@"1;;native_cancelled_or_timed_out\r\n"]&&colorMultiCalls==noRead&&!caller->stopped()&&caller->deadline()==deadline);
+    context=parent(0.25);reset(context);assert([invoke(hit,@{},context).value[@"ok"] boolValue]&&colorMultiBudget->remainingSeconds(3)<0.3);
+    context=parent();reset(context);cancelColorMulti=true;failure(invoke(hit,@{},context).value,@"AbortError");
+    for(int fault:{1,2}){context=parent();reset(context);colorMultiFault=fault;failure(invoke(hit,@{},context).value,@"native_exception");}
+    for(NSArray *list:@[hit,miss]){context=parent();reset(context);NSDictionary *success=invoke(list,@{},context).value;const NSUInteger bytes=[success[@"raw"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        context=parent(1,bytes);reset(context);assert([invoke(list,@{},context).value[@"ok"] boolValue]);context=parent(1,bytes-1);reset(context);failure(invoke(list,@{},context).value,@"response_too_large");}
+    assert(calls==wireCalls&&!TLinkCurrentNativeBudget());colorMultiBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
+    puts("Typed live multi actual bridge/entry passed: 160 frozen JS/RAW ROI/offset/skip cases, aliases/full-table/signed extents, INT_MIN offsets/INT_MAX skip, 512/513/exact ingress, scalar modes, one task-28 gate, C01/caller/fault/output and no typed RAW dispatch/response vector.");
+}
 static void typedFramePickCases(TLinkInProcessNativeBridge *bridge){
     const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameReadFault=0;frameReadError=nil;cancelFrameRead=false;};
     const auto invoke=[bridge](int id,double x,double y,NSDictionary *options,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{
@@ -1339,6 +1443,7 @@ int main() { @autoreleasepool {
     typedColorCases(bridge);
     typedColorRangeCases(bridge);
     typedLiveColorsCases(bridge);
+    typedLiveMultiCases(bridge);
     typedFramePickCases(bridge);
     typedFramePickManyCases(bridge);
     typedFrameSearchCases(bridge);

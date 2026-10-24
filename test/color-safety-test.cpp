@@ -1,6 +1,7 @@
 #include "../shared/TLinkColorPolicy.h"
 #include "../shared/TLinkNativeColorRange.h"
 #include "../shared/TLinkNativeColorPoints.h"
+#include "../shared/TLinkNativeColorMulti.h"
 #include <cassert>
 #include <cstdio>
 #include <thread>
@@ -71,7 +72,37 @@ static void nativePointsPolicyCases(){
     {TLinkColorRequest work({},TLinkNativeNowNs()-3000000001ULL);TLinkNativeColorPointsCompare(pixel,1,crop,points,1,0,work,matched);assert(work.stopped());}
     puts("Native live points policy passed: 10k frozen encodings/bounds/crop/predicates, exact 8192/8193 ingress, 512/513 storage, saturated table, mode/tolerance and work/cancel/deadline bounds.");
 }
+#include "fixtures/live-multi-legacy-v1.inc"
+static void nativeMultiPolicyCases(){
+    std::vector<uint8_t> rgba(32*24*4);for(auto &byte:rgba)byte=uint8_t(randomByte());
+    for(unsigned trial=0;trial<10000;++trial){
+        TLinkNativeColorMultiRequest r;r.colors.mode=int(trial%2);r.skip=trial%17?int(trial%5):INT_MAX;
+        double x=double(int(trial%89)-20)*0.5,y=double(int(trial%67)-12)*0.5,w=double(int(trial%49)-5)*0.5,h=double(int(trial%41)-5)*0.5;
+        if(trial%97==0)x=double(INT_MIN);if(trial%113==0)y=double(INT_MAX);if(trial%127==0)w=1e308;
+        r.setRegion(x,y,w,h);char threshold[384];std::snprintf(threshold,sizeof(threshold),"%.4f",r.colors.mode?double(trial%256)+0.00004:double(trial%10001)/10000.0);
+        r.colors.toleranceUnits=std::strlen(threshold);r.colors.toleranceValid=TLinkColorDouble(threshold,r.colors.tolerance);std::string table;
+        for(unsigned j=0;j<trial%5+1;++j){double dx=double(int((trial+j)%13)-6)*0.5,dy=double(int(j%9)-4)*0.5;
+            if(trial%101==0)dx=double(INT_MIN);if(trial%131==0)dy=double(INT_MAX);const int red=int(trial%256),green=int(j%256),blue=int((trial+j)%256);
+            r.colors.append(dx,dy,red,green,blue);char row[820];std::snprintf(row,sizeof(row),"%.0f,,%.0f,,%d,,%d,,%d",dx,dy,red,green,blue);if(j)table+='|';table+=row;}
+        char prefix[1600],suffix[420];std::snprintf(prefix,sizeof(prefix),"283;;%.0f;;%.0f;;%.0f;;%.0f;;",x,y,w,h);std::snprintf(suffix,sizeof(suffix),";;%d;;%s;;%d",r.colors.mode,threshold,r.skip);
+        const size_t wire=std::strlen(prefix)+table.size()+std::strlen(suffix);assert(TLinkNativeColorMultiInputFits(r)==(wire<=8192));
+        if(!r.coordinatesValid)continue;assert(TLinkNativeColorMultiParameters(r)&&!TLinkNativeColorPointsTableError(r.colors));
+        int fx=-1,fy=-1;legacyLiveMulti(rgba.data(),32,24,r,fx,fy);TLinkColorRect region,anchors,crop;
+        assert(TLinkColorRegion(32,24,r.x,r.y,r.width,r.height,true,region));TLinkColorResult value;value.x=value.y=-1;
+        if(TLinkColorAnchors(32,24,region,r.colors.points,anchors,crop)){
+            std::vector<uint8_t> cropped(size_t(crop.width)*crop.height*4);for(int cy=0;cy<crop.height;++cy)std::memcpy(cropped.data()+size_t(cy)*crop.width*4,rgba.data()+(size_t(crop.y+cy)*32+size_t(crop.x))*4,size_t(crop.width)*4);
+            TLinkColorRequest work({});const auto status=TLinkColorMultiScan(cropped.data(),crop.width,crop,anchors,r.colors.points,r.colors.mode,r.colors.tolerance,r.skip,work,value);assert(status!=TLinkColorScan::Stopped);if(status==TLinkColorScan::NoMatch)value.x=value.y=-1;
+        }
+        assert(value.x==fx&&value.y==fy);
+    }
+    TLinkNativeColorMultiRequest r;r.colors.append(0,0,0,0,0);r.setRegion(INT_MIN,INT_MAX,INT_MIN,INT_MAX);r.skip=INT_MAX;assert(TLinkNativeColorMultiParameters(r));r.skip=-1;assert(!TLinkNativeColorMultiParameters(r));r.skip=0;
+    r.setRegion(NAN,0,0,0);assert(!TLinkNativeColorMultiParameters(r));r.setRegion(0,0,1e308,0);assert(!TLinkNativeColorMultiParameters(r));r.setRegion(0,0,0,0);
+    r.regionUnits=SIZE_MAX;assert(!TLinkNativeColorMultiInputFits(r));r.regionUnits=4;r.colors.tableUnits=SIZE_MAX;assert(!TLinkNativeColorMultiInputFits(r));r.colors.tableUnits=13;r.colors.toleranceUnits=SIZE_MAX;assert(!TLinkNativeColorMultiInputFits(r));
+    for(unsigned extra=0;extra<2;++extra){r=TLinkNativeColorMultiRequest{};for(unsigned i=0;i<512;++i)r.colors.append(i<3?2e307:(i==3?(extra?2e74:2e73):0),0,0,0,0);assert(19+4+1+6+1+r.colors.tableUnits==8192+extra&&TLinkNativeColorMultiInputFits(r)==(extra==0));}
+    puts("Native live multi policy passed: 10k frozen ROI/offset/anchor/crop/mode/skip/first-hit cases, exact wire limits, signed extents/INT_MIN offsets/INT_MAX skip and saturated ingress.");
+}
 int main(){
+    nativeMultiPolicyCases();
     nativePointsPolicyCases();
     nativeRangePolicyCases();
     int number=0;double value=0;

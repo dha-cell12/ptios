@@ -12,6 +12,7 @@ static uint64_t FixtureNow(){return TLinkNativeNowNs()+offset.load();}
 #include "ColorPolicyUnderTest.h"
 #include "../shared/TLinkNativeColorRange.h"
 #include "../shared/TLinkNativeColorPoints.h"
+#include "../shared/TLinkNativeColorMulti.h"
 #include "ColorHeaderUnderTest.h"
 static bool failAllocate=false,failCrop=false,failSpace=false,failContext=false,throwDraw=false,expireDraw=false,expireCapture=false,failCapture=false;
 static unsigned buffers=0,providers=0,captures=0;
@@ -98,10 +99,41 @@ static void numericPointsCases(){
     {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
     puts("Numeric live points Foundation passed: 110 RAW/numeric cases, scalar mode boundaries, full-table/pre/post-capture bounds, 512/513, graphics faults/NSError lifetime, busy/memory/cancel recovery and zero retained buffers.");
 }
+static void numericMultiCases(){
+    const auto check=[](const TLinkNativeColorMultiRequest &r,NSString *table,NSString *threshold){
+        NSString *wire=[NSString stringWithFormat:@"3;;%d;;%d;;%d;;%d;;%@;;%d;;%@;;%d",r.x,r.y,r.width,r.height,table,r.colors.mode,threshold,r.skip];NSError *rawError=nil,*numericError=nil;NSString *raw=search(wire,&rawError);TLinkColorResult result;
+        const bool ok=searchRGBMulti(r,result,&numericError);assert(ok==(raw!=nil));
+        if(ok){NSString *expected=[NSString stringWithFormat:@"%d;;%d",result.x,result.y];assert([raw isEqualToString:expected]);}else assert([rawError.localizedDescription isEqualToString:numericError.localizedDescription]);settled();
+    };
+    for(double x:{-1e308,double(INT_MIN),-1.5,-0.5,-0.0,0.5,1.5,7.5,8191.5,double(INT_MAX),1e308})for(int mode:{0,1})for(unsigned n=0;n<5;++n){
+        const double value=mode?std::vector<double>{-0.00004,0,0.99995,255.00004,255.00006}[n]:std::vector<double>{-0.00006,-0.00004,0.99995,1,1.00006}[n];
+        TLinkNativeColorMultiRequest r;r.colors.mode=mode;r.setRegion(double(int(n)-2)*0.5,0,double(n),0);r.skip=int(n);r.colors.append(x,1.5,10,20,30);r.colors.append(0,0,10,20,30);
+        NSString *threshold=[NSString stringWithFormat:@"%.4f",value];r.colors.toleranceUnits=threshold.length;r.colors.toleranceValid=TLinkColorDouble(threshold.UTF8String,r.colors.tolerance);
+        check(r,[NSString stringWithFormat:@"%.0f,,%.0f,,10,,20,,30|0,,0,,10,,20,,30",x,1.5],threshold);
+    }
+    TLinkNativeColorMultiRequest r;NSMutableString *table=[NSMutableString string];
+    for(unsigned i=0;i<512;++i){r.colors.append(0,0,10,20,30);if(i)[table appendString:@"|"];[table appendString:@"0,,0,,10,,20,,30"];}
+    check(r,table,@"0.0000");r.colors.append(0,0,10,20,30);[table appendString:@"|0,,0,,10,,20,,30"];check(r,table,@"0.0000");
+    r=TLinkNativeColorMultiRequest{};r.colors.append(0,0,11,20,30);r.colors.append(0,0,999,0,0);const unsigned beforeInvalid=captures;check(r,@"0,,0,,11,,20,,30|0,,0,,999,,0,,0",@"0.0000");assert(captures==beforeInvalid);
+    r=TLinkNativeColorMultiRequest{};r.colors.append(0,0,11,20,30);r.colors.append(8,0,10,20,30);check(r,@"0,,0,,11,,20,,30|8,,0,,10,,20,,30",@"0.0000"); // signed offsets may leave no valid anchors
+    r=TLinkNativeColorMultiRequest{};r.colors.append(0,0,10,20,30);TLinkColorResult result;
+    bool *faults[]={&failAllocate,&failCrop,&failSpace,&failContext,&throwDraw,&expireDraw,&expireCapture,&failCapture};
+    NSString *codes[]={@"color_allocation_failed",@"color_crop_failed",@"color_space_failed",@"color_context_failed",@"color_operation_failed",@"color_cancelled_or_timed_out",@"color_cancelled_or_timed_out",@"color_capture_failed"};
+    for(unsigned n=0;n<8;++n){NSError *retained=nil;@autoreleasepool{*faults[n]=true;assert(!searchRGBMulti(r,result,&retained));}assert([retained.localizedDescription containsString:codes[n]]);offset=0;settled();}
+    {TLinkColorRequest first({}),second({});const unsigned before=captures;r.colors.mode=2;NSError *error=nil;assert(!searchRGBMulti(r,result,&error)&&[error.localizedDescription containsString:@"color_compute_busy"]&&captures==before);}r.colors.mode=1;settled();
+    {auto hold=TLinkColorMemory().reserve(TLinkImageKind::Frame,32*1024*1024);assert(hold);NSError *error=nil;assert(!searchRGBMulti(r,result,&error)&&[error.localizedDescription containsString:@"color_memory_budget"]);}settled();
+    {auto token=std::make_shared<TLinkNativeCancellation>();auto budget=std::make_shared<TLinkNativeBudget>(token,0,4096);TLinkNativeBudgetScope scope(budget);cancelOnDraw=token;NSError *error=nil;
+        assert(!searchRGBMulti(r,result,&error)&&[error.localizedDescription containsString:@"color_cancelled_or_timed_out"]);cancelOnDraw.reset();const unsigned before=captures;error=nil;assert(!searchRGBMulti(r,result,&error)&&captures==before);}settled();
+    {TLinkColorRequest first({}),second({});assert(first.admitted()&&second.admitted());}
+    {auto hold=TLinkColorMemory().reserve(TLinkImageKind::Frame,32*1024*1024);assert(hold);TLinkNativeColorMultiRequest absent;absent.colors.append(INT_MIN,0,10,20,30);NSError *error=nil;const unsigned before=captures;
+        failAllocate=true;assert(searchRGBMulti(absent,result,&error)&&!error&&result.x==-1&&result.y==-1&&captures==before+1&&failAllocate);failAllocate=false;}settled();
+    puts("Numeric live multi Foundation passed: 110 RAW/numeric ROI/offset/skip cases, full-table and mode order, 512/513, no-anchor allocation bypass, graphics faults/NSError lifetime, busy/memory/cancel recovery and zero retained buffers.");
+}
 int main(){@autoreleasepool{
     fixtureImage=image(8,6);
     numericRangeCases();
     numericPointsCases();
+    numericMultiCases();
     fputs("Color Foundation: actual parser, RGBA conversion, encoder and wire results\n",stderr);
     NSError *error=nil;NSDictionary *rgb=getRGBFromRawData((UInt8 *)"2;;1",&error);
     assert(!error&&[rgb[@"red"] intValue]==10&&[rgb[@"green"] intValue]==20&&[rgb[@"blue"] intValue]==30);settled();

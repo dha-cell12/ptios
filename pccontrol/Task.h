@@ -117,6 +117,8 @@
 #include "../shared/TLinkNativeColorRequest.h"
 #include "../shared/TLinkNativeColorRange.h"
 #include "../shared/TLinkNativeColorPoints.h"
+#include "../shared/TLinkNativeColorMulti.h"
+NSDictionary *TLinkExecuteNativeColorMulti(const TLinkNativeColorMultiRequest &request,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest &request,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &request,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeFramePick.h"

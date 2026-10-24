@@ -144,6 +144,25 @@ bool testRGBPoints(const TLinkNativeColorPointsRequest &check,bool &matched,NSEr
         return zx_colorPointsScreen(check.points,check.mode,check.tolerance,request,matched,error)?@"":nil;
     },error)!=nil;
 }
+static bool zx_colorMultiScreen(const TLinkNativeColorMultiRequest &search,TLinkColorRequest &request,TLinkColorResult &value,NSError **error){
+    ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;
+    if(!zx_colorDimensions(screen.value,sw,sh,error))return false;
+    TLinkColorRect crop,anchors,region;
+    if(!TLinkColorRegion(sw,sh,search.x,search.y,search.width,search.height,true,region)){zx_colorError(error,"color_region_invalid");return false;}
+    if(!TLinkColorAnchors(sw,sh,region,search.colors.points,anchors,crop)){value.x=value.y=-1;return true;}
+    ZXColorBuffer buffer;if(!zx_colorRender(screen.value,crop,request,buffer,error))return false;
+    const auto status=TLinkColorMultiScan(buffer.bytes.get(),buffer.width,crop,anchors,search.colors.points,search.colors.mode,search.colors.tolerance,search.skip,request,value);
+    if(status==TLinkColorScan::Stopped){zx_colorError(error,request.error());return false;}
+    if(status==TLinkColorScan::NoMatch)value.x=value.y=-1;
+    return true;
+}
+bool searchRGBMulti(const TLinkNativeColorMultiRequest &search,TLinkColorResult &value,NSError **error){
+    return zx_colorRun([&](TLinkColorRequest &request)->id{
+        if(!TLinkNativeColorMultiParameters(search)){zx_colorError(error,"color_parameters_invalid");return nil;}
+        if(const char *code=TLinkNativeColorPointsTableError(search.colors)){zx_colorError(error,code);return nil;}
+        return zx_colorMultiScreen(search,request,value,error)?@"":nil;
+    },error)!=nil;
+}
 NSDictionary* getRGBAtPosition(int x,int y,NSError **error){
     return zx_colorRun([&](TLinkColorRequest &request)->id{return zx_colorPickScreen(x,y,request,error);},error);
 }
@@ -175,14 +194,9 @@ NSString* searchRGBFromRawData(UInt8 *eventData,NSError **error){
             bool matched=false;if(!zx_colorPointsScreen(points,mode,value,request,matched,error))return nil;
             return matched?@"1":@"0";
         }
-        ZXColorImage screen(zx_colorCapture(request,error));int sw=0,sh=0;if(!zx_colorDimensions(screen.value,sw,sh,error))return nil;
-        TLinkColorRect crop,anchors,region;
-        if(!TLinkColorRegion(sw,sh,x,y,width,height,true,region)){zx_colorError(error,"color_region_invalid");return nil;}
-        if(!TLinkColorAnchors(sw,sh,region,points,anchors,crop))return @"-1;;-1";
-        ZXColorBuffer buffer;if(!zx_colorRender(screen.value,crop,request,buffer,error))return nil;
-        TLinkColorResult result;auto scan=TLinkColorMultiScan(buffer.bytes.get(),buffer.width,crop,anchors,points,mode,value,skip,request,result);
-        if(scan==TLinkColorScan::Stopped){zx_colorError(error,request.error());return nil;}
-        if(scan==TLinkColorScan::NoMatch)return @"-1;;-1";
+        TLinkNativeColorMultiRequest search;search.x=x;search.y=y;search.width=width;search.height=height;search.skip=skip;
+        search.colors.mode=mode;search.colors.tolerance=value;search.colors.points=std::move(points);
+        TLinkColorResult result;if(!zx_colorMultiScreen(search,request,result,error))return nil;
         return [NSString stringWithFormat:@"%d;;%d",result.x,result.y];
     },error);
 }

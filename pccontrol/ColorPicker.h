@@ -10,6 +10,8 @@
 #import <opencv.hpp>
 #include "../shared/TLinkNativeColorRange.h"
 #include "../shared/TLinkNativeColorPoints.h"
+#include "../shared/TLinkNativeColorMulti.h"
+bool searchRGBMulti(const TLinkNativeColorMultiRequest &request,TLinkColorResult &value,NSError **error);
 bool testRGBPoints(const TLinkNativeColorPointsRequest &request,bool &matched,NSError **error);
 bool searchRGBRange(const TLinkNativeColorRangeRequest &request,TLinkColorResult &value,NSError **error);
 #endif
