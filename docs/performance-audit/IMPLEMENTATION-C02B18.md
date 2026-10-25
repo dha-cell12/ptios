@@ -1,7 +1,7 @@
 # C02b18 — structured frame capture input and publication rollback
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `62a9c90`; the user reported C02b17 built successfully before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b19 (`765d989`); device qualification pending**.
 Finding: **P0-13, captureFrame input portion**. Response parsing, image creation/other adapters and helper transport/config/dedupe remain open.
 
 ## Result and scope
@@ -41,3 +41,5 @@ This also covers late exceptions/oversized replies where recovering the ID from 
 Build rootfull/roothide observe/enforced variants. Compare JS captureFrame with RAW task 66 for gray/BGRA/default flags, TTL boundaries, owner encoding, geometry/metadata and capture/store failures. Exercise cancellation/deadline during capture, late publication faults, low/overflowing output budgets and concurrent release/expiry/eviction. Verify no failed call leaves an owned published frame and existing readers remain valid; measure bridge cost separately from capture/conversion and memory pressure.
 
 Continue remaining P0-13 creation/response/other adapters, P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+The user reported C02b18 build `765d989` passed before C02b19. Structured capture metadata is tracked in `IMPLEMENTATION-C02B19.md`. This records the user report; no independent macOS/device execution was performed on this host.

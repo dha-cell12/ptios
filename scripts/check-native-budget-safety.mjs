@@ -123,7 +123,12 @@ try {
   assert.doesNotMatch(frameCaptureBridge,/executeRawPayload/);
   assert.match(frameCaptureEntry,/outputLimit\(\)<1024[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_FRAME_CAPTURE,&denial\)[\s\S]*captureStoredFrame/);
   assert.match(frameCaptureEntry,/@finally[\s\S]*!committed&&publishedId[\s\S]*TLinkNativeCallContext\(call,true,false\)[\s\S]*releaseStoredFrames/);
-  assert.doesNotMatch(frameCaptureEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
+  assert.doesNotMatch(frameCaptureEntry,/processTaskWithContext|CFWriteStream|componentsSeparatedByString|\b(?:YES|NO)\b/);
+  assert.doesNotMatch(frameCaptureBridge,/result\[@"parts"\]|SafeStringPart|NSMutableDictionary/);
+  assert.match(frameCaptureEntry,/TLinkNativeFrameCaptureValue value[\s\S]*TLinkNativeFrameCaptureResult\(value\)[\s\S]*outputAllowed[\s\S]*committed=true/);
+  const captureResult=await readFile(join(root,"shared/TLinkNativeFrameCaptureResult.h"),"utf8");
+  assert.doesNotMatch(captureResult,/componentsSeparatedByString|\b(?:YES|NO)\b/);
+  assert.match(captureResult,/componentsJoinedByString[\s\S]*created\.longLongValue/);
   await writeFile(join(temp,"NativeFrameCaptureBridge.inc"),frameCaptureBridge);
   await writeFile(join(temp,"NativeFrameCaptureEntry.inc"),frameCaptureEntry);
   const imageReleaseBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage])","    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColor])");

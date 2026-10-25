@@ -686,26 +686,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if(fields.count>2&&[fields[2] length])input.runId=[fields[2] UTF8String]?:"";
         if(fields.count>3&&[fields[3] length])input.runtime=[fields[3] UTF8String]?:"";
         NSDictionary *result=TLinkExecuteNativeFrameCapture(input,context);
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 14) return [TLinkJSNativeResponse responseWithValue:result];
-        int frameId = [parts[1] intValue];
-        [runtime trackFrameId:frameId];
-        NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
-        res[@"id"] = @(frameId);
-        res[@"width"] = @([TLinkautoJSSafeStringPart(parts, 2) intValue]);
-        res[@"height"] = @([TLinkautoJSSafeStringPart(parts, 3) intValue]);
-        res[@"bytesPerRow"] = @([TLinkautoJSSafeStringPart(parts, 4) intValue]);
-        res[@"scale"] = @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]);
-        res[@"coord"] = TLinkautoJSSafeStringPart(parts, 6);
-        res[@"format"] = TLinkautoJSSafeStringPart(parts, 7);
-        res[@"hasBGRA"] = @([TLinkautoJSSafeStringPart(parts, 8) intValue] != 0);
-        res[@"hasGray"] = @([TLinkautoJSSafeStringPart(parts, 9) intValue] != 0);
-        res[@"createdAtMs"] = @([TLinkautoJSSafeStringPart(parts, 10) longLongValue]);
-        res[@"captureMs"] = @([TLinkautoJSSafeStringPart(parts, 11) doubleValue]);
-        res[@"bgraMs"] = @([TLinkautoJSSafeStringPart(parts, 12) doubleValue]);
-        res[@"grayMs"] = @([TLinkautoJSSafeStringPart(parts, 13) doubleValue]);
-        if ([parts count] > 14) res[@"totalMs"] = @([TLinkautoJSSafeStringPart(parts, 14) doubleValue]);
-        return [TLinkJSNativeResponse responseWithValue:res];
+        if([result[@"ok"] boolValue])[runtime trackFrameId:[result[@"id"] intValue]];
+        return [TLinkJSNativeResponse responseWithValue:result];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseFrame]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;

@@ -4,6 +4,7 @@
 #include "../shared/TLinkOCRPolicy.h"
 #include "../shared/TLinkNativeDispatch.h"
 #import "Image.h"
+#include "../shared/TLinkNativeFrameCaptureResult.h"
 #import <ImageIO/ImageIO.h>
 #include "../shared/TLinkImageStorage.h"
 #import "Screen.h"
@@ -468,7 +469,7 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
 }
 
 // BEGIN numeric frame capture.
-static NSString *zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,uint32_t &publishedId,NSError **error){
+static bool zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,uint32_t &publishedId,TLinkNativeFrameCaptureValue &value,NSError **error){
     const bool needGray=request.gray||!request.bgra,needBGRA=request.bgra||!request.gray;
     static_assert(kDefaultFrameTtlMs==1000&&kHardFrameTtlMs==5000,"capture TTL compatibility changed");
     const uint64_t ttlMs=TLinkNativeFrameCaptureTTL(request.ttlMs);
@@ -478,20 +479,20 @@ static NSString *zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,u
     double captureMs = (TLinkImageNowSeconds() - capture0) * 1000.0;
     if (!screen) {
         if (error) *error = zx_frameError(@"1;;capture_failed\r\n");
-        return nil;
+        return false;
     }
 
     size_t pixels = 0;
     if (!TLinkImagePixels(CGImageGetWidth(screen), CGImageGetHeight(screen), kMaxImagePixels, &pixels)) {
         CGImageRelease(screen);
         if (error) *error = zx_frameError(@"1;;frame_pixel_limit\r\n");
-        return nil;
+        return false;
     }
     auto charge = zx_reservePayload(TLinkImageKind::Frame, pixels * ((needBGRA ? 4 : 0) + (needGray ? 1 : 0)));
     if (!charge) {
         CGImageRelease(screen);
         if (error) *error = zx_frameError(@"1;;frame_memory_budget\r\n");
-        return nil;
+        return false;
     }
     auto pendingFrame = std::make_shared<ZXFrameObject>();
     pendingFrame->charge = std::move(charge);
@@ -514,7 +515,7 @@ static NSString *zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,u
     if (!zx_renderBGRAFromCGImage(screen, needBGRA ? frame.bgra : tmpBGRA, &w, &h, &bpr)) {
         CGImageRelease(screen);
         if (error) *error = zx_frameError(@"1;;bgra_render_failed\r\n");
-        return nil;
+        return false;
     }
     double bgraMs = (TLinkImageNowSeconds() - bgra0) * 1000.0;
     CGImageRelease(screen);
@@ -533,7 +534,7 @@ static NSString *zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,u
     double grayMs = (TLinkImageNowSeconds() - gray0) * 1000.0;
     if (needGray && !frame.hasGray) {
         if (error) *error = zx_frameError(@"1;;gray_convert_failed\r\n");
-        return nil;
+        return false;
     }
 
     __block uint32_t frameId = 0;
@@ -543,20 +544,19 @@ static NSString *zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,u
     publishedId=frameId;
     if (!frameId) {
         if (error) *error = zx_frameError(@"1;;frame_publish_failed\r\n");
-        return nil;
+        return false;
     }
     double totalMs = (TLinkImageNowSeconds() - total0) * 1000.0;
-    return [NSString stringWithFormat:@"%u;;%d;;%d;;%d;;%.3f;;pixel;;BGRA;;%d;;%d;;%llu;;%.3f;;%.3f;;%.3f;;%.3f",
-            frameId, frame.width, frame.height, frame.bytesPerRow, frame.scale,
-            frame.hasBGRA ? 1 : 0, frame.hasGray ? 1 : 0,
-            (unsigned long long)frame.capturedAtMs,
-            captureMs, bgraMs, grayMs, totalMs];
+    value.id=frameId;value.width=frame.width;value.height=frame.height;value.bytesPerRow=frame.bytesPerRow;
+    value.scale=frame.scale;value.hasBGRA=frame.hasBGRA;value.hasGray=frame.hasGray;value.capturedAtMs=frame.capturedAtMs;
+    value.captureMs=captureMs;value.bgraMs=bgraMs;value.grayMs=grayMs;value.totalMs=totalMs;
+    return true;
 }
 
-NSString *captureStoredFrame(const TLinkNativeFrameCaptureRequest &request,uint32_t &publishedId,NSError **error){
-    publishedId=0;TLinkImageWork work(gImageCompute);
-    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return nil;}
-    return zx_captureFrame(request,publishedId,error);
+bool captureStoredFrame(const TLinkNativeFrameCaptureRequest &request,uint32_t &publishedId,TLinkNativeFrameCaptureValue &value,NSError **error){
+    publishedId=0;value=TLinkNativeFrameCaptureValue{};TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return false;}
+    return zx_captureFrame(request,publishedId,value,error);
 }
 // END numeric frame capture.
 
@@ -568,7 +568,8 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData,NSError **error){
     if(data.count>=2&&[data[1] length]>0)request.bgra=[data[1] intValue]!=0;
     if(data.count>=3&&[data[2] length]>0)request.ttlMs=uint64_t(MAX(0,[data[2] longLongValue]));
     request.sessionId=zx_stringFromPart(data,3,"");request.runId=zx_stringFromPart(data,4,"");request.runtime=zx_stringFromPart(data,5,"legacy");
-    uint32_t publishedId=0;return zx_captureFrame(request,publishedId,error);
+    uint32_t publishedId=0;TLinkNativeFrameCaptureValue value;
+    return zx_captureFrame(request,publishedId,value,error)?TLinkNativeFrameCaptureBody(value):nil;
 }
 
 // BEGIN numeric frame release.

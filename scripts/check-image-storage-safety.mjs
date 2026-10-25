@@ -73,6 +73,9 @@ const imageReleaseAction='NSString *imageReleaseActionUnderTest(UInt8 *eventData
 const frameCapture=section('// BEGIN numeric frame capture.','// END numeric frame capture.');
 const rawCapture=section('NSString* handleFrameCaptureTaskFromRawData(', '// BEGIN numeric frame release.');
 assert.match(frameCapture,/TLinkImageWork work\(gImageCompute\)/);
+assert.doesNotMatch(frameCapture,/stringWithFormat|componentsSeparatedByString/);
+assert.match(frameCapture,/publishedId=frameId[\s\S]*value\.id=frameId/);
+assert.match(rawCapture,/TLinkNativeFrameCaptureBody\(value\)/);
 const captureParser=section('static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData)\n{','static bool zx_stringIsPointCoord(');
 const fixtures = {
   ...admissionFixtures,

@@ -7,6 +7,7 @@
 #include "../shared/TLinkNativeFrameImage.h"
 #include "../shared/TLinkNativeFrameRelease.h"
 #include "../shared/TLinkNativeFrameCapture.h"
+#include "../shared/TLinkNativeFrameCaptureResult.h"
 #include "../shared/TLinkNativeImageRelease.h"
 #import "../pccontrol/TesseractOCRTask.h"
 #include "../shared/TLinkNativeOCRInput.h"
@@ -127,6 +128,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeFrameOCRResult.inc"
 #include "fixtures/native-frame-ocr-result-legacy-v1.inc"
 #include "fixtures/frame-ocr-result-cases.inc"
+#include "fixtures/frame-capture-result-cases.inc"
 @interface TLinkInProcessNativeBridge : NSObject
 - (void)trackFrameId:(int)frameId;
 - (TLinkJSNativeResponse *)legacyFrameCapture:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
@@ -613,21 +615,24 @@ static bool hugeCaptureReply=false;
 static unsigned frameCaptureCalls=0;static int frameCaptureFault=0;static bool cancelFrameCapture=false;static unsigned frameCaptureDelay=0;static NSString *frameCaptureError=nil;
 static TLinkNativeFrameCaptureRequest observedFrameCapture;static TLinkNativeBudgetPtr frameCaptureBudget;
 static std::set<uint32_t> capturedFrames;static TLinkCancellationToken *captureToken;
-static NSString *frameCaptureValues(const TLinkNativeFrameCaptureRequest &r,uint32_t &publishedId,NSError **error){
+static bool frameCaptureValues(const TLinkNativeFrameCaptureRequest &r,uint32_t &publishedId,TLinkNativeFrameCaptureValue &value,NSError **error){
     observedFrameCapture=r;
-    if(frameCaptureError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"1;;%@\r\n",frameCaptureError]}];return nil;}
+    if(frameCaptureError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"1;;%@\r\n",frameCaptureError]}];return false;}
     publishedId=41;capturedFrames.insert(publishedId);
-    NSString *body=[NSString stringWithFormat:@"41;;8;;8;;32;;2.125;;pixel;;BGRA;;%d;;%d;;123456;;1.125;;2.250;;3.375;;6.750",r.bgra||!r.gray,r.gray||!r.bgra];
-    return hugeCaptureReply?[body stringByPaddingToLength:2048 withString:@"x" startingAtIndex:0]:body;
+    value.id=publishedId;value.width=8;value.height=8;value.bytesPerRow=32;value.scale=2.125;
+    value.hasBGRA=r.bgra||!r.gray;value.hasGray=r.gray||!r.bgra;value.capturedAtMs=123456;
+    value.captureMs=1.125;value.bgraMs=2.250;value.grayMs=3.375;value.totalMs=6.750;
+    if(hugeCaptureReply)value.captureMs=value.bgraMs=value.grayMs=value.totalMs=1.7976931348623157e308;
+    return true;
 }
-NSString *captureStoredFrame(const TLinkNativeFrameCaptureRequest &r,uint32_t &publishedId,NSError **error){
+bool captureStoredFrame(const TLinkNativeFrameCaptureRequest &r,uint32_t &publishedId,TLinkNativeFrameCaptureValue &value,NSError **error){
     ++frameCaptureCalls;frameCaptureBudget=TLinkCurrentNativeBudget();assert(frameCaptureBudget&&!frameCaptureBudget->capturesResponse());
     if(frameCaptureFault==1)[NSException raise:@"CaptureFixture" format:@"before publish"];
     if(frameCaptureFault==2)throw std::runtime_error("before publish");
-    NSString *body=frameCaptureValues(r,publishedId,error);
+    const bool ready=frameCaptureValues(r,publishedId,value,error);
     if(frameCaptureFault==3)[NSException raise:@"CaptureFixture" format:@"after publish"];
     if(frameCaptureFault==4)throw std::runtime_error("after publish");
-    if(cancelFrameCapture)[captureToken cancel];if(frameCaptureDelay)std::this_thread::sleep_for(std::chrono::milliseconds(frameCaptureDelay));return body;
+    if(cancelFrameCapture)[captureToken cancel];if(frameCaptureDelay)std::this_thread::sleep_for(std::chrono::milliseconds(frameCaptureDelay));return ready;
 }
 static void frameCaptureLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
     NSString *raw=[[NSString alloc] initWithBytes:bytes+2 length:length-2 encoding:NSUTF8StringEncoding];NSArray *fields=[raw componentsSeparatedByString:@";;"];
@@ -635,7 +640,7 @@ static void frameCaptureLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef s
     if(fields.count>3&&[fields[3] length])r.sessionId=[fields[3] UTF8String]?:"";
     if(fields.count>4&&[fields[4] length])r.runId=[fields[4] UTF8String]?:"";
     if(fields.count>5&&[fields[5] length])r.runtime=[fields[5] UTF8String]?:"";
-    NSError *error=nil;uint32_t id=0;NSString *body=frameCaptureValues(r,id,&error);NSString *reply=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)reply.UTF8String,stream);
+    NSError *error=nil;uint32_t id=0;TLinkNativeFrameCaptureValue value;const bool ready=frameCaptureValues(r,id,value,&error);NSString *body=ready?legacyFrameCaptureBody(value):nil;NSString *reply=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)reply.UTF8String,stream);
 }
 static void captureRollbackLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
     (void)length;assert(TLinkCurrentNativeBudget()->cleanup());NSString *raw=[[NSString alloc] initWithUTF8String:(char *)bytes+2];capturedFrames.erase(uint32_t(raw.intValue));notifyClient((UInt8 *)"0;;1\r\n",stream);
@@ -695,7 +700,16 @@ static void imageReleaseLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef s
 #include "NativeFrameMultiEntry.inc"
 #include "NativeFrameReleaseEntry.inc"
 #include "NativeImageReleaseEntry.inc"
+static NSDictionary *fixtureFrameCaptureResult(const TLinkNativeFrameCaptureValue &v){
+    if(frameCaptureFault==5)[NSException raise:@"CaptureFixture" format:@"format result"];
+    if(frameCaptureFault==6)throw std::runtime_error("format result");
+    NSDictionary *result=TLinkNativeFrameCaptureResult(v);
+    if(frameCaptureFault==7)[captureToken cancel];
+    return result;
+}
+#define TLinkNativeFrameCaptureResult fixtureFrameCaptureResult
 #include "NativeFrameCaptureEntry.inc"
+#undef TLinkNativeFrameCaptureResult
 #pragma pop_macro("NO")
 #pragma pop_macro("YES")
 static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 1024 * 1024) {
@@ -1269,7 +1283,8 @@ static void typedFrameCaptureCases(TLinkInProcessNativeBridge *bridge){
     context=parent(.01);reset(context);licenseDelayMs=30;failure(invoke(@{},context),@"TimeoutError");assert(frameCaptureCalls==before);
     context=parent(1,1023);reset(context);const int gates=licenseCalls;failure(invoke(@{},context),@"response_too_large");assert(licenseCalls==gates&&frameCaptureCalls==before);
     context=parent(1,1024);reset(context);assert([invoke(@{},context)[@"ok"] boolValue]);capturedFrames.clear();
-    for(int fault:{1,2,3,4}){context=parent();reset(context);frameCaptureFault=fault;failure(invoke(@{},context),@"native_exception");assert(capturedFrames.empty());}
+    for(int fault:{1,2,3,4,5,6}){context=parent();reset(context);frameCaptureFault=fault;failure(invoke(@{},context),@"native_exception");assert(capturedFrames.empty());}
+    context=parent();reset(context);frameCaptureFault=7;failure(invoke(@{},context),@"AbortError");assert(capturedFrames.empty());
     context=parent();reset(context);cancelFrameCapture=true;unsigned rollbacks=frameReleaseCalls;failure(invoke(@{},context),@"AbortError");assert(capturedFrames.empty()&&frameReleaseCalls==rollbacks+1);
     context=parent(.01);reset(context);frameCaptureDelay=30;failure(invoke(@{},context),@"TimeoutError");assert(capturedFrames.empty());
     context=parent(1,1024);reset(context);hugeCaptureReply=true;failure(invoke(@{},context),@"response_too_large");assert(capturedFrames.empty());
@@ -1818,6 +1833,7 @@ int main() { @autoreleasepool {
     typedFrameOCRCases(bridge);
     typedFrameReleaseCases(bridge);
     typedImageReleaseCases(bridge);
+    frameCaptureResultCases();
     typedFrameCaptureCases(bridge);
     typedFramePickCases(bridge);
     typedFramePickManyCases(bridge);
