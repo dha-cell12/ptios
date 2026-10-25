@@ -1,7 +1,7 @@
 # C02b17 — structured image cleanup
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `d2c9343`; the user reported C02b16 built successfully before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b18 (`62a9c90`); device qualification pending**.
 Finding: **P0-13, releaseImage portion**. Creation/other native adapters and helper transport/config/dedupe remain open.
 
 ## Result and scope
@@ -38,3 +38,5 @@ Cleanup and owner-queue waiting remain synchronous and may outlive a cancelled c
 Build rootfull/roothide observe/enforced variants. Compare JS releaseImage and RAW task 48/action 3 for matching/mismatched owners, Unicode/truncation/whitespace, missing/zero/repeated IDs, exact count/raw/parts/tracking, cancellation/deadline/license failures and output overflow after deletion. Verify admitted matcher readers survive release, resources recover, and active frame storage/expiry remains unchanged.
 
 Continue remaining measured P0-13 creation/other adapters, P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+The user reported C02b17 build `62a9c90` passed before C02b18. Structured frame capture input/publication rollback is tracked in `IMPLEMENTATION-C02B18.md`. This records the user report; no independent macOS/device execution was performed on this host.

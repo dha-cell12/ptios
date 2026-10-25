@@ -181,11 +181,8 @@ static std::string zx_stringFromPart(NSArray *data, NSUInteger index, const char
     return std::string([text UTF8String] ?: "");
 }
 
-static void zx_applyFrameOwner(ZXFrameObject &frame, NSArray *data, NSUInteger startIndex)
-{
-    frame.ownerSessionId = zx_stringFromPart(data, startIndex, "");
-    frame.ownerRunId = zx_stringFromPart(data, startIndex + 1, "");
-    frame.ownerRuntime = zx_stringFromPart(data, startIndex + 2, "legacy");
+static void zx_applyFrameOwner(ZXFrameObject &frame,const TLinkNativeFrameCaptureRequest &request){
+    frame.ownerSessionId=request.sessionId;frame.ownerRunId=request.runId;frame.ownerRuntime=request.runtime;
 }
 
 static void zx_applyImageOwner(ZXImageObject &image, NSArray *data, NSUInteger startIndex)
@@ -470,25 +467,11 @@ static BOOL zx_findTemplateSAD(const Mat &img, const Mat &templ,
     return false;
 }
 
-NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
-{
-    TLinkImageWork work(gImageCompute);
-    if (!work) { if (error) *error = zx_frameError(@"1;;image_compute_busy\r\n"); return nil; }
-
-    NSArray<NSString *> *data = zx_splitEventData(eventData);
-    bool needGray = true;
-    bool needBGRA = true;
-    uint64_t ttlMs = kDefaultFrameTtlMs;
-    if ([data count] >= 1 && [data[0] length] > 0) needGray = [data[0] intValue] != 0;
-    if ([data count] >= 2 && [data[1] length] > 0) needBGRA = [data[1] intValue] != 0;
-    if ([data count] >= 3 && [data[2] length] > 0) ttlMs = (uint64_t)MAX(0, [data[2] longLongValue]);
-    if (!needGray && !needBGRA) {
-        needGray = true;
-        needBGRA = true;
-    }
-    if (ttlMs == 0) ttlMs = kDefaultFrameTtlMs;
-    if (ttlMs > kHardFrameTtlMs) ttlMs = kHardFrameTtlMs;
-
+// BEGIN numeric frame capture.
+static NSString *zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,uint32_t &publishedId,NSError **error){
+    const bool needGray=request.gray||!request.bgra,needBGRA=request.bgra||!request.gray;
+    static_assert(kDefaultFrameTtlMs==1000&&kHardFrameTtlMs==5000,"capture TTL compatibility changed");
+    const uint64_t ttlMs=TLinkNativeFrameCaptureTTL(request.ttlMs);
     CFAbsoluteTime total0 = TLinkImageNowSeconds();
     CFAbsoluteTime capture0 = TLinkImageNowSeconds();
     CGImageRef screen = [Screen createScreenShotCGImageRef];
@@ -521,7 +504,7 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
     frame.expiresAtMs = TLinkImageExpiry(frame.createdAtMs, ttlMs);
     frame.capturedAtMs = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
     frame.ttlMs = ttlMs;
-    zx_applyFrameOwner(frame, data, 3);
+    zx_applyFrameOwner(frame, request);
     frame.hasBGRA = false;
     frame.hasGray = false;
 
@@ -557,6 +540,7 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
     TLinkNativeDispatchSync(zx_imageQueue(), ^{
         frameId = zx_storeFrameLocked(pendingFrame);
     });
+    publishedId=frameId;
     if (!frameId) {
         if (error) *error = zx_frameError(@"1;;frame_publish_failed\r\n");
         return nil;
@@ -567,6 +551,24 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
             frame.hasBGRA ? 1 : 0, frame.hasGray ? 1 : 0,
             (unsigned long long)frame.capturedAtMs,
             captureMs, bgraMs, grayMs, totalMs];
+}
+
+NSString *captureStoredFrame(const TLinkNativeFrameCaptureRequest &request,uint32_t &publishedId,NSError **error){
+    publishedId=0;TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return nil;}
+    return zx_captureFrame(request,publishedId,error);
+}
+// END numeric frame capture.
+
+NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData,NSError **error){
+    TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"1;;image_compute_busy\r\n");return nil;}
+    NSArray *data=zx_splitEventData(eventData);TLinkNativeFrameCaptureRequest request;
+    if(data.count>=1&&[data[0] length]>0)request.gray=[data[0] intValue]!=0;
+    if(data.count>=2&&[data[1] length]>0)request.bgra=[data[1] intValue]!=0;
+    if(data.count>=3&&[data[2] length]>0)request.ttlMs=uint64_t(MAX(0,[data[2] longLongValue]));
+    request.sessionId=zx_stringFromPart(data,3,"");request.runId=zx_stringFromPart(data,4,"");request.runtime=zx_stringFromPart(data,5,"legacy");
+    uint32_t publishedId=0;return zx_captureFrame(request,publishedId,error);
 }
 
 // BEGIN numeric frame release.

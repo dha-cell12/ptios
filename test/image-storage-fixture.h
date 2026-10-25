@@ -3,6 +3,7 @@
 #include "../shared/TLinkImageStorage.h"
 #include "../shared/TLinkNativeFrameRelease.h"
 #include "../shared/TLinkNativeImageRelease.h"
+#include "../shared/TLinkNativeFrameCapture.h"
 #include <cassert>
 #include <climits>
 #include <cstdio>
@@ -19,6 +20,7 @@ public:
     Mat() = default;
     Mat(int r, int c) : pixels_(std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(r) * c)), rows(r), cols(c) {}
     Mat(int r, int c, int, void *) : rows(r), cols(c) {} // Borrowed encoded input header.
+    Mat(int r,int c,int,void *,size_t) : rows(r),cols(c) {}
     bool empty() const { return !pixels_ || pixels_->empty(); }
     const uint8_t *data() const { return pixels_ ? pixels_->data() : nullptr; }
 };

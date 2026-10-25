@@ -70,8 +70,15 @@ const objectBody=bodyAfter(source.indexOf('NSString* handleImageObjectTaskFromRa
 const parserEnd=objectBody.indexOf('    if (action == 1) {');assert.ok(parserEnd>0);
 const imageReleaseAction='NSString *imageReleaseActionUnderTest(UInt8 *eventData,NSError **error){'+objectBody.slice(0,parserEnd)+
   section('// BEGIN raw image release action.','// END raw image release action.').replace('    else if','    if')+'return nil;\n}\n';
+const frameCapture=section('// BEGIN numeric frame capture.','// END numeric frame capture.');
+const rawCapture=section('NSString* handleFrameCaptureTaskFromRawData(', '// BEGIN numeric frame release.');
+assert.match(frameCapture,/TLinkImageWork work\(gImageCompute\)/);
+const captureParser=section('static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData)\n{','static bool zx_stringIsPointCoord(');
 const fixtures = {
   ...admissionFixtures,
+  'FrameCaptureUnderTest.inc': frameCapture+rawCapture,
+  'FrameCaptureOwnerUnderTest.inc': section('static void zx_applyFrameOwner(', 'static void zx_applyImageOwner('),
+  'FrameCaptureParserUnderTest.inc': captureParser,
   'NumericImageReleaseUnderTest.inc': numericImageRelease,
   'ImageReleasePortableUnderTest.inc': portableImageRelease,
   'ImageReleaseActionUnderTest.inc': imageReleaseAction,

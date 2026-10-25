@@ -678,6 +678,32 @@ NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest 
 }
 // END typed color points task entry.
 
+// BEGIN typed frame capture task entry.
+NSDictionary *TLinkExecuteNativeFrameCapture(const TLinkNativeFrameCaptureRequest &request,TLinkTaskExecutionContext *context){
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    uint32_t publishedId=0;bool committed=false;
+    @try {try {
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(budget->outputLimit()<1024)return zx_typedTouchFailure(@"response_too_large");
+        NSString *denial=nil;if(!TLinkRootfullLicenseTaskAllowed(TASK_FRAME_CAPTURE,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;NSString *body=captureStoredFrame(request,publishedId,&error);
+        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        NSString *raw=[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];
+        if(!budget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||budget->stopped())return zx_typedTouchStopped(budget);
+        NSArray *parts=[[raw stringByTrimmingCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsSeparatedByString:@";;"];
+        NSDictionary *result=@{@"ok":@(true),@"raw":raw,@"parts":parts};committed=true;return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}@catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+    @finally {
+        if(!committed&&publishedId){
+            TLinkTaskExecutionContext *cleanup=TLinkNativeCallContext(call,true,false);TLinkNativeBudgetScope cleanupScope([cleanup nativeBudget]);
+            TLinkNativeFrameReleaseRequest rollback;rollback.frameId=publishedId;
+            @try{try{releaseStoredFrames(rollback);}catch(...){}}@catch(__unused NSException *exception){}
+        }
+    }
+}
+// END typed frame capture task entry.
+
 // BEGIN typed image release task entry.
 NSDictionary *TLinkExecuteNativeImageRelease(const TLinkNativeImageReleaseRequest &request,TLinkTaskExecutionContext *context){
     // Match task 48/action 3's cleanup exemption; capture/open retain their ordinary gates.

@@ -8,7 +8,8 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const source=(await readFile(join(root,'pccontrol/Image.xm'),'utf8')).replaceAll('\r\n','\n');
 function section(start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 const sad=section('static long long zx_sad_match_region','static BOOL zx_findTemplateSAD');
-const scale=section('static BOOL zx_findTemplateSAD','NSString* handleFrameCaptureTaskFromRawData');
+const scale=section('static BOOL zx_findTemplateSAD','// BEGIN numeric frame capture.');
+assert.doesNotMatch(scale,/captureStoredFrame|zx_captureFrame|TLinkNativeFrameCaptureRequest/,'matcher fixture must exclude the adjacent capture adapter');
 assert.ok(scale.indexOf('TLinkModernImageMakePlan(')<scale.indexOf('cv::resize('));
 assert.ok(scale.indexOf('request->reserve(')<scale.indexOf('cv::resize('));
 assert.match(sad,/request->consume\(size_t\(w\)\)/);

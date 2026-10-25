@@ -6,6 +6,7 @@
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameImage.h"
 #include "../shared/TLinkNativeFrameRelease.h"
+#include "../shared/TLinkNativeFrameCapture.h"
 #include "../shared/TLinkNativeImageRelease.h"
 #import "../pccontrol/TesseractOCRTask.h"
 #include "../shared/TLinkNativeOCRInput.h"
@@ -32,6 +33,7 @@
 #include <string>
 #include <stdexcept>
 #include <vector>
+#include <set>
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
@@ -41,11 +43,15 @@ NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchReq
 static bool zx_handleNativeBatch(UInt8 *,NSError **);
 NSDictionary *TLinkExecuteNativeFrameRelease(const TLinkNativeFrameReleaseRequest &,TLinkTaskExecutionContext *);
 static void frameReleaseLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+NSDictionary *TLinkExecuteNativeFrameCapture(const TLinkNativeFrameCaptureRequest &,TLinkTaskExecutionContext *);
+static void frameCaptureLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+static void captureRollbackLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+static unsigned trackFrames=0;static int lastTrackedFrame=-1;
 NSDictionary *TLinkExecuteNativeImageRelease(const TLinkNativeImageReleaseRequest &,TLinkTaskExecutionContext *);
 static void imageReleaseLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 static unsigned untrackImages=0;static int lastUntrackedImage=-1;
 static unsigned untrackFrames=0,untrackAllFrames=0;static int lastUntrackedFrame=-1;
-enum {TASK_NATIVE_BATCH=65,TASK_COLOR_PICKER=23,TASK_COLOR_SEARCHER=28,TASK_COLOR_IN_FRAME=69,TASK_FIND_IMAGE_IN_FRAME=68,TASK_OCR_TESSERACT_REGION=91,TASK_FRAME_RELEASE=67,TASK_IMAGE_OBJECT=48};
+enum {TASK_NATIVE_BATCH=65,TASK_COLOR_PICKER=23,TASK_COLOR_SEARCHER=28,TASK_COLOR_IN_FRAME=69,TASK_FIND_IMAGE_IN_FRAME=68,TASK_OCR_TESSERACT_REGION=91,TASK_FRAME_RELEASE=67,TASK_IMAGE_OBJECT=48,TASK_FRAME_CAPTURE=66};
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &,TLinkTaskExecutionContext *);
 static void colorRangeLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
@@ -70,6 +76,8 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"frameCaptureRuntime"]&&lastPayload.compare(0,2,"66")==0){frameCaptureLegacyTask(bytes,length,stream);return;}
+    if([mode isEqualToString:@"frameCaptureRuntime"]&&lastPayload.compare(0,2,"67")==0){captureRollbackLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"imageReleaseRuntime"]&&lastPayload.compare(0,5,"483;;")==0){imageReleaseLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameReleaseRuntime"]&&lastPayload.compare(0,2,"67")==0){frameReleaseLegacyTask(bytes,length,stream);return;}
     if (lastPayload.compare(0, 2, "67") == 0 || lastPayload.compare(0, 5, "483;;") == 0 || lastPayload.compare(0, 5, "300;;") == 0) {
@@ -120,6 +128,8 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "fixtures/native-frame-ocr-result-legacy-v1.inc"
 #include "fixtures/frame-ocr-result-cases.inc"
 @interface TLinkInProcessNativeBridge : NSObject
+- (void)trackFrameId:(int)frameId;
+- (TLinkJSNativeResponse *)legacyFrameCapture:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (void)untrackImageId:(int)imageId;
 - (TLinkJSNativeResponse *)legacyImageRelease:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (void)untrackFrameId:(int)frameId;
@@ -138,6 +148,14 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (void)trackFrameId:(int)frameId {++trackFrames;lastTrackedFrame=frameId;}
+- (TLinkJSNativeResponse *)legacyFrameCapture:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    id runtime=self;
+    if(false){}
+#include "fixtures/native-frame-capture-legacy-v1.inc"
+    return nil;
+}
 - (void)untrackImageId:(int)imageId {++untrackImages;lastUntrackedImage=imageId;}
 - (TLinkJSNativeResponse *)legacyImageRelease:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
@@ -224,6 +242,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeFrameOCRBridge.inc"
 #include "NativeFrameReleaseBridge.inc"
 #include "NativeImageReleaseBridge.inc"
+#include "NativeFrameCaptureBridge.inc"
 #include "NativeFramePickBridge.inc"
 #include "NativeFrameManyBridge.inc"
 #include "NativeFrameSearchBridge.inc"
@@ -590,12 +609,44 @@ static void frameOCRLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef strea
     TLinkNativeFrameOCRRequest r;r.frameId=uint32_t([fields[0] intValue]);r.x=[fields[1] intValue];r.y=[fields[2] intValue];r.width=[fields[3] intValue];r.height=[fields[4] intValue];r.lang=[fields[5] length]?fields[5]:@"vie";r.oem=[fields[6] intValue];r.psm=[fields[7] intValue];r.whitelist=TLinkautoJSBase64Decode(fields[8]);r.scaleUp=[fields[9] intValue];r.thresholdMode=[fields[10] intValue];r.coord=[fields[11] length]?fields[11]:@"pixel";r.maxAgeMs=uint64_t(MAX(0,[fields[12] longLongValue]));if(!r.maxAgeMs)r.maxAgeMs=1000;
     NSError *error=nil;TLinkNativeFrameOCRValue value;const bool ready=frameOCRValues(r,value,&error);NSString *raw=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",ready?value.body:@""];notifyClient((UInt8 *)raw.UTF8String,stream);
 }
+static bool hugeCaptureReply=false;
+static unsigned frameCaptureCalls=0;static int frameCaptureFault=0;static bool cancelFrameCapture=false;static unsigned frameCaptureDelay=0;static NSString *frameCaptureError=nil;
+static TLinkNativeFrameCaptureRequest observedFrameCapture;static TLinkNativeBudgetPtr frameCaptureBudget;
+static std::set<uint32_t> capturedFrames;static TLinkCancellationToken *captureToken;
+static NSString *frameCaptureValues(const TLinkNativeFrameCaptureRequest &r,uint32_t &publishedId,NSError **error){
+    observedFrameCapture=r;
+    if(frameCaptureError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"1;;%@\r\n",frameCaptureError]}];return nil;}
+    publishedId=41;capturedFrames.insert(publishedId);
+    NSString *body=[NSString stringWithFormat:@"41;;8;;8;;32;;2.125;;pixel;;BGRA;;%d;;%d;;123456;;1.125;;2.250;;3.375;;6.750",r.bgra||!r.gray,r.gray||!r.bgra];
+    return hugeCaptureReply?[body stringByPaddingToLength:2048 withString:@"x" startingAtIndex:0]:body;
+}
+NSString *captureStoredFrame(const TLinkNativeFrameCaptureRequest &r,uint32_t &publishedId,NSError **error){
+    ++frameCaptureCalls;frameCaptureBudget=TLinkCurrentNativeBudget();assert(frameCaptureBudget&&!frameCaptureBudget->capturesResponse());
+    if(frameCaptureFault==1)[NSException raise:@"CaptureFixture" format:@"before publish"];
+    if(frameCaptureFault==2)throw std::runtime_error("before publish");
+    NSString *body=frameCaptureValues(r,publishedId,error);
+    if(frameCaptureFault==3)[NSException raise:@"CaptureFixture" format:@"after publish"];
+    if(frameCaptureFault==4)throw std::runtime_error("after publish");
+    if(cancelFrameCapture)[captureToken cancel];if(frameCaptureDelay)std::this_thread::sleep_for(std::chrono::milliseconds(frameCaptureDelay));return body;
+}
+static void frameCaptureLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
+    NSString *raw=[[NSString alloc] initWithBytes:bytes+2 length:length-2 encoding:NSUTF8StringEncoding];NSArray *fields=[raw componentsSeparatedByString:@";;"];
+    TLinkNativeFrameCaptureRequest r;r.gray=[fields[0] intValue]!=0;r.bgra=[fields[1] intValue]!=0;r.ttlMs=uint64_t(MAX(0,[fields[2] longLongValue]));
+    if(fields.count>3&&[fields[3] length])r.sessionId=[fields[3] UTF8String]?:"";
+    if(fields.count>4&&[fields[4] length])r.runId=[fields[4] UTF8String]?:"";
+    if(fields.count>5&&[fields[5] length])r.runtime=[fields[5] UTF8String]?:"";
+    NSError *error=nil;uint32_t id=0;NSString *body=frameCaptureValues(r,id,&error);NSString *reply=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)reply.UTF8String,stream);
+}
+static void captureRollbackLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
+    (void)length;assert(TLinkCurrentNativeBudget()->cleanup());NSString *raw=[[NSString alloc] initWithUTF8String:(char *)bytes+2];capturedFrames.erase(uint32_t(raw.intValue));notifyClient((UInt8 *)"0;;1\r\n",stream);
+}
 static unsigned frameReleaseCalls=0;static int frameReleaseFault=0;static size_t frameReleaseCount=1;
 static TLinkNativeFrameReleaseRequest observedFrameRelease;
 static TLinkNativeBudgetPtr frameReleaseBudget;
 size_t releaseStoredFrames(const TLinkNativeFrameReleaseRequest &request){
     ++frameReleaseCalls;observedFrameRelease=request;frameReleaseBudget=TLinkCurrentNativeBudget();
     assert(frameReleaseBudget&&frameReleaseBudget->cleanup()&&!frameReleaseBudget->capturesResponse()&&frameReleaseBudget->response().capacity()==0);
+    if([mode isEqualToString:@"frameCaptureRuntime"])return capturedFrames.erase(request.frameId);
     if(frameReleaseFault==1)[NSException raise:@"FrameReleaseFixture" format:@"release throws"];
     if(frameReleaseFault==2)throw std::runtime_error("release fixture");
     return frameReleaseCount;
@@ -644,6 +695,7 @@ static void imageReleaseLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef s
 #include "NativeFrameMultiEntry.inc"
 #include "NativeFrameReleaseEntry.inc"
 #include "NativeImageReleaseEntry.inc"
+#include "NativeFrameCaptureEntry.inc"
 #pragma pop_macro("NO")
 #pragma pop_macro("YES")
 static TLinkTaskExecutionContext *parent(double timeout = 1, NSUInteger cap = 1024 * 1024) {
@@ -1192,6 +1244,38 @@ static void typedFrameImageCases(TLinkInProcessNativeBridge *bridge){
     assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameImageBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
     puts("Typed frame image bridge/entry passed: 120 frozen JS/RAW cases, exact fields/rounding/ingress/encoding, one task-68 gate, eight-second C01/caller isolation, denial/cancel/fault/output and no typed RAW dispatch.");
 }
+static void typedFrameCaptureCases(TLinkInProcessNativeBridge *bridge){
+    const auto reset=[](TLinkTaskExecutionContext *context){mode=@"frameCaptureRuntime";captureToken=context.cancellationToken;touchToken=captureToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameCaptureFault=0;cancelFrameCapture=false;frameCaptureDelay=0;frameCaptureError=nil;hugeCaptureReply=false;capturedFrames.clear();};
+    const auto request=[](NSDictionary *options)->TLinkJSNativeRequest *{return [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodCaptureFrame arguments:@[options]];};
+    const auto invoke=[bridge,request](NSDictionary *options,TLinkTaskExecutionContext *context)->NSDictionary *{NSDictionary *value=[bridge executeRequest:request(options) context:context error:nil].value;assert(!TLinkCurrentNativeBudget());return value;};
+    const auto make=[](NSArray *owners)->TLinkTaskExecutionContext *{auto context=parent(30);context.ownerSessionId=owners[0];context.ownerRunId=owners[1];context.ownerRuntime=owners[2];return context;};
+    const auto compare=[bridge,request,invoke,reset,make](NSDictionary *options,NSArray *owners,NSString *code){
+        auto oldContext=make(owners);reset(oldContext);frameCaptureError=code;const int oldCalls=calls;unsigned oldTracking=trackFrames;
+        NSDictionary *old=[bridge legacyFrameCapture:request(options) context:oldContext].value;const int dispatched=calls-oldCalls;const unsigned tracking=trackFrames-oldTracking;auto expected=observedFrameCapture;
+        auto context=make(owners);reset(context);frameCaptureError=code;oldTracking=trackFrames;const int before=calls,gates=licenseCalls;const unsigned captures=frameCaptureCalls;uint64_t start=TLinkNativeNowNs();NSDictionary *typed=invoke(options,context);uint64_t end=TLinkNativeNowNs();
+        if(![typed isEqual:old])std::fprintf(stderr,"frame capture parity: old %s, typed %s\n",[[old description] UTF8String],[[typed description] UTF8String]);
+        assert([typed isEqual:old]&&calls==before&&licenseCalls==gates+dispatched&&frameCaptureCalls==captures+dispatched&&trackFrames-oldTracking==tracking);
+        if(dispatched){assert(observedFrameCapture.gray==expected.gray&&observedFrameCapture.bgra==expected.bgra&&observedFrameCapture.ttlMs==expected.ttlMs);
+            assert(observedFrameCapture.sessionId==expected.sessionId&&observedFrameCapture.runId==expected.runId&&observedFrameCapture.runtime==expected.runtime&&lastLicenseTask==66);
+            assert(frameCaptureBudget==licenseBudget&&frameCaptureBudget->response().capacity()==0&&frameCaptureBudget->deadline()>=start+30000000000ULL&&frameCaptureBudget->deadline()<=end+30000000000ULL);}
+        if([typed[@"ok"] boolValue])assert(lastTrackedFrame==41&&capturedFrames.count(41));else assert(capturedFrames.empty());
+    };
+    unichar nul=0,high=0xd800;NSString *nulString=[NSString stringWithCharacters:&nul length:1],*broken=[NSString stringWithCharacters:&high length:1];
+    NSString *emoji=[@"🙂" stringByPaddingToLength:120 withString:@"🙂" startingAtIndex:0];NSArray *tokens=@[@"session",@"",@";",@"owner;",@";owner",@"a;;b",@"a\rb\nc",@" runtime \t",@"Tiếng Việt",nulString,broken,emoji,[@"x" stringByAppendingString:emoji]];
+    for(unsigned n=0;n<160;++n)compare(@{@"gray":@(int(n%5)-2),@"bgra":@(int(n%3)-1),@"ttlMs":n%2?@(-1):@(int(n)*100)},@[tokens[n%tokens.count],tokens[(n/3)%tokens.count],tokens[(n/7)%tokens.count]],nil);
+    for(NSString *code:@[@"image_compute_busy",@"capture_failed",@"frame_pixel_limit",@"frame_memory_budget",@"bgra_render_failed",@"gray_convert_failed",@"frame_publish_failed"])compare(@{},@[@"session",@"run",@"test"],code);
+    auto context=parent();reset(context);const unsigned before=frameCaptureCalls;licenseAllowed=false;failure(invoke(@{},context),@"license_required task=66");assert(frameCaptureCalls==before);
+    context=parent();reset(context);stopInLicense=true;failure(invoke(@{},context),@"AbortError");assert(frameCaptureCalls==before);
+    context=parent(.01);reset(context);licenseDelayMs=30;failure(invoke(@{},context),@"TimeoutError");assert(frameCaptureCalls==before);
+    context=parent(1,1023);reset(context);const int gates=licenseCalls;failure(invoke(@{},context),@"response_too_large");assert(licenseCalls==gates&&frameCaptureCalls==before);
+    context=parent(1,1024);reset(context);assert([invoke(@{},context)[@"ok"] boolValue]);capturedFrames.clear();
+    for(int fault:{1,2,3,4}){context=parent();reset(context);frameCaptureFault=fault;failure(invoke(@{},context),@"native_exception");assert(capturedFrames.empty());}
+    context=parent();reset(context);cancelFrameCapture=true;unsigned rollbacks=frameReleaseCalls;failure(invoke(@{},context),@"AbortError");assert(capturedFrames.empty()&&frameReleaseCalls==rollbacks+1);
+    context=parent(.01);reset(context);frameCaptureDelay=30;failure(invoke(@{},context),@"TimeoutError");assert(capturedFrames.empty());
+    context=parent(1,1024);reset(context);hugeCaptureReply=true;failure(invoke(@{},context),@"response_too_large");assert(capturedFrames.empty());
+    frameCaptureBudget.reset();frameReleaseBudget.reset();licenseBudget.reset();mode=@"echo";captureToken=nil;touchToken=nil;hugeCaptureReply=false;
+    puts("Typed frame capture passed: 160 frozen JS/RAW option/owner/metadata cases, one task-66 gate, caller deadline, 1024-byte floor, faults and rollback after publication/cancel/expiry/output.");
+}
 static void typedImageReleaseCases(TLinkInProcessNativeBridge *bridge){
     const auto make=[](NSArray *owners)->TLinkTaskExecutionContext *{auto context=parent(30);context.ownerSessionId=owners[0];context.ownerRunId=owners[1];context.ownerRuntime=owners[2];return context;};
     const auto request=[](int id)->TLinkJSNativeRequest *{return [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodReleaseImage arguments:@[@(id)]];};
@@ -1734,6 +1818,7 @@ int main() { @autoreleasepool {
     typedFrameOCRCases(bridge);
     typedFrameReleaseCases(bridge);
     typedImageReleaseCases(bridge);
+    typedFrameCaptureCases(bridge);
     typedFramePickCases(bridge);
     typedFramePickManyCases(bridge);
     typedFrameSearchCases(bridge);

@@ -57,6 +57,8 @@ static void numericImageReleaseCases(){
 int main() {
     numericReleaseCases();
     numericImageReleaseCases();
+    for(uint64_t n=0;n<100000;++n){const uint64_t input=n%2?n:UINT64_MAX;const uint64_t expected=input==0?1000:(input>5000?5000:input);assert(TLinkNativeFrameCaptureTTL(input)==expected);}
+    assert(TLinkNativeFrameCaptureTTL(0)==1000&&TLinkNativeFrameCaptureTTL(1)==1&&TLinkNativeFrameCaptureTTL(5000)==5000&&TLinkNativeFrameCaptureTTL(5001)==5000);
     assert(kDefaultFrameTtlMs == 1000 && kHardFrameTtlMs == 5000 && kMaxImagePixels == 16 * 1024 * 1024);
     size_t pixels = 0;
     assert(TLinkImagePixels(8192, 2048, kMaxImagePixels, &pixels) && pixels == kMaxImagePixels);

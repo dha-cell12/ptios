@@ -35,6 +35,8 @@ NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error);
 #ifdef __cplusplus
 #include "../shared/TLinkNativeImageRelease.h"
 size_t releaseStoredImages(const TLinkNativeImageReleaseRequest &request);
+#include "../shared/TLinkNativeFrameCapture.h"
+NSString *captureStoredFrame(const TLinkNativeFrameCaptureRequest &request,uint32_t &publishedId,NSError **error);
 #include "../shared/TLinkNativeFrameRelease.h"
 size_t releaseStoredFrames(const TLinkNativeFrameReleaseRequest &request);
 #include "../shared/TLinkNativeFrameImage.h"

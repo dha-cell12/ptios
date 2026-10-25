@@ -7,7 +7,8 @@
 #include "image-storage-fixture.h"
 // Production serial queue, timer and snapshot/reservation adapter; real steady clock.
 #include "ImageQueueUnderTest.inc"
-static uint64_t zx_nowMs() { return TLinkImageNowMs(); }
+static std::atomic<uint64_t> captureClockOverride{0};
+static uint64_t zx_nowMs() { const uint64_t override=captureClockOverride.load();return override?override:TLinkImageNowMs(); }
 static bool zx_rearmFrameExpiryLocked();
 #include "ImageCoreUnderTest.inc"
 #include "ImageDispatchUnderTest.inc"
@@ -29,6 +30,7 @@ static Mat imdecode(const Mat &input, int) {
 static const int IMREAD_GRAYSCALE = 0;
 #include "ImageErrorUnderTest.inc"
 #include "ImageDecoderUnderTest.inc"
+#include "frame-capture-runtime-fixture.inc"
 #include "../shared/TLinkFrameVisionPolicy.h"
 static bool failFrameProvider=false,failFrameImage=false;
 static CGDataProviderRef FixtureFrameProvider(void *info,const void *data,size_t bytes,CGDataProviderReleaseDataCallback release){
@@ -176,6 +178,7 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         fputs("Image runtime: bounded file/ImageIO preflight fixtures\n", stderr);
         decodeFixtures([NSString stringWithUTF8String:argv[1]]);
+        frameCaptureRuntimeCases();
         frameVisionFixtures();
         numericReleaseParityCases();
         numericImageReleaseParityCases();

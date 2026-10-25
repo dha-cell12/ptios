@@ -677,8 +677,15 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         int gray = TLinkautoJSIntOption(options, @"gray", 1);
         int bgra = TLinkautoJSIntOption(options, @"bgra", 1);
         int ttlMs = TLinkautoJSIntOption(options, @"ttlMs", 1000);
-        NSString *payload = [NSString stringWithFormat:@"%d;;%d;;%d%@", gray ? 1 : 0, bgra ? 1 : 0, ttlMs, TLinkautoJSOwnerSuffix(context)];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_FRAME_CAPTURE, payload] context:context];
+        TLinkNativeFrameCaptureRequest input;input.gray=gray!=0;input.bgra=bgra!=0;input.ttlMs=ttlMs>0?uint64_t(ttlMs):0;
+        NSString *suffix=TLinkautoJSOwnerSuffix(context);NSData *encoded=[suffix dataUsingEncoding:NSUTF8StringEncoding];
+        if(!encoded||(encoded.length&&memchr(encoded.bytes,0,encoded.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *wireOwner=[[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding]?:@"";
+        NSArray *fields=[[@"0" stringByAppendingString:wireOwner] componentsSeparatedByString:@";;"];
+        if(fields.count>1&&[fields[1] length])input.sessionId=[fields[1] UTF8String]?:"";
+        if(fields.count>2&&[fields[2] length])input.runId=[fields[2] UTF8String]?:"";
+        if(fields.count>3&&[fields[3] length])input.runtime=[fields[3] UTF8String]?:"";
+        NSDictionary *result=TLinkExecuteNativeFrameCapture(input,context);
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 14) return [TLinkJSNativeResponse responseWithValue:result];
         int frameId = [parts[1] intValue];
