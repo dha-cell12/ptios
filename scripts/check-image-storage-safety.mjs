@@ -74,7 +74,9 @@ const imageReleaseAction='NSString *imageReleaseActionUnderTest(UInt8 *eventData
 const imageOpen=section('// BEGIN structured image open.','// END structured image open.');
 const rawImageOpen=section('    else if (action == 2) {','    // BEGIN raw image release action.');
 assert.match(imageOpen,/TLinkImageWork work\(gImageCompute\)/);
-assert.match(imageOpen,/zx_decodeBoundedImage[\s\S]*zx_storeImageLocked[\s\S]*publishedId=imageId[\s\S]*stringWithFormat/);
+assert.match(imageOpen,/zx_decodeBoundedImage[\s\S]*zx_storeImageLocked[\s\S]*publishedId=imageId[\s\S]*value\.id=imageId/);
+assert.doesNotMatch(imageOpen,/stringWithFormat:@"%u;;%d;;%d"|componentsSeparatedByString/);
+assert.match(rawImageOpen,/TLinkNativeImageBody\(value\)/);
 const imageOpenAction='NSString *imageOpenActionUnderTest(UInt8 *eventData,NSError **error){'+objectBody.slice(0,parserEnd)+rawImageOpen.replace('    else if','    if')+'return nil;\n}\n';
 const frameCapture=section('// BEGIN numeric frame capture.','// END numeric frame capture.');
 const rawCapture=section('NSString* handleFrameCaptureTaskFromRawData(', '// BEGIN numeric frame release.');

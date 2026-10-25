@@ -5,6 +5,7 @@
 #include "../shared/TLinkNativeDispatch.h"
 #import "Image.h"
 #include "../shared/TLinkNativeFrameCaptureResult.h"
+#include "../shared/TLinkNativeImageResult.h"
 #import <ImageIO/ImageIO.h>
 #include "../shared/TLinkImageStorage.h"
 #import "Screen.h"
@@ -1500,14 +1501,14 @@ static cv::Mat zx_decodeBoundedImage(NSString *path, std::shared_ptr<TLinkImageC
 }
 
 // BEGIN structured image open.
-static NSString *zx_openImage(const TLinkNativeImageOpenRequest &request,uint32_t &publishedId,NSError **error){
+static bool zx_openImage(const TLinkNativeImageOpenRequest &request,uint32_t &publishedId,TLinkNativeImageValue &value,NSError **error){
     NSString *inputPath=request.path;
     NSString *path = zx_resolveImagePath(inputPath);
     if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Image not found. Path: %@\r\n", path ?: inputPath]}];
         }
-        return nil;
+        return false;
     }
     std::shared_ptr<TLinkImageCharge> charge;
     NSError *decodeError = nil;
@@ -1516,7 +1517,7 @@ static NSString *zx_openImage(const TLinkNativeImageOpenRequest &request,uint32_
         if (error) {
             *error = decodeError ?: [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;Failed to read image. Path: %@\r\n", path]}];
         }
-        return nil;
+        return false;
     }
     auto pendingImage = std::make_shared<ZXImageObject>();
     ZXImageObject &image = *pendingImage;
@@ -1536,14 +1537,15 @@ static NSString *zx_openImage(const TLinkNativeImageOpenRequest &request,uint32_
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image object limit reached. Release unused images.\r\n"}];
         }
-        return nil;
+        return false;
     }
-    return [NSString stringWithFormat:@"%u;;%d;;%d", imageId, image.w, image.h];
+    value.id=imageId;value.width=image.w;value.height=image.h;
+    return true;
 }
-NSString *openStoredImage(const TLinkNativeImageOpenRequest &request,uint32_t &publishedId,NSError **error){
-    publishedId=0;TLinkImageWork work(gImageCompute);
-    if(!work){if(error)*error=zx_frameError(@"-1;;image_compute_busy\r\n");return nil;}
-    return zx_openImage(request,publishedId,error);
+bool openStoredImage(const TLinkNativeImageOpenRequest &request,uint32_t &publishedId,TLinkNativeImageValue &value,NSError **error){
+    publishedId=0;value=TLinkNativeImageValue{};TLinkImageWork work(gImageCompute);
+    if(!work){if(error)*error=zx_frameError(@"-1;;image_compute_busy\r\n");return false;}
+    return zx_openImage(request,publishedId,value,error);
 }
 // END structured image open.
 
@@ -1641,7 +1643,8 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         if (data.count<2) {if(error)*error=zx_frameError(@"-1;;Image open format should be action;;path\r\n");return nil;}
         TLinkNativeImageOpenRequest request;request.path=data[1];
         request.sessionId=zx_stringFromPart(data,2,"");request.runId=zx_stringFromPart(data,3,"");request.runtime=zx_stringFromPart(data,4,"legacy");
-        uint32_t publishedId=0;return zx_openImage(request,publishedId,error);
+        uint32_t publishedId=0;TLinkNativeImageValue value;
+        return zx_openImage(request,publishedId,value,error)?TLinkNativeImageBody(value):nil;
     }
     // BEGIN raw image release action.
     else if (action == 3) {

@@ -10,6 +10,7 @@
 #include "../shared/TLinkNativeFrameCaptureResult.h"
 #include "../shared/TLinkNativeImageRelease.h"
 #include "../shared/TLinkNativeImageOpen.h"
+#include "../shared/TLinkNativeImageResult.h"
 #import "../pccontrol/TesseractOCRTask.h"
 #include "../shared/TLinkNativeOCRInput.h"
 #include "../shared/TLinkNativeFrameSearch.h"
@@ -136,6 +137,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "fixtures/native-frame-ocr-result-legacy-v1.inc"
 #include "fixtures/frame-ocr-result-cases.inc"
 #include "fixtures/frame-capture-result-cases.inc"
+#include "fixtures/image-open-result-cases.inc"
 @interface TLinkInProcessNativeBridge : NSObject
 - (void)trackImageId:(int)imageId;
 - (TLinkJSNativeResponse *)legacyImageOpen:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
@@ -685,20 +687,20 @@ static void frameReleaseLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef s
 static unsigned imageOpenCalls=0;static int imageOpenFault=0;static bool cancelImageOpen=false,hugeImageOpenReply=false;static unsigned imageOpenDelay=0;
 static NSString *imageOpenError=nil;static TLinkNativeImageOpenRequest observedImageOpen;static TLinkNativeBudgetPtr imageOpenBudget;
 static std::set<uint32_t> openedImages;static TLinkCancellationToken *imageOpenToken;
-static NSString *imageOpenValues(const TLinkNativeImageOpenRequest &r,uint32_t &publishedId,NSError **error){
+static bool imageOpenValues(const TLinkNativeImageOpenRequest &r,uint32_t &publishedId,TLinkNativeImageValue &value,NSError **error){
     observedImageOpen=r;
-    if(imageOpenError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n",imageOpenError]}];return nil;}
-    publishedId=41;openedImages.insert(41);NSString *body=@"41;;2;;3";
-    return hugeImageOpenReply?[body stringByPaddingToLength:2048 withString:@"x" startingAtIndex:0]:body;
+    if(imageOpenError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n",imageOpenError]}];return false;}
+    publishedId=41;openedImages.insert(41);value.id=41;value.width=2;value.height=3;return true;
 }
-NSString *openStoredImage(const TLinkNativeImageOpenRequest &r,uint32_t &publishedId,NSError **error){
+bool openStoredImage(const TLinkNativeImageOpenRequest &r,uint32_t &publishedId,TLinkNativeImageValue &value,NSError **error){
     ++imageOpenCalls;imageOpenBudget=TLinkCurrentNativeBudget();assert(imageOpenBudget&&!imageOpenBudget->capturesResponse());
     if(imageOpenFault==1)[NSException raise:@"ImageOpenFixture" format:@"before publish"];
     if(imageOpenFault==2)throw std::runtime_error("before publish");
-    NSString *body=imageOpenValues(r,publishedId,error);
+    const bool ready=imageOpenValues(r,publishedId,value,error);
     if(imageOpenFault==3)[NSException raise:@"ImageOpenFixture" format:@"after publish"];
     if(imageOpenFault==4)throw std::runtime_error("after publish");
-    if(cancelImageOpen)[imageOpenToken cancel];if(imageOpenDelay)std::this_thread::sleep_for(std::chrono::milliseconds(imageOpenDelay));return body;
+    if(imageOpenFault==9)return false;
+    if(cancelImageOpen)[imageOpenToken cancel];if(imageOpenDelay)std::this_thread::sleep_for(std::chrono::milliseconds(imageOpenDelay));return ready;
 }
 static void imageOpenLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
     (void)length;NSArray *fields=[[NSString stringWithFormat:@"%s",(const char *)bytes+2] componentsSeparatedByString:@";;"];
@@ -706,7 +708,7 @@ static void imageOpenLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stre
     if(fields.count>2&&[fields[2] length])r.sessionId=[fields[2] UTF8String]?:"";
     if(fields.count>3&&[fields[3] length])r.runId=[fields[3] UTF8String]?:"";
     if(fields.count>4&&[fields[4] length])r.runtime=[fields[4] UTF8String]?:"";
-    NSError *error=nil;uint32_t id=0;NSString *body=imageOpenValues(r,id,&error);NSString *raw=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)raw.UTF8String,stream);
+    NSError *error=nil;uint32_t id=0;TLinkNativeImageValue value;const bool ready=imageOpenValues(r,id,value,&error);NSString *body=ready?legacyImageOpenBody(value):nil;NSString *raw=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)raw.UTF8String,stream);
 }
 static void imageOpenRollbackLegacyTask(UInt8 *bytes,CFWriteStreamRef stream){
     assert(TLinkCurrentNativeBudget()->cleanup());NSArray *fields=[[NSString stringWithFormat:@"%s",(const char *)bytes+2] componentsSeparatedByString:@";;"];
@@ -749,7 +751,18 @@ static void imageReleaseLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef s
 #include "NativeFrameMultiEntry.inc"
 #include "NativeFrameReleaseEntry.inc"
 #include "NativeImageReleaseEntry.inc"
+static NSDictionary *fixtureImageOpenResult(const TLinkNativeImageValue &v){
+    if(imageOpenFault==5)[NSException raise:@"ImageOpenFixture" format:@"format result"];
+    if(imageOpenFault==6)throw std::runtime_error("format result");
+    NSDictionary *result=TLinkNativeImageResult(v);
+    if(imageOpenFault==7)[imageOpenToken cancel];
+    if(imageOpenFault==8)std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    if(hugeImageOpenReply){NSMutableDictionary *oversized=[result mutableCopy];oversized[@"raw"]=[result[@"raw"] stringByPaddingToLength:2048 withString:@"x" startingAtIndex:0];return oversized;}
+    return result;
+}
+#define TLinkNativeImageResult fixtureImageOpenResult
 #include "NativeImageOpenEntry.inc"
+#undef TLinkNativeImageResult
 static NSDictionary *fixtureFrameCaptureResult(const TLinkNativeFrameCaptureValue &v){
     if(frameCaptureFault==5)[NSException raise:@"CaptureFixture" format:@"format result"];
     if(frameCaptureFault==6)throw std::runtime_error("format result");
@@ -1338,7 +1351,10 @@ static void typedImageOpenCases(TLinkInProcessNativeBridge *bridge){
     context=parent(.01);reset(context);licenseDelayMs=30;failure(invoke(@"image.png",context),@"TimeoutError");assert(imageOpenCalls==before);
     context=parent(1,1023);reset(context);const int gates=licenseCalls;failure(invoke(@"image.png",context),@"response_too_large");assert(licenseCalls==gates&&imageOpenCalls==before);
     context=parent(1,1024);reset(context);assert([invoke(@"image.png",context)[@"ok"] boolValue]);openedImages.clear();
-    for(int fault:{1,2,3,4}){context=parent();reset(context);imageOpenFault=fault;failure(invoke(@"image.png",context),@"native_exception");assert(openedImages.empty());}
+    for(int fault:{1,2,3,4,5,6}){context=parent();reset(context);imageOpenFault=fault;failure(invoke(@"image.png",context),@"native_exception");assert(openedImages.empty());}
+    context=parent();reset(context);imageOpenFault=9;failure(invoke(@"image.png",context),@"image_open_failed");assert(openedImages.empty());
+    context=parent();reset(context);imageOpenFault=7;failure(invoke(@"image.png",context),@"AbortError");assert(openedImages.empty());
+    context=parent(.01);reset(context);imageOpenFault=8;failure(invoke(@"image.png",context),@"TimeoutError");assert(openedImages.empty());
     context=parent();reset(context);cancelImageOpen=true;openedImages.insert(99);const unsigned rollbacks=imageReleaseCalls;failure(invoke(@"a;;shifted",context),@"AbortError");assert(openedImages.size()==1&&openedImages.count(99)&&imageReleaseCalls==rollbacks+1);assert(!observedImageRelease.scoped&&observedImageRelease.imageId==41);
     context=parent(.01);reset(context);imageOpenDelay=30;failure(invoke(@"image.png",context),@"TimeoutError");assert(openedImages.empty());
     context=parent(1,1024);reset(context);hugeImageOpenReply=true;failure(invoke(@"image.png",context),@"response_too_large");assert(openedImages.empty());
@@ -1922,6 +1938,7 @@ int main() { @autoreleasepool {
     typedImageReleaseCases(bridge);
     frameCaptureResultCases();
     typedFrameCaptureCases(bridge);
+    imageOpenResultCases();
     typedImageOpenCases(bridge);
     typedFramePickCases(bridge);
     typedFramePickManyCases(bridge);

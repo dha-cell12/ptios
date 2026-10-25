@@ -137,7 +137,11 @@ try {
   assert.match(imageOpenBridge,/TLinkNativeImageOpenInputFits[\s\S]*TLinkNativeImageOpenBytesFit[\s\S]*TLinkExecuteNativeImageOpen/);
   assert.match(imageOpenEntry,/outputLimit\(\)<1024[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_IMAGE_OBJECT,&denial\)[\s\S]*openStoredImage/);
   assert.match(imageOpenEntry,/@finally[\s\S]*!committed&&publishedId[\s\S]*TLinkNativeCallContext\(call,true,false\)[\s\S]*releaseStoredImages/);
-  assert.doesNotMatch(imageOpenEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
+  assert.doesNotMatch(imageOpenEntry,/processTaskWithContext|CFWriteStream|componentsSeparatedByString|\b(?:YES|NO)\b/);
+  assert.doesNotMatch(imageOpenBridge,/result\[@"parts"\]|SafeStringPart|NSMutableDictionary/);
+  assert.match(imageOpenEntry,/TLinkNativeImageValue value[\s\S]*TLinkNativeImageResult\(value\)[\s\S]*outputAllowed[\s\S]*committed=true/);
+  const imageResult=await readFile(join(root,"shared/TLinkNativeImageResult.h"),"utf8");
+  assert.doesNotMatch(imageResult,/componentsSeparatedByString|\b(?:YES|NO)\b/);
   await writeFile(join(temp,"NativeImageOpenBridge.inc"),imageOpenBridge);
   await writeFile(join(temp,"NativeImageOpenEntry.inc"),imageOpenEntry);
   const imageReleaseBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage])","    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColor])");

@@ -733,17 +733,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if(fields.count>3&&[fields[3] length])input.runId=[fields[3] UTF8String]?:"";
         if(fields.count>4&&[fields[4] length])input.runtime=[fields[4] UTF8String]?:"";
         NSDictionary *result=TLinkExecuteNativeImageOpen(input,context);
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
-        int imageId = [parts[1] intValue];
-        [runtime trackImageId:imageId];
-        NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
-        res[@"id"] = @(imageId);
-        if ([parts count] > 3) {
-            res[@"width"] = @([TLinkautoJSSafeStringPart(parts, 2) intValue]);
-            res[@"height"] = @([TLinkautoJSSafeStringPart(parts, 3) intValue]);
-        }
-        return [TLinkJSNativeResponse responseWithValue:res];
+        if([result[@"ok"] boolValue])[runtime trackImageId:[result[@"id"] intValue]];
+        return [TLinkJSNativeResponse responseWithValue:result];
     }
     
     else if ([method isEqualToString:TLinkJSNativeMethodCaptureImage]) {

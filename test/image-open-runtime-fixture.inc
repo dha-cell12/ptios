@@ -1,3 +1,4 @@
+#include "../shared/TLinkNativeImageResult.h"
 // Real file/ImageIO/store/owner adapters; only script environment and CV are doubled.
 using cv::Mat;
 static NSString *imageOpenFixtureRoot,*imageOpenFixtureScript;
@@ -32,12 +33,12 @@ static void imageOpenRuntimeCases(NSString *directory){
         NSArray *oldParts=[old componentsSeparatedByString:@";;"];auto oldReader=old?imageOpenReader(uint32_t([oldParts[0] intValue])):ZXImageRef{};
         TLinkNativeImageReleaseRequest release;release.all=true;releaseStoredImages(release);
         for(unsigned variant=0;variant<2;++variant){
-            NSError *error=nil;NSString *current=nil;uint32_t published=0;
+            NSError *error=nil;NSString *current=nil;uint32_t published=0;TLinkNativeImageValue value;
             if(!variant)current=imageOpenActionUnderTest((UInt8 *)command.UTF8String,&error);
             else{
                 NSArray *fields=[[NSString stringWithFormat:@"%s",command.UTF8String] componentsSeparatedByString:@";;"];
                 TLinkNativeImageOpenRequest request;request.path=fields[1];request.sessionId=zx_stringFromPart(fields,2,"");request.runId=zx_stringFromPart(fields,3,"");request.runtime=zx_stringFromPart(fields,4,"legacy");
-                current=openStoredImage(request,published,&error);
+                if(openStoredImage(request,published,value,&error))current=TLinkNativeImageBody(value);
             }
             assert((!old&&!current)||(old&&current));assert((!error&&!oldError)||[error.localizedDescription isEqual:oldError.localizedDescription]);
             if(current){
@@ -49,19 +50,19 @@ static void imageOpenRuntimeCases(NSString *directory){
         }
         oldReader.reset();clearImageOpenFixture();
     }
-    TLinkNativeImageOpenRequest request;request.path=path;uint32_t id=999;NSError *error=nil;const int calls=cv::decoderCalls;
-    {TLinkImageWork a(gImageCompute),b(gImageCompute);assert(a&&b);assert(!openStoredImage(request,id,&error)&&!id&&cv::decoderCalls==calls&&[error.localizedDescription containsString:@"image_compute_busy"]);}
-    {auto full=gImageMemory.reserve(TLinkImageKind::Image,64*1024*1024);assert(full);error=nil;assert(!openStoredImage(request,id,&error)&&!id&&cv::decoderCalls==calls&&[error.localizedDescription containsString:@"image_memory_budget"]);}
+    TLinkNativeImageOpenRequest request;request.path=path;TLinkNativeImageValue value;value.id=999;value.width=99;value.height=99;uint32_t id=999;NSError *error=nil;const int calls=cv::decoderCalls;
+    {TLinkImageWork a(gImageCompute),b(gImageCompute);assert(a&&b);assert(!openStoredImage(request,id,value,&error)&&!id&&value.id==0&&value.width==0&&value.height==0&&cv::decoderCalls==calls&&[error.localizedDescription containsString:@"image_compute_busy"]);}
+    {auto full=gImageMemory.reserve(TLinkImageKind::Image,64*1024*1024);assert(full);error=nil;assert(!openStoredImage(request,id,value,&error)&&!id&&cv::decoderCalls==calls&&[error.localizedDescription containsString:@"image_memory_budget"]);}
     for(unsigned n=0;n<64;++n)publishImage(imageFixture());error=nil;
-    assert(!openStoredImage(request,id,&error)&&!id&&cv::decoderCalls==calls&&[error.localizedDescription containsString:@"image_memory_budget"]);clearImageOpenFixture();
+    assert(!openStoredImage(request,id,value,&error)&&!id&&cv::decoderCalls==calls&&[error.localizedDescription containsString:@"image_memory_budget"]);clearImageOpenFixture();
     __block uint32_t saved=0;dispatch_sync(zx_imageQueue(),^{saved=gNextImageId;gNextImageId=0;});error=nil;
-    assert(!openStoredImage(request,id,&error)&&!id&&[error.localizedDescription containsString:@"Image object limit reached"]);dispatch_sync(zx_imageQueue(),^{gNextImageId=saved;});clearImageOpenFixture();
-    cv::decoderWidth=4;error=nil;assert(!openStoredImage(request,id,&error)&&!id&&[error.localizedDescription containsString:@"image_decode_dimension_mismatch"]);cv::decoderWidth=2;clearImageOpenFixture();
+    assert(!openStoredImage(request,id,value,&error)&&!id&&[error.localizedDescription containsString:@"Image object limit reached"]);dispatch_sync(zx_imageQueue(),^{gNextImageId=saved;});clearImageOpenFixture();
+    cv::decoderWidth=4;error=nil;assert(!openStoredImage(request,id,value,&error)&&!id&&[error.localizedDescription containsString:@"image_decode_dimension_mismatch"]);cv::decoderWidth=2;clearImageOpenFixture();
     error=nil;NSString *missing=imageOpenActionUnderTest((UInt8 *)"2",&error);assert(!missing&&[error.localizedDescription containsString:@"Image open format"]);
     NSString *bad=[directory stringByAppendingPathComponent:@"open-bad.png"];assert([[NSData dataWithBytes:"invalid" length:7] writeToFile:bad atomically:true]);request.path=bad;error=nil;
-    assert(!openStoredImage(request,id,&error)&&!id&&[error.localizedDescription containsString:@"image_pixel_limit_or_invalid_metadata"]);clearImageOpenFixture();
+    assert(!openStoredImage(request,id,value,&error)&&!id&&[error.localizedDescription containsString:@"image_pixel_limit_or_invalid_metadata"]);clearImageOpenFixture();
     NSString *large=[directory stringByAppendingPathComponent:@"open-large.png"];NSData *oversized=[NSMutableData dataWithLength:32*1024*1024+1];assert([oversized writeToFile:large atomically:true]);request.path=large;error=nil;
-    assert(!openStoredImage(request,id,&error)&&!id&&[error.localizedDescription containsString:@"image_encoded_limit_or_read_failed"]);clearImageOpenFixture();
+    assert(!openStoredImage(request,id,value,&error)&&!id&&[error.localizedDescription containsString:@"image_encoded_limit_or_read_failed"]);clearImageOpenFixture();
     imageOpenFixtureRoot=nil;imageOpenFixtureScript=nil;
     puts("Image open Foundation passed: 96 frozen old/RAW/direct path/owner/store comparisons, real PNG/ImageIO, held readers, admission/count/bytes/decode/publication faults and zero final charges. CV decoding remains controlled.");
 }
