@@ -1,6 +1,6 @@
 #ifndef TLINK_HELPER_RPC_REPLAY_H
 #define TLINK_HELPER_RPC_REPLAY_H
-#include <array>
+#include "TLinkHelperRPCFingerprint.h"
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -11,7 +11,7 @@
 // Session-owner only. Retired IDs stay in the bounded ledger until clear().
 class TLinkHelperRPCReplay {
 public:
-    using Digest=std::array<uint8_t,32>;
+    using Digest=TLinkHelperRPCFingerprintDigest;
     enum class Decision { Execute, Replay, Collision, Unavailable, Capacity, Invalid, InFlight };
     struct Limits {
         size_t replies=256,bytes=4*1024*1024,replyBytes=1024*1024;
@@ -58,15 +58,7 @@ public:
 
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
-#import <CommonCrypto/CommonDigest.h>
 static inline NSDictionary *TLinkHelperRPCError(NSString *message){return @{@"ok":@(false),@"error":message};}
-// Keep JSON number/string semantics, sort object keys, and retain only a 32-byte digest.
-// The bounded transport still supplies the argument object and this temporary JSON buffer.
-static inline bool TLinkHelperRPCFingerprint(NSArray *arguments,TLinkHelperRPCReplay::Digest &digest){
-    NSData *json=[NSJSONSerialization dataWithJSONObject:arguments options:NSJSONWritingSortedKeys error:nil];
-    if(!json||json.length>1024*1024)return false;
-    return CC_SHA256(json.bytes,(CC_LONG)json.length,digest.data())!=nullptr;
-}
 static inline NSDictionary *TLinkHelperRPCDispatch(TLinkHelperRPCReplay &cache,NSString *requestId,NSString *method,
                                                    NSArray *arguments,NSDictionary *(^execute)(void),
                                                    TLinkHelperRPCReplay::Decision &decision){

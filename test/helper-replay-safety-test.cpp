@@ -1,7 +1,44 @@
 #include "../shared/TLinkHelperRPCReplay.h"
 #include <cassert>
 #include <cstdio>
+#include <limits>
+#include <vector>
+struct DigestOracle {
+    uint64_t hash=1469598103934665603ULL;size_t calls=0,failAt=0;
+    static bool update(void *opaque,const uint8_t *bytes,size_t length){
+        auto &state=*static_cast<DigestOracle *>(opaque);++state.calls;
+        if(state.failAt&&state.calls==state.failAt)return false;
+        for(size_t n=0;n<length;++n){state.hash^=bytes[n];state.hash*=1099511628211ULL;}
+        return true;
+    }
+};
+static void digestFeedCases(){
+    using Feed=TLinkHelperRPCDigestFeed;
+    for(unsigned n=0;n<100000;++n){
+        std::array<uint8_t,64> input;for(size_t j=0;j<input.size();++j)input[j]=static_cast<uint8_t>(n+j);
+        const size_t length=n%64+1,step=n%31+1;Feed feed;DigestOracle actual,expected;
+        DigestOracle::update(&expected,input.data(),length);
+        for(size_t offset=0;offset<length;){const size_t take=step<length-offset?step:length-offset;assert(feed.append(input.data()+offset,take,DigestOracle::update,&actual));offset+=take;}
+        assert(feed.finish());assert(actual.hash==expected.hash);assert(feed.stats().bytes==length&&!feed.stats().failed);
+        const size_t calls=actual.calls;assert(!feed.append(input.data(),1,DigestOracle::update,&actual));assert(!feed.finish()&&actual.calls==calls);
+    }
+    std::vector<uint8_t> input(Feed::MaxBytes,0x5a);Feed exact;DigestOracle actual,expected;
+    assert(exact.append(input.data(),input.size(),DigestOracle::update,&actual));DigestOracle::update(&expected,input.data(),input.size());
+    assert(exact.stats().bytes==Feed::MaxBytes&&exact.stats().updates==Feed::MaxBytes/Feed::ChunkBytes&&actual.hash==expected.hash);assert(exact.finish());
+    Feed overflow;DigestOracle unused;
+    assert(!overflow.append(input.data(),std::numeric_limits<size_t>::max(),DigestOracle::update,&unused));assert(overflow.stats().failed&&unused.calls==0&&!overflow.finish());
+    Feed extra;assert(extra.append(input.data(),input.size(),DigestOracle::update,&unused));const auto calls=unused.calls;
+    assert(!extra.append(input.data(),1,DigestOracle::update,&unused));assert(extra.stats().bytes==Feed::MaxBytes&&unused.calls==calls&&!extra.finish());
+    Feed invalid;assert(!invalid.append(nullptr,1,DigestOracle::update,&unused));assert(!invalid.finish());
+    Feed noCallback;assert(!noCallback.append(input.data(),1,nullptr,&unused));
+    Feed empty;assert(empty.append(nullptr,0,DigestOracle::update,&unused));assert(!empty.finish());
+    Feed fault;DigestOracle failing;failing.failAt=2;
+    assert(!fault.append(input.data(),Feed::ChunkBytes*3,DigestOracle::update,&failing));
+    assert(fault.stats().bytes==Feed::ChunkBytes&&fault.stats().updates==1&&fault.stats().failed&&!fault.finish());
+    puts("Helper fingerprint feed passed: 100k chunk partitions, exact 1-MiB/4096-byte update boundaries, SIZE_MAX rejection, failed callback and terminal-state fencing.");
+}
 int main(){
+    digestFeedCases();
     using C=TLinkHelperRPCReplay;using D=C::Decision;C::Digest digest{};C::Limits limits;
     limits.replies=3;limits.bytes=12;limits.replyBytes=10;limits.identities=6;limits.identityBytes=300;
     C cache(limits);

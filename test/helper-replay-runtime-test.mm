@@ -1,12 +1,37 @@
 #import <Foundation/Foundation.h>
+#import <CommonCrypto/CommonDigest.h>
 #include "../shared/TLinkHelperRPCReplay.h"
 #include <cassert>
 #include <algorithm>
 #include <cstdio>
 #include <stdexcept>
+#include <cmath>
 using Cache=TLinkHelperRPCReplay;using D=Cache::Decision;
 static void errorIs(NSDictionary *reply,NSString *message){assert(![reply[@"ok"] boolValue]);assert([reply[@"error"] isEqualToString:message]);}
+static void streamingFingerprintCases(){
+    Cache::Digest actual,legacy;
+    for(unsigned n=0;n<1500;++n){@autoreleasepool {
+        unichar chars[5]={'a',0,0x00e9,'\n','"'};NSString *text=[NSString stringWithCharacters:chars length:5];
+        NSMutableDictionary *object=[NSMutableDictionary dictionary];
+        object[@"z"]=@[@(n),@(-double(n)/7.0),@(true),[NSNull null]];object[@"a"]=@{@"text":text,@"slash":@"/\\\t\b\f\r"};
+        NSArray *arguments=@[object,@(uint64_t(9007199254740991ULL)+n),@"\U0001F642"];
+        NSData *json=[NSJSONSerialization dataWithJSONObject:arguments options:NSJSONWritingSortedKeys error:nil];assert(json);
+        assert(CC_SHA256(json.bytes,static_cast<CC_LONG>(json.length),legacy.data()));
+        TLinkHelperRPCFingerprintStats stats;assert(TLinkHelperRPCFingerprint(arguments,actual,&stats));
+        assert(actual==legacy&&stats.bytes==json.length&&stats.writes>0&&stats.updates>0&&!stats.failed);
+    }}
+    NSString *limit=[@"" stringByPaddingToLength:1024*1024-4 withString:@"x" startingAtIndex:0];
+    NSData *json=[NSJSONSerialization dataWithJSONObject:@[limit] options:NSJSONWritingSortedKeys error:nil];assert(json.length==1024*1024);
+    assert(CC_SHA256(json.bytes,static_cast<CC_LONG>(json.length),legacy.data()));TLinkHelperRPCFingerprintStats stats;
+    assert(TLinkHelperRPCFingerprint(@[limit],actual,&stats));assert(actual==legacy&&stats.bytes==1024*1024&&!stats.failed);
+    for(NSArray *bad in @[@[[limit stringByAppendingString:@"x"]],@[[NSData data]],@[@(NAN)],@[@(INFINITY)]]){
+        actual.fill(0xa5);legacy=actual;
+        assert(!TLinkHelperRPCFingerprint(bad,actual,&stats));assert(stats.failed&&stats.bytes<=1024*1024&&actual==legacy);
+    }
+    puts("Helper fingerprint Foundation: 1500 frozen one-shot SHA/JSON comparisons, escapes/Unicode/NUL/numbers/sorted keys, exact cap, oversize/non-JSON rejection and unpublished failed digest.");
+}
 int main(){@autoreleasepool {
+    streamingFingerprintCases();
     Cache cache;D decision;__block unsigned effects=0;
     NSDictionary *(^execute)(void)=^NSDictionary *{++effects;return @{@"ok":@(true),@"parts":@[@"0",@"42"],@"raw":@"0;;42\r\n"};};
     NSDictionary *first=TLinkHelperRPCDispatch(cache,@"one",@"tap",@[@1,@"x"],execute,decision);assert(decision==D::Execute&&effects==1);

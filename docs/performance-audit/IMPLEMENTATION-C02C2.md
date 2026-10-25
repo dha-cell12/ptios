@@ -1,7 +1,7 @@
 # C02c2 — byte-bounded helper RPC replay and session identity fence
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `904e7ca`; the user reported C02c1 built successfully before this slice.
-Status: **source implemented; new Foundation/macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user after the fixture correction (`af250da`); device qualification pending**.
 Finding: **P1-41, retained replay/fingerprint storage addressed; streaming fingerprint work remains**.
 
 ## Result and scope
@@ -41,3 +41,5 @@ Continue P0-12 event-driven helper transport with session/request ownership and 
 ## CI fixture correction
 
 The first macOS build reported a compile error in the reentry fixture: an Objective-C block captured the local C++ cache by value as const. The fixture now captures a pointer to the original session cache, whose lifetime encloses the synchronous dispatch, so the nested call can inspect its reserved in-flight identity. The existing InFlight and unchanged-effect assertions remain. Production cache/dispatcher code is unchanged. The portable helper replay runner and assert preprocessing pass on Windows after this correction; actual Foundation compilation/execution still requires macOS CI.
+
+The user reported the corrected C02c2 build `af250da` passed before C02c3. The next fingerprint stream implementation is tracked in `IMPLEMENTATION-C02C3.md`; no independent macOS/device execution was performed on this Windows host.
