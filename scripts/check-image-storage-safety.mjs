@@ -27,7 +27,8 @@ assert.equal([...source.matchAll(/CFAbsoluteTimeGetCurrent\(/g)].length, 1, 'Onl
 assert.match(source, /frame\.capturedAtMs = \(uint64_t\)\(CFAbsoluteTimeGetCurrent/);
 assert.match(source, /dispatch_source_set_timer[\s\S]*gFrameStore\.empty\(\) \? DISPATCH_TIME_FOREVER[\s\S]*DISPATCH_TIME_FOREVER, NSEC_PER_MSEC/);
 assert.match(source, /TLinkImagePixels\(CGImageGetWidth\(screen\)[\s\S]*zx_reservePayload\(TLinkImageKind::Frame[\s\S]*zx_renderBGRAFromCGImage\(screen/);
-const decoder = section('static cv::Mat zx_decodeBoundedImage(', 'NSString* handleImageObjectTaskFromRawData');
+const decoder = section('static cv::Mat zx_decodeBoundedImage(', '// BEGIN structured image open.');
+assert.doesNotMatch(decoder,/openStoredImage|zx_openImage/);
 assert.match(decoder, /readDataOfLength:maxEncodedBytes \+ 1/);
 assert.match(decoder, /CGImageSourceCopyPropertiesAtIndex[\s\S]*TLinkImagePixels[\s\S]*zx_reservePayload[\s\S]*cv::imdecode/);
 assert.match(decoder, /gray\.cols == \(int\)height && gray\.rows == \(int\)width/);
@@ -70,6 +71,11 @@ const objectBody=bodyAfter(source.indexOf('NSString* handleImageObjectTaskFromRa
 const parserEnd=objectBody.indexOf('    if (action == 1) {');assert.ok(parserEnd>0);
 const imageReleaseAction='NSString *imageReleaseActionUnderTest(UInt8 *eventData,NSError **error){'+objectBody.slice(0,parserEnd)+
   section('// BEGIN raw image release action.','// END raw image release action.').replace('    else if','    if')+'return nil;\n}\n';
+const imageOpen=section('// BEGIN structured image open.','// END structured image open.');
+const rawImageOpen=section('    else if (action == 2) {','    // BEGIN raw image release action.');
+assert.match(imageOpen,/TLinkImageWork work\(gImageCompute\)/);
+assert.match(imageOpen,/zx_decodeBoundedImage[\s\S]*zx_storeImageLocked[\s\S]*publishedId=imageId[\s\S]*stringWithFormat/);
+const imageOpenAction='NSString *imageOpenActionUnderTest(UInt8 *eventData,NSError **error){'+objectBody.slice(0,parserEnd)+rawImageOpen.replace('    else if','    if')+'return nil;\n}\n';
 const frameCapture=section('// BEGIN numeric frame capture.','// END numeric frame capture.');
 const rawCapture=section('NSString* handleFrameCaptureTaskFromRawData(', '// BEGIN numeric frame release.');
 assert.match(frameCapture,/TLinkImageWork work\(gImageCompute\)/);
@@ -79,6 +85,10 @@ assert.match(rawCapture,/TLinkNativeFrameCaptureBody\(value\)/);
 const captureParser=section('static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData)\n{','static bool zx_stringIsPointCoord(');
 const fixtures = {
   ...admissionFixtures,
+  'ImageOpenUnderTest.inc':imageOpen,
+  'ImageOpenActionUnderTest.inc':imageOpenAction,
+  'ImageOpenResolverUnderTest.inc':section('static NSString *zx_resolveImagePath(', 'static cv::Mat zx_cvMatGrayFromCGImage('),
+  'ImageOpenOwnerUnderTest.inc':section('static void zx_applyImageOwner(', 'static bool zx_ownerMatchFields('),
   'FrameCaptureUnderTest.inc': frameCapture+rawCapture,
   'FrameCaptureOwnerUnderTest.inc': section('static void zx_applyFrameOwner(', 'static void zx_applyImageOwner('),
   'FrameCaptureParserUnderTest.inc': captureParser,

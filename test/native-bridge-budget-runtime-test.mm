@@ -9,6 +9,7 @@
 #include "../shared/TLinkNativeFrameCapture.h"
 #include "../shared/TLinkNativeFrameCaptureResult.h"
 #include "../shared/TLinkNativeImageRelease.h"
+#include "../shared/TLinkNativeImageOpen.h"
 #import "../pccontrol/TesseractOCRTask.h"
 #include "../shared/TLinkNativeOCRInput.h"
 #include "../shared/TLinkNativeFrameSearch.h"
@@ -35,6 +36,10 @@
 #include <stdexcept>
 #include <vector>
 #include <set>
+NSDictionary *TLinkExecuteNativeImageOpen(const TLinkNativeImageOpenRequest &,TLinkTaskExecutionContext *);
+static void imageOpenLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+static void imageOpenRollbackLegacyTask(UInt8 *,CFWriteStreamRef);
+static unsigned trackImages=0;static int lastTrackedImage=-1;
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
@@ -77,6 +82,8 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"imageOpenRuntime"]&&lastPayload.compare(0,5,"482;;")==0){imageOpenLegacyTask(bytes,length,stream);return;}
+    if([mode isEqualToString:@"imageOpenRuntime"]&&lastPayload.compare(0,5,"483;;")==0){imageOpenRollbackLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"frameCaptureRuntime"]&&lastPayload.compare(0,2,"66")==0){frameCaptureLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameCaptureRuntime"]&&lastPayload.compare(0,2,"67")==0){captureRollbackLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"imageReleaseRuntime"]&&lastPayload.compare(0,5,"483;;")==0){imageReleaseLegacyTask(bytes,length,stream);return;}
@@ -130,6 +137,8 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "fixtures/frame-ocr-result-cases.inc"
 #include "fixtures/frame-capture-result-cases.inc"
 @interface TLinkInProcessNativeBridge : NSObject
+- (void)trackImageId:(int)imageId;
+- (TLinkJSNativeResponse *)legacyImageOpen:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (void)trackFrameId:(int)frameId;
 - (TLinkJSNativeResponse *)legacyFrameCapture:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (void)untrackImageId:(int)imageId;
@@ -150,6 +159,14 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (void)trackImageId:(int)imageId {++trackImages;lastTrackedImage=imageId;}
+- (TLinkJSNativeResponse *)legacyImageOpen:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    id runtime=self;
+    if(false){}
+#include "fixtures/native-image-open-legacy-v1.inc"
+    return nil;
+}
 - (void)trackFrameId:(int)frameId {++trackFrames;lastTrackedFrame=frameId;}
 - (TLinkJSNativeResponse *)legacyFrameCapture:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
@@ -245,6 +262,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeFrameReleaseBridge.inc"
 #include "NativeImageReleaseBridge.inc"
 #include "NativeFrameCaptureBridge.inc"
+#include "NativeImageOpenBridge.inc"
 #include "NativeFramePickBridge.inc"
 #include "NativeFrameManyBridge.inc"
 #include "NativeFrameSearchBridge.inc"
@@ -664,12 +682,43 @@ static void frameReleaseLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef s
     if(r.scoped){r.sessionId=[fields[1] UTF8String]?:"";r.runId=[fields[2] UTF8String]?:"";r.runtime=[fields[3] UTF8String]?:"";}observedFrameRelease=r;
     NSString *raw=[NSString stringWithFormat:@"0;;%lu\r\n",(unsigned long)frameReleaseCount];notifyClient((UInt8 *)raw.UTF8String,stream);
 }
+static unsigned imageOpenCalls=0;static int imageOpenFault=0;static bool cancelImageOpen=false,hugeImageOpenReply=false;static unsigned imageOpenDelay=0;
+static NSString *imageOpenError=nil;static TLinkNativeImageOpenRequest observedImageOpen;static TLinkNativeBudgetPtr imageOpenBudget;
+static std::set<uint32_t> openedImages;static TLinkCancellationToken *imageOpenToken;
+static NSString *imageOpenValues(const TLinkNativeImageOpenRequest &r,uint32_t &publishedId,NSError **error){
+    observedImageOpen=r;
+    if(imageOpenError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"-1;;%@\r\n",imageOpenError]}];return nil;}
+    publishedId=41;openedImages.insert(41);NSString *body=@"41;;2;;3";
+    return hugeImageOpenReply?[body stringByPaddingToLength:2048 withString:@"x" startingAtIndex:0]:body;
+}
+NSString *openStoredImage(const TLinkNativeImageOpenRequest &r,uint32_t &publishedId,NSError **error){
+    ++imageOpenCalls;imageOpenBudget=TLinkCurrentNativeBudget();assert(imageOpenBudget&&!imageOpenBudget->capturesResponse());
+    if(imageOpenFault==1)[NSException raise:@"ImageOpenFixture" format:@"before publish"];
+    if(imageOpenFault==2)throw std::runtime_error("before publish");
+    NSString *body=imageOpenValues(r,publishedId,error);
+    if(imageOpenFault==3)[NSException raise:@"ImageOpenFixture" format:@"after publish"];
+    if(imageOpenFault==4)throw std::runtime_error("after publish");
+    if(cancelImageOpen)[imageOpenToken cancel];if(imageOpenDelay)std::this_thread::sleep_for(std::chrono::milliseconds(imageOpenDelay));return body;
+}
+static void imageOpenLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
+    (void)length;NSArray *fields=[[NSString stringWithFormat:@"%s",(const char *)bytes+2] componentsSeparatedByString:@";;"];
+    TLinkNativeImageOpenRequest r;r.path=fields[1];
+    if(fields.count>2&&[fields[2] length])r.sessionId=[fields[2] UTF8String]?:"";
+    if(fields.count>3&&[fields[3] length])r.runId=[fields[3] UTF8String]?:"";
+    if(fields.count>4&&[fields[4] length])r.runtime=[fields[4] UTF8String]?:"";
+    NSError *error=nil;uint32_t id=0;NSString *body=imageOpenValues(r,id,&error);NSString *raw=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)raw.UTF8String,stream);
+}
+static void imageOpenRollbackLegacyTask(UInt8 *bytes,CFWriteStreamRef stream){
+    assert(TLinkCurrentNativeBudget()->cleanup());NSArray *fields=[[NSString stringWithFormat:@"%s",(const char *)bytes+2] componentsSeparatedByString:@";;"];
+    openedImages.erase(uint32_t([fields[1] intValue]));notifyClient((UInt8 *)"0;;1\r\n",stream);
+}
 static unsigned imageReleaseCalls=0;static int imageReleaseFault=0;static size_t imageReleaseCount=1;
 static TLinkNativeImageReleaseRequest observedImageRelease;
 static TLinkNativeBudgetPtr imageReleaseBudget;
 size_t releaseStoredImages(const TLinkNativeImageReleaseRequest &request){
     ++imageReleaseCalls;observedImageRelease=request;imageReleaseBudget=TLinkCurrentNativeBudget();
     assert(imageReleaseBudget&&imageReleaseBudget->cleanup()&&!imageReleaseBudget->capturesResponse()&&imageReleaseBudget->response().capacity()==0);
+    if([mode isEqualToString:@"imageOpenRuntime"])return openedImages.erase(request.imageId);
     if(imageReleaseFault==1)[NSException raise:@"ImageReleaseFixture" format:@"release throws"];
     if(imageReleaseFault==2)throw std::runtime_error("image release fixture");
     return imageReleaseCount;
@@ -700,6 +749,7 @@ static void imageReleaseLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef s
 #include "NativeFrameMultiEntry.inc"
 #include "NativeFrameReleaseEntry.inc"
 #include "NativeImageReleaseEntry.inc"
+#include "NativeImageOpenEntry.inc"
 static NSDictionary *fixtureFrameCaptureResult(const TLinkNativeFrameCaptureValue &v){
     if(frameCaptureFault==5)[NSException raise:@"CaptureFixture" format:@"format result"];
     if(frameCaptureFault==6)throw std::runtime_error("format result");
@@ -1257,6 +1307,43 @@ static void typedFrameImageCases(TLinkInProcessNativeBridge *bridge){
     for(NSDictionary *options:@[hit,miss]){context=parent();reset(context);NSDictionary *success=invoke(1,2,options,context).value;const NSUInteger bytes=[success[@"raw"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];context=parent(1,bytes);reset(context);assert([invoke(1,2,options,context).value[@"ok"] boolValue]);context=parent(1,bytes-1);reset(context);failure(invoke(1,2,options,context).value,@"response_too_large");}
     assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameImageBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
     puts("Typed frame image bridge/entry passed: 120 frozen JS/RAW cases, exact fields/rounding/ingress/encoding, one task-68 gate, eight-second C01/caller isolation, denial/cancel/fault/output and no typed RAW dispatch.");
+}
+static void typedImageOpenCases(TLinkInProcessNativeBridge *bridge){
+    const auto reset=[](TLinkTaskExecutionContext *context){mode=@"imageOpenRuntime";imageOpenToken=context.cancellationToken;touchToken=imageOpenToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;imageOpenFault=0;cancelImageOpen=false;imageOpenDelay=0;imageOpenError=nil;hugeImageOpenReply=false;openedImages.clear();};
+    const auto request=[](NSString *path)->TLinkJSNativeRequest *{return [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodOpenImage arguments:@[path]];};
+    const auto invoke=[bridge,request](NSString *path,TLinkTaskExecutionContext *context)->NSDictionary *{NSDictionary *value=[bridge executeRequest:request(path) context:context error:nil].value;assert(!TLinkCurrentNativeBudget());return value;};
+    const auto make=[](NSArray *owners)->TLinkTaskExecutionContext *{auto context=parent(30);context.ownerSessionId=owners[0];context.ownerRunId=owners[1];context.ownerRuntime=owners[2];return context;};
+    const auto compare=[bridge,request,invoke,reset,make](NSString *path,NSArray *owners,NSString *code){
+        auto oldContext=make(owners);reset(oldContext);imageOpenError=code;const int oldCalls=calls;unsigned oldTracking=trackImages;
+        TLinkJSNativeResponse *oldResponse=[bridge legacyImageOpen:request(path) context:oldContext];NSDictionary *old=oldResponse.value;
+        const int dispatched=calls-oldCalls;const unsigned tracking=trackImages-oldTracking;auto expected=observedImageOpen;
+        auto context=make(owners);reset(context);imageOpenError=code;oldTracking=trackImages;const int before=calls,gates=licenseCalls;const unsigned opens=imageOpenCalls;
+        const uint64_t start=TLinkNativeNowNs();NSDictionary *typed=invoke(path,context);const uint64_t end=TLinkNativeNowNs();
+        if(typed&&![typed isEqual:old])std::fprintf(stderr,"image open parity: old %s, typed %s\n",[[old description] UTF8String],[[typed description] UTF8String]);
+        assert((!old&&!typed)||[typed isEqual:old]);assert(calls==before&&licenseCalls==gates+dispatched&&imageOpenCalls==opens+dispatched&&trackImages-oldTracking==tracking);
+        if(dispatched){assert([observedImageOpen.path isEqual:expected.path]&&observedImageOpen.sessionId==expected.sessionId&&observedImageOpen.runId==expected.runId&&observedImageOpen.runtime==expected.runtime&&lastLicenseTask==48);
+            assert(imageOpenBudget==licenseBudget&&imageOpenBudget->response().capacity()==0&&imageOpenBudget->deadline()>=start+30000000000ULL&&imageOpenBudget->deadline()<=end+30000000000ULL);}
+        if([typed[@"ok"] boolValue])assert(lastTrackedImage==41&&openedImages.count(41));else assert(openedImages.empty());
+    };
+    unichar nul=0,high=0xd800;NSString *nulString=[NSString stringWithCharacters:&nul length:1],*broken=[NSString stringWithCharacters:&high length:1];
+    NSString *emoji=[@"🙂" stringByPaddingToLength:120 withString:@"🙂" startingAtIndex:0];
+    NSArray *tokens=@[@"owner",@"",@";",@"a;;b",@"a\rb\nc",@" js \t",@"Tiếng Việt",nulString,broken,emoji,[@"x" stringByAppendingString:emoji]];
+    NSArray *paths=@[@"image.png",@"/tmp/a.png",@"../image.png",@" image.png \t",@"ảnh🙂.png",@"\ufeffbom.png",@"a;",@";",@"a;;fake;;owner;;runtime",@";;",nulString,broken,@""];
+    for(unsigned n=0;n<180;++n)compare(paths[n%paths.count],@[tokens[n%tokens.count],tokens[(n/3)%tokens.count],tokens[(n/7)%tokens.count]],nil);
+    for(NSString *code:@[@"image_compute_busy",@"Image not found. Path: /missing",@"image_encoded_limit_or_read_failed",@"image_pixel_limit_or_invalid_metadata",@"image_memory_budget",@"image_decode_dimension_mismatch",@"Image object limit reached. Release unused images."])compare(@"image.png",@[@"session",@"run",@"test"],code);
+    auto context=make(@[@"session",@"run",@"test"]);const NSUInteger ownerUnits=TLinkautoJSOwnerSuffix(context).length;
+    for(NSUInteger units:{NSUInteger(8192-5-ownerUnits),NSUInteger(8193-5-ownerUnits)})compare([@"p" stringByPaddingToLength:units withString:@"p" startingAtIndex:0],@[@"session",@"run",@"test"],nil);
+    context=parent();reset(context);const unsigned before=imageOpenCalls;licenseAllowed=false;failure(invoke(@"image.png",context),@"license_required task=48");assert(imageOpenCalls==before);
+    context=parent();reset(context);stopInLicense=true;failure(invoke(@"image.png",context),@"AbortError");assert(imageOpenCalls==before);
+    context=parent(.01);reset(context);licenseDelayMs=30;failure(invoke(@"image.png",context),@"TimeoutError");assert(imageOpenCalls==before);
+    context=parent(1,1023);reset(context);const int gates=licenseCalls;failure(invoke(@"image.png",context),@"response_too_large");assert(licenseCalls==gates&&imageOpenCalls==before);
+    context=parent(1,1024);reset(context);assert([invoke(@"image.png",context)[@"ok"] boolValue]);openedImages.clear();
+    for(int fault:{1,2,3,4}){context=parent();reset(context);imageOpenFault=fault;failure(invoke(@"image.png",context),@"native_exception");assert(openedImages.empty());}
+    context=parent();reset(context);cancelImageOpen=true;openedImages.insert(99);const unsigned rollbacks=imageReleaseCalls;failure(invoke(@"a;;shifted",context),@"AbortError");assert(openedImages.size()==1&&openedImages.count(99)&&imageReleaseCalls==rollbacks+1);assert(!observedImageRelease.scoped&&observedImageRelease.imageId==41);
+    context=parent(.01);reset(context);imageOpenDelay=30;failure(invoke(@"image.png",context),@"TimeoutError");assert(openedImages.empty());
+    context=parent(1,1024);reset(context);hugeImageOpenReply=true;failure(invoke(@"image.png",context),@"response_too_large");assert(openedImages.empty());
+    openedImages.clear();imageOpenBudget.reset();imageReleaseBudget.reset();licenseBudget.reset();imageOpenToken=nil;touchToken=nil;mode=@"echo";
+    puts("Typed image open passed: 180 frozen JS/RAW path/owner/results, delimiter overlap/UTF8/NUL, exact 8192/8193 ingress, task-48 gate, floor, caller budget, faults and isolated publication rollback.");
 }
 static void typedFrameCaptureCases(TLinkInProcessNativeBridge *bridge){
     const auto reset=[](TLinkTaskExecutionContext *context){mode=@"frameCaptureRuntime";captureToken=context.cancellationToken;touchToken=captureToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameCaptureFault=0;cancelFrameCapture=false;frameCaptureDelay=0;frameCaptureError=nil;hugeCaptureReply=false;capturedFrames.clear();};
@@ -1835,6 +1922,7 @@ int main() { @autoreleasepool {
     typedImageReleaseCases(bridge);
     frameCaptureResultCases();
     typedFrameCaptureCases(bridge);
+    typedImageOpenCases(bridge);
     typedFramePickCases(bridge);
     typedFramePickManyCases(bridge);
     typedFrameSearchCases(bridge);

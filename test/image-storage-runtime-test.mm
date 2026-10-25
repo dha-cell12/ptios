@@ -31,6 +31,7 @@ static const int IMREAD_GRAYSCALE = 0;
 #include "ImageErrorUnderTest.inc"
 #include "ImageDecoderUnderTest.inc"
 #include "frame-capture-runtime-fixture.inc"
+#include "image-open-runtime-fixture.inc"
 #include "../shared/TLinkFrameVisionPolicy.h"
 static bool failFrameProvider=false,failFrameImage=false;
 static CGDataProviderRef FixtureFrameProvider(void *info,const void *data,size_t bytes,CGDataProviderReleaseDataCallback release){
@@ -178,6 +179,7 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         fputs("Image runtime: bounded file/ImageIO preflight fixtures\n", stderr);
         decodeFixtures([NSString stringWithUTF8String:argv[1]]);
+        imageOpenRuntimeCases([NSString stringWithUTF8String:argv[1]]);
         frameCaptureRuntimeCases();
         frameVisionFixtures();
         numericReleaseParityCases();

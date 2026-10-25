@@ -6,6 +6,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #include <math.h>
 #include "../../shared/TLinkNativeOCRInput.h"
+#include "../../shared/TLinkNativeImageOpen.h"
 
 #ifndef TASK_IMAGE_OBJECT
 #define TASK_IMAGE_OBJECT 48
@@ -719,7 +720,19 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if ([path length] == 0) {
             return [TLinkJSNativeResponse responseWithError:@"openImage(path) requires a valid path" code:@-1];
         }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%@%@", TASK_IMAGE_OBJECT, path, TLinkautoJSOwnerSuffix(context)] context:context];
+        // Preserve legacy delimiter overlap and Foundation %s conversion for path/owner fields.
+        NSString *tail=[NSString stringWithFormat:@"%@%@",path,TLinkautoJSOwnerSuffix(context)];
+        if(!TLinkNativeImageOpenInputFits(tail.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        NSData *encoded=[tail dataUsingEncoding:NSUTF8StringEncoding];
+        if(!encoded||!TLinkNativeImageOpenBytesFit(encoded.length)||(encoded.length&&memchr(encoded.bytes,0,encoded.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *compatibilityBody=[@"2;;" stringByAppendingString:tail];
+        NSString *wire=[NSString stringWithFormat:@"%s",[compatibilityBody UTF8String]];
+        NSArray *fields=[wire componentsSeparatedByString:@";;"];TLinkNativeImageOpenRequest input;
+        input.path=fields[1];
+        if(fields.count>2&&[fields[2] length])input.sessionId=[fields[2] UTF8String]?:"";
+        if(fields.count>3&&[fields[3] length])input.runId=[fields[3] UTF8String]?:"";
+        if(fields.count>4&&[fields[4] length])input.runtime=[fields[4] UTF8String]?:"";
+        NSDictionary *result=TLinkExecuteNativeImageOpen(input,context);
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         int imageId = [parts[1] intValue];

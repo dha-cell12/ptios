@@ -55,6 +55,13 @@ static void numericImageReleaseCases(){
     puts("Image release core passed: 10k actual owner/mismatch/single/scoped-all/global/empty transactions, held readers, unchanged frames/timers and zero final charges.");
 }
 int main() {
+    for(size_t n=0;n<100000;++n){
+        assert(TLinkNativeImageOpenInputFits(n)==(n+5<=8192));
+        assert(TLinkNativeImageOpenBytesFit(n)==(n+5<=32*1024));
+    }
+    assert(TLinkNativeImageOpenInputFits(8187)&&!TLinkNativeImageOpenInputFits(8188)&&!TLinkNativeImageOpenInputFits(SIZE_MAX));
+    assert(TLinkNativeImageOpenBytesFit(32763)&&!TLinkNativeImageOpenBytesFit(32764)&&!TLinkNativeImageOpenBytesFit(SIZE_MAX));
+    puts("Image open ingress passed: 100k UTF16/byte envelope plans, exact prefix accounting and saturated size boundaries.");
     numericReleaseCases();
     numericImageReleaseCases();
     for(uint64_t n=0;n<100000;++n){const uint64_t input=n%2?n:UINT64_MAX;const uint64_t expected=input==0?1000:(input>5000?5000:input);assert(TLinkNativeFrameCaptureTTL(input)==expected);}

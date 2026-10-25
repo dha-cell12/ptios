@@ -1,7 +1,7 @@
 # C02b19 — structured captureFrame result and metadata
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `765d989`; the user reported C02b18 built successfully before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b20 (`adf0a93`); device qualification pending**.
 Finding: **P0-13, captureFrame response portion**. Other creation adapters and helper transport/config/dedupe remain open.
 
 ## Result and scope
@@ -41,3 +41,5 @@ Capture, renderer, CV, license and synchronous owner operations remain cooperati
 Build rootfull/roothide observe/enforced variants. Compare captureFrame with RAW task 66 for channel/TTL/owner variants, exact metadata/raw/parts, fractional scale/timing, capture faults, low output limits and cancellation/deadline near publication/result construction. Verify failed calls leave no newly owned frame and held readers survive release/expiry/eviction. Measure bridge time and allocations separately from capture/conversion and store pressure.
 
 Continue remaining P0-13 creation/other adapters, P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+The user reported C02b19 build `adf0a93` passed before C02b20. Structured image opening is tracked in `IMPLEMENTATION-C02B20.md`. This records the user report; no independent macOS/device execution was performed on this host.
