@@ -5,6 +5,7 @@
 #include "../shared/TLinkNativeImageRelease.h"
 #include "../shared/TLinkNativeFrameCapture.h"
 #include "../shared/TLinkNativeImageOpen.h"
+#include "../shared/TLinkNativeImageCapture.h"
 #include <cassert>
 #include <climits>
 #include <cstdio>

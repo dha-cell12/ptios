@@ -1,7 +1,7 @@
 # C02b21 — structured openImage result and metadata
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `0200261`; the user reported the corrected C02b20 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b22 (`5ffc503`); device qualification pending**.
 Finding: **P0-13, openImage response portion**. captureImage/other native adapters and helper transport/config/dedupe remain open.
 
 ## Result and scope
@@ -42,3 +42,5 @@ Three formatted integer columns fit well below the retained 1024-byte floor; the
 Build rootfull/roothide observe/enforced variants. Compare openImage with RAW action 2 for exact metadata/raw/parts across paths/owners and real decode/count/memory errors. Exercise caller stop/deadline near publication and result construction, confirm unsuccessful calls release only their new ID and held readers remain valid. Measure bridge cost separately from image loading, decoding and memory pressure.
 
 Continue remaining P0-13 creation/other adapters, P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+The user reported C02b21 build `5ffc503` passed before C02b22. Structured image capture is tracked in `IMPLEMENTATION-C02B22.md`. This records the user report; no independent macOS/device execution was performed on this host.

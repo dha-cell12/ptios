@@ -7,6 +7,7 @@
 #include <math.h>
 #include "../../shared/TLinkNativeOCRInput.h"
 #include "../../shared/TLinkNativeImageOpen.h"
+#include "../../shared/TLinkNativeImageCapture.h"
 
 #ifndef TASK_IMAGE_OBJECT
 #define TASK_IMAGE_OBJECT 48
@@ -745,18 +746,22 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height)) {
             return [TLinkJSNativeResponse responseWithError:@"captureImage(x, y, width, height) requires finite numbers" code:@-1];
         }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%.0f;;%.0f;;%.0f;;%.0f%@", TASK_IMAGE_OBJECT, x, y, width, height, TLinkautoJSOwnerSuffix(context)] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
-        int imageId = [parts[1] intValue];
-        [runtime trackImageId:imageId];
-        NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];
-        res[@"id"] = @(imageId);
-        if ([parts count] > 3) {
-            res[@"width"] = @([TLinkautoJSSafeStringPart(parts, 2) intValue]);
-            res[@"height"] = @([TLinkautoJSSafeStringPart(parts, 3) intValue]);
-        }
-        return [TLinkJSNativeResponse responseWithValue:res];
+        TLinkNativeImageCaptureRequest input;size_t xu=0,yu=0,wu=0,hu=0;
+        input.x=TLinkNativeImageCaptureJSInt(x,&xu);input.y=TLinkNativeImageCaptureJSInt(y,&yu);
+        input.width=TLinkNativeImageCaptureJSInt(width,&wu);input.height=TLinkNativeImageCaptureJSInt(height,&hu);
+        NSString *suffix=TLinkautoJSOwnerSuffix(context);
+        if(!TLinkNativeImageCaptureInputFits(xu,yu,wu,hu,suffix.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        NSData *encoded=[suffix dataUsingEncoding:NSUTF8StringEncoding];
+        if(!encoded||!TLinkNativeImageCaptureInputFits(xu,yu,wu,hu,encoded.length,32*1024)||(encoded.length&&memchr(encoded.bytes,0,encoded.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        // The original numeric prefix ends in an ASCII digit; retain %s owner decoding with that same boundary.
+        NSString *owner=[NSString stringWithFormat:@"0%s",[suffix UTF8String]];
+        NSArray *fields=[owner componentsSeparatedByString:@";;"];
+        if(fields.count>1&&[fields[1] length])input.sessionId=[fields[1] UTF8String]?:"";
+        if(fields.count>2&&[fields[2] length])input.runId=[fields[2] UTF8String]?:"";
+        if(fields.count>3&&[fields[3] length])input.runtime=[fields[3] UTF8String]?:"";
+        NSDictionary *result=TLinkExecuteNativeImageCapture(input,context);
+        if([result[@"ok"] boolValue])[runtime trackImageId:[result[@"id"] intValue]];
+        return [TLinkJSNativeResponse responseWithValue:result];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage]) {
         int imageId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;

@@ -54,7 +54,30 @@ static void numericImageReleaseCases(){
     TLinkNativeFrameReleaseRequest cleanup;cleanup.all=true;assert(releaseStoredFrames(cleanup)==1&&gImageMemory.stats().total==0);
     puts("Image release core passed: 10k actual owner/mismatch/single/scoped-all/global/empty transactions, held readers, unchanged frames/timers and zero final charges.");
 }
+static void imageCapturePolicyCases(){
+    for(int n=0;n<100000;++n){
+        const int sw=1+n%8192,sh=1+(n/7)%8192;
+        int x=(n*37)%20000-1000,y=(n*71)%20000-1000,w=(n*19)%20000-1000,h=(n*23)%20000-1000;
+        int ox=x,oy=y,ow=w,oh=h;ox=ox<0?0:(ox>=sw?sw-1:ox);oy=oy<0?0:(oy>=sh?sh-1:oy);
+        if(ow<=0||ox+ow>sw)ow=sw-ox;if(oh<=0||oy+oh>sh)oh=sh-oy;
+        TLinkNativeImageCrop actual;assert(TLinkNativeImageCaptureCrop(x,y,w,h,sw,sh,actual));
+        assert(actual.x==ox&&actual.y==oy&&actual.width==ow&&actual.height==oh);
+    }
+    const int limits[]={INT_MIN,-1,0,1,INT_MAX};
+    for(int sw:{1,8,INT_MAX})for(int sh:{1,8,INT_MAX})for(int x:limits)for(int y:limits)for(int w:limits)for(int h:limits){
+        TLinkNativeImageCrop actual;assert(TLinkNativeImageCaptureCrop(x,y,w,h,sw,sh,actual));
+        const int64_t rx=std::max<int64_t>(0,std::min<int64_t>(x,int64_t(sw)-1)),ry=std::max<int64_t>(0,std::min<int64_t>(y,int64_t(sh)-1));
+        const int64_t rw=w<=0||rx+int64_t(w)>sw?int64_t(sw)-rx:w,rh=h<=0||ry+int64_t(h)>sh?int64_t(sh)-ry:h;
+        assert(actual.x==rx&&actual.y==ry&&actual.width==rw&&actual.height==rh);
+    }
+    TLinkNativeImageCrop out;out.width=99;assert(!TLinkNativeImageCaptureCrop(0,0,1,1,0,8,out)&&out.width==0);assert(!TLinkNativeImageCaptureCrop(0,0,1,1,8,-1,out));
+    assert(TLinkNativeImageCaptureInputFits(1,1,1,1,8192-15)&&!TLinkNativeImageCaptureInputFits(1,1,1,1,8193-15));
+    assert(!TLinkNativeImageCaptureInputFits(SIZE_MAX,0,0,0,0)&&!TLinkNativeImageCaptureInputFits(0,0,0,0,SIZE_MAX));
+    assert(TLinkNativeImageCaptureInputFits(1,1,1,1,32768-15,32768)&&!TLinkNativeImageCaptureInputFits(0,0,0,0,0,10));
+    puts("Image capture policy passed: 100k defined legacy crops, wide-arithmetic extreme oracle, invalid geometry and exact/saturated envelope boundaries.");
+}
 int main() {
+    imageCapturePolicyCases();
     for(size_t n=0;n<100000;++n){
         assert(TLinkNativeImageOpenInputFits(n)==(n+5<=8192));
         assert(TLinkNativeImageOpenBytesFit(n)==(n+5<=32*1024));

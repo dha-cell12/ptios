@@ -131,6 +131,15 @@ try {
   assert.match(captureResult,/componentsJoinedByString[\s\S]*created\.longLongValue/);
   await writeFile(join(temp,"NativeFrameCaptureBridge.inc"),frameCaptureBridge);
   await writeFile(join(temp,"NativeFrameCaptureEntry.inc"),frameCaptureEntry);
+  const imageCaptureBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodCaptureImage])","    else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage])");
+  const imageCaptureEntry=between(task,"// BEGIN typed image capture task entry.","// END typed image capture task entry.");
+  assert.doesNotMatch(imageCaptureBridge,/executeRawPayload|result\[@"parts"\]|SafeStringPart|NSMutableDictionary/);
+  assert.match(imageCaptureBridge,/TLinkNativeImageCaptureJSInt[\s\S]*TLinkNativeImageCaptureInputFits[\s\S]*TLinkExecuteNativeImageCapture/);
+  assert.match(imageCaptureEntry,/outputLimit\(\)<1024[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_IMAGE_OBJECT,&denial\)[\s\S]*captureStoredImage[\s\S]*TLinkNativeImageResult[\s\S]*outputAllowed[\s\S]*committed=true/);
+  assert.match(imageCaptureEntry,/@finally[\s\S]*!committed&&publishedId[\s\S]*TLinkNativeCallContext\(call,true,false\)[\s\S]*releaseStoredImages/);
+  assert.doesNotMatch(imageCaptureEntry,/processTaskWithContext|CFWriteStream|componentsSeparatedByString|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeImageCaptureBridge.inc"),imageCaptureBridge);
+  await writeFile(join(temp,"NativeImageCaptureEntry.inc"),imageCaptureEntry);
   const imageOpenBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodOpenImage])","    else if ([method isEqualToString:TLinkJSNativeMethodCaptureImage])");
   const imageOpenEntry=between(task,"// BEGIN typed image open task entry.","// END typed image open task entry.");
   assert.doesNotMatch(imageOpenBridge,/executeRawPayload/);
@@ -228,7 +237,7 @@ try {
     between(bridge,"static BOOL TLinkautoJSValidToken","static BOOL TLinkautoJSValidProtocolString") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption") +
     between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageOpenBridge}\n${frameCaptureBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);

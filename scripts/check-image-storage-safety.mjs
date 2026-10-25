@@ -78,6 +78,12 @@ assert.match(imageOpen,/zx_decodeBoundedImage[\s\S]*zx_storeImageLocked[\s\S]*pu
 assert.doesNotMatch(imageOpen,/stringWithFormat:@"%u;;%d;;%d"|componentsSeparatedByString/);
 assert.match(rawImageOpen,/TLinkNativeImageBody\(value\)/);
 const imageOpenAction='NSString *imageOpenActionUnderTest(UInt8 *eventData,NSError **error){'+objectBody.slice(0,parserEnd)+rawImageOpen.replace('    else if','    if')+'return nil;\n}\n';
+const imageCapture=section('// BEGIN structured image capture.','// END structured image capture.');
+const rawImageCapture=objectBody.slice(parserEnd,objectBody.indexOf('    else if (action == 2) {',parserEnd));
+assert.match(imageCapture,/TLinkNativeImageCaptureCrop[\s\S]*@finally\{CGImageRelease\(screen\);\}[\s\S]*@finally\{CGImageRelease\(cropped\);\}/);
+assert.match(imageCapture,/publishedId=imageId[\s\S]*value\.id=imageId/);
+assert.match(rawImageCapture,/TLinkImageWork work[\s\S]*zx_captureImage[\s\S]*TLinkNativeImageBody/);
+const imageCaptureAction='NSString *imageCaptureActionUnderTest(UInt8 *eventData,NSError **error){'+objectBody.slice(0,parserEnd)+rawImageCapture+'return nil;\n}\n';
 const frameCapture=section('// BEGIN numeric frame capture.','// END numeric frame capture.');
 const rawCapture=section('NSString* handleFrameCaptureTaskFromRawData(', '// BEGIN numeric frame release.');
 assert.match(frameCapture,/TLinkImageWork work\(gImageCompute\)/);
@@ -87,12 +93,14 @@ assert.match(rawCapture,/TLinkNativeFrameCaptureBody\(value\)/);
 const captureParser=section('static NSArray<NSString *> *zx_splitEventData(UInt8 *eventData)\n{','static bool zx_stringIsPointCoord(');
 const fixtures = {
   ...admissionFixtures,
+  'ImageCaptureUnderTest.inc':imageCapture,
+  'ImageCaptureActionUnderTest.inc':imageCaptureAction,
   'ImageOpenUnderTest.inc':imageOpen,
   'ImageOpenActionUnderTest.inc':imageOpenAction,
   'ImageOpenResolverUnderTest.inc':section('static NSString *zx_resolveImagePath(', 'static cv::Mat zx_cvMatGrayFromCGImage('),
-  'ImageOpenOwnerUnderTest.inc':section('static void zx_applyImageOwner(', 'static bool zx_ownerMatchFields('),
+  'ImageOpenOwnerUnderTest.inc':await readFile(join(root,'test/fixtures/image-owner-legacy-v1.inc'),'utf8'),
   'FrameCaptureUnderTest.inc': frameCapture+rawCapture,
-  'FrameCaptureOwnerUnderTest.inc': section('static void zx_applyFrameOwner(', 'static void zx_applyImageOwner('),
+  'FrameCaptureOwnerUnderTest.inc': section('static void zx_applyFrameOwner(', '// END frame owner assignment.'),
   'FrameCaptureParserUnderTest.inc': captureParser,
   'NumericImageReleaseUnderTest.inc': numericImageRelease,
   'ImageReleasePortableUnderTest.inc': portableImageRelease,
@@ -118,6 +126,8 @@ const runtimeFixture=(await readFile(join(root,'test/image-storage-runtime-test.
 const publishImageAt=runtimeFixture.indexOf('static uint32_t publishImage(');
 const openFixtureAt=runtimeFixture.indexOf('#include "image-open-runtime-fixture.inc"');
 assert.ok(publishImageAt>=0&&openFixtureAt>publishImageAt,'Image open fixture must follow the publishImage helper definition');
+const captureFixtureAt=runtimeFixture.indexOf('#include "image-capture-runtime-fixture.inc"');
+assert.ok(captureFixtureAt>openFixtureAt,'Image capture fixture needs the published-image helper and image owner formatter first');
 const tempRoot = resolve(tmpdir()), temp = await mkdtemp(join(tempRoot, 'tlink-image-storage-'));
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, encoding: 'utf8', timeout: 120000 });

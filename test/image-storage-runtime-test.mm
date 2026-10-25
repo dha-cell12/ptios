@@ -1,5 +1,6 @@
 #include "../shared/TLinkNativeDispatch.h"
 #include <new>
+#include <stdexcept>
 #include "../shared/TLinkModernImagePolicy.h"
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
@@ -108,6 +109,7 @@ static uint32_t publishImage(std::shared_ptr<ZXImageObject> value) {
 }
 // The open fixture uses the completed publishImage helper above.
 #include "image-open-runtime-fixture.inc"
+#include "image-capture-runtime-fixture.inc"
 static void barrier() { dispatch_sync(zx_imageQueue(), ^{}); }
 static void releaseFrame(uint32_t id){NSString *value=[NSString stringWithFormat:@"%u",id];(void)handleFrameReleaseTaskFromRawData((UInt8 *)value.UTF8String,NULL);}
 static void numericReleaseParityCases(){
@@ -181,6 +183,7 @@ int main(int argc, char **argv) {
         fputs("Image runtime: bounded file/ImageIO preflight fixtures\n", stderr);
         decodeFixtures([NSString stringWithUTF8String:argv[1]]);
         imageOpenRuntimeCases([NSString stringWithUTF8String:argv[1]]);
+        imageCaptureRuntimeCases();
         frameCaptureRuntimeCases();
         frameVisionFixtures();
         numericReleaseParityCases();
