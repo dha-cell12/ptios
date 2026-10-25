@@ -693,8 +693,14 @@ NSDictionary *TLinkExecuteNativeFrameOCR(const TLinkNativeFrameOCRRequest &reque
         if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
         NSString *denial=nil;if(!TLinkRootfullLicenseTaskAllowed(TASK_OCR_TESSERACT_REGION,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",replyBudget);
         if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
-        NSError *error=nil;NSString *body=recognizeFrameWithTesseract(request,&error);
-        return zx_typedFrameOCRReply(error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""],replyBudget);
+        NSError *error=nil;TLinkNativeFrameOCRValue value;
+        if(!recognizeFrameWithTesseract(request,value,&error))return zx_typedFrameOCRReply(error.localizedDescription?:@"0;;\r\n",replyBudget);
+        NSString *raw=[NSString stringWithFormat:@"0;;%@\r\n",value.body];
+        if(!replyBudget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        NSArray *c=value.columns;
+        return @{@"ok":@(true),@"raw":raw,@"parts":[@[@"0"] arrayByAddingObjectsFromArray:c],@"text":value.text,
+            @"confidence":@([c[1] doubleValue]),@"ageMs":@([c[2] longLongValue]),@"ocrMs":@([c[3] doubleValue]),
+            @"preprocessMs":@([c[4] doubleValue]),@"totalMs":@([c[5] doubleValue])};
     }catch(...){return zx_typedTouchFailure(@"native_exception");}}@catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
 }
 // END typed frame OCR task entry.

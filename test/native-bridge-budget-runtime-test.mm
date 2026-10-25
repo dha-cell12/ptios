@@ -106,6 +106,9 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     notifyClient((UInt8 *)"0;;xin chào\r\n", stream);
 }
 #include "NativeHelpersUnderTest.inc"
+#include "NativeFrameOCRResult.inc"
+#include "fixtures/native-frame-ocr-result-legacy-v1.inc"
+#include "fixtures/frame-ocr-result-cases.inc"
 @interface TLinkInProcessNativeBridge : NSObject
 - (TLinkJSNativeResponse *)legacyFrameColors:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyColorRange:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
@@ -534,21 +537,23 @@ static void frameImageLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef str
 }
 static unsigned frameOCRCalls=0;static int frameOCRFault=0;static bool cancelFrameOCR=false;static NSString *frameOCRError=nil;
 static TLinkNativeBudgetPtr frameOCRBudget;
-static NSString *frameOCRValues(const TLinkNativeFrameOCRRequest &r,NSError **error){
-    if(frameOCRError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"1;;%@;;%@\r\n",frameOCRError,TLinkautoJSBase64Encode(@"controlled OCR error")]}];return nil;}
+static bool customOCRResult=false;static TLinkNativeFrameOCRValue publishedOCRResult;
+static bool frameOCRValues(const TLinkNativeFrameOCRRequest &r,TLinkNativeFrameOCRValue &value,NSError **error){
+    if(customOCRResult){value=publishedOCRResult;return true;}
+    if(frameOCRError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"1;;%@;;%@\r\n",frameOCRError,TLinkautoJSBase64Encode(@"controlled OCR error")]}];return false;}
     NSString *text=[NSString stringWithFormat:@"%@|%@|%@|%u|%d|%d|%d|%d|%d|%d|%d|%d|%llu",r.lang.length?r.lang:@"vie",r.coord.length?r.coord:@"pixel",r.whitelist?:@"",r.frameId,r.x,r.y,r.width,r.height,r.oem,r.psm,r.scaleUp,r.thresholdMode,(unsigned long long)(r.maxAgeMs?r.maxAgeMs:1000)];
-    return [NSString stringWithFormat:@"%@;;83.12;;42;;1.235;;2.346;;3.457",TLinkautoJSBase64Encode(text)];
+    value=TLinkFormatFrameOCRValue(text,83.12,42,1.235,2.346,3.457);return true;
 }
-NSString *recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &r,NSError **error){
+bool recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &r,TLinkNativeFrameOCRValue &value,NSError **error){
     ++frameOCRCalls;frameOCRBudget=TLinkCurrentNativeBudget();assert(frameOCRBudget&&!frameOCRBudget->capturesResponse());
     if(frameOCRFault==1)[NSException raise:@"FrameOCRFixture" format:@"OCR throws"];
     if(frameOCRFault==2)throw std::runtime_error("frame OCR fixture");
-    NSString *body=frameOCRValues(r,error);if(cancelFrameOCR)[touchToken cancel];return body;
+    const bool ready=frameOCRValues(r,value,error);if(cancelFrameOCR)[touchToken cancel];return ready;
 }
 static void frameOCRLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
     NSString *payload=[[NSString alloc] initWithBytes:bytes+2 length:length-2 encoding:NSUTF8StringEncoding];NSArray *fields=[payload componentsSeparatedByString:@";;"];assert(fields.count==13);
     TLinkNativeFrameOCRRequest r;r.frameId=uint32_t([fields[0] intValue]);r.x=[fields[1] intValue];r.y=[fields[2] intValue];r.width=[fields[3] intValue];r.height=[fields[4] intValue];r.lang=[fields[5] length]?fields[5]:@"vie";r.oem=[fields[6] intValue];r.psm=[fields[7] intValue];r.whitelist=TLinkautoJSBase64Decode(fields[8]);r.scaleUp=[fields[9] intValue];r.thresholdMode=[fields[10] intValue];r.coord=[fields[11] length]?fields[11]:@"pixel";r.maxAgeMs=uint64_t(MAX(0,[fields[12] longLongValue]));if(!r.maxAgeMs)r.maxAgeMs=1000;
-    NSError *error=nil;NSString *body=frameOCRValues(r,&error);NSString *raw=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)raw.UTF8String,stream);
+    NSError *error=nil;TLinkNativeFrameOCRValue value;const bool ready=frameOCRValues(r,value,&error);NSString *raw=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",ready?value.body:@""];notifyClient((UInt8 *)raw.UTF8String,stream);
 }
 // Match Image.h: OpenCV leaves these macros undefined in production Task.xm.
 #pragma push_macro("YES")
@@ -1116,7 +1121,7 @@ static void typedFrameImageCases(TLinkInProcessNativeBridge *bridge){
     puts("Typed frame image bridge/entry passed: 120 frozen JS/RAW cases, exact fields/rounding/ingress/encoding, one task-68 gate, eight-second C01/caller isolation, denial/cancel/fault/output and no typed RAW dispatch.");
 }
 static void typedFrameOCRCases(TLinkInProcessNativeBridge *bridge){
-    const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameOCRFault=0;frameOCRError=nil;cancelFrameOCR=false;};
+    const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameOCRFault=0;frameOCRError=nil;cancelFrameOCR=false;customOCRResult=false;};
     const auto request=[](int fid,NSDictionary *options)->TLinkJSNativeRequest *{return [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodOcrFrame arguments:@[@(fid),options]];};
     const auto invoke=[bridge,request](int fid,NSDictionary *options,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{TLinkJSNativeResponse *result=[bridge executeRequest:request(fid,options) context:context error:nil];assert(!TLinkCurrentNativeBudget());return result;};
     const auto compare=[bridge,request,invoke,reset](int fid,NSDictionary *options,NSString *backendError){
@@ -1138,13 +1143,22 @@ static void typedFrameOCRCases(TLinkInProcessNativeBridge *bridge){
     for(unsigned extra=0;extra<2;++extra){compare(1,@{@"lang":[@"x" stringByPaddingToLength:limit+extra withString:@"x" startingAtIndex:0]},nil);compare(1,@{@"lang":[nullString stringByPaddingToLength:limit+extra withString:@"x" startingAtIndex:0]},nil);}
     compare(1,@{@"whitelist":[@"界" stringByPaddingToLength:3000 withString:@"界" startingAtIndex:0]},nil);
     for(NSString *code:@[@"disabled",@"ocr_busy",@"ocr_scaled_image_too_large",@"engine_init_failed",@"ocr_exception",@"ocr_cancelled_or_timed_out"])compare(1,normal,code);
+    const double confidenceCases[]={-1.0,-0.0,.005,83.125,99.995};
+    for(unsigned n=0;n<80;++n){
+        auto context=parent(30);reset(context);customOCRResult=true;
+        publishedOCRResult=TLinkFormatFrameOCRValue(n%2?@"Tiếng Việt ;; A\n🙂":nullString,confidenceCases[n%5],n%3?42:UINT64_MAX,double(n)*.0005,2.3455,3.4565);
+        NSDictionary *typed=invoke(1,normal,context).value;
+        mode=@"frameOCRRuntime";TLinkJSNativeResponse *legacy=[bridge legacyFrameOCR:request(1,normal) context:parent(30)];
+        assert([typed[@"ok"] boolValue]&&[typed isEqual:legacy.value]);customOCRResult=false;
+    }
     const int wireCalls=calls;auto context=parent();reset(context);licenseAllowed=false;const unsigned reads=frameOCRCalls;NSDictionary *denied=invoke(1,normal,context).value;assert([denied[@"raw"] isEqualToString:@"-1;;license_required task=91\r\n"]&&frameOCRCalls==reads);
     context=parent();reset(context);stopInLicense=true;failure(invoke(1,normal,context).value,@"AbortError");assert(frameOCRCalls==reads);context=parent();reset(context);[context.cancellationToken cancel];const int gates=licenseCalls;failure(invoke(1,normal,context).value,@"AbortError");assert(licenseCalls==gates&&frameOCRCalls==reads);
     context=parent();reset(context);[context setNativeBudget:std::make_shared<TLinkNativeBudget>(nullptr,TLinkNativeNowNs()-1,4096)];failure(invoke(1,normal,context).value,@"TimeoutError");assert(licenseCalls==gates);
     context=parent(30);reset(context);licenseDelayMs=3100;auto caller=std::make_shared<TLinkNativeBudget>([context.cancellationToken nativeCancellation],TLinkNativeDeadline(30),4096);[context setNativeBudget:caller];NSDictionary *expired=invoke(1,normal,context).value;assert([expired[@"raw"] isEqualToString:@"1;;native_cancelled_or_timed_out\r\n"]&&!caller->stopped()&&frameOCRCalls==reads);
     context=parent();reset(context);cancelFrameOCR=true;failure(invoke(1,normal,context).value,@"AbortError");for(int fault:{1,2}){context=parent();reset(context);frameOCRFault=fault;failure(invoke(1,normal,context).value,@"native_exception");}
     context=parent();reset(context);NSDictionary *success=invoke(1,normal,context).value;const NSUInteger bytes=[success[@"raw"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];context=parent(1,bytes);reset(context);assert([invoke(1,normal,context).value[@"ok"] boolValue]);context=parent(1,bytes-1);reset(context);failure(invoke(1,normal,context).value,@"response_too_large");
-    assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameOCRBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";puts("Typed frame OCR input passed: 100 frozen JS/RAW cases, Foundation int/age/whitelist normalization, exact ingress/encoding, decoded errors/results, one task-91 gate, C01/caller/cancel/fault/output and no typed RAW dispatch.");
+    publishedOCRResult=TLinkNativeFrameOCRValue();
+    assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameOCRBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";puts("Typed frame OCR passed: 100 frozen JS/RAW input cases, 80 structured result cases, Foundation int/age/whitelist normalization, exact ingress/encoding, decoded errors/results, one task-91 gate, C01/caller/cancel/fault/output and no typed RAW dispatch.");
 }
 static void typedFramePickCases(TLinkInProcessNativeBridge *bridge){
     const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameReadFault=0;frameReadError=nil;cancelFrameRead=false;};
@@ -1577,6 +1591,7 @@ int main() { @autoreleasepool {
     typedLiveColorsCases(bridge);
     typedLiveMultiCases(bridge);
     typedFrameImageCases(bridge);
+    frameOCRResultCases();
     typedFrameOCRCases(bridge);
     typedFramePickCases(bridge);
     typedFramePickManyCases(bridge);

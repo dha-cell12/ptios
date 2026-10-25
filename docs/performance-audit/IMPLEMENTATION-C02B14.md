@@ -1,7 +1,7 @@
 # C02b14 — structured input for OCR in a stored frame
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `4a3b0d4`; the user reported the C02b13 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build and OCR-success correction reported passed by the user before C02b15 (`2475200`); device qualification pending**.
 Finding: **P0-13, ocrFrame input portion**. OCR response parsing, other remaining image/OCR adapters and helper transport remain open.
 
 ## Result and scope
@@ -48,3 +48,5 @@ Continue remaining measured P0-13 image/OCR adapters and response work, P0-12 ev
 Root macOS CI aborted in the native bridge fixture after the frame-image cases. The typed OCR entry reused zx_typedTouchReply, whose sole success shape is exactly `0\r\n`; it marked a valid `0;;<OCR body>\r\n` as failed. The OCR reply adapter now derives ok from the first compatibility column while retaining the same raw/parts, output/cancellation checks and error mappings. Touch reply handling is unchanged.
 
 The actual bridge fixture explicitly requires the default OCR call to succeed with seven reply parts and decoded text/confidence/age before the frozen comparison cases. All-host extraction guards require the OCR-specific adapter. Windows native-budget/OCR and assert-preprocessor checks pass; corrected Foundation/macOS and iOS execution remain pending on CI. No strict warning or sanitizer setting is disabled.
+
+The user reported the corrected C02b14 build at `2475200` passed before C02b15. Structured OCR result publication is tracked in `IMPLEMENTATION-C02B15.md`. This records the user report; no independent macOS/device execution was performed on this host.

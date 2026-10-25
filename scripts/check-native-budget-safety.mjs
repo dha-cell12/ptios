@@ -128,6 +128,11 @@ try {
   assert.match(frameOCREntry,/"ok":@\(\[status isEqualToString:@"0"\]\)/);
   await writeFile(join(temp,"NativeFrameOCRBridge.inc"),frameOCRBridge);
   await writeFile(join(temp,"NativeFrameOCREntry.inc"),frameOCREntry);
+  const frameOCRResult=between(tess,"// BEGIN structured frame OCR result.","// END structured frame OCR result.");
+  assert.doesNotMatch(frameOCRResult,/initWithBase64EncodedString|componentsSeparatedByString/);
+  assert.doesNotMatch(frameOCREntry.slice(frameOCREntry.indexOf("NSDictionary *TLinkExecuteNativeFrameOCR")),/componentsSeparatedByString|initWithBase64EncodedString/);
+  assert.doesNotMatch(frameOCRBridge.slice(frameOCRBridge.indexOf("NSDictionary *result=TLinkExecuteNativeFrameOCR")),/TLinkautoJSBase64Decode|TLinkautoJSSafeStringPart/);
+  await writeFile(join(temp,"NativeFrameOCRResult.inc"),frameOCRResult);
   const framePickBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColor])","    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColors])");
   const framePickEntry=between(task,"// BEGIN typed frame pick task entry.","// END typed frame pick task entry.");
   assert.doesNotMatch(framePickBridge,/executeRawPayload|stringWithFormat|componentsSeparatedByString/);

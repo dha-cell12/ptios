@@ -65,6 +65,20 @@ static NSError *zx_tessError(NSString *code, NSString *message)
                            userInfo:@{NSLocalizedDescriptionKey:resp}];
 }
 
+// BEGIN structured frame OCR result.
+TLinkNativeFrameOCRValue TLinkFormatFrameOCRValue(NSString *text,double confidence,uint64_t ageMs,double ocrMs,double preprocessMs,double totalMs){
+    TLinkNativeFrameOCRValue value;
+    NSData *utf8=[(text?:@"") dataUsingEncoding:NSUTF8StringEncoding];
+    // Keep the legacy UTF-8 normalization without decoding our own Base64 column.
+    value.text=utf8?([[NSString alloc] initWithData:utf8 encoding:NSUTF8StringEncoding]?:@""):@"";
+    value.columns=@[[utf8 base64EncodedStringWithOptions:0]?:@"",[NSString stringWithFormat:@"%.2f",confidence],
+        [NSString stringWithFormat:@"%llu",(unsigned long long)ageMs],[NSString stringWithFormat:@"%.3f",ocrMs],
+        [NSString stringWithFormat:@"%.3f",preprocessMs],[NSString stringWithFormat:@"%.3f",totalMs]];
+    value.body=[value.columns componentsJoinedByString:@";;"];
+    return value;
+}
+// END structured frame OCR result.
+
 static NSString *zx_tessCheckLangs(void)
 {
     NSString *dir = [kZXTessdataRoot stringByAppendingPathComponent:@"tessdata"];
@@ -182,7 +196,7 @@ static double zx_tessMeanConfidence(G8Tesseract *tesseract)
     return count > 0 ? sum / (double)count : -1.0;
 }
 
-static NSString *zx_tessRunOCR(cv::Mat &gray,
+static bool zx_tessRunOCR(cv::Mat &gray,
                                NSString *lang,
                                int oem,
                                int psm,
@@ -190,21 +204,22 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
                                int scaleUp,
                                int thresholdMode,
                                uint64_t frameAgeMs,
+                               TLinkNativeFrameOCRValue &value,
                                NSError **error,
                                TLinkOCRBudgetPtr requestBudget)
 {
-    if (requestBudget->stopped()) return nil;
+    if (requestBudget->stopped()) return false;
     const uint64_t total0 = TLinkNativeNowNs(), prep0 = total0;
 
     TLinkOCRImagePlan plan;
     if (gray.empty() || gray.type() != CV_8UC1 || !TLinkOCRPlanImage(gray.cols, gray.rows, scaleUp, thresholdMode == 1 || thresholdMode == 2, plan)) {
         if (error) *error = zx_tessError(@"ocr_scaled_image_too_large", @"OCR accepts at most 4,000,000 scaled pixels; reduce ROI or scale_up.");
-        return nil;
+        return false;
     }
     cv::Mat work = gray;
     if (plan.scale > 1) cv::resize(gray, work, cv::Size(plan.width, plan.height), 0, 0, cv::INTER_CUBIC);
     else if (plan.separateWork) work = gray.clone();
-    if (requestBudget->stopped()) return nil;
+    if (requestBudget->stopped()) return false;
 
     if (thresholdMode == 1) {
         cv::threshold(work, work, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
@@ -214,19 +229,19 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
         cv::adaptiveThreshold(work, work, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, blockSize, 7);
     }
 
-    if (requestBudget->stopped()) return nil;
+    if (requestBudget->stopped()) return false;
     UIImage *image = zx_tessUIImageFromGrayMat(work);
     work.release(); // UIImage owns its provider bytes; discard the scaled work buffer before engine init.
-    if (requestBudget->stopped()) return nil;
+    if (requestBudget->stopped()) return false;
     double preprocessMs = (TLinkNativeNowNs() - prep0) / 1e6;
     if (!image) {
         if (error) *error = zx_tessError(@"image_convert_failed", @"Failed to convert OCR region to UIImage.");
-        return nil;
+        return false;
     }
 
     // Retain the complete prior engine identity, with an unambiguous encoding.
     NSData *identity = [NSJSONSerialization dataWithJSONObject:@[lang ?: @"vie", @(oem), @(psm), whitelist ?: @""] options:0 error:NULL];
-    if (!identity.length) { if (error) *error = zx_tessError(@"engine_identity_failed", @"Unable to encode engine configuration."); return nil; }
+    if (!identity.length) { if (error) *error = zx_tessError(@"engine_identity_failed", @"Unable to encode engine configuration."); return false; }
     std::string key((const char *)identity.bytes, identity.length);
     zx_tessObserveMemoryPressure();
     const uint64_t cacheEpoch = sZXTessEpoch.load();
@@ -241,7 +256,7 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
                                                engineMode:zx_tessOEM(oem)];
         if (!tesseract || !tesseract.isEngineConfigured) {
             if (error) *error = zx_tessError(@"engine_init_failed", @"Failed to initialize Tesseract. Check tessdata files and OEM compatibility.");
-            return nil;
+            return false;
         }
         tesseract.pageSegmentationMode = zx_tessPSM(psm);
         if (whitelist && [whitelist length] > 0) {
@@ -254,7 +269,7 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
     }
 
     const uint64_t ocr0 = TLinkNativeNowNs();
-    if (requestBudget->stopped()) return nil;
+    if (requestBudget->stopped()) return false;
     __attribute__((objc_precise_lifetime)) ZXTessBudgetDelegate *delegate = [[ZXTessBudgetDelegate alloc] initWithBudget:requestBudget];
     tesseract.delegate = delegate;
 
@@ -262,37 +277,33 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
     @try {
         tesseract.image = image;
         tesseract.rect = CGRectMake(0, 0, image.size.width, image.size.height);
-        if (requestBudget->stopped()) return nil;
+        if (requestBudget->stopped()) return false;
         tesseract.maximumRecognitionTime = requestBudget->remainingSeconds();
-        if (tesseract.maximumRecognitionTime <= 0) return nil;
+        if (tesseract.maximumRecognitionTime <= 0) return false;
         // The wrapper converts seconds to integer milliseconds; avoid a positive remainder becoming zero/unlimited.
         if (tesseract.maximumRecognitionTime < 0.001) tesseract.maximumRecognitionTime = 0.001;
         recognized = [tesseract recognize];
-        if (requestBudget->stopped()) return nil;
+        if (requestBudget->stopped()) return false;
         double ocrMs = (TLinkNativeNowNs() - ocr0) / 1e6;
         if (!recognized) {
             if (error) *error = zx_tessError(@"recognize_failed", @"Tesseract recognition failed.");
-            return nil;
+            return false;
         }
 
         NSString *text = [tesseract.recognizedText ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (!TLinkNativeOutputAllowed(256 + 4 * (([text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 2) / 3))) return nil;
+        if (!TLinkNativeOutputAllowed(256 + 4 * (([text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] + 2) / 3))) return false;
         double confidence = zx_tessMeanConfidence(tesseract);
         double totalMs = (TLinkNativeNowNs() - total0) / 1e6;
-        return [NSString stringWithFormat:@"%@;;%.2f;;%llu;;%.3f;;%.3f;;%.3f",
-                zx_tessBase64(text),
-                confidence,
-                (unsigned long long)frameAgeMs,
-                ocrMs,
-                preprocessMs,
-                totalMs];
+        value=TLinkFormatFrameOCRValue(text,confidence,frameAgeMs,ocrMs,preprocessMs,totalMs);
+        return true;
     } @finally { tesseract.delegate = nil; tesseract.image = nil; }
 }
-static NSString *zx_tessRecognizeFrame(const TLinkNativeFrameOCRRequest &request,NSError **error,TLinkOCRBudgetPtr requestBudget){
+static bool zx_tessRecognizeFrame(const TLinkNativeFrameOCRRequest &request,TLinkNativeFrameOCRValue &value,NSError **error,TLinkOCRBudgetPtr requestBudget){
     const uint32_t frameId=request.frameId;const int x=request.x,y=request.y,w=request.width,h=request.height;
     NSString *lang=request.lang.length?request.lang:@"vie",*whitelist=request.whitelist?:@"",*coord=request.coord.length?request.coord:@"pixel";
     const int oem=request.oem,psm=request.psm,scaleUp=request.scaleUp,thresholdMode=request.thresholdMode;const uint64_t maxAgeMs=request.maxAgeMs?request.maxAgeMs:1000;
-    __block NSString *ret = nil;
+    __block TLinkNativeFrameOCRValue completed;
+    __block bool ready=false;
     __block NSError *blockErr = nil;
     const uint64_t queuedEpoch = sZXTessEpoch.load();
     TLinkNativeDispatchSync(zx_tessQueue(), ^{
@@ -304,7 +315,7 @@ static NSString *zx_tessRecognizeFrame(const TLinkNativeFrameOCRRequest &request
                     cv::Mat gray;
                     uint64_t frameAgeMs = 0;
                     if (!zx_copyFrameGrayRegionForOCR(frameId, x, y, w, h, coord, maxAgeMs, gray, &frameAgeMs, &blockErr, scaleUp)) return;
-                    ret = zx_tessRunOCR(gray, lang, oem, psm, whitelist, scaleUp, thresholdMode, frameAgeMs, &blockErr, requestBudget);
+                    ready = zx_tessRunOCR(gray, lang, oem, psm, whitelist, scaleUp, thresholdMode, frameAgeMs, completed, &blockErr, requestBudget);
                 } @catch (NSException *exception) {
                     blockErr = zx_tessError(@"ocr_exception", exception.reason ?: @"OCR failed.");
                     zx_tessPurgeCache();
@@ -320,14 +331,15 @@ static NSString *zx_tessRecognizeFrame(const TLinkNativeFrameOCRRequest &request
     });
     if (requestBudget->stopped()) {
         if (error) *error = zx_tessError(@"ocr_cancelled_or_timed_out", @"OCR request cancelled or its 3-second cooperative budget expired.");
-        return nil;
+        return false;
     }
 
     if (blockErr) {
         if (error) *error = blockErr;
-        return nil;
+        return false;
     }
-    return ret;
+    if(ready)value=std::move(completed);
+    return ready;
 }
 #endif
 
@@ -373,18 +385,20 @@ NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error)
 
     TLinkNativeFrameOCRRequest request;request.frameId=frameId;request.x=x;request.y=y;request.width=w;request.height=h;
     request.lang=lang;request.oem=oem;request.psm=psm;request.whitelist=whitelist;request.scaleUp=scaleUp;request.thresholdMode=thresholdMode;request.coord=coord;request.maxAgeMs=maxAgeMs;
-    return zx_tessRecognizeFrame(request,error,requestBudget);
+    TLinkNativeFrameOCRValue value;
+    return zx_tessRecognizeFrame(request,value,error,requestBudget)?value.body:nil;
 #endif
 }
 
-NSString *recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &request,NSError **error){
+bool recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &request,TLinkNativeFrameOCRValue &value,NSError **error){
+    value=TLinkNativeFrameOCRValue();
 #if !ENABLE_TESSERACT_OCR
-    (void)request;if(error)*error=zx_tessError(@"disabled",@"Tesseract OCR is not enabled in this build.");return nil;
+    (void)request;if(error)*error=zx_tessError(@"disabled",@"Tesseract OCR is not enabled in this build.");return false;
 #else
     const uint64_t enteredAt=TLinkNativeNowNs();
     TLinkOCRAdmission admission(sZXTessActive);
-    if(!admission){sZXTessBusy.fetch_add(1);if(error)*error=zx_tessError(@"ocr_busy",@"Only two OCR requests may be active or queued.");return nil;}
+    if(!admission){sZXTessBusy.fetch_add(1);if(error)*error=zx_tessError(@"ocr_busy",@"Only two OCR requests may be active or queued.");return false;}
     auto requestBudget=std::make_shared<TLinkOCRRequestBudget>(TLinkCurrentNativeBudget(),enteredAt);
-    return zx_tessRecognizeFrame(request,error,requestBudget);
+    return zx_tessRecognizeFrame(request,value,error,requestBudget);
 #endif
 }

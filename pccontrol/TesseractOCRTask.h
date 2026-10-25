@@ -10,7 +10,12 @@ struct TLinkNativeFrameOCRRequest {
     uint64_t maxAgeMs=1000;
     NSString *lang=@"vie",*whitelist=@"",*coord=@"pixel";
 };
-NSString *recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &request,NSError **error);
+struct TLinkNativeFrameOCRValue {
+    NSString *text=@"",*body=@"";
+    NSArray<NSString *> *columns=nil;
+};
+TLinkNativeFrameOCRValue TLinkFormatFrameOCRValue(NSString *text,double confidence,uint64_t ageMs,double ocrMs,double preprocessMs,double totalMs);
+bool recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &request,TLinkNativeFrameOCRValue &value,NSError **error);
 #endif
 
 NSDictionary *TLinkTesseractOCRPerformance(void);

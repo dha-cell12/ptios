@@ -104,7 +104,7 @@ struct FixtureEngine { unsigned clears=0; size_t imageBytes=0; void Clear(){++cl
     if(throwCPP.exchange(false))throw std::runtime_error("fixture recognition failure");
     return ![self.delegate shouldCancelImageRecognitionForTesseract:self];
 }
-- (NSString *)recognizedText{return @" fixture result \n";}
+- (NSString *)recognizedText{return [NSString stringWithFormat:@" %@ \n",@"fixture result"];}
 - (NSArray *)recognizedBlocksByIteratorLevel:(G8PageIteratorLevel)level{(void)level;G8RecognizedBlock *block=[G8RecognizedBlock new];block.confidence=83;return @[block];}
 @end
 static bool zx_copyFrameGrayRegionForOCR(uint32_t,int,int,int w,int h,NSString *,uint64_t,cv::Mat &out,uint64_t *age,NSError **error,int scale) {
@@ -114,26 +114,35 @@ static bool zx_copyFrameGrayRegionForOCR(uint32_t,int,int,int w,int h,NSString *
 }
 #define ENABLE_TESSERACT_OCR 1
 #include "OCRTaskUnderTest.inc"
+#include "fixtures/native-frame-ocr-result-legacy-v1.inc"
+#include "fixtures/frame-ocr-result-cases.inc"
 static NSString *run(NSString *whitelist=@"",int scale=1,int threshold=0,int width=16,int height=16,NSError **failure=nullptr) {
     NSString *raw=[NSString stringWithFormat:@"1;;0;;0;;%d;;%d;;eng;;1;;7;;%@;;%d;;%d;;pixel;;1000",width,height,[[whitelist dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0],scale,threshold];
     NSError *error=nil;NSString *value=handleTesseractOCRTaskFromRawData((UInt8 *)raw.UTF8String,&error);
     if(failure)*failure=error;else assert(value&&!error);return value;
 }
 static void purge(){dispatch_sync(zx_tessQueue(),^{zx_tessPurgeCache();});}
+static NSString *runTyped(const TLinkNativeFrameOCRRequest &request,NSError **error){
+    TLinkNativeFrameOCRValue value;return recognizeFrameWithTesseract(request,value,error)?value.body:nil;
+}
 static void typedOCRCases(){
     for(int scale:{0,1,2,4})for(int threshold:{0,1,2}){
         TLinkNativeFrameOCRRequest r;r.frameId=1;r.width=r.height=16;r.lang=@"eng";r.whitelist=@"typed-đọc";r.scaleUp=scale;r.thresholdMode=threshold;
-        NSError *error=nil;NSString *raw=run(r.whitelist,scale,threshold,16,16,&error);assert(raw&&!error);NSString *typed=recognizeFrameWithTesseract(r,&error);assert(typed&&!error);
+        NSError *error=nil;NSString *raw=run(r.whitelist,scale,threshold,16,16,&error);assert(raw&&!error);NSString *typed=runTyped(r,&error);assert(typed&&!error);
         NSArray *a=[raw componentsSeparatedByString:@";;"],*b=[typed componentsSeparatedByString:@";;"];assert(a.count==6&&b.count==6);for(unsigned i=0;i<3;++i)assert([a[i] isEqual:b[i]]);assert(images==0&&sZXTessActive==0);
     }
     TLinkNativeFrameOCRRequest r;r.frameId=1;r.width=r.height=16;r.lang=@"eng";NSError *error=nil;
-    throwNS=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_exception"]);purge();
-    throwCPP=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_exception"]);purge();
-    failInit=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"engine_init_failed"]);purge();
-    slowInit=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_cancelled_or_timed_out"]);clockOffset=0;purge();
-    r.width=501;r.height=500;r.scaleUp=4;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_scaled_image_too_large"]);r.width=r.height=16;r.scaleUp=1;
-    {TLinkOCRAdmission a(sZXTessActive),b(sZXTessActive);assert(a&&b);assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_busy"]);}
-    auto token=std::make_shared<TLinkNativeCancellation>();auto parent=std::make_shared<TLinkNativeBudget>(token,0,4096);token->cancel();{TLinkNativeBudgetScope scope(parent);assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_cancelled_or_timed_out"]);}purge();
+    throwNS=true;assert(!runTyped(r,&error)&&[error.localizedDescription containsString:@"ocr_exception"]);purge();
+    throwCPP=true;assert(!runTyped(r,&error)&&[error.localizedDescription containsString:@"ocr_exception"]);purge();
+    failInit=true;assert(!runTyped(r,&error)&&[error.localizedDescription containsString:@"engine_init_failed"]);purge();
+    slowInit=true;assert(!runTyped(r,&error)&&[error.localizedDescription containsString:@"ocr_cancelled_or_timed_out"]);clockOffset=0;purge();
+    r.width=501;r.height=500;r.scaleUp=4;assert(!runTyped(r,&error)&&[error.localizedDescription containsString:@"ocr_scaled_image_too_large"]);r.width=r.height=16;r.scaleUp=1;
+    {TLinkOCRAdmission a(sZXTessActive),b(sZXTessActive);assert(a&&b);assert(!runTyped(r,&error)&&[error.localizedDescription containsString:@"ocr_busy"]);}
+    auto token=std::make_shared<TLinkNativeCancellation>();auto parent=std::make_shared<TLinkNativeBudget>(token,0,4096);token->cancel();{TLinkNativeBudgetScope scope(parent);assert(!runTyped(r,&error)&&[error.localizedDescription containsString:@"ocr_cancelled_or_timed_out"]);}purge();
+    TLinkNativeFrameOCRValue held;
+    @autoreleasepool{error=nil;assert(recognizeFrameWithTesseract(r,held,&error)&&!error);}
+    assert([held.text isEqualToString:@"fixture result"]&&held.columns.count==6&&held.body.length>0);purge();
+    throwNS=true;assert(!recognizeFrameWithTesseract(r,held,&error)&&held.body.length==0&&held.text.length==0&&held.columns.count==0);purge();
     assert(engines==0&&images==0&&sZXTessActive==0);puts("Typed OCR Foundation passed: shared actual queue/cache/CV/engine adapter, 12 RAW/typed comparisons, busy/scaled preflight, NS/C++ faults, cold expiry/cancel and released resources.");
 }
 int main(){@autoreleasepool{
@@ -142,6 +151,7 @@ int main(){@autoreleasepool{
         cv::Mat gray(8,8);UIImage *image=zx_tessUIImageFromGrayMat(gray);engine.image=image;assert(engine->_tesseract->imageBytes==64);engine.image=nil;
         assert(!engine.image&&engine->_tesseract->imageBytes==0&&engine->_tesseract->clears==1&&CGSizeEqualToSize(engine.imageSize,CGSizeZero));}
     assert(engines==0&&images==0);
+    frameOCRResultCases();
     typedOCRCases();
     fputs("OCR runtime: actual task orchestration/cache/conversion and vendor nil cleanup\n",stderr);
     for(unsigned n=0;n<1000;++n){@autoreleasepool{NSString *value=run([NSString stringWithFormat:@"list-%u",n]);assert([value componentsSeparatedByString:@";;"].count==6);assert(engines<=2);}}

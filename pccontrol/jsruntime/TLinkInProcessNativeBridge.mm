@@ -925,10 +925,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         for(NSString *token in @[lang,coord]){NSData *data=[token dataUsingEncoding:NSUTF8StringEncoding];if(!data||(data.length&&memchr(data.bytes,0,data.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];}
         input.lang=lang;input.coord=coord;
         NSDictionary *result=TLinkExecuteNativeFrameOCR(input,context);
-        NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:TLinkautoJSOCRResultByAddingDecodedError(result)];
-        if ([parts count] < 7) return [TLinkJSNativeResponse responseWithValue:result];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"text": TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 1)), @"confidence": @([TLinkautoJSSafeStringPart(parts, 2) doubleValue]), @"ageMs": @([TLinkautoJSSafeStringPart(parts, 3) longLongValue]), @"ocrMs": @([TLinkautoJSSafeStringPart(parts, 4) doubleValue]), @"preprocessMs": @([TLinkautoJSSafeStringPart(parts, 5) doubleValue]), @"totalMs": @([TLinkautoJSSafeStringPart(parts, 6) doubleValue])})];
+        return [TLinkJSNativeResponse responseWithValue:result];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodOcr]) {
         NSDictionary *options = [args count] > 0 ? [args objectAtIndex:0] : @{};
