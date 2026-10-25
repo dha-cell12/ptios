@@ -1,7 +1,7 @@
 # C02b13 — structured image matching in a stored frame
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `404af5a`; the user reported the C02b12 build passed before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b14 (`4a3b0d4`); device qualification pending**.
 Finding: **P0-13, findImageInFrame portion**. Other image/OCR adapters and helper transport remain open.
 
 ## Result and scope
@@ -43,3 +43,5 @@ Opaque authorization/queue/OpenCV work remains cooperative/nonpreemptible. No ha
 Build rootfull/roothide observe/enforced variants. Compare JS findImageInFrame with RAW task 68 on one retained frame/template for decimal/float boundaries, reversed scale ranges, point-space ROI, TTL, missing template/frame, match/miss and exact output columns. Check authorization/cancellation, store release/expiry during admitted work, output caps and admission/resource recovery; verify no display capture. Measure bridge allocation/latency separately from matcher cost.
 
 Continue remaining measured P0-13 image/OCR methods, P0-12 event-driven helper RPC, P1-40 config snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+The user reported C02b13 build `4a3b0d4` passed before C02b14. Structured ocrFrame input is tracked in `IMPLEMENTATION-C02B14.md`. This records the user report; no independent macOS/device execution was performed on this host.

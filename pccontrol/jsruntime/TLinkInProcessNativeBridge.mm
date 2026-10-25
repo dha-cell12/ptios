@@ -5,6 +5,7 @@
 #import <UIKit/UIKit.h>
 #import <CoreFoundation/CoreFoundation.h>
 #include <math.h>
+#include "../../shared/TLinkNativeOCRInput.h"
 
 #ifndef TASK_IMAGE_OBJECT
 #define TASK_IMAGE_OBJECT 48
@@ -913,8 +914,17 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSString *lang = TLinkautoJSStringOption(options, @"lang", @"vie");
         NSString *coord = TLinkautoJSStringOption(options, @"coord", @"pixel");
         if (!TLinkautoJSValidToken(lang) || !TLinkautoJSValidToken(coord)) return [TLinkJSNativeResponse responseWithError:@"ocrFrame lang/coord contains unsupported protocol delimiter" code:@-1];
-        NSString *payload = [NSString stringWithFormat:@"%d;;%.0f;;%.0f;;%.0f;;%.0f;;%@;;%d;;%d;;%@;;%d;;%d;;%@;;%d", frameId, x, y, width, height, lang, TLinkautoJSIntOption(options, @"oem", 1), TLinkautoJSIntOption(options, @"psm", 7), TLinkautoJSBase64Encode(TLinkautoJSStringOption(options, @"whitelist", @"")), TLinkautoJSIntOption(options, @"scaleUp", 2), TLinkautoJSIntOption(options, @"thresholdMode", 0), coord, TLinkautoJSIntOption(options, @"maxAgeMs", 1000)];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_OCR_TESSERACT_REGION, payload] context:context];
+        TLinkNativeFrameOCRRequest input;input.frameId=uint32_t(frameId);size_t regionUnits=0;
+        const double region[]={x,y,width,height};int *positions[]={&input.x,&input.y,&input.width,&input.height};
+        for(unsigned i=0;i<4;++i){NSString *part=[NSString stringWithFormat:@"%.0f",region[i]];*positions[i]=[part intValue];regionUnits+=part.length;}
+        input.oem=TLinkautoJSIntOption(options,@"oem",1);input.psm=TLinkautoJSIntOption(options,@"psm",7);
+        NSString *encodedWhitelist=TLinkautoJSBase64Encode(TLinkautoJSStringOption(options,@"whitelist",@""));input.whitelist=TLinkautoJSBase64Decode(encodedWhitelist);
+        input.scaleUp=TLinkautoJSIntOption(options,@"scaleUp",2);input.thresholdMode=TLinkautoJSIntOption(options,@"thresholdMode",0);
+        const int age=TLinkautoJSIntOption(options,@"maxAgeMs",1000);input.maxAgeMs=age>0?uint64_t(age):1000;
+        if(!TLinkNativeOCRInputFits(frameId,input.oem,input.psm,input.scaleUp,input.thresholdMode,age,regionUnits,lang.length,encodedWhitelist.length,coord.length))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"input_too_large")];
+        for(NSString *token in @[lang,coord]){NSData *data=[token dataUsingEncoding:NSUTF8StringEncoding];if(!data||(data.length&&memchr(data.bytes,0,data.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];}
+        input.lang=lang;input.coord=coord;
+        NSDictionary *result=TLinkExecuteNativeFrameOCR(input,context);
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:TLinkautoJSOCRResultByAddingDecodedError(result)];
         if ([parts count] < 7) return [TLinkJSNativeResponse responseWithValue:result];

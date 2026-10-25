@@ -288,6 +288,47 @@ static NSString *zx_tessRunOCR(cv::Mat &gray,
                 totalMs];
     } @finally { tesseract.delegate = nil; tesseract.image = nil; }
 }
+static NSString *zx_tessRecognizeFrame(const TLinkNativeFrameOCRRequest &request,NSError **error,TLinkOCRBudgetPtr requestBudget){
+    const uint32_t frameId=request.frameId;const int x=request.x,y=request.y,w=request.width,h=request.height;
+    NSString *lang=request.lang.length?request.lang:@"vie",*whitelist=request.whitelist?:@"",*coord=request.coord.length?request.coord:@"pixel";
+    const int oem=request.oem,psm=request.psm,scaleUp=request.scaleUp,thresholdMode=request.thresholdMode;const uint64_t maxAgeMs=request.maxAgeMs?request.maxAgeMs:1000;
+    __block NSString *ret = nil;
+    __block NSError *blockErr = nil;
+    const uint64_t queuedEpoch = sZXTessEpoch.load();
+    TLinkNativeDispatchSync(zx_tessQueue(), ^{
+        @autoreleasepool {
+            try {
+                @try {
+                    if (queuedEpoch != sZXTessEpoch.load()) zx_tessPurgeCache();
+                    if (requestBudget->stopped()) return;
+                    cv::Mat gray;
+                    uint64_t frameAgeMs = 0;
+                    if (!zx_copyFrameGrayRegionForOCR(frameId, x, y, w, h, coord, maxAgeMs, gray, &frameAgeMs, &blockErr, scaleUp)) return;
+                    ret = zx_tessRunOCR(gray, lang, oem, psm, whitelist, scaleUp, thresholdMode, frameAgeMs, &blockErr, requestBudget);
+                } @catch (NSException *exception) {
+                    blockErr = zx_tessError(@"ocr_exception", exception.reason ?: @"OCR failed.");
+                    zx_tessPurgeCache();
+                } @finally {
+                    // A warning may arrive while this owner is in an opaque engine operation.
+                    if (queuedEpoch != sZXTessEpoch.load()) zx_tessPurgeCache();
+                }
+            } catch (const std::exception &exception) {
+                blockErr = zx_tessError(@"ocr_exception", [NSString stringWithUTF8String:exception.what()] ?: @"OCR failed.");
+                zx_tessPurgeCache();
+            }
+        }
+    });
+    if (requestBudget->stopped()) {
+        if (error) *error = zx_tessError(@"ocr_cancelled_or_timed_out", @"OCR request cancelled or its 3-second cooperative budget expired.");
+        return nil;
+    }
+
+    if (blockErr) {
+        if (error) *error = blockErr;
+        return nil;
+    }
+    return ret;
+}
 #endif
 
 NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error)
@@ -330,41 +371,20 @@ NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error)
     uint64_t maxAgeMs = (uint64_t)MAX(0, [data[12] longLongValue]);
     if (maxAgeMs == 0) maxAgeMs = 1000;
 
-    __block NSString *ret = nil;
-    __block NSError *blockErr = nil;
-    const uint64_t queuedEpoch = sZXTessEpoch.load();
-    TLinkNativeDispatchSync(zx_tessQueue(), ^{
-        @autoreleasepool {
-            try {
-                @try {
-                    if (queuedEpoch != sZXTessEpoch.load()) zx_tessPurgeCache();
-                    if (requestBudget->stopped()) return;
-                    cv::Mat gray;
-                    uint64_t frameAgeMs = 0;
-                    if (!zx_copyFrameGrayRegionForOCR(frameId, x, y, w, h, coord, maxAgeMs, gray, &frameAgeMs, &blockErr, scaleUp)) return;
-                    ret = zx_tessRunOCR(gray, lang, oem, psm, whitelist, scaleUp, thresholdMode, frameAgeMs, &blockErr, requestBudget);
-                } @catch (NSException *exception) {
-                    blockErr = zx_tessError(@"ocr_exception", exception.reason ?: @"OCR failed.");
-                    zx_tessPurgeCache();
-                } @finally {
-                    // A warning may arrive while this owner is in an opaque engine operation.
-                    if (queuedEpoch != sZXTessEpoch.load()) zx_tessPurgeCache();
-                }
-            } catch (const std::exception &exception) {
-                blockErr = zx_tessError(@"ocr_exception", [NSString stringWithUTF8String:exception.what()] ?: @"OCR failed.");
-                zx_tessPurgeCache();
-            }
-        }
-    });
-    if (requestBudget->stopped()) {
-        if (error) *error = zx_tessError(@"ocr_cancelled_or_timed_out", @"OCR request cancelled or its 3-second cooperative budget expired.");
-        return nil;
-    }
+    TLinkNativeFrameOCRRequest request;request.frameId=frameId;request.x=x;request.y=y;request.width=w;request.height=h;
+    request.lang=lang;request.oem=oem;request.psm=psm;request.whitelist=whitelist;request.scaleUp=scaleUp;request.thresholdMode=thresholdMode;request.coord=coord;request.maxAgeMs=maxAgeMs;
+    return zx_tessRecognizeFrame(request,error,requestBudget);
+#endif
+}
 
-    if (blockErr) {
-        if (error) *error = blockErr;
-        return nil;
-    }
-    return ret;
+NSString *recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &request,NSError **error){
+#if !ENABLE_TESSERACT_OCR
+    (void)request;if(error)*error=zx_tessError(@"disabled",@"Tesseract OCR is not enabled in this build.");return nil;
+#else
+    const uint64_t enteredAt=TLinkNativeNowNs();
+    TLinkOCRAdmission admission(sZXTessActive);
+    if(!admission){sZXTessBusy.fetch_add(1);if(error)*error=zx_tessError(@"ocr_busy",@"Only two OCR requests may be active or queued.");return nil;}
+    auto requestBudget=std::make_shared<TLinkOCRRequestBudget>(TLinkCurrentNativeBudget(),enteredAt);
+    return zx_tessRecognizeFrame(request,error,requestBudget);
 #endif
 }

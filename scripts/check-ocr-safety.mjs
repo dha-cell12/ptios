@@ -24,6 +24,9 @@ const scaler=between(troll,'static UIImage *TLinkScaledImageForTesseract(', 'sta
 assert.ok(scaler.indexOf('TLinkOCRPlanImageExtent(')<scaler.indexOf('UIGraphicsBeginImageContextWithOptions'));
 const trueOCR=between(troll,'static NSData *TLinkRunTrueTesseractOCR(', 'static BOOL TLinkAppendVisionOCRTextForRegion(');
 assert.ok(trueOCR.indexOf('TLinkOCRPlanImage(')<trueOCR.indexOf('TLinkScaledImageForTesseract(image'));
+assert.match(task,/NSString \*recognizeFrameWithTesseract[\s\S]*TLinkOCRAdmission admission[\s\S]*zx_tessRecognizeFrame/);
+assert.match(task,/static NSString \*zx_tessRecognizeFrame[\s\S]*TLinkNativeDispatchSync/);
+assert.doesNotMatch(task.slice(task.indexOf('NSString *recognizeFrameWithTesseract')),/zx_tessSplitEventData|initWithUTF8String/);
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ocr-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

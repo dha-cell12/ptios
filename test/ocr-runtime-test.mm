@@ -11,6 +11,7 @@
 static std::atomic<uint64_t> clockOffset{0};
 static uint64_t FixtureNow() { return TLinkNativeNowNs()+clockOffset.load(); }
 #include "OCRPolicyUnderTest.h"
+#import "../pccontrol/TesseractOCRTask.h"
 #import "../third_party/TesseractOCR/TesseractOCR/G8Constants.h"
 static std::atomic<unsigned> engines{0}, maxEngines{0}, images{0}, roiCalls{0}, recognizes{0};
 static std::atomic<bool> holdCopy{false}, failInit{false}, slowInit{false}, pressureInit{false}, pressure{false}, throwNS{false}, throwCPP{false};
@@ -119,12 +120,29 @@ static NSString *run(NSString *whitelist=@"",int scale=1,int threshold=0,int wid
     if(failure)*failure=error;else assert(value&&!error);return value;
 }
 static void purge(){dispatch_sync(zx_tessQueue(),^{zx_tessPurgeCache();});}
+static void typedOCRCases(){
+    for(int scale:{0,1,2,4})for(int threshold:{0,1,2}){
+        TLinkNativeFrameOCRRequest r;r.frameId=1;r.width=r.height=16;r.lang=@"eng";r.whitelist=@"typed-đọc";r.scaleUp=scale;r.thresholdMode=threshold;
+        NSError *error=nil;NSString *raw=run(r.whitelist,scale,threshold,16,16,&error);assert(raw&&!error);NSString *typed=recognizeFrameWithTesseract(r,&error);assert(typed&&!error);
+        NSArray *a=[raw componentsSeparatedByString:@";;"],*b=[typed componentsSeparatedByString:@";;"];assert(a.count==6&&b.count==6);for(unsigned i=0;i<3;++i)assert([a[i] isEqual:b[i]]);assert(images==0&&sZXTessActive==0);
+    }
+    TLinkNativeFrameOCRRequest r;r.frameId=1;r.width=r.height=16;r.lang=@"eng";NSError *error=nil;
+    throwNS=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_exception"]);purge();
+    throwCPP=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_exception"]);purge();
+    failInit=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"engine_init_failed"]);purge();
+    slowInit=true;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_cancelled_or_timed_out"]);clockOffset=0;purge();
+    r.width=501;r.height=500;r.scaleUp=4;assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_scaled_image_too_large"]);r.width=r.height=16;r.scaleUp=1;
+    {TLinkOCRAdmission a(sZXTessActive),b(sZXTessActive);assert(a&&b);assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_busy"]);}
+    auto token=std::make_shared<TLinkNativeCancellation>();auto parent=std::make_shared<TLinkNativeBudget>(token,0,4096);token->cancel();{TLinkNativeBudgetScope scope(parent);assert(!recognizeFrameWithTesseract(r,&error)&&[error.localizedDescription containsString:@"ocr_cancelled_or_timed_out"]);}purge();
+    assert(engines==0&&images==0&&sZXTessActive==0);puts("Typed OCR Foundation passed: shared actual queue/cache/CV/engine adapter, 12 RAW/typed comparisons, busy/scaled preflight, NS/C++ faults, cold expiry/cancel and released resources.");
+}
 int main(){@autoreleasepool{
     // The old setter's nil call must clear both Objective-C and native request state.
     @autoreleasepool {G8Tesseract *engine=[[G8Tesseract alloc]initWithLanguage:@"eng" configDictionary:nil configFileNames:nil absoluteDataPath:@"" engineMode:G8OCREngineModeLSTMOnly];
         cv::Mat gray(8,8);UIImage *image=zx_tessUIImageFromGrayMat(gray);engine.image=image;assert(engine->_tesseract->imageBytes==64);engine.image=nil;
         assert(!engine.image&&engine->_tesseract->imageBytes==0&&engine->_tesseract->clears==1&&CGSizeEqualToSize(engine.imageSize,CGSizeZero));}
     assert(engines==0&&images==0);
+    typedOCRCases();
     fputs("OCR runtime: actual task orchestration/cache/conversion and vendor nil cleanup\n",stderr);
     for(unsigned n=0;n<1000;++n){@autoreleasepool{NSString *value=run([NSString stringWithFormat:@"list-%u",n]);assert([value componentsSeparatedByString:@";;"].count==6);assert(engines<=2);}}
     assert(images==0&&engines==2&&maxEngines<=2);

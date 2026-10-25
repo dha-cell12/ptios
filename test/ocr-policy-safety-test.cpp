@@ -1,9 +1,19 @@
 #include "../shared/TLinkOCRPolicy.h"
+#include "../shared/TLinkNativeOCRInput.h"
 #include <cassert>
 #include <cstdio>
 #include <thread>
 #include <map>
+static void typedOCRInputCases(){
+    for(unsigned n=0;n<10000;++n){const int frame=n%2?1:INT_MAX,oem=int(n%7)-3,psm=int(n%29),scale=int(n%7)-1,threshold=int(n%5)-1,age=n%3?1000:INT_MIN;size_t regionUnits=0;std::string wire="91"+std::to_string(frame);
+        for(unsigned i=0;i<4;++i){char part[384];std::snprintf(part,sizeof(part),"%.0f",n%73?double(int((n+i)%19)-4)*.5:1e308);regionUnits+=std::strlen(part);wire+=";;";wire+=part;}
+        const size_t langUnits=n%31,whiteUnits=(n%200)*4;wire+=";;"+std::string(langUnits,'x')+";;"+std::to_string(oem)+";;"+std::to_string(psm)+";;"+std::string(whiteUnits,'x')+";;"+std::to_string(scale)+";;"+std::to_string(threshold)+";;;;"+std::to_string(age);
+        const size_t limit=8192-wire.size();assert(TLinkNativeOCRInputFits(frame,oem,psm,scale,threshold,age,regionUnits,langUnits,whiteUnits,limit)&&!TLinkNativeOCRInputFits(frame,oem,psm,scale,threshold,age,regionUnits,langUnits,whiteUnits,limit+1));}
+    for(unsigned field=0;field<4;++field){size_t units[]={4,3,0,5};units[field]=SIZE_MAX;assert(!TLinkNativeOCRInputFits(1,1,7,2,0,1000,units[0],units[1],units[2],units[3]));}
+    puts("Typed OCR ingress passed: 10k frozen wire-length plans, signed scalar fields, huge finite ROI, exact 8192/8193 boundaries and saturated units.");
+}
 int main() {
+    typedOCRInputCases();
     TLinkOCRImagePlan plan;
     assert(TLinkOCRPlanImage(500,500,4,false,plan) && plan.pixels == 4000000 && plan.width == 2000);
     assert(!TLinkOCRPlanImage(501,500,4,false,plan));

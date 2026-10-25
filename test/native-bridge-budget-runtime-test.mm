@@ -5,6 +5,8 @@
 #include "../shared/TLinkNativeColorMulti.h"
 #include "../shared/TLinkNativeFramePick.h"
 #include "../shared/TLinkNativeFrameImage.h"
+#import "../pccontrol/TesseractOCRTask.h"
+#include "../shared/TLinkNativeOCRInput.h"
 #include "../shared/TLinkNativeFrameSearch.h"
 #include "../shared/TLinkNativeFrameColors.h"
 #include "../shared/TLinkNativeFrameMulti.h"
@@ -35,7 +37,7 @@ static TLinkTaskExecutionContext *observed;
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &,TLinkTaskExecutionContext *);
 static bool zx_handleNativeBatch(UInt8 *,NSError **);
-enum {TASK_NATIVE_BATCH=65,TASK_COLOR_PICKER=23,TASK_COLOR_SEARCHER=28,TASK_COLOR_IN_FRAME=69,TASK_FIND_IMAGE_IN_FRAME=68};
+enum {TASK_NATIVE_BATCH=65,TASK_COLOR_PICKER=23,TASK_COLOR_SEARCHER=28,TASK_COLOR_IN_FRAME=69,TASK_FIND_IMAGE_IN_FRAME=68,TASK_OCR_TESSERACT_REGION=91};
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &,TLinkTaskExecutionContext *);
 static void colorRangeLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
@@ -48,6 +50,8 @@ NSDictionary *TLinkExecuteNativeFramePickMany(const TLinkNativeFramePickManyRequ
 static void frameManyLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeFrameImage(const TLinkNativeFrameImageRequest &,TLinkTaskExecutionContext *);
 static void frameImageLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+NSDictionary *TLinkExecuteNativeFrameOCR(const TLinkNativeFrameOCRRequest &,TLinkTaskExecutionContext *);
+static void frameOCRLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeFrameSearch(const TLinkNativeFrameSearchRequest &,TLinkTaskExecutionContext *);
 static void frameSearchLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeFrameColors(const TLinkNativeFrameColorsRequest &,TLinkTaskExecutionContext *);
@@ -76,6 +80,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     if([mode isEqualToString:@"colorMultiRuntime"]&&lastPayload.compare(0,2,"28")==0){colorMultiLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"colorPointsRuntime"]&&lastPayload.compare(0,2,"28")==0){colorPointsLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"colorRangeRuntime"]&&lastPayload.compare(0,2,"28")==0){colorRangeLegacyTask(bytes,length,stream);return;}
+    if([mode isEqualToString:@"frameOCRRuntime"]&&lastPayload.compare(0,2,"91")==0){frameOCRLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameImageRuntime"]&&lastPayload.compare(0,2,"68")==0){frameImageLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameManyRuntime"]&&lastPayload.compare(0,2,"69")==0){frameManyLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"frameSearchRuntime"]&&lastPayload.compare(0,2,"69")==0){frameSearchLegacyTask(bytes,length,stream);return;}
@@ -110,6 +115,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyFrameSearch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameMany:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameImage:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyFrameOCR:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (NSDictionary *)executeRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
@@ -151,6 +157,12 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "fixtures/native-frame-search-legacy-v1.inc"
     return nil;
 }
+- (TLinkJSNativeResponse *)legacyFrameOCR:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-frame-ocr-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyFrameImage:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -173,6 +185,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeColorPointsBridge.inc"
 #include "NativeColorMultiBridge.inc"
 #include "NativeFrameImageBridge.inc"
+#include "NativeFrameOCRBridge.inc"
 #include "NativeFramePickBridge.inc"
 #include "NativeFrameManyBridge.inc"
 #include "NativeFrameSearchBridge.inc"
@@ -519,6 +532,24 @@ static void frameImageLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef str
     TLinkNativeFrameImageValue value;NSError *error=nil;if(!frameImageValues(r,value,&error)){notifyClient((UInt8 *)error.localizedDescription.UTF8String,stream);return;}
     NSString *raw=value.x<0?[NSString stringWithFormat:@"0;;-1;;-1;;0;;0;;-1;;-1;;%.4f;;%llu;;%.3f;;%.3f\r\n",value.score,(unsigned long long)value.ageMs,value.totalMs,value.totalMs]:[NSString stringWithFormat:@"0;;%d;;%d;;%d;;%d;;%.2f;;%.2f;;%.4f;;%llu;;%.3f;;%.3f\r\n",value.x,value.y,value.width,value.height,value.centerX,value.centerY,value.score,(unsigned long long)value.ageMs,value.totalMs,value.totalMs];notifyClient((UInt8 *)raw.UTF8String,stream);
 }
+static unsigned frameOCRCalls=0;static int frameOCRFault=0;static bool cancelFrameOCR=false;static NSString *frameOCRError=nil;
+static TLinkNativeBudgetPtr frameOCRBudget;
+static NSString *frameOCRValues(const TLinkNativeFrameOCRRequest &r,NSError **error){
+    if(frameOCRError){if(error)*error=[NSError errorWithDomain:@"fixture" code:999 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"1;;%@;;%@\r\n",frameOCRError,TLinkautoJSBase64Encode(@"controlled OCR error")]}];return nil;}
+    NSString *text=[NSString stringWithFormat:@"%@|%@|%@|%u|%d|%d|%d|%d|%d|%d|%d|%d|%llu",r.lang.length?r.lang:@"vie",r.coord.length?r.coord:@"pixel",r.whitelist?:@"",r.frameId,r.x,r.y,r.width,r.height,r.oem,r.psm,r.scaleUp,r.thresholdMode,(unsigned long long)(r.maxAgeMs?r.maxAgeMs:1000)];
+    return [NSString stringWithFormat:@"%@;;83.12;;42;;1.235;;2.346;;3.457",TLinkautoJSBase64Encode(text)];
+}
+NSString *recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &r,NSError **error){
+    ++frameOCRCalls;frameOCRBudget=TLinkCurrentNativeBudget();assert(frameOCRBudget&&!frameOCRBudget->capturesResponse());
+    if(frameOCRFault==1)[NSException raise:@"FrameOCRFixture" format:@"OCR throws"];
+    if(frameOCRFault==2)throw std::runtime_error("frame OCR fixture");
+    NSString *body=frameOCRValues(r,error);if(cancelFrameOCR)[touchToken cancel];return body;
+}
+static void frameOCRLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef stream){
+    NSString *payload=[[NSString alloc] initWithBytes:bytes+2 length:length-2 encoding:NSUTF8StringEncoding];NSArray *fields=[payload componentsSeparatedByString:@";;"];assert(fields.count==13);
+    TLinkNativeFrameOCRRequest r;r.frameId=uint32_t([fields[0] intValue]);r.x=[fields[1] intValue];r.y=[fields[2] intValue];r.width=[fields[3] intValue];r.height=[fields[4] intValue];r.lang=[fields[5] length]?fields[5]:@"vie";r.oem=[fields[6] intValue];r.psm=[fields[7] intValue];r.whitelist=TLinkautoJSBase64Decode(fields[8]);r.scaleUp=[fields[9] intValue];r.thresholdMode=[fields[10] intValue];r.coord=[fields[11] length]?fields[11]:@"pixel";r.maxAgeMs=uint64_t(MAX(0,[fields[12] longLongValue]));if(!r.maxAgeMs)r.maxAgeMs=1000;
+    NSError *error=nil;NSString *body=frameOCRValues(r,&error);NSString *raw=error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""];notifyClient((UInt8 *)raw.UTF8String,stream);
+}
 // Match Image.h: OpenCV leaves these macros undefined in production Task.xm.
 #pragma push_macro("YES")
 #pragma push_macro("NO")
@@ -530,6 +561,7 @@ static void frameImageLegacyTask(UInt8 *bytes,size_t length,CFWriteStreamRef str
 #include "NativeColorPointsEntry.inc"
 #include "NativeColorMultiEntry.inc"
 #include "NativeFrameImageEntry.inc"
+#include "NativeFrameOCREntry.inc"
 #include "NativeFramePickEntry.inc"
 #include "NativeFrameManyEntry.inc"
 #include "NativeFrameSearchEntry.inc"
@@ -1083,6 +1115,32 @@ static void typedFrameImageCases(TLinkInProcessNativeBridge *bridge){
     assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameImageBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
     puts("Typed frame image bridge/entry passed: 120 frozen JS/RAW cases, exact fields/rounding/ingress/encoding, one task-68 gate, eight-second C01/caller isolation, denial/cancel/fault/output and no typed RAW dispatch.");
 }
+static void typedFrameOCRCases(TLinkInProcessNativeBridge *bridge){
+    const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameOCRFault=0;frameOCRError=nil;cancelFrameOCR=false;};
+    const auto request=[](int fid,NSDictionary *options)->TLinkJSNativeRequest *{return [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodOcrFrame arguments:@[@(fid),options]];};
+    const auto invoke=[bridge,request](int fid,NSDictionary *options,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{TLinkJSNativeResponse *result=[bridge executeRequest:request(fid,options) context:context error:nil];assert(!TLinkCurrentNativeBudget());return result;};
+    const auto compare=[bridge,request,invoke,reset](int fid,NSDictionary *options,NSString *backendError){
+        mode=@"frameOCRRuntime";auto oldContext=parent(30);reset(oldContext);frameOCRError=backendError;const int oldCalls=calls;TLinkJSNativeResponse *legacy=[bridge legacyFrameOCR:request(fid,options) context:oldContext];const int dispatched=calls-oldCalls;
+        auto context=parent(30);reset(context);frameOCRError=backendError;const int before=calls,gates=licenseCalls;const unsigned reads=frameOCRCalls;const uint64_t started=TLinkNativeNowNs();TLinkJSNativeResponse *typed=invoke(fid,options,context);const uint64_t ended=TLinkNativeNowNs();assert(typed.ok==legacy.ok);
+        if(typed.ok){if(![typed.value isEqual:legacy.value])std::fprintf(stderr,"frame OCR parity: legacy %s, typed %s\n",[[legacy.value description] UTF8String],[[typed.value description] UTF8String]);assert([typed.value isEqual:legacy.value]);}else assert([typed.errorMessage isEqualToString:legacy.errorMessage]&&[typed.errorCode isEqual:legacy.errorCode]);
+        assert(calls==before&&licenseCalls==gates+dispatched&&frameOCRCalls==reads+dispatched);if(dispatched){assert(lastLicenseTask==91&&frameOCRBudget==licenseBudget&&!frameOCRBudget->capturesResponse()&&frameOCRBudget->response().capacity()==0);assert(frameOCRBudget->deadline()>=started+3000000000ULL&&frameOCRBudget->deadline()<=ended+3000000000ULL);}
+    };
+    for(unsigned n=0;n<100;++n){const double x=n<8?std::vector<double>{-1e308,double(INT_MIN),-.5,-0.0,.5,1.5,double(INT_MAX),1e308}[n]:double(int(n%19)-3)*.5;compare(1,@{@"x":@(x),@"y":@1.5,@"width":@(double(int(n%9)-2)*.5),@"lang":n%3?@"eng":@"",@"coord":n%2?@"point":@"pixel",@"whitelist":@"đọc ;;A\n",@"oem":@(int(n%7)-2),@"psm":@(n%17),@"scaleUp":@(int(n%7)-1),@"thresholdMode":@(n%4),@"maxAgeMs":@(int(n%3)-1)},nil);}
+    NSDictionary *normal=@{};compare(1,normal,nil);compare(0,normal,nil);compare(1,@{@"x":@(NAN)},nil);compare(1,@{@"height":@(INFINITY)},nil);compare(1,@{@"lang":@"en;;x"},nil);compare(1,@{@"coord":@"pixel\n"},nil);
+    unichar nul=0,high=0xd800;NSString *nullString=[NSString stringWithCharacters:&nul length:1],*broken=[NSString stringWithCharacters:&high length:1];
+    for(NSString *token:@[nullString,broken,@"điểm",@""]){compare(1,@{@"lang":token},nil);compare(1,@{@"coord":token},nil);compare(1,@{@"whitelist":token},nil);}
+    NSString *empty=@"911;;0;;0;;0;;0;;;;1;;7;;;;2;;0;;pixel;;1000";const NSUInteger limit=8192-empty.length;
+    for(unsigned extra=0;extra<2;++extra){compare(1,@{@"lang":[@"x" stringByPaddingToLength:limit+extra withString:@"x" startingAtIndex:0]},nil);compare(1,@{@"lang":[nullString stringByPaddingToLength:limit+extra withString:@"x" startingAtIndex:0]},nil);}
+    compare(1,@{@"whitelist":[@"界" stringByPaddingToLength:3000 withString:@"界" startingAtIndex:0]},nil);
+    for(NSString *code:@[@"disabled",@"ocr_busy",@"ocr_scaled_image_too_large",@"engine_init_failed",@"ocr_exception",@"ocr_cancelled_or_timed_out"])compare(1,normal,code);
+    const int wireCalls=calls;auto context=parent();reset(context);licenseAllowed=false;const unsigned reads=frameOCRCalls;NSDictionary *denied=invoke(1,normal,context).value;assert([denied[@"raw"] isEqualToString:@"-1;;license_required task=91\r\n"]&&frameOCRCalls==reads);
+    context=parent();reset(context);stopInLicense=true;failure(invoke(1,normal,context).value,@"AbortError");assert(frameOCRCalls==reads);context=parent();reset(context);[context.cancellationToken cancel];const int gates=licenseCalls;failure(invoke(1,normal,context).value,@"AbortError");assert(licenseCalls==gates&&frameOCRCalls==reads);
+    context=parent();reset(context);[context setNativeBudget:std::make_shared<TLinkNativeBudget>(nullptr,TLinkNativeNowNs()-1,4096)];failure(invoke(1,normal,context).value,@"TimeoutError");assert(licenseCalls==gates);
+    context=parent(30);reset(context);licenseDelayMs=3100;auto caller=std::make_shared<TLinkNativeBudget>([context.cancellationToken nativeCancellation],TLinkNativeDeadline(30),4096);[context setNativeBudget:caller];NSDictionary *expired=invoke(1,normal,context).value;assert([expired[@"raw"] isEqualToString:@"1;;native_cancelled_or_timed_out\r\n"]&&!caller->stopped()&&frameOCRCalls==reads);
+    context=parent();reset(context);cancelFrameOCR=true;failure(invoke(1,normal,context).value,@"AbortError");for(int fault:{1,2}){context=parent();reset(context);frameOCRFault=fault;failure(invoke(1,normal,context).value,@"native_exception");}
+    context=parent();reset(context);NSDictionary *success=invoke(1,normal,context).value;const NSUInteger bytes=[success[@"raw"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];context=parent(1,bytes);reset(context);assert([invoke(1,normal,context).value[@"ok"] boolValue]);context=parent(1,bytes-1);reset(context);failure(invoke(1,normal,context).value,@"response_too_large");
+    assert(calls==wireCalls&&!TLinkCurrentNativeBudget());frameOCRBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";puts("Typed frame OCR input passed: 100 frozen JS/RAW cases, Foundation int/age/whitelist normalization, exact ingress/encoding, decoded errors/results, one task-91 gate, C01/caller/cancel/fault/output and no typed RAW dispatch.");
+}
 static void typedFramePickCases(TLinkInProcessNativeBridge *bridge){
     const auto reset=[](TLinkTaskExecutionContext *context){touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;frameReadFault=0;frameReadError=nil;cancelFrameRead=false;};
     const auto invoke=[bridge](int id,double x,double y,NSDictionary *options,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{
@@ -1514,6 +1572,7 @@ int main() { @autoreleasepool {
     typedLiveColorsCases(bridge);
     typedLiveMultiCases(bridge);
     typedFrameImageCases(bridge);
+    typedFrameOCRCases(bridge);
     typedFramePickCases(bridge);
     typedFramePickManyCases(bridge);
     typedFrameSearchCases(bridge);
