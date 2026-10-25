@@ -2,6 +2,7 @@
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #import "../shared/TLinkJSFileHandle.h"
 #include "../shared/TLinkHelperRPCIdentity.h"
+#include "../shared/TLinkHelperSocketIO.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -1052,46 +1053,33 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 }
 // END helper RPC response admission.
 
-- (NSData *)readAllFromClient:(int)client
-{
-    NSMutableData *data = [NSMutableData data];
-    uint8_t buffer[4096];
-    while (true) {
-        ssize_t n = read(client, buffer, sizeof(buffer));
-        if (n > 0) {
-            [data appendBytes:buffer length:(NSUInteger)n];
-            if (data.length > 1024 * 1024) break;
-            if (memchr(buffer, '\n', (size_t)n)) break;
-            continue;
-        }
-        break;
-    }
-    return data;
-}
-
+// BEGIN helper socket client ownership.
 - (void)handleClient:(int)client
 {
+    using namespace TLinkHelperIO;
+    Socket socket(client);
+    const Deadline deadline(nowMs(), ServerTimeoutMs);
     @autoreleasepool {
-        NSData *requestData = [self readAllFromClient:client];
-        NSError *err = nil;
-        NSDictionary *request = [TLinkJSHelperProtocol deserializeEnvelope:requestData error:&err];
-        NSDictionary *response = request ? [self handleEnvelope:request] : [self errorEnvelopeForRequest:@{} message:err.localizedDescription ?: @"invalid_json"];
-        NSMutableData *responseData = [[TLinkJSHelperProtocol serializeEnvelope:response error:nil] mutableCopy];
-        if (responseData) {
-            const uint8_t newline = '\n';
-            [responseData appendBytes:&newline length:1];
-            const uint8_t *bytes = (const uint8_t *)responseData.bytes;
-            NSUInteger remaining = responseData.length;
-            while (remaining > 0) {
-                ssize_t written = write(client, bytes, remaining);
-                if (written <= 0) break;
-                bytes += written;
-                remaining -= (NSUInteger)written;
+        @try {
+            if (!socket.prepare().ok()) return;
+            std::vector<uint8_t> frame;
+            if (!readFrame(posixOps(), socket.fd(), frame, deadline).ok()) return;
+            NSData *requestData = [NSData dataWithBytes:frame.data() length:frame.size()];
+            NSError *err = nil;
+            NSDictionary *request = [TLinkJSHelperProtocol deserializeEnvelope:requestData error:&err];
+            if (!deadline.remaining(nowMs())) return;
+            NSDictionary *response = request ? [self handleEnvelope:request] : [self errorEnvelopeForRequest:@{} message:err.localizedDescription ?: @"invalid_json"];
+            if (!deadline.remaining(nowMs())) return;
+            NSData *responseData = [TLinkJSHelperProtocol serializeEnvelope:response error:nil];
+            if (responseData.length > MaxFrameBytes) {
+                response = [self errorEnvelopeForRequest:request ?: @{} message:@"frame_too_large"];
+                responseData = [TLinkJSHelperProtocol serializeEnvelope:response error:nil];
             }
-        }
-        close(client);
+            if (responseData) (void)writeFrame(posixOps(), socket.fd(), static_cast<const uint8_t *>(responseData.bytes), responseData.length, deadline);
+        } @finally { socket.close(); }
     }
 }
+// END helper socket client ownership.
 
 - (void)run
 {

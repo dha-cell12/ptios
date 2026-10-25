@@ -1,7 +1,7 @@
 # C02d1 — helper RPC identity and single response slot
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `aec9902`; the user reported C02c3 built successfully before this slice.
-Status: **source implemented; new macOS/Foundation/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02d2 (`3e9f798`); device qualification pending**.
 Finding: **P0-12 prerequisite: correlate ownership before native effects and concurrent/event transport**.
 
 ## Result and scope
@@ -40,3 +40,5 @@ Identity strings must contain 1..64 UTF-8 bytes, including embedded NUL in compa
 Run rootfull/roothide helper mode, force helper restart/session replacement and delay or duplicate native replies. Verify mismatched status cannot inject, duplicate results cannot replace the first result, late/unknown replies do not retain payloads, and stop drains the pending worker before a new session starts. Compare successful native replies and license/policy denial behavior with the previous build. Measure actual cancellation and cleanup on device.
 
 Next P0-12 work: deadline-bounded socket framing/connect/read/write and bounded server client ownership before introducing concurrent event waits; preserve session/request correlation, replay retirement and no repeated native effects. P1-40 invalidation, remaining P0-13 adapters and C01/C02 device/performance acceptance remain open.
+
+The user reported C02d1 build `3e9f798` passed before C02d2. The transport I/O deadline slice is tracked in `IMPLEMENTATION-C02D2.md`; no independent macOS/device execution was performed on this Windows host.

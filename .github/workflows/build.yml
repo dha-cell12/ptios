@@ -55,6 +55,7 @@ jobs:
           node scripts/check-helper-config-safety.mjs
           node scripts/check-helper-replay-safety.mjs
           node scripts/check-helper-identity-safety.mjs
+          node scripts/check-helper-transport-safety.mjs
           node scripts/check-recorder-safety.mjs
           node scripts/check-image-storage-safety.mjs
           node scripts/check-socket-transport-safety.mjs
