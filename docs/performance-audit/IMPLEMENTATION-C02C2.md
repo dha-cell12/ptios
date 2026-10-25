@@ -37,3 +37,7 @@ Empty/oversized IDs, invalid/oversized argument JSON and unsupported method iden
 Build rootfull/roothide in helper modes. Drop the first response to a native side effect and verify the retry replays once; exceed the byte window and confirm an old ID reports unavailable without repeating the effect. Verify collisions, exceptions, policy denials, session reset and cleanup. Measure retained bytes/RSS and encode/decode costs separately from polling delay under real screenshot/OCR/result mixes. Qualify CommonCrypto/JSON behavior on supported iOS versions.
 
 Continue P0-12 event-driven helper transport with session/request ownership and reconnect ordering, remaining P0-13 adapters, P1-40 asynchronous/memory-only invalidation and P1-41 streaming fingerprints. C01/C02 performance/device acceptance remains open.
+
+## CI fixture correction
+
+The first macOS build reported a compile error in the reentry fixture: an Objective-C block captured the local C++ cache by value as const. The fixture now captures a pointer to the original session cache, whose lifetime encloses the synchronous dispatch, so the nested call can inspect its reserved in-flight identity. The existing InFlight and unchanged-effect assertions remain. Production cache/dispatcher code is unchanged. The portable helper replay runner and assert preprocessing pass on Windows after this correction; actual Foundation compilation/execution still requires macOS CI.

@@ -35,9 +35,11 @@ int main(){@autoreleasepool {
     TLinkHelperRPCDispatch(cache,@"a",@"tap",@[],execute,decision);assert(decision==D::Execute);
     TLinkHelperRPCDispatch(cache,nulId,@"tap",@[],execute,decision);assert(decision==D::Execute);
     before=effects;TLinkHelperRPCDispatch(cache,nulId,@"tap",@[],execute,decision);assert(decision==D::Replay&&effects==before);
+    // Capture a pointer: Blocks copy C++ locals as const; reentry must use the original ledger.
+    Cache *const reentryCache=&cache;
     // An execution reentering the same identity cannot recursively repeat its effect.
     TLinkHelperRPCDispatch(cache,@"nested",@"tap",@[],^NSDictionary *{
-        D nested;NSDictionary *blocked=TLinkHelperRPCDispatch(cache,@"nested",@"tap",@[],execute,nested);
+        D nested;NSDictionary *blocked=TLinkHelperRPCDispatch(*reentryCache,@"nested",@"tap",@[],execute,nested);
         assert(nested==D::InFlight);errorIs(blocked,@"native RPC request already in flight");return @{@"ok":@(true)};
     },decision);assert(effects==before);
     // A denied policy reply is replayed; toggling policy later cannot authorize an old ID.
