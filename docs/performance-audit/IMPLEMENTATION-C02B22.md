@@ -1,7 +1,7 @@
 # C02b22 — structured captureImage entry, safe crop bounds and owned resources
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `5ffc503`; the user reported C02b21 built successfully before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02c1 (`2259bc0`); device qualification pending**.
 Finding: **P0-13, captureImage adapter**. Other native adapters and helper transport/config/dedupe remain open.
 
 ## Result and scope
@@ -41,3 +41,5 @@ Until commit, failures after publication attempt direct cleanup of only this cal
 Build rootfull/roothide observe/enforced variants. Compare captureImage with RAW task 48 action 1 for default/negative/outside origins, fractional inputs, extent limits, owner variants and exact reply metadata. Confirm oversized positive extents clamp without overflow, real crop/conversion quality is unchanged, and failures release CGImages and only the newly owned store ID. Exercise caller stop/deadline and memory/count pressure while held readers remain valid. Measure bridge cost separately from capture/conversion and ledger pressure.
 
 Continue remaining P0-13 adapters, P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+The user reported C02b22 build `2259bc0` passed before C02c1. The helper config cache is tracked in `IMPLEMENTATION-C02C1.md`. This records the user report; no independent macOS/device execution was performed on this host.

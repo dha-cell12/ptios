@@ -24,6 +24,7 @@ const settingsController = await read("TLinkauto/TLinkauto/Settings/SettingsPage
 const configManager = await read("TLinkauto/TLinkauto/ConfigManager.m");
 const appConfig = await read("TLinkauto/TLinkauto/Config.h");
 const jsRuntime = await read("pccontrol/TLinkautoJSRuntime.mm");
+const helperConfig = await read("shared/TLinkHelperConfigSnapshot.h");
 
 assert.equal(integration.product, "tlinkauto-rootfull");
 assert.ok(integration.phase >= 2);
@@ -139,7 +140,8 @@ assert.match(settingsController, /javascript_helper_runtime_enabled/);
 assert.match(settingsController, /scriptRuntimeSettingsHint/);
 assert.match(configManager, /withIntermediateDirectories:YES/);
 assert.match(appConfig, /RUNTIME_CONFIG_PATH/);
-assert.match(jsRuntime, /enable_js_helper_execution/);
+assert.match(jsRuntime, /#include "\.\.\/shared\/TLinkHelperConfigSnapshot\.h"/);
+assert.match(helperConfig, /dict\[@"javascript_helper_runtime_enabled"\]\?:dict\[@"enable_js_helper_execution"\]/);
 
 for (const token of [
   "LICENSE_SIGNING_PRIVATE_JWK",

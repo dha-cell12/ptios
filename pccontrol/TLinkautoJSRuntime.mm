@@ -17,6 +17,7 @@
 #import "jsruntime/TLinkautoDeviceBridge.h"
 #import "jsruntime/TLinkJSHelperClient.h"
 #import "../shared/TLinkJSFileHandle.h"
+#include "../shared/TLinkHelperConfigSnapshot.h"
 
 typedef NS_ENUM(int, TLinkJSRuntimeTaskCode) {
     TASK_PERFORM_TOUCH = 10,
@@ -89,37 +90,13 @@ static const NSUInteger kTLinkautoJSMaxOpenFiles = 32;
 static NSString * const kTLinkautoJSHelperConfigPath = @"/var/mobile/Library/TLinkauto/config.json";
 static const NSUInteger kTLinkautoJSNativeRPCCacheLimit = 256;
 
+// BEGIN cached helper config snapshot.
 static NSDictionary *TLinkautoJSHelperConfigSnapshot(void)
 {
-    NSMutableDictionary *snapshot = [@{
-        @"configPath": kTLinkautoJSHelperConfigPath ?: @"",
-        @"configValid": @NO,
-        @"enabled": @NO,
-        @"runtimeDefault": @NO,
-        @"allowAdminRPC": @NO,
-        @"error": @"",
-    } mutableCopy];
-    NSData *data = [NSData dataWithContentsOfFile:kTLinkautoJSHelperConfigPath];
-    if (![data isKindOfClass:[NSData class]] || [data length] == 0) {
-        snapshot[@"error"] = @"missing_or_empty_config";
-        return snapshot;
-    }
-    NSError *error = nil;
-    id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-    if (![obj isKindOfClass:[NSDictionary class]]) {
-        snapshot[@"error"] = error.localizedDescription ?: @"config_parse_failed";
-        return snapshot;
-    }
-    NSDictionary *dict = (NSDictionary *)obj;
-    snapshot[@"configValid"] = @YES;
-    id enabled = dict[@"javascript_helper_runtime_enabled"] ?: dict[@"enable_js_helper_execution"];
-    id runtimeDefault = dict[@"javascript_helper_runtime_default"];
-    id allowAdmin = dict[@"javascript_helper_allow_admin_rpc"];
-    snapshot[@"enabled"] = @([enabled respondsToSelector:@selector(boolValue)] && [enabled boolValue]);
-    snapshot[@"runtimeDefault"] = @([runtimeDefault respondsToSelector:@selector(boolValue)] && [runtimeDefault boolValue]);
-    snapshot[@"allowAdminRPC"] = @([allowAdmin respondsToSelector:@selector(boolValue)] && [allowAdmin boolValue]);
-    return snapshot;
+    static TLinkHelperConfigSnapshot config(kTLinkautoJSHelperConfigPath);
+    return config.read();
 }
+// END cached helper config snapshot.
 
 static BOOL TLinkautoJSHelperRuntimeEnabledFromConfig(void)
 {
