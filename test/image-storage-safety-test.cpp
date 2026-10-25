@@ -8,6 +8,7 @@ static uint64_t rearmCalls=0;
 static bool zx_rearmFrameExpiryLocked() { ++rearmCalls;return timerAvailable; }
 #include "ImageCoreUnderTest.inc"
 #include "ImageReleaseCoreUnderTest.inc"
+#include "ImageReleasePortableUnderTest.inc"
 static void numericReleaseCases(){
     for(unsigned n=0;n<10000;++n){
         auto first=frameFixture(fixtureNow,1000),second=frameFixture(fixtureNow,1000),third=frameFixture(fixtureNow,1000);
@@ -30,8 +31,32 @@ static void numericReleaseCases(){
     }
     puts("Frame release core passed: 10k actual owner/mismatch/single/scoped-all/global/empty transactions, one expiry rearm each and held-reader resource recovery.");
 }
+static void numericImageReleaseCases(){
+    const uint32_t frame=zx_storeFrameLocked(frameFixture(fixtureNow,1000));assert(frame);
+    const uint64_t rearms=rearmCalls;
+    for(unsigned n=0;n<10000;++n){
+        auto first=imageFixture(),second=imageFixture(),third=imageFixture();
+        first->ownerSessionId=third->ownerSessionId="a";second->ownerSessionId="b";
+        first->ownerRunId=second->ownerRunId=third->ownerRunId="run";
+        first->ownerRuntime=second->ownerRuntime=third->ownerRuntime="js";
+        const uint32_t id=zx_storeImageLocked(first);assert(id&&zx_storeImageLocked(second)&&zx_storeImageLocked(third));
+        ZXImageRef held=first;first.reset();second.reset();third.reset();
+        TLinkNativeImageReleaseRequest request;request.imageId=id;request.scoped=true;request.sessionId="wrong";
+        assert(releaseStoredImages(request)==0&&gImageStore.size()==3);
+        request.sessionId="a";request.runtime="js \t";request.runId="run";assert(releaseStoredImages(request)==0&&gImageStore.size()==3);request.runtime="js";
+        if(n%2){request.all=true;assert(releaseStoredImages(request)==2&&gImageStore.size()==1);}
+        else assert(releaseStoredImages(request)==1&&gImageStore.size()==2);
+        assert(!held->gray.empty());request.all=true;request.scoped=false;const size_t remaining=gImageStore.size();
+        assert(releaseStoredImages(request)==remaining&&gImageStore.empty()&&gImageMemory.stats().images==64);
+        held.reset();assert(gImageMemory.stats().images==0&&gFrameStore.count(frame)==1&&gImageMemory.stats().frames==256);
+        assert(releaseStoredImages(request)==0&&rearmCalls==rearms);
+    }
+    TLinkNativeFrameReleaseRequest cleanup;cleanup.all=true;assert(releaseStoredFrames(cleanup)==1&&gImageMemory.stats().total==0);
+    puts("Image release core passed: 10k actual owner/mismatch/single/scoped-all/global/empty transactions, held readers, unchanged frames/timers and zero final charges.");
+}
 int main() {
     numericReleaseCases();
+    numericImageReleaseCases();
     assert(kDefaultFrameTtlMs == 1000 && kHardFrameTtlMs == 5000 && kMaxImagePixels == 16 * 1024 * 1024);
     size_t pixels = 0;
     assert(TLinkImagePixels(8192, 2048, kMaxImagePixels, &pixels) && pixels == kMaxImagePixels);

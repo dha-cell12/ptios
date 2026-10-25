@@ -123,6 +123,8 @@ NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest 
 NSDictionary *TLinkExecuteNativeColorRange(const TLinkNativeColorRangeRequest &request,TLinkTaskExecutionContext *context);
 #import "TesseractOCRTask.h"
 NSDictionary *TLinkExecuteNativeFrameOCR(const TLinkNativeFrameOCRRequest &request,TLinkTaskExecutionContext *context);
+#include "../shared/TLinkNativeImageRelease.h"
+NSDictionary *TLinkExecuteNativeImageRelease(const TLinkNativeImageReleaseRequest &request,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeFrameRelease.h"
 NSDictionary *TLinkExecuteNativeFrameRelease(const TLinkNativeFrameReleaseRequest &request,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeFrameImage.h"

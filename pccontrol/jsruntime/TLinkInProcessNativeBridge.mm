@@ -768,7 +768,15 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseImage]) {
         int imageId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
         if (imageId < 0) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"invalid handle" }];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d3;;%d%@", TASK_IMAGE_OBJECT, imageId, TLinkautoJSOwnerSuffix(context)] context:context];
+        TLinkNativeImageReleaseRequest input;input.imageId=uint32_t(imageId);
+        NSString *suffix=TLinkautoJSOwnerSuffix(context);NSData *encoded=[suffix dataUsingEncoding:NSUTF8StringEncoding];
+        if(!encoded||(encoded.length&&memchr(encoded.bytes,0,encoded.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *wireOwner=[[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding]?:@"";
+        // Image action 3 uses Foundation %s parsing and preserves trailing owner whitespace.
+        NSString *owner=[NSString stringWithFormat:@"0%s",[wireOwner UTF8String]];
+        NSArray *fields=[owner componentsSeparatedByString:@";;"];input.scoped=fields.count>=4;
+        if(input.scoped){input.sessionId=[fields[1] UTF8String]?:"";input.runId=[fields[2] UTF8String]?:"";input.runtime=[fields[3] UTF8String]?:"";}
+        NSDictionary *result=TLinkExecuteNativeImageRelease(input,context);
         if ([result[@"ok"] boolValue]) [runtime untrackImageId:imageId];
         return [TLinkJSNativeResponse responseWithValue:result];
     }

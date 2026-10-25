@@ -1498,7 +1498,7 @@ static cv::Mat zx_decodeBoundedImage(NSString *path, std::shared_ptr<TLinkImageC
 
 NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
 {
-    NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
+    NSArray *data = [[NSString stringWithFormat:@"%s", (const char *)eventData] componentsSeparatedByString:@";;"];
     if ([data count] < 1) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Image task missing action.\r\n"}];
@@ -1630,68 +1630,41 @@ NSString* handleImageObjectTaskFromRawData(UInt8 *eventData, NSError **error)
         }
         return [NSString stringWithFormat:@"%u;;%d;;%d", imageId, image.w, image.h];
     }
+    // BEGIN raw image release action.
     else if (action == 3) {
-        if ([data count] < 2) {
-            return nil;
-        }
-        NSString *target = [data[1] isKindOfClass:[NSString class]] ? data[1] : @"";
-        NSString *lower = [target lowercaseString];
-        __block NSUInteger removed = 0;
-        TLinkNativeDispatchSync(zx_imageQueue(), ^{
-            if ([lower isEqualToString:@"all"]) {
-                if ([data count] >= 5) {
-                    std::string sessionId = zx_stringFromPart(data, 2, "");
-                    std::string runId = zx_stringFromPart(data, 3, "");
-                    std::string runtime = zx_stringFromPart(data, 4, "");
-                    std::vector<uint32_t> ids;
-                    for (auto const &kv : gImageStore) {
-                        if (zx_ownerMatchesImage(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
-                    }
-                    for (uint32_t iid : ids) {
-                        removed += gImageStore.erase(iid);
-                    }
-                } else {
-                    removed = gImageStore.size();
-                    gImageStore.clear();
-                }
-            } else if ([lower isEqualToString:@"scoped"]) {
-                if ([data count] >= 5) {
-                    std::string sessionId = zx_stringFromPart(data, 2, "");
-                    std::string runId = zx_stringFromPart(data, 3, "");
-                    std::string runtime = zx_stringFromPart(data, 4, "");
-                    std::vector<uint32_t> ids;
-                    for (auto const &kv : gImageStore) {
-                        if (zx_ownerMatchesImage(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
-                    }
-                    for (uint32_t iid : ids) {
-                        removed += gImageStore.erase(iid);
-                    }
-                }
-            } else {
-                uint32_t imageId = (uint32_t)[target intValue];
-                auto it = gImageStore.find(imageId);
-                if (it != gImageStore.end()) {
-                    bool allowed = true;
-                    if ([data count] >= 5) {
-                        allowed = zx_ownerMatchesImage(*it->second,
-                                                       zx_stringFromPart(data, 2, ""),
-                                                       zx_stringFromPart(data, 3, ""),
-                                                       zx_stringFromPart(data, 4, ""));
-                    }
-                    if (allowed) {
-                        removed = gImageStore.erase(imageId);
-                    }
-                }
-            }
-        });
-        return [NSString stringWithFormat:@"%lu", (unsigned long)removed];
+        if(data.count<2)return nil;
+        NSString *target=[data[1] isKindOfClass:[NSString class]]?data[1]:@"",*lower=[target lowercaseString];
+        TLinkNativeImageReleaseRequest request;request.imageId=uint32_t([target intValue]);request.all=[lower isEqualToString:@"all"]||[lower isEqualToString:@"scoped"];request.scoped=data.count>=5;
+        if(request.scoped){request.sessionId=zx_stringFromPart(data,2,"");request.runId=zx_stringFromPart(data,3,"");request.runtime=zx_stringFromPart(data,4,"");}
+        if([lower isEqualToString:@"scoped"]&&!request.scoped){TLinkNativeDispatchSync(zx_imageQueue(), ^{});return @"0";}
+        return [NSString stringWithFormat:@"%lu",(unsigned long)releaseStoredImages(request)];
     }
+    // END raw image release action.
 
     if (error) {
         *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown image task action.\r\n"}];
     }
     return nil;
 }
+
+// BEGIN numeric image release.
+size_t releaseStoredImages(const TLinkNativeImageReleaseRequest &request){
+    __block size_t removed=0;
+    TLinkNativeDispatchSync(zx_imageQueue(), ^{
+        if(request.all){
+            if(request.scoped){
+                std::vector<uint32_t> ids;
+                for(auto const &kv:gImageStore)if(zx_ownerMatchesImage(*kv.second,request.sessionId,request.runId,request.runtime))ids.push_back(kv.first);
+                for(uint32_t id:ids)removed+=gImageStore.erase(id);
+            }else{removed=gImageStore.size();gImageStore.clear();}
+        }else{
+            auto it=gImageStore.find(request.imageId);
+            if(it!=gImageStore.end()&&(!request.scoped||zx_ownerMatchesImage(*it->second,request.sessionId,request.runId,request.runtime)))removed=gImageStore.erase(request.imageId);
+        }
+    });
+    return removed;
+}
+// END numeric image release.
 
 NSString* handleFindImageTaskFromRawData(UInt8 *eventData, NSError **error)
 {

@@ -62,8 +62,19 @@ const numericRelease=section('// BEGIN numeric frame release.','// END numeric f
 assert.match(numericRelease,/__block size_t removed=0/);assert.match(numericRelease,/TLinkNativeDispatchSync\(zx_imageQueue\(\), \^\{/);
 const portableRelease=numericRelease.replace('__block ','').replace('TLinkNativeDispatchSync(zx_imageQueue(), ^{','[&]{').replace('    });','    }();');
 assert.doesNotMatch(portableRelease,/__block|TLinkNativeDispatchSync|\^\{/);
+const numericImageRelease=section('// BEGIN numeric image release.','// END numeric image release.');
+assert.match(numericImageRelease,/__block size_t removed=0/);assert.match(numericImageRelease,/TLinkNativeDispatchSync\(zx_imageQueue\(\), \^\{/);
+const portableImageRelease=numericImageRelease.replace('__block ','').replace('TLinkNativeDispatchSync(zx_imageQueue(), ^{','[&]{').replace('    });','    }();');
+assert.doesNotMatch(portableImageRelease,/__block|TLinkNativeDispatchSync|\^\{|gFrameStore|zx_rearmFrameExpiry|TLinkImageWork/);
+const objectBody=bodyAfter(source.indexOf('NSString* handleImageObjectTaskFromRawData('));
+const parserEnd=objectBody.indexOf('    if (action == 1) {');assert.ok(parserEnd>0);
+const imageReleaseAction='NSString *imageReleaseActionUnderTest(UInt8 *eventData,NSError **error){'+objectBody.slice(0,parserEnd)+
+  section('// BEGIN raw image release action.','// END raw image release action.').replace('    else if','    if')+'return nil;\n}\n';
 const fixtures = {
   ...admissionFixtures,
+  'NumericImageReleaseUnderTest.inc': numericImageRelease,
+  'ImageReleasePortableUnderTest.inc': portableImageRelease,
+  'ImageReleaseActionUnderTest.inc': imageReleaseAction,
   'ImageNumericReleaseUnderTest.inc': numericRelease,
   'ImageReleaseCoreUnderTest.inc': portableRelease,
   'ImagePayloadUnderTest.inc': section('// BEGIN immutable image payload types', '// END immutable image payload types.'),

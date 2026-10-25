@@ -33,6 +33,8 @@ NSString* handleColorInFrameTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* handleFrameBatchTaskFromRawData(UInt8 *eventData, NSError **error);
 
 #ifdef __cplusplus
+#include "../shared/TLinkNativeImageRelease.h"
+size_t releaseStoredImages(const TLinkNativeImageReleaseRequest &request);
 #include "../shared/TLinkNativeFrameRelease.h"
 size_t releaseStoredFrames(const TLinkNativeFrameReleaseRequest &request);
 #include "../shared/TLinkNativeFrameImage.h"
