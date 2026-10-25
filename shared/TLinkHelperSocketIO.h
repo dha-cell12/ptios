@@ -91,6 +91,7 @@ public:
     ~Socket(){close();}
     Socket(const Socket &)=delete;Socket &operator=(const Socket &)=delete;
     int fd()const{return fd_;}
+    int release(){const int fd=fd_;fd_=-1;return fd;}
     void close(){if(fd_>=0){const int fd=fd_;fd_=-1;::close(fd);}}
     Result prepare(){
         if(fd_<0)return {Code::Setup,EBADF};

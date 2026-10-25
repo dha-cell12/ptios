@@ -330,6 +330,7 @@ jobs:
           node scripts/check-helper-replay-safety.mjs
           node scripts/check-helper-identity-safety.mjs
           node scripts/check-helper-transport-safety.mjs
+          node scripts/check-helper-client-admission-safety.mjs
           node scripts/check-zoom-p2-observability.mjs
           node scripts/check-smart-wait-v1.mjs
           node scripts/check-ui-tree-v1.mjs

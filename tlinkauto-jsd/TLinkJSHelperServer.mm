@@ -3,6 +3,7 @@
 #import "../shared/TLinkJSFileHandle.h"
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperSocketIO.h"
+#include "../shared/TLinkHelperClientAdmission.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -43,12 +44,15 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 
 @interface TLinkJSHelperServer () {
     TLinkJSHelperCancelState *_cancelState;
+    TLinkHelperClientAdmission _clientAdmission;
+    std::timed_mutex _clientCommandOwner;
     TLinkJSHelperSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkJSHelperClearExecutionTimeLimitFn _clearExecutionTimeLimit;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;
 @property(nonatomic, strong) NSDate *startedAt;
 @property(nonatomic, strong) dispatch_queue_t executionQueue;
+@property(nonatomic, strong) dispatch_queue_t clientQueue;
 @property(nonatomic, strong) NSCondition *sleepCondition;
 @property(nonatomic, copy) NSString *activeSessionId;
 @property(nonatomic, copy) NSString *activeRunId;
@@ -86,6 +90,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
         _helperInstanceId = [[NSUUID UUID] UUIDString];
         _startedAt = [NSDate date];
         _executionQueue = dispatch_queue_create("com.tlinkauto.js-helper.execution", DISPATCH_QUEUE_SERIAL);
+        _clientQueue = dispatch_queue_create("com.tlinkauto.js-helper.clients", DISPATCH_QUEUE_CONCURRENT);
         _sleepCondition = [[NSCondition alloc] init];
         _rpcCondition = [[NSCondition alloc] init];
         _activeFileHandles = [NSMutableDictionary dictionary];
@@ -139,6 +144,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)statusPayload
 {
+    const auto clients = _clientAdmission.stats();
     NSTimeInterval uptimeMs = [[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000.0;
     NSDate *durationEnd = self.activeEndedAt ?: [NSDate date];
     long long startedAtMs = self.activeStartedAt ? (long long)([self.activeStartedAt timeIntervalSince1970] * 1000.0) : 0;
@@ -146,6 +152,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     long long durationMs = self.activeStartedAt ? (long long)([durationEnd timeIntervalSinceDate:self.activeStartedAt] * 1000.0) : 0;
     NSMutableDictionary *payload = [@{
         @"state": self.activeState ?: kTLinkJSHelperStateIdle,
+        @"socketClientsActive": @(clients.active),
+        @"socketClientsLimit": @(clients.limit),
+        @"socketClientsRejected": @(clients.rejected),
         @"activeSessionId": self.activeSessionId ?: [NSNull null],
         @"runId": self.activeRunId ?: @"",
         @"uptimeMs": @((long long)uptimeMs),
@@ -1053,12 +1062,43 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 }
 // END helper RPC response admission.
 
+// BEGIN helper socket client admission.
+- (void)enqueueClient:(int)client acceptedAt:(uint64_t)acceptedAt
+{
+    TLinkHelperIO::Socket descriptor(client);
+    auto lease = _clientAdmission.acquire(client, acceptedAt, [](int fd){ (void)::close(fd); });
+    if (!lease) return;
+    (void)descriptor.release(); // The lease owns the descriptor until the worker takes it.
+    dispatch_async(self.clientQueue, ^{
+        @autoreleasepool {
+            try {
+                @try {
+                    const TLinkHelperIO::Deadline deadline(lease->acceptedAt(), TLinkHelperIO::ServerTimeoutMs);
+                    if (lease->isOpen() && deadline.remaining(TLinkHelperIO::nowMs())) {
+                        const int fd = lease->takeDescriptor();
+                        if (fd >= 0) [self handleClient:fd acceptedAt:lease->acceptedAt()];
+                    }
+                } @catch (NSException *exception) {
+                    NSLog(@"tlinkauto-jsd: client exception %@", exception.name);
+                }
+            } catch (...) { NSLog(@"tlinkauto-jsd: client C++ exception"); }
+        }
+        lease->finish(); // Release capacity only after handler/I/O and its autorelease pool finish.
+        // Lease destruction also covers callbacks discarded before execution.
+    });
+}
+// END helper socket client admission.
+
 // BEGIN helper socket client ownership.
 - (void)handleClient:(int)client
 {
+    [self handleClient:client acceptedAt:TLinkHelperIO::nowMs()];
+}
+- (void)handleClient:(int)client acceptedAt:(uint64_t)acceptedAt
+{
     using namespace TLinkHelperIO;
     Socket socket(client);
-    const Deadline deadline(nowMs(), ServerTimeoutMs);
+    const Deadline deadline(acceptedAt, ServerTimeoutMs);
     @autoreleasepool {
         @try {
             if (!socket.prepare().ok()) return;
@@ -1068,7 +1108,14 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             NSError *err = nil;
             NSDictionary *request = [TLinkJSHelperProtocol deserializeEnvelope:requestData error:&err];
             if (!deadline.remaining(nowMs())) return;
-            NSDictionary *response = request ? [self handleEnvelope:request] : [self errorEnvelopeForRequest:@{} message:err.localizedDescription ?: @"invalid_json"];
+            NSDictionary *response = nil;
+            {
+                std::unique_lock<std::timed_mutex> command(_clientCommandOwner, std::defer_lock);
+                const int remaining = deadline.remaining(nowMs());
+                if (!remaining || !command.try_lock_for(std::chrono::milliseconds(remaining)) ||
+                    !deadline.remaining(nowMs()) || !_clientAdmission.isOpen()) return;
+                response = request ? [self handleEnvelope:request] : [self errorEnvelopeForRequest:@{} message:err.localizedDescription ?: @"invalid_json"];
+            } // Release the command owner before serialization and potentially slow socket output.
             if (!deadline.remaining(nowMs())) return;
             NSData *responseData = [TLinkJSHelperProtocol serializeEnvelope:response error:nil];
             if (responseData.length > MaxFrameBytes) {
@@ -1145,8 +1192,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             NSLog(@"tlinkauto-jsd: accept failed: %d", errno);
             break;
         }
-        [self handleClient:client];
+        [self enqueueClient:client acceptedAt:TLinkHelperIO::nowMs()];
     }
+    _clientAdmission.stop(); // Queued/parsed clients cannot begin new commands after listener shutdown.
     close(server);
     unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);
     close(pidFd);

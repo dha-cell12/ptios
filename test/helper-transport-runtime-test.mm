@@ -4,34 +4,43 @@
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperSocketIO.h"
+#include "../shared/TLinkHelperClientAdmission.h"
 #include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <stdexcept>
 using namespace TLinkHelperIO;
 static NSString *kTLinkJSHelperSocketPath;
 #include "HelperTransportClientUnderTest.inc"
 @interface FixturePeer : NSObject {
 @public std::atomic<unsigned> mode,effects;
+    TLinkHelperClientAdmission _clientAdmission;
+    std::timed_mutex _clientCommandOwner;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;
+@property(nonatomic, strong) dispatch_queue_t clientQueue;
 - (void)handleClient:(int)client;
+- (void)handleClient:(int)client acceptedAt:(uint64_t)acceptedAt;
+- (void)enqueueClient:(int)client acceptedAt:(uint64_t)acceptedAt;
 - (NSDictionary *)handleEnvelope:(NSDictionary *)request;
 - (NSDictionary *)errorEnvelopeForRequest:(NSDictionary *)request message:(NSString *)message;
 @end
 @implementation FixturePeer
-- (instancetype)init {self=[super init];if(self){mode.store(0);effects.store(0);self.helperInstanceId=@"helper";}return self;}
+- (instancetype)init {self=[super init];if(self){mode.store(0);effects.store(0);self.helperInstanceId=@"helper";self.clientQueue=dispatch_queue_create("fixture.helper.clients",DISPATCH_QUEUE_CONCURRENT);}return self;}
 - (NSDictionary *)handleEnvelope:(NSDictionary *)request {
     ++effects;const unsigned action=mode.load();
     if(action==4)[NSException raise:@"FixtureHandler" format:@"handler exception"];
+    if(action==6)throw std::runtime_error("fixture handler exception");
     NSString *command=request[@"command"],*session=[command isEqual:@"start"]?@"session":request[@"sessionId"];
     NSDictionary *payload=@{@"state":@"running",@"activeSessionId":@"session"};
     if(action==3)payload=@{@"huge":[@"" stringByPaddingToLength:MaxFrameBytes withString:@"x" startingAtIndex:0]};
     return [TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:action==1?@"replacement":self.helperInstanceId
                                            sessionId:session requestId:action==2?@"wrong":request[@"requestId"] payload:payload];
 }
+#include "HelperClientAdmissionUnderTest.inc"
 #include "HelperTransportServerUnderTest.inc"
 @end
 class Listener {
@@ -100,4 +109,48 @@ static void serverCases(){
         }
     }}
 }
-int main(){@autoreleasepool{clientCases();clientTimeout();serverCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
+static void drainClients(FixturePeer *peer){dispatch_barrier_sync(peer.clientQueue, ^{});assert(peer->_clientAdmission.stats().active==0);}
+static void queueCases(){
+    // A stalled reader must not delay a different complete request.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];int idle[2],ready[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,idle)==0&&::socketpair(AF_UNIX,SOCK_STREAM,0,ready)==0);
+        Socket idleSender(idle[0]),readySender(ready[0]);assert(readySender.prepare().ok());
+        [peer enqueueClient:idle[1] acceptedAt:nowMs()];[peer enqueueClient:ready[1] acceptedAt:nowMs()];
+        NSData *json=wireRequest();const Deadline deadline(nowMs(),1000);
+        assert(writeFrame(posixOps(),readySender.fd(),static_cast<const uint8_t *>(json.bytes),json.length,deadline).ok());
+        std::vector<uint8_t> frame;assert(readFrame(posixOps(),readySender.fd(),frame,deadline).ok());assert(peer->effects==1);
+        idleSender.close();drainClients(peer);assert(peer->_clientAdmission.stats().finished==2);
+    }
+    // Include queued callbacks in the eight-client budget; the ninth fd closes immediately.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];dispatch_suspend(peer.clientQueue);std::vector<int> senders;
+        const uint64_t now=nowMs(),expired=now>2000?now-2000:0;
+        for(unsigned n=0;n<8;++n){int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);senders.push_back(pair[0]);[peer enqueueClient:pair[1] acceptedAt:expired];}
+        assert(peer->_clientAdmission.stats().active==8);int rejected[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,rejected)==0);
+        [peer enqueueClient:rejected[1] acceptedAt:nowMs()];assert(::fcntl(rejected[1],F_GETFD,0)<0&&errno==EBADF);::close(rejected[0]);
+        dispatch_resume(peer.clientQueue);drainClients(peer);const auto stats=peer->_clientAdmission.stats();assert(stats.peak==8&&stats.rejected==1&&peer->effects==0);
+        for(int fd:senders)::close(fd);
+    }
+    // A command waiting for another handler retains its original deadline and cannot run late.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);assert(sender.prepare().ok());
+        peer->_clientCommandOwner.lock();[peer enqueueClient:pair[1] acceptedAt:nowMs()];NSData *json=wireRequest();const Deadline deadline(nowMs(),2000);
+        assert(writeFrame(posixOps(),sender.fd(),static_cast<const uint8_t *>(json.bytes),json.length,deadline).ok());std::vector<uint8_t> frame;
+        assert(readFrame(posixOps(),sender.fd(),frame,deadline).code==Code::Empty);assert(peer->effects==0);
+        peer->_clientCommandOwner.unlock();drainClients(peer);assert(peer->effects==0);
+    }
+    // Stop rejects queued/new work, and exceptions still return the lease.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);
+        dispatch_suspend(peer.clientQueue);[peer enqueueClient:pair[1] acceptedAt:nowMs()];peer->_clientAdmission.stop();dispatch_resume(peer.clientQueue);drainClients(peer);assert(peer->effects==0);
+        int rejected[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,rejected)==0);[peer enqueueClient:rejected[1] acceptedAt:nowMs()];assert(::fcntl(rejected[1],F_GETFD,0)<0&&errno==EBADF);::close(rejected[0]);
+    }
+    for(unsigned kind : {4U,6U}) {
+        FixturePeer *peer=[[FixturePeer alloc] init];peer->mode.store(kind);int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);assert(sender.prepare().ok());
+        [peer enqueueClient:pair[1] acceptedAt:nowMs()];NSData *json=wireRequest();const Deadline deadline(nowMs(),2000);
+        assert(writeFrame(posixOps(),sender.fd(),static_cast<const uint8_t *>(json.bytes),json.length,deadline).ok());std::vector<uint8_t> frame;
+        assert(readFrame(posixOps(),sender.fd(),frame,deadline).code==Code::Empty);drainClients(peer);assert(peer->effects==1&&peer->_clientAdmission.stats().finished==1);
+    }
+    puts("Helper admission Foundation passed: actual concurrent enqueue/leases, stalled-reader isolation, eight queued clients/ninth-fd rejection, accepted-time expiry, serialized command deadline, stopped and exception cleanup.");
+}
+int main(){@autoreleasepool{clientCases();clientTimeout();serverCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}

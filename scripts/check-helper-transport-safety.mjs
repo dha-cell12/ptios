@@ -8,6 +8,7 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const [server,client,header]=await Promise.all(['tlinkauto-jsd/TLinkJSHelperServer.mm','pccontrol/jsruntime/TLinkJSHelperClient.mm','shared/TLinkHelperSocketIO.h'].map(read));
 const between=(source,a,b)=>{const x=source.indexOf(a),y=source.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return source.slice(x,y);};
+const admission=between(server,'// BEGIN helper socket client admission.','// END helper socket client admission.');
 const owner=between(server,'// BEGIN helper socket client ownership.','// END helper socket client ownership.');
 const error=between(server,'- (NSDictionary *)errorEnvelopeForRequest:','- (NSDictionary *)handleEnvelope:');
 const clientImplementation=client.slice(client.indexOf('@interface TLinkJSHelperClient ()'));
@@ -24,6 +25,7 @@ const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-helper-
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
     await writeFile(join(temp,'HelperTransportServerUnderTest.inc'),owner+error);
+    await writeFile(join(temp,'HelperClientAdmissionUnderTest.inc'),admission);
     await writeFile(join(temp,'HelperTransportClientUnderTest.inc'),clientImplementation);
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     const binary=join(temp,windows?'helper-transport.exe':'helper-transport'),file=join(root,'test/helper-transport-safety-test.cpp');

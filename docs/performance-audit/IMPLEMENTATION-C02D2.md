@@ -1,7 +1,7 @@
 # C02d2 — deadline-bounded helper socket I/O and framing
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `3e9f798`; the user reported C02d1 built successfully before this slice.
-Status: **source implemented; new POSIX/macOS/Foundation/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02d3 (`d89c4d3`); device qualification pending**.
 Finding: **P0-12 transport prerequisite: bounded socket ownership before concurrent event waiting**.
 
 ## Result and scope
@@ -40,3 +40,5 @@ The reader scans only newly received chunks, holds at most 1 MiB of body bytes, 
 Build rootfull/roothide and run helper traffic under slow/closed/stalled peers. Verify request prefixes do not dispatch on timeout, oversized frames return explicit failures, identity/replay policy survives failed delivery, and descriptors close on setup/parse/handler/error paths. Exercise native replies near the envelope ceiling and document delivery ambiguity after effects. Measure actual I/O/cancellation latency and allocation overhead separately from handler time and polling delay.
 
 Continue P0-12 with bounded concurrent client ownership, request expiry/cancellation propagation, event wait generation/cursors and reconnect ordering while preserving the one-slot identity gate and no repeated native effects. P1-40 invalidation, remaining P0-13 adapters and C01/C02 performance/device acceptance remain open.
+
+The user reported C02d2 build `d89c4d3` passed before C02d3. Bounded concurrent helper clients are tracked in `IMPLEMENTATION-C02D3.md`; no independent macOS/device execution was performed on this Windows host.
