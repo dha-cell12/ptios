@@ -1,5 +1,6 @@
 #import "TLinkJSHelperClient.h"
 #import "TLinkJSHelperProtocol.h"
+#include "../../shared/TLinkHelperRPCIdentity.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -9,6 +10,10 @@
 #include <string.h>
 
 static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkauto/run/js-helper.sock";
+
+@interface TLinkJSHelperClient ()
+@property(nonatomic, copy) NSString *boundHelperInstanceId;
+@end
 
 @implementation TLinkJSHelperClient
 
@@ -34,7 +39,7 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
     }
 
     NSString *requestId = [[NSUUID UUID] UUIDString];
-    NSDictionary *envelope = [TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:nil sessionId:sessionId requestId:requestId payload:payload ?: @{}];
+    NSDictionary *envelope = [TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:self.boundHelperInstanceId sessionId:sessionId requestId:requestId payload:payload ?: @{}];
     NSMutableData *requestData = [[TLinkJSHelperProtocol serializeEnvelope:envelope error:nil] mutableCopy];
     if (!requestData) {
         close(sock);
@@ -75,7 +80,14 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
     NSError *err = nil;
     NSDictionary *response = [TLinkJSHelperProtocol deserializeEnvelope:responseData error:&err];
     if (!response) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"invalid_response" };
+    NSString *identityError = TLinkHelperRPCReplyError(response, command, requestId, sessionId, self.boundHelperInstanceId);
+    if (identityError) return @{ @"ok": @(false), @"error": identityError };
     if (response[kTLinkJSHelperKeyError]) return @{ @"ok": @NO, @"response": response, @"error": response[kTLinkJSHelperKeyError] };
+    if ([command isEqualToString:kTLinkJSHelperCmdStart]) {
+        identityError = TLinkHelperRPCStartError(response);
+        if (identityError) return @{ @"ok": @(false), @"error": identityError };
+        self.boundHelperInstanceId = response[kTLinkJSHelperKeyHelperInstanceId];
+    }
     return @{ @"ok": @YES, @"response": response };
 }
 

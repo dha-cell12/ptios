@@ -1,6 +1,7 @@
 #import "TLinkJSHelperServer.h"
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #import "../shared/TLinkJSFileHandle.h"
+#include "../shared/TLinkHelperRPCIdentity.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -66,7 +67,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 @property(nonatomic, copy) NSString *lastConsoleLatestLogPath;
 @property(nonatomic, strong) NSCondition *rpcCondition;
 @property(nonatomic, copy) NSDictionary *pendingNativeRequest;
-@property(nonatomic, strong) NSMutableDictionary *nativeResponses;
+@property(nonatomic, copy) NSDictionary *nativeResponse;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *activeFileHandles;
 @property(nonatomic, assign) NSUInteger nextFileHandleId;
 @property(nonatomic, strong) dispatch_source_t licenseHeartbeat;
@@ -86,7 +87,6 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
         _executionQueue = dispatch_queue_create("com.tlinkauto.js-helper.execution", DISPATCH_QUEUE_SERIAL);
         _sleepCondition = [[NSCondition alloc] init];
         _rpcCondition = [[NSCondition alloc] init];
-        _nativeResponses = [NSMutableDictionary dictionary];
         _activeFileHandles = [NSMutableDictionary dictionary];
         _nextFileHandleId = 1;
         _activeState = kTLinkJSHelperStateIdle;
@@ -157,7 +157,6 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         @"blockedRpcCount": @(self.nativeRPCBlockedCount),
         @"storageOpsCount": @(self.storageOpsCount),
         @"openFileHandles": @(self.activeFileHandles.count),
-        @"pendingNativeRPC": @(self.pendingNativeRequest != nil),
         @"rpcAvgMs": @(self.nativeRPCCount > 0 ? (self.nativeRPCTotalMs / (double)self.nativeRPCCount) : 0),
         @"rpcMaxMs": @(self.nativeRPCMaxMs),
         @"evalDurationMs": @(self.evalDurationMs),
@@ -170,6 +169,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         @"licenseRevocationCount": @(self.licenseRevocationCount),
     } mutableCopy];
     [self.rpcCondition lock];
+    payload[@"pendingNativeRPC"] = @(self.pendingNativeRequest != nil);
     if (self.pendingNativeRequest) {
         payload[@"nativeRPCRequest"] = self.pendingNativeRequest;
     }
@@ -276,6 +276,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         @"method": method,
         @"arguments": arguments ?: @[],
         @"sessionId": sessionId ?: @"",
+        @"helperInstanceId": self.helperInstanceId,
     };
     NSTimeInterval nativeRPCTimeout = [method isEqualToString:@"zoom"] ? 7.0 : 5.0;
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:nativeRPCTimeout];
@@ -283,7 +284,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     while (self.pendingNativeRequest && !_cancelState->stopped.load(std::memory_order_acquire)) {
         if (![self.rpcCondition waitUntilDate:deadline]) break;
     }
-    if (self.pendingNativeRequest || _cancelState->stopped.load(std::memory_order_acquire)) {
+    if (self.pendingNativeRequest || _cancelState->stopped.load(std::memory_order_acquire) ||
+        ![self.activeSessionId isEqualToString:sessionId]) {
         [self.rpcCondition unlock];
         double elapsedMs = [[NSDate date] timeIntervalSinceDate:rpcStartedAt] * 1000.0;
         self.nativeRPCTotalMs += elapsedMs;
@@ -291,13 +293,16 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         self.nativeRPCFailedCount++;
         return @{ @"ok": @NO, @"error": @"native RPC unavailable" };
     }
+    self.nativeResponse = nil;
     self.pendingNativeRequest = request;
     NSLog(@"tlinkauto-jsd rpc: request method=%@ id=%@", method, requestId);
     [self.rpcCondition broadcast];
-    while (!_cancelState->stopped.load(std::memory_order_acquire)) {
-        NSDictionary *response = self.nativeResponses[requestId];
+    while (!_cancelState->stopped.load(std::memory_order_acquire) &&
+           [self.pendingNativeRequest[@"requestId"] isEqualToString:requestId] &&
+           [self.pendingNativeRequest[@"sessionId"] isEqualToString:sessionId]) {
+        NSDictionary *response = self.nativeResponse;
         if (response) {
-            [self.nativeResponses removeObjectForKey:requestId];
+            self.nativeResponse = nil;
             self.pendingNativeRequest = nil;
             double elapsedMs = [[NSDate date] timeIntervalSinceDate:rpcStartedAt] * 1000.0;
             self.nativeRPCTotalMs += elapsedMs;
@@ -315,7 +320,11 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         }
         if (![self.rpcCondition waitUntilDate:deadline]) break;
     }
-    self.pendingNativeRequest = nil;
+    if ([self.pendingNativeRequest[@"requestId"] isEqualToString:requestId] &&
+        [self.pendingNativeRequest[@"sessionId"] isEqualToString:sessionId]) {
+        self.pendingNativeRequest = nil;
+        self.nativeResponse = nil;
+    }
     [self.rpcCondition broadcast];
     [self.rpcCondition unlock];
     double elapsedMs = [[NSDate date] timeIntervalSinceDate:rpcStartedAt] * 1000.0;
@@ -324,6 +333,19 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     self.nativeRPCFailedCount++;
     return @{ @"ok": @NO, @"error": @"native RPC timed out" };
 }
+
+// BEGIN helper RPC slot cleanup.
+- (void)clearNativeRPCForSessionId:(NSString *)sessionId
+{
+    [self.rpcCondition lock];
+    if (!self.pendingNativeRequest || [self.pendingNativeRequest[@"sessionId"] isEqualToString:sessionId]) {
+        self.pendingNativeRequest = nil;
+        self.nativeResponse = nil;
+    }
+    [self.rpcCondition broadcast];
+    [self.rpcCondition unlock];
+}
+// END helper RPC slot cleanup.
 
 - (NSString *)consoleLogPathForBundlePath:(NSString *)bundlePath runId:(NSString *)runId latest:(BOOL)latest
 {
@@ -594,10 +616,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSString *line = [NSString stringWithFormat:@"[%@][%@][summary] %@\n", [NSDate date], self.activeRunId ?: @"", body ?: @"{}"];
     if ([logPath length]) [self appendLine:line toPath:logPath];
     if ([latestPath length]) [self appendLine:line toPath:latestPath];
-    [self.rpcCondition lock];
-    self.pendingNativeRequest = nil;
-    [self.rpcCondition broadcast];
-    [self.rpcCondition unlock];
+    [self clearNativeRPCForSessionId:sessionId];
     NSLog(@"tlinkauto-jsd: finished session=%@ state=%@ reason=%@ rpc=%lu blocked=%lu storage=%lu", sessionId ?: @"", self.activeState ?: @"", self.activeExitReason ?: @"", (unsigned long)self.nativeRPCCount, (unsigned long)self.nativeRPCBlockedCount, (unsigned long)self.storageOpsCount);
 }
 
@@ -838,10 +857,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         NSString *summaryLine = [NSString stringWithFormat:@"[%@][%@][summary] %@\n", [NSDate date], runId ?: @"", summaryBody ?: @"{}"];
         [self appendLine:summaryLine toPath:logPath];
         [self appendLine:summaryLine toPath:latestPath];
-        [self.rpcCondition lock];
-        self.pendingNativeRequest = nil;
-        [self.rpcCondition broadcast];
-        [self.rpcCondition unlock];
+        [self clearNativeRPCForSessionId:sessionId];
         NSLog(@"tlinkauto-jsd: finished session=%@ state=%@ error=%@", sessionId, self.activeState, self.lastError ?: @"");
         if (![self.activeSessionId isEqualToString:sessionId]) return;
     }
@@ -874,6 +890,10 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     self.lastConsoleLogPath = @"";
     self.lastConsoleLatestLogPath = @"";
     self.activeState = kTLinkJSHelperStateStarting;
+    [self.rpcCondition lock];
+    self.pendingNativeRequest = nil;
+    self.nativeResponse = nil;
+    [self.rpcCondition unlock];
     _cancelState->stopped.store(false, std::memory_order_release);
     [self runSessionId:sessionId scriptPath:scriptPath bundlePath:bundlePath manifest:manifest ?: @{} runId:runId];
     return [self statusPayload];
@@ -881,7 +901,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)startWithRequest:(NSDictionary *)request
 {
-    if (self.activeSessionId && ([self.activeState isEqualToString:kTLinkJSHelperStateStarting] || [self.activeState isEqualToString:kTLinkJSHelperStateRunning])) {
+    if (self.activeSessionId && ([self.activeState isEqualToString:kTLinkJSHelperStateStarting] || [self.activeState isEqualToString:kTLinkJSHelperStateRunning] || [self.activeState isEqualToString:kTLinkJSHelperStateStopping])) {
         return [self errorEnvelopeForRequest:request message:@"helper_busy"];
     }
     NSDictionary *payload = [request[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? request[kTLinkJSHelperKeyPayload] : @{};
@@ -909,6 +929,10 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     self.lastConsoleLogPath = @"";
     self.lastConsoleLatestLogPath = @"";
     self.activeState = kTLinkJSHelperStateStarting;
+    [self.rpcCondition lock];
+    self.pendingNativeRequest = nil;
+    self.nativeResponse = nil;
+    [self.rpcCondition unlock];
     _cancelState->stopped.store(false, std::memory_order_release);
     dispatch_async(self.executionQueue, ^{
         [self runSessionId:sessionId scriptPath:scriptPath bundlePath:bundlePath manifest:manifest runId:runId];
@@ -935,6 +959,10 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     }
 
     NSString *command = request[kTLinkJSHelperKeyCommand];
+    id requestedHelper = request[kTLinkJSHelperKeyHelperInstanceId];
+    if (requestedHelper && ![requestedHelper isEqual:self.helperInstanceId])
+        return [self errorEnvelopeForRequest:request message:@"helper_instance_mismatch"];
+
     NSTimeInterval uptimeMs = [[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000.0;
     if ([command isEqualToString:kTLinkJSHelperCmdHandshake]) {
         return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdHandshake
@@ -983,6 +1011,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             [self.sleepCondition lock];
             [self.sleepCondition broadcast];
             [self.sleepCondition unlock];
+            [self.rpcCondition lock];
+            [self.rpcCondition broadcast];
+            [self.rpcCondition unlock];
         }
         return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStop
                                          helperInstanceId:self.helperInstanceId
@@ -991,24 +1022,35 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                                                   payload:[self statusPayload]];
     }
     if ([command isEqualToString:kTLinkJSHelperCmdNativeRPCResponse]) {
-        NSDictionary *payload = [request[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? request[kTLinkJSHelperKeyPayload] : @{};
-        NSString *nativeRequestId = [payload[kTLinkJSHelperKeyRequestId] isKindOfClass:[NSString class]] ? payload[kTLinkJSHelperKeyRequestId] : @"";
-        NSDictionary *result = [payload[@"result"] isKindOfClass:[NSDictionary class]] ? payload[@"result"] : @{};
-        [self.rpcCondition lock];
-        if ([nativeRequestId length] > 0) {
-            self.nativeResponses[nativeRequestId] = result;
-            NSLog(@"tlinkauto-jsd rpc: accepted response id=%@ ok=%d", nativeRequestId, [result[@"ok"] boolValue]);
-        }
-        [self.rpcCondition broadcast];
-        [self.rpcCondition unlock];
-        return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdNativeRPCResponse
-                                         helperInstanceId:self.helperInstanceId
-                                                sessionId:request[kTLinkJSHelperKeySessionId]
-                                                requestId:request[kTLinkJSHelperKeyRequestId]
-                                                  payload:@{ kTLinkJSHelperKeyRequestId: nativeRequestId ?: @"", @"result": @{ @"ok": @YES, @"accepted": @YES } }];
+        return [self acceptNativeRPCResponse:request];
     }
     return [self errorEnvelopeForRequest:request message:@"unsupported_command"];
 }
+
+// BEGIN helper RPC response admission.
+- (NSDictionary *)acceptNativeRPCResponse:(NSDictionary *)request
+{
+    [self.rpcCondition lock];
+    NSString *rejection = nil;
+    BOOL duplicate = false;
+    @try {
+        rejection = TLinkHelperRPCResponseError(self.helperInstanceId, self.activeSessionId, self.pendingNativeRequest,
+                                               request, _cancelState->stopped.load(std::memory_order_acquire));
+        if (!rejection) {
+            duplicate = self.nativeResponse != nil;
+            if (!duplicate) self.nativeResponse = request[@"payload"][@"result"];
+            [self.rpcCondition broadcast];
+        }
+    } @finally { [self.rpcCondition unlock]; }
+    if (rejection) return [self errorEnvelopeForRequest:request message:rejection];
+    return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdNativeRPCResponse
+                                     helperInstanceId:self.helperInstanceId
+                                            sessionId:request[kTLinkJSHelperKeySessionId]
+                                            requestId:request[kTLinkJSHelperKeyRequestId]
+                                              payload:@{kTLinkJSHelperKeyRequestId:request[@"payload"][@"requestId"],
+                                                        @"result":@{@"ok":@(true),@"accepted":@(true),@"duplicate":@(duplicate)}}];
+}
+// END helper RPC response admission.
 
 - (NSData *)readAllFromClient:(int)client
 {

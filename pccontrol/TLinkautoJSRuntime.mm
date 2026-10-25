@@ -19,6 +19,7 @@
 #import "../shared/TLinkJSFileHandle.h"
 #include "../shared/TLinkHelperConfigSnapshot.h"
 #include "../shared/TLinkHelperRPCReplay.h"
+#include "../shared/TLinkHelperRPCIdentity.h"
 
 typedef NS_ENUM(int, TLinkJSRuntimeTaskCode) {
     TASK_PERFORM_TOUCH = 10,
@@ -967,6 +968,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     [self beginOwnedHandleTracking];
     _taskContext = context;
     _helperSessionId = [response[@"sessionId"] copy];
+    NSString *helperInstanceId = [response[@"helperInstanceId"] copy];
     _helperRunId = [payload[@"runId"] copy];
     context.ownerSessionId = _helperSessionId ?: @"";
     context.ownerRunId = _helperRunId ?: @"";
@@ -993,6 +995,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
                 break;
             }
             NSDictionary *statusResponse = status[@"response"];
+            NSString *identityError = TLinkHelperRPCStatusError(statusResponse, helperInstanceId, _helperSessionId);
+            if (identityError) { failure = identityError; break; }
+
             NSDictionary *statusPayload = [statusResponse[@"payload"] isKindOfClass:[NSDictionary class]] ? statusResponse[@"payload"] : @{};
             NSString *state = [statusPayload[@"state"] isKindOfClass:[NSString class]] ? statusPayload[@"state"] : @"unknown";
             NSDictionary *nativeRPC = [statusPayload[@"nativeRPCRequest"] isKindOfClass:[NSDictionary class]] ? statusPayload[@"nativeRPCRequest"] : nil;

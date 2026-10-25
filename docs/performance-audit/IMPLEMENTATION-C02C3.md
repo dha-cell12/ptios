@@ -1,7 +1,7 @@
 # C02c3 — bounded streaming helper RPC fingerprints
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `af250da`; the user reported the corrected C02c2 build passed before this slice.
-Status: **source implemented; new macOS/Foundation/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02d1 (`aec9902`); device qualification pending**.
 Finding: **P1-41, application-owned fingerprint buffer removed; Foundation allocation/latency qualification remains**.
 
 ## Result and scope
@@ -34,3 +34,5 @@ The stream API is documented by Apple as [NSJSONSerialization writeJSONObject:to
 Run both rootfull/roothide builds and the macOS fixture. Compare old/new digests on actual helper traffic, especially screenshot/OCR argument mixes and boundary escapes, then confirm replay/collision/retired identity behavior. Use Allocations and latency traces to determine whether supported Foundation versions internally buffer the entire JSON and whether the application sink reduces transient retention. Do not infer device RSS savings from sink byte counters.
 
 Continue P0-12 event-driven helper transport with session/request ownership, reconnect ordering and no repeated effects; P1-40 asynchronous/memory-only invalidation; remaining P0-13 adapters; and P1-41 Foundation/device allocation qualification. C01/C02 performance/device acceptance remains open.
+
+The user reported C02c3 build `aec9902` passed before C02d1. No independent macOS/device run was performed on this Windows host. The helper identity/response-slot prerequisite is tracked in `IMPLEMENTATION-C02D1.md`.
