@@ -4,6 +4,7 @@
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperSocketIO.h"
+#include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperClientAdmission.h"
 #include <atomic>
 #include <cassert>
@@ -31,6 +32,11 @@ static NSString *kTLinkJSHelperSocketPath;
 @implementation FixturePeer
 - (instancetype)init {self=[super init];if(self){mode.store(0);effects.store(0);self.helperInstanceId=@"helper";self.clientQueue=dispatch_queue_create("fixture.helper.clients",DISPATCH_QUEUE_CONCURRENT);}return self;}
 - (NSDictionary *)handleEnvelope:(NSDictionary *)request {
+    if(![request[@"requestId"] isEqual:@"transport"]){
+        bool present=false;uint64_t issued=0,expires=0;
+        assert(TLinkHelperReadSenderDeadline(request,present,issued,expires)&&present);
+        assert(issued<=nowMs()&&nowMs()<expires);
+    }
     ++effects;const unsigned action=mode.load();
     if(action==4)[NSException raise:@"FixtureHandler" format:@"handler exception"];
     if(action==6)throw std::runtime_error("fixture handler exception");
@@ -110,6 +116,68 @@ static void serverCases(){
     }}
 }
 static void drainClients(FixturePeer *peer){dispatch_barrier_sync(peer.clientQueue, ^{});assert(peer->_clientAdmission.stats().active==0);}
+static NSData *deadlineRequest(id window){
+    NSMutableDictionary *request=[[TLinkJSHelperProtocol deserializeEnvelope:wireRequest() error:nil] mutableCopy];
+    request[@"requestDeadline"]=window;
+    // Bypass the serializer's validation to exercise receiver rejection of malformed wire input.
+    return [NSJSONSerialization dataWithJSONObject:request options:0 error:nil];
+}
+static void senderDeadlineCases(){
+    const uint64_t now=nowMs();assert(now>1000);
+    NSArray *malformed=@[
+        [NSNull null],@[],@{},
+        @{@"clock":@"other",@"issuedMs":@(now),@"expiresMs":@(now+100)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@(true),@"expiresMs":@(100)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@"1",@"expiresMs":@(100)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@(-1),@"expiresMs":@(100)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@(0.5),@"expiresMs":@(100)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@(now),@"expiresMs":@(now)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@(now),@"expiresMs":@(now+30001)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@(UINT64_MAX-1),@"expiresMs":@(UINT64_MAX)},
+        @{@"clock":@"mach_continuous_ms_v1",@"issuedMs":@(now),@"expiresMs":@(now+100),@"extra":@(1)}
+    ];
+    for(id window in malformed){
+        NSData *data=deadlineRequest(window);
+        NSDictionary *raw=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        assert(![TLinkJSHelperProtocol validateEnvelope:raw error:nil]);
+        assert(![TLinkJSHelperProtocol deserializeEnvelope:data error:nil]);
+        assert(![TLinkJSHelperProtocol serializeEnvelope:raw error:nil]);
+        int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);assert(sender.prepare().ok());
+        FixturePeer *peer=[[FixturePeer alloc] init];[peer enqueueClient:pair[1] acceptedAt:nowMs()];
+        const Deadline io(nowMs(),2000);assert(writeFrame(posixOps(),sender.fd(),static_cast<const uint8_t *>(data.bytes),data.length,io).ok());
+        std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,io).ok());
+        drainClients(peer);assert(peer->effects==0);
+    }
+    // Even a newly accepted socket must reject an already-expired or future sender window.
+    for(bool future : {false,true}){
+        const uint64_t sampled=nowMs();const Deadline wire(future?sampled+60000:sampled-1000,100);
+        NSData *data=deadlineRequest(TLinkHelperSenderDeadline(future?sampled+60000:sampled-1000,wire));
+        FixturePeer *peer=[[FixturePeer alloc] init];dispatch_suspend(peer.clientQueue);
+        int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);assert(sender.prepare().ok());
+        [peer enqueueClient:pair[1] acceptedAt:nowMs()];const Deadline io(nowMs(),2000);
+        assert(writeFrame(posixOps(),sender.fd(),static_cast<const uint8_t *>(data.bytes),data.length,io).ok());
+        dispatch_resume(peer.clientQueue);std::vector<uint8_t> frame;
+        assert(readFrame(posixOps(),sender.fd(),frame,io).code==Code::Empty);drainClients(peer);assert(peer->effects==0);
+    }
+    // Real client times out while its complete command is still in the listen backlog.
+    // Accept only after the client returns: a fresh server window must not revive the command.
+    {
+        Listener listener;TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];
+        NSDictionary *reply=[client statusWithTimeoutMs:100];assert([reply[@"error"] isEqual:@"io_timeout"]);
+        FixturePeer *peer=[[FixturePeer alloc] init];[peer handleClient:listener.accept()];assert(peer->effects==0);
+    }
+    // The client has a shorter budget than accept: command-owner wait must use that shorter budget.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];peer->_clientCommandOwner.lock();
+        int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);assert(sender.prepare().ok());
+        const uint64_t issued=nowMs();const Deadline wire(issued,100);NSData *data=deadlineRequest(TLinkHelperSenderDeadline(issued,wire));
+        [peer enqueueClient:pair[1] acceptedAt:issued];const Deadline io(nowMs(),2000);
+        assert(writeFrame(posixOps(),sender.fd(),static_cast<const uint8_t *>(data.bytes),data.length,io).ok());
+        std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,io).code==Code::Empty);
+        assert(nowMs()>=wire.end&&peer->effects==0);peer->_clientCommandOwner.unlock();drainClients(peer);assert(peer->effects==0);
+    }
+    puts("Helper sender deadline Foundation passed: actual client metadata, strict codec/wire rejection, fresh-accept/queued expiry, future-clock rejection, shorter command-owner budget and no late effects; legacy EOF remains covered.");
+}
 static void queueCases(){
     // A stalled reader must not delay a different complete request.
     {
@@ -153,4 +221,4 @@ static void queueCases(){
     }
     puts("Helper admission Foundation passed: actual concurrent enqueue/leases, stalled-reader isolation, eight queued clients/ninth-fd rejection, accepted-time expiry, serialized command deadline, stopped and exception cleanup.");
 }
-int main(){@autoreleasepool{clientCases();clientTimeout();serverCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
+int main(){@autoreleasepool{clientCases();clientTimeout();serverCases();senderDeadlineCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}

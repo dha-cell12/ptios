@@ -1,7 +1,7 @@
 # C02d3 — bounded concurrent helper clients and serialized command ownership
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `d89c4d3`; the user reported C02d2 built successfully before this slice.
-Status: **source implemented; new macOS/Foundation/GCD/iOS CI and device qualification pending**.
+Status: **user reported build `6cbe63c` passed before C02d4; independent device/performance qualification remains pending**.
 Finding: **P0-12 prerequisite: bounded client ownership and I/O isolation before event waits**.
 
 ## Result and scope

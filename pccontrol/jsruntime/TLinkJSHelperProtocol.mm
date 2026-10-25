@@ -1,4 +1,5 @@
 #import "TLinkJSHelperProtocol.h"
+#include "../../shared/TLinkHelperRequestDeadline.h"
 
 NSString * const kTLinkJSHelperProtocolVersion = @"1.0";
 
@@ -118,6 +119,11 @@ NSString * const kTLinkJSHelperStateCrashed = @"crashed";
     NSString *command = envelope[kTLinkJSHelperKeyCommand];
     if (![command isKindOfClass:[NSString class]] || ![[self allowedCommands] containsObject:command]) {
         if (error) *error = [self errorWithMessage:@"Missing or invalid command"];
+        return NO;
+    }
+    bool hasDeadline=false;uint64_t issued=0,expires=0;
+    if(!TLinkHelperReadSenderDeadline(envelope,hasDeadline,issued,expires)) {
+        if(error)*error=[self errorWithMessage:@"invalid requestDeadline"];
         return NO;
     }
     id payload = envelope[kTLinkJSHelperKeyPayload];

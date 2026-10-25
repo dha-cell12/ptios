@@ -1,4 +1,5 @@
 #include "../shared/TLinkHelperSocketIO.h"
+#include "../shared/TLinkHelperRequestDeadline.h"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,23 @@ struct Fake {
         const size_t n=std::min(s.writeChunk,length);s.output.append(reinterpret_cast<const char *>(data),n);return static_cast<ptrdiff_t>(n);}
     Ops ops(){return {this,now,wait,receive,send};}
 };
+static void senderDeadlineCases(){
+    for(uint64_t n=0;n<100000;++n){
+        const uint64_t issued=1000000+n,budget=n%30000+1,age=n%31000,now=issued+age;
+        Deadline local(now,1000);const bool accepted=constrainToSender(local,issued,issued+budget,now);
+        assert(accepted==(age<budget));
+        if(accepted)assert(local.remaining(now)==static_cast<int>(std::min<uint64_t>(1000,budget-age)));
+    }
+    for(const auto &window:std::vector<std::pair<uint64_t,uint64_t>>{{1,1},{2,1},{0,30001},{MaxWireTime,MaxWireTime+1},{UINT64_MAX-1,UINT64_MAX}}){
+        Deadline local(0,1000);assert(!constrainToSender(local,window.first,window.second,0));
+    }
+    Deadline future(100,1000);assert(!constrainToSender(future,101,102,100));
+    Deadline expired(100,1);assert(!constrainToSender(expired,0,1000,101));
+    Deadline shorter(100,10);assert(constrainToSender(shorter,0,30000,100)&&shorter.end==110);
+    Deadline exact(100,100);assert(!constrainToSender(exact,0,100,100));
+    Deadline edge(MaxWireTime-5,10);assert(constrainToSender(edge,MaxWireTime-5,MaxWireTime,MaxWireTime-1)&&edge.end==MaxWireTime);
+    puts("Helper sender deadline passed: 100k backlog/accept age plans, no renewal, future/expired/malformed/overflow rejection and shorter local window preserved.");
+}
 static void portableCases(){
     assert(!Deadline(0,0).valid&&!Deadline(0,-1).valid);assert(Deadline(10,INT32_MAX).remaining(10)==30000);
     assert(Deadline(UINT64_MAX-2,10).end==UINT64_MAX);assert(Deadline(0,3).remaining(3)==0);
@@ -72,7 +90,7 @@ static void posixCases(){
     puts("Helper transport POSIX passed: real nonblocking Unix connect, socketpair frames, peer close without SIGPIPE, backpressure timeout and owned descriptor cleanup.");
 }
 #endif
-int main(){portableCases();
+int main(){senderDeadlineCases();portableCases();
 #if !defined(_WIN32)
     posixCases();
 #endif

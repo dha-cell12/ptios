@@ -12,7 +12,9 @@ const admission=between(server,'// BEGIN helper socket client admission.','// EN
 const owner=between(server,'// BEGIN helper socket client ownership.','// END helper socket client ownership.');
 const error=between(server,'- (NSDictionary *)errorEnvelopeForRequest:','- (NSDictionary *)handleEnvelope:');
 const clientImplementation=client.slice(client.indexOf('@interface TLinkJSHelperClient ()'));
-assert.match(client,/Deadline deadline\(nowMs\(\), timeoutMs\)/);
+assert.match(client,/Deadline deadline\(issuedAt, timeoutMs\)/);
+assert.match(client,/requestDeadline.*TLinkHelperSenderDeadline/);
+assert.match(owner,/constrainToSender[\s\S]*try_lock_for[\s\S]*deadline.remaining\(nowMs\(\)\)[\s\S]*handleEnvelope/);
 assert.match(client,/connectUnix[\s\S]*writeFrame[\s\S]*readFrame[\s\S]*@finally \{ socket.close/);
 assert.match(owner,/readFrame[\s\S]*deserializeEnvelope[\s\S]*deadline.remaining\(nowMs\(\)\)[\s\S]*handleEnvelope/);
 assert.match(owner,/responseData.length > MaxFrameBytes[\s\S]*frame_too_large/);

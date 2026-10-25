@@ -3,6 +3,7 @@
 #import "../shared/TLinkJSFileHandle.h"
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperSocketIO.h"
+#include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperClientAdmission.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
@@ -1098,7 +1099,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 {
     using namespace TLinkHelperIO;
     Socket socket(client);
-    const Deadline deadline(acceptedAt, ServerTimeoutMs);
+    Deadline deadline(acceptedAt, ServerTimeoutMs);
     @autoreleasepool {
         @try {
             if (!socket.prepare().ok()) return;
@@ -1108,6 +1109,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             NSError *err = nil;
             NSDictionary *request = [TLinkJSHelperProtocol deserializeEnvelope:requestData error:&err];
             if (!deadline.remaining(nowMs())) return;
+            bool hasDeadline=false;uint64_t issued=0,expires=0;
+            if (request && (!TLinkHelperReadSenderDeadline(request,hasDeadline,issued,expires) ||
+                (hasDeadline && !constrainToSender(deadline,issued,expires,nowMs())))) return;
             NSDictionary *response = nil;
             {
                 std::unique_lock<std::timed_mutex> command(_clientCommandOwner, std::defer_lock);

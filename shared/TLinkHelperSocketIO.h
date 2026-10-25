@@ -7,6 +7,9 @@
 #include <cstdint>
 #include <limits>
 #include <vector>
+#if defined(__APPLE__)
+#include <mach/mach_time.h>
+#endif
 #if !defined(_WIN32)
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -18,7 +21,17 @@
 namespace TLinkHelperIO {
 static const size_t MaxFrameBytes=1024*1024;
 static const int ServerTimeoutMs=1000;
-static inline uint64_t nowMs(){return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());}
+// Darwin peers share the kernel continuous clock, including time spent asleep.
+static inline uint64_t nowMs(){
+#if defined(__APPLE__)
+    static const mach_timebase_info_data_t scale=[] {mach_timebase_info_data_t value{};if(mach_timebase_info(&value)!=KERN_SUCCESS)value={};return value;}();
+    if(!scale.numer||!scale.denom)return UINT64_MAX; // fail closed, never change clock domains
+    const __uint128_t ms=static_cast<__uint128_t>(mach_continuous_time())*scale.numer/(static_cast<uint64_t>(scale.denom)*1000000);
+    return ms>UINT64_MAX?UINT64_MAX:static_cast<uint64_t>(ms);
+#else
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+#endif
+}
 struct Deadline {
     uint64_t end=0;bool valid=false;
     Deadline(uint64_t now,int timeout){if(timeout<=0)return;valid=true;const uint64_t span=static_cast<uint64_t>(timeout>30000?30000:timeout);end=now>UINT64_MAX-span?UINT64_MAX:now+span;}

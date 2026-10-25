@@ -2,6 +2,7 @@
 #import "TLinkJSHelperProtocol.h"
 #include "../../shared/TLinkHelperRPCIdentity.h"
 #include "../../shared/TLinkHelperSocketIO.h"
+#include "../../shared/TLinkHelperRequestDeadline.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -21,10 +22,12 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
 - (NSDictionary *)requestCommand:(NSString *)command payload:(NSDictionary *)payload sessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs
 {
     using namespace TLinkHelperIO;
-    const Deadline deadline(nowMs(), timeoutMs);
+    const uint64_t issuedAt = nowMs();
+    const Deadline deadline(issuedAt, timeoutMs);
     if (!deadline.valid) return TLinkHelperIOFailure({Code::InvalidTimeout});
     NSString *requestId = [[NSUUID UUID] UUIDString];
-    NSDictionary *envelope = [TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:self.boundHelperInstanceId sessionId:sessionId requestId:requestId payload:payload ?: @{}];
+    NSMutableDictionary *envelope = [[TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:self.boundHelperInstanceId sessionId:sessionId requestId:requestId payload:payload ?: @{}] mutableCopy];
+    envelope[@"requestDeadline"] = TLinkHelperSenderDeadline(issuedAt, deadline);
     NSData *requestData = [TLinkJSHelperProtocol serializeEnvelope:envelope error:nil];
     if (!requestData) return @{ @"ok": @(false), @"error": @"serialize_failed" };
     if (requestData.length > MaxFrameBytes) return TLinkHelperIOFailure({Code::TooLarge});
