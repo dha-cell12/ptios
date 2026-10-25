@@ -111,6 +111,11 @@ const fixtures = {
   'ImageQueueUnderTest.inc': 'static dispatch_queue_t zx_imageQueue() {' + bodyAfter(source.indexOf('static dispatch_queue_t zx_imageQueue(')) + '}\n',
 };
 assert.doesNotMatch(fixtures['ImageReleaseUnderTest.inc'],/matchImageInFrame|TLinkNativeFrameImageRequest/,'release fixture must not import the adjacent matcher');
+// macOS compiles this include; catch its helper dependency on every host too.
+const runtimeFixture=(await readFile(join(root,'test/image-storage-runtime-test.mm'),'utf8')).replaceAll('\r\n','\n');
+const publishImageAt=runtimeFixture.indexOf('static uint32_t publishImage(');
+const openFixtureAt=runtimeFixture.indexOf('#include "image-open-runtime-fixture.inc"');
+assert.ok(publishImageAt>=0&&openFixtureAt>publishImageAt,'Image open fixture must follow the publishImage helper definition');
 const tempRoot = resolve(tmpdir()), temp = await mkdtemp(join(tempRoot, 'tlink-image-storage-'));
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, encoding: 'utf8', timeout: 120000 });

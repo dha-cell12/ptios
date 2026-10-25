@@ -31,7 +31,6 @@ static const int IMREAD_GRAYSCALE = 0;
 #include "ImageErrorUnderTest.inc"
 #include "ImageDecoderUnderTest.inc"
 #include "frame-capture-runtime-fixture.inc"
-#include "image-open-runtime-fixture.inc"
 #include "../shared/TLinkFrameVisionPolicy.h"
 static bool failFrameProvider=false,failFrameImage=false;
 static CGDataProviderRef FixtureFrameProvider(void *info,const void *data,size_t bytes,CGDataProviderReleaseDataCallback release){
@@ -107,6 +106,8 @@ static uint32_t publishImage(std::shared_ptr<ZXImageObject> value) {
     assert(result);
     return result;
 }
+// The open fixture uses the completed publishImage helper above.
+#include "image-open-runtime-fixture.inc"
 static void barrier() { dispatch_sync(zx_imageQueue(), ^{}); }
 static void releaseFrame(uint32_t id){NSString *value=[NSString stringWithFormat:@"%u",id];(void)handleFrameReleaseTaskFromRawData((UInt8 *)value.UTF8String,NULL);}
 static void numericReleaseParityCases(){

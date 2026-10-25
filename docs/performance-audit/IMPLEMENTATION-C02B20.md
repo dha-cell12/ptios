@@ -42,3 +42,9 @@ Cleanup is best-effort and exceptions are contained. Image objects have explicit
 Build rootfull/roothide observe/enforced variants. Compare openImage with RAW task 48 action 2 for absolute/script-relative paths, Unicode/delimiters/whitespace, owner variants, file/decode/count/memory failures and exact raw/parts/metadata. Exercise caller stop/deadline near file reading, decoding, publication and response construction. Verify failed transfers remove only the new image and admitted readers remain valid after release; measure bridge overhead separately from decode and memory pressure.
 
 Continue remaining P0-13 creation/response/other adapters, P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+## CI correction — fixture helper declaration order
+
+The C02b20 macOS build at `79c78ee` failed because image-open-runtime-fixture.inc was included before the definition of publishImage. Move that include below the complete helper definition. The production image-open/store path is unchanged. An all-host extraction guard now rejects the original ordering before compiling the runtime fixture; corrected macOS CI remains pending.
+
+Correction validation: image-storage portable/extraction checks and standards-conforming assert preprocessing pass on Windows; git diff --check passes. Actual macOS Foundation/sanitizer compilation and execution must be rerun in CI.
