@@ -1,7 +1,7 @@
 # C02c1 — metadata-backed immutable helper configuration snapshot
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `2259bc0`; the user reported C02b22 built successfully before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02c2 (`904e7ca`); device qualification pending**.
 Finding: **P1-40, bounded first slice**. Metadata syscalls/serialization remain synchronous; event-driven helper transport, dedupe and other native adapters remain open.
 
 ## Result and scope
@@ -42,3 +42,5 @@ The helper RPC allowlist/admin classification, task license enforcement and repl
 Build rootfull/roothide, run helper and default/fallback modes, compare flags/runtimeInfo and new-RPC admin policy while changing config by atomic replacement and in-place writes. Verify parse/open counts stay flat under unchanged RPC traffic, policy changes are detected, invalid reads never reuse admin permission, and retained snapshots survive refresh. Measure cache-hit metadata/lock cost and reload stalls separately from the existing transport polling delay.
 
 Continue P0-12 event-driven helper RPC with reconnect/session/request identity and no repeated side effects, P1-41 byte-bounded replay/dedupe, remaining P0-13 adapters and the rest of P1-40 invalidation work. C01/C02 performance/device acceptance remains open.
+
+The user reported C02c1 build `904e7ca` passed before C02c2. No independent macOS/device execution was performed on this Windows host. The next replay cache slice is tracked in `IMPLEMENTATION-C02C2.md`.

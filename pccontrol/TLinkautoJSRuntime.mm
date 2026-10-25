@@ -18,6 +18,7 @@
 #import "jsruntime/TLinkJSHelperClient.h"
 #import "../shared/TLinkJSFileHandle.h"
 #include "../shared/TLinkHelperConfigSnapshot.h"
+#include "../shared/TLinkHelperRPCReplay.h"
 
 typedef NS_ENUM(int, TLinkJSRuntimeTaskCode) {
     TASK_PERFORM_TOUCH = 10,
@@ -88,7 +89,6 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 * 1024;
 static const NSUInteger kTLinkautoJSMaxOpenFiles = 32;
 static NSString * const kTLinkautoJSHelperConfigPath = @"/var/mobile/Library/TLinkauto/config.json";
-static const NSUInteger kTLinkautoJSNativeRPCCacheLimit = 256;
 
 // BEGIN cached helper config snapshot.
 static NSDictionary *TLinkautoJSHelperConfigSnapshot(void)
@@ -101,16 +101,6 @@ static NSDictionary *TLinkautoJSHelperConfigSnapshot(void)
 static BOOL TLinkautoJSHelperRuntimeEnabledFromConfig(void)
 {
     return [TLinkautoJSHelperConfigSnapshot()[@"enabled"] boolValue];
-}
-
-static NSString *TLinkautoJSArgumentsFingerprint(NSArray *arguments)
-{
-    id obj = [arguments isKindOfClass:[NSArray class]] ? arguments : @[];
-    if ([NSJSONSerialization isValidJSONObject:obj]) {
-        NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
-        if (data) return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
-    }
-    return [obj description] ?: @"";
 }
 
 static BOOL TLinkautoJSHelperRPCMethodIsAdmin(NSString *method, NSArray *arguments)
@@ -226,8 +216,7 @@ struct TLinkautoJSWatchdogProbeState {
     NSString *_helperRunId;
     NSString *_helperConsoleLogPath;
     NSString *_helperConsoleLatestLogPath;
-    NSMutableDictionary<NSString *, NSDictionary *> *_helperNativeRPCCache;
-    NSMutableArray<NSString *> *_helperNativeRPCOrder;
+    TLinkHelperRPCReplay _helperNativeRPCReplay;
     NSUInteger _helperRPCCount;
     NSUInteger _helperDuplicateRPCCount;
     NSUInteger _helperBlockedRPCCount;
@@ -559,8 +548,6 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         _sleepCondition = [[NSCondition alloc] init];
         _ownedFrameIds = [NSMutableSet set];
         _ownedImageIds = [NSMutableSet set];
-        _helperNativeRPCCache = [NSMutableDictionary dictionary];
-        _helperNativeRPCOrder = [NSMutableArray array];
         _lastEffectiveRuntimeLocation = @"in-process";
         _lastHelperDefaultFallbackReason = @"";
         _setExecutionTimeLimit = (TLinkautoJSSetExecutionTimeLimitFn)dlsym(RTLD_DEFAULT, "JSContextGroupSetExecutionTimeLimit");
@@ -971,8 +958,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     NSDictionary *response = start[@"response"];
     NSDictionary *payload = [response[@"payload"] isKindOfClass:[NSDictionary class]] ? response[@"payload"] : @{};
     _helperRunning = YES;
-    [_helperNativeRPCCache removeAllObjects];
-    [_helperNativeRPCOrder removeAllObjects];
+    _helperNativeRPCReplay.clear();
     _helperRPCCount = 0;
     _helperDuplicateRPCCount = 0;
     _helperBlockedRPCCount = 0;
@@ -1015,45 +1001,19 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
                 NSString *method = [nativeRPC[@"method"] isKindOfClass:[NSString class]] ? nativeRPC[@"method"] : @"";
                 NSArray *arguments = [nativeRPC[@"arguments"] isKindOfClass:[NSArray class]] ? nativeRPC[@"arguments"] : @[];
                 _helperRPCCount++;
-                NSString *argumentsFingerprint = TLinkautoJSArgumentsFingerprint(arguments);
-                NSString *cacheKey = [NSString stringWithFormat:@"%@|%@", _helperSessionId ?: @"", nativeRequestId ?: @""];
-                NSDictionary *result = nil;
-                NSDictionary *cacheEntry = nil;
-                if ([nativeRequestId length] > 0) {
-                    cacheEntry = _helperNativeRPCCache[cacheKey];
-                }
-                if (cacheEntry) {
-                    NSString *cachedMethod = [cacheEntry[@"method"] isKindOfClass:[NSString class]] ? cacheEntry[@"method"] : @"";
-                    NSString *cachedArguments = [cacheEntry[@"argumentsFingerprint"] isKindOfClass:[NSString class]] ? cacheEntry[@"argumentsFingerprint"] : @"";
-                    if (![cachedMethod isEqualToString:method] || ![cachedArguments isEqualToString:argumentsFingerprint]) {
-                        _helperBlockedRPCCount++;
-                        result = @{ @"ok": @NO, @"error": @"duplicate native RPC requestId collision", @"requestId": nativeRequestId ?: @"" };
-                        NSLog(@"tlinkauto-helper-rpc: collision method=%@ id=%@ cachedMethod=%@", method, nativeRequestId, cachedMethod);
-                    } else {
-                        _helperDuplicateRPCCount++;
-                        result = [cacheEntry[@"result"] isKindOfClass:[NSDictionary class]] ? cacheEntry[@"result"] : @{};
-                        NSLog(@"tlinkauto-helper-rpc: replay method=%@ id=%@ ok=%d", method, nativeRequestId, [result[@"ok"] boolValue]);
-                    }
-                } else {
+                TLinkHelperRPCReplay::Decision decision;
+                NSDictionary *result = TLinkHelperRPCDispatch(_helperNativeRPCReplay, nativeRequestId, method, arguments, ^NSDictionary *{
                     NSDictionary *policy = TLinkautoJSHelperRPCPolicy(method, arguments, TLinkautoJSHelperConfigSnapshot());
                     if (![policy[@"allowed"] boolValue]) {
                         _helperBlockedRPCCount++;
-                        result = @{ @"ok": @NO, @"error": @"helper RPC method blocked by policy", @"method": method ?: @"", @"reason": policy[@"reason"] ?: @"blocked" };
-                        NSLog(@"tlinkauto-helper-rpc: blocked method=%@ id=%@ reason=%@", method, nativeRequestId, policy[@"reason"] ?: @"blocked");
-                    } else {
-                        result = [self executeNativeRequest:method arguments:arguments];
+                        return @{ @"ok": @(false), @"error": @"helper RPC method blocked by policy", @"method": method ?: @"", @"reason": policy[@"reason"] ?: @"blocked" };
                     }
-                    if ([nativeRequestId length] > 0) {
-                        _helperNativeRPCCache[cacheKey] = @{ @"method": method ?: @"", @"argumentsFingerprint": argumentsFingerprint ?: @"", @"result": result ?: @{} };
-                        [_helperNativeRPCOrder addObject:cacheKey];
-                        while ([_helperNativeRPCOrder count] > kTLinkautoJSNativeRPCCacheLimit) {
-                            NSString *oldest = [_helperNativeRPCOrder firstObject];
-                            if (oldest) [_helperNativeRPCCache removeObjectForKey:oldest];
-                            [_helperNativeRPCOrder removeObjectAtIndex:0];
-                        }
-                    }
-                    NSLog(@"tlinkauto-helper-rpc: handled method=%@ id=%@ ok=%d", method, nativeRequestId, [result[@"ok"] boolValue]);
-                }
+                    return [self executeNativeRequest:method arguments:arguments];
+                }, decision);
+                if (decision == TLinkHelperRPCReplay::Decision::Replay) _helperDuplicateRPCCount++;
+                else if (decision != TLinkHelperRPCReplay::Decision::Execute) _helperBlockedRPCCount++;
+                NSLog(@"tlinkauto-helper-rpc: method=%@ id=%@ decision=%d ok=%d replayBytes=%lu identities=%lu", method, nativeRequestId,
+                      (int)decision, [result[@"ok"] boolValue], (unsigned long)_helperNativeRPCReplay.bytes(), (unsigned long)_helperNativeRPCReplay.identities());
                 [helper sendNativeRPCResponse:result ?: @{} requestId:nativeRequestId sessionId:_helperSessionId timeoutMs:500];
             }
             id activeSession = statusPayload[@"activeSessionId"];
@@ -1094,8 +1054,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         _taskContext.ownerRunId = nil;
         _taskContext.ownerRuntime = nil;
         _taskContext = nil;
-        [_helperNativeRPCCache removeAllObjects];
-        [_helperNativeRPCOrder removeAllObjects];
+        _helperNativeRPCReplay.clear();
         _helperRunning = NO;
         _helperSessionId = nil;
     }
