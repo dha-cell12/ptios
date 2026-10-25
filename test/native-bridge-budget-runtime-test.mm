@@ -1125,6 +1125,11 @@ static void typedFrameOCRCases(TLinkInProcessNativeBridge *bridge){
         if(typed.ok){if(![typed.value isEqual:legacy.value])std::fprintf(stderr,"frame OCR parity: legacy %s, typed %s\n",[[legacy.value description] UTF8String],[[typed.value description] UTF8String]);assert([typed.value isEqual:legacy.value]);}else assert([typed.errorMessage isEqualToString:legacy.errorMessage]&&[typed.errorCode isEqual:legacy.errorCode]);
         assert(calls==before&&licenseCalls==gates+dispatched&&frameOCRCalls==reads+dispatched);if(dispatched){assert(lastLicenseTask==91&&frameOCRBudget==licenseBudget&&!frameOCRBudget->capturesResponse()&&frameOCRBudget->response().capacity()==0);assert(frameOCRBudget->deadline()>=started+3000000000ULL&&frameOCRBudget->deadline()<=ended+3000000000ULL);}
     };
+    // OCR success has columns after status 0; touch's exact "0\r\n" reply is insufficient.
+    auto successContext=parent(30);reset(successContext);NSDictionary *structured=invoke(1,@{},successContext).value;
+    if(![structured[@"ok"] boolValue])std::fprintf(stderr,"typed frame OCR must accept status-0 body: %s\n",[[structured description] UTF8String]);
+    assert([structured[@"ok"] boolValue]&&[structured[@"parts"] count]==7&&[structured[@"text"] length]>0);
+    assert([structured[@"confidence"] doubleValue]==83.12&&[structured[@"ageMs"] unsignedLongLongValue]==42);
     for(unsigned n=0;n<100;++n){const double x=n<8?std::vector<double>{-1e308,double(INT_MIN),-.5,-0.0,.5,1.5,double(INT_MAX),1e308}[n]:double(int(n%19)-3)*.5;compare(1,@{@"x":@(x),@"y":@1.5,@"width":@(double(int(n%9)-2)*.5),@"lang":n%3?@"eng":@"",@"coord":n%2?@"point":@"pixel",@"whitelist":@"đọc ;;A\n",@"oem":@(int(n%7)-2),@"psm":@(n%17),@"scaleUp":@(int(n%7)-1),@"thresholdMode":@(n%4),@"maxAgeMs":@(int(n%3)-1)},nil);}
     NSDictionary *normal=@{};compare(1,normal,nil);compare(0,normal,nil);compare(1,@{@"x":@(NAN)},nil);compare(1,@{@"height":@(INFINITY)},nil);compare(1,@{@"lang":@"en;;x"},nil);compare(1,@{@"coord":@"pixel\n"},nil);
     unichar nul=0,high=0xd800;NSString *nullString=[NSString stringWithCharacters:&nul length:1],*broken=[NSString stringWithCharacters:&high length:1];

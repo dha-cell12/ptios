@@ -679,6 +679,12 @@ NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest 
 // END typed color points task entry.
 
 // BEGIN typed frame OCR task entry.
+static NSDictionary *zx_typedFrameOCRReply(NSString *raw,const TLinkNativeBudgetPtr &budget){
+    if(!budget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||budget->stopped())return zx_typedTouchStopped(budget);
+    NSArray *parts=[[raw stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"];
+    NSString *status=parts.count?parts[0]:@"1";
+    return @{@"ok":@([status isEqualToString:@"0"]),@"raw":raw,@"parts":parts};
+}
 NSDictionary *TLinkExecuteNativeFrameOCR(const TLinkNativeFrameOCRRequest &request,TLinkTaskExecutionContext *context){
     TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);auto replyBudget=[call nativeBudget];TLinkNativeBudgetScope callScope(replyBudget);
     static_assert(TASK_OCR_TESSERACT_REGION==91,"frame OCR task classification changed");const uint8_t task[]={'9','1'};
@@ -688,7 +694,7 @@ NSDictionary *TLinkExecuteNativeFrameOCR(const TLinkNativeFrameOCRRequest &reque
         NSString *denial=nil;if(!TLinkRootfullLicenseTaskAllowed(TASK_OCR_TESSERACT_REGION,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",replyBudget);
         if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
         NSError *error=nil;NSString *body=recognizeFrameWithTesseract(request,&error);
-        return zx_typedTouchReply(error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""],replyBudget);
+        return zx_typedFrameOCRReply(error.localizedDescription?:[NSString stringWithFormat:@"0;;%@\r\n",body?:@""],replyBudget);
     }catch(...){return zx_typedTouchFailure(@"native_exception");}}@catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
 }
 // END typed frame OCR task entry.

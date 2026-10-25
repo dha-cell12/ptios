@@ -124,6 +124,8 @@ try {
   assert.match(frameOCRBridge,/TLinkNativeOCRInputFits[\s\S]*invalid_payload[\s\S]*TLinkExecuteNativeFrameOCR/);
   assert.match(frameOCREntry,/TLinkC01TaskBudget[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_OCR_TESSERACT_REGION,&denial\)[\s\S]*recognizeFrameWithTesseract/);
   assert.doesNotMatch(frameOCREntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
+  assert.match(frameOCREntry,/return zx_typedFrameOCRReply\(error\.localizedDescription/,'OCR bodies require column-aware status handling, not touch-only success');
+  assert.match(frameOCREntry,/"ok":@\(\[status isEqualToString:@"0"\]\)/);
   await writeFile(join(temp,"NativeFrameOCRBridge.inc"),frameOCRBridge);
   await writeFile(join(temp,"NativeFrameOCREntry.inc"),frameOCREntry);
   const framePickBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColor])","    else if ([method isEqualToString:TLinkJSNativeMethodFramePickColors])");

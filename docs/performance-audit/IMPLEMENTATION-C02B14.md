@@ -42,3 +42,9 @@ The entry checks the final response through the existing bounded reply helper. D
 Build rootfull/roothide observe/enforced variants. Compare JS ocrFrame with RAW task 91 on the same retained frame: pixel/point ROI, language/whitelist, OEM/PSM, scale/threshold, age/TTL, empty/default and large scalar conversions. Check missing frame/gray, disabled engine, busy/preflight/init errors, license delay/denial, cancellation, output caps and pressure/resource recovery. Confirm no display capture; measure bridge allocations/latency separately from recognition and accuracy.
 
 Continue remaining measured P0-13 image/OCR adapters and response work, P0-12 event-driven helper RPC, P1-40 config snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+## CI correction — OCR success status
+
+Root macOS CI aborted in the native bridge fixture after the frame-image cases. The typed OCR entry reused zx_typedTouchReply, whose sole success shape is exactly `0\r\n`; it marked a valid `0;;<OCR body>\r\n` as failed. The OCR reply adapter now derives ok from the first compatibility column while retaining the same raw/parts, output/cancellation checks and error mappings. Touch reply handling is unchanged.
+
+The actual bridge fixture explicitly requires the default OCR call to succeed with seven reply parts and decoded text/confidence/age before the frozen comparison cases. All-host extraction guards require the OCR-specific adapter. Windows native-budget/OCR and assert-preprocessor checks pass; corrected Foundation/macOS and iOS execution remain pending on CI. No strict warning or sanitizer setting is disabled.
