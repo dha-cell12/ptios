@@ -569,64 +569,38 @@ NSString* handleFrameCaptureTaskFromRawData(UInt8 *eventData, NSError **error)
             captureMs, bgraMs, grayMs, totalMs];
 }
 
-NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData, NSError **error)
-{
-    (void)error;
-    NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData] ?: @"";
-    raw = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSArray<NSString *> *data = [raw componentsSeparatedByString:@";;"];
-    NSString *command = [data count] > 0 ? data[0] : @"";
-    NSString *lower = [command lowercaseString];
-    __block NSUInteger removed = 0;
+// BEGIN numeric frame release.
+size_t releaseStoredFrames(const TLinkNativeFrameReleaseRequest &request){
+    __block size_t removed=0;
     TLinkNativeDispatchSync(zx_imageQueue(), ^{
-        if ([lower isEqualToString:@"all"]) {
-            if ([data count] >= 4) {
-                std::string sessionId = zx_stringFromPart(data, 1, "");
-                std::string runId = zx_stringFromPart(data, 2, "");
-                std::string runtime = zx_stringFromPart(data, 3, "");
+        if(request.all){
+            if(request.scoped){
                 std::vector<uint32_t> ids;
-                for (auto const &kv : gFrameStore) {
-                    if (zx_ownerMatchesFrame(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
-                }
-                for (uint32_t fid : ids) {
-                    removed += gFrameStore.erase(fid);
-                }
-            } else {
-                removed = gFrameStore.size();
-                gFrameStore.clear();
-            }
-        } else if ([lower isEqualToString:@"scoped"]) {
-            if ([data count] >= 4) {
-                std::string sessionId = zx_stringFromPart(data, 1, "");
-                std::string runId = zx_stringFromPart(data, 2, "");
-                std::string runtime = zx_stringFromPart(data, 3, "");
-                std::vector<uint32_t> ids;
-                for (auto const &kv : gFrameStore) {
-                    if (zx_ownerMatchesFrame(*kv.second, sessionId, runId, runtime)) ids.push_back(kv.first);
-                }
-                for (uint32_t fid : ids) {
-                    removed += gFrameStore.erase(fid);
-                }
-            }
-        } else {
-            uint32_t frameId = (uint32_t)[command intValue];
-            auto it = gFrameStore.find(frameId);
-            if (it != gFrameStore.end()) {
-                bool allowed = true;
-                if ([data count] >= 4) {
-                    allowed = zx_ownerMatchesFrame(*it->second,
-                                                   zx_stringFromPart(data, 1, ""),
-                                                   zx_stringFromPart(data, 2, ""),
-                                                   zx_stringFromPart(data, 3, ""));
-                }
-                if (allowed) {
-                    removed = gFrameStore.erase(frameId);
-                }
-            }
+                for(auto const &kv:gFrameStore)if(zx_ownerMatchesFrame(*kv.second,request.sessionId,request.runId,request.runtime))ids.push_back(kv.first);
+                for(uint32_t id:ids)removed+=gFrameStore.erase(id);
+            }else{removed=gFrameStore.size();gFrameStore.clear();}
+        }else{
+            auto it=gFrameStore.find(request.frameId);
+            if(it!=gFrameStore.end()&&(!request.scoped||zx_ownerMatchesFrame(*it->second,request.sessionId,request.runId,request.runtime)))removed=gFrameStore.erase(request.frameId);
         }
         zx_rearmFrameExpiryLocked();
     });
-    return [NSString stringWithFormat:@"%lu", (unsigned long)removed];
+    return removed;
+}
+// END numeric frame release.
+
+NSString* handleFrameReleaseTaskFromRawData(UInt8 *eventData,NSError **error){
+    (void)error;
+    NSString *raw=[[NSString alloc] initWithUTF8String:(char *)eventData]?:@"";
+    raw=[raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSArray *data=[raw componentsSeparatedByString:@";;"];
+    NSString *command=data.count?data[0]:@"",*lower=[command lowercaseString];
+    TLinkNativeFrameReleaseRequest request;request.all=[lower isEqualToString:@"all"]||[lower isEqualToString:@"scoped"];
+    request.scoped=data.count>=4;request.frameId=uint32_t([command intValue]);
+    if(request.scoped){request.sessionId=zx_stringFromPart(data,1,"");request.runId=zx_stringFromPart(data,2,"");request.runtime=zx_stringFromPart(data,3,"");}
+    // The legacy scoped command without an owner tuple is a no-op, but still rearms expiry.
+    if([lower isEqualToString:@"scoped"]&&!request.scoped){TLinkNativeDispatchSync(zx_imageQueue(), ^{zx_rearmFrameExpiryLocked();});return @"0";}
+    return [NSString stringWithFormat:@"%lu",(unsigned long)releaseStoredFrames(request)];
 }
 
 // BEGIN numeric frame image match.

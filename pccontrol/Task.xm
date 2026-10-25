@@ -678,6 +678,19 @@ NSDictionary *TLinkExecuteNativeColorPoints(const TLinkNativeColorPointsRequest 
 }
 // END typed color points task entry.
 
+// BEGIN typed frame release task entry.
+NSDictionary *TLinkExecuteNativeFrameRelease(const TLinkNativeFrameReleaseRequest &request,TLinkTaskExecutionContext *context){
+    // Match task 67's existing cleanup admission: no license/stop gate can strand owned frames.
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,true,false);auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try {
+        const size_t removed=releaseStoredFrames(request);
+        NSString *count=[NSString stringWithFormat:@"%lu",(unsigned long)removed],*raw=[NSString stringWithFormat:@"0;;%@\r\n",count];
+        if(!budget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||budget->stopped())return zx_typedTouchStopped(budget);
+        return @{@"ok":@(true),@"raw":raw,@"parts":@[@"0",count]};
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}@catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+// END typed frame release task entry.
+
 // BEGIN typed frame OCR task entry.
 static NSDictionary *zx_typedFrameOCRReply(NSString *raw,const TLinkNativeBudgetPtr &budget){
     if(!budget->outputAllowed([raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding])||budget->stopped())return zx_typedTouchStopped(budget);

@@ -1,6 +1,7 @@
 #ifndef TLINK_IMAGE_STORAGE_FIXTURE_H
 #define TLINK_IMAGE_STORAGE_FIXTURE_H
 #include "../shared/TLinkImageStorage.h"
+#include "../shared/TLinkNativeFrameRelease.h"
 #include <cassert>
 #include <climits>
 #include <cstdio>

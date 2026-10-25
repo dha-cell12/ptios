@@ -58,8 +58,14 @@ for (const [label, name] of [['Find', 'matchImageInFrame'], ['Batch', 'handleFra
 // modern-image handler fixture and would be unused under macOS -Werror here.
 const frameErrorHelper = section('static NSError *zx_frameError(', '// BEGIN typed frame/image wire admission.');
 assert.doesNotMatch(frameErrorHelper, /\bstatic\s+bool\s+zx_/, 'Storage error fixture must not import wire validators');
+const numericRelease=section('// BEGIN numeric frame release.','// END numeric frame release.');
+assert.match(numericRelease,/__block size_t removed=0/);assert.match(numericRelease,/TLinkNativeDispatchSync\(zx_imageQueue\(\), \^\{/);
+const portableRelease=numericRelease.replace('__block ','').replace('TLinkNativeDispatchSync(zx_imageQueue(), ^{','[&]{').replace('    });','    }();');
+assert.doesNotMatch(portableRelease,/__block|TLinkNativeDispatchSync|\^\{/);
 const fixtures = {
   ...admissionFixtures,
+  'ImageNumericReleaseUnderTest.inc': numericRelease,
+  'ImageReleaseCoreUnderTest.inc': portableRelease,
   'ImagePayloadUnderTest.inc': section('// BEGIN immutable image payload types', '// END immutable image payload types.'),
   'FrameVisionUnderTest.inc': section('// BEGIN frame Vision provider.', '// END frame Vision provider.')
     .replaceAll('CGDataProviderCreateWithData(', 'FixtureFrameProvider(').replaceAll('CGImageCreate(', 'FixtureFrameImage('),

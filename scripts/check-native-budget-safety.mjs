@@ -118,6 +118,13 @@ try {
   assert.doesNotMatch(frameImageEntry,/processTaskWithContext|CFWriteStream|\b(?:YES|NO)\b/);
   await writeFile(join(temp,"NativeFrameImageBridge.inc"),frameImageBridge);
   await writeFile(join(temp,"NativeFrameImageEntry.inc"),frameImageEntry);
+  const frameReleaseBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodReleaseFrame])","    else if ([method isEqualToString:TLinkJSNativeMethodOpenImage])");
+  const frameReleaseEntry=between(task,"// BEGIN typed frame release task entry.","// END typed frame release task entry.");
+  assert.doesNotMatch(frameReleaseBridge,/executeRawPayload/);
+  assert.match(frameReleaseEntry,/TLinkNativeCallContext\(context,true,false\)/);
+  assert.doesNotMatch(frameReleaseEntry,/processTaskWithContext|CFWriteStream|TLinkRootfullLicenseTaskAllowed|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeFrameReleaseBridge.inc"),frameReleaseBridge);
+  await writeFile(join(temp,"NativeFrameReleaseEntry.inc"),frameReleaseEntry);
   const frameOCRBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodOcrFrame])","    else if ([method isEqualToString:TLinkJSNativeMethodOcr])");
   const frameOCREntry=between(task,"// BEGIN typed frame OCR task entry.","// END typed frame OCR task entry.");
   assert.doesNotMatch(frameOCRBridge,/executeRawPayload|componentsJoinedByString/);
@@ -188,7 +195,7 @@ try {
     between(bridge,"static BOOL TLinkautoJSValidToken","static BOOL TLinkautoJSValidProtocolString") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption") +
     between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);

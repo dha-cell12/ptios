@@ -1,7 +1,7 @@
 # C02b15 — structured OCR result publication
 
 Date: 2026-10-25 (Asia/Bangkok). Baseline: `2475200`; the user reported C02b14 and its OCR-success correction built successfully before this slice.
-Status: **source implemented; new macOS/iOS CI and device qualification pending**.
+Status: **build reported passed by the user before C02b16 (`e9e0b1c`); device qualification pending**.
 Finding: **P0-13, ocrFrame response portion**. Other remaining native adapters and helper transport/config/dedupe remain open.
 
 ## Result and scope
@@ -40,3 +40,5 @@ Opaque license, queue, CV and engine calls remain cooperative/nonpreemptible. De
 Build rootfull/roothide observe/enforced variants. Compare JS ocrFrame with RAW task 91 for empty/Unicode/multiline recognition, ROI/TTL, language/whitelist and OEM/PSM/scale/threshold choices. Verify confidence/timing precision and exact raw/parts shape, license/stop/timeout/output behavior, pressure/cache recovery and result lifetime. Measure bridge cost separately from recognition accuracy/latency and process memory.
 
 Continue remaining measured P0-13 adapters, P0-12 event-driven helper RPC, P1-40 policy snapshots and P1-41 byte-bounded dedupe. C01/C02 performance/device acceptance remains open.
+
+The user reported C02b15 build `e9e0b1c` passed before C02b16. Structured frame cleanup is tracked in `IMPLEMENTATION-C02B16.md`. This records the user report; no independent macOS/device execution was performed on this host.

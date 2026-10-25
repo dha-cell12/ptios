@@ -12,7 +12,9 @@ static bool zx_rearmFrameExpiryLocked();
 #include "ImageCoreUnderTest.inc"
 #include "ImageDispatchUnderTest.inc"
 #include "ImageOwnerPartsUnderTest.inc"
+#include "ImageNumericReleaseUnderTest.inc"
 #include "ImageReleaseUnderTest.inc"
+#include "fixtures/frame-release-handler-legacy-v1.inc"
 namespace cv {
 static int decoderCalls = 0, decoderWidth = 2, decoderHeight = 3;
 static Mat imdecode(const Mat &input, int) {
@@ -101,6 +103,28 @@ static uint32_t publishImage(std::shared_ptr<ZXImageObject> value) {
 }
 static void barrier() { dispatch_sync(zx_imageQueue(), ^{}); }
 static void releaseFrame(uint32_t id){NSString *value=[NSString stringWithFormat:@"%u",id];(void)handleFrameReleaseTaskFromRawData((UInt8 *)value.UTF8String,NULL);}
+static void numericReleaseParityCases(){
+    for(unsigned n=0;n<120;++n){
+        auto owned=frameFixture(zx_nowMs(),5000);owned->ownerSessionId="session";owned->ownerRunId="run";owned->ownerRuntime="js";
+        const uint32_t id=publishFrame(owned);owned.reset();const uint32_t other=publishFrame(frameFixture(zx_nowMs(),5000));
+        __block unordered_map<uint32_t,ZXFrameRef> baseline;
+        dispatch_sync(zx_imageQueue(),^{baseline=gFrameStore;});
+        NSString *single=[NSString stringWithFormat:@"%u;;session;;run;;js",id];
+        NSArray *commands=@[single,@"all",@"ALL;;session;;run;;js",@"scoped;;session;;other;;js",@"ScOpEd;;session;;run;;js",@"scoped",@"scoped;;session",@"0",@"-1",@"invalid",@"all;;;;;;",@"all;;session;;run;;js \t"];
+        NSString *command=commands[n%commands.count];NSError *error=nil;
+        NSString *old=legacyFrameReleaseTaskFromRawData((UInt8 *)command.UTF8String,&error);assert(old&&!error);
+        __block std::vector<uint32_t> remaining;
+        dispatch_sync(zx_imageQueue(),^{for(auto const &item:gFrameStore)remaining.push_back(item.first);gFrameStore=baseline;});
+        NSString *current=handleFrameReleaseTaskFromRawData((UInt8 *)command.UTF8String,&error);assert([old isEqualToString:current]&&!error);
+        dispatch_sync(zx_imageQueue(),^{std::vector<uint32_t> actual;for(auto const &item:gFrameStore)actual.push_back(item.first);std::sort(remaining.begin(),remaining.end());std::sort(actual.begin(),actual.end());assert(actual==remaining);gFrameStore.clear();zx_rearmFrameExpiryLocked();});
+        baseline.clear();assert(gImageMemory.stats().frames==0);(void)other;
+    }
+    // Actual numeric release bypasses compute admission and retains admitted readers.
+    const uint32_t id=publishFrame(frameFixture(zx_nowMs(),5000));auto reader=zx_snapshotFrame(id);TLinkNativeFrameReleaseRequest request;request.frameId=id;
+    {TLinkImageWork a(gImageCompute),b(gImageCompute);assert(a&&b);assert(releaseStoredFrames(request)==1);}
+    assert(reader->bgra[0]==42&&gImageMemory.stats().frames==256);reader.reset();assert(gImageMemory.stats().frames==0);
+    puts("Frame release Foundation passed: 120 frozen actual handler/parser/store cases, scoped/global/partial commands, busy compute and held readers.");
+}
 static void frameVisionFixtures(){
     fputs("Image runtime: actual immutable Vision provider survives store release and balances failed creation\n",stderr);
     auto frame=frameFixture(zx_nowMs(),5000);for(size_t i=0;i<frame->bgra.size();++i)frame->bgra[i]=uint8_t(i);
@@ -128,6 +152,7 @@ int main(int argc, char **argv) {
         fputs("Image runtime: bounded file/ImageIO preflight fixtures\n", stderr);
         decodeFixtures([NSString stringWithUTF8String:argv[1]]);
         frameVisionFixtures();
+        numericReleaseParityCases();
         assert(kDefaultFrameTtlMs == 1000 && kMaxImagePixels > 0);
         { TLinkImageWork work(gImageCompute); assert(work); }
         fputs("Image runtime: idle expiry and held readers\n", stderr);

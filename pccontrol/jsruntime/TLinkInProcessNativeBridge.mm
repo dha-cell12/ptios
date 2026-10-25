@@ -703,12 +703,21 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseFrame]) {
         int frameId = [args count] > 0 ? [[args objectAtIndex:0] intValue] : -1;
         if (frameId < 0) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"invalid handle" }];
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%d%@", TASK_FRAME_RELEASE, frameId, TLinkautoJSOwnerSuffix(context)] context:context];
+        TLinkNativeFrameReleaseRequest input;input.frameId=uint32_t(frameId);
+        // Retain bounded owner-suffix canonicalization, including delimiter overlap and trailing whitespace.
+        NSString *suffix=TLinkautoJSOwnerSuffix(context);NSData *encoded=[suffix dataUsingEncoding:NSUTF8StringEncoding];
+        if(!encoded||(encoded.length&&memchr(encoded.bytes,0,encoded.length)))return [TLinkJSNativeResponse responseWithValue:TLinkNativeFailure(@"invalid_payload")];
+        NSString *wireOwner=[[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding]?:@"";
+        NSString *owner=[[@"0" stringByAppendingString:wireOwner] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSArray *fields=[owner componentsSeparatedByString:@";;"];input.scoped=fields.count>=4;
+        if(input.scoped){input.sessionId=[fields[1] UTF8String]?:"";input.runId=[fields[2] UTF8String]?:"";input.runtime=[fields[3] UTF8String]?:"";}
+        NSDictionary *result=TLinkExecuteNativeFrameRelease(input,context);
         if ([result[@"ok"] boolValue]) [runtime untrackFrameId:frameId];
         return [TLinkJSNativeResponse responseWithValue:result];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodReleaseAllFrames]) {
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02dall", TASK_FRAME_RELEASE] context:context];
+        TLinkNativeFrameReleaseRequest input;input.all=true;
+        NSDictionary *result=TLinkExecuteNativeFrameRelease(input,context);
         if ([result[@"ok"] boolValue] && [runtime respondsToSelector:@selector(untrackAllFrameIds)]) {
             [(id)runtime untrackAllFrameIds];
         }

@@ -4,9 +4,34 @@
 static uint64_t fixtureNow = 100;
 static uint64_t zx_nowMs() { return fixtureNow; }
 static bool timerAvailable = true;
-static bool zx_rearmFrameExpiryLocked() { return timerAvailable; }
+static uint64_t rearmCalls=0;
+static bool zx_rearmFrameExpiryLocked() { ++rearmCalls;return timerAvailable; }
 #include "ImageCoreUnderTest.inc"
+#include "ImageReleaseCoreUnderTest.inc"
+static void numericReleaseCases(){
+    for(unsigned n=0;n<10000;++n){
+        auto first=frameFixture(fixtureNow,1000),second=frameFixture(fixtureNow,1000),third=frameFixture(fixtureNow,1000);
+        first->ownerSessionId=third->ownerSessionId="a";second->ownerSessionId="b";
+        first->ownerRunId=second->ownerRunId=third->ownerRunId="run";
+        first->ownerRuntime=second->ownerRuntime=third->ownerRuntime="js";
+        const uint32_t id=zx_storeFrameLocked(first);assert(id&&zx_storeFrameLocked(second)&&zx_storeFrameLocked(third));
+        ZXFrameRef held=first;first.reset();second.reset();third.reset();
+        TLinkNativeFrameReleaseRequest request;request.frameId=id;request.scoped=true;request.sessionId="wrong";
+        uint64_t before=rearmCalls;assert(releaseStoredFrames(request)==0&&rearmCalls==before+1&&gFrameStore.size()==3);
+        request.sessionId="a";request.runtime="js";request.runId="run";
+        before=rearmCalls;
+        if(n%2){request.all=true;assert(releaseStoredFrames(request)==2&&gFrameStore.size()==1);}
+        else assert(releaseStoredFrames(request)==1&&gFrameStore.size()==2);
+        assert(rearmCalls==before+1&&held->bgra[255]==42);
+        request.all=true;request.scoped=false;const size_t remaining=gFrameStore.size();before=rearmCalls;
+        assert(releaseStoredFrames(request)==remaining&&gFrameStore.empty()&&rearmCalls==before+1);
+        assert(gImageMemory.stats().frames==256);held.reset();assert(gImageMemory.stats().total==0);
+        before=rearmCalls;assert(releaseStoredFrames(request)==0&&rearmCalls==before+1);
+    }
+    puts("Frame release core passed: 10k actual owner/mismatch/single/scoped-all/global/empty transactions, one expiry rearm each and held-reader resource recovery.");
+}
 int main() {
+    numericReleaseCases();
     assert(kDefaultFrameTtlMs == 1000 && kHardFrameTtlMs == 5000 && kMaxImagePixels == 16 * 1024 * 1024);
     size_t pixels = 0;
     assert(TLinkImagePixels(8192, 2048, kMaxImagePixels, &pixels) && pixels == kMaxImagePixels);
