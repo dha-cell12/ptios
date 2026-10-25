@@ -57,6 +57,7 @@ jobs:
           node scripts/check-helper-identity-safety.mjs
           node scripts/check-helper-transport-safety.mjs
           node scripts/check-helper-client-admission-safety.mjs
+            node scripts/check-helper-change-wait-safety.mjs
           node scripts/check-recorder-safety.mjs
           node scripts/check-image-storage-safety.mjs
           node scripts/check-socket-transport-safety.mjs

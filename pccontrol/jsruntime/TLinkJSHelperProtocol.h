@@ -15,6 +15,7 @@ extern NSString * const kTLinkJSHelperKeyPayload;
 extern NSString * const kTLinkJSHelperKeyError;
 
 // Commands
+extern NSString * const kTLinkJSHelperCmdWaitForChange;
 extern NSString * const kTLinkJSHelperCmdHandshake;
 extern NSString * const kTLinkJSHelperCmdStart;
 extern NSString * const kTLinkJSHelperCmdStop;

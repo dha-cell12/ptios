@@ -5,6 +5,7 @@
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperClientAdmission.h"
+#include "../shared/TLinkHelperChangeWait.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -47,6 +48,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
     TLinkJSHelperCancelState *_cancelState;
     TLinkHelperClientAdmission _clientAdmission;
     std::timed_mutex _clientCommandOwner;
+    TLinkHelperChangeWait _statusChanges;
     TLinkJSHelperSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkJSHelperClearExecutionTimeLimitFn _clearExecutionTimeLimit;
 }
@@ -143,8 +145,14 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     return -1;
 }
 
+// BEGIN helper change publication.
+- (void)publishStatusChange { _statusChanges.publish(); }
+// END helper change publication.
+
 - (NSDictionary *)statusPayload
 {
+    // Capture BEFORE reading state/slot: a concurrent later publication must wake this cursor.
+    const uint64_t changeSequence = _statusChanges.sequence();
     const auto clients = _clientAdmission.stats();
     NSTimeInterval uptimeMs = [[NSDate date] timeIntervalSinceDate:self.startedAt] * 1000.0;
     NSDate *durationEnd = self.activeEndedAt ?: [NSDate date];
@@ -153,6 +161,11 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     long long durationMs = self.activeStartedAt ? (long long)([durationEnd timeIntervalSinceDate:self.activeStartedAt] * 1000.0) : 0;
     NSMutableDictionary *payload = [@{
         @"state": self.activeState ?: kTLinkJSHelperStateIdle,
+        @"changeSequence": @(changeSequence),
+        @"changeWaitContract": @"session_native_rpc_v1",
+        @"changeWaitersActive": @(_statusChanges.waiters()),
+        @"changeWaitersLimit": @(TLinkHelperChangeWait::Limit),
+        @"changeWaitMaxMs": @(TLinkHelperChangeWait::MaxWaitMs),
         @"socketClientsActive": @(clients.active),
         @"socketClientsLimit": @(clients.limit),
         @"socketClientsRejected": @(clients.rejected),
@@ -244,6 +257,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             strongSelf.activeState = kTLinkJSHelperStateStopping;
             strongSelf->_cancelState->stopped.store(true, std::memory_order_release);
         }
+        [strongSelf publishStatusChange];
         NSLog(@"tlinkauto-jsd: license_revoked_during_execution session=%@ denial=%@",
               sessionId,
               denial ?: @"license_required");
@@ -306,6 +320,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     }
     self.nativeResponse = nil;
     self.pendingNativeRequest = request;
+    [self publishStatusChange];
     NSLog(@"tlinkauto-jsd rpc: request method=%@ id=%@", method, requestId);
     [self.rpcCondition broadcast];
     while (!_cancelState->stopped.load(std::memory_order_acquire) &&
@@ -315,6 +330,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         if (response) {
             self.nativeResponse = nil;
             self.pendingNativeRequest = nil;
+            [self publishStatusChange];
             double elapsedMs = [[NSDate date] timeIntervalSinceDate:rpcStartedAt] * 1000.0;
             self.nativeRPCTotalMs += elapsedMs;
             if (elapsedMs > self.nativeRPCMaxMs) self.nativeRPCMaxMs = elapsedMs;
@@ -335,6 +351,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         [self.pendingNativeRequest[@"sessionId"] isEqualToString:sessionId]) {
         self.pendingNativeRequest = nil;
         self.nativeResponse = nil;
+        [self publishStatusChange];
     }
     [self.rpcCondition broadcast];
     [self.rpcCondition unlock];
@@ -350,8 +367,10 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 {
     [self.rpcCondition lock];
     if (!self.pendingNativeRequest || [self.pendingNativeRequest[@"sessionId"] isEqualToString:sessionId]) {
+        const bool changed = self.pendingNativeRequest != nil || self.nativeResponse != nil;
         self.pendingNativeRequest = nil;
         self.nativeResponse = nil;
+        if (changed) [self publishStatusChange];
     }
     [self.rpcCondition broadcast];
     [self.rpcCondition unlock];
@@ -628,6 +647,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     if ([logPath length]) [self appendLine:line toPath:logPath];
     if ([latestPath length]) [self appendLine:line toPath:latestPath];
     [self clearNativeRPCForSessionId:sessionId];
+    [self publishStatusChange];
     NSLog(@"tlinkauto-jsd: finished session=%@ state=%@ reason=%@ rpc=%lu blocked=%lu storage=%lu", sessionId ?: @"", self.activeState ?: @"", self.activeExitReason ?: @"", (unsigned long)self.nativeRPCCount, (unsigned long)self.nativeRPCBlockedCount, (unsigned long)self.storageOpsCount);
 }
 
@@ -655,6 +675,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         }
 
         self.activeState = kTLinkJSHelperStateRunning;
+        [self publishStatusChange];
         [self startLicenseHeartbeatForSessionId:sessionId];
         NSLog(@"tlinkauto-jsd: evaluating session=%@", sessionId);
         JSVirtualMachine *vm = [[JSVirtualMachine alloc] init];
@@ -869,6 +890,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         [self appendLine:summaryLine toPath:logPath];
         [self appendLine:summaryLine toPath:latestPath];
         [self clearNativeRPCForSessionId:sessionId];
+        [self publishStatusChange];
         NSLog(@"tlinkauto-jsd: finished session=%@ state=%@ error=%@", sessionId, self.activeState, self.lastError ?: @"");
         if (![self.activeSessionId isEqualToString:sessionId]) return;
     }
@@ -881,6 +903,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         self.activeState = kTLinkJSHelperStateFailed;
         self.activeExitReason = @"license_required";
         self.lastError = licenseDenial;
+        [self publishStatusChange];
         return [self statusPayload];
     }
     NSString *sessionId = [[NSUUID UUID] UUIDString];
@@ -906,6 +929,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     self.nativeResponse = nil;
     [self.rpcCondition unlock];
     _cancelState->stopped.store(false, std::memory_order_release);
+    [self publishStatusChange];
     [self runSessionId:sessionId scriptPath:scriptPath bundlePath:bundlePath manifest:manifest ?: @{} runId:runId];
     return [self statusPayload];
 }
@@ -945,6 +969,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     self.nativeResponse = nil;
     [self.rpcCondition unlock];
     _cancelState->stopped.store(false, std::memory_order_release);
+    [self publishStatusChange];
     dispatch_async(self.executionQueue, ^{
         [self runSessionId:sessionId scriptPath:scriptPath bundlePath:bundlePath manifest:manifest runId:runId];
     });
@@ -988,6 +1013,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             @"capabilities": @{
                 @"javascriptcore": @YES,
                 @"pureJavaScriptExecution": @YES,
+                @"changeWaitContract": @"session_native_rpc_v1",
                 @"executionTimeLimit": @(_setExecutionTimeLimit != NULL && _clearExecutionTimeLimit != NULL),
                 @"hardKillRecovery": @NO,
                 @"nativeRPC": @YES,
@@ -1019,6 +1045,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         if (self.activeSessionId && ([self.activeState isEqualToString:kTLinkJSHelperStateStarting] || [self.activeState isEqualToString:kTLinkJSHelperStateRunning])) {
             self.activeState = kTLinkJSHelperStateStopping;
             _cancelState->stopped.store(true, std::memory_order_release);
+            [self publishStatusChange];
             [self.sleepCondition lock];
             [self.sleepCondition broadcast];
             [self.sleepCondition unlock];
@@ -1090,6 +1117,38 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 }
 // END helper socket client admission.
 
+// BEGIN helper change wait handler.
+- (NSDictionary *)waitForChangeRequest:(NSDictionary *)request deadline:(const TLinkHelperIO::Deadline &)deadline
+{
+    using namespace TLinkHelperIO;
+    uint64_t after=0,waitMs=0,issued=0,expires=0;bool hasDeadline=false;
+    const auto identity=TLinkHelperRPCIdentityFrom(request[@"helperInstanceId"],request[@"sessionId"],request[@"requestId"]);
+    if (!TLinkHelperReadChangeWait(request,after,waitMs) || !TLinkHelperReadSenderDeadline(request,hasDeadline,issued,expires) || !hasDeadline ||
+        !TLinkHelperRPCIdentity::valid(identity.helper) || !TLinkHelperRPCIdentity::valid(identity.session) || !TLinkHelperRPCIdentity::valid(identity.request))
+        return [self errorEnvelopeForRequest:request message:@"invalid_wait_request"];
+    {
+        std::unique_lock<std::timed_mutex> command(_clientCommandOwner,std::defer_lock);
+        const int remaining=deadline.remaining(nowMs());
+        if (!remaining || !command.try_lock_for(std::chrono::milliseconds(remaining)) || !deadline.remaining(nowMs()) || !_clientAdmission.isOpen()) return nil;
+        if (![request[@"helperInstanceId"] isEqual:self.helperInstanceId]) return [self errorEnvelopeForRequest:request message:@"helper_instance_mismatch"];
+        if (![request[@"sessionId"] isEqual:self.activeSessionId]) return [self errorEnvelopeForRequest:request message:@"session_mismatch"];
+    } // Never retain the command owner while waiting for publication.
+    const uint64_t now=nowMs();
+    if (deadline.remaining(now)<=TLinkHelperChangeWait::OutputReserveMs) return nil;
+    Deadline waitDeadline(now,static_cast<int>(waitMs));
+    waitDeadline.end=std::min(waitDeadline.end,deadline.end-TLinkHelperChangeWait::OutputReserveMs);
+    const auto result=_statusChanges.wait(after,waitDeadline);
+    if (!deadline.remaining(nowMs())) return nil;
+    using C=TLinkHelperChangeWait::Code;
+    if (result.code==C::Busy) return [self errorEnvelopeForRequest:request message:@"change_wait_busy"];
+    if (result.code==C::Stopped) return [self errorEnvelopeForRequest:request message:@"change_wait_stopped"];
+    if (result.code==C::InvalidCursor) return [self errorEnvelopeForRequest:request message:@"change_cursor_ahead"];
+    return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdWaitForChange helperInstanceId:self.helperInstanceId
+        sessionId:request[@"sessionId"] requestId:request[@"requestId"]
+        payload:@{@"sequence":@(result.sequence),@"changed":@(result.code==C::Changed),@"reason":result.code==C::Changed?@"changed":@"timeout"}];
+}
+// END helper change wait handler.
+
 // BEGIN helper socket client ownership.
 - (void)handleClient:(int)client
 {
@@ -1113,7 +1172,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             if (request && (!TLinkHelperReadSenderDeadline(request,hasDeadline,issued,expires) ||
                 (hasDeadline && !constrainToSender(deadline,issued,expires,nowMs())))) return;
             NSDictionary *response = nil;
-            {
+            if ([request[@"command"] isEqualToString:kTLinkJSHelperCmdWaitForChange]) {
+                response = [self waitForChangeRequest:request deadline:deadline];
+            } else {
                 std::unique_lock<std::timed_mutex> command(_clientCommandOwner, std::defer_lock);
                 const int remaining = deadline.remaining(nowMs());
                 if (!remaining || !command.try_lock_for(std::chrono::milliseconds(remaining)) ||
@@ -1198,6 +1259,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         }
         [self enqueueClient:client acceptedAt:TLinkHelperIO::nowMs()];
     }
+    _statusChanges.stop();
     _clientAdmission.stop(); // Queued/parsed clients cannot begin new commands after listener shutdown.
     close(server);
     unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);

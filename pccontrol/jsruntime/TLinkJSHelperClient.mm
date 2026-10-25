@@ -3,6 +3,7 @@
 #include "../../shared/TLinkHelperRPCIdentity.h"
 #include "../../shared/TLinkHelperSocketIO.h"
 #include "../../shared/TLinkHelperRequestDeadline.h"
+#include "../../shared/TLinkHelperChangeWait.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -81,6 +82,15 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
 - (NSDictionary *)statusForSessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs
 {
     return [self requestCommand:kTLinkJSHelperCmdStatus payload:@{} sessionId:sessionId timeoutMs:timeoutMs];
+}
+
+- (NSDictionary *)waitForChangeAfterSequence:(uint64_t)sequence sessionId:(NSString *)sessionId waitMs:(int)waitMs timeoutMs:(int)timeoutMs
+{
+    if (!self.boundHelperInstanceId) return @{@"ok":@(false),@"error":@"helper_not_bound"};
+    if (sequence>TLinkHelperIO::MaxWireTime || waitMs<=0 || waitMs>TLinkHelperChangeWait::MaxWaitMs ||
+        !TLinkHelperRPCIdentity::valid(TLinkHelperRPCIdentityBytes(sessionId)))
+        return @{@"ok":@(false),@"error":@"invalid_wait_request"};
+    return [self requestCommand:kTLinkJSHelperCmdWaitForChange payload:@{@"afterSequence":@(sequence),@"waitMs":@(waitMs)} sessionId:sessionId timeoutMs:timeoutMs];
 }
 
 - (NSDictionary *)stopSessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs

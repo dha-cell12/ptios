@@ -8,6 +8,7 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const [runtime,server,client]=await Promise.all(['pccontrol/TLinkautoJSRuntime.mm','tlinkauto-jsd/TLinkJSHelperServer.mm','pccontrol/jsruntime/TLinkJSHelperClient.mm'].map(read));
 const between=(source,a,b)=>{const x=source.indexOf(a),y=source.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return source.slice(x,y);};
+const publication=between(server,'// BEGIN helper change publication.','// END helper change publication.');
 const admission=between(server,'// BEGIN helper RPC response admission.','// END helper RPC response admission.');
 const cleanup=between(server,'// BEGIN helper RPC slot cleanup.','// END helper RPC slot cleanup.');
 const execute=between(server,'- (NSDictionary *)executeNativeRPCMethod:','// BEGIN helper RPC slot cleanup.');
@@ -26,7 +27,7 @@ for(const workflow of await Promise.all(['.github/workflows/build.yml','.github/
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-helper-identity-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
-    await writeFile(join(temp,'HelperIdentityServerUnderTest.inc'),execute+cleanup+admission+error);
+    await writeFile(join(temp,'HelperIdentityServerUnderTest.inc'),publication+execute+cleanup+admission+error);
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     const binary=join(temp,windows?'helper-identity.exe':'helper-identity'),file=join(root,'test/helper-identity-safety-test.cpp');
     run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',binary]);

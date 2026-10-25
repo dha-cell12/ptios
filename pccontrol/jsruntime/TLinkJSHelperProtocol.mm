@@ -12,6 +12,7 @@ NSString * const kTLinkJSHelperKeyStateSequence = @"stateSequence";
 NSString * const kTLinkJSHelperKeyPayload = @"payload";
 NSString * const kTLinkJSHelperKeyError = @"error";
 
+NSString * const kTLinkJSHelperCmdWaitForChange = @"waitForChange";
 NSString * const kTLinkJSHelperCmdHandshake = @"handshake";
 NSString * const kTLinkJSHelperCmdStart = @"start";
 NSString * const kTLinkJSHelperCmdStop = @"stop";
@@ -41,7 +42,7 @@ NSString * const kTLinkJSHelperStateCrashed = @"crashed";
     static NSSet *commands = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        commands = [NSSet setWithObjects:kTLinkJSHelperCmdHandshake,
+        commands = [NSSet setWithObjects:kTLinkJSHelperCmdWaitForChange, kTLinkJSHelperCmdHandshake,
                     kTLinkJSHelperCmdStart,
                     kTLinkJSHelperCmdStop,
                     kTLinkJSHelperCmdStatus,

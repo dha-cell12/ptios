@@ -1,7 +1,7 @@
 # C02d4 — sender expiry across helper backlog and command waits
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `6cbe63c`; the user reported C02d3 built successfully before this slice.
-Status: **source implemented; new macOS/Foundation/iOS CI and device qualification pending**.
+Status: **user reported build `22b449f` passed before C02d5; independent device/performance qualification remains pending**.
 Finding: **P0-12 prerequisite: carry the sender's original request deadline into helper admission**.
 
 ## Behavior

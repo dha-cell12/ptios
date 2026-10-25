@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #include <dispatch/dispatch.h>
 #include "../shared/TLinkHelperRPCIdentity.h"
+#include "../shared/TLinkHelperChangeWait.h"
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #include <atomic>
 #include <cassert>
@@ -10,6 +11,7 @@
 struct FixtureCancel {std::atomic<bool> stopped{false};};
 @interface FixtureHelper : NSObject {
 @public FixtureCancel *_cancelState;
+    TLinkHelperChangeWait _statusChanges;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;
 @property(nonatomic, copy) NSString *activeSessionId;
@@ -21,6 +23,7 @@ struct FixtureCancel {std::atomic<bool> stopped{false};};
 @property(nonatomic, assign) NSUInteger nativeRPCBlockedCount;
 @property(nonatomic, assign) double nativeRPCTotalMs;
 @property(nonatomic, assign) double nativeRPCMaxMs;
+- (void)publishStatusChange;
 - (NSDictionary *)executeNativeRPCMethod:(NSString *)method arguments:(NSArray *)arguments sessionId:(NSString *)sessionId;
 - (NSDictionary *)acceptNativeRPCResponse:(NSDictionary *)request;
 - (void)clearNativeRPCForSessionId:(NSString *)sessionId;
@@ -86,11 +89,14 @@ static void workerCases(){
     FixtureHelper *server=[[FixtureHelper alloc] init];
     for(unsigned n=0;n<100;++n){@autoreleasepool {
         NSDictionary *__strong response=nil;server->_cancelState->stopped.store(false);
+        const uint64_t before=server->_statusChanges.sequence();
         std::thread worker([&]{@autoreleasepool{response=[server executeNativeRPCMethod:@"tap" arguments:@[] sessionId:@"session"];}});
+        const auto hint=server->_statusChanges.wait(before,TLinkHelperIO::Deadline(TLinkHelperIO::nowMs(),2000));
+        assert(hint.code==TLinkHelperChangeWait::Code::Changed&&hint.sequence>before);
         NSDictionary *request=waitPending(server);
         if(n%5==0){server->_cancelState->stopped.store(true);[server.rpcCondition lock];[server.rpcCondition broadcast];[server.rpcCondition unlock];}
         else{NSDictionary *ack=[server acceptNativeRPCResponse:envelope(@"session",request[@"requestId"],@{@"ok":@(true)})];assert([ack[@"payload"][@"result"][@"accepted"] boolValue]);}
-        worker.join();assert(response);assert([response[@"ok"] boolValue]==(n%5!=0));assert(!server.pendingNativeRequest&&!server.nativeResponse);
+        worker.join();assert(server->_statusChanges.sequence()>before);assert(response);assert([response[@"ok"] boolValue]==(n%5!=0));assert(!server.pendingNativeRequest&&!server.nativeResponse);
         server->_cancelState->stopped.store(false);rejection([server acceptNativeRPCResponse:envelope(@"session",request[@"requestId"],@{@"ok":@(true)})],@"no_pending_native_rpc");
     }}
     NSDictionary *denied=[server executeNativeRPCMethod:@"tap" arguments:@[] sessionId:@"old-session"];assert(![denied[@"ok"] boolValue]);assert(!server.pendingNativeRequest);
