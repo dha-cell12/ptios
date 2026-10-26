@@ -39,6 +39,9 @@ struct TLinkJSHelperCancellationContext {
     NSString *requestId = [[NSUUID UUID] UUIDString];
     NSMutableDictionary *envelope = [[TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:self.boundHelperInstanceId sessionId:sessionId requestId:requestId payload:payload ?: @{}] mutableCopy];
     envelope[@"requestDeadline"] = TLinkHelperSenderDeadline(issuedAt, deadline);
+    // This client keeps its write side open until reply/cancel. Old helpers ignore
+    // this envelope extension; new helpers may release a wait as soon as we close.
+    if ([command isEqualToString:kTLinkJSHelperCmdWaitForChange]) envelope[@"waitPeerEOFContract"]=@"cancel_v1";
     NSData *requestData = [TLinkJSHelperProtocol serializeEnvelope:envelope error:nil];
     if (!requestData) return @{ @"ok": @(false), @"error": @"serialize_failed" };
     if (requestData.length > MaxFrameBytes) return TLinkHelperIOFailure({Code::TooLarge});

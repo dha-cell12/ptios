@@ -6,6 +6,7 @@
 #include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperClientAdmission.h"
 #include "../shared/TLinkHelperChangeWait.h"
+#include "../shared/TLinkHelperWaitPeer.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -283,6 +284,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             @"sessionSnapshotContract": @"lifecycle_rpc_owner_v1",
             @"changeSequence": @(changeSequence),
             @"changeWaitContract": @"session_native_rpc_v1",
+            @"changeWaitPeerEOFContract": @"cancel_v1",
             @"changeWaitersActive": @(_statusChanges.waiters()),
             @"changeWaitersLimit": @(TLinkHelperChangeWait::Limit),
             @"changeWaitMaxMs": @(TLinkHelperChangeWait::MaxWaitMs),
@@ -1056,6 +1058,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 @"javascriptcore": @YES,
                 @"pureJavaScriptExecution": @YES,
                 @"changeWaitContract": @"session_native_rpc_v1",
+                @"changeWaitPeerEOFContract": @"cancel_v1",
                 @"sessionSnapshotContract": @"lifecycle_rpc_owner_v1",
                 @"executionTimeLimit": @(_setExecutionTimeLimit != NULL && _clearExecutionTimeLimit != NULL),
                 @"hardKillRecovery": @NO,
@@ -1149,7 +1152,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 // END helper socket client admission.
 
 // BEGIN helper change wait handler.
-- (NSDictionary *)waitForChangeRequest:(NSDictionary *)request deadline:(const TLinkHelperIO::Deadline &)deadline
+- (NSDictionary *)waitForChangeRequest:(NSDictionary *)request deadline:(const TLinkHelperIO::Deadline &)deadline client:(int)client
 {
     using namespace TLinkHelperIO;
     uint64_t after=0,waitMs=0,issued=0,expires=0;bool hasDeadline=false;
@@ -1171,9 +1174,15 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     if (deadline.remaining(now)<=TLinkHelperChangeWait::OutputReserveMs) return nil;
     Deadline waitDeadline(now,static_cast<int>(waitMs));
     waitDeadline.end=std::min(waitDeadline.end,deadline.end-TLinkHelperChangeWait::OutputReserveMs);
-    const auto result=_statusChanges.wait(after,waitDeadline);
+    TLinkHelperChangeWait::Cancellation cancellation;
+    TLinkHelperWaitPeer peer(_statusChanges,cancellation);
+    if(request[@"waitPeerEOFContract"]&&!peer.start(client))
+        return [self errorEnvelopeForRequest:request message:@"change_wait_busy"];
+    const auto result=_statusChanges.wait(after,waitDeadline,&cancellation);
+    peer.stop(); // Join before this method returns to the socket owner/finally close.
     if (!deadline.remaining(nowMs())) return nil;
     using C=TLinkHelperChangeWait::Code;
+    if (result.code==C::Cancelled) return nil;
     if (result.code==C::Busy) return [self errorEnvelopeForRequest:request message:@"change_wait_busy"];
     if (result.code==C::Stopped) return [self errorEnvelopeForRequest:request message:@"change_wait_stopped"];
     if (result.code==C::InvalidCursor) return [self errorEnvelopeForRequest:request message:@"change_cursor_ahead"];
@@ -1207,7 +1216,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 (hasDeadline && !constrainToSender(deadline,issued,expires,nowMs())))) return;
             NSDictionary *response = nil;
             if ([request[@"command"] isEqualToString:kTLinkJSHelperCmdWaitForChange]) {
-                response = [self waitForChangeRequest:request deadline:deadline];
+                response = [self waitForChangeRequest:request deadline:deadline client:socket.fd()];
             } else {
                 std::unique_lock<std::timed_mutex> command(_clientCommandOwner, std::defer_lock);
                 const int remaining = deadline.remaining(nowMs());

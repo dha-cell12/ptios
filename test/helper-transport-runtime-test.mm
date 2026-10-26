@@ -7,6 +7,7 @@
 #include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperClientAdmission.h"
 #include "../shared/TLinkHelperChangeWait.h"
+#include "../shared/TLinkHelperWaitPeer.h"
 #include <atomic>
 #include <cassert>
 #include <cstdio>
@@ -28,7 +29,7 @@ static NSString *kTLinkJSHelperSocketPath;
 @property(nonatomic, strong) NSCondition *rpcCondition;
 @property(nonatomic, strong) dispatch_queue_t clientQueue;
 - (void)publishStatusChange;
-- (NSDictionary *)waitForChangeRequest:(NSDictionary *)request deadline:(const TLinkHelperIO::Deadline &)deadline;
+- (NSDictionary *)waitForChangeRequest:(NSDictionary *)request deadline:(const TLinkHelperIO::Deadline &)deadline client:(int)client;
 - (void)handleClient:(int)client;
 - (void)handleClient:(int)client acceptedAt:(uint64_t)acceptedAt;
 - (void)enqueueClient:(int)client acceptedAt:(uint64_t)acceptedAt;
@@ -215,6 +216,96 @@ static NSDictionary *readReply(Socket &sender){
     std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,Deadline(nowMs(),2000)).ok());
     NSDictionary *reply=[TLinkJSHelperProtocol deserializeEnvelope:[NSData dataWithBytes:frame.data() length:frame.size()] error:nil];assert(reply);return reply;
 }
+static NSData *cancellableChangeRequest(uint64_t sequence=1){
+    NSMutableDictionary *request=[[TLinkJSHelperProtocol deserializeEnvelope:changeRequest(sequence,750,@"helper",@"session") error:nil] mutableCopy];
+    request[@"waitPeerEOFContract"]=@"cancel_v1";
+    return [TLinkJSHelperProtocol serializeEnvelope:request error:nil];
+}
+static void peerMonitorCases(){
+    // Exercise the actual source independently of the 750-ms wire cap: a missing
+    // notification must fail as Timeout, never accidentally pass via normal expiry.
+    for(unsigned round=0;round<128;++round){@autoreleasepool{
+        int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);
+        Socket sender(pair[0]),receiver(pair[1]);assert(sender.prepare().ok()&&receiver.prepare().ok());
+        TLinkHelperChangeWait changes;TLinkHelperChangeWait::Cancellation cancellation;
+        {
+            TLinkHelperWaitPeer monitor(changes,cancellation);assert(!monitor.start(-1));assert(monitor.start(receiver.fd()));assert(!monitor.start(receiver.fd()));
+            std::thread abandon([&]{const Deadline watchdog(nowMs(),5000);while(changes.waiters()!=1){assert(watchdog.remaining(nowMs()));std::this_thread::yield();}
+                if(round%2)sender.close();else{const uint8_t extra='x';assert(::send(sender.fd(),&extra,1,0)==1);}
+            });
+            const auto result=changes.wait(1,Deadline(nowMs(),10000),&cancellation);
+            assert(result.code==TLinkHelperChangeWait::Code::Cancelled&&result.sequence==1);
+            abandon.join();monitor.stop();monitor.stop();
+        }
+        assert(changes.waiters()==0&&changes.sequence()==1&&::fcntl(receiver.fd(),F_GETFD,0)>=0);
+        // Force reuse of the watched descriptor after the source cancellation join.
+        const int retired=receiver.release();assert(::close(retired)==0);
+        int replacement[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,replacement)==0);
+        if(replacement[0]!=retired){assert(::dup2(replacement[0],retired)==retired);assert(::close(replacement[0])==0);replacement[0]=retired;}
+        Socket fresh(replacement[0]),other(replacement[1]);assert(fresh.prepare().ok()&&other.prepare().ok());
+        const uint8_t byte='r';assert(::send(other.fd(),&byte,1,0)==1);uint8_t received=0;
+        assert(::recv(fresh.fd(),&received,1,0)==1&&received==byte);
+    }}
+    // Normal return and both exception paths join before tokens/borrowed FDs die.
+    for(unsigned mode=0;mode<3;++mode){
+        int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]),receiver(pair[1]);assert(receiver.prepare().ok());
+        TLinkHelperChangeWait changes;TLinkHelperChangeWait::Cancellation cancellation;bool caught=false;
+        try{@try{
+            TLinkHelperWaitPeer monitor(changes,cancellation);assert(monitor.start(receiver.fd()));
+            if(mode==1)throw std::runtime_error("monitor cleanup");
+            if(mode==2)[NSException raise:@"MonitorCleanup" format:@"cleanup"];
+            assert(changes.wait(1,Deadline(nowMs(),5),&cancellation).code==TLinkHelperChangeWait::Code::Timeout);
+        }@catch(NSException *error){(void)error;caught=true;}}catch(const std::runtime_error &){caught=true;}
+        assert(caught==(mode!=0)&&::fcntl(receiver.fd(),F_GETFD,0)>=0);
+        sender.close();assert(changes.wait(1,Deadline(nowMs(),5),&cancellation).code==TLinkHelperChangeWait::Code::Timeout);
+    }
+    puts("Helper peer monitor passed: actual dispatch READ EOF/extra-input cancellation, unchanged sequence, 128 source joins/forced FD reuses, timeout, invalid setup and NS/C++ unwind cleanup.");
+}
+static void disconnectCases(){
+    // Only the abandoned waiter exits; the other three retain cursor/deadline and
+    // the released slot can admit a replacement without a lifecycle publication.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];std::vector<int> senders;
+        for(unsigned n=0;n<4;++n)senders.push_back(beginRequest(peer,cancellableChangeRequest()));
+        waitForReaders(peer,4);assert(::close(senders.back())==0);senders.pop_back();waitForReaders(peer,3);
+        assert(peer->_statusChanges.sequence()==1);
+        Socket replacement(beginRequest(peer,cancellableChangeRequest()));waitForReaders(peer,4);
+        [peer publishStatusChange];
+        for(int fd:senders){Socket sender(fd);assert([readReply(sender)[@"payload"][@"changed"] boolValue]);}
+        assert([readReply(replacement)[@"payload"][@"changed"] boolValue]);drainClients(peer);
+        assert(peer->_statusChanges.waiters()==0&&peer->_clientAdmission.stats().finished==5&&peer->effects==0);
+    }
+    // A legacy half-close still requests a reply. An explicit EOF contract instead
+    // abandons only this wait, including EOF before its condition registration.
+    for(bool optIn : {false,true}){
+        FixturePeer *peer=[[FixturePeer alloc] init];dispatch_suspend(peer.clientQueue);
+        NSData *json=optIn?cancellableChangeRequest():changeRequest(1,10,@"helper",@"session");
+        Socket sender(beginRequest(peer,json));assert(::shutdown(sender.fd(),SHUT_WR)==0);dispatch_resume(peer.clientQueue);
+        if(optIn){std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);}
+        else{NSDictionary *reply=readReply(sender);assert([reply[@"payload"][@"reason"] isEqual:@"timeout"]);}
+        drainClients(peer);assert(peer->_statusChanges.sequence()==1&&peer->_statusChanges.waiters()==0&&peer->effects==0);
+    }
+    for(id contract in @[@"unknown",@"",@(true),@1,@{},[NSNull null]]){
+        FixturePeer *peer=[[FixturePeer alloc] init];NSMutableDictionary *request=[[TLinkJSHelperProtocol deserializeEnvelope:cancellableChangeRequest() error:nil] mutableCopy];
+        request[@"waitPeerEOFContract"]=contract;
+        Socket sender(beginRequest(peer,[TLinkJSHelperProtocol serializeEnvelope:request error:nil]));NSDictionary *reply=readReply(sender);
+        assert([reply[@"error"][@"message"] isEqual:@"invalid_wait_request"]);drainClients(peer);assert(peer->_statusChanges.waiters()==0);
+    }
+    // Actual public client closes its in-flight wait on local cancellation; the
+    // actual server releases both waiter and client lease, without stopping a run.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];std::atomic<bool> cancelled{false};
+        std::thread service([&]{@autoreleasepool{
+            [peer handleClient:listener.accept()];[peer enqueueClient:listener.accept() acceptedAt:nowMs()];waitForReaders(peer,1);cancelled=true;drainClients(peer);
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];NSDictionary *reply=[client startScriptAtPath:@"/script.js" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000];assert([reply[@"ok"] boolValue]);
+        std::atomic<bool> *flag=&cancelled;[client setCancellationCheck:^BOOL{return flag->load();}];
+        reply=[client waitForChangeAfterSequence:1 sessionId:@"session" waitMs:750 timeoutMs:1000];assert([reply[@"error"] isEqual:@"cancelled"]);
+        [client setCancellationCheck:nil];service.join();
+        assert(peer->_statusChanges.sequence()==1&&peer->_statusChanges.waiters()==0&&peer->_clientAdmission.stats().finished==1&&peer->effects==1);
+    }
+    puts("Helper disconnect Foundation passed: targeted slot reuse, legacy/opt-in half-close, EOF before registration, strict extension and actual client cancellation/server lease cleanup.");
+}
 static void changeWaitCases(){
     // Four sleeping waiters do not own the command lock; the fifth fails without blocking status.
     {
@@ -307,4 +398,4 @@ static void queueCases(){
     }
     puts("Helper admission Foundation passed: actual concurrent enqueue/leases, stalled-reader isolation, eight queued clients/ninth-fd rejection, accepted-time expiry, serialized command deadline, stopped and exception cleanup.");
 }
-int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();changeWaitCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
+int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();peerMonitorCases();disconnectCases();changeWaitCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}

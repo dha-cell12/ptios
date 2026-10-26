@@ -42,4 +42,29 @@ static void concurrentCases(){
     waitCount(events,4);events.stop();for(auto &reader:readers)reader.join();assert(stopped==4&&events.waiters()==0);
     TLinkHelperChangeWait quiet;const auto timeout=quiet.wait(quiet.sequence(),Deadline(nowMs(),5));assert(timeout.code==C::Timeout&&quiet.waiters()==0);
 }
-int main(){oracleCases();concurrentCases();puts("Helper change wait passed: 100k registration-gap/cursor cases, 80k concurrent publications, four-waiter cap, fan-out, stop, timeout and zero final waiters.");}
+static void cancellationCases(){
+    TLinkHelperChangeWait events;const uint64_t sequence=events.sequence();
+    for(unsigned n=0;n<100000;++n){
+        TLinkHelperChangeWait::Cancellation cancellation;events.cancel(cancellation);
+        assert(events.wait(sequence,Deadline(nowMs(),10000),&cancellation).code==C::Cancelled);
+        assert(events.sequence()==sequence&&events.waiters()==0);
+    }
+    for(unsigned round=0;round<64;++round){
+        const uint64_t before=events.sequence();TLinkHelperChangeWait::Cancellation cancellation;
+        std::atomic<bool> otherDone{false};
+        std::thread target([&]{const auto result=events.wait(before,Deadline(nowMs(),10000),&cancellation);assert(result.code==C::Cancelled&&result.sequence==before);});
+        std::thread other([&]{assert(events.wait(before,Deadline(nowMs(),10000)).code==C::Changed);otherDone=true;});
+        waitCount(events,2);events.cancel(cancellation);target.join();
+        assert(!otherDone&&events.waiters()==1&&events.sequence()==before);
+        // Repeated cancellation is harmless and a freed slot is reusable immediately.
+        events.cancel(cancellation);assert(events.wait(before,Deadline(0,1)).code==C::Timeout);
+        events.publish();other.join();assert(events.waiters()==0);
+    }
+    for(unsigned round=0;round<1000;++round){
+        TLinkHelperChangeWait::Cancellation cancellation;const auto before=events.sequence();
+        std::thread cancel([&]{events.cancel(cancellation);});
+        assert(events.wait(before,Deadline(nowMs(),10000),&cancellation).code==C::Cancelled);
+        cancel.join();assert(events.waiters()==0&&events.sequence()==before);
+    }
+}
+int main(){oracleCases();concurrentCases();cancellationCases();puts("Helper change wait passed: 100k registration-gap/cursor cases, 80k concurrent publications, four-waiter cap, fan-out, stop/timeout, 100k pre-cancels, targeted wake isolation, 1000 cancel/registration races and zero final waiters.");}
