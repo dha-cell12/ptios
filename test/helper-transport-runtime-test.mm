@@ -25,6 +25,7 @@ static NSString *kTLinkJSHelperSocketPath;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;
 @property(nonatomic, copy) NSString *activeSessionId;
+@property(nonatomic, strong) NSCondition *rpcCondition;
 @property(nonatomic, strong) dispatch_queue_t clientQueue;
 - (void)publishStatusChange;
 - (NSDictionary *)waitForChangeRequest:(NSDictionary *)request deadline:(const TLinkHelperIO::Deadline &)deadline;
@@ -35,7 +36,7 @@ static NSString *kTLinkJSHelperSocketPath;
 - (NSDictionary *)errorEnvelopeForRequest:(NSDictionary *)request message:(NSString *)message;
 @end
 @implementation FixturePeer
-- (instancetype)init {self=[super init];if(self){mode.store(0);effects.store(0);self.helperInstanceId=@"helper";self.activeSessionId=@"session";self.clientQueue=dispatch_queue_create("fixture.helper.clients",DISPATCH_QUEUE_CONCURRENT);}return self;}
+- (instancetype)init {self=[super init];if(self){mode.store(0);effects.store(0);self.helperInstanceId=@"helper";self.activeSessionId=@"session";self.rpcCondition=[[NSCondition alloc] init];self.clientQueue=dispatch_queue_create("fixture.helper.clients",DISPATCH_QUEUE_CONCURRENT);}return self;}
 - (NSDictionary *)handleEnvelope:(NSDictionary *)request {
     if(![request[@"requestId"] isEqual:@"transport"]){
         bool present=false;uint64_t issued=0,expires=0;

@@ -9,25 +9,37 @@ const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n
 const [runtime,server,client]=await Promise.all(['pccontrol/TLinkautoJSRuntime.mm','tlinkauto-jsd/TLinkJSHelperServer.mm','pccontrol/jsruntime/TLinkJSHelperClient.mm'].map(read));
 const between=(source,a,b)=>{const x=source.indexOf(a),y=source.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return source.slice(x,y);};
 const publication=between(server,'// BEGIN helper change publication.','// END helper change publication.');
+const session=between(server,'// BEGIN helper session ownership.','// END helper session ownership.');
+const status=between(server,'- (NSDictionary *)statusPayload','- (void)stopLicenseHeartbeatForSessionId:');
+const finish=between(server,'- (void)finishSessionId:','// BEGIN helper owned execution.');
+const owned=between(server,'// BEGIN helper owned execution.','// END helper owned execution.');
+const start=between(server,'- (NSDictionary *)startWithRequest:','- (NSDictionary *)errorEnvelopeForRequest:');
 const admission=between(server,'// BEGIN helper RPC response admission.','// END helper RPC response admission.');
 const cleanup=between(server,'// BEGIN helper RPC slot cleanup.','// END helper RPC slot cleanup.');
 const execute=between(server,'- (NSDictionary *)executeNativeRPCMethod:','// BEGIN helper RPC slot cleanup.');
 const error=between(server,'- (NSDictionary *)errorEnvelopeForRequest:','- (NSDictionary *)handleEnvelope:');
 assert.doesNotMatch(server,/nativeResponses/);
+assert.match(session,/sessionWorkerActive[\s\S]*sessionCompletionCommitted[\s\S]*rpcCondition unlock/);
+assert.match(status,/rpcCondition lock[\s\S]*activeSessionId[\s\S]*pendingNativeRPC[\s\S]*@finally[\s\S]*rpcCondition unlock/);
+assert.match(execute,/@finally[\s\S]*rpcCondition unlock/);
+assert.match(owned,/@finally[\s\S]*closeActiveFileHandles[\s\S]*retireSessionId/);
+assert.match(start,/beginSessionId[\s\S]*runOwnedSessionId/);
 assert.match(admission,/rpcCondition lock[\s\S]*TLinkHelperRPCResponseError[\s\S]*if \(!duplicate\) self.nativeResponse[\s\S]*@finally[\s\S]*rpcCondition unlock/);
 assert.match(execute,/activeSessionId isEqualToString:sessionId[\s\S]*self.nativeResponse = nil;[\s\S]*self.pendingNativeRequest = request/);
 assert.match(cleanup,/pendingNativeRequest\[@"sessionId"\] isEqualToString:sessionId/);
 assert.match(runtime,/TLinkHelperRPCStatusError\(statusResponse, helperInstanceId, _helperSessionId\)[\s\S]*if \(identityError\)[\s\S]*TLinkHelperRPCDispatch/);
 assert.match(client,/TLinkHelperRPCReplyError[\s\S]*if \(identityError\)[\s\S]*TLinkHelperRPCStartError[\s\S]*boundHelperInstanceId = response/);
 assert.match(client,/helperInstanceId:self.boundHelperInstanceId/);
-assert.match(server,/kTLinkJSHelperStateStopping\]\)\) \{\n        return \[self errorEnvelopeForRequest:request message:@"helper_busy"\]/);
+assert.match(server,/sessionIsBusy\][^\n]*helper_busy/);
 const stop=between(server,'if ([command isEqualToString:kTLinkJSHelperCmdStop])','if ([command isEqualToString:kTLinkJSHelperCmdNativeRPCResponse])');
-assert.match(stop,/stopped.store\(true[\s\S]*rpcCondition broadcast/);
+assert.match(stop,/requestStopForSessionId:requestedSessionId/);
+assert.match(server,/requestStopForSessionId:[\s\S]*stopped.store\(true[\s\S]*rpcCondition broadcast/);
 for(const workflow of await Promise.all(['.github/workflows/build.yml','.github/workflows/stream-app.yml'].map(read)))assert.match(workflow,/node scripts\/check-helper-identity-safety\.mjs/);
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-helper-identity-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
     await writeFile(join(temp,'HelperIdentityServerUnderTest.inc'),publication+execute+cleanup+admission+error);
+    await writeFile(join(temp,'HelperSessionUnderTest.inc'),publication+session+status+finish+owned+start+execute+cleanup+admission+error);
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     const binary=join(temp,windows?'helper-identity.exe':'helper-identity'),file=join(root,'test/helper-identity-safety-test.cpp');
     run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',binary]);
@@ -36,5 +48,8 @@ try{
         const executable=join(temp,'helper-identity-runtime');
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/helper-identity-runtime-test.mm'),join(root,'pccontrol/jsruntime/TLinkJSHelperProtocol.mm'),'-o',executable]);
         run(executable,[temp]);
+        const sessionExecutable=join(temp,'helper-session-runtime');
+        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/helper-session-runtime-test.mm'),join(root,'pccontrol/jsruntime/TLinkJSHelperProtocol.mm'),'-o',sessionExecutable]);
+        run(sessionExecutable,[temp]);
     }else console.log('macOS actual helper response slot/owner/condition integration is included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-helper-identity-'));await rm(temp,{recursive:true,force:true});}

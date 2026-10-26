@@ -1,7 +1,7 @@
 # C02d5 — bounded helper change waits and publication cursors
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `22b449f`; the user reported C02d4 built successfully before this slice.
-Status: **source implemented; new macOS/Foundation/GCD/iOS CI and device qualification pending**.
+Status: **user reported build `29858f0` passed before C02d6; independent device/performance qualification remains pending**.
 Finding: **P0-12 prerequisite: change publication and wait endpoint before switching the runtime polling loop**.
 
 ## Result
