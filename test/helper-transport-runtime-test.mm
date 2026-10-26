@@ -241,10 +241,12 @@ static void peerMonitorCases(){
         // Force reuse of the watched descriptor after the source cancellation join.
         const int retired=receiver.release();assert(::close(retired)==0);
         int replacement[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,replacement)==0);
+        if(replacement[1]==retired)std::swap(replacement[0],replacement[1]);
         if(replacement[0]!=retired){assert(::dup2(replacement[0],retired)==retired);assert(::close(replacement[0])==0);replacement[0]=retired;}
         Socket fresh(replacement[0]),other(replacement[1]);assert(fresh.prepare().ok()&&other.prepare().ok());
-        const uint8_t byte='r';assert(::send(other.fd(),&byte,1,0)==1);uint8_t received=0;
-        assert(::recv(fresh.fd(),&received,1,0)==1&&received==byte);
+        const uint8_t byte='r';const Deadline io(nowMs(),2000);
+        assert(writeFrame(posixOps(),other.fd(),&byte,1,io).ok());std::vector<uint8_t> received;
+        assert(readFrame(posixOps(),fresh.fd(),received,io).ok()&&received.size()==1&&received[0]==byte);
     }}
     // Normal return and both exception paths join before tokens/borrowed FDs die.
     for(unsigned mode=0;mode<3;++mode){

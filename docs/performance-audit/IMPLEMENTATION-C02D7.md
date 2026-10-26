@@ -1,8 +1,10 @@
 # C02d7 — runtime adoption of bounded helper change waits
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `014db57`; the user reported C02d6 built successfully before this slice.
-Status: **source implemented; new macOS/Foundation/ARC/iOS CI and device qualification pending**.
+Status: **user reported build `12a915e` passed before C02d8; independent device/performance qualification remains pending**.
 Finding: **P0-12 runtime wait adoption, cancellation and replay-safe reconciliation**.
+
+Follow-up: C02d8 adds opted-in server EOF cancellation; see `IMPLEMENTATION-C02D8.md`. The implementation and validation descriptions below record this slice before that follow-up.
 
 ## Runtime behavior
 
