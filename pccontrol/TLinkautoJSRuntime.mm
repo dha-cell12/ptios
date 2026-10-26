@@ -1031,20 +1031,28 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
             [NSThread sleepForTimeInterval:static_cast<double>(std::min(remaining,50))/1000.0];
         }
     };
-    [helper setCancellationCheck:^BOOL{return stopReason()!=nil;}];
+    TLinkHelperStatusRecovery statusRecovery;
+    TLinkHelperStatusRecovery *recovery=&statusRecovery;
+    // The client invokes this synchronously; finally clears it before recovery dies.
+    [helper setCancellationCheck:^BOOL{return stopReason()!=nil||recovery->expired(TLinkHelperIO::nowMs());}];
     BOOL useWait=false,negotiated=false;
     uint64_t previousSequence=0;
+    NSString *lastStatusError=nil;
     BOOL ok = NO;
     NSString *failure = nil;
     @try {
         for (;;) { @autoreleasepool {
             failure=stopReason();if(failure)break;
-            const int statusBudget=ioBudget(500);
-            if(!statusBudget){failure=@"JavaScript helper caller deadline exceeded";break;}
+            const int statusBudget=statusRecovery.begin(TLinkHelperIO::nowMs(),ioBudget(TLinkHelperStatusRecovery::AttemptMs));
+            if(!statusBudget){failure=statusRecovery.expired(TLinkHelperIO::nowMs())?@"helper_status_recovery_timeout":(lastStatusError?:@"JavaScript helper caller deadline exceeded");break;}
             NSDictionary *status = [helper statusForSessionId:_helperSessionId timeoutMs:statusBudget];
             failure=stopReason();if(failure)break;
+            if(statusRecovery.expired(TLinkHelperIO::nowMs())){failure=@"helper_status_recovery_timeout";break;}
             if (![status[@"ok"] boolValue]) {
-                failure = TLinkHelperRuntimeErrorCode(status);
+                lastStatusError=TLinkHelperRuntimeErrorCode(status);
+                const int pause=std::min(statusRecovery.retryDelay(TLinkHelperIO::nowMs()),ioBudget(TLinkHelperStatusRecovery::BackoffMs));
+                if(TLinkHelperRuntimeRetryStatus(status)&&pause>0){delay(pause);continue;}
+                failure = lastStatusError;
                 break;
             }
             NSDictionary *statusResponse = status[@"response"];
@@ -1056,7 +1064,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
             const int capability=TLinkHelperRuntimeCursor(statusPayload,sequence);
             if(!negotiated){useWait=capability==1;negotiated=true;}
             if((capability<0)||(useWait&&(capability!=1||sequence<previousSequence))){failure=@"invalid_helper_change_cursor";break;}
+            if(statusRecovery.expired(TLinkHelperIO::nowMs())){failure=@"helper_status_recovery_timeout";break;}
             if(useWait)previousSequence=sequence;
+            statusRecovery.reset();lastStatusError=nil; // Only a validated snapshot ends an outage.
             BOOL responseFailed=false;
             NSString *state = [statusPayload[@"state"] isKindOfClass:[NSString class]] ? statusPayload[@"state"] : @"unknown";
             NSDictionary *nativeRPC = [statusPayload[@"nativeRPCRequest"] isKindOfClass:[NSDictionary class]] ? statusPayload[@"nativeRPCRequest"] : nil;

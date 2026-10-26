@@ -18,6 +18,9 @@ const begin=runtime.indexOf('// BEGIN helper runtime wait loop.'),end=runtime.in
 assert.ok(begin>=0&&end>begin);const implementation=runtime.slice(begin,end);
 assert.match(implementation,/TLinkHelperRPCStatusError[\s\S]*TLinkHelperRPCDispatch[\s\S]*waitForChangeAfterSequence:sequence/);
 assert.match(implementation,/TLinkHelperRuntimeHintError/);
+assert.match(implementation,/statusRecovery.begin[\s\S]*statusForSessionId[\s\S]*TLinkHelperRuntimeRetryStatus/);
+assert.match(implementation,/setCancellationCheck:[^\n]*recovery->expired/);
+assert.match(implementation,/TLinkHelperRPCStatusError[\s\S]*TLinkHelperRuntimeCursor[\s\S]*statusRecovery.reset\(\)/);
 assert.match(implementation,/setCancellationCheck:nil[\s\S]*releaseOwnedHandles/);
 assert.match(runtime,/infrastructureFailure = \[helperError.userInfo\[@"helperFallbackSafe"\] boolValue\]/);
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-helper-change-wait-'));

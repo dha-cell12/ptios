@@ -1,4 +1,4 @@
-#include "../shared/TLinkHelperChangeWait.h"
+#include "../shared/TLinkHelperRuntimeWait.h"
 #include <atomic>
 #include <cassert>
 #include <cstdio>
@@ -67,4 +67,32 @@ static void cancellationCases(){
         cancel.join();assert(events.waiters()==0&&events.sequence()==before);
     }
 }
-int main(){oracleCases();concurrentCases();cancellationCases();puts("Helper change wait passed: 100k registration-gap/cursor cases, 80k concurrent publications, four-waiter cap, fan-out, stop/timeout, 100k pre-cancels, targeted wake isolation, 1000 cancel/registration races and zero final waiters.");}
+static void recoveryCases(){
+    // An independent elapsed-time oracle spans fast faults, full I/O timeouts,
+    // oversleep and shorter caller budgets. No episode admits a fourth attempt.
+    for(uint64_t n=0;n<100000;++n){
+        TLinkHelperStatusRecovery recovery;const uint64_t start=1000+n;
+        uint64_t now=start;unsigned attempts=0;const int caller=static_cast<int>(n%600)+1;
+        for(unsigned step=0;step<5;++step){
+            const int expected=attempts>=3||now>=start+1500?0:static_cast<int>(std::min<uint64_t>(std::min(caller,500),start+1500-now));
+            const int budget=recovery.begin(now,caller);assert(budget==expected);if(!budget)break;++attempts;
+            now+=n%701;
+            const int expectedPause=attempts>=3||now>=start+1500?0:static_cast<int>(std::min<uint64_t>(100,start+1500-now));
+            assert(recovery.retryDelay(now)==expectedPause);
+            now+=static_cast<uint64_t>(expectedPause)+n%301;
+        }
+        assert(attempts<=3);recovery.reset();assert(recovery.remaining(now)==0&&!recovery.expired(now));
+        assert(recovery.begin(now,500)==500); // Reset is explicit, never on a failed attempt.
+    }
+    TLinkHelperStatusRecovery bounded;assert(bounded.begin(1000,500)==500);
+    assert(bounded.begin(1600,500)==500);assert(bounded.begin(2200,500)==300);
+    assert(bounded.retryDelay(2200)==0&&bounded.begin(2300,500)==0);
+    TLinkHelperStatusRecovery expiry;assert(expiry.begin(1000,1)==1);
+    assert(expiry.retryDelay(2499)==1&&!expiry.expired(2499)&&expiry.expired(2500)&&expiry.begin(2500,500)==0);
+    TLinkHelperStatusRecovery overflow;assert(overflow.begin(UINT64_MAX-2,500)==2);
+    assert(overflow.remaining(UINT64_MAX)==0&&overflow.begin(UINT64_MAX,500)==0);
+    TLinkHelperStatusRecovery stopped;assert(stopped.begin(1000,0)==0&&stopped.begin(1000,-1)==0);
+    assert(stopped.begin(2000,500)==500);
+    puts("Helper status recovery passed: 100k elapsed/budget/attempt oracle cases, three-attempt ceiling, fixed 1500-ms window, bounded backoff, caller shortening, reset and saturation.");
+}
+int main(){oracleCases();concurrentCases();cancellationCases();recoveryCases();puts("Helper change wait passed: 100k registration-gap/cursor cases, 80k concurrent publications, four-waiter cap, fan-out, stop/timeout, 100k pre-cancels, targeted wake isolation, 1000 cancel/registration races and zero final waiters.");}

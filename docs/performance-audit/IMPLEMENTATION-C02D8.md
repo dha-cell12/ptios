@@ -1,7 +1,7 @@
 # C02d8 — release helper change waits on opted-in peer EOF
 
 Date: 2026-10-26 (Asia/Bangkok). Previous slice: C02d7 (`12a915e`), build passed according to the user.
-Status: **source implemented; new Darwin/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `b206649` passed before C02d9; independent device/performance qualification remains pending**.
 Finding: **P0-12 prompt cancellation of abandoned helper waits**.
 
 ## Behavior and compatibility

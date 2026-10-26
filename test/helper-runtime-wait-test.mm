@@ -14,6 +14,7 @@
 @property(nonatomic,strong) NSMutableArray *statuses;
 @property(nonatomic,strong) NSMutableArray *hints;
 @property(nonatomic,strong) NSMutableArray *cursors;
+@property(nonatomic,strong) NSMutableArray *statusBudgets;
 @property(nonatomic,strong) NSDictionary *startError;
 @property(nonatomic,copy) void (^onStatus)(void);
 @property(nonatomic,copy) void (^onWait)(void);
@@ -29,9 +30,10 @@
 @property(nonatomic,assign) BOOL lostAck;
 @property(nonatomic,assign) BOOL throwStatus;
 @property(nonatomic,assign) BOOL cppStatus;
+@property(nonatomic,assign) BOOL statusCancellationObserved;
 @end
 @implementation Script
-- (instancetype)init {self=[super init];if(self){self.statuses=[NSMutableArray array];self.hints=[NSMutableArray array];self.cursors=[NSMutableArray array];}return self;}
+- (instancetype)init {self=[super init];if(self){self.statuses=[NSMutableArray array];self.hints=[NSMutableArray array];self.cursors=[NSMutableArray array];self.statusBudgets=[NSMutableArray array];}return self;}
 @end
 static Script *script;
 @interface TLinkJSHelperClient ()
@@ -44,9 +46,12 @@ static Script *script;
 }
 - (NSDictionary *)statusForSessionId:(NSString *)session timeoutMs:(int)timeout {
     assert([session isEqual:@"session"]&&timeout>0&&timeout<=500);++script.statusCalls;
+    [script.statusBudgets addObject:@(timeout)];
     if(script.cppStatus)throw std::runtime_error("injected transport failure");
     if(script.throwStatus)[NSException raise:@"fixture_transport" format:@"injected"];
-    if(script.onStatus)script.onStatus();assert(script.statuses.count);NSDictionary *reply=script.statuses.firstObject;[script.statuses removeObjectAtIndex:0];return reply;
+    if(script.onStatus)script.onStatus();
+    script.statusCancellationObserved=self.cancellationCheck&&self.cancellationCheck();
+    assert(script.statuses.count);NSDictionary *reply=script.statuses.firstObject;[script.statuses removeObjectAtIndex:0];return reply;
 }
 - (NSDictionary *)waitForChangeAfterSequence:(uint64_t)sequence sessionId:(NSString *)session waitMs:(int)waitMs timeoutMs:(int)timeout {
     assert([session isEqual:@"session"]&&waitMs==750&&timeout>25&&timeout<=1000);++script.waits;[script.cursors addObject:@(sequence)];
@@ -166,4 +171,77 @@ static void startCases(){
         assert([error.userInfo[@"helperFallbackSafe"] boolValue]==safe&&script.starts==1&&script.statusCalls==0);
     }
 }
-int main(){@autoreleasepool{successCases();rejectionCases();cancellationCases();startCases();puts("Helper runtime Foundation passed: actual loop capability/legacy paths, fresh status after hints, lost ACK replay without repeated effects, transport/busy recovery, cursor/identity gates, cancellation/deadline before native work, owned-context cleanup and uncertain-start fallback fence.");}return 0;}
+static void recoveryCases(){
+    for(NSString *code in @[@"io_timeout",@"empty_frame",@"connect_failed",@"read_failed",@"write_failed"]){
+        assert(TLinkHelperRuntimeRetryStatus(failure(code)));
+        for(bool exhaust : {false,true}){
+            script=[[Script alloc] init];RuntimeFixture *runtime=[[RuntimeFixture alloc] init];TLinkTaskExecutionContext *ctx=context();NSError *error=nil;
+            [script.statuses addObjectsFromArray:@[failure(code),failure(code)]];
+            if(exhaust)[script.statuses addObject:failure(code)];
+            [script.statuses addObject:status(@"completed",1)];
+            assert(run(runtime,ctx,@{},&error)==!exhaust);
+            assert(script.starts==1&&script.statusCalls==3&&script.effects==0&&script.waits==0&&script.stops==(exhaust?1U:0U));
+            if(exhaust){assert(script.statuses.count==1);assert([error.localizedDescription containsString:code]);}
+            cleaned(runtime,ctx);
+        }
+    }
+    // A successful snapshot resets both attempt count and outage window.
+    script=[[Script alloc] init];RuntimeFixture *runtime=[[RuntimeFixture alloc] init];TLinkTaskExecutionContext *ctx=context();
+    [script.statuses addObjectsFromArray:@[failure(@"read_failed"),failure(@"read_failed"),status(@"running",1),failure(@"connect_failed"),failure(@"empty_frame"),status(@"completed",2)]];
+    [script.hints addObject:hint(2,true)];assert(run(runtime,ctx,@{},nil));assert(script.statusCalls==6&&script.starts==1&&script.waits==1);cleaned(runtime,ctx);
+
+    // Lost ACK plus status outage must keep the replay ledger, cursor and pinned owner.
+    script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();script.lostAck=true;
+    [script.statuses addObjectsFromArray:@[status(@"running",2,true),failure(@"read_failed"),failure(@"io_timeout"),status(@"running",2,true),status(@"completed",3)]];
+    [script.hints addObject:hint(3,true)];assert(run(runtime,ctx,@{},nil));
+    assert(script.effects==1&&script.acks==2&&script.starts==1&&script.statusCalls==5&&runtime->_helperDuplicateRPCCount==1);
+    assert(([script.cursors isEqual:@[@2]]));cleaned(runtime,ctx);
+
+    // Local-looking remote errors, malformed/ownership/cancel errors stay fatal.
+    NSArray *fatal=@[failure(@"cancelled"),failure(@"helper_instance_mismatch"),failure(@"session_mismatch"),failure(@"invalid_rpc_response"),failure(@"frame_too_large"),failure(@"change_wait_busy"),failure(@"socket_setup_failed"),
+        @{@"ok":@(false),@"error":@{@"message":@"read_failed"}},@{@"ok":@(false),@"error":@"read_failed",@"response":@{}},@{@"ok":@0,@"error":@"read_failed"}];
+    for(NSDictionary *reply in fatal){
+        assert(!TLinkHelperRuntimeRetryStatus(reply));script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();
+        [script.statuses addObjectsFromArray:@[reply,status(@"running",1,true)]];
+        assert(!run(runtime,ctx,@{},nil));assert(script.statusCalls==1&&script.effects==0&&script.stops==1);cleaned(runtime,ctx);
+    }
+    // Reconnect still checks helper/session ownership before accepting native work.
+    for(bool replacementHelper : {false,true}){
+        script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();
+        NSMutableDictionary *bad=[status(@"running",1,true) mutableCopy],*response=[bad[@"response"] mutableCopy];
+        response[replacementHelper?@"helperInstanceId":@"sessionId"]=@"replacement";bad[@"response"]=response;
+        [script.statuses addObjectsFromArray:@[failure(@"read_failed"),bad]];
+        assert(!run(runtime,ctx,@{},nil));assert(script.statusCalls==2&&script.effects==0&&script.acks==0&&script.stops==1);cleaned(runtime,ctx);
+    }
+    script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();
+    [script.statuses addObjectsFromArray:@[status(@"running",2),failure(@"empty_frame"),status(@"running",1,true)]];[script.hints addObject:hint(3,true)];
+    assert(!run(runtime,ctx,@{},nil));assert(script.effects==0&&script.acks==0&&script.statusCalls==3);cleaned(runtime,ctx);
+
+    // Cancellation/output stop after a retry reply cannot dispatch the pending effect.
+    for(bool outputStop : {false,true}){
+        script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();
+        auto output=std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},0,1,false,true);[ctx setNativeBudget:output];
+        script.onStatus=^{if(script.statusCalls==2){if(outputStop){const uint8_t bytes[]={'a','b',0};assert(output->appendCString(bytes)<0);}else [ctx.cancellationToken cancel];}};
+        [script.statuses addObjectsFromArray:@[failure(@"read_failed"),status(@"running",1,true)]];
+        assert(!run(runtime,ctx,@{},nil));assert(script.statusCalls==2&&script.effects==0&&script.acks==0&&script.stops==1);cleaned(runtime,ctx);
+    }
+    // A shorter caller deadline bounds the first attempt and blocks retry/native work.
+    script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();
+    [ctx setNativeBudget:std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},TLinkNativeDeadline(0.25),1024)];
+    script.onStatus=^{[NSThread sleepForTimeInterval:0.3];};[script.statuses addObject:failure(@"read_failed")];
+    assert(!run(runtime,ctx,@{},nil));assert(script.statusCalls<=1&&script.effects==0&&script.stops==1);
+    if(script.statusCalls)assert([script.statusBudgets[0] intValue]<=250);cleaned(runtime,ctx);
+
+    // A syntactically good reply arriving after the episode window is not admitted.
+    script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();NSError *lateError=nil;
+    script.onStatus=^{[NSThread sleepForTimeInterval:1.6];};[script.statuses addObject:status(@"running",1,true)];
+    assert(!run(runtime,ctx,@{},&lateError));assert(script.statusCalls==1&&script.effects==0&&script.acks==0&&script.stops==1);
+    assert(script.statusCancellationObserved&&[lateError.localizedDescription containsString:@"helper_status_recovery_timeout"]);cleaned(runtime,ctx);
+
+    // Old capability peers can recover status without enabling waitForChange.
+    script=[[Script alloc] init];runtime=[[RuntimeFixture alloc] init];ctx=context();
+    [script.statuses addObjectsFromArray:@[failure(@"read_failed"),status(@"running",1,false,0),failure(@"empty_frame"),status(@"completed",2,false,0)]];
+    assert(run(runtime,ctx,@{},nil));assert(script.starts==1&&script.statusCalls==4&&script.waits==0);cleaned(runtime,ctx);
+    puts("Helper status reconciliation Foundation passed: bounded retries/exhaustion/reset, fatal error classification, pinned ownership/cursor rejection, lost ACK replay with one effect, cancellation/output/caller deadline and legacy peers.");
+}
+int main(){@autoreleasepool{successCases();rejectionCases();cancellationCases();startCases();recoveryCases();puts("Helper runtime Foundation passed: actual loop capability/legacy paths, fresh status after hints, lost ACK replay without repeated effects, transport/busy recovery, cursor/identity gates, cancellation/deadline before native work, owned-context cleanup and uncertain-start fallback fence.");}return 0;}
