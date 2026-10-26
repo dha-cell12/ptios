@@ -5,6 +5,7 @@
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperClientAdmission.h"
+#include "../shared/TLinkHelperCommandGate.h"
 #include "../shared/TLinkHelperChangeWait.h"
 #include "../shared/TLinkHelperWaitPeer.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
@@ -48,7 +49,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 @interface TLinkJSHelperServer () {
     TLinkJSHelperCancelState *_cancelState;
     TLinkHelperClientAdmission _clientAdmission;
-    std::timed_mutex _clientCommandOwner;
+    TLinkHelperCommandGate _clientCommandOwner;
     TLinkHelperChangeWait _statusChanges;
     TLinkJSHelperSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkJSHelperClearExecutionTimeLimitFn _clearExecutionTimeLimit;
@@ -1161,9 +1162,13 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         !TLinkHelperRPCIdentity::valid(identity.helper) || !TLinkHelperRPCIdentity::valid(identity.session) || !TLinkHelperRPCIdentity::valid(identity.request))
         return [self errorEnvelopeForRequest:request message:@"invalid_wait_request"];
     {
-        std::unique_lock<std::timed_mutex> command(_clientCommandOwner,std::defer_lock);
-        const int remaining=deadline.remaining(nowMs());
-        if (!remaining || !command.try_lock_for(std::chrono::milliseconds(remaining)) || !deadline.remaining(nowMs()) || !_clientAdmission.isOpen()) return nil;
+        TLinkHelperCommandGate::Cancellation queuedCancellation;
+        TLinkHelperWaitPeer queuedPeer(_clientCommandOwner,queuedCancellation);
+        if(request[@"waitPeerEOFContract"]&&!queuedPeer.start(client))
+            return [self errorEnvelopeForRequest:request message:@"change_wait_busy"];
+        auto command=_clientCommandOwner.acquire(deadline,&queuedCancellation);
+        queuedPeer.stop(); // Join callbacks before checking cancellation and entering the owner.
+        if (!command || _clientCommandOwner.cancelled(queuedCancellation) || !deadline.remaining(nowMs()) || !_clientAdmission.isOpen()) return nil;
         if (![request[@"helperInstanceId"] isEqual:self.helperInstanceId]) return [self errorEnvelopeForRequest:request message:@"helper_instance_mismatch"];
         [self.rpcCondition lock];
         BOOL matches=false;
@@ -1218,9 +1223,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             if ([request[@"command"] isEqualToString:kTLinkJSHelperCmdWaitForChange]) {
                 response = [self waitForChangeRequest:request deadline:deadline client:socket.fd()];
             } else {
-                std::unique_lock<std::timed_mutex> command(_clientCommandOwner, std::defer_lock);
-                const int remaining = deadline.remaining(nowMs());
-                if (!remaining || !command.try_lock_for(std::chrono::milliseconds(remaining)) ||
+                auto command=_clientCommandOwner.acquire(deadline);
+                if (!command ||
                     !deadline.remaining(nowMs()) || !_clientAdmission.isOpen()) return;
                 response = request ? [self handleEnvelope:request] : [self errorEnvelopeForRequest:@{} message:err.localizedDescription ?: @"invalid_json"];
             } // Release the command owner before serialization and potentially slow socket output.
@@ -1303,6 +1307,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         [self enqueueClient:client acceptedAt:TLinkHelperIO::nowMs()];
     }
     _statusChanges.stop();
+    _clientCommandOwner.stop();
     _clientAdmission.stop(); // Queued/parsed clients cannot begin new commands after listener shutdown.
     close(server);
     unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);

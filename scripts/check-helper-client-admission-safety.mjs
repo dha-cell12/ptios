@@ -13,7 +13,8 @@ assert.match(server,/descriptor.release\(\)[\s\S]*dispatch_async\(self.clientQue
 assert.match(server,/lease->isOpen\(\) && deadline.remaining[\s\S]*takeDescriptor\(\)[\s\S]*handleClient:fd acceptedAt:lease->acceptedAt\(\)/);
 assert.match(server,/lease->finish\(\)/);
 assert.match(server,/Deadline deadline\(acceptedAt, ServerTimeoutMs\)/);
-assert.match(server,/unique_lock<std::timed_mutex>[\s\S]*try_lock_for[\s\S]*_clientAdmission.isOpen\(\)[\s\S]*handleEnvelope/);
+assert.match(server,/_clientCommandOwner.acquire\(deadline\)[\s\S]*_clientAdmission.isOpen\(\)[\s\S]*handleEnvelope/);
+assert.match(server,/_clientCommandOwner.stop\(\)/);
 assert.match(server,/enqueueClient:client acceptedAt:TLinkHelperIO::nowMs\(\)/);
 assert.match(server,/_clientAdmission.stop\(\)/);
 assert.match(transport,/int release\(\)/);

@@ -1,4 +1,5 @@
 #include "../shared/TLinkHelperClientAdmission.h"
+#include "../shared/TLinkHelperCommandGate.h"
 #include <cassert>
 #include <cstdio>
 #include <set>
@@ -6,7 +7,63 @@
 #include <vector>
 static std::mutex closeMutex;static std::set<int> closed;
 static void closeFake(int fd){std::lock_guard<std::mutex> guard(closeMutex);assert(fd>=0&&closed.insert(fd).second);}
+using TLinkHelperIO::Deadline;
+using TLinkHelperIO::nowMs;
+static void waitGate(TLinkHelperCommandGate &gate,size_t count){
+    const Deadline watchdog(nowMs(),5000);
+    while(gate.waiters()!=count){assert(watchdog.remaining(nowMs()));std::this_thread::yield();}
+}
+static void gateCases(){
+    TLinkHelperCommandGate gate;
+    assert(!gate.acquire(Deadline(0,1)));
+    {
+        auto holder=gate.acquire(Deadline(nowMs(),10000));assert(holder);
+        const Deadline expiry(nowMs(),5);assert(!gate.acquire(expiry)&&!expiry.remaining(nowMs()));
+    }
+    for(unsigned n=0;n<100000;++n){
+        TLinkHelperCommandGate::Cancellation cancellation;gate.cancel(cancellation);
+        assert(!gate.acquire(Deadline(nowMs(),10000),&cancellation));
+        auto guard=gate.acquire(Deadline(nowMs(),10000));assert(guard&&gate.waiters()==0);
+        assert(!gate.acquire(Deadline(0,1)));auto moved=std::move(guard);assert(moved&&!guard);
+    }
+    for(unsigned round=0;round<64;++round){
+        auto holder=gate.acquire(Deadline(nowMs(),10000));assert(holder);
+        TLinkHelperCommandGate::Cancellation cancellation;std::vector<std::thread> peers;
+        std::thread target([&]{const Deadline deadline(nowMs(),10000);assert(!gate.acquire(deadline,&cancellation));assert(deadline.remaining(nowMs())&&gate.cancelled(cancellation));});
+        unsigned count=0;
+        for(unsigned n=0;n<3;++n)peers.emplace_back([&]{auto owner=gate.acquire(Deadline(nowMs(),10000));assert(owner);++count;});
+        waitGate(gate,4);gate.cancel(cancellation);target.join();
+        assert(gate.waiters()==3);gate.cancel(cancellation);holder.unlock();
+        for(auto &peer:peers)peer.join();assert(count==3&&gate.waiters()==0);
+    }
+    for(unsigned n=0;n<1000;++n){
+        auto holder=gate.acquire(Deadline(nowMs(),10000));assert(holder);
+        TLinkHelperCommandGate::Cancellation cancellation;const Deadline deadline(nowMs(),10000);
+        std::thread cancel([&]{gate.cancel(cancellation);});
+        assert(!gate.acquire(deadline,&cancellation)&&deadline.remaining(nowMs()));cancel.join();
+        assert(gate.cancelled(cancellation)&&gate.waiters()==0);
+    }
+    {
+        TLinkHelperCommandGate::Cancellation cancellation;
+        auto owner=gate.acquire(Deadline(nowMs(),10000),&cancellation);assert(owner);
+        gate.cancel(cancellation);assert(owner&&gate.cancelled(cancellation)&&!gate.acquire(Deadline(0,1)));
+        owner.unlock();auto next=gate.acquire(Deadline(nowMs(),10000));assert(next);
+        assert(!gate.acquire(Deadline(nowMs(),10000),&cancellation)); // Cancel does not revoke/release the owner.
+    }
+    try{auto guard=gate.acquire(Deadline(nowMs(),10000));assert(guard);throw 1;}catch(int){}
+    {auto guard=gate.acquire(Deadline(nowMs(),10000));assert(guard);}
+    TLinkHelperCommandGate stopped;auto holder=stopped.acquire(Deadline(nowMs(),10000));assert(holder);
+    std::vector<std::thread> waiters;
+    for(unsigned n=0;n<4;++n)waiters.emplace_back([&]{const Deadline deadline(nowMs(),10000);assert(!stopped.acquire(deadline)&&deadline.remaining(nowMs()));});
+    waitGate(stopped,4);stopped.stop();for(auto &waiter:waiters)waiter.join();
+    assert(stopped.waiters()==0&&!stopped.acquire(Deadline(nowMs(),10000)));holder.unlock();assert(!stopped.acquire(Deadline(nowMs(),10000)));
+    TLinkHelperCommandGate serial;std::vector<std::thread> workers;unsigned count=0;
+    for(unsigned t=0;t<8;++t)workers.emplace_back([&]{for(unsigned n=0;n<10000;++n){auto owner=serial.acquire(Deadline(nowMs(),10000));assert(owner);++count;}});
+    for(auto &worker:workers)worker.join();assert(count==80000&&serial.waiters()==0);
+    puts("Helper command gate passed: 100k guard/pre-cancel lifecycles, targeted cancellation with three unaffected peers, 1000 registration races, move/unwind/stop and 80k serialized transactions.");
+}
 int main(){
+    gateCases();
     TLinkHelperClientAdmission pool;std::vector<std::shared_ptr<TLinkHelperClientAdmission::Lease>> leases;
     for(int fd=0;fd<8;++fd){auto lease=pool.acquire(fd,100+fd,closeFake);assert(lease&&lease->acceptedAt()==uint64_t(100+fd));leases.push_back(lease);}
     assert(!pool.acquire(8,100,closeFake));closeFake(8);assert(pool.stats().active==8&&pool.stats().peak==8);

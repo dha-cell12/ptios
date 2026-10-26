@@ -1,7 +1,7 @@
 # C02d9 — bounded status reconnection for a pinned helper session
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `b206649`; the user reported C02d8 built successfully.
-Status: **source implemented; new Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `c96f525` passed before C02d10; independent device/performance qualification remains pending**.
 Finding: **P0-12 status transport recovery without repeating native effects**.
 
 ## Behavior

@@ -11,14 +11,17 @@
 // Only opt-in, one-request wait connections promise EOF means cancellation rather
 // than legacy half-close framing. Additional post-request input is also invalid.
 class TLinkHelperWaitPeer {
-    TLinkHelperChangeWait &changes_;
-    TLinkHelperChangeWait::Cancellation &cancellation_;
+    void *changes_,*cancellation_;
+    void (*cancel_)(void *,void *);
     dispatch_source_t source_=nullptr;
     dispatch_semaphore_t completed_=nullptr;
     int descriptor_=-1;
 public:
-    TLinkHelperWaitPeer(TLinkHelperChangeWait &changes,TLinkHelperChangeWait::Cancellation &cancellation)
-        :changes_(changes),cancellation_(cancellation){}
+    template<class Changes>
+    TLinkHelperWaitPeer(Changes &changes,typename Changes::Cancellation &cancellation)
+        :changes_(&changes),cancellation_(&cancellation),cancel_([](void *owner,void *token){
+            static_cast<Changes *>(owner)->cancel(*static_cast<typename Changes::Cancellation *>(token));
+        }){}
     TLinkHelperWaitPeer(const TLinkHelperWaitPeer &)=delete;
     TLinkHelperWaitPeer &operator=(const TLinkHelperWaitPeer &)=delete;
     bool start(int descriptor){
@@ -37,7 +40,7 @@ public:
             uint8_t byte=0;
             const ssize_t count=::recv(owner->descriptor_,&byte,1,MSG_PEEK|MSG_DONTWAIT);
             if(count<0&&(errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR))return;
-            owner->changes_.cancel(owner->cancellation_);
+            owner->cancel_(owner->changes_,owner->cancellation_);
             dispatch_source_cancel(owner->source_); // One event, no EOF/data busy loop.
         });
         dispatch_semaphore_t completed=completed_;

@@ -6,6 +6,7 @@
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperClientAdmission.h"
+#include "../shared/TLinkHelperCommandGate.h"
 #include "../shared/TLinkHelperChangeWait.h"
 #include "../shared/TLinkHelperWaitPeer.h"
 #include <atomic>
@@ -21,7 +22,7 @@ static NSString *kTLinkJSHelperSocketPath;
 @interface FixturePeer : NSObject {
 @public std::atomic<unsigned> mode,effects;
     TLinkHelperClientAdmission _clientAdmission;
-    std::timed_mutex _clientCommandOwner;
+    TLinkHelperCommandGate _clientCommandOwner;
     TLinkHelperChangeWait _statusChanges;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;
@@ -221,6 +222,62 @@ static NSData *cancellableChangeRequest(uint64_t sequence=1){
     request[@"waitPeerEOFContract"]=@"cancel_v1";
     return [TLinkJSHelperProtocol serializeEnvelope:request error:nil];
 }
+static void waitForCommandReaders(FixturePeer *peer,size_t count){
+    const Deadline watchdog(nowMs(),5000);
+    while(peer->_clientCommandOwner.waiters()!=count){assert(watchdog.remaining(nowMs()));std::this_thread::yield();}
+}
+static void queuedDisconnectCases(){
+    // A long direct gate deadline distinguishes a source wake from normal expiry.
+    {
+        TLinkHelperCommandGate gate;auto holder=gate.acquire(Deadline(nowMs(),10000));assert(holder);
+        TLinkHelperCommandGate::Cancellation cancellation;int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);
+        Socket sender(pair[0]),receiver(pair[1]);assert(receiver.prepare().ok());
+        TLinkHelperWaitPeer monitor(gate,cancellation);assert(monitor.start(receiver.fd()));
+        std::thread disconnect([&]{const Deadline watchdog(nowMs(),5000);while(gate.waiters()!=1){assert(watchdog.remaining(nowMs()));std::this_thread::yield();}sender.close();});
+        const Deadline deadline(nowMs(),10000);auto owner=gate.acquire(deadline,&cancellation);monitor.stop();disconnect.join();
+        assert(!owner&&gate.cancelled(cancellation)&&deadline.remaining(nowMs())&&gate.waiters()==0);
+        assert(::fcntl(receiver.fd(),F_GETFD,0)>=0); // Borrowed descriptor remains owned by Socket.
+    }
+    // Keep the command owner locked while abandoning its queued wait. Draining the
+    // client queue must not depend on releasing that owner or publishing a change.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];auto holder=peer->_clientCommandOwner.acquire(Deadline(nowMs(),10000));assert(holder);
+        Socket sender(beginRequest(peer,cancellableChangeRequest()));waitForCommandReaders(peer,1);
+        assert(peer->_statusChanges.waiters()==0);sender.close();drainClients(peer);
+        assert(peer->_clientCommandOwner.waiters()==0&&peer->_statusChanges.sequence()==1&&peer->effects==0);
+        assert(peer->_clientAdmission.stats().finished==1);
+        holder.unlock();Socket replacement(beginRequest(peer,cancellableChangeRequest()));waitForReaders(peer,1);
+        [peer publishStatusChange];assert([readReply(replacement)[@"payload"][@"changed"] boolValue]);drainClients(peer);
+    }
+    // Half-close keeps its legacy meaning unless the caller explicitly opts in.
+    for(bool optIn : {false,true}){
+        FixturePeer *peer=[[FixturePeer alloc] init];auto holder=peer->_clientCommandOwner.acquire(Deadline(nowMs(),10000));assert(holder);
+        Socket sender(beginRequest(peer,optIn?cancellableChangeRequest():changeRequest(1,10,@"helper",@"session")));
+        waitForCommandReaders(peer,1);assert(::shutdown(sender.fd(),SHUT_WR)==0);
+        if(optIn){drainClients(peer);assert(peer->_clientCommandOwner.waiters()==0);holder.unlock();
+            std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);
+        }else{assert(peer->_clientCommandOwner.waiters()==1);holder.unlock();NSDictionary *reply=readReply(sender);assert([reply[@"payload"][@"reason"] isEqual:@"timeout"]);drainClients(peer);}
+        assert(peer->_statusChanges.waiters()==0&&peer->_statusChanges.sequence()==1&&peer->effects==0);
+    }
+    // Stop wakes both opted-in and legacy clients queued behind the active owner.
+    for(bool optIn : {false,true}){
+        FixturePeer *peer=[[FixturePeer alloc] init];auto holder=peer->_clientCommandOwner.acquire(Deadline(nowMs(),10000));assert(holder);
+        Socket sender(beginRequest(peer,optIn?cancellableChangeRequest():wireRequest()));waitForCommandReaders(peer,1);
+        peer->_clientCommandOwner.stop();drainClients(peer);assert(peer->effects==0&&peer->_clientCommandOwner.waiters()==0);
+        std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);
+    }
+    // Source/token cleanup also survives exceptions while a command guard is held.
+    for(bool objc : {false,true}){
+        TLinkHelperCommandGate gate;TLinkHelperCommandGate::Cancellation cancellation;int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);
+        Socket sender(pair[0]),receiver(pair[1]);assert(receiver.prepare().ok());bool caught=false;
+        try{@try{
+            TLinkHelperWaitPeer monitor(gate,cancellation);assert(monitor.start(receiver.fd()));auto owner=gate.acquire(Deadline(nowMs(),10000),&cancellation);assert(owner);
+            if(objc)[NSException raise:@"QueuedMonitorCleanup" format:@"cleanup"];else throw std::runtime_error("gate cleanup");
+        }@catch(NSException *error){(void)error;caught=true;}}catch(const std::runtime_error &){caught=true;}
+        sender.close();auto owner=gate.acquire(Deadline(nowMs(),10000));assert(caught&&owner&&!gate.cancelled(cancellation));
+    }
+    puts("Helper queued disconnect Foundation passed: actual READ-to-command cancellation, abandoned lease drain under held owner, replacement wait, legacy/opt-in half-close, shutdown and NS/C++ guard/source cleanup.");
+}
 static void peerMonitorCases(){
     // Exercise the actual source independently of the 750-ms wire cap: a missing
     // notification must fail as Timeout, never accidentally pass via normal expiry.
@@ -400,4 +457,4 @@ static void queueCases(){
     }
     puts("Helper admission Foundation passed: actual concurrent enqueue/leases, stalled-reader isolation, eight queued clients/ninth-fd rejection, accepted-time expiry, serialized command deadline, stopped and exception cleanup.");
 }
-int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();peerMonitorCases();disconnectCases();changeWaitCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
+int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();queuedDisconnectCases();peerMonitorCases();disconnectCases();changeWaitCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
