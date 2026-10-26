@@ -1,5 +1,6 @@
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkHelperRequestDeadline.h"
+#include "../shared/TLinkHelperRuntimeWait.h"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +42,23 @@ static void senderDeadlineCases(){
     Deadline exact(100,100);assert(!constrainToSender(exact,0,100,100));
     Deadline edge(MaxWireTime-5,10);assert(constrainToSender(edge,MaxWireTime-5,MaxWireTime,MaxWireTime-1)&&edge.end==MaxWireTime);
     puts("Helper sender deadline passed: 100k backlog/accept age plans, no renewal, future/expired/malformed/overflow rejection and shorter local window preserved.");
+}
+static void cancellationCases(){
+    struct Cancel {Fake *io;uint64_t at;static bool check(void *p){const auto &self=*static_cast<Cancel *>(p);return self.io->time>=self.at;}};
+    std::vector<uint8_t> frame;
+    for(uint64_t n=1;n<=1000;++n){
+        Fake io;io.stall=true;Cancel cancel{&io,n};CancellableOps adapter(io.ops(),&cancel,Cancel::check);
+        const auto result=readFrame(adapter.ops(),0,frame,Deadline(0,2000));
+        assert(result.error==ECANCELED&&io.time>=n&&io.time<n+50&&frame.empty());
+    }
+    Fake io;io.stall=true;Cancel never{&io,10000};CancellableOps adapter(io.ops(),&never,Cancel::check);
+    assert(readFrame(adapter.ops(),0,frame,Deadline(0,121)).code==Code::Timeout);assert(io.time==121);
+    Fake output;Cancel stopped{&output,0};CancellableOps cancelled(output.ops(),&stopped,Cancel::check);const uint8_t byte=1;
+    assert(writeFrame(cancelled.ops(),0,&byte,1,Deadline(0,100)).error==ECANCELED&&output.output.empty());
+    for(uint64_t n=0;n<100000;++n){TLinkHelperRuntimeWindow window(1000,n%300001);assert(window.budget(1000,500)==static_cast<int>(std::min<uint64_t>(500,n%300001)));assert(window.budget(301001,500)==0);}
+    assert(TLinkHelperRuntimeWindow(0,UINT64_MAX).budget(300000,1)==0);
+    assert(TLinkHelperRuntimeWindow(UINT64_MAX-1,500).budget(UINT64_MAX,1)==0);
+    puts("Helper cancellation/window passed: 1000 sliced wait cancellations, absolute poll deadline, no writes after pre-cancel and 100k runtime budget plans.");
 }
 static void portableCases(){
     assert(!Deadline(0,0).valid&&!Deadline(0,-1).valid);assert(Deadline(10,INT32_MAX).remaining(10)==30000);
@@ -90,7 +108,7 @@ static void posixCases(){
     puts("Helper transport POSIX passed: real nonblocking Unix connect, socketpair frames, peer close without SIGPIPE, backpressure timeout and owned descriptor cleanup.");
 }
 #endif
-int main(){senderDeadlineCases();portableCases();
+int main(){cancellationCases();senderDeadlineCases();portableCases();
 #if !defined(_WIN32)
     posixCases();
 #endif

@@ -46,6 +46,33 @@ struct Ops {
     ptrdiff_t (*receive)(void *,int,uint8_t *,size_t,int &);
     ptrdiff_t (*send)(void *,int,const uint8_t *,size_t,int &);
 };
+// Adapter for client-owned cancellation. No thread or descriptor ownership is transferred.
+class CancellableOps {
+    Ops base_;void *context_;bool (*cancelled_)(void *);
+    bool cancelled()const{return cancelled_&&cancelled_(context_);}
+    static uint64_t now(void *opaque){auto &self=*static_cast<CancellableOps *>(opaque);return self.base_.now(self.base_.context);}
+    static int wait(void *opaque,int fd,bool writing,int timeout,int &error){
+        auto &self=*static_cast<CancellableOps *>(opaque);const Deadline deadline(now(opaque),timeout);
+        for(;;){
+            if(self.cancelled()){error=ECANCELED;return -1;}
+            const int remaining=deadline.remaining(now(opaque));if(!remaining)return 0;
+            const int ready=self.base_.wait(self.base_.context,fd,writing,std::min(remaining,50),error);
+            if(self.cancelled()){error=ECANCELED;return -1;}
+            if(ready!=0)return ready;
+        }
+    }
+    static ptrdiff_t receive(void *opaque,int fd,uint8_t *bytes,size_t length,int &error){
+        auto &self=*static_cast<CancellableOps *>(opaque);if(self.cancelled()){error=ECANCELED;return -1;}
+        return self.base_.receive(self.base_.context,fd,bytes,length,error);
+    }
+    static ptrdiff_t send(void *opaque,int fd,const uint8_t *bytes,size_t length,int &error){
+        auto &self=*static_cast<CancellableOps *>(opaque);if(self.cancelled()){error=ECANCELED;return -1;}
+        return self.base_.send(self.base_.context,fd,bytes,length,error);
+    }
+public:
+    CancellableOps(Ops base,void *context,bool (*cancelled)(void *)):base_(base),context_(context),cancelled_(cancelled){}
+    Ops ops(){return {this,now,wait,receive,send};}
+};
 static inline bool wouldBlock(int error){return error==EAGAIN||error==EWOULDBLOCK;}
 static inline Result waitReady(const Ops &ops,int fd,bool writing,const Deadline &deadline){
     if(!deadline.valid)return {Code::InvalidTimeout};
@@ -132,7 +159,7 @@ static inline ptrdiff_t posixSend(void *,int fd,const uint8_t *bytes,size_t leng
     const auto count=::send(fd,bytes,length,flags);if(count<0)error=errno;return count;
 }
 static inline Ops posixOps(){return {nullptr,[](void *){return nowMs();},posixWait,posixReceive,posixSend};}
-static inline Result connectUnix(Socket &socket,const char *path,const Deadline &deadline){
+static inline Result connectUnix(Socket &socket,const char *path,const Deadline &deadline,const Ops &ops=posixOps()){
     if(!deadline.valid)return {Code::InvalidTimeout};if(!deadline.remaining(nowMs()))return {Code::Timeout};
     sockaddr_un address{};address.sun_family=AF_UNIX;
     if(!path||std::strlen(path)>=sizeof(address.sun_path))return {Code::Connect,ENAMETOOLONG};
@@ -140,7 +167,7 @@ static inline Result connectUnix(Socket &socket,const char *path,const Deadline 
     if(::connect(socket.fd(),reinterpret_cast<sockaddr *>(&address),sizeof(address))==0)return deadline.remaining(nowMs())?Result{Code::Ok}:Result{Code::Timeout};
     const int error=errno;
     if(error!=EINPROGRESS&&error!=EALREADY&&error!=EINTR)return {Code::Connect,error};
-    Result ready=waitReady(posixOps(),socket.fd(),true,deadline);if(!ready.ok())return ready.code==Code::Timeout?ready:Result{Code::Connect,ready.error};
+    Result ready=waitReady(ops,socket.fd(),true,deadline);if(!ready.ok())return ready.code==Code::Timeout?ready:Result{Code::Connect,ready.error};
     int status=0;socklen_t length=sizeof(status);
     if(::getsockopt(socket.fd(),SOL_SOCKET,SO_ERROR,&status,&length)!=0)return {Code::Connect,errno};
     if(status)return {Code::Connect,status};

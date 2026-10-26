@@ -1,6 +1,10 @@
 #import <Foundation/Foundation.h>
 
+typedef BOOL (^TLinkJSHelperCancellationCheck)(void);
+
 @interface TLinkJSHelperClient : NSObject
+// Used synchronously by the owning run loop; clear before cleanup stop requests.
+- (void)setCancellationCheck:(TLinkJSHelperCancellationCheck)check;
 - (NSDictionary *)handshakeWithTimeoutMs:(int)timeoutMs;
 - (NSDictionary *)statusWithTimeoutMs:(int)timeoutMs;
 - (NSDictionary *)startScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest timeoutMs:(int)timeoutMs;

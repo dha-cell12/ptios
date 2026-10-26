@@ -16,7 +16,13 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
 
 @interface TLinkJSHelperClient ()
 @property(nonatomic, copy) NSString *boundHelperInstanceId;
+@property(nonatomic, copy) TLinkJSHelperCancellationCheck cancellationCheck;
 @end
+
+struct TLinkJSHelperCancellationContext {
+    TLinkJSHelperCancellationCheck check;
+    static bool cancelled(void *opaque){auto &self=*static_cast<TLinkJSHelperCancellationContext *>(opaque);return self.check&&self.check();}
+};
 
 @implementation TLinkJSHelperClient
 
@@ -26,6 +32,10 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
     const uint64_t issuedAt = nowMs();
     const Deadline deadline(issuedAt, timeoutMs);
     if (!deadline.valid) return TLinkHelperIOFailure({Code::InvalidTimeout});
+    TLinkJSHelperCancellationContext cancellation{[self.cancellationCheck copy]};
+    if (cancellation.cancelled(&cancellation)) return @{@"ok":@(false),@"error":@"cancelled"};
+    CancellableOps cancellable(posixOps(),&cancellation,TLinkJSHelperCancellationContext::cancelled);
+    const Ops ops=cancellation.check?cancellable.ops():posixOps();
     NSString *requestId = [[NSUUID UUID] UUIDString];
     NSMutableDictionary *envelope = [[TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:self.boundHelperInstanceId sessionId:sessionId requestId:requestId payload:payload ?: @{}] mutableCopy];
     envelope[@"requestDeadline"] = TLinkHelperSenderDeadline(issuedAt, deadline);
@@ -38,10 +48,11 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
     if (!io.ok()) return TLinkHelperIOFailure(io);
     std::vector<uint8_t> responseBytes;
     @try {
-        io = connectUnix(socket, [kTLinkJSHelperSocketPath fileSystemRepresentation], deadline);
-        if (io.ok()) io = writeFrame(posixOps(), socket.fd(), static_cast<const uint8_t *>(requestData.bytes), requestData.length, deadline);
-        if (io.ok()) io = readFrame(posixOps(), socket.fd(), responseBytes, deadline);
+        io = connectUnix(socket, [kTLinkJSHelperSocketPath fileSystemRepresentation], deadline, ops);
+        if (io.ok()) io = writeFrame(ops, socket.fd(), static_cast<const uint8_t *>(requestData.bytes), requestData.length, deadline);
+        if (io.ok()) io = readFrame(ops, socket.fd(), responseBytes, deadline);
     } @finally { socket.close(); }
+    if (cancellation.cancelled(&cancellation)) return @{@"ok":@(false),@"error":@"cancelled"};
     if (!io.ok()) return TLinkHelperIOFailure(io);
     NSData *responseData = [NSData dataWithBytes:responseBytes.data() length:responseBytes.size()];
     if (!deadline.remaining(nowMs())) return TLinkHelperIOFailure({Code::Timeout});
@@ -50,6 +61,7 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
     NSDictionary *response = [TLinkJSHelperProtocol deserializeEnvelope:responseData error:&err];
     if (!response) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"invalid_response" };
     if (!deadline.remaining(nowMs())) return TLinkHelperIOFailure({Code::Timeout});
+    if (cancellation.cancelled(&cancellation)) return @{@"ok":@(false),@"error":@"cancelled"};
     NSString *identityError = TLinkHelperRPCReplyError(response, command, requestId, sessionId, self.boundHelperInstanceId);
     if (identityError) return @{ @"ok": @(false), @"error": identityError };
     if (response[kTLinkJSHelperKeyError]) return @{ @"ok": @NO, @"response": response, @"error": response[kTLinkJSHelperKeyError] };

@@ -92,6 +92,17 @@ static void clientTimeout(){
     TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];NSDictionary *reply=[client statusWithTimeoutMs:200];
     assert([reply[@"error"] isEqual:@"io_timeout"]);silent.join();
 }
+static void clientCancellation(){
+    Listener listener;std::atomic<bool> received{false},cancelled{false};
+    std::thread silent([&]{Socket peer(listener.accept());assert(peer.prepare().ok());std::vector<uint8_t> frame;
+        assert(readFrame(posixOps(),peer.fd(),frame,Deadline(nowMs(),2000)).ok());received=true;
+        assert(readFrame(posixOps(),peer.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);
+    });
+    std::thread cancel([&]{const Deadline deadline(nowMs(),2000);while(!received){assert(deadline.remaining(nowMs()));std::this_thread::yield();}cancelled=true;});
+    TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];std::atomic<bool> *flag=&cancelled;
+    [client setCancellationCheck:^BOOL{return flag->load();}];NSDictionary *reply=[client statusWithTimeoutMs:5000];
+    assert([reply[@"error"] isEqual:@"cancelled"]);[client setCancellationCheck:nil];cancel.join();silent.join();
+}
 static void serverCases(){
     for(unsigned action=0;action<4;++action){@autoreleasepool {
         int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);assert(sender.prepare().ok());
@@ -296,4 +307,4 @@ static void queueCases(){
     }
     puts("Helper admission Foundation passed: actual concurrent enqueue/leases, stalled-reader isolation, eight queued clients/ninth-fd rejection, accepted-time expiry, serialized command deadline, stopped and exception cleanup.");
 }
-int main(){@autoreleasepool{clientCases();clientTimeout();serverCases();senderDeadlineCases();changeWaitCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
+int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();changeWaitCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
