@@ -22,6 +22,8 @@ assert.match(implementation,/statusRecovery.begin[\s\S]*statusForSessionId[\s\S]
 assert.match(implementation,/setCancellationCheck:[^\n]*recovery->expired/);
 assert.match(implementation,/TLinkHelperRPCStatusError[\s\S]*TLinkHelperRuntimeCursor[\s\S]*statusRecovery.reset\(\)/);
 assert.match(implementation,/setCancellationCheck:nil[\s\S]*releaseOwnedHandles/);
+assert.match(implementation,/setConnectionReuseEnabled:true/);
+assert.match(implementation,/setConnectionReuseEnabled:false[\s\S]*stopSessionId/);
 assert.match(runtime,/infrastructureFailure = \[helperError.userInfo\[@"helperFallbackSafe"\] boolValue\]/);
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-helper-change-wait-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}

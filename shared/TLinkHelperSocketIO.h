@@ -101,7 +101,9 @@ static inline Result writeFrame(const Ops &ops,int fd,const uint8_t *bytes,size_
     Result result=writeBytes(ops,fd,bytes,length,deadline);if(!result.ok())return result;
     static const uint8_t newline='\n';return writeBytes(ops,fd,&newline,1,deadline);
 }
-static inline Result readFrame(const Ops &ops,int fd,std::vector<uint8_t> &frame,const Deadline &deadline){
+struct FrameBoundary {bool newline=false,trailing=false;};
+static inline Result readFrame(const Ops &ops,int fd,std::vector<uint8_t> &frame,const Deadline &deadline,FrameBoundary *boundary=nullptr){
+    if(boundary)*boundary={};
     frame.clear();if(!deadline.valid)return {Code::InvalidTimeout};
     uint8_t buffer[4096];
     for(;;){
@@ -114,7 +116,7 @@ static inline Result readFrame(const Ops &ops,int fd,std::vector<uint8_t> &frame
             const size_t length=static_cast<size_t>(newline-buffer);
             if(length>MaxFrameBytes-frame.size())return {Code::TooLarge};
             frame.insert(frame.end(),buffer,newline);
-            if(newline!=end)return frame.empty()?Result{Code::Empty}:Result{Code::Ok};
+            if(newline!=end){if(boundary)*boundary={true,newline+1!=end};return frame.empty()?Result{Code::Empty}:Result{Code::Ok};}
             continue;
         }
         // Preserve the legacy one-command EOF frame. Timeouts never complete a prefix.
@@ -132,6 +134,7 @@ public:
     Socket(const Socket &)=delete;Socket &operator=(const Socket &)=delete;
     int fd()const{return fd_;}
     int release(){const int fd=fd_;fd_=-1;return fd;}
+    void reset(int fd){if(fd_==fd)return;close();fd_=fd;}
     void close(){if(fd_>=0){const int fd=fd_;fd_=-1;::close(fd);}}
     Result prepare(){
         if(fd_<0)return {Code::Setup,EBADF};

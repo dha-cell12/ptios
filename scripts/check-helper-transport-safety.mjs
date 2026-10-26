@@ -16,6 +16,11 @@ const error=between(server,'- (NSDictionary *)errorEnvelopeForRequest:','- (NSDi
 const clientImplementation=client.slice(client.indexOf('@interface TLinkJSHelperClient ()'));
 assert.match(client,/Deadline deadline\(issuedAt, timeoutMs\)/);
 assert.match(client,/requestDeadline.*TLinkHelperSenderDeadline/);
+assert.match(client,/_connection.take[\s\S]*_connection.keep/);
+assert.match(client,/cached<0\)io = connectUnix/);
+assert.match(owner,/_connectionAdmission.acquireSlot[\s\S]*connection.complete[\s\S]*connectionLease/);
+assert.match(owner,/connection_scope_mismatch/);
+assert.match(owner,/boundary.newline\|\|boundary.trailing/);
 assert.match(client,/kTLinkJSHelperCmdWaitForChange\]\) envelope\[@"waitPeerEOFContract"\]=@"cancel_v1"/);
 assert.match(changeWait,/waitPeerEOFContract[\s\S]*peer.start\(client\)[\s\S]*_statusChanges.wait[\s\S]*peer.stop\(\)/);
 assert.match(peer,/DISPATCH_SOURCE_TYPE_READ/);

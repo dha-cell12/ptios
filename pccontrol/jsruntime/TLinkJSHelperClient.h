@@ -5,6 +5,8 @@ typedef BOOL (^TLinkJSHelperCancellationCheck)(void);
 @interface TLinkJSHelperClient : NSObject
 // Used synchronously by the owning run loop; clear before cleanup stop requests.
 - (void)setCancellationCheck:(TLinkJSHelperCancellationCheck)check;
+// Run-owned, synchronous use only. Disabled by default; disabling closes idle reuse.
+- (void)setConnectionReuseEnabled:(BOOL)enabled;
 - (NSDictionary *)handshakeWithTimeoutMs:(int)timeoutMs;
 - (NSDictionary *)statusWithTimeoutMs:(int)timeoutMs;
 - (NSDictionary *)startScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest timeoutMs:(int)timeoutMs;

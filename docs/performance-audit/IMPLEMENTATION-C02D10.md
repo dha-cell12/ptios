@@ -1,7 +1,7 @@
 # C02d10 — cancel opted-in waits while queued for helper command ownership
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `c96f525`; the user reported C02d9 built successfully.
-Status: **source implemented; new Darwin/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `f2c951e` passed before C02d11; independent device/performance qualification remains pending**.
 Finding: **P0-12 abandoned change-wait admission and command-owner cleanup**.
 
 ## Behavior

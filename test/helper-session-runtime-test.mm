@@ -4,6 +4,7 @@
 #include "../shared/TLinkHelperChangeWait.h"
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperClientAdmission.h"
+#include "../shared/TLinkHelperConnection.h"
 #include <atomic>
 #include <cassert>
 #include <cstdio>
@@ -16,6 +17,7 @@ struct FixtureCancel {std::atomic<bool> stopped{false};};
 @public FixtureCancel *_cancelState;
     TLinkHelperChangeWait _statusChanges;
     TLinkHelperClientAdmission _clientAdmission;
+    TLinkHelperConnectionAdmission _connectionAdmission;
     std::atomic<unsigned> mode,closed,evaluated;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;

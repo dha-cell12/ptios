@@ -8,6 +8,7 @@
 #include "../shared/TLinkHelperCommandGate.h"
 #include "../shared/TLinkHelperChangeWait.h"
 #include "../shared/TLinkHelperWaitPeer.h"
+#include "../shared/TLinkHelperConnection.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -49,6 +50,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
 @interface TLinkJSHelperServer () {
     TLinkJSHelperCancelState *_cancelState;
     TLinkHelperClientAdmission _clientAdmission;
+    TLinkHelperConnectionAdmission _connectionAdmission;
     TLinkHelperCommandGate _clientCommandOwner;
     TLinkHelperChangeWait _statusChanges;
     TLinkJSHelperSetExecutionTimeLimitFn _setExecutionTimeLimit;
@@ -267,6 +269,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     // Capture BEFORE reading state/slot: a concurrent later publication must wake this cursor.
     const uint64_t changeSequence = _statusChanges.sequence();
     const auto clients = _clientAdmission.stats();
+    const auto connections = _connectionAdmission.stats();
     NSUInteger openFiles=0,heartbeatChecks=0,revocations=0;BOOL heartbeatActive=false;
     @synchronized (self) {
         openFiles=self.activeFileHandles.count;heartbeatActive=self.licenseHeartbeat!=nil;
@@ -292,6 +295,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             @"socketClientsActive": @(clients.active),
             @"socketClientsLimit": @(clients.limit),
             @"socketClientsRejected": @(clients.rejected),
+            @"helperConnectionContract": @"sequential_v1",
+            @"helperConnectionsActive": @(connections.active),
+            @"helperConnectionsLimit": @(connections.limit),
             @"activeSessionId": self.activeSessionId ?: [NSNull null],
             @"runId": self.activeRunId ?: @"",
             @"uptimeMs": @((long long)uptimeMs),
@@ -1060,6 +1066,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 @"pureJavaScriptExecution": @YES,
                 @"changeWaitContract": @"session_native_rpc_v1",
                 @"changeWaitPeerEOFContract": @"cancel_v1",
+                @"helperConnectionContract": @"sequential_v1",
                 @"sessionSnapshotContract": @"lifecycle_rpc_owner_v1",
                 @"executionTimeLimit": @(_setExecutionTimeLimit != NULL && _clearExecutionTimeLimit != NULL),
                 @"hardKillRecovery": @NO,
@@ -1207,34 +1214,69 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     using namespace TLinkHelperIO;
     Socket socket(client);
     Deadline deadline(acceptedAt, ServerTimeoutMs);
+    TLinkHelperConnectionWindow connection(acceptedAt);
+    std::shared_ptr<TLinkHelperClientAdmission::Lease> connectionSlot;
+    NSString *connectionSession=nil;
     @autoreleasepool {
         @try {
             if (!socket.prepare().ok()) return;
-            std::vector<uint8_t> frame;
-            if (!readFrame(posixOps(), socket.fd(), frame, deadline).ok()) return;
-            NSData *requestData = [NSData dataWithBytes:frame.data() length:frame.size()];
-            NSError *err = nil;
-            NSDictionary *request = [TLinkJSHelperProtocol deserializeEnvelope:requestData error:&err];
-            if (!deadline.remaining(nowMs())) return;
-            bool hasDeadline=false;uint64_t issued=0,expires=0;
-            if (request && (!TLinkHelperReadSenderDeadline(request,hasDeadline,issued,expires) ||
-                (hasDeadline && !constrainToSender(deadline,issued,expires,nowMs())))) return;
-            NSDictionary *response = nil;
-            if ([request[@"command"] isEqualToString:kTLinkJSHelperCmdWaitForChange]) {
-                response = [self waitForChangeRequest:request deadline:deadline client:socket.fd()];
-            } else {
-                auto command=_clientCommandOwner.acquire(deadline);
-                if (!command ||
-                    !deadline.remaining(nowMs()) || !_clientAdmission.isOpen()) return;
-                response = request ? [self handleEnvelope:request] : [self errorEnvelopeForRequest:@{} message:err.localizedDescription ?: @"invalid_json"];
-            } // Release the command owner before serialization and potentially slow socket output.
-            if (!deadline.remaining(nowMs())) return;
-            NSData *responseData = [TLinkJSHelperProtocol serializeEnvelope:response error:nil];
-            if (responseData.length > MaxFrameBytes) {
-                response = [self errorEnvelopeForRequest:request ?: @{} message:@"frame_too_large"];
-                responseData = [TLinkJSHelperProtocol serializeEnvelope:response error:nil];
-            }
-            if (responseData) (void)writeFrame(posixOps(), socket.fd(), static_cast<const uint8_t *>(responseData.bytes), responseData.length, deadline);
+            for(;;){ @autoreleasepool {
+                std::vector<uint8_t> frame;
+                FrameBoundary boundary;
+                if (!readFrame(posixOps(), socket.fd(), frame, deadline,&boundary).ok()) return;
+                if(connectionSlot){
+                    // Idle framing has its own bound. Command work still gets at most
+                    // 1000 ms, intersected below with sender expiry and channel lifetime.
+                    deadline=Deadline(nowMs(),ServerTimeoutMs);deadline.end=std::min(deadline.end,connection.end());
+                }
+                NSData *requestData = [NSData dataWithBytes:frame.data() length:frame.size()];
+                NSError *err = nil;
+                NSDictionary *request = [TLinkJSHelperProtocol deserializeEnvelope:requestData error:&err];
+                if (!deadline.remaining(nowMs())) return;
+                bool hasDeadline=false;uint64_t issued=0,expires=0;
+                if (request && (!TLinkHelperReadSenderDeadline(request,hasDeadline,issued,expires) ||
+                    (hasDeadline && !constrainToSender(deadline,issued,expires,nowMs())))) return;
+                NSDictionary *response = nil;
+                id contract=request[@"connectionContract"];
+                const bool requested=contract!=nil;
+                const auto identity=TLinkHelperRPCIdentityFrom(request[@"helperInstanceId"],request[@"sessionId"],request[@"requestId"]);
+                NSString *connectionError=nil;
+                if(requested&&(![contract isKindOfClass:[NSString class]]||![contract isEqual:@"sequential_v1"]||!hasDeadline||
+                    !TLinkHelperConnectionCommand(request[@"command"])||!boundary.newline||boundary.trailing||
+                    !TLinkHelperRPCIdentity::valid(identity.helper)||!TLinkHelperRPCIdentity::valid(identity.session)||!TLinkHelperRPCIdentity::valid(identity.request)))connectionError=@"invalid_connection_request";
+                if(connectionSlot&&(!requested||![request[@"helperInstanceId"] isEqual:self.helperInstanceId]||![request[@"sessionId"] isEqual:connectionSession]))connectionError=@"connection_scope_mismatch";
+                if(connectionError){response=[self errorEnvelopeForRequest:request message:connectionError];}
+                else if ([request[@"command"] isEqualToString:kTLinkJSHelperCmdWaitForChange]) {
+                    response = [self waitForChangeRequest:request deadline:deadline client:socket.fd()];
+                } else {
+                    auto command=_clientCommandOwner.acquire(deadline);
+                    if (!command ||
+                        !deadline.remaining(nowMs()) || !_clientAdmission.isOpen()) return;
+                    response = request ? [self handleEnvelope:request] : [self errorEnvelopeForRequest:@{} message:err.localizedDescription ?: @"invalid_json"];
+                } // Release the command owner before serialization and potentially slow socket output.
+                if (!deadline.remaining(nowMs())) return;
+                bool keep=false;TLinkHelperConnectionLease lease;
+                if(requested&&!connectionError&&[response[@"command"] isEqual:request[@"command"]]){
+                    BOOL matches=false;[self.rpcCondition lock];
+                    @try{matches=[request[@"helperInstanceId"] isEqual:self.helperInstanceId]&&[request[@"sessionId"] isEqual:self.activeSessionId];}
+                    @finally{[self.rpcCondition unlock];}
+                    if(matches){
+                        if(!connectionSlot)connectionSlot=_connectionAdmission.acquireSlot(acceptedAt);
+                        if(connectionSlot&&connectionSlot->isOpen()){
+                            lease=connection.complete(nowMs());keep=lease.remaining>0;
+                            if(keep){connectionSession=[request[@"sessionId"] copy];NSMutableDictionary *extended=[response mutableCopy];extended[@"connectionLease"]=TLinkHelperConnectionLeaseValue(lease);response=extended;}
+                        }
+                    }
+                }
+                NSData *responseData = [TLinkJSHelperProtocol serializeEnvelope:response error:nil];
+                if (responseData.length > MaxFrameBytes) {
+                    keep=false;
+                    response = [self errorEnvelopeForRequest:request ?: @{} message:@"frame_too_large"];
+                    responseData = [TLinkJSHelperProtocol serializeEnvelope:response error:nil];
+                }
+                if(!responseData||!writeFrame(posixOps(),socket.fd(),static_cast<const uint8_t *>(responseData.bytes),responseData.length,deadline).ok()||!keep)return;
+                deadline=Deadline(nowMs(),TLinkHelperConnectionWindow::IdleMs);deadline.end=lease.until;
+            }}
         } @finally { socket.close(); }
     }
 }
@@ -1308,6 +1350,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     }
     _statusChanges.stop();
     _clientCommandOwner.stop();
+    _connectionAdmission.stop();
     _clientAdmission.stop(); // Queued/parsed clients cannot begin new commands after listener shutdown.
     close(server);
     unlink([kTLinkJSHelperSocketPath fileSystemRepresentation]);

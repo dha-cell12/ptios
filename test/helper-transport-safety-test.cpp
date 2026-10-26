@@ -1,6 +1,7 @@
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperRuntimeWait.h"
+#include "../shared/TLinkHelperConnection.h"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -26,6 +27,31 @@ struct Fake {
         const size_t n=std::min(s.writeChunk,length);s.output.append(reinterpret_cast<const char *>(data),n);return static_cast<ptrdiff_t>(n);}
     Ops ops(){return {this,now,wait,receive,send};}
 };
+static void connectionCases(){
+    for(uint64_t n=0;n<100000;++n){
+        const uint64_t start=1000+n,step=n%1001;TLinkHelperConnectionWindow window(start);
+        for(unsigned i=1;i<=34;++i){
+            const uint64_t now=start+step*i;const auto lease=window.complete(now);
+            const bool expected=i<32&&now<start+10000;
+            assert(bool(lease.remaining)==expected);
+            if(expected){assert(lease.remaining==32-i&&lease.until==std::min(start+10000,now+1000));assert(TLinkHelperConnectionWindow::valid(lease,now));assert(!TLinkHelperConnectionWindow::valid(lease,lease.until));}
+        }
+    }
+    TLinkHelperConnectionWindow edge(UINT64_MAX-2);assert(edge.end()==UINT64_MAX);assert(!edge.complete(UINT64_MAX).remaining);
+    assert(!TLinkHelperConnectionWindow::valid({1001,0},1000));assert(!TLinkHelperConnectionWindow::valid({2001,1},1000));
+    assert(!TLinkHelperConnectionWindow::valid({1001,32},1000));assert(TLinkHelperConnectionWindow::valid({2000,31},1000));
+    TLinkHelperConnectionAdmission slots;std::vector<std::shared_ptr<TLinkHelperClientAdmission::Lease>> held;
+    for(unsigned i=0;i<4;++i){auto slot=slots.acquireSlot(i);assert(slot&&slot->takeDescriptor()==-1);held.push_back(slot);}
+    assert(!slots.acquireSlot(5)&&slots.stats().active==4);held.clear();assert(slots.stats().active==0);
+    for(unsigned i=0;i<100000;++i){auto slot=slots.acquireSlot(i);assert(slot);slot->finish();slot->finish();assert(slots.stats().active==0);}
+    auto last=slots.acquireSlot(1);slots.stop();assert(!slots.acquireSlot(2)&&!last->isOpen());last.reset();assert(slots.stats().active==0);
+    for(const auto &input:std::vector<std::string>{"{}\n","{}","{}\nnext","{}\n\n"}){
+        Fake io;io.input=input;FrameBoundary boundary{true,true};std::vector<uint8_t> frame;
+        assert(readFrame(io.ops(),0,frame,Deadline(0,100),&boundary).ok());
+        assert(boundary.newline==(input.find('\n')!=std::string::npos));assert(boundary.trailing==(input.size()>3));
+    }
+    puts("Helper connection policy passed: 100k fixed-lifetime/32-request oracles, idle/lease bounds, 100k four-slot lifecycles and LF/EOF/coalesced framing metadata.");
+}
 static void senderDeadlineCases(){
     for(uint64_t n=0;n<100000;++n){
         const uint64_t issued=1000000+n,budget=n%30000+1,age=n%31000,now=issued+age;
@@ -89,6 +115,20 @@ static void portableCases(){
 }
 #if !defined(_WIN32)
 static void posixCases(){
+    {
+        int a[2],b[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,a)==0&&::socketpair(AF_UNIX,SOCK_STREAM,0,b)==0);
+        Socket first(a[0]),aPeer(a[1]),second(b[0]),bPeer(b[1]);const int old=first.fd(),replacement=second.fd();
+        first.reset(second.release());assert(::fcntl(old,F_GETFD,0)<0&&errno==EBADF);
+        first.reset(first.fd());assert(first.fd()==replacement&&::fcntl(replacement,F_GETFD,0)>=0);
+    }
+    for(unsigned n=0;n<1000;++n){
+        int descriptors[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,descriptors)==0);Socket local(descriptors[0]),other(descriptors[1]);
+        const int original=local.fd();TLinkHelperConnectionCache cache;const uint64_t now=nowMs();
+        cache.keep(local,"helper","session",{now+1000,31});assert(local.fd()==-1);TLinkHelperConnectionLease previous;
+        if(n%3==0){assert(cache.take("other","session",now,previous)==-1);assert(::fcntl(original,F_GETFD,0)<0&&errno==EBADF);}
+        else if(n%3==1){assert(cache.take("helper","session",now+1000,previous)==-1);assert(::fcntl(original,F_GETFD,0)<0&&errno==EBADF);}
+        else {Socket recovered(cache.take("helper","session",now,previous));assert(recovered.fd()==original&&previous.remaining==31);cache.close();assert(::fcntl(original,F_GETFD,0)>=0);}
+    }
     int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]),receiver(pair[1]);assert(sender.prepare().ok()&&receiver.prepare().ok());
     const uint8_t body[]={'{','}'};assert(writeFrame(posixOps(),sender.fd(),body,sizeof(body),Deadline(nowMs(),1000)).ok());
     std::vector<uint8_t> frame;assert(readFrame(posixOps(),receiver.fd(),frame,Deadline(nowMs(),1000)).ok());assert(frame.size()==2);
@@ -108,7 +148,7 @@ static void posixCases(){
     puts("Helper transport POSIX passed: real nonblocking Unix connect, socketpair frames, peer close without SIGPIPE, backpressure timeout and owned descriptor cleanup.");
 }
 #endif
-int main(){cancellationCases();senderDeadlineCases();portableCases();
+int main(){connectionCases();cancellationCases();senderDeadlineCases();portableCases();
 #if !defined(_WIN32)
     posixCases();
 #endif

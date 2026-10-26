@@ -31,6 +31,7 @@
 @property(nonatomic,assign) BOOL throwStatus;
 @property(nonatomic,assign) BOOL cppStatus;
 @property(nonatomic,assign) BOOL statusCancellationObserved;
+@property(nonatomic,assign) BOOL reuseEnabled;
 @end
 @implementation Script
 - (instancetype)init {self=[super init];if(self){self.statuses=[NSMutableArray array];self.hints=[NSMutableArray array];self.cursors=[NSMutableArray array];self.statusBudgets=[NSMutableArray array];}return self;}
@@ -40,12 +41,13 @@ static Script *script;
 @property(nonatomic,copy) TLinkJSHelperCancellationCheck cancellationCheck;
 @end
 @implementation TLinkJSHelperClient
+- (void)setConnectionReuseEnabled:(BOOL)enabled {assert(script.starts==1);script.reuseEnabled=enabled;}
 - (NSDictionary *)startScriptAtPath:(NSString *)path bundlePath:(NSString *)bundle manifest:(NSDictionary *)manifest timeoutMs:(int)timeout {
     (void)path;(void)bundle;(void)manifest;assert(timeout>0&&timeout<=1000);++script.starts;
     return script.startError ?: @{@"ok":@(true),@"response":@{@"helperInstanceId":@"helper",@"sessionId":@"session",@"payload":@{@"runId":@"run"}}};
 }
 - (NSDictionary *)statusForSessionId:(NSString *)session timeoutMs:(int)timeout {
-    assert([session isEqual:@"session"]&&timeout>0&&timeout<=500);++script.statusCalls;
+    assert(script.reuseEnabled&&[session isEqual:@"session"]&&timeout>0&&timeout<=500);++script.statusCalls;
     [script.statusBudgets addObject:@(timeout)];
     if(script.cppStatus)throw std::runtime_error("injected transport failure");
     if(script.throwStatus)[NSException raise:@"fixture_transport" format:@"injected"];
@@ -61,7 +63,7 @@ static Script *script;
     (void)result;assert([request isEqual:@"native"]&&[session isEqual:@"session"]&&timeout>0&&timeout<=500);++script.acks;
     if(script.lostAck){script.lostAck=false;return @{@"ok":@(false),@"error":@"read_failed"};}return @{@"ok":@(true)};
 }
-- (NSDictionary *)stopSessionId:(NSString *)session timeoutMs:(int)timeout {(void)session;assert(timeout==250&&!self.cancellationCheck);++script.stops;return @{@"ok":@(true)};}
+- (NSDictionary *)stopSessionId:(NSString *)session timeoutMs:(int)timeout {(void)session;assert(timeout==250&&!self.cancellationCheck&&!script.reuseEnabled);++script.stops;return @{@"ok":@(true)};}
 - (NSDictionary *)handshakeWithTimeoutMs:(int)timeout {(void)timeout;return @{};}
 - (NSDictionary *)statusWithTimeoutMs:(int)timeout {(void)timeout;return @{};}
 @end
@@ -106,7 +108,7 @@ static NSDictionary *hint(uint64_t sequence,bool changed){return @{@"ok":@(true)
 static NSDictionary *failure(NSString *code){return @{@"ok":@(false),@"error":code};}
 static TLinkTaskExecutionContext *context(){TLinkTaskExecutionContext *ctx=[[TLinkTaskExecutionContext alloc] init];ctx.cancellationToken=[[TLinkCancellationToken alloc] init];ctx.defaultTimeoutSeconds=30;ctx.defaultMaxOutputBytes=1024*1024;ctx.ownerSessionId=@"caller";return ctx;}
 static bool run(RuntimeFixture *runtime,TLinkTaskExecutionContext *ctx,NSDictionary *manifest,NSError **error){return [runtime runScriptInHelperAtPath:@"/script" bundlePath:@"/bundle" manifest:manifest context:ctx error:error];}
-static void cleaned(RuntimeFixture *runtime,TLinkTaskExecutionContext *ctx){assert(!runtime->_helperRunning&&!runtime->_helperSessionId&&!runtime->_taskContext&&runtime->_helperNativeRPCReplay.identities()==0);assert([ctx.ownerSessionId isEqual:@"caller"]);}
+static void cleaned(RuntimeFixture *runtime,TLinkTaskExecutionContext *ctx){assert(!runtime->_helperRunning&&!runtime->_helperSessionId&&!runtime->_taskContext&&runtime->_helperNativeRPCReplay.identities()==0&&!script.reuseEnabled);assert([ctx.ownerSessionId isEqual:@"caller"]);}
 static void successCases(){
     script=[[Script alloc] init];RuntimeFixture *runtime=[[RuntimeFixture alloc] init];TLinkTaskExecutionContext *ctx=context();
     [script.statuses addObjectsFromArray:@[status(@"running",1),status(@"running",2,true),status(@"running",2,true),status(@"completed",3)]];

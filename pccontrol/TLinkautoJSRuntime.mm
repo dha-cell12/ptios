@@ -988,6 +988,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     _helperSessionId = [response[@"sessionId"] copy];
     os_unfair_lock_unlock(&_handlesLock);
     NSString *helperInstanceId = [response[@"helperInstanceId"] copy];
+    [helper setConnectionReuseEnabled:true];
     _helperRunId = [payload[@"runId"] copy];
 
     _helperConsoleLogPath = [payload[@"consoleLogPath"] copy];
@@ -1134,6 +1135,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         }}
     } @finally {
         [helper setCancellationCheck:nil];
+        [helper setConnectionReuseEnabled:false];
         if(!ok){try {@try {[helper stopSessionId:_helperSessionId timeoutMs:250];} @catch(NSException *exception){(void)exception;}}catch(...){}}
 
         NSUInteger ownedFrameCount = 0;

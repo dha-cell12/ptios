@@ -9,6 +9,7 @@
 #include "../shared/TLinkHelperCommandGate.h"
 #include "../shared/TLinkHelperChangeWait.h"
 #include "../shared/TLinkHelperWaitPeer.h"
+#include "../shared/TLinkHelperConnection.h"
 #include <atomic>
 #include <cassert>
 #include <cstdio>
@@ -22,6 +23,7 @@ static NSString *kTLinkJSHelperSocketPath;
 @interface FixturePeer : NSObject {
 @public std::atomic<unsigned> mode,effects;
     TLinkHelperClientAdmission _clientAdmission;
+    TLinkHelperConnectionAdmission _connectionAdmission;
     TLinkHelperCommandGate _clientCommandOwner;
     TLinkHelperChangeWait _statusChanges;
 }
@@ -216,6 +218,159 @@ static int beginRequest(FixturePeer *peer,NSData *json){
 static NSDictionary *readReply(Socket &sender){
     std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,Deadline(nowMs(),2000)).ok());
     NSDictionary *reply=[TLinkJSHelperProtocol deserializeEnvelope:[NSData dataWithBytes:frame.data() length:frame.size()] error:nil];assert(reply);return reply;
+}
+static NSData *connectionRequest(NSString *command=@"status",NSString *helper=@"helper",NSString *session=@"session"){
+    NSMutableDictionary *request=[[TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:helper sessionId:session requestId:@"transport" payload:@{}] mutableCopy];
+    const uint64_t now=nowMs();request[@"requestDeadline"]=TLinkHelperSenderDeadline(now,Deadline(now,1000));request[@"connectionContract"]=@"sequential_v1";
+    return [TLinkJSHelperProtocol serializeEnvelope:request error:nil];
+}
+static void sendRequest(Socket &sender,NSData *json){assert(writeFrame(posixOps(),sender.fd(),static_cast<const uint8_t *>(json.bytes),json.length,Deadline(nowMs(),2000)).ok());}
+static NSDictionary *receiveRequest(Socket &socket){
+    std::vector<uint8_t> frame;assert(readFrame(posixOps(),socket.fd(),frame,Deadline(nowMs(),2000)).ok());
+    return [TLinkJSHelperProtocol deserializeEnvelope:[NSData dataWithBytes:frame.data() length:frame.size()] error:nil];
+}
+static void sendReply(Socket &socket,NSDictionary *reply){NSData *json=[TLinkJSHelperProtocol serializeEnvelope:reply error:nil];assert(json);sendRequest(socket,json);}
+static void connectionClientCases(){
+    // Start is one-shot. 72 subsequent mixed exchanges fit in three 32-request channels.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{[peer handleClient:listener.accept()];for(unsigned n=0;n<3;++n)[peer handleClient:listener.accept()];}});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];NSDictionary *reply=[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000];assert([reply[@"ok"] boolValue]);
+        [client setConnectionReuseEnabled:true];
+        for(unsigned n=0;n<70;++n){reply=[client statusForSessionId:@"session" timeoutMs:1000];assert([reply[@"ok"] boolValue]);}
+        reply=[client sendNativeRPCResponse:@{@"ok":@(true)} requestId:@"native" sessionId:@"session" timeoutMs:1000];assert([reply[@"ok"] boolValue]);
+        reply=[client waitForChangeAfterSequence:1 sessionId:@"session" waitMs:10 timeoutMs:1000];assert([reply[@"ok"] boolValue]);
+        [client setConnectionReuseEnabled:false];service.join();const auto stats=peer->_connectionAdmission.stats();
+        assert(peer->effects==72&&stats.admitted==3&&stats.finished==3&&stats.active==0&&peer->_statusChanges.waiters()==0);
+    }
+    // Client destruction also closes an idle cached descriptor and releases the slot.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{[peer handleClient:listener.accept()];[peer handleClient:listener.accept()];}});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);client=nil;service.join();
+        assert(peer->_connectionAdmission.stats().active==0&&peer->_connectionAdmission.stats().finished==1);
+    }
+    // Old peers ignore the extension and send no lease; no stale FD is reused.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{
+            [peer handleClient:listener.accept()];
+            for(unsigned n=0;n<2;++n){Socket socket(listener.accept());assert(socket.prepare().ok());NSDictionary *request=receiveRequest(socket);assert([request[@"connectionContract"] isEqual:@"sequential_v1"]);sendReply(socket,[peer handleEnvelope:request]);}
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        for(unsigned n=0;n<2;++n)assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);
+        [client setConnectionReuseEnabled:false];service.join();assert(peer->effects==3&&peer->_connectionAdmission.stats().admitted==0);
+    }
+    // Local idle expiry reconnects before sending; stop closes reuse and uses its own socket.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{for(unsigned n=0;n<4;++n)[peer handleClient:listener.accept()];}});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);[NSThread sleepForTimeInterval:1.05];
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);assert([[client stopSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);
+        [client setConnectionReuseEnabled:false];service.join();assert(peer->_connectionAdmission.stats().admitted==2&&peer->_connectionAdmission.stats().active==0&&peer->effects==4);
+    }
+    // A reused socket remains subject to helper/request correlation, without client retry.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{[peer handleClient:listener.accept()];[peer handleClient:listener.accept()];}});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);peer->mode=1;
+        NSDictionary *reply=[client statusForSessionId:@"session" timeoutMs:1000];assert([reply[@"error"] isEqual:@"helper_instance_mismatch"]);
+        [client setConnectionReuseEnabled:false];service.join();assert(peer->effects==3&&peer->_connectionAdmission.stats().active==0);
+    }
+    puts("Helper persistent client passed: 72 mixed exchanges on three channels, request-cap rotation, legacy downgrade, idle reconnect, one-shot start/stop, pinned correlation and exact cache/slot cleanup.");
+}
+static void connectionFaultCases(){
+    // A dead cached FD fails the current ACK; the client must not resend it. The
+    // caller can explicitly reconcile through a fresh pinned status afterwards.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];std::atomic<bool> closed{false};
+        std::thread service([&]{@autoreleasepool{
+            [peer handleClient:listener.accept()];Socket socket(listener.accept());assert(socket.prepare().ok());NSDictionary *request=receiveRequest(socket);
+            NSMutableDictionary *reply=[[peer handleEnvelope:request] mutableCopy];reply[@"connectionLease"]=TLinkHelperConnectionLeaseValue({nowMs()+1000,31});sendReply(socket,reply);socket.close();closed=true;
+            Socket reconciled(listener.accept());assert(reconciled.prepare().ok());request=receiveRequest(reconciled);assert([request[@"command"] isEqual:@"status"]);sendReply(reconciled,[peer handleEnvelope:request]);
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);const Deadline watchdog(nowMs(),5000);while(!closed){assert(watchdog.remaining(nowMs()));std::this_thread::yield();}
+        NSDictionary *reply=[client sendNativeRPCResponse:@{@"ok":@(true)} requestId:@"native" sessionId:@"session" timeoutMs:500];assert(![reply[@"ok"] boolValue]);
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:false];service.join();assert(peer->effects==3);
+    }
+    for(unsigned kind=0;kind<7;++kind){
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{
+            [peer handleClient:listener.accept()];Socket socket(listener.accept());assert(socket.prepare().ok());NSDictionary *request=receiveRequest(socket);
+            NSMutableDictionary *reply=[[peer handleEnvelope:request] mutableCopy];const uint64_t now=nowMs();
+            NSArray *bad=@[[NSNull null],@{},@{@"contract":@"other",@"untilMs":@(now+1000),@"remaining":@31},
+                @{@"contract":@"sequential_v1",@"untilMs":@(true),@"remaining":@31},@{@"contract":@"sequential_v1",@"untilMs":@(now+1000),@"remaining":@32},
+                @{@"contract":@"sequential_v1",@"untilMs":@(now+10000),@"remaining":@31},@{@"contract":@"sequential_v1",@"untilMs":@(now+1000),@"remaining":@31,@"extra":@1}];
+            reply[@"connectionLease"]=bad[kind];sendReply(socket,reply);std::vector<uint8_t> frame;assert(readFrame(posixOps(),socket.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        NSDictionary *reply=[client statusForSessionId:@"session" timeoutMs:1000];assert([reply[@"error"] isEqual:@"invalid_connection_lease"]);[client setConnectionReuseEnabled:false];service.join();assert(peer->effects==2);
+    }
+    // A peer cannot renew the request count on the same FD.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{
+            [peer handleClient:listener.accept()];Socket socket(listener.accept());assert(socket.prepare().ok());
+            for(unsigned n=0;n<2;++n){NSDictionary *request=receiveRequest(socket);NSMutableDictionary *reply=[[peer handleEnvelope:request] mutableCopy];reply[@"connectionLease"]=TLinkHelperConnectionLeaseValue({nowMs()+1000,31});sendReply(socket,reply);}
+            std::vector<uint8_t> frame;assert(readFrame(posixOps(),socket.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);NSDictionary *reply=[client statusForSessionId:@"session" timeoutMs:1000];assert([reply[@"error"] isEqual:@"invalid_connection_lease"]);
+        [client setConnectionReuseEnabled:false];service.join();assert(peer->effects==3);
+    }
+    puts("Helper persistent fault client passed: strict lease schema/type/count/time bounds, no count renewal, no command retry and FD close on rejection.");
+}
+static void connectionServerCases(){
+    // Four persistent slots leave capacity for independent ordinary requests.
+    {
+        FixturePeer *peer=[[FixturePeer alloc] init];std::vector<int> held;
+        for(unsigned n=0;n<4;++n){Socket sender(beginRequest(peer,connectionRequest()));NSDictionary *reply=readReply(sender);assert(reply[@"connectionLease"]);held.push_back(sender.release());}
+        assert(peer->_connectionAdmission.stats().active==4);
+        Socket fifth(beginRequest(peer,connectionRequest()));assert(!readReply(fifth)[@"connectionLease"]);
+        Socket ordinary(beginRequest(peer,wireRequest()));assert([readReply(ordinary)[@"command"] isEqual:@"status"]);
+        for(int fd:held)assert(::close(fd)==0);drainClients(peer);assert(peer->_connectionAdmission.stats().active==0&&peer->_connectionAdmission.stats().peak==4&&peer->effects==6);
+    }
+    for(unsigned kind=0;kind<4;++kind){
+        FixturePeer *peer=[[FixturePeer alloc] init];Socket sender(beginRequest(peer,connectionRequest()));assert(readReply(sender)[@"connectionLease"]);
+        NSMutableDictionary *request=[[TLinkJSHelperProtocol deserializeEnvelope:connectionRequest() error:nil] mutableCopy];
+        if(kind==0)request[@"sessionId"]=@"replacement";
+        if(kind==1)request[@"helperInstanceId"]=@"replacement";
+        if(kind==2)[request removeObjectForKey:@"connectionContract"];
+        if(kind==3){const uint64_t now=nowMs();request[@"requestDeadline"]=TLinkHelperSenderDeadline(now-2000,Deadline(now-2000,1000));}
+        sendRequest(sender,[TLinkJSHelperProtocol serializeEnvelope:request error:nil]);
+        if(kind<3)assert([readReply(sender)[@"error"][@"message"] isEqual:@"connection_scope_mismatch"]);
+        else{std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);}
+        drainClients(peer);assert(peer->effects==1&&peer->_connectionAdmission.stats().active==0);
+    }
+    // Opted-in streams require LF, reject coalesced trailing bytes and exclude mutations.
+    for(unsigned kind=0;kind<3;++kind){
+        FixturePeer *peer=[[FixturePeer alloc] init];int pair[2];assert(::socketpair(AF_UNIX,SOCK_STREAM,0,pair)==0);Socket sender(pair[0]);assert(sender.prepare().ok());
+        dispatch_suspend(peer.clientQueue);[peer enqueueClient:pair[1] acceptedAt:nowMs()];
+        NSMutableData *json=[connectionRequest(kind==2?@"start":@"status") mutableCopy];
+        if(kind==1)[json appendBytes:"\n{}" length:3];else if(kind==2)[json appendBytes:"\n" length:1];
+        assert(writeBytes(posixOps(),sender.fd(),static_cast<const uint8_t *>(json.bytes),json.length,Deadline(nowMs(),2000)).ok());
+        if(kind==0)assert(::shutdown(sender.fd(),SHUT_WR)==0);dispatch_resume(peer.clientQueue);
+        assert([readReply(sender)[@"error"][@"message"] isEqual:@"invalid_connection_request"]);drainClients(peer);assert(peer->effects==0&&peer->_connectionAdmission.stats().active==0);
+    }
+    for(unsigned kind : {4U,6U}){
+        FixturePeer *peer=[[FixturePeer alloc] init];Socket sender(beginRequest(peer,connectionRequest()));assert(readReply(sender)[@"connectionLease"]);
+        peer->mode=kind;sendRequest(sender,connectionRequest());std::vector<uint8_t> frame;assert(readFrame(posixOps(),sender.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);
+        drainClients(peer);assert(peer->_connectionAdmission.stats().active==0&&peer->_clientAdmission.stats().active==0&&peer->effects==2);
+    }
+    // Real client cancellation on a reused wait releases both socket and persistent slot.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];std::atomic<bool> cancelled{false};
+        std::thread service([&]{@autoreleasepool{[peer handleClient:listener.accept()];[peer enqueueClient:listener.accept() acceptedAt:nowMs()];waitForReaders(peer,1);cancelled=true;drainClients(peer);}});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];assert([[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000][@"ok"] boolValue]);[client setConnectionReuseEnabled:true];
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);std::atomic<bool> *flag=&cancelled;[client setCancellationCheck:^BOOL{return flag->load();}];
+        NSDictionary *reply=[client waitForChangeAfterSequence:1 sessionId:@"session" waitMs:750 timeoutMs:1000];assert([reply[@"error"] isEqual:@"cancelled"]);[client setCancellationCheck:nil];[client setConnectionReuseEnabled:false];service.join();
+        assert(peer->effects==2&&peer->_connectionAdmission.stats().active==0&&peer->_clientAdmission.stats().active==0&&peer->_statusChanges.waiters()==0);
+    }
+    puts("Helper persistent server passed: four-slot admission/fallback, independent legacy commands, session/helper fence, expired next request, LF/coalesced/mutation rejection, NS/C++ cleanup and reused-wait cancellation.");
 }
 static NSData *cancellableChangeRequest(uint64_t sequence=1){
     NSMutableDictionary *request=[[TLinkJSHelperProtocol deserializeEnvelope:changeRequest(sequence,750,@"helper",@"session") error:nil] mutableCopy];
@@ -457,4 +612,4 @@ static void queueCases(){
     }
     puts("Helper admission Foundation passed: actual concurrent enqueue/leases, stalled-reader isolation, eight queued clients/ninth-fd rejection, accepted-time expiry, serialized command deadline, stopped and exception cleanup.");
 }
-int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();queuedDisconnectCases();peerMonitorCases();disconnectCases();changeWaitCases();queueCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
+int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();queuedDisconnectCases();peerMonitorCases();disconnectCases();changeWaitCases();queueCases();connectionClientCases();connectionFaultCases();connectionServerCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}

@@ -29,13 +29,21 @@ public:
     explicit TLinkHelperClientAdmission(size_t limit=DefaultLimit):state_(std::make_shared<State>(limit)){}
     TLinkHelperClientAdmission(const TLinkHelperClientAdmission &)=delete;
     TLinkHelperClientAdmission &operator=(const TLinkHelperClientAdmission &)=delete;
-    // Success adopts fd. Failure leaves fd with the caller; closer must not throw.
-    std::shared_ptr<Lease> acquire(int fd,uint64_t acceptedAt,void (*closer)(int)){
+private:
+    std::shared_ptr<Lease> acquireOwned(int fd,uint64_t acceptedAt,void (*closer)(int)){
         std::lock_guard<std::mutex> guard(state_->mutex);auto &stats=state_->stats;
-        if(fd<0||!closer||!stats.open||stats.active>=stats.limit){++stats.rejected;return {};}
+        if(!stats.open||stats.active>=stats.limit){++stats.rejected;return {};}
         auto lease=std::make_shared<Lease>(state_,fd,acceptedAt,closer);
         ++stats.active;++stats.admitted;if(stats.active>stats.peak)stats.peak=stats.active;return lease;
     }
+public:
+    // Success adopts fd. Failure leaves fd with the caller; closer must not throw.
+    std::shared_ptr<Lease> acquire(int fd,uint64_t acceptedAt,void (*closer)(int)){
+        if(fd<0||!closer){std::lock_guard<std::mutex> guard(state_->mutex);++state_->stats.rejected;return {};}
+        return acquireOwned(fd,acceptedAt,closer);
+    }
+    // Descriptorless capacity, with the same shared lifetime/exact-once finish rules.
+    std::shared_ptr<Lease> acquireSlot(uint64_t acceptedAt){return acquireOwned(-1,acceptedAt,nullptr);}
     void stop(){std::lock_guard<std::mutex> guard(state_->mutex);state_->stats.open=false;}
     bool isOpen()const{std::lock_guard<std::mutex> guard(state_->mutex);return state_->stats.open;}
     Stats stats()const{std::lock_guard<std::mutex> guard(state_->mutex);return state_->stats;}
