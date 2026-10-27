@@ -12,6 +12,8 @@ NSString* wifiTaskWithAction(int action, int value, NSError **error);
 NSString* bluetoothTaskWithAction(int action, int value, NSError **error);
 NSString* airplaneTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* cellularDataTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* airplaneTaskWithAction(int action, int value, NSError **error);
+NSString* cellularDataTaskWithAction(int action, int value, NSError **error);
 NSString* vpnTaskFromRawData(UInt8 *eventData, NSError **error);
 
 #endif

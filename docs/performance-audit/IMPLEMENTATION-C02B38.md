@@ -1,7 +1,7 @@
 # C02b38 — direct Wi-Fi and Bluetooth state adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: C02b37 working source based on HEAD `aed36da`; the user reported C02b37 built successfully. Its existing uncommitted changes are retained. Connectivity oracle fragments use `aed36da`, where those fragments were unchanged through C02b37.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b39 at source baseline `4c7e249`; independent device/performance qualification pending**.
 Finding: **P0-13, task-55/56 connectivity adapters**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -33,5 +33,7 @@ New macOS coverage compiles actual parser/helpers/provider bodies, the bridge/st
 Coverage includes 160 ordinary cases; class/instance/factory availability and precedence; setter/getter masks and false getters; applied/unapplied setters and no-getter fallback; query/BOOL normalization, custom value conversion and metadata key collisions; exact/short output; ordinary license/owner denial; pre-cancel/expiry, gate-time stop and conversion-time cancellation; stop/deadline during accepted provider work; NS/C++ faults before/after effects; permissive RAW action/value parsing and missing-value errors; NSError/result pool lifetime; invalid typed tasks; and other-task RAW fallback, including wide/negative task formatting. Existing app/device/list/frontmost/path fixtures retain shared formatter regression coverage.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b39; the combined C02b37/C02b38 source is committed as `4c7e249`. The next source checkpoint is IMPLEMENTATION-C02B39.md; the build report does not replace manager/radio/device/performance qualification.
 
 The user reported C02b37 build success before this checkpoint; that report does not qualify the new task-55/56 paths. Build rootfull/roothide variants and compare typed/helper Wi-Fi/Bluetooth query/set with RAW tasks 55/56 across available singleton/set/get selector layouts, denied/unchanged state and missing managers. Check exact replies and enabledKey/value metadata, license denial/revocation, output caps and caller stop/deadline. Qualify actual manager thread requirements and observed hardware state without automatically retrying uncertain changes. Recheck other connectivity RAW routes. Measure bridge overhead separately from private-manager work. Continue remaining P0-13 adapters, metadata copies/codecs, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

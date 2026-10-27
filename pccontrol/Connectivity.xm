@@ -211,7 +211,11 @@ NSString* airplaneTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     int action = 0, value = 0;
     if (!zx_parseActionValue(eventData, &action, &value, error)) return nil;
+    return airplaneTaskWithAction(action, value, error);
+}
 
+NSString* airplaneTaskWithAction(int action, int value, NSError **error)
+{
     // Try RadiosPreferences (seen on many iOS builds)
     Class cls = NSClassFromString(@"RadiosPreferences");
     id pref = zx_sharedInstance(cls);
@@ -245,7 +249,11 @@ NSString* cellularDataTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     int action = 0, value = 0;
     if (!zx_parseActionValue(eventData, &action, &value, error)) return nil;
+    return cellularDataTaskWithAction(action, value, error);
+}
 
+NSString* cellularDataTaskWithAction(int action, int value, NSError **error)
+{
     // Best-effort via RadiosPreferences if present.
     Class cls = NSClassFromString(@"RadiosPreferences");
     id pref = zx_sharedInstance(cls);

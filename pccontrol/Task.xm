@@ -815,8 +815,8 @@ NSDictionary *TLinkExecuteNativeDeviceInfo(int selector,TLinkTaskExecutionContex
 // BEGIN typed radio task entry.
 static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context)
 {
-    static_assert(TASK_WIFI==55&&TASK_BLUETOOTH==56,"radio task classification changed");
-    if(taskType!=TASK_WIFI&&taskType!=TASK_BLUETOOTH)return zx_typedTouchFailure(@"invalid_payload");
+    static_assert(TASK_WIFI==55&&TASK_BLUETOOTH==56&&TASK_AIRPLANE==57&&TASK_CELLULAR_DATA==58,"radio task classification changed");
+    if(taskType!=TASK_WIFI&&taskType!=TASK_BLUETOOTH&&taskType!=TASK_AIRPLANE&&taskType!=TASK_CELLULAR_DATA)return zx_typedTouchFailure(@"invalid_payload");
     TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
     auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
     @try {try{
@@ -826,7 +826,11 @@ static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enable
         if(budget->stopped())return zx_typedTouchStopped(budget);
         const int action=setting?1:0,value=setting&&enabled?1:0;
         NSError *error=nil;
-        NSString *state=taskType==TASK_WIFI?wifiTaskWithAction(action,value,&error):bluetoothTaskWithAction(action,value,&error);
+        NSString *state=nil;
+        if(taskType==TASK_WIFI)state=wifiTaskWithAction(action,value,&error);
+        else if(taskType==TASK_BLUETOOTH)state=bluetoothTaskWithAction(action,value,&error);
+        else if(taskType==TASK_AIRPLANE)state=airplaneTaskWithAction(action,value,&error);
+        else state=cellularDataTaskWithAction(action,value,&error);
         if(budget->stopped())return zx_typedTouchStopped(budget);
         if(error)return zx_typedTouchReply(error.localizedDescription,budget);
         NSDictionary *result=zx_nativeStringQueryResult(state?:@"0",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);

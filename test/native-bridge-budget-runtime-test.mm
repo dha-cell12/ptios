@@ -77,6 +77,8 @@ NSDictionary *TLinkExecuteNativeDeviceInfo(int,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeRadioState(int,BOOL,BOOL,TLinkTaskExecutionContext *);
 static void radioLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_WIFI=55,TASK_BLUETOOTH=56};
+static void auxRadioLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_AIRPLANE=57,TASK_CELLULAR_DATA=58};
 static void deviceInfoLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_GET_DEVICE_INFO=25};
 static void openUrlLegacyTask(UInt8 *,CFWriteStreamRef);
@@ -132,6 +134,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"auxRadioRuntime"]&&(lastPayload.compare(0,2,"57")==0||lastPayload.compare(0,2,"58")==0)){auxRadioLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"radioRuntime"]&&(lastPayload.compare(0,2,"55")==0||lastPayload.compare(0,2,"56")==0)){radioLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"deviceInfoRuntime"]&&lastPayload.compare(0,2,"25")==0){deviceInfoLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"openUrlRuntime"]&&lastPayload.compare(0,2,"54")==0){openUrlLegacyTask(bytes,stream);return;}
@@ -1008,6 +1011,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-open-url-runtime-fixture.inc"
 #include "native-device-info-runtime-fixture.inc"
 #include "native-radio-runtime-fixture.inc"
+#include "native-aux-radio-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2205,6 +2209,7 @@ int main() { @autoreleasepool {
     typedOpenUrlCases(bridge);
     typedDeviceInfoCases(bridge);
     typedRadioCases(bridge);
+    typedAuxRadioCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }
