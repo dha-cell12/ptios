@@ -1,6 +1,7 @@
 // Actual app PID Process core/RAW parser and shared app bridge; counted PID lookup from the preceding fixture.
 NSString *appPidForBundleIdentifier(NSString *,NSError **);
 NSString *appStateForBundleIdentifier(NSString *,NSError **);
+NSString *appInfoForBundleIdentifier(NSString *,NSError **);
 #include "AppPidCoreUnderTest.inc"
 #define appPidFromRawData legacyAppPidFromRawData
 #include "fixtures/app-pid-core-legacy-v1.inc"

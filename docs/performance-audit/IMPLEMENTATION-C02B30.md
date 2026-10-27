@@ -1,7 +1,7 @@
 # C02b30 — direct appState query and shared app ingress
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `dfde59c`; the user reported C02b29 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b31 (`aca0719`); independent device/performance qualification pending**.
 Finding: **P0-13, task-32 application-state adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -29,5 +29,7 @@ New macOS coverage compiles the actual Process parser/core and performs its objc
 Cases include 160 ordinary states, NSInteger/int boundaries and both isRunning values, exact/short output caps, exact/over-limit Unicode ingress, NUL/encoding/argument rejection, authority, caller/gate/lookup/selector cancellation/deadline, NS/C++ lookup/selector faults, RAW errors, input snapshots and NSError/reply pool lifetime. Existing appPid, frontmost and path fixtures cover the shared-entry/formatter changes. Fixture extraction also checks dependency order on every host. SpringBoard discovery, actual selector capabilities and device/performance acceptance remain pending.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b31. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B31.md.
 
 Build rootfull/roothide variants and compare typed/helper appState with RAW task 32 for running/stopped/missing applications and supported selector combinations. Verify exact state/running fields, license denial/revocation, caller stop/deadline and input/output limits. Recheck appPid and frontmost/path replies after the shared refactor. Measure bridge overhead separately from application/selector work. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

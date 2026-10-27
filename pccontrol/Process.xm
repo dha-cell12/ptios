@@ -264,6 +264,11 @@ NSString* appStateForBundleIdentifier(NSString *bundleId, NSError **error)
 NSString* appInfoFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *bundleId = [NSString stringWithFormat:@"%s", eventData];
+    return appInfoForBundleIdentifier(bundleId, error);
+}
+
+NSString* appInfoForBundleIdentifier(NSString *bundleId, NSError **error)
+{
     if ([bundleId length] == 0)
     {
         if (error)
@@ -279,7 +284,7 @@ NSString* appInfoFromRawData(UInt8 *eventData, NSError **error)
     NSString *name = proxy.localizedName ?: @"";
     NSString *shortVersion = proxy.shortVersionString ?: @"";
     NSString *bundleVersion = proxy.bundleVersion ?: @"";
-    NSString *state = appStateFromRawData(eventData, nil) ?: @"-1";
+    NSString *state = appStateForBundleIdentifier(bundleId, nil) ?: @"-1";
 
     return [NSString stringWithFormat:@"%@;;%@;;%@;;%@;;%@", bundleId, name, shortVersion, bundleVersion, state];
 }
