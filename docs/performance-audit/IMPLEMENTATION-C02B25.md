@@ -1,7 +1,7 @@
 # C02b25 — direct hardwareKey and press cleanup
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `66bb60c`; the user reported C02b24 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b26 (`b60a754`); independent device/performance qualification pending**.
 Finding: **P0-13, task-30 hardware-key adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles the actual hardware bridge, task entry, RAW parser, 
 The actual press body is exercised for committed DOWN cancellation, wait expiry, tiny output caps, success metadata merge and NS/C++ dispatch faults before/after commit. Counted events must balance on every path; test-owned cached clients are explicitly drained at fixture teardown. Host fixture calls do not inject hardware events. These new Foundation/ARC/ASan/UBSan branches cannot execute on this Windows host and await macOS CI; private HID behavior and physical key cleanup require device qualification.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b26. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B26.md.
 
 Build rootfull/roothide variants and compare typed/helper hardwareKey with RAW task 30 for supported keys/actions and error replies. On device, verify press DOWN/UP order under cancellation, deadline, license denial/revocation and output rejection, including recovery after HID failures. Measure bridge overhead separately from unchanged HID work. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

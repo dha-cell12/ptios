@@ -11,6 +11,8 @@ NSString* listAutoLaunch(NSError **error);
 NSString* setTimerFromRawData(UInt8 *eventData, NSError **error);
 NSString* removeTimerFromRawData(UInt8 *eventData, NSError **error);
 NSString* keepAwakeFromRawData(UInt8 *eventData, NSError **error);
+// ACK means queued on main, as with the RAW adapter.
+void TLinkSetKeepAwakeEnabled(BOOL enabled);
 NSString* stopScriptFromRawData(NSError **error);
 
 #endif

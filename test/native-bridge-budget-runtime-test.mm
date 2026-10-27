@@ -54,6 +54,9 @@ enum {TASK_ROOT_DIR=44,TASK_CURRENT_DIR=45,TASK_BOT_PATH=46};
 NSDictionary *TLinkExecuteNativeHardwareKey(int,int,TLinkTaskExecutionContext *);
 static void hardwareKeyLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_HARDWARE_KEY=30};
+NSDictionary *TLinkExecuteNativeKeepAwake(BOOL,TLinkTaskExecutionContext *);
+static void keepAwakeLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_KEEP_AWAKE=40};
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
@@ -96,6 +99,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"keepAwakeRuntime"]&&lastPayload.compare(0,2,"40")==0){keepAwakeLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"hardwareKeyRuntime"]&&lastPayload.compare(0,2,"30")==0){hardwareKeyLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"frontmostRuntime"]&&(lastPayload=="34"||lastPayload=="35")){frontmostLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"pathRuntime"]&&(lastPayload=="44"||lastPayload=="45"||lastPayload=="46")){pathLegacyTask(bytes,stream);return;}
@@ -177,9 +181,16 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyFrontmost:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyPath:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyHardwareKey:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyKeepAwake:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyKeepAwake:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-keep-awake-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyHardwareKey:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -319,6 +330,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeFrameMultiBridge.inc"
 #include "NativeBatchBridgeUnderTest.inc"
 #include "NativeHardwareKeyBridge.inc"
+#include "NativeKeepAwakeBridge.inc"
     return nil;
 }
 @end
@@ -878,6 +890,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-frontmost-runtime-fixture.inc"
 #include "native-path-runtime-fixture.inc"
 #include "native-hardware-key-runtime-fixture.inc"
+#include "native-keep-awake-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2029,6 +2042,7 @@ int main() { @autoreleasepool {
     dispatch_semaphore_signal(gate);
     { TLinkNativeBudgetScope scope(expired); TLinkNativeDispatchSync(queue, ^{ assert(false && "expired queued operation ran"); }); }
     typedHardwareKeyCases(bridge);
+    typedKeepAwakeCases(bridge);
     checkGesture(zx_handleNativeTap, @"20;;30;;60000;;19", 1, 1);
     checkGesture(zx_handleNativeSwipe, @"20;;30;;80;;90;;5000;;19;;120", 1, 2);
     checkGesture(zx_handleNativeGesture, @"19;;500;;20,30|40,50|60,70", 1, 2);

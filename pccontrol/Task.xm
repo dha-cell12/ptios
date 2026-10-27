@@ -696,6 +696,29 @@ NSDictionary *TLinkExecuteNativeHardwareKey(int action,int keyType,TLinkTaskExec
 }
 // END typed hardware key task entry.
 
+// BEGIN typed keep awake task entry.
+static NSDictionary *zx_nativeKeepAwakeExecute(BOOL enabled,TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_KEEP_AWAKE,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        TLinkSetKeepAwakeEnabled(enabled);
+        return zx_typedTouchReply(@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeKeepAwake(BOOL enabled,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeKeepAwakeExecute(enabled,context);}
+    return result;
+}
+// END typed keep awake task entry.
+
 // BEGIN typed color task entry.
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request,TLinkTaskExecutionContext *context)
 {

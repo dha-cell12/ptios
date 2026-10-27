@@ -210,10 +210,15 @@ NSString* keepAwakeFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *value = [NSString stringWithFormat:@"%s", eventData];
     BOOL enabled = [value intValue] != 0;
+    TLinkSetKeepAwakeEnabled(enabled);
+    return @"";
+}
+
+void TLinkSetKeepAwakeEnabled(BOOL enabled)
+{
     dispatch_async(dispatch_get_main_queue(), ^{
         [UIApplication sharedApplication].idleTimerDisabled = enabled;
     });
-    return @"";
 }
 
 NSString* stopScriptFromRawData(NSError **error)

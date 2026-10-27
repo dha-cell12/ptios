@@ -268,6 +268,22 @@ try {
   await writeFile(join(temp,"NativeHardwareKeyBridge.inc"),hardwareBridge);
   await writeFile(join(temp,"NativeHardwareKeyEntry.inc"),hardwareEntry);
   await writeFile(join(temp,"HardwareKeyCoreUnderTest.inc"),hardwareCore);
+  const scheduler=await read("pccontrol/Scheduler.xm");
+  const awakeBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake])","    else if ([method isEqualToString:TLinkJSNativeMethodTouchIndicator])");
+  const awakeEntry=between(task,"// BEGIN typed keep awake task entry.","// END typed keep awake task entry.");
+  const awakeCore=between(scheduler,"NSString* keepAwakeFromRawData","NSString* stopScriptFromRawData");
+  assert.match(awakeBridge,/boolValue[\s\S]*TLinkExecuteNativeKeepAwake\(enabled,context\)/);
+  assert.doesNotMatch(awakeBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  assert.match(awakeEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_KEEP_AWAKE,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkSetKeepAwakeEnabled\(enabled\)[\s\S]*zx_typedTouchReply/);
+  assert.equal([...awakeEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(awakeEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  assert.match(awakeCore,/BOOL enabled = \[value intValue\] != 0;[\s\S]*TLinkSetKeepAwakeEnabled\(enabled\)/);
+  assert.match(awakeCore,/void TLinkSetKeepAwakeEnabled\(BOOL enabled\)[\s\S]*dispatch_async\(dispatch_get_main_queue\(\),[\s\S]*idleTimerDisabled = enabled/);
+  const awakeLegacy=await read("test/fixtures/keep-awake-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_KEEP_AWAKE)","    else if (taskType == TASK_APP_PID)").trim(),awakeLegacy.slice(awakeLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeKeepAwakeBridge.inc"),awakeBridge);
+  await writeFile(join(temp,"NativeKeepAwakeEntry.inc"),awakeEntry);
+  await writeFile(join(temp,"KeepAwakeCoreUnderTest.inc"),awakeCore);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
