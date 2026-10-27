@@ -12,5 +12,6 @@
 #define HARDWARE_KEY_LOCK 4
 
 int sendHardwareKeyEventFromRawData(UInt8 *eventData, NSError **error);
+int sendHardwareKeyEvent(int action,int keyType,NSError **error);
 
 #endif

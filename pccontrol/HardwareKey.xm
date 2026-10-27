@@ -45,8 +45,11 @@ int sendHardwareKeyEventFromRawData(UInt8 *eventData, NSError **error)
         return -1;
     }
 
-    int action = [data[0] intValue];
-    int keyType = [data[1] intValue];
+    return sendHardwareKeyEvent([data[0] intValue],[data[1] intValue],error);
+}
+
+int sendHardwareKeyEvent(int action,int keyType,NSError **error)
+{
     Boolean isDown = action == HARDWARE_KEY_ACTION_DOWN;
 
     uint16_t usagePage = 0;
@@ -95,7 +98,7 @@ int sendHardwareKeyEventFromRawData(UInt8 *eventData, NSError **error)
         return -1;
     }
 
-    IOHIDEventSystemClientDispatchEvent(hardwareKeyClient, event);
-    CFRelease(event);
+    @try { IOHIDEventSystemClientDispatchEvent(hardwareKeyClient, event); }
+    @finally { CFRelease(event); }
     return 0;
 }

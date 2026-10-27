@@ -670,6 +670,32 @@ NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *con
 }
 // END typed path task entry.
 
+// BEGIN typed hardware key task entry.
+static NSDictionary *zx_nativeHardwareKeyExecute(int action,int keyType,TLinkTaskExecutionContext *context)
+{
+    if(action<0||keyType<=0)return zx_typedTouchFailure(@"invalid_payload");
+    // Only canonical action zero is an exempt release, matching the RAW 0;; prefix.
+    const bool cleanup=action==HARDWARE_KEY_ACTION_UP;
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,cleanup,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!cleanup&&!TLinkRootfullLicenseTaskAllowed(TASK_HARDWARE_KEY,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;sendHardwareKeyEvent(action,keyType,&error);
+        return zx_typedTouchReply(error.localizedDescription?:@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeHardwareKey(int action,int keyType,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeHardwareKeyExecute(action,keyType,context);}
+    return result;
+}
+// END typed hardware key task entry.
+
 // BEGIN typed color task entry.
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request,TLinkTaskExecutionContext *context)
 {

@@ -249,6 +249,25 @@ try {
   assert.equal(between(task,"    else if (taskType == TASK_ROOT_DIR)","    else if (taskType == TASK_SCREENSHOT)").trim(),pathLegacy.slice(pathLegacy.indexOf('\n')+1).trim());
   await writeFile(join(temp,"NativePathBridge.inc"),pathBridge);
   await writeFile(join(temp,"NativePathEntry.inc"),pathEntry);
+  const hardware=await read("pccontrol/HardwareKey.xm");
+  const hardwareBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey])","    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey])");
+  const hardwareEntry=between(task,"// BEGIN typed hardware key task entry.","// END typed hardware key task entry.");
+  assert.match(hardwareBridge,/keyType <= 0 \|\| keyAction < 0[\s\S]*TLinkExecuteNativeHardwareKey\(keyAction,keyType,context\)/);
+  assert.doesNotMatch(hardwareBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  assert.match(hardwareEntry,/cleanup=action==HARDWARE_KEY_ACTION_UP[\s\S]*TLinkNativeCallContext\(context,cleanup,false\)[\s\S]*budget->stopped\(\)[\s\S]*!cleanup&&!TLinkRootfullLicenseTaskAllowed\(TASK_HARDWARE_KEY,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*sendHardwareKeyEvent\(action,keyType,&error\)/);
+  assert.equal([...hardwareEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(hardwareEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  assert.match(hardware,/return sendHardwareKeyEvent\(\[data\[0\] intValue\],\[data\[1\] intValue\],error\)/);
+  const hardwareCore=hardware.slice(hardware.indexOf('static IOHIDEventSystemClientRef hardwareKeyClient'));
+  const numericHardware=hardware.slice(hardware.indexOf('int sendHardwareKeyEvent(int action'));
+  assert.match(numericHardware,/isDown = action == HARDWARE_KEY_ACTION_DOWN/);
+  assert.match(numericHardware,/@try \{ IOHIDEventSystemClientDispatchEvent[\s\S]*@finally \{ CFRelease\(event\); \}/);
+  assert.doesNotMatch(numericHardware,/componentsSeparatedByString|stringWithUTF8String/);
+  const hardwareLegacy=await read("test/fixtures/hardware-key-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_HARDWARE_KEY)","    else if (taskType == TASK_APP_KILL)").trim(),hardwareLegacy.slice(hardwareLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeHardwareKeyBridge.inc"),hardwareBridge);
+  await writeFile(join(temp,"NativeHardwareKeyEntry.inc"),hardwareEntry);
+  await writeFile(join(temp,"HardwareKeyCoreUnderTest.inc"),hardwareCore);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +

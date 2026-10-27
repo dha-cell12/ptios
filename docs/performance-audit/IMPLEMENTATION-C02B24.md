@@ -1,7 +1,7 @@
 # C02b24 — direct rootDir/currentDir/botPath queries
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `de4e01f`; the user reported C02b23 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b25 (`66bb60c`); independent device/performance qualification pending**.
 Finding: **P0-13, task-44/45/46 path adapters**. Other native adapters, config invalidation and performance qualification remain open.
 
 ## Result and compatibility
@@ -29,5 +29,7 @@ New macOS fixture coverage compiles the actual bridge fragments, task entry, con
 All-host guards check direct bridge entry, unchanged RAW bodies, one gate and stop ordering, no C01/RAW/CF stream in the new entry, macro-independent booleans and fixture dependency order for the shared scalar formatter. New Foundation/ARC/ASan/UBSan branches and iOS/device behavior cannot execute on this Windows host.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b25. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B25.md.
 
 Build rootfull/roothide variants and compare in-process/helper queries with RAW 44/45/46, including all path alias fields and the existing slash spelling. Exercise license denial/revocation, caller stop/deadline and output limits. Measure bridge cost separately from the unchanged backend. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
