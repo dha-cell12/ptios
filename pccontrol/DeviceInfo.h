@@ -16,5 +16,6 @@
 
 
 NSString *getDeviceInfoFromRawData(UInt8* eventData, NSError **error);
+NSString *getDeviceInfoForTask(int task, NSError **error);
 
 #endif

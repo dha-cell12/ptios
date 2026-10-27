@@ -146,7 +146,11 @@ NSString* wifiTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     int action = 0, value = 0;
     if (!zx_parseActionValue(eventData, &action, &value, error)) return nil;
+    return wifiTaskWithAction(action, value, error);
+}
 
+NSString* wifiTaskWithAction(int action, int value, NSError **error)
+{
     // Try SBWiFiManager (common on many iOS versions)
     Class cls = NSClassFromString(@"SBWiFiManager");
     id mgr = zx_sharedInstance(cls);
@@ -176,7 +180,11 @@ NSString* bluetoothTaskFromRawData(UInt8 *eventData, NSError **error)
 {
     int action = 0, value = 0;
     if (!zx_parseActionValue(eventData, &action, &value, error)) return nil;
+    return bluetoothTaskWithAction(action, value, error);
+}
 
+NSString* bluetoothTaskWithAction(int action, int value, NSError **error)
+{
     // BluetoothManager in /System/Library/PrivateFrameworks/BluetoothManager.framework
     Class cls = NSClassFromString(@"BluetoothManager");
     id mgr = zx_sharedInstance(cls);

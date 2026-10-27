@@ -8,6 +8,8 @@
 
 NSString* wifiTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* bluetoothTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* wifiTaskWithAction(int action, int value, NSError **error);
+NSString* bluetoothTaskWithAction(int action, int value, NSError **error);
 NSString* airplaneTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* cellularDataTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* vpnTaskFromRawData(UInt8 *eventData, NSError **error);

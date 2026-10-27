@@ -372,6 +372,60 @@ try {
   assert.equal(between(task,"    else if (taskType == TASK_OPEN_URL)","    else if (taskType == TASK_WIFI)").trim(),urlHandler.slice(urlHandler.indexOf('\n')+1).trim());
   await writeFile(join(temp,"NativeOpenUrlBridge.inc"),urlBridge);
   await writeFile(join(temp,"OpenUrlCoreUnderTest.inc"),urlCore);
+  const deviceBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodInfo])","    else if ([method isEqualToString:TLinkJSNativeMethodAlert])");
+  const deviceEntry=between(task,"// BEGIN typed device info task entry.","// END typed device info task entry.");
+  const deviceSource=await read("pccontrol/DeviceInfo.xm");
+  const deviceCore=deviceSource.slice(deviceSource.indexOf('static NSString* modelName()'));
+  const deviceCoreLegacy=await read("test/fixtures/device-info-core-legacy-v1.inc");
+  assert.match(deviceCore,/return getDeviceInfoForTask\(task, error\);/);
+  const deviceBody='    if (task == DEVICE_INFO_TASK_GET_SCREEN_SIZE)';
+  assert.equal(deviceCore.slice(deviceCore.indexOf(deviceBody)).trim(),deviceCoreLegacy.slice(deviceCoreLegacy.indexOf(deviceBody)).trim(),'device providers and numeric/string formatting remain unchanged');
+  assert.equal(between(deviceCore,'static NSString* modelName()','NSString *getDeviceInfoFromRawData').trim(),between(deviceCoreLegacy,'static NSString* modelName()','NSString *getDeviceInfoFromRawData').trim(),'uname/model helper remains unchanged');
+  assert.match(deviceBridge,/TLinkExecuteNativeDeviceInfo\(30,context\)[\s\S]*TLinkExecuteNativeDeviceInfo\(31,context\)/);
+  assert.doesNotMatch(deviceBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const deviceBridgeLegacy=await read("test/fixtures/native-device-info-legacy-v1.inc");
+  for(const method of ['Info','BatteryInfo']){
+    const prefix=`    else if ([method isEqualToString:TLinkJSNativeMethod${method}])`;
+    const current=deviceBridge.slice(deviceBridge.indexOf(prefix)),old=deviceBridgeLegacy.slice(deviceBridgeLegacy.indexOf(prefix));
+    const tail=source=>source.slice(source.indexOf('        NSArray *parts'),source.indexOf('\n    }'));
+    assert.equal(tail(current),tail(old),'device JS metadata fields remain unchanged');
+  }
+  assert.match(deviceEntry,/selector!=DEVICE_INFO_TASK_GET_DEVICE_INFO&&selector!=DEVICE_INFO_TASK_GET_BATTERY_INFO[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_GET_DEVICE_INFO,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*getDeviceInfoForTask\(selector,&error\)/);
+  assert.equal([...deviceEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.ok(deviceEntry.includes('zx_nativeStringQueryResult(value,nil,false,nil,budget,TLinkNativeQueryMetadata::Reply)'));
+  assert.doesNotMatch(deviceEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  const deviceHandler=await read("test/fixtures/device-info-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_GET_DEVICE_INFO)","    else if (taskType == TASK_TOUCH_INDICATOR)").trim(),deviceHandler.slice(deviceHandler.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeDeviceInfoBridge.inc"),deviceBridge);
+  await writeFile(join(temp,"NativeDeviceInfoEntry.inc"),deviceEntry);
+  await writeFile(join(temp,"DeviceInfoCoreUnderTest.inc"),deviceCore);
+  const radioSource=await read("pccontrol/Connectivity.xm");
+  const radioHelpers=between(radioSource,"static BOOL zx_parseActionValue","static NSString *zx_vpnBrokerRequest");
+  const radioCore=between(radioSource,"NSString* wifiTaskFromRawData","NSString* airplaneTaskFromRawData");
+  const radioHelpersLegacy=await read("test/fixtures/radio-helpers-legacy-v1.inc");
+  assert.equal(radioHelpers.trim(),radioHelpersLegacy.slice(radioHelpersLegacy.indexOf('\n')+1).trim(),'radio parser/selector helpers remain unchanged');
+  const radioCoreLegacy=await read("test/fixtures/radio-core-legacy-v1.inc");
+  assert.equal(between(radioCore,'    // Try SBWiFiManager','NSString* bluetoothTaskFromRawData').trim(),between(radioCoreLegacy,'    // Try SBWiFiManager','NSString* bluetoothTaskFromRawData').trim(),'Wi-Fi provider body remains unchanged');
+  assert.equal(radioCore.slice(radioCore.indexOf('    // BluetoothManager')).trim(),radioCoreLegacy.slice(radioCoreLegacy.indexOf('    // BluetoothManager')).trim(),'Bluetooth provider body remains unchanged');
+  assert.match(radioCore,/return wifiTaskWithAction\(action, value, error\);/);
+  assert.match(radioCore,/return bluetoothTaskWithAction\(action, value, error\);/);
+  const radioBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodConnectivity])","    else if ([method isEqualToString:TLinkJSNativeMethodRootDir]");
+  const radioEntry=between(task,"// BEGIN typed radio task entry.","// END typed radio task entry.");
+  assert.match(radioBridge,/if \(task == TASK_WIFI \|\| task == TASK_BLUETOOTH\) \{\s*NSDictionary \*result = TLinkExecuteNativeRadioState\(task,setting,setting \? \[value boolValue\] : false,context\);\s*return \[TLinkJSNativeResponse responseWithValue:TLinkautoJSStateResult\(result, enabledKey\)\]/);
+  const radioBridgeLegacy=await read("test/fixtures/native-radio-legacy-v1.inc");
+  const fallback=source=>source.slice(source.indexOf('        NSDictionary *result = [self executeRawPayload')).trim();
+  assert.equal(fallback(radioBridge),fallback(radioBridgeLegacy),'non-radio connectivity dispatch remains RAW');
+  assert.match(radioEntry,/taskType!=TASK_WIFI&&taskType!=TASK_BLUETOOTH[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*wifiTaskWithAction\(action,value,&error\):bluetoothTaskWithAction\(action,value,&error\)/);
+  assert.equal([...radioEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.ok(radioEntry.includes('const int action=setting?1:0,value=setting&&enabled?1:0'));
+  assert.ok(radioEntry.includes('zx_nativeStringQueryResult(state?:@"0",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply)'));
+  assert.doesNotMatch(radioEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  const radioHandler=await read("test/fixtures/radio-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_WIFI)","    else if (taskType == TASK_AIRPLANE)").trim(),radioHandler.slice(radioHandler.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"RadioHelpersUnderTest.inc"),radioHelpers);
+  await writeFile(join(temp,"RadioCoreUnderTest.inc"),radioCore);
+  await writeFile(join(temp,"NativeRadioBridge.inc"),radioBridge);
+  await writeFile(join(temp,"NativeRadioEntry.inc"),radioEntry);
   const pathBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodRootDir]","    else if ([method isEqualToString:TLinkJSNativeMethodInfo])");
   const pathEntry=between(task,"// BEGIN typed path task entry.","// END typed path task entry.");
   assert.match(pathBridge,/TLinkExecuteNativePath\(task,context\)/);
@@ -458,8 +512,9 @@ try {
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
     between(bridge,"static BOOL TLinkautoJSValidToken","static NSString *TLinkautoJSEncodeGesturePoints") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption") +
-    between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}\n${urlBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+    between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult") +
+    between(bridge,"static NSDictionary *TLinkautoJSStateResult","static NSString *TLinkNativeStopCode");
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}\n${urlBridge}\n${deviceBridge}\n${radioBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -497,6 +552,10 @@ try {
   assert.match(runtimeFixture,/#include "native-app-kill-runtime-fixture.inc"\n#include "native-app-open-runtime-fixture.inc"/,'app-open fixture requires the shared app entry first');
   assert.match(runtimeFixture,/#include "native-app-open-runtime-fixture.inc"\n#include "native-list-bundles-runtime-fixture.inc"/,'list-bundles fixture requires the shared formatter and Objective-C runtime first');
   assert.match(runtimeFixture,/#include "native-list-bundles-runtime-fixture.inc"\n#include "native-open-url-runtime-fixture.inc"/,'open-url fixture requires the shared app entry and Objective-C imports first');
+  assert.match(runtimeFixture,/#include "native-open-url-runtime-fixture.inc"\n#include "native-device-info-runtime-fixture.inc"/,'device-info fixture requires the shared formatter and controlled Screen class first');
+  assert.ok(runtimeFixture.includes('#import "../pccontrol/DeviceInfo.h"'),'device numeric core must have its production forward declaration');
+  assert.match(runtimeFixture,/#include "native-device-info-runtime-fixture.inc"\n#include "native-radio-runtime-fixture.inc"/,'radio fixture requires the shared formatter and Objective-C runtime first');
+  assert.ok(runtimeFixture.includes('#import "../pccontrol/Connectivity.h"'),'radio numeric cores require their production forward declarations');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

@@ -1,7 +1,7 @@
 # C02b36 — direct openUrl task and main-thread admission
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `5d4c67a`, containing C02b35; the user reported C02b35 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported corrected build success before C02b37 at source baseline `aed36da`; independent device/performance qualification pending**.
 Finding: **P0-13, task-54 URL-opening adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -33,6 +33,8 @@ New macOS coverage compiles the actual Process parser/core/main-owner wrapper, b
 Coverage includes 160 ordinary cases; modern/legacy selectors; primary/fallback BOOL combinations and settings scheme casing; real URL parsing; exact/short output; exact/over-limit ASCII/CJK/emoji ingress; malformed/NUL/encoding inputs; ordinary license/owner denial; pre-cancel/expiry, gate-time stop and stop/deadline during accepted owner work; NS/C++ faults before/after fake effects; inline-main dispatch avoidance; late false/true completions; RAW null/%s parsing; input snapshots; and NSError/result/completion lifetime across caller/pool teardown. Existing app/list/frontmost/path fixtures cover shared-entry/formatter regression.
 
 ## Acceptance and remaining work
+
+The user reported the corrected C02b36 build passed before C02b37 (`aed36da`), including the legacy-launcher forward-declaration correction below. The next source checkpoint is IMPLEMENTATION-C02B37.md; the build report does not replace UIKit/GCD/device/performance qualification.
 
 The user reported C02b35 build success at baseline `5d4c67a`; that report does not qualify the new task-54 path. Build rootfull/roothide variants and compare typed/helper openUrl with RAW task 54 on disposable URL handlers and settings schemes. Verify modern ACK versus later completion, legacy fallback order/errors, main-thread inline behavior and background main-queue dispatch, license denial/revocation, input/output caps and caller stop/deadline. Treat uncertain results as potentially committed; do not retry automatically. Recheck other shared app/string calls. Measure bridge overhead separately from queue residence, URL parsing and UIKit work. Continue other P0-13 adapters, listBundles metadata codecs, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
 

@@ -24,6 +24,8 @@
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import "../pccontrol/TLinkTaskContext.h"
+#import "../pccontrol/DeviceInfo.h"
+#import "../pccontrol/Connectivity.h"
 #import "../pccontrol/SocketServer.h"
 #import "../pccontrol/jsruntime/TLinkJSNativeRequest.h"
 #import "../pccontrol/jsruntime/TLinkJSNativeResponse.h"
@@ -71,6 +73,12 @@ NSDictionary *TLinkExecuteNativeKillApp(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeOpenApp(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeListBundles(BOOL,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeOpenUrl(NSString *,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeDeviceInfo(int,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeRadioState(int,BOOL,BOOL,TLinkTaskExecutionContext *);
+static void radioLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_WIFI=55,TASK_BLUETOOTH=56};
+static void deviceInfoLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_GET_DEVICE_INFO=25};
 static void openUrlLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_OPEN_URL=54};
 static void listBundlesLegacyTask(UInt8 *,CFWriteStreamRef);
@@ -124,6 +132,8 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"radioRuntime"]&&(lastPayload.compare(0,2,"55")==0||lastPayload.compare(0,2,"56")==0)){radioLegacyTask(bytes,stream);return;}
+    if([mode isEqualToString:@"deviceInfoRuntime"]&&lastPayload.compare(0,2,"25")==0){deviceInfoLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"openUrlRuntime"]&&lastPayload.compare(0,2,"54")==0){openUrlLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"listBundlesRuntime"]&&lastPayload.compare(0,2,"53")==0){listBundlesLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appOpenRuntime"]&&lastPayload.compare(0,2,"11")==0){appOpenLegacyTask(bytes,stream);return;}
@@ -222,9 +232,23 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyAppQuery:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyListBundles:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyOpenUrl:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyDeviceInfo:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-radio-legacy-v1.inc"
+    return nil;
+}
+- (TLinkJSNativeResponse *)legacyDeviceInfo:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-device-info-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyOpenUrl:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -406,16 +430,22 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeAppQueryBridge.inc"
 #include "NativeListBundlesBridge.inc"
 #include "NativeOpenUrlBridge.inc"
+#include "NativeDeviceInfoBridge.inc"
+#include "NativeRadioBridge.inc"
     return nil;
 }
 @end
 @interface Screen : NSObject
 + (CGFloat)getScreenWidth;
 + (CGFloat)getScreenHeight;
++ (int)getScreenOrientation;
++ (CGFloat)getScale;
 @end
 @implementation Screen
 + (CGFloat)getScreenWidth { return 500; }
 + (CGFloat)getScreenHeight { return 1000; }
++ (int)getScreenOrientation { return 3; }
++ (CGFloat)getScale { return 2; }
 @end
 enum { TOUCH_UP = 0, TOUCH_DOWN = 1, TOUCH_MOVE = 2,
        TASK_PERFORM_TOUCH = 10, TASK_NATIVE_TAP = 62, TASK_NATIVE_SWIPE = 63, TASK_NATIVE_GESTURE = 64 };
@@ -976,6 +1006,8 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-app-open-runtime-fixture.inc"
 #include "native-list-bundles-runtime-fixture.inc"
 #include "native-open-url-runtime-fixture.inc"
+#include "native-device-info-runtime-fixture.inc"
+#include "native-radio-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2171,6 +2203,8 @@ int main() { @autoreleasepool {
     typedAppOpenCases(bridge);
     typedListBundlesCases(bridge);
     typedOpenUrlCases(bridge);
+    typedDeviceInfoCases(bridge);
+    typedRadioCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

@@ -783,6 +783,66 @@ NSDictionary *TLinkExecuteNativeListBundles(BOOL withInfo,TLinkTaskExecutionCont
 }
 // END typed list bundles task entry.
 
+// BEGIN typed device info task entry.
+static NSDictionary *zx_nativeDeviceInfoExecute(int selector,TLinkTaskExecutionContext *context)
+{
+    static_assert(DEVICE_INFO_TASK_GET_DEVICE_INFO==30&&DEVICE_INFO_TASK_GET_BATTERY_INFO==31,"device info selector classification changed");
+    if(selector!=DEVICE_INFO_TASK_GET_DEVICE_INFO&&selector!=DEVICE_INFO_TASK_GET_BATTERY_INFO)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_GET_DEVICE_INFO,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;NSString *value=getDeviceInfoForTask(selector,&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        NSDictionary *result=zx_nativeStringQueryResult(value,nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeDeviceInfo(int selector,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeDeviceInfoExecute(selector,context);}
+    return result;
+}
+// END typed device info task entry.
+
+// BEGIN typed radio task entry.
+static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_WIFI==55&&TASK_BLUETOOTH==56,"radio task classification changed");
+    if(taskType!=TASK_WIFI&&taskType!=TASK_BLUETOOTH)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(taskType,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        const int action=setting?1:0,value=setting&&enabled?1:0;
+        NSError *error=nil;
+        NSString *state=taskType==TASK_WIFI?wifiTaskWithAction(action,value,&error):bluetoothTaskWithAction(action,value,&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        NSDictionary *result=zx_nativeStringQueryResult(state?:@"0",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeRadioState(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeRadioExecute(taskType,setting,enabled,context);}
+    return result;
+}
+// END typed radio task entry.
+
 // BEGIN typed path task entry.
 static NSDictionary *zx_nativePathExecute(int taskType,TLinkTaskExecutionContext *context)
 {

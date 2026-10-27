@@ -124,6 +124,8 @@ NSDictionary *TLinkExecuteNativeKillApp(NSString *bundleId,TLinkTaskExecutionCon
 NSDictionary *TLinkExecuteNativeOpenApp(NSString *bundleId,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeOpenUrl(NSString *url,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeListBundles(BOOL withInfo,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeDeviceInfo(int selector,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeRadioState(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeHardwareKey(int action,int keyType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeKeepAwake(BOOL enabled,TLinkTaskExecutionContext *context);

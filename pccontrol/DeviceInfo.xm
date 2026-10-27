@@ -14,6 +14,11 @@ NSString *getDeviceInfoFromRawData(UInt8* eventData, NSError **error)
 {
     NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
     int task = [data[0] intValue];
+    return getDeviceInfoForTask(task, error);
+}
+
+NSString *getDeviceInfoForTask(int task, NSError **error)
+{
     if (task == DEVICE_INFO_TASK_GET_SCREEN_SIZE)
     {
         return [NSString stringWithFormat:@"%f;;%f", [Screen getScreenWidth], [Screen getScreenHeight]];
