@@ -118,6 +118,7 @@ NSDictionary *TLinkExecuteNativeFrontmost(int taskType,TLinkTaskExecutionContext
 NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeHardwareKey(int action,int keyType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeKeepAwake(BOOL enabled,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeIndicator(int action,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeTouchRequest.h"
 #include "../shared/TLinkNativeColorRequest.h"
 #include "../shared/TLinkNativeColorRange.h"

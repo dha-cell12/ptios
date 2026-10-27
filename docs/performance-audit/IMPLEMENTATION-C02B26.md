@@ -1,7 +1,7 @@
 # C02b26 — direct keepAwake enqueue adapter
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `b60a754`; the user reported C02b25 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **corrected build reported passed by the user before C02b27 (`acc8648`); independent device/performance qualification pending**.
 Finding: **P0-13, task-40 keep-awake adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles the actual bridge, task entry and Scheduler parser/c
 Coverage checks one ordinary gate for both states, denied owner exemption, pre/gate cancellation and expiry, cancellation/expiry immediately after enqueue, enqueue faults before/after acceptance, caller/pool teardown, ordered alternating queued values and zero typed RAW dispatch/response-vector capacity. Pending blocks are explicitly drained at fixture boundaries. Controlled host calls do not change the host idle timer; the new Foundation fixtures await macOS CI and actual GCD/UIKit behavior requires device qualification.
 
 ## Acceptance and remaining work
+
+The user reported the corrected checkpoint built successfully before C02b27. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B27.md.
 
 Build rootfull/roothide variants and compare typed/helper keepAwake with RAW task 40 for both states and normalized arguments. Verify on device that ACK remains enqueue-only, the property changes on main, and licensing, stop/deadline/output failures preserve the documented accepted-work behavior. Measure bridge cost separately from UI scheduling. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

@@ -169,11 +169,17 @@ void handleTouchIndicatorTaskWithRawData(UInt8 *eventData, NSError **error)
 {
     NSString *raw = eventData ? [NSString stringWithUTF8String:(const char *)eventData] : nil;
     NSString *action = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if ([action isEqualToString:@"0"]) {
+    int value = [action isEqualToString:@"0"] ? 0 : [action isEqualToString:@"1"] ? 1 : [action isEqualToString:@"2"] ? 2 : -1;
+    handleTouchIndicatorAction(value, error);
+}
+
+void handleTouchIndicatorAction(int action, NSError **error)
+{
+    if (action == 0) {
         stopTouchIndicator(error);
-    } else if ([action isEqualToString:@"1"]) {
+    } else if (action == 1) {
         startTouchIndicator(error);
-    } else if ([action isEqualToString:@"2"]) {
+    } else if (action == 2) {
         __block NSError *result = nil;
         zx_indicatorPerformOnMain(^{
             if (indicatorState != TLinkIndicatorRunning) {

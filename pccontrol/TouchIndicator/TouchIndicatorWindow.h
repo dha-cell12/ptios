@@ -6,6 +6,7 @@
 
 // Lifecycle entry points complete synchronously on main; NSError** is never retained by async work.
 void handleTouchIndicatorTaskWithRawData(UInt8* eventData, NSError **error);
+void handleTouchIndicatorAction(int action, NSError **error);
 void stopTouchIndicator(NSError **error);
 void startTouchIndicator(NSError **error);
 

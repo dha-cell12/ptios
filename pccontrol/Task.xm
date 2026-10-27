@@ -719,6 +719,30 @@ NSDictionary *TLinkExecuteNativeKeepAwake(BOOL enabled,TLinkTaskExecutionContext
 }
 // END typed keep awake task entry.
 
+// BEGIN typed indicator task entry.
+static NSDictionary *zx_nativeIndicatorExecute(int action,TLinkTaskExecutionContext *context)
+{
+    if(action<0)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_TOUCH_INDICATOR,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;handleTouchIndicatorAction(action,&error);
+        return zx_typedTouchReply(error.localizedDescription?:@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeIndicator(int action,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeIndicatorExecute(action,context);}
+    return result;
+}
+// END typed indicator task entry.
+
 // BEGIN typed color task entry.
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request,TLinkTaskExecutionContext *context)
 {

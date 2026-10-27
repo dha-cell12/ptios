@@ -290,6 +290,26 @@ try {
   // Preserve the frozen oracle; explicitly consume its unused out-parameter in the generated fixture.
   await writeFile(join(temp,"KeepAwakeLegacyCoreUnderTest.inc"),awakeLegacyCore.replace(awakeLegacySignature,
     awakeLegacySignature+"    (void)error;\n"));
+  const indicator=await read("pccontrol/TouchIndicator/TouchIndicatorWindow.xm");
+  const indicatorBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodTouchIndicator])","    else if ([method isEqualToString:TLinkJSNativeMethodSaveScreenshotToAlbum])");
+  const indicatorEntry=between(task,"// BEGIN typed indicator task entry.","// END typed indicator task entry.");
+  const indicatorCore=between(indicator,"void startTouchIndicator(NSError **error)","static void IOHIDEventCallbackForTouchIndicator");
+  assert.match(indicatorBridge,/value < 0[\s\S]*TLinkExecuteNativeIndicator\(value,context\)/);
+  assert.doesNotMatch(indicatorBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  assert.match(indicatorEntry,/action<0[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_TOUCH_INDICATOR,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*handleTouchIndicatorAction\(action,&error\)/);
+  assert.equal([...indicatorEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(indicatorEntry,/processTaskWithContext|CFWriteStream|WithRawData|TLinkC01|\b(?:YES|NO)\b/);
+  assert.match(indicatorCore,/stringByTrimmingCharactersInSet:[\s\S]*isEqualToString:@"0"[\s\S]*isEqualToString:@"1"[\s\S]*isEqualToString:@"2"[\s\S]*: -1;[\s\S]*handleTouchIndicatorAction\(value, error\)/);
+  const numericIndicator=indicatorCore.slice(indicatorCore.indexOf('void handleTouchIndicatorAction(int action'));
+  assert.doesNotMatch(numericIndicator,/stringWithUTF8String|isEqualToString|intValue/);
+  assert.match(numericIndicator,/action == 0[\s\S]*stopTouchIndicator\(error\)[\s\S]*action == 1[\s\S]*startTouchIndicator\(error\)[\s\S]*action == 2[\s\S]*zx_indicatorPerformOnMain/);
+  const indicatorLegacy=await read("test/fixtures/indicator-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_TOUCH_INDICATOR)","    else if (taskType == TASK_TEXT_RECOGNIZER)").trim(),indicatorLegacy.slice(indicatorLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeIndicatorBridge.inc"),indicatorBridge);
+  await writeFile(join(temp,"NativeIndicatorEntry.inc"),indicatorEntry);
+  await writeFile(join(temp,"IndicatorNativeCoreUnderTest.inc"),indicatorCore);
+  await writeFile(join(temp,"IndicatorNativeStateUnderTest.inc"),between(indicator,"enum TLinkIndicatorState {","static uintptr_t indicatorGeneration"));
+  await writeFile(join(temp,"IndicatorNativeColorUnderTest.inc"),between(indicator,"static NSError *zx_indicatorError(","static NSError *zx_indicatorLoadColor("));
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
