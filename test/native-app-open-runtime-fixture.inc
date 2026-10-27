@@ -44,6 +44,7 @@ static void appOpenRelease(CFTypeRef value){
 #define CFRelease appOpenRelease
 #define NSLog(...) ((void)0)
 #include "AppOpenCoreUnderTest.inc"
+int legacyBringAppForeground(NSString *appIdentifier);
 #define bringAppForeground legacyBringAppForeground
 #define switchProcessForegroundFromRawData legacySwitchProcessForegroundFromRawData
 #include "fixtures/app-open-core-legacy-v1.inc"

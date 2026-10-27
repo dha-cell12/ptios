@@ -487,6 +487,8 @@ try {
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
+  const appOpenFixture=await read('test/native-app-open-runtime-fixture.inc');
+  assert.match(appOpenFixture,/int legacyBringAppForeground\(NSString \*appIdentifier\);\s*#define bringAppForeground legacyBringAppForeground\s*#define switchProcessForegroundFromRawData legacySwitchProcessForegroundFromRawData\s*#include "fixtures\/app-open-core-legacy-v1.inc"/,'the renamed legacy launcher must be declared before its RAW adapter calls it');
   assert.match(runtimeFixture,/#include "native-frontmost-runtime-fixture.inc"\n#include "native-path-runtime-fixture.inc"/,'path fixture requires the shared scalar formatter first');
   assert.match(runtimeFixture,/#include "native-app-pid-runtime-fixture.inc"\n#include "native-app-state-runtime-fixture.inc"/,'app-state fixture requires the shared app entry first');
   assert.match(runtimeFixture,/#include "native-app-state-runtime-fixture.inc"\n#include "native-app-info-runtime-fixture.inc"/,'app-info fixture requires the actual state core first');
