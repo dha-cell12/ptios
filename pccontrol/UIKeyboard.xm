@@ -33,6 +33,19 @@ static NSString *TLinkautoPasteboardImageType(NSData *imageData)
     return nil;
 }
 
+NSString *TLinkReadClipboardText(void)
+{
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+    if (!pasteboard.string) return @"";
+    return pasteboard.string;
+}
+
+void TLinkWriteClipboardText(NSString *text)
+{
+    UIPasteboard *pb = [UIPasteboard generalPasteboard];
+    pb.string = text;
+}
+
 NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
 {
     NSArray *data = [[NSString stringWithUTF8String:(char*)eventData] componentsSeparatedByString:@";;"];
@@ -46,12 +59,7 @@ NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
     int taskType = [data[0] intValue];
     if (taskType == TASK_GET_TEXT_FROM_CLIPBOARD)
     {
-        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-
-        if (!pasteboard.string)
-            return @"";
-
-        return pasteboard.string;
+        return TLinkReadClipboardText();
     }
     else if (taskType == TASK_SAVE_TEXT_TO_CLIPBOARD)
     {  
@@ -61,8 +69,7 @@ NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
             return nil;
         }
         
-        UIPasteboard *pb = [UIPasteboard generalPasteboard];
-        pb.string = data[1];
+        TLinkWriteClipboardText(data[1]);
         return @"";
     }
     else if (taskType == TASK_SAVE_IMAGE_TO_CLIPBOARD)

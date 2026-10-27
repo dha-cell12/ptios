@@ -1,7 +1,7 @@
 # C02b40 — direct OCR language listing
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `86c0974`, containing C02b39; the user reported C02b39 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b41 at source baseline `b6f5dae`; independent device/performance qualification pending**.
 Finding: **P0-13, ocrLanguages task-91 adapter**. Other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles the actual shared base64/error helpers, language cor
 Coverage compares complete replies and read/license counts across 160 ordinary cases; duplicates, case/suffix rules, Unicode/delimiter/NUL names, empty/error results and ignored arguments; exact/short output; ordinary authority and owner-denial behavior; pre-cancel/expiry; local C01 expiry before admission and during accepted gate/listing work; caller stop/deadline during accepted work; NSException parity and direct C++ guards; trimmed/case-folded RAW commands and disabled-engine errors; caller deadline preservation, no typed RAW dispatch/response vector and retained-result lifetime. Accelerated-overrun tests adjust only the admission timestamp passed to the real C01 budget factory; the production duration and budget implementation remain under test.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b41; source baseline is `b6f5dae`. The next source checkpoint is IMPLEMENTATION-C02B41.md. This build report does not replace filesystem/device/performance qualification.
 
 The user reported C02b39 build success at baseline 86c0974; that report does not qualify the new task-91 path. Build rootfull/roothide and compare typed/helper ocrLanguages with RAW 91check_langs against installed languages, empty/missing directories and unusual filenames. Verify exact fields/base64/languages/value, license denial/revocation, caller stop/output limits and the unchanged local-only C01 overrun behavior. Recheck RAW frame OCR and ocrFrame. Measure adapter overhead separately from filesystem listing. Continue remaining P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

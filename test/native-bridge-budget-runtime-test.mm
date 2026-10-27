@@ -76,6 +76,9 @@ NSDictionary *TLinkExecuteNativeOpenUrl(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeDeviceInfo(int,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeOCRLanguages(TLinkTaskExecutionContext *);
 static void ocrLanguagesLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
+NSDictionary *TLinkExecuteNativeClipboardText(int,id,TLinkTaskExecutionContext *);
+static void clipboardTextLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_TEXT_INPUT=24};
 NSDictionary *TLinkExecuteNativeRadioState(int,BOOL,BOOL,TLinkTaskExecutionContext *);
 static void radioLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_WIFI=55,TASK_BLUETOOTH=56};
@@ -136,6 +139,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"clipboardTextRuntime"]&&lastPayload.compare(0,2,"24")==0){clipboardTextLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"ocrLanguagesRuntime"]&&lastPayload.compare(0,2,"91")==0){ocrLanguagesLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"auxRadioRuntime"]&&(lastPayload.compare(0,2,"57")==0||lastPayload.compare(0,2,"58")==0)){auxRadioLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"radioRuntime"]&&(lastPayload.compare(0,2,"55")==0||lastPayload.compare(0,2,"56")==0)){radioLegacyTask(bytes,stream);return;}
@@ -240,10 +244,17 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyOpenUrl:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyDeviceInfo:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyOCRLanguages:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyClipboardText:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyClipboardText:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-clipboard-text-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyOCRLanguages:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -445,6 +456,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeOpenUrlBridge.inc"
 #include "NativeDeviceInfoBridge.inc"
 #include "NativeOCRLanguagesBridge.inc"
+#include "NativeClipboardTextBridge.inc"
 #include "NativeRadioBridge.inc"
     return nil;
 }
@@ -1024,6 +1036,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-radio-runtime-fixture.inc"
 #include "native-aux-radio-runtime-fixture.inc"
 #include "native-ocr-languages-runtime-fixture.inc"
+#include "native-clipboard-text-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2223,6 +2236,7 @@ int main() { @autoreleasepool {
     typedRadioCases(bridge);
     typedAuxRadioCases(bridge);
     typedOCRLanguagesCases(bridge);
+    typedClipboardTextCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

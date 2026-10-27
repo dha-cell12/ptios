@@ -534,6 +534,31 @@ try {
   await writeFile(join(temp,"OCRLanguagesHelpersUnderTest.inc"),languagesHelpers);
   await writeFile(join(temp,"OCRLanguagesCoreUnderTest.inc"),between(tess,"static NSString *const kZXTessdataRoot","static NSArray<NSString *> *zx_tessSplitEventData")+languagesCore);
   await writeFile(join(temp,"OCRLanguagesParserUnderTest.inc"),languagesParser);
+  const clipboardSource=await read("pccontrol/UIKeyboard.xm");
+  const clipboardCore=clipboardSource.slice(clipboardSource.indexOf('#define TASK_GET_TEXT_FROM_CLIPBOARD'));
+  const clipboardPrimitives=between(clipboardCore,"NSString *TLinkReadClipboardText","NSString* inputTextFromRawData");
+  const clipboardLegacyCore=await frozenBody("test/fixtures/clipboard-text-core-legacy-v1.inc");
+  const oldGet='        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];\n\n        if (!pasteboard.string)\n            return @"";\n\n        return pasteboard.string;';
+  const oldSet='        UIPasteboard *pb = [UIPasteboard generalPasteboard];\n        pb.string = data[1];';
+  assert.ok(clipboardLegacyCore.includes(oldGet)&&clipboardLegacyCore.includes(oldSet));
+  assert.equal(clipboardCore.replace(clipboardPrimitives,'').trim(),clipboardLegacyCore.replace(oldGet,'        return TLinkReadClipboardText();').replace(oldSet,'        TLinkWriteClipboardText(data[1]);'));
+  assert.match(clipboardPrimitives,/if \(!pasteboard.string\) return @"";\s*return pasteboard.string;/);
+  assert.match(clipboardPrimitives,/void TLinkWriteClipboardText\(NSString \*text\)[\s\S]*pb.string = text;/);
+  const clipboardHeader=await read("pccontrol/UIKeyboard.h");
+  assert.ok(clipboardHeader.includes('NSString *TLinkReadClipboardText(void);')&&clipboardHeader.includes('void TLinkWriteClipboardText(NSString *text);'));
+  assert.equal(between(task,"    else if (taskType == TASK_TEXT_INPUT)","    else if (taskType == TASK_GET_DEVICE_INFO)").trim(),await frozenBody("test/fixtures/clipboard-text-handler-legacy-v1.inc"));
+  const clipboardBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodKeyboard])","    else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey])");
+  const clipboardLegacyBridge=await frozenBody("test/fixtures/native-clipboard-text-legacy-v1.inc");
+  assert.match(clipboardBridge,/if\(kind==6\|\|kind==7\)result=TLinkExecuteNativeClipboardText\(kind,content,context\);\s*else\{[\s\S]*executeRawPayload/);
+  assert.equal(clipboardBridge.slice(clipboardBridge.indexOf('        if (kind != 6)')).trim(),clipboardLegacyBridge.slice(clipboardLegacyBridge.indexOf('        if (kind != 6)')).trim());
+  assert.ok(clipboardBridge.includes('result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEXT_INPUT, payload] context:context];'));
+  const clipboardEntry=between(task,"// BEGIN typed clipboard text task entry.","// END typed clipboard text task entry.");
+  assert.match(clipboardEntry,/kind!=6&&kind!=7[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_TEXT_INPUT,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkReadClipboardText\(\)[\s\S]*TLinkWriteClipboardText/);
+  assert.equal([...clipboardEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(clipboardEntry,/processTaskWithContext|CFWriteStream|FromRawData|componentsSeparatedByString|TLinkC01|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,"NativeClipboardTextBridge.inc"),clipboardBridge);
+  await writeFile(join(temp,"NativeClipboardTextEntry.inc"),clipboardEntry);
+  await writeFile(join(temp,"ClipboardTextCoreUnderTest.inc"),clipboardCore);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -551,6 +576,8 @@ try {
   for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}\n${urlBridge}\n${deviceBridge}\n${radioBridge}\n${languagesBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
+  for(const name of new Set([...clipboardBridge.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match=>match[1])))
+    assert.ok(helpers.includes(`${name}(`),`missing clipboard production helper in native fixture: ${name}`);
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
   await writeFile(join(temp, "NativeHelpersUnderTest.inc"), helpers);
   await writeFile(join(temp, "NativeRequestPreludeUnderTest.inc"),
@@ -593,6 +620,7 @@ try {
   assert.match(runtimeFixture,/#include "native-radio-runtime-fixture.inc"\n#include "native-aux-radio-runtime-fixture.inc"/,'aux-radio fixture requires the actual and frozen radio helpers first');
   assert.match(runtimeFixture,/#include "native-aux-radio-runtime-fixture.inc"\n#include "native-ocr-languages-runtime-fixture.inc"/,'OCR languages fixture requires the bounded query formatter first');
   assert.ok(runtimeFixture.includes('#import "../pccontrol/TesseractOCRTask.h"'),'language entry requires its production backend declaration');
+  assert.match(runtimeFixture,/#include "native-ocr-languages-runtime-fixture.inc"\n#include "native-clipboard-text-runtime-fixture.inc"/,'clipboard text fixture requires the bounded query formatter first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

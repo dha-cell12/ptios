@@ -126,6 +126,7 @@ NSDictionary *TLinkExecuteNativeOpenUrl(NSString *url,TLinkTaskExecutionContext 
 NSDictionary *TLinkExecuteNativeListBundles(BOOL withInfo,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeDeviceInfo(int selector,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeOCRLanguages(TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeClipboardText(int kind,id content,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeRadioState(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeHardwareKey(int action,int keyType,TLinkTaskExecutionContext *context);

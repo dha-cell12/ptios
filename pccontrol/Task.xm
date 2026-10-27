@@ -840,6 +840,47 @@ NSDictionary *TLinkExecuteNativeOCRLanguages(TLinkTaskExecutionContext *context)
 }
 // END typed OCR languages task entry.
 
+// BEGIN typed clipboard text task entry.
+static NSDictionary *zx_nativeClipboardTextExecute(int kind,id content,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_TEXT_INPUT==24,"clipboard task classification changed");
+    if(kind!=6&&kind!=7)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        // Preserve %@ conversion and validate the complete old input, even ignored
+        // GET content and the suffix after the first clipboard-text delimiter.
+        NSString *input=content?[[NSString stringWithFormat:@"%@",content] copy]:nil;
+        const NSUInteger prefix=content?5:3; // task 24, kind 6/7, optional ;;
+        if(input.length>8192-prefix)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger byteCount=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(content&&(!bytes||byteCount>32*1024-prefix||memchr(bytes,0,byteCount)))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_TEXT_INPUT,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(kind==7&&!content)return zx_typedTouchReply(@"-1;;Keyboard related event error. You have to specify the content you want to paste to clipboard.\r\n",budget);
+        NSString *value=nil;
+        if(kind==6)value=TLinkReadClipboardText();
+        else{
+            NSRange separator=[input rangeOfString:@";;"];
+            TLinkWriteClipboardText(separator.location==NSNotFound?input:[input substringToIndex:separator.location]);value=@"";
+        }
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSDictionary *result=zx_nativeStringQueryResult(value,nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeClipboardText(int kind,id content,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeClipboardTextExecute(kind,content,context);}
+    return result;
+}
+// END typed clipboard text task entry.
+
 // BEGIN typed radio task entry.
 static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context)
 {
