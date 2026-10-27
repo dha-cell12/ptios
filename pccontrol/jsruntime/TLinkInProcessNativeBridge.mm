@@ -957,16 +957,10 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         return ocrRes;
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFrontMostAppId]) {
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_FRONTMOST_APP_ID] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"bundleId": TLinkautoJSSafeStringPart(parts, 1)})];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrontmost(TASK_FRONTMOST_APP_ID,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodOrientation]) {
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_FRONTMOST_APP_ORIENTATION] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"value": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrontmost(TASK_FRONTMOST_APP_ORIENTATION,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodOpenApp] || [method isEqualToString:TLinkJSNativeMethodKillApp] || [method isEqualToString:TLinkJSNativeMethodAppState] || [method isEqualToString:TLinkJSNativeMethodAppInfo] || [method isEqualToString:TLinkJSNativeMethodAppPid] || [method isEqualToString:TLinkJSNativeMethodAppPaths]) {
         NSString *bundleId = [args count] > 0 ? [args objectAtIndex:0] : @"";

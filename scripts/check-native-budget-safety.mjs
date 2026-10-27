@@ -224,6 +224,18 @@ try {
   assert.doesNotMatch(structuredBatch,/executeRawPayload|componentsJoinedByString|CFWriteStream|UTF8String/);
   assert.match(structuredBatch,/input.fits\(\)[\s\S]*TLinkExecuteNativeTouchBatch\(touches,context\)/);
   await writeFile(join(temp,"NativeBatchBridgeUnderTest.inc"),batchBridge);
+  const frontmostBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFrontMostAppId])","    else if ([method isEqualToString:TLinkJSNativeMethodOpenApp]");
+  const frontmostEntry=between(task,"// BEGIN typed frontmost task entry.","// END typed frontmost task entry.");
+  assert.equal([...frontmostBridge.matchAll(/TLinkExecuteNativeFrontmost\(/g)].length,2);
+  assert.doesNotMatch(frontmostBridge,/executeRawPayload|stringWithFormat|componentsSeparatedByString|CFWriteStream/);
+  assert.match(frontmostEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*frontMostAppId\(\)/);
+  assert.equal([...frontmostEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(frontmostEntry,/outputAllowed\(length\)[\s\S]*if\(compatibility\)[\s\S]*else parts=@\[@"0",body\]/);
+  assert.doesNotMatch(frontmostEntry,/processTaskWithContext|CFWriteStream|TLinkC01|\b(?:YES|NO)\b/);
+  const frontmostLegacy=await read("test/fixtures/frontmost-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_FRONTMOST_APP_ID)","    else if (taskType == TASK_SET_AUTO_LAUNCH)").trim(),frontmostLegacy.slice(frontmostLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeFrontmostBridge.inc"),frontmostBridge);
+  await writeFile(join(temp,"NativeFrontmostEntry.inc"),frontmostEntry);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +

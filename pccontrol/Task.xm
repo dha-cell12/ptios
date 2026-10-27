@@ -583,6 +583,62 @@ NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchReq
 }
 // END typed touch task entry.
 
+// BEGIN typed frontmost task entry.
+static NSDictionary *zx_nativeFrontmostResult(int taskType,NSString *value,const TLinkNativeBudgetPtr &budget)
+{
+    NSString *body=[value copy]?:@"(null)";
+    NSString *raw=[NSString stringWithFormat:@"0;;%@\r\n",body];
+    const char *wire=raw.UTF8String;
+    size_t length=0;
+    // Match notifyClient's NUL boundary, admitting the complete response chunk.
+    while(wire&&length<=budget->outputLimit()&&wire[length])++length;
+    if(!budget->outputAllowed(length))return zx_typedTouchStopped(budget);
+    NSCharacterSet *newlines=[NSCharacterSet newlineCharacterSet];
+    const bool compatibility=!wire||![body canBeConvertedToEncoding:NSUTF8StringEncoding]||length<[raw lengthOfBytesUsingEncoding:NSUTF8StringEncoding]||
+        [body rangeOfString:@";;"].location!=NSNotFound||
+        (body.length&&[newlines characterIsMember:[body characterAtIndex:body.length-1]]);
+    NSArray *parts=nil;
+    if(compatibility){
+        // Unusual backend strings retain the old C-string/trim/split behavior.
+        raw=wire?[[NSString alloc] initWithBytes:wire length:length encoding:NSUTF8StringEncoding]:@"0\r\n";
+        if(!raw)return zx_typedTouchFailure(@"invalid_response_encoding");
+        parts=[[raw stringByTrimmingCharactersInSet:newlines] componentsSeparatedByString:@";;"];
+    }else parts=@[@"0",body];
+    NSMutableDictionary *result=[@{@"ok":@(true),@"raw":raw,@"parts":parts} mutableCopy];
+    if(parts.count>1){
+        if(taskType==TASK_FRONTMOST_APP_ID)result[@"bundleId"]=parts[1];
+        else result[@"value"]=@([parts[1] intValue]);
+    }
+    return result;
+}
+static NSDictionary *zx_nativeFrontmostExecute(int taskType,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_FRONTMOST_APP_ID==34&&TASK_FRONTMOST_APP_ORIENTATION==35,"frontmost task classification changed");
+    if(taskType!=TASK_FRONTMOST_APP_ID&&taskType!=TASK_FRONTMOST_APP_ORIENTATION)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(taskType,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *value=taskType==TASK_FRONTMOST_APP_ID?frontMostAppId():frontMostAppOrientation();
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSDictionary *result=zx_nativeFrontmostResult(taskType,value,budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeFrontmost(int taskType,TLinkTaskExecutionContext *context)
+{
+    // Keep the result strongly owned outside the per-query temporary pool.
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeFrontmostExecute(taskType,context);}
+    return result;
+}
+// END typed frontmost task entry.
+
 // BEGIN typed color task entry.
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request,TLinkTaskExecutionContext *context)
 {

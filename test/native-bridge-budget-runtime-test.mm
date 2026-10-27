@@ -45,6 +45,9 @@ static unsigned trackImages=0;static int lastTrackedImage=-1;
 NSDictionary *TLinkExecuteNativeImageCapture(const TLinkNativeImageCaptureRequest &,TLinkTaskExecutionContext *);
 static void imageCaptureLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 static void imageCaptureRollbackLegacyTask(UInt8 *,CFWriteStreamRef);
+NSDictionary *TLinkExecuteNativeFrontmost(int,TLinkTaskExecutionContext *);
+static void frontmostLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_FRONTMOST_APP_ID=34,TASK_FRONTMOST_APP_ORIENTATION=35};
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
@@ -87,6 +90,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"frontmostRuntime"]&&(lastPayload=="34"||lastPayload=="35")){frontmostLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"imageCaptureRuntime"]&&lastPayload.compare(0,5,"481;;")==0){imageCaptureLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"imageCaptureRuntime"]&&lastPayload.compare(0,5,"483;;")==0){imageCaptureRollbackLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"imageOpenRuntime"]&&lastPayload.compare(0,5,"482;;")==0){imageOpenLegacyTask(bytes,length,stream);return;}
@@ -165,9 +169,16 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyFrameImage:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameOCR:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (NSDictionary *)executeRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyFrontmost:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyFrontmost:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-frontmost-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyImageCapture:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     id runtime=self;
@@ -280,6 +291,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeFrameCaptureBridge.inc"
 #include "NativeImageOpenBridge.inc"
 #include "NativeImageCaptureBridge.inc"
+#include "NativeFrontmostBridge.inc"
 #include "NativeFramePickBridge.inc"
 #include "NativeFrameManyBridge.inc"
 #include "NativeFrameSearchBridge.inc"
@@ -846,6 +858,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
     if(!matches)std::fprintf(stderr,"native bridge failure at line %u: expected %s, received %s\n",callerLine,code.UTF8String ?: "(nil)",[[result description] UTF8String] ?: "(nil)");
     assert(matches);
 }
+#include "native-frontmost-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2044,5 +2057,6 @@ int main() { @autoreleasepool {
     typedFrameSearchCases(bridge);
     typedFrameColorsCases(bridge);
     typedFrameMultiCases(bridge);
+    typedFrontmostCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

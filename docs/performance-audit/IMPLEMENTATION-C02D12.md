@@ -1,7 +1,7 @@
 # C02d12 — read-only recovery of a lost accepted-start reply
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `3bc4832`; the user reported the corrected C02d11 build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b23 (`c3f2443`); device qualification pending**.
 Finding: **P0-12, bounded unknown-start recovery**.
 
 ## Result and contract
@@ -35,6 +35,8 @@ Old clients keep unextended start behavior. Old helpers ignore the start extensi
 - New Darwin/Foundation/ARC/ASan/UBSan branches and iOS/device tests cannot execute on this Windows host. No measured CPU, RSS, energy or latency improvement is claimed.
 
 ## Remaining qualification
+
+The user reported build `c3f2443` passed before the next P0-13 adapter slice, `IMPLEMENTATION-C02B23.md`. This records the user report, without independent device/performance qualification on this host.
 
 P0-12 remains partial. Full-budget timeout, no receipt, session replacement, helper restart or cancellation can still leave an unknown outcome. They remain errors without automatically running an in-process fallback or sending start again. The receipt is neither a durable execution journal nor an idempotency guarantee for a caller that explicitly submits another start.
 
