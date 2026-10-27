@@ -222,6 +222,11 @@ NSString* killAppFromRawData(UInt8 *eventData, NSError **error)
 NSString* appStateFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *bundleId = [NSString stringWithFormat:@"%s", eventData];
+    return appStateForBundleIdentifier(bundleId, error);
+}
+
+NSString* appStateForBundleIdentifier(NSString *bundleId, NSError **error)
+{
     if ([bundleId length] == 0)
     {
         if (error)

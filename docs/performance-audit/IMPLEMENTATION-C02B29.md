@@ -1,7 +1,7 @@
 # C02b29 — direct appPid bundle query
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `b2ac272`; the user reported C02b28 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b30 (`dfde59c`); independent device/performance qualification pending**.
 Finding: **P0-13, task-50 app PID adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -29,5 +29,7 @@ New macOS coverage compiles the actual shared app bridge, task entry, Process pa
 Coverage checks one task-50 gate, denied owner exemption, pre/gate/read cancellation and deadline, NS/C++ lookup faults, RAW parser/error parity, immutable mutable-string input and NSError/reply lifetime after pool teardown. The actual protocol-string helper is extracted into the fixture, with dependency checks on every host. Typed appPid must issue zero RAW dispatches and reserve no response-vector capacity. SpringBoard/PID behavior and device/performance acceptance remain pending.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b30. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B30.md.
 
 Build rootfull/roothide variants and compare typed/helper appPid with RAW task 50 for running/missing apps, valid/invalid identifiers and boundary inputs. Verify authority, stop/deadline/output behavior and PID transitions on device. Measure bridge overhead separately from the unchanged lookup. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

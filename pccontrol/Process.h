@@ -10,6 +10,7 @@ int bringAppForeground(NSString *appIdentifier);
 id getFrontMostApplication();
 NSString* killAppFromRawData(UInt8 *eventData, NSError **error);
 NSString* appStateFromRawData(UInt8 *eventData, NSError **error);
+NSString* appStateForBundleIdentifier(NSString *bundleId, NSError **error);
 NSString* appInfoFromRawData(UInt8 *eventData, NSError **error);
 NSString* frontMostAppId(void);
 NSString* frontMostAppOrientation(void);

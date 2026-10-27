@@ -64,6 +64,8 @@ NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *);
 static void frontmostPidLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_FRONTMOST_PID=51};
 NSDictionary *TLinkExecuteNativeAppPid(NSString *,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeAppState(NSString *,TLinkTaskExecutionContext *);
+static void appStateLegacyTask(UInt8 *,CFWriteStreamRef);
 static void appPidLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_APP_PID=50,TASK_APP_STATE=32,TASK_APP_INFO=33,TASK_APP_KILL=31,TASK_APP_PATHS=52,TASK_PROCESS_BRING_FOREGROUND=11};
 static NSString *mode;
@@ -108,6 +110,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"appStateRuntime"]&&lastPayload.compare(0,2,"32")==0){appStateLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appPidRuntime"]&&lastPayload.compare(0,2,"50")==0){appPidLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"frontmostPidRuntime"]&&lastPayload=="51"){frontmostPidLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"indicatorRuntime"]&&lastPayload.compare(0,2,"26")==0){indicatorLegacyTask(bytes,stream);return;}
@@ -930,6 +933,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-indicator-runtime-fixture.inc"
 #include "native-frontmost-pid-runtime-fixture.inc"
 #include "native-app-pid-runtime-fixture.inc"
+#include "native-app-state-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2118,6 +2122,7 @@ int main() { @autoreleasepool {
     typedFrontmostCases(bridge);
     typedFrontmostPidCases(bridge);
     typedAppPidCases(bridge);
+    typedAppStateCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

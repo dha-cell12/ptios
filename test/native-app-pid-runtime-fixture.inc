@@ -1,5 +1,6 @@
 // Actual app PID Process core/RAW parser and shared app bridge; counted PID lookup from the preceding fixture.
 NSString *appPidForBundleIdentifier(NSString *,NSError **);
+NSString *appStateForBundleIdentifier(NSString *,NSError **);
 #include "AppPidCoreUnderTest.inc"
 #define appPidFromRawData legacyAppPidFromRawData
 #include "fixtures/app-pid-core-legacy-v1.inc"
@@ -18,7 +19,7 @@ static void appPidLegacyTask(UInt8 *bytes,CFWriteStreamRef writeStreamRef){
 #pragma push_macro("NO")
 #undef YES
 #undef NO
-#include "NativeAppPidEntry.inc"
+#include "NativeAppQueryEntry.inc"
 #pragma pop_macro("NO")
 #pragma pop_macro("YES")
 static void typedAppPidCases(TLinkInProcessNativeBridge *bridge){

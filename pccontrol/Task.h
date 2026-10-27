@@ -117,6 +117,7 @@
 NSDictionary *TLinkExecuteNativeFrontmost(int taskType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeAppPid(NSString *bundleId,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeAppState(NSString *bundleId,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeHardwareKey(int action,int keyType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeKeepAwake(BOOL enabled,TLinkTaskExecutionContext *context);
