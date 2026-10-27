@@ -263,7 +263,7 @@ try {
   assert.match(appBridge,/TLinkautoJSValidProtocolString\(bundleId\)[\s\S]*TLinkJSNativeMethodAppPid\]\) return \[TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppPid\(bundleId,context\)\]/);
   assert.equal([...appBridge.matchAll(/TLinkExecuteNativeAppPid\(/g)].length,1);
   assert.match(appPidEntry,/input.length>8192-2[\s\S]*byteCount>32\*1024-2[\s\S]*memchr\(bytes,0,byteCount\)/);
-  assert.match(appPidEntry,/taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO&&taskType!=TASK_APP_PATHS&&taskType!=TASK_APP_KILL&&taskType!=TASK_PROCESS_BRING_FOREGROUND[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*appPidForBundleIdentifier\(normalized,&error\)/);
+  assert.match(appPidEntry,/taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO&&taskType!=TASK_APP_PATHS&&taskType!=TASK_APP_KILL&&taskType!=TASK_PROCESS_BRING_FOREGROUND&&taskType!=TASK_OPEN_URL[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*appPidForBundleIdentifier\(normalized,&error\)/);
   assert.equal([...appPidEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
   assert.match(appPidEntry,/canBeConvertedToEncoding:NSASCIIStringEncoding\]\?input:\[NSString stringWithFormat:@"%s",input.UTF8String\]/);
   assert.match(appPidEntry,/zx_nativeStringQueryResult\(state\?value:\(value\?:@"0"\),state\?@"state":@"pid",true,nil,budget,state\?TLinkNativeQueryMetadata::State:TLinkNativeQueryMetadata::Scalar\)/);
@@ -275,7 +275,9 @@ try {
   assert.match(appPidEntry,/zx_nativeAppCall\(TASK_APP_PATHS,bundleId,context\)/);
   assert.match(appPidEntry,/zx_nativeAppCall\(TASK_APP_KILL,bundleId,context\)/);
   assert.match(appPidEntry,/killAppForBundleIdentifier\(normalized,&error\)/);
-  assert.ok(appPidEntry.includes('if(kill||open)return zx_typedTouchReply(@"0\\r\\n",budget)'));
+  assert.ok(appPidEntry.includes('if(kill||open||url)return zx_typedTouchReply(@"0\\r\\n",budget)'));
+  assert.match(appPidEntry,/zx_nativeAppCall\(TASK_OPEN_URL,url,context\)/);
+  assert.match(appPidEntry,/if\(url\)value=openUrlString\(normalized,&error\)/);
   assert.match(appPidEntry,/zx_nativeAppCall\(TASK_PROCESS_BRING_FOREGROUND,bundleId,context\)/);
   assert.match(appPidEntry,/if\(open\)\(void\)bringAppForeground\(normalized\)/);
   assert.match(appPidEntry,/appPathsForBundleIdentifier\(normalized,&error\)/);
@@ -357,6 +359,19 @@ try {
   await writeFile(join(temp,"NativeListBundlesEntry.inc"),bundlesEntry);
   await writeFile(join(temp,"ListBundlesCoreUnderTest.inc"),bundlesCore);
   await writeFile(join(temp,"SafeStringUnderTest.inc"),safeString);
+  const urlBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodOpenUrl])","    else if ([method isEqualToString:TLinkJSNativeMethodConnectivity])");
+  assert.match(urlBridge,/TLinkautoJSValidProtocolString\(url\)[\s\S]*TLinkExecuteNativeOpenUrl\(url,context\)/);
+  assert.doesNotMatch(urlBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const urlCore=processSource.slice(processSource.indexOf('NSString* openUrlFromRawData'));
+  assert.match(urlCore,/return openUrlString\(raw, error\);/);
+  assert.match(urlCore,/if \(\[NSThread isMainThread\]\) \{\s*operation\(\);\s*return;\s*\}\s*dispatch_sync\(dispatch_get_main_queue\(\), operation\)/);
+  const urlLegacy=await read("test/fixtures/open-url-core-legacy-v1.inc");
+  const urlBody='    if ([raw length] == 0)';
+  assert.equal(urlCore.slice(urlCore.indexOf(urlBody)).trim(),urlLegacy.slice(urlLegacy.indexOf(urlBody)).replace('dispatch_sync(dispatch_get_main_queue(), ^{','zx_processPerformOnMain(^{').trim(),'URL parse/fallback/ACK logic is unchanged after extracting the main owner');
+  const urlHandler=await read("test/fixtures/open-url-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_OPEN_URL)","    else if (taskType == TASK_WIFI)").trim(),urlHandler.slice(urlHandler.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeOpenUrlBridge.inc"),urlBridge);
+  await writeFile(join(temp,"OpenUrlCoreUnderTest.inc"),urlCore);
   const pathBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodRootDir]","    else if ([method isEqualToString:TLinkJSNativeMethodInfo])");
   const pathEntry=between(task,"// BEGIN typed path task entry.","// END typed path task entry.");
   assert.match(pathBridge,/TLinkExecuteNativePath\(task,context\)/);
@@ -444,7 +459,7 @@ try {
     between(bridge,"static BOOL TLinkautoJSValidToken","static NSString *TLinkautoJSEncodeGesturePoints") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption") +
     between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}\n${urlBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -479,6 +494,7 @@ try {
   assert.match(runtimeFixture,/#include "native-app-paths-runtime-fixture.inc"\n#include "native-app-kill-runtime-fixture.inc"/,'app-kill fixture requires the app/state entry and controlled application boundary');
   assert.match(runtimeFixture,/#include "native-app-kill-runtime-fixture.inc"\n#include "native-app-open-runtime-fixture.inc"/,'app-open fixture requires the shared app entry first');
   assert.match(runtimeFixture,/#include "native-app-open-runtime-fixture.inc"\n#include "native-list-bundles-runtime-fixture.inc"/,'list-bundles fixture requires the shared formatter and Objective-C runtime first');
+  assert.match(runtimeFixture,/#include "native-list-bundles-runtime-fixture.inc"\n#include "native-open-url-runtime-fixture.inc"/,'open-url fixture requires the shared app entry and Objective-C imports first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

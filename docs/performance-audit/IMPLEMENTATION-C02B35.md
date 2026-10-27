@@ -1,7 +1,7 @@
 # C02b35 — direct listBundles task
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `68cd857`, containing C02b34; the user reported C02b34 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b36 at source baseline `5d4c67a`; independent device/performance qualification pending**.
 Finding: **P0-13, task-53 installed-application-list adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles the actual bridge/entry, Process parser/core and saf
 Coverage includes 160 ordinary cases; class/default-workspace/instance availability; preferred/fallback/no selector and nil preferred result; selector masks/KVC and swallowed exceptions; numeric/missing metadata; empty and Unicode IDs; comma-pair/task delimiters, newline and embedded NUL; JS BOOL normalization; exact/short output; ordinary license/owner denial; pre-cancel/expiry, gate-time stop, cancellation/expiry during opaque work; NS/C++ boundary faults; nil-data/error JSON failures; RAW null/intValue parsing; and NSError/decoded-result pool lifetime. Existing app/frontmost/path fixtures retain shared formatter regression coverage. No real LS inventory is accessed by the new fixture.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b36 (`5d4c67a`). The next source checkpoint is IMPLEMENTATION-C02B36.md; the build report does not replace LS/device/performance or large-inventory memory qualification.
 
 The user reported C02b34 build success at baseline `68cd857`; that report does not qualify the new task-53 path. Build rootfull/roothide variants and compare typed/helper listBundles with RAW task 53 for empty/ordinary/large inventories, both modes, supported selector/KVC layouts, missing workspace and license denial/revocation. Verify exact plain-list replies, decoded JSON schema/items, wire caps and caller stop/deadline. Confirm metadata survives pool teardown. Measure bridge overhead separately from LS enumeration and serialization; qualify large-inventory memory before considering removal of the remaining metadata codec/copy. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

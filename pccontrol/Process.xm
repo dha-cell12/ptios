@@ -482,6 +482,20 @@ NSString* listBundlesWithInfo(BOOL withInfo, NSError **error)
 NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *raw = [NSString stringWithFormat:@"%s", eventData ?: (UInt8*)""];
+    return openUrlString(raw, error);
+}
+
+static void zx_processPerformOnMain(dispatch_block_t operation)
+{
+    if ([NSThread isMainThread]) {
+        operation();
+        return;
+    }
+    dispatch_sync(dispatch_get_main_queue(), operation);
+}
+
+NSString* openUrlString(NSString *raw, NSError **error)
+{
     if ([raw length] == 0) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing URL.\r\n"}];
@@ -505,7 +519,7 @@ NSString* openUrlFromRawData(UInt8 *eventData, NSError **error)
     }
 
     __block BOOL started = NO;
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    zx_processPerformOnMain(^{
         UIApplication *app = [UIApplication sharedApplication];
         if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
             started = YES;

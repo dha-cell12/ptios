@@ -29,5 +29,6 @@ NSString* listBundlesWithInfo(BOOL withInfo, NSError **error);
 
 // Open URL / URL scheme
 NSString* openUrlFromRawData(UInt8 *eventData, NSError **error);
+NSString* openUrlString(NSString *raw, NSError **error);
 
 #endif

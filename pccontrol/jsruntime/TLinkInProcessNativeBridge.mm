@@ -994,7 +994,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
     else if ([method isEqualToString:TLinkJSNativeMethodOpenUrl]) {
         NSString *url = [args count] > 0 ? [args objectAtIndex:0] : @"";
         if (!TLinkautoJSValidProtocolString(url)) return [TLinkJSNativeResponse responseWithError:@"openUrl(url) requires a valid URL string" code:@-1];
-        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_OPEN_URL, url] context:context]];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeOpenUrl(url,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodConnectivity]) {
         int task = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;

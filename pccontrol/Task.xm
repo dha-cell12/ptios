@@ -679,7 +679,7 @@ NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *context)
 // BEGIN typed app task entry.
 static NSDictionary *zx_nativeAppExecute(int taskType,NSString *bundleId,TLinkTaskExecutionContext *context)
 {
-    if(taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO&&taskType!=TASK_APP_PATHS&&taskType!=TASK_APP_KILL&&taskType!=TASK_PROCESS_BRING_FOREGROUND)return zx_typedTouchFailure(@"invalid_payload");
+    if(taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO&&taskType!=TASK_APP_PATHS&&taskType!=TASK_APP_KILL&&taskType!=TASK_PROCESS_BRING_FOREGROUND&&taskType!=TASK_OPEN_URL)return zx_typedTouchFailure(@"invalid_payload");
     TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
     auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
     @try {try{
@@ -700,15 +700,17 @@ static NSDictionary *zx_nativeAppExecute(int taskType,NSString *bundleId,TLinkTa
         const bool paths=taskType==TASK_APP_PATHS;
         const bool kill=taskType==TASK_APP_KILL;
         const bool open=taskType==TASK_PROCESS_BRING_FOREGROUND;
+        const bool url=taskType==TASK_OPEN_URL;
         NSError *error=nil;NSString *value=nil;
-        if(open)(void)bringAppForeground(normalized);
+        if(url)value=openUrlString(normalized,&error);
+        else if(open)(void)bringAppForeground(normalized);
         else if(kill)value=killAppForBundleIdentifier(normalized,&error);
         else if(info)value=appInfoForBundleIdentifier(normalized,&error);
         else if(paths)value=appPathsForBundleIdentifier(normalized,&error);
         else value=state?appStateForBundleIdentifier(normalized,&error):appPidForBundleIdentifier(normalized,&error);
         if(budget->stopped())return zx_typedTouchStopped(budget);
         if(error)return zx_typedTouchReply(error.localizedDescription,budget);
-        if(kill||open)return zx_typedTouchReply(@"0\r\n",budget);
+        if(kill||open||url)return zx_typedTouchReply(@"0\r\n",budget);
         NSDictionary *result=nil;
         if(info)result=zx_nativeStringQueryResult(value,@"bundleId",false,nil,budget,TLinkNativeQueryMetadata::AppInfo);
         else if(paths)result=zx_nativeStringQueryResult(value?:@";;",@"bundlePath",false,nil,budget,TLinkNativeQueryMetadata::AppPaths);
@@ -747,6 +749,10 @@ NSDictionary *TLinkExecuteNativeKillApp(NSString *bundleId,TLinkTaskExecutionCon
 NSDictionary *TLinkExecuteNativeOpenApp(NSString *bundleId,TLinkTaskExecutionContext *context)
 {
     return zx_nativeAppCall(TASK_PROCESS_BRING_FOREGROUND,bundleId,context);
+}
+NSDictionary *TLinkExecuteNativeOpenUrl(NSString *url,TLinkTaskExecutionContext *context)
+{
+    return zx_nativeAppCall(TASK_OPEN_URL,url,context);
 }
 // END typed app task entry.
 
