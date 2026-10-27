@@ -1,7 +1,7 @@
 # C02d11 — bounded persistent helper status/wait/ACK channels
 
 Date: 2026-10-26 (Asia/Bangkok). Baseline: `f2c951e`; the user reported C02d10 built successfully.
-Status: **source implemented; new Darwin/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **corrected build reported passed by the user before C02d12 (`3bc4832`); device qualification pending**.
 Finding: **P0-12 fresh-socket churn in helper status/native-response traffic**.
 
 ## Negotiation and runtime adoption
@@ -47,5 +47,7 @@ The controlled fixture now uses the production ACK payload shape, including the 
 Focused transport, identity, client-admission and change-wait runners, plus standards-conforming assert preprocessing, pass on Windows. The corrected Foundation/ARC/sanitizer case still requires macOS CI; these local checks do not establish that the reported Darwin failure has passed there.
 
 ## Remaining work
+
+The user reported corrected build `3bc4832` passed before C02d12. Bounded accepted-start receipt lookup continues in `IMPLEMENTATION-C02D12.md`; this records the user report without independent device/performance qualification on this host.
 
 P0-12 remains partial pending device/performance acceptance and unknown-start outcome recovery. Client cancellation still uses the bounded poll slices introduced in C02d7; larger event/cancellation transport changes require separate measurement and design. Qualify long native calls that outlive idle reuse, dropped ACK/status replies, slot contention, helper restart, stop in both wait phases, sleep/wake and mixed client/helper versions. Remaining P0-13 adapters and P1-40 invalidation continue separately. TouchPOC and production TrollStore execution source are unchanged; both build workflows run the shared suites. No measured CPU, energy, RSS or latency improvement is claimed.
