@@ -342,8 +342,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         int fontSize = [options[@"fontSize"] respondsToSelector:@selector(intValue)] ? [options[@"fontSize"] intValue] : 14;
         if (type < 0 || type > 4) type = 3;
         if (duration <= 0 && type != 0) duration = 2;
-        NSString *payload = [NSString stringWithFormat:@"%d;;%@;;%d;;%d;;%d", type, safeMessage, duration, position, fontSize];
-        NSDictionary *res = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_SHOW_TOAST, payload] context:context];
+        NSDictionary *res = TLinkExecuteNativeToast(type,safeMessage,duration,position,fontSize,context);
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodTap]) {

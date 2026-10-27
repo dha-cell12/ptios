@@ -1,7 +1,7 @@
 # C02b41 — direct clipboard text adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `b6f5dae`, containing C02b40; the user reported C02b40 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b42 at source baseline `df1283d`; independent device/performance qualification pending**.
 Finding: **P0-13, keyboard task-24 kinds 6/7**. Other keyboard kinds, other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -29,5 +29,7 @@ New macOS coverage compiles the actual clipboard primitives and full RAW parser,
 Coverage includes 160 ordinary cases; nil/missing pasteboard and getter rereads; missing/empty/NSNull SET content; Unicode, delimiter, newline and NUL inputs/results; numeric kind normalization and non-string content descriptions; exact/over-limit ASCII/Unicode ingress and exact/short output; complete admission of ignored inputs/suffixes; ordinary authority/owner denial and initial/gate/provider stop/deadline; faults before/after fake SET effects; conversion-time cancellation, mutable input snapshots and retained results; RAW image-validation/notification fallbacks and full RAW parser compatibility after primitive extraction. Image file loading remains outside this checkpoint.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b42; source baseline is `df1283d`. The next source checkpoint is IMPLEMENTATION-C02B42.md. This build report does not replace UIPasteboard/thread/privacy/device/performance qualification.
 
 The user reported C02b40 build success at b6f5dae; that does not qualify the new text clipboard paths. Build rootfull/roothide and compare typed/helper keyboard 6/7 with RAW task 24 for empty/nonempty clipboard, Unicode/delimiters/newlines, missing/empty SET content, exact limits, ordinary license denial/revocation and caller stop/output failures. Qualify UIPasteboard thread/privacy behavior and actual cross-app read/write effects. Recheck keyboard notifications and clipboard image RAW routes. Measure bridge overhead separately from pasteboard access. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

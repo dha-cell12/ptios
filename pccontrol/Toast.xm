@@ -7,9 +7,9 @@ static int windowHeight = 200;
 static NSDictionary* backgroundColorDict = @{@"4":[UIColor colorWithRed:0.282f green:0.78f blue:0.45f alpha:1.0f], @"1":[UIColor colorWithRed:0.945f green:0.275f blue:0.408f alpha:1.0f],@"2":[UIColor colorWithRed:1.0f green:0.867f blue:0.341f alpha:1.0f],@"3":[UIColor whiteColor]};
 static NSDictionary* fontColorDict = @{@"4":[UIColor whiteColor], @"1":[UIColor whiteColor],@"2":[UIColor colorWithRed:0.0f green:0.0f blue:0.0f alpha:0.7f],@"3":[UIColor colorWithRed:0.0f green:0.0f blue:0.0f alpha:0.7f]};
 static UIWindow *_window;
-void showToastFromRawData(UInt8 *eventData, NSError **error)
+// BEGIN toast task core.
+static void zx_parseToastFromRawData(UInt8 *eventData, NSError **error)
 {
-    @autoreleasepool{
         NSArray *data = [[NSString stringWithFormat:@"%s", eventData] componentsSeparatedByString:@";;"];
         if ([data count] < 3)
         {
@@ -29,6 +29,11 @@ void showToastFromRawData(UInt8 *eventData, NSError **error)
             fontSize = [data[4] intValue];
         }
 
+        TLinkShowToast(type,data[1],duration,position,fontSize,error);
+}
+
+void TLinkShowToast(int type,NSString *content,int duration,int position,int fontSize,NSError **error)
+{
         if (type > 4 || type < 0)
         {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Unknown type. The type ranges from 0-3. Please refer to the documentation on Github.\r\n"}];
@@ -43,10 +48,21 @@ void showToastFromRawData(UInt8 *eventData, NSError **error)
             if (type == 0)
                 [Toast hideToast];
             else
-                [Toast showToastWithContent:data[1] type:type duration:duration position:position fontSize:fontSize];
+                [Toast showToastWithContent:content type:type duration:duration position:position fontSize:fontSize];
         });
-    }
 }
+
+void showToastFromRawData(UInt8 *eventData, NSError **error)
+{
+    NSError *retainedError=nil;
+    @autoreleasepool{
+        NSError *localError=nil;
+        zx_parseToastFromRawData(eventData,&localError);
+        retainedError=localError;
+    }
+    if(retainedError&&error)*error=retainedError;
+}
+// END toast task core.
 
 @implementation Toast
 {

@@ -20,6 +20,7 @@
 #endif
 
 #include <spawn.h>
+#include <cstdio>
 #include <poll.h>
 #include "Touch.h"
 #include "../shared/TLinkRawPlayback.h"
@@ -880,6 +881,40 @@ NSDictionary *TLinkExecuteNativeClipboardText(int kind,id content,TLinkTaskExecu
     return result;
 }
 // END typed clipboard text task entry.
+
+// BEGIN typed toast task entry.
+static NSDictionary *zx_nativeToastExecute(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_SHOW_TOAST==22,"toast task classification changed");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(![message isKindOfClass:[NSString class]])return zx_typedTouchFailure(@"invalid_payload");
+        NSString *input=[message copy];char numbers[64];
+        const int units=std::snprintf(numbers,sizeof(numbers),"%d%d%d%d",type,duration,position,fontSize);
+        const NSUInteger prefix=10+NSUInteger(units); // task 22 and four ;; separators
+        if(input.length>8192-prefix)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger byteCount=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(!bytes||byteCount>32*1024-prefix||memchr(bytes,0,byteCount))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_SHOW_TOAST,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        // The RAW parser used %s; retain that conversion without rebuilding its request.
+        NSString *normalized=[input canBeConvertedToEncoding:NSASCIIStringEncoding]?input:[NSString stringWithFormat:@"%s",bytes];
+        NSError *error=nil;TLinkShowToast(type,normalized,duration,position,fontSize,&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return zx_typedTouchReply(error?error.localizedDescription:@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeToast(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeToastExecute(type,message,duration,position,fontSize,context);}
+    return result;
+}
+// END typed toast task entry.
 
 // BEGIN typed radio task entry.
 static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context)

@@ -559,6 +559,38 @@ try {
   await writeFile(join(temp,"NativeClipboardTextBridge.inc"),clipboardBridge);
   await writeFile(join(temp,"NativeClipboardTextEntry.inc"),clipboardEntry);
   await writeFile(join(temp,"ClipboardTextCoreUnderTest.inc"),clipboardCore);
+  const toastSource=await read('pccontrol/Toast.xm');
+  const toastCore=between(toastSource,'// BEGIN toast task core.','// END toast task core.');
+  const toastLegacyCore=await frozenBody('test/fixtures/toast-core-legacy-v1.inc');
+  const toastParser=between(toastCore,'static void zx_parseToastFromRawData','void TLinkShowToast');
+  const expectedToastParser=toastLegacyCore.slice(0,toastLegacyCore.indexOf('        if (type > 4')).replace('void showToastFromRawData','static void zx_parseToastFromRawData').replace('    @autoreleasepool{\n','')+'        TLinkShowToast(type,data[1],duration,position,fontSize,error);\n}\n';
+  assert.equal(toastParser.trim(),expectedToastParser.trim());
+  assert.equal(between(toastCore,'        if (type > 4','        dispatch_async'),between(toastLegacyCore,'        if (type > 4','        dispatch_async'));
+  const toastNumeric=between(toastCore,'void TLinkShowToast','void showToastFromRawData');
+  const toastDispatch=toastNumeric.slice(toastNumeric.indexOf('        dispatch_async')).replace(/\n\}\s*$/,'').trim();
+  assert.equal(toastDispatch,between(toastLegacyCore,'        dispatch_async','    }\n}').replace('data[1]','content').trim());
+  assert.ok((await read('pccontrol/Toast.h')).includes('void TLinkShowToast(int type,NSString *content,int duration,int position,int fontSize,NSError **error);'));
+  assert.equal(between(task,'    else if (taskType == TASK_SHOW_TOAST)','    else if (taskType == TASK_COLOR_PICKER)').trim(),await frozenBody('test/fixtures/toast-handler-legacy-v1.inc'));
+  const toastBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodToast])','    else if ([method isEqualToString:TLinkJSNativeMethodTap])');
+  const toastLegacyBridge=await frozenBody('test/fixtures/native-toast-legacy-v1.inc');
+  assert.equal(toastBridge.slice(0,toastBridge.indexOf('        NSDictionary *res')).trim(),toastLegacyBridge.slice(0,toastLegacyBridge.indexOf('        NSString *payload')).trim());
+  assert.match(toastBridge,/TLinkExecuteNativeToast\(type,safeMessage,duration,position,fontSize,context\)/);
+  assert.doesNotMatch(toastBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const toastEntry=between(task,'// BEGIN typed toast task entry.','// END typed toast task entry.');
+  assert.match(toastEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_SHOW_TOAST,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkShowToast\(type,normalized,duration,position,fontSize,&error\)/);
+  assert.equal([...toastEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(toastEntry,/processTaskWithContext|CFWriteStream|FromRawData|componentsSeparatedByString|TLinkC01|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,'NativeToastBridge.inc'),toastBridge);
+  await writeFile(join(temp,'NativeToastEntry.inc'),toastEntry);
+  await writeFile(join(temp,'ToastCoreUnderTest.inc'),toastCore);
+  assert.match(toastCore,/NSError \*retainedError=nil;\s*@autoreleasepool\{[\s\S]*zx_parseToastFromRawData\(eventData,&localError\);\s*retainedError=localError;\s*\}\s*if\(retainedError&&error\)\*error=retainedError;/);
+  // Keep the frozen source intact. Its inner pool can destroy an autoreleasing
+  // error before ARC writeback; run only that value/effect oracle in the caller pool.
+  assert.equal([...toastLegacyCore.matchAll(/@autoreleasepool/g)].length,1);
+  await writeFile(join(temp,'ToastLegacyCoreUnderTest.inc'),toastLegacyCore.replace('@autoreleasepool',''));
+  const toastFixture=await read('test/native-toast-runtime-fixture.inc');
+  assert.match(toastFixture,/void TLinkShowToast\(int,NSString \*,int,int,int,NSError \*\*\);[\s\S]*#include "ToastCoreUnderTest.inc"/,'RAW parser needs the numeric helper declaration before its body');
+  assert.ok(toastFixture.includes('#include "ToastLegacyCoreUnderTest.inc"'),'old toast value oracle must not repeat its unsafe NSError pool writeback');
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -621,6 +653,7 @@ try {
   assert.match(runtimeFixture,/#include "native-aux-radio-runtime-fixture.inc"\n#include "native-ocr-languages-runtime-fixture.inc"/,'OCR languages fixture requires the bounded query formatter first');
   assert.ok(runtimeFixture.includes('#import "../pccontrol/TesseractOCRTask.h"'),'language entry requires its production backend declaration');
   assert.match(runtimeFixture,/#include "native-ocr-languages-runtime-fixture.inc"\n#include "native-clipboard-text-runtime-fixture.inc"/,'clipboard text fixture requires the bounded query formatter first');
+  assert.match(runtimeFixture,/#include "native-clipboard-text-runtime-fixture.inc"\n#include "native-toast-runtime-fixture.inc"/,'toast fixture requires shared entry/reply helpers first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
