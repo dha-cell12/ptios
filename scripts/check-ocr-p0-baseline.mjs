@@ -113,7 +113,10 @@ for (const [key, value] of Object.entries(fixture.task97.rootfullRequiredAdditiv
 assert.match(trollScriptBridge, /TLinkScriptTaskResult\(weakSession, 91, body\)/);
 assert.match(rootfullVisionTask, /taskType == TASK_TEXT_RECOGNIZER/);
 assert.match(rootfullTesseractTask, /tesseract\.maximumRecognitionTime = 3\.0/);
-assert.match(rootfullJSBridge, /TASK_OCR_TESSERACT_REGION/);
+assert.match(rootfullJSBridge, /TLinkJSNativeMethodOcrLanguages[\s\S]*TLinkExecuteNativeOCRLanguages\(context\)/);
+assert.match(rootfullJSBridge, /TLinkJSNativeMethodOcrFrame[\s\S]*TLinkExecuteNativeFrameOCR\(input,context\)/);
+assert.match(rootfullVisionTask, /TLinkExecuteNativeOCRLanguages\(TLinkTaskExecutionContext \*context\)/);
+assert.match(rootfullVisionTask, /TLinkRootfullLicenseTaskAllowed\(TASK_OCR_TESSERACT_REGION,&denial\)/);
 assert.match(pythonClient, /single_string_info = raw_info\.split\(",,"\)/);
 assert.match(collector, /\[switch\]\$RunVision/);
 assert.match(collector, /\$visionTask = "271;;\$rect/);

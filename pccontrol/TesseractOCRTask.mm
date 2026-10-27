@@ -93,6 +93,11 @@ static NSString *zx_tessCheckLangs(void)
     return [NSString stringWithFormat:@"check_langs;;%@", zx_tessBase64([langs componentsJoinedByString:@","])];
 }
 
+NSString *TLinkTesseractOCRLanguages(void)
+{
+    return zx_tessCheckLangs();
+}
+
 #if ENABLE_TESSERACT_OCR
 static dispatch_queue_t zx_tessQueue(void)
 {

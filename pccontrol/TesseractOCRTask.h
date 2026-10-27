@@ -19,6 +19,7 @@ bool recognizeFrameWithTesseract(const TLinkNativeFrameOCRRequest &request,TLink
 #endif
 
 NSDictionary *TLinkTesseractOCRPerformance(void);
+NSString *TLinkTesseractOCRLanguages(void);
 NSString *handleTesseractOCRTaskFromRawData(UInt8 *eventData, NSError **error);
 
 #endif

@@ -1,7 +1,7 @@
 # C02b39 — direct airplane and cellular state adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `4c7e249`, containing C02b38; the user reported C02b38 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b40 at source baseline `86c0974`; independent device/performance qualification pending**.
 Finding: **P0-13, task-57/58 connectivity adapters**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles actual Airplane/Cellular parsers and numeric cores u
 Coverage includes 160 ordinary cases; primary and alternate class/singleton availability; nil sharedInstance without same-class fallback; Airplane controller fallback versus unavailable selector behavior; Cellular absence of alternate lookup; setter/getter masks and false getters; applied/unapplied setters; query/BOOL normalization and metadata key collisions; exact/short output; ordinary license/owner denial; pre-cancel/expiry, gate-time stop and conversion-time cancellation; stop/deadline during accepted provider work; NS/C++ faults before/after effects and during alternate lookup; permissive RAW parsing/errors; and NSError/result pool lifetime. Wi-Fi/Bluetooth fixtures retain their shared-entry regression coverage; invalid-task and non-radio RAW fallback cases now use task numbers outside 55..58.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b40; source baseline is `86c0974`. The next source checkpoint is IMPLEMENTATION-C02B40.md. The build report does not replace controller/radio/device/performance qualification.
 
 The user reported C02b38 build success at baseline `4c7e249`; that report does not qualify the new task-57/58 paths. Build rootfull/roothide variants and compare typed/helper Airplane/Cellular query/set with RAW tasks 57/58 across available controller layouts, unsupported selectors and denied/unchanged state. Verify controller fallback order, exact replies/metadata, license denial/revocation, output limits and caller stop/deadline. Qualify manager thread requirements and actual hardware state without automatically retrying uncertain changes. Recheck Wi-Fi/Bluetooth and VPN/non-radio RAW routes. Measure bridge overhead separately from private-controller work. Continue remaining P0-13 adapters, metadata copies/codecs, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

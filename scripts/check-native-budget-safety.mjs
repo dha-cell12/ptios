@@ -509,6 +509,31 @@ try {
   await writeFile(join(temp,"IndicatorNativeCoreUnderTest.inc"),indicatorCore);
   await writeFile(join(temp,"IndicatorNativeStateUnderTest.inc"),between(indicator,"enum TLinkIndicatorState {","static uintptr_t indicatorGeneration"));
   await writeFile(join(temp,"IndicatorNativeColorUnderTest.inc"),between(indicator,"static NSError *zx_indicatorError(","static NSError *zx_indicatorLoadColor("));
+  const languagesBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodOcrLanguages])","    else if ([method isEqualToString:TLinkJSNativeMethodOcrFrame])");
+  const languagesEntry=between(task,"// BEGIN typed OCR languages task entry.","// END typed OCR languages task entry.");
+  const languagesCore=between(tess,"static NSString *zx_tessCheckLangs","#if ENABLE_TESSERACT_OCR");
+  const languagesHelpers=between(tess,"static NSString *zx_tessBase64","static NSString *zx_tessDecodeBase64")+between(tess,"static NSError *zx_tessError","// BEGIN structured frame OCR result.");
+  const languagesParser=between(tess,"NSString *handleTesseractOCRTaskFromRawData","bool recognizeFrameWithTesseract");
+  const frozenBody=async path=>{const source=await read(path);return source.slice(source.indexOf('\n')+1).trim();};
+  assert.equal(between(languagesCore,"static NSString *zx_tessCheckLangs","NSString *TLinkTesseractOCRLanguages").trim(),await frozenBody("test/fixtures/ocr-languages-core-legacy-v1.inc"));
+  assert.equal(languagesHelpers.trim(),await frozenBody("test/fixtures/ocr-languages-helpers-legacy-v1.inc"));
+  assert.equal(languagesParser.trim(),await frozenBody("test/fixtures/ocr-languages-parser-legacy-v1.inc"));
+  assert.equal(between(task,"    else if (taskType == TASK_OCR_TESSERACT_REGION)","    else if (taskType == TASK_FIND_IMAGE)").trim(),await frozenBody("test/fixtures/ocr-languages-handler-legacy-v1.inc"));
+  const languagesLegacyBridge=await read("test/fixtures/native-ocr-languages-legacy-v1.inc");
+  assert.equal(languagesBridge.slice(languagesBridge.indexOf('        NSArray *parts')).trim(),languagesLegacyBridge.slice(languagesLegacyBridge.indexOf('        NSArray *parts')).trim());
+  assert.match(languagesBridge,/TLinkExecuteNativeOCRLanguages\(context\)/);
+  assert.doesNotMatch(languagesBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  assert.match(languagesEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*TLinkC01TaskBudget[\s\S]*TLinkNativeStopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_OCR_TESSERACT_REGION,&denial\)[\s\S]*TLinkTesseractOCRLanguages\(\)[\s\S]*replyBudget->stopped\(\)/);
+  assert.equal([...languagesEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.equal([...languagesEntry.matchAll(/TLinkNativeStopped\(/g)].length,1,'accepted check_langs keeps its opaque listing behavior after local C01 expiry');
+  assert.ok(languagesEntry.includes('zx_nativeStringQueryResult(body?:@"",nil,false,nil,replyBudget,TLinkNativeQueryMetadata::Reply)'));
+  assert.doesNotMatch(languagesEntry,/processTaskWithContext|CFWriteStream|FromRawData|\b(?:YES|NO)\b/);
+  assert.match(languagesCore,/NSString \*TLinkTesseractOCRLanguages\(void\)\s*\{\s*return zx_tessCheckLangs\(\);\s*\}/);
+  await writeFile(join(temp,"NativeOCRLanguagesBridge.inc"),languagesBridge);
+  await writeFile(join(temp,"NativeOCRLanguagesEntry.inc"),languagesEntry);
+  await writeFile(join(temp,"OCRLanguagesHelpersUnderTest.inc"),languagesHelpers);
+  await writeFile(join(temp,"OCRLanguagesCoreUnderTest.inc"),between(tess,"static NSString *const kZXTessdataRoot","static NSArray<NSString *> *zx_tessSplitEventData")+languagesCore);
+  await writeFile(join(temp,"OCRLanguagesParserUnderTest.inc"),languagesParser);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -523,7 +548,7 @@ try {
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption") +
     between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult") +
     between(bridge,"static NSDictionary *TLinkautoJSStateResult","static NSString *TLinkNativeStopCode");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}\n${urlBridge}\n${deviceBridge}\n${radioBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}\n${urlBridge}\n${deviceBridge}\n${radioBridge}\n${languagesBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -566,6 +591,8 @@ try {
   assert.match(runtimeFixture,/#include "native-device-info-runtime-fixture.inc"\n#include "native-radio-runtime-fixture.inc"/,'radio fixture requires the shared formatter and Objective-C runtime first');
   assert.ok(runtimeFixture.includes('#import "../pccontrol/Connectivity.h"'),'radio numeric cores require their production forward declarations');
   assert.match(runtimeFixture,/#include "native-radio-runtime-fixture.inc"\n#include "native-aux-radio-runtime-fixture.inc"/,'aux-radio fixture requires the actual and frozen radio helpers first');
+  assert.match(runtimeFixture,/#include "native-aux-radio-runtime-fixture.inc"\n#include "native-ocr-languages-runtime-fixture.inc"/,'OCR languages fixture requires the bounded query formatter first');
+  assert.ok(runtimeFixture.includes('#import "../pccontrol/TesseractOCRTask.h"'),'language entry requires its production backend declaration');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

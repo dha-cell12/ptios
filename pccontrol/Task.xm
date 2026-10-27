@@ -812,6 +812,34 @@ NSDictionary *TLinkExecuteNativeDeviceInfo(int selector,TLinkTaskExecutionContex
 }
 // END typed device info task entry.
 
+// BEGIN typed OCR languages task entry.
+static NSDictionary *zx_nativeOCRLanguagesExecute(TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto replyBudget=[call nativeBudget];TLinkNativeBudgetScope callScope(replyBudget);
+    static_assert(TASK_OCR_TESSERACT_REGION==91,"OCR languages task classification changed");
+    const uint8_t task[]={'9','1'};TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget(task,sizeof(task),replyBudget));
+    @try {try{
+        if(TLinkNativeStopped())return zx_typedTouchReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_OCR_TESSERACT_REGION,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",replyBudget);
+        // Preserve the accepted check_langs path: opaque directory work is not preempted
+        // by a local C01 expiry. The caller's cancellation/deadline/output still governs the reply.
+        NSString *body=TLinkTesseractOCRLanguages();
+        NSDictionary *result=zx_nativeStringQueryResult(body?:@"",nil,false,nil,replyBudget,TLinkNativeQueryMetadata::Reply);
+        if(replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeOCRLanguages(TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeOCRLanguagesExecute(context);}
+    return result;
+}
+// END typed OCR languages task entry.
+
 // BEGIN typed radio task entry.
 static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context)
 {
