@@ -20,6 +20,7 @@
 @property(nonatomic,copy) void (^onWait)(void);
 @property(nonatomic,copy) void (^onPolicy)(void);
 @property(nonatomic,copy) void (^onNative)(void);
+@property(nonatomic,copy) void (^onStart)(void);
 @property(nonatomic,assign) unsigned starts;
 @property(nonatomic,assign) unsigned statusCalls;
 @property(nonatomic,assign) unsigned waits;
@@ -44,6 +45,8 @@ static Script *script;
 - (void)setConnectionReuseEnabled:(BOOL)enabled {assert(script.starts==1);script.reuseEnabled=enabled;}
 - (NSDictionary *)startScriptAtPath:(NSString *)path bundlePath:(NSString *)bundle manifest:(NSDictionary *)manifest timeoutMs:(int)timeout {
     (void)path;(void)bundle;(void)manifest;assert(timeout>0&&timeout<=1000);++script.starts;
+    assert(self.cancellationCheck);if(script.onStart)script.onStart();
+    if(self.cancellationCheck())return @{@"ok":@(false),@"error":@"cancelled"};
     return script.startError ?: @{@"ok":@(true),@"response":@{@"helperInstanceId":@"helper",@"sessionId":@"session",@"payload":@{@"runId":@"run"}}};
 }
 - (NSDictionary *)statusForSessionId:(NSString *)session timeoutMs:(int)timeout {
@@ -167,6 +170,10 @@ static void cancellationCases(){
     assert(cppCaught&&script.stops==1);cleaned(runtime,ctx);
 }
 static void startCases(){
+    script=[[Script alloc] init];RuntimeFixture *runtime=[[RuntimeFixture alloc] init];TLinkTaskExecutionContext *ctx=context();NSError *error=nil;
+    script.onStart=^{[ctx.cancellationToken cancel];};
+    assert(!run(runtime,ctx,@{},&error)&&script.starts==1&&script.statusCalls==0&&!runtime->_helperRunning);
+    assert(![error.userInfo[@"helperFallbackSafe"] boolValue]);
     for(NSString *code in @[@"helper_busy",@"connect_failed",@"socket_setup_failed",@"io_timeout",@"read_failed",@"write_failed",@"helper_instance_mismatch",@"license_required",@"frame_too_large",@"serialize_failed"]){
         script=[[Script alloc] init];script.startError=failure(code);RuntimeFixture *runtime=[[RuntimeFixture alloc] init];NSError *error=nil;
         assert(!run(runtime,context(),@{},&error));const bool safe=[code isEqual:@"helper_busy"]||[code isEqual:@"connect_failed"]||[code isEqual:@"socket_setup_failed"];

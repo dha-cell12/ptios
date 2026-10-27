@@ -965,6 +965,9 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
         return false;
     }
     TLinkJSHelperClient *helper = [[TLinkJSHelperClient alloc] init];
+    TLinkautoJSCancelState *startCancel=_cancelState;
+    TLinkCancellationToken *startToken=context.cancellationToken;
+    [helper setCancellationCheck:^BOOL{return startCancel->aborted.load(std::memory_order_acquire)||[startToken isCancelled]||(parentBudget&&parentBudget->stopped());}];
     NSDictionary *start = [helper startScriptAtPath:scriptPath bundlePath:bundlePath manifest:manifest ?: @{} timeoutMs:startBudget];
     if (![start[@"ok"] boolValue]) {
         NSString *message = [start[@"error"] isKindOfClass:[NSDictionary class]] ? start[@"error"][@"message"] : [start[@"error"] description];

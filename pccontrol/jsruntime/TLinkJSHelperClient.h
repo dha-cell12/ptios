@@ -9,6 +9,8 @@ typedef BOOL (^TLinkJSHelperCancellationCheck)(void);
 - (void)setConnectionReuseEnabled:(BOOL)enabled;
 - (NSDictionary *)handshakeWithTimeoutMs:(int)timeoutMs;
 - (NSDictionary *)statusWithTimeoutMs:(int)timeoutMs;
+// Unknown replies may trigger one read-only accepted-start lookup within this
+// call's original budget. The start command itself is never resent.
 - (NSDictionary *)startScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest timeoutMs:(int)timeoutMs;
 - (NSDictionary *)statusForSessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs;
 // Wake hint only: read a fresh status and validate ownership before native dispatch.

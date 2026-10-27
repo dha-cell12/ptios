@@ -5,6 +5,7 @@
 #include "../../shared/TLinkHelperRequestDeadline.h"
 #include "../../shared/TLinkHelperChangeWait.h"
 #include "../../shared/TLinkHelperConnection.h"
+#include "../../shared/TLinkHelperStartReceipt.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -21,6 +22,7 @@ static NSString * const kTLinkJSHelperSocketPath = @"/var/mobile/Library/TLinkau
 }
 @property(nonatomic, copy) NSString *boundHelperInstanceId;
 @property(nonatomic, copy) TLinkJSHelperCancellationCheck cancellationCheck;
+- (NSDictionary *)requestCommand:(NSString *)command payload:(NSDictionary *)payload sessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs requestId:(NSString *)requestId untilMs:(uint64_t)untilMs;
 @end
 
 struct TLinkJSHelperCancellationContext {
@@ -34,15 +36,21 @@ struct TLinkJSHelperCancellationContext {
 
 - (NSDictionary *)requestCommand:(NSString *)command payload:(NSDictionary *)payload sessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs
 {
+    return [self requestCommand:command payload:payload sessionId:sessionId timeoutMs:timeoutMs requestId:[[NSUUID UUID] UUIDString] untilMs:0];
+}
+
+- (NSDictionary *)requestCommand:(NSString *)command payload:(NSDictionary *)payload sessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs requestId:(NSString *)requestId untilMs:(uint64_t)untilMs
+{
     using namespace TLinkHelperIO;
     const uint64_t issuedAt = nowMs();
-    const Deadline deadline(issuedAt, timeoutMs);
+    Deadline deadline(issuedAt, timeoutMs);
     if (!deadline.valid) {_connection.close();return TLinkHelperIOFailure({Code::InvalidTimeout});}
+    if(untilMs)deadline.end=std::min(deadline.end,untilMs);
+    if(!deadline.remaining(issuedAt)){_connection.close();return TLinkHelperIOFailure({Code::Timeout});}
     TLinkJSHelperCancellationContext cancellation{[self.cancellationCheck copy]};
     if (cancellation.cancelled(&cancellation)) {_connection.close();return @{@"ok":@(false),@"error":@"cancelled"};}
     CancellableOps cancellable(posixOps(),&cancellation,TLinkJSHelperCancellationContext::cancelled);
     const Ops ops=cancellation.check?cancellable.ops():posixOps();
-    NSString *requestId = [[NSUUID UUID] UUIDString];
     const auto helperBytes=TLinkHelperRPCIdentityBytes(self.boundHelperInstanceId),sessionBytes=TLinkHelperRPCIdentityBytes(sessionId);
     const bool reuse=_connectionReuseEnabled&&TLinkHelperConnectionCommand(command)&&TLinkHelperRPCIdentity::valid(helperBytes)&&TLinkHelperRPCIdentity::valid(sessionBytes);
     if(!reuse)_connection.close();
@@ -111,10 +119,30 @@ struct TLinkJSHelperCancellationContext {
 
 - (NSDictionary *)startScriptAtPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest timeoutMs:(int)timeoutMs
 {
-    return [self requestCommand:kTLinkJSHelperCmdStart
-                        payload:@{ @"scriptPath": scriptPath ?: @"", @"bundlePath": bundlePath ?: @"", @"manifest": manifest ?: @{} }
+    using namespace TLinkHelperIO;
+    const TLinkHelperStartRecoveryWindow window(nowMs(),timeoutMs);
+    const int initialBudget=window.remaining(nowMs());
+    if(!initialBudget)return TLinkHelperIOFailure({timeoutMs<=0?Code::InvalidTimeout:Code::Timeout});
+    NSString *requestId=[[NSUUID UUID] UUIDString];
+    NSDictionary *start=[self requestCommand:kTLinkJSHelperCmdStart
+                        payload:@{ @"scriptPath": scriptPath ?: @"", @"bundlePath": bundlePath ?: @"", @"manifest": manifest ?: @{}, @"startReceiptContract":@"accepted_start_v1" }
                       sessionId:nil
-                      timeoutMs:timeoutMs];
+                      timeoutMs:initialBudget requestId:requestId untilMs:window.end()];
+    if([start[@"ok"] boolValue]||!TLinkHelperStartRecoveryAllowed(start))return start;
+    const int budget=window.lookupBudget(nowMs());
+    if(!budget||(self.cancellationCheck&&self.cancellationCheck()))return start;
+    // A lookup can only recover this exact accepted start. Never resend start.
+    NSDictionary *lookup=[self requestCommand:kTLinkJSHelperCmdStatus
+        payload:@{@"startReceiptContract":@"accepted_start_v1",@"startRequestId":requestId} sessionId:nil timeoutMs:budget
+        requestId:[[NSUUID UUID] UUIDString] untilMs:window.end()];
+    if(![lookup[@"ok"] boolValue]||!window.remaining(nowMs())||
+       (self.cancellationCheck&&self.cancellationCheck())||
+       TLinkHelperRecoveredStartError(lookup[@"response"],requestId,self.boundHelperInstanceId))return start;
+    NSDictionary *response=lookup[@"response"][@"payload"][@"response"];
+    NSDictionary *result=@{@"ok":@(true),@"response":response,@"startRecovered":@(true)};
+    if(!window.remaining(nowMs())||(self.cancellationCheck&&self.cancellationCheck()))return start;
+    self.boundHelperInstanceId=response[@"helperInstanceId"];
+    return result;
 }
 
 - (NSDictionary *)statusForSessionId:(NSString *)sessionId timeoutMs:(int)timeoutMs

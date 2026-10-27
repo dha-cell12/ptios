@@ -5,6 +5,7 @@
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperClientAdmission.h"
 #include "../shared/TLinkHelperConnection.h"
+#include "../shared/TLinkHelperStartReceipt.h"
 #include <atomic>
 #include <cassert>
 #include <cstdio>
@@ -18,6 +19,7 @@ struct FixtureCancel {std::atomic<bool> stopped{false};};
     TLinkHelperChangeWait _statusChanges;
     TLinkHelperClientAdmission _clientAdmission;
     TLinkHelperConnectionAdmission _connectionAdmission;
+    NSDictionary *_acceptedStartReceipt;
     std::atomic<unsigned> mode,closed,evaluated;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;
@@ -69,6 +71,7 @@ struct FixtureCancel {std::atomic<bool> stopped{false};};
 - (void)retireSessionId:(NSString *)sessionId;
 - (NSDictionary *)statusPayload;
 - (NSDictionary *)startWithRequest:(NSDictionary *)request;
+- (NSDictionary *)startReceiptForRequest:(NSDictionary *)request;
 - (NSDictionary *)errorEnvelopeForRequest:(NSDictionary *)request message:(NSString *)message;
 - (void)runOwnedSessionId:(NSString *)sessionId scriptPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest runId:(NSString *)runId;
 - (void)runSessionId:(NSString *)sessionId scriptPath:(NSString *)scriptPath bundlePath:(NSString *)bundlePath manifest:(NSDictionary *)manifest runId:(NSString *)runId;
@@ -87,7 +90,7 @@ struct FixtureCancel {std::atomic<bool> stopped{false};};
     self.inLog=dispatch_semaphore_create(0);self.releaseLog=dispatch_semaphore_create(0);
 }return self;}
 - (void)dealloc {delete _cancelState;}
-- (NSString *)licenseDenialForComponent:(NSString *)component {(void)component;return nil;}
+- (NSString *)licenseDenialForComponent:(NSString *)component {(void)component;return mode==5?@"license_denied":nil;}
 - (void)stopLicenseHeartbeatForSessionId:(NSString *)sessionId {(void)sessionId;}
 - (void)closeActiveFileHandles {++closed;assert([self statusPayload]);}
 - (void)appendLine:(NSString *)line toPath:(NSString *)path {
@@ -107,6 +110,44 @@ struct FixtureCancel {std::atomic<bool> stopped{false};};
 @end
 static NSDictionary *request(){return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStart helperInstanceId:@"helper" sessionId:nil requestId:@"transport" payload:@{@"scriptPath":@"/script.js",@"bundlePath":@"/bundle"}];}
 static void busy(NSDictionary *reply){assert([reply[@"error"][@"message"] isEqual:@"helper_busy"]);}
+static NSDictionary *receiptQuery(NSString *requestId){
+    return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStatus helperInstanceId:@"helper" sessionId:nil requestId:@"lookup"
+        payload:@{@"startReceiptContract":@"accepted_start_v1",@"startRequestId":requestId}];
+}
+static void startReceiptCases(){
+    SessionFixture *server=[[SessionFixture alloc] init];
+    NSMutableDictionary *start=[request() mutableCopy],*payload=[start[@"payload"] mutableCopy];start[@"payload"]=payload;
+    payload[@"startReceiptContract"]=@"accepted_start_v1";
+    dispatch_suspend(server.executionQueue);
+    NSDictionary *reply=[server startWithRequest:start];assert(!reply[@"error"]);
+    NSDictionary *recovered=[server startReceiptForRequest:receiptQuery(@"transport")];
+    assert(!TLinkHelperRecoveredStartError(recovered,@"transport",@"helper"));
+    assert([recovered[@"payload"][@"response"][@"sessionId"] isEqual:reply[@"sessionId"]]);
+    assert([TLinkJSHelperProtocol serializeEnvelope:recovered error:nil].length<2048);
+    assert([[[server startReceiptForRequest:receiptQuery(@"other")][@"error"] objectForKey:@"message"] isEqual:@"start_receipt_unavailable"]);
+    busy([server startWithRequest:start]);assert(server->evaluated==0);
+    dispatch_resume(server.executionQueue);dispatch_sync(server.executionQueue,^{});
+    assert(server->evaluated==1&&![server sessionIsBusy]);
+    // Retiring the worker preserves the accepted receipt; queries cannot execute it again.
+    for(unsigned n=0;n<32;++n)assert(!TLinkHelperRecoveredStartError([server startReceiptForRequest:receiptQuery(@"transport")],@"transport",@"helper"));
+    assert(server->evaluated==1);
+    // Rejected/denied starts do not replace an earlier acceptance receipt.
+    server->mode=5;assert([server startWithRequest:start][@"error"]);server->mode=0;
+    assert(!TLinkHelperRecoveredStartError([server startReceiptForRequest:receiptQuery(@"transport")],@"transport",@"helper"));
+    payload[@"startReceiptContract"]=@"other";assert([server startWithRequest:start][@"error"]);
+    assert(server->evaluated==1);
+    for(id token in @[@"",@1,[NSNull null],[@"" stringByPaddingToLength:65 withString:@"x" startingAtIndex:0]]){
+        NSMutableDictionary *query=[receiptQuery(@"transport") mutableCopy];NSMutableDictionary *body=[query[@"payload"] mutableCopy];
+        body[@"startRequestId"]=token;query[@"payload"]=body;assert([server startReceiptForRequest:query][@"error"]);
+    }
+    // Even an unextended replacement start invalidates the old receipt atomically.
+    dispatch_suspend(server.executionQueue);assert(![server startWithRequest:request()][@"error"]);
+    assert([server startReceiptForRequest:receiptQuery(@"transport")][@"error"]);
+    dispatch_resume(server.executionQueue);dispatch_sync(server.executionQueue,^{});assert(server->evaluated==2&&!server->_acceptedStartReceipt);
+    assert(!TLinkHelperRecoveredStartError(recovered,@"transport",@"helper")); // Held snapshot survives replacement.
+    SessionFixture *replacement=[[SessionFixture alloc] init];assert([replacement startReceiptForRequest:receiptQuery(@"transport")][@"error"]);
+    puts("Helper start receipt Foundation passed: actual accepted-start publication before execution, bounded immutable metadata, terminal retention, read-only queries, exact token, license/busy/contract rejection and legacy/session/restart invalidation.");
+}
 static void lifecycleCases(){
     SessionFixture *server=[[SessionFixture alloc] init];assert([[server statusPayload][@"sessionSnapshotContract"] isEqual:@"lifecycle_rpc_owner_v1"]);assert([server beginSessionId:@"one" runId:@"run-one"]);
     assert(![server beginSessionId:@"other" runId:@"other"]);
@@ -202,4 +243,4 @@ static void snapshotCases(){
     }}
     done=true;for(auto &reader:readers)reader.join();assert(reads>0&&!server.pendingNativeRequest&&![server sessionIsBusy]);
 }
-int main(){@autoreleasepool{lifecycleCases();executionCases();admissionRaceCases();snapshotCases();puts("Helper session Foundation passed: owned start/stop/terminal/retire, stopped-before-eval, stale callbacks, immutable lifecycle/RPC snapshots with four readers and 1000 replacements, busy through blocked logging, and NS/C++ exception cleanup.");}return 0;}
+int main(){@autoreleasepool{startReceiptCases();lifecycleCases();executionCases();admissionRaceCases();snapshotCases();puts("Helper session Foundation passed: owned start/stop/terminal/retire, stopped-before-eval, stale callbacks, immutable lifecycle/RPC snapshots with four readers and 1000 replacements, busy through blocked logging, and NS/C++ exception cleanup.");}return 0;}

@@ -9,6 +9,7 @@
 #include "../shared/TLinkHelperChangeWait.h"
 #include "../shared/TLinkHelperWaitPeer.h"
 #include "../shared/TLinkHelperConnection.h"
+#include "../shared/TLinkHelperStartReceipt.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -53,6 +54,7 @@ static bool TLinkJSHelperShouldTerminate(JSContextRef ctx, void *opaque) {
     TLinkHelperConnectionAdmission _connectionAdmission;
     TLinkHelperCommandGate _clientCommandOwner;
     TLinkHelperChangeWait _statusChanges;
+    NSDictionary *_acceptedStartReceipt; // rpcCondition; one bounded metadata receipt
     TLinkJSHelperSetExecutionTimeLimitFn _setExecutionTimeLimit;
     TLinkJSHelperClearExecutionTimeLimitFn _clearExecutionTimeLimit;
 }
@@ -168,6 +170,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     [self.rpcCondition lock];
     @try {
         if (self.sessionWorkerActive) return false;
+        _acceptedStartReceipt=nil; // A new session retires the previous receipt, including legacy starts.
         self.sessionWorkerActive=true;self.sessionCompletionCommitted=false;
         self.activeSessionId=sessionId;self.activeRunId=runId;
         self.activeStartedAt=[NSDate date];self.activeEndedAt=nil;self.activeExitReason=@"";
@@ -1012,6 +1015,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 {
     if ([self sessionIsBusy]) return [self errorEnvelopeForRequest:request message:@"helper_busy"];
     NSDictionary *payload = [request[kTLinkJSHelperKeyPayload] isKindOfClass:[NSDictionary class]] ? request[kTLinkJSHelperKeyPayload] : @{};
+    NSString *receiptError=TLinkHelperStartReceiptOptInError(request);
+    if(receiptError)return [self errorEnvelopeForRequest:request message:receiptError];
     NSString *scriptPath = [payload[@"scriptPath"] isKindOfClass:[NSString class]] ? payload[@"scriptPath"] : @"";
     NSString *bundlePath = [payload[@"bundlePath"] isKindOfClass:[NSString class]] ? payload[@"bundlePath"] : @"";
     NSDictionary *manifest = [payload[@"manifest"] isKindOfClass:[NSDictionary class]] ? payload[@"manifest"] : @{};
@@ -1020,12 +1025,37 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     if (licenseDenial) return [self errorEnvelopeForRequest:request message:licenseDenial];
     NSString *sessionId = [[NSUUID UUID] UUIDString];
     NSString *runId = [[NSUUID UUID] UUIDString];
+    // Prepare metadata before reserving the worker so allocation failures cannot
+    // leave a newly admitted session without its execution block.
+    NSDictionary *receipt=payload[@"startReceiptContract"]?TLinkHelperMakeStartReceipt(request,self.helperInstanceId,sessionId,runId):nil;
     if (![self beginSessionId:sessionId runId:runId]) return [self errorEnvelopeForRequest:request message:@"helper_busy"];
+    if(receipt){
+        [self.rpcCondition lock];
+        @try{_acceptedStartReceipt=receipt;}@finally{[self.rpcCondition unlock];}
+    }
     dispatch_async(self.executionQueue, ^{
         [self runOwnedSessionId:sessionId scriptPath:scriptPath bundlePath:bundlePath manifest:manifest runId:runId];
     });
     return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStart helperInstanceId:self.helperInstanceId sessionId:sessionId requestId:request[kTLinkJSHelperKeyRequestId] payload:[self statusPayload]];
 }
+
+// BEGIN helper start receipt lookup.
+- (NSDictionary *)startReceiptForRequest:(NSDictionary *)request
+{
+    NSString *error=TLinkHelperStartReceiptQueryError(request);
+    if(error)return [self errorEnvelopeForRequest:request message:error];
+    NSDictionary *receipt=nil;
+    [self.rpcCondition lock];
+    @try{
+        NSDictionary *response=_acceptedStartReceipt[@"response"];
+        if([response[@"requestId"] isEqual:request[@"payload"][@"startRequestId"]]&&
+           [response[@"sessionId"] isEqual:self.activeSessionId])receipt=_acceptedStartReceipt;
+    }@finally{[self.rpcCondition unlock];}
+    if(!receipt)return [self errorEnvelopeForRequest:request message:@"start_receipt_unavailable"];
+    return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStatus helperInstanceId:self.helperInstanceId
+        sessionId:request[@"sessionId"] requestId:request[@"requestId"] payload:receipt];
+}
+// END helper start receipt lookup.
 
 - (NSDictionary *)errorEnvelopeForRequest:(NSDictionary *)request message:(NSString *)message
 {
@@ -1067,6 +1097,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 @"changeWaitContract": @"session_native_rpc_v1",
                 @"changeWaitPeerEOFContract": @"cancel_v1",
                 @"helperConnectionContract": @"sequential_v1",
+                @"startReceiptContract": @"accepted_start_v1",
                 @"sessionSnapshotContract": @"lifecycle_rpc_owner_v1",
                 @"executionTimeLimit": @(_setExecutionTimeLimit != NULL && _clearExecutionTimeLimit != NULL),
                 @"hardKillRecovery": @NO,
@@ -1082,6 +1113,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         }];
     }
     if ([command isEqualToString:kTLinkJSHelperCmdStatus]) {
+        NSDictionary *query=[request[@"payload"] isKindOfClass:[NSDictionary class]]?request[@"payload"]:nil;
+        if(query[@"startReceiptContract"]||query[@"startRequestId"])return [self startReceiptForRequest:request];
         return [TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStatus
                                           helperInstanceId:self.helperInstanceId
                                                  sessionId:request[kTLinkJSHelperKeySessionId]

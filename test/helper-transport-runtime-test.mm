@@ -10,6 +10,7 @@
 #include "../shared/TLinkHelperChangeWait.h"
 #include "../shared/TLinkHelperWaitPeer.h"
 #include "../shared/TLinkHelperConnection.h"
+#include "../shared/TLinkHelperStartReceipt.h"
 #include <atomic>
 #include <cassert>
 #include <cstdio>
@@ -26,6 +27,7 @@ static NSString *kTLinkJSHelperSocketPath;
     TLinkHelperConnectionAdmission _connectionAdmission;
     TLinkHelperCommandGate _clientCommandOwner;
     TLinkHelperChangeWait _statusChanges;
+    NSDictionary *_acceptedStartReceipt;
 }
 @property(nonatomic, copy) NSString *helperInstanceId;
 @property(nonatomic, copy) NSString *activeSessionId;
@@ -37,6 +39,7 @@ static NSString *kTLinkJSHelperSocketPath;
 - (void)handleClient:(int)client acceptedAt:(uint64_t)acceptedAt;
 - (void)enqueueClient:(int)client acceptedAt:(uint64_t)acceptedAt;
 - (NSDictionary *)handleEnvelope:(NSDictionary *)request;
+- (NSDictionary *)startReceiptForRequest:(NSDictionary *)request;
 - (NSDictionary *)errorEnvelopeForRequest:(NSDictionary *)request message:(NSString *)message;
 @end
 @implementation FixturePeer
@@ -46,6 +49,13 @@ static NSString *kTLinkJSHelperSocketPath;
         bool present=false;uint64_t issued=0,expires=0;
         assert(TLinkHelperReadSenderDeadline(request,present,issued,expires)&&present);
         assert(issued<=nowMs()&&nowMs()<expires);
+    }
+    if([request[@"command"] isEqual:kTLinkJSHelperCmdStatus]&&request[@"payload"][@"startReceiptContract"])
+        return [self startReceiptForRequest:request];
+    if([request[@"command"] isEqual:kTLinkJSHelperCmdStart]&&request[@"payload"][@"startReceiptContract"]){
+        [self.rpcCondition lock];
+        @try{_acceptedStartReceipt=TLinkHelperMakeStartReceipt(request,self.helperInstanceId,@"session",@"run");}
+        @finally{[self.rpcCondition unlock];}
     }
     ++effects;const unsigned action=mode.load();
     if(action==4)[NSException raise:@"FixtureHandler" format:@"handler exception"];
@@ -235,6 +245,78 @@ static NSDictionary *receiveRequest(Socket &socket){
     return [TLinkJSHelperProtocol deserializeEnvelope:[NSData dataWithBytes:frame.data() length:frame.size()] error:nil];
 }
 static void sendReply(Socket &socket,NSDictionary *reply){NSData *json=[TLinkJSHelperProtocol serializeEnvelope:reply error:nil];assert(json);sendRequest(socket,json);}
+static void startRecoveryClientCases(){
+    for(NSString *code in @[@"read_failed",@"write_failed",@"empty_frame",@"io_timeout",@"connect_failed",@"socket_setup_failed",@"cancelled",@"frame_too_large",@"response_request_mismatch"]){
+        const bool allowed=[@[@"read_failed",@"write_failed",@"empty_frame",@"io_timeout"] containsObject:code];
+        assert((TLinkHelperStartRecoveryAllowed(@{@"ok":@(false),@"error":code})==allowed));
+        assert((!TLinkHelperStartRecoveryAllowed(@{@"ok":@(false),@"error":code,@"response":@{}})));
+        assert((!TLinkHelperStartRecoveryAllowed(@{@"ok":@(false),@"error":@{@"message":code}})));
+    }
+    // Lose the real start reply after acceptance. Lookup runs through the actual
+    // owner/codec/socket handler; the next status must be pinned to that receipt.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{
+            Socket first(listener.accept());assert(first.prepare().ok());NSDictionary *request=receiveRequest(first);
+            assert([request[@"command"] isEqual:@"start"]&&request[@"payload"][@"startReceiptContract"]);
+            assert([peer handleEnvelope:request]);first.close();
+            [peer handleClient:listener.accept()];
+            Socket pinned(listener.accept());assert(pinned.prepare().ok());request=receiveRequest(pinned);
+            assert([request[@"command"] isEqual:@"status"]&&[request[@"helperInstanceId"] isEqual:@"helper"]&&[request[@"sessionId"] isEqual:@"session"]);
+            sendReply(pinned,[peer handleEnvelope:request]);
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];
+        NSDictionary *reply=[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000];
+        assert([reply[@"ok"] boolValue]&&[reply[@"startRecovered"] boolValue]&&[reply[@"response"][@"payload"][@"runId"] isEqual:@"run"]);
+        assert([[client statusForSessionId:@"session" timeoutMs:1000][@"ok"] boolValue]);service.join();assert(peer->effects==2);
+    }
+    // Old helpers and malformed/stale receipts cannot authorize adoption. Every
+    // case has exactly one start followed by one read-only query, never a resend.
+    for(unsigned kind=0;kind<13;++kind){
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];
+        std::thread service([&]{@autoreleasepool{
+            Socket first(listener.accept());assert(first.prepare().ok());NSDictionary *start=receiveRequest(first);
+            assert([start[@"command"] isEqual:@"start"]);assert([peer handleEnvelope:start]);first.close();
+            Socket lookup(listener.accept());assert(lookup.prepare().ok());NSDictionary *query=receiveRequest(lookup);
+            assert([query[@"command"] isEqual:@"status"]&&[query[@"payload"][@"startRequestId"] isEqual:start[@"requestId"]]);
+            assert([query[@"requestDeadline"][@"expiresMs"] unsignedLongLongValue]<=[start[@"requestDeadline"][@"expiresMs"] unsignedLongLongValue]);
+            NSMutableDictionary *receipt=[peer->_acceptedStartReceipt mutableCopy];
+            NSMutableDictionary *response=[receipt[@"response"] mutableCopy],*payload=[response[@"payload"] mutableCopy];
+            response[@"payload"]=payload;receipt[@"response"]=response;
+            if(kind==0)receipt=[@{@"state":@"running",@"activeSessionId":@"session"} mutableCopy]; // old helper
+            if(kind==1)response[@"requestId"]=@"different";
+            if(kind==2)response[@"helperInstanceId"]=@"replacement";
+            if(kind==3)payload[@"activeSessionId"]=@"replacement";
+            if(kind==4)receipt[@"contract"]=@"other";
+            if(kind==5)payload[@"runId"]=@1;
+            if(kind==6)response[@"payload"]=@[];
+            if(kind==7)response[@"error"]=@{@"message":@"not_accepted"};
+            if(kind==8)receipt[@"extra"]=@1;
+            if(kind==9)response[@"command"]=@"error";
+            if(kind==10)response[@"connectionLease"]=@{};
+            if(kind==11)payload[@"state"]=@"running";
+            if(kind==12){peer->_acceptedStartReceipt=nil;sendReply(lookup,[peer startReceiptForRequest:query]);}
+            else sendReply(lookup,[TLinkJSHelperProtocol envelopeWithCommand:kTLinkJSHelperCmdStatus helperInstanceId:@"helper" sessionId:nil requestId:query[@"requestId"] payload:receipt]);
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];
+        NSDictionary *reply=[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000];
+        assert(![reply[@"ok"] boolValue]&&[reply[@"error"] isEqual:@"empty_frame"]);service.join();assert(peer->effects==1);
+    }
+    // Caller cancellation while lookup is reading closes the second FD and
+    // preserves the unknown-start failure, without another lookup or start.
+    {
+        Listener listener;FixturePeer *peer=[[FixturePeer alloc] init];std::atomic<bool> cancelled{false};
+        std::thread service([&]{@autoreleasepool{
+            Socket first(listener.accept());assert(first.prepare().ok());assert([peer handleEnvelope:receiveRequest(first)]);first.close();
+            Socket lookup(listener.accept());assert(lookup.prepare().ok());NSDictionary *query=receiveRequest(lookup);assert([query[@"command"] isEqual:@"status"]);
+            cancelled=true;std::vector<uint8_t> frame;assert(readFrame(posixOps(),lookup.fd(),frame,Deadline(nowMs(),2000)).code==Code::Empty);
+        }});
+        TLinkJSHelperClient *client=[[TLinkJSHelperClient alloc] init];std::atomic<bool> *flag=&cancelled;[client setCancellationCheck:^BOOL{return flag->load();}];
+        NSDictionary *reply=[client startScriptAtPath:@"/script" bundlePath:@"/bundle" manifest:@{} timeoutMs:1000];assert(![reply[@"ok"] boolValue]);
+        [client setCancellationCheck:nil];service.join();assert(peer->effects==1);
+    }
+    puts("Helper start recovery client passed: lost accepted reply, exact read-only lookup and pinning, shared sender expiry, legacy/unavailable/token/helper/session/schema rejection, cancellation and no start resend.");
+}
 static void connectionClientCases(){
     // Start is one-shot. 72 subsequent mixed exchanges fit in three 32-request channels.
     {
@@ -621,4 +703,4 @@ static void queueCases(){
     }
     puts("Helper admission Foundation passed: actual concurrent enqueue/leases, stalled-reader isolation, eight queued clients/ninth-fd rejection, accepted-time expiry, serialized command deadline, stopped and exception cleanup.");
 }
-int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();queuedDisconnectCases();peerMonitorCases();disconnectCases();changeWaitCases();queueCases();connectionClientCases();connectionFaultCases();connectionServerCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}
+int main(){@autoreleasepool{clientCases();clientTimeout();clientCancellation();serverCases();senderDeadlineCases();queuedDisconnectCases();peerMonitorCases();disconnectCases();changeWaitCases();queueCases();startRecoveryClientCases();connectionClientCases();connectionFaultCases();connectionServerCases();puts("Helper transport Foundation passed: actual client/server over AF_UNIX, 54 correlated exchanges, restart/request mismatches, oversize errors, silent-peer deadline, no dispatch of timed-out prefixes, EOF compatibility and exception/descriptor cleanup.");}return 0;}

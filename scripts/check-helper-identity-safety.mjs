@@ -24,6 +24,8 @@ assert.match(status,/rpcCondition lock[\s\S]*activeSessionId[\s\S]*pendingNative
 assert.match(execute,/@finally[\s\S]*rpcCondition unlock/);
 assert.match(owned,/@finally[\s\S]*closeActiveFileHandles[\s\S]*retireSessionId/);
 assert.match(start,/beginSessionId[\s\S]*runOwnedSessionId/);
+assert.match(start,/TLinkHelperMakeStartReceipt[\s\S]*beginSessionId[\s\S]*_acceptedStartReceipt=receipt[\s\S]*dispatch_async/);
+assert.match(session,/sessionWorkerActive\) return false;[\s\S]*_acceptedStartReceipt=nil/);
 assert.match(admission,/rpcCondition lock[\s\S]*TLinkHelperRPCResponseError[\s\S]*if \(!duplicate\) self.nativeResponse[\s\S]*@finally[\s\S]*rpcCondition unlock/);
 assert.match(execute,/activeSessionId isEqualToString:sessionId[\s\S]*self.nativeResponse = nil;[\s\S]*self.pendingNativeRequest = request/);
 assert.match(cleanup,/pendingNativeRequest\[@"sessionId"\] isEqualToString:sessionId/);

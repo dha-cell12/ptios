@@ -2,7 +2,9 @@
 #include "../shared/TLinkHelperRequestDeadline.h"
 #include "../shared/TLinkHelperRuntimeWait.h"
 #include "../shared/TLinkHelperConnection.h"
+#include "../shared/TLinkHelperStartReceipt.h"
 #include <cassert>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -148,7 +150,23 @@ static void posixCases(){
     puts("Helper transport POSIX passed: real nonblocking Unix connect, socketpair frames, peer close without SIGPIPE, backpressure timeout and owned descriptor cleanup.");
 }
 #endif
-int main(){connectionCases();cancellationCases();senderDeadlineCases();portableCases();
+static void startRecoveryCases(){
+    assert(TLinkHelperStartRecoveryWindow(100,0).lookupBudget(100)==0);
+    assert(TLinkHelperStartRecoveryWindow(100,-1).lookupBudget(100)==0);
+    assert(TLinkHelperStartRecoveryWindow(100,INT_MAX).end()==30100);
+    assert(TLinkHelperStartRecoveryWindow(UINT64_MAX-10,1000).lookupBudget(UINT64_MAX-1)==1);
+    for(unsigned n=0;n<100000;++n){
+        const uint64_t issued=100000+n;const int timeout=int(n%30000)+1;
+        TLinkHelperStartRecoveryWindow window(issued,timeout);
+        const uint64_t elapsed=(uint64_t(n)*7919)%31000;
+        const int expected=elapsed>=uint64_t(timeout)?0:timeout-int(elapsed);
+        assert(window.remaining(issued+elapsed)==expected);
+        assert(window.lookupBudget(issued+elapsed)==(expected>500?500:expected));
+        assert(window.lookupBudget(window.end())==0&&window.end()==issued+uint64_t(timeout));
+    }
+    puts("Helper start recovery policy passed: 100k original-window/500-ms lookup budgets, exhausted/invalid/max/overflow boundaries and no deadline renewal.");
+}
+int main(){startRecoveryCases();connectionCases();cancellationCases();senderDeadlineCases();portableCases();
 #if !defined(_WIN32)
     posixCases();
 #endif

@@ -12,12 +12,18 @@ const publication=between(server,'// BEGIN helper change publication.','// END h
 const changeWait=between(server,'// BEGIN helper change wait handler.','// END helper change wait handler.');
 const admission=between(server,'// BEGIN helper socket client admission.','// END helper socket client admission.');
 const owner=between(server,'// BEGIN helper socket client ownership.','// END helper socket client ownership.');
+const receipt=between(server,'// BEGIN helper start receipt lookup.','// END helper start receipt lookup.');
 const error=between(server,'- (NSDictionary *)errorEnvelopeForRequest:','- (NSDictionary *)handleEnvelope:');
 const clientImplementation=client.slice(client.indexOf('@interface TLinkJSHelperClient ()'));
 assert.match(client,/Deadline deadline\(issuedAt, timeoutMs\)/);
 assert.match(client,/requestDeadline.*TLinkHelperSenderDeadline/);
 assert.match(client,/_connection.take[\s\S]*_connection.keep/);
 assert.match(client,/cached<0\)io = connectUnix/);
+assert.match(client,/deadline\.end=std::min\(deadline\.end,untilMs\)/);
+assert.match(client,/lookupBudget[\s\S]*requestCommand:kTLinkJSHelperCmdStatus[\s\S]*TLinkHelperRecoveredStartError[\s\S]*startRecovered/);
+assert.match(server,/if\(query\[@"startReceiptContract"\]\|\|query\[@"startRequestId"\]\)return \[self startReceiptForRequest:request\]/);
+assert.match(receipt,/rpcCondition lock[\s\S]*activeSessionId[\s\S]*rpcCondition unlock/);
+assert.doesNotMatch(receipt,/startWithRequest|runOwnedSessionId|dispatch_async/);
 assert.match(owner,/_connectionAdmission.acquireSlot[\s\S]*connection.complete[\s\S]*connectionLease/);
 assert.match(owner,/connection_scope_mismatch/);
 assert.match(owner,/boundary.newline\|\|boundary.trailing/);
@@ -40,7 +46,7 @@ for(const workflow of await Promise.all(['.github/workflows/build.yml','.github/
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-helper-transport-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
-    await writeFile(join(temp,'HelperTransportServerUnderTest.inc'),publication+changeWait+owner+error);
+    await writeFile(join(temp,'HelperTransportServerUnderTest.inc'),publication+changeWait+owner+receipt+error);
     await writeFile(join(temp,'HelperClientAdmissionUnderTest.inc'),admission);
     await writeFile(join(temp,'HelperTransportClientUnderTest.inc'),clientImplementation);
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
