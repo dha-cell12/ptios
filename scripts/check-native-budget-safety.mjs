@@ -284,6 +284,12 @@ try {
   await writeFile(join(temp,"NativeKeepAwakeBridge.inc"),awakeBridge);
   await writeFile(join(temp,"NativeKeepAwakeEntry.inc"),awakeEntry);
   await writeFile(join(temp,"KeepAwakeCoreUnderTest.inc"),awakeCore);
+  const awakeLegacyCore=await read("test/fixtures/keep-awake-core-legacy-v1.inc");
+  const awakeLegacySignature="NSString* keepAwakeFromRawData(UInt8 *eventData, NSError **error)\n{\n";
+  assert.ok(awakeLegacyCore.includes(awakeLegacySignature));
+  // Preserve the frozen oracle; explicitly consume its unused out-parameter in the generated fixture.
+  await writeFile(join(temp,"KeepAwakeLegacyCoreUnderTest.inc"),awakeLegacyCore.replace(awakeLegacySignature,
+    awakeLegacySignature+"    (void)error;\n"));
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +

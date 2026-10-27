@@ -208,6 +208,7 @@ NSString* removeTimerFromRawData(UInt8 *eventData, NSError **error)
 
 NSString* keepAwakeFromRawData(UInt8 *eventData, NSError **error)
 {
+    (void)error; // Compatibility: this adapter leaves the caller's error unchanged.
     NSString *value = [NSString stringWithFormat:@"%s", eventData];
     BOOL enabled = [value intValue] != 0;
     TLinkSetKeepAwakeEnabled(enabled);

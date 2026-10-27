@@ -22,6 +22,8 @@ Each direct call drains temporary objects in an autorelease pool while retaining
 
 ## Verification
 
+CI correction after build `5c054fc`: macOS -Wextra/-Werror rejected the unused NSError out-parameter in both the actual RAW adapter and frozen backend fixture. The actual adapter now explicitly consumes the parameter without writing it. The runner generates a temporary legacy include with the same (void)error statement, leaving the frozen oracle file intact. The fixture includes that generated copy. Compiler warning/sanitizer flags and runtime semantics are unchanged. Focused native-budget, scheduler and expanded assert preprocessing pass on Windows after the correction; macOS compilation/execution of the corrected fixture still requires CI.
+
 All 62 workflow runners (36 source-contract, 26 native), 521 direct workflow source-grep assertions, expanded standards-conforming assert preprocessing and git diff --check pass on Windows. The assert checker retains its rejecting negative control. Sixteen artifact-only checks require CI outputs. No warning or sanitizer checks were disabled. New Foundation/ARC/ASan/UBSan fixture branches cannot execute on this Windows host.
 
 New macOS coverage compiles the actual bridge, task entry and Scheduler parser/core against controlled main-queue and UIApplication boundaries. Independent frozen bridge/task/backend fragments provide the old adapter oracle. It compares replies and deferred boolean effects for missing, numeric, string and extra arguments at ordinary/exact/short output caps, and independently compares the RAW parser's integer interpretation.

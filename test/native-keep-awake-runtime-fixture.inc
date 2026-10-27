@@ -37,7 +37,7 @@ void TLinkSetKeepAwakeEnabled(BOOL);
 #define dispatch_async awakeEnqueue
 #include "KeepAwakeCoreUnderTest.inc"
 #define keepAwakeFromRawData legacyKeepAwakeFromRawData
-#include "fixtures/keep-awake-core-legacy-v1.inc"
+#include "KeepAwakeLegacyCoreUnderTest.inc"
 #undef keepAwakeFromRawData
 #undef dispatch_async
 #undef UIApplication
