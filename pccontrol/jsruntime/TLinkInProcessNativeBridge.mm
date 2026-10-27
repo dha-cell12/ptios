@@ -968,16 +968,12 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if ([method isEqualToString:TLinkJSNativeMethodAppPid]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppPid(bundleId,context)];
         if ([method isEqualToString:TLinkJSNativeMethodAppState]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppState(bundleId,context)];
         if ([method isEqualToString:TLinkJSNativeMethodAppInfo]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppInfo(bundleId,context)];
+        if ([method isEqualToString:TLinkJSNativeMethodAppPaths]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppPaths(bundleId,context)];
         int task = TASK_PROCESS_BRING_FOREGROUND;
         if ([method isEqualToString:TLinkJSNativeMethodOpenApp]) task = TASK_PROCESS_BRING_FOREGROUND;
         else if ([method isEqualToString:TLinkJSNativeMethodKillApp]) task = TASK_APP_KILL;
-        else if ([method isEqualToString:TLinkJSNativeMethodAppPaths]) task = TASK_APP_PATHS;
         NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", task, bundleId] context:context];
-        NSArray *parts = result[@"parts"];
-        if ([method isEqualToString:TLinkJSNativeMethodOpenApp] || [method isEqualToString:TLinkJSNativeMethodKillApp]) return [TLinkJSNativeResponse responseWithValue:result];
-        if (![result[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:result];
-        if ([parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"bundlePath": TLinkautoJSSafeStringPart(parts, 1), @"dataPath": [parts count] > 2 ? TLinkautoJSSafeStringPart(parts, 2) : @""})];
+        return [TLinkJSNativeResponse responseWithValue:result];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFrontMostPid]) {
         return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrontmostPid(context)];

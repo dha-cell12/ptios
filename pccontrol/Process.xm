@@ -324,6 +324,11 @@ NSString* frontMostPidValue(void)
 NSString* appPathsFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *bundleId = [NSString stringWithFormat:@"%s", eventData];
+    return appPathsForBundleIdentifier(bundleId, error);
+}
+
+NSString* appPathsForBundleIdentifier(NSString *bundleId, NSError **error)
+{
     if ([bundleId length] == 0) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];

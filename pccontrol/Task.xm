@@ -585,7 +585,7 @@ NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchReq
 
 // BEGIN typed frontmost task entry.
 // Shared scalar reply formatting for frontmost, path and application queries.
-enum class TLinkNativeQueryMetadata { Scalar, State, AppInfo };
+enum class TLinkNativeQueryMetadata { Scalar, State, AppInfo, AppPaths };
 static NSDictionary *zx_nativeStringQueryResult(NSString *value,NSString *key,bool numeric,NSString *alias,const TLinkNativeBudgetPtr &budget,TLinkNativeQueryMetadata metadata=TLinkNativeQueryMetadata::Scalar)
 {
     NSString *body=[value copy]?:@"(null)";
@@ -612,6 +612,8 @@ static NSDictionary *zx_nativeStringQueryResult(NSString *value,NSString *key,bo
             result[@"bundleId"]=parts[1];result[@"name"]=parts[2];result[@"shortVersion"]=parts[3];
             result[@"bundleVersion"]=parts[4];result[@"state"]=@([parts[5] intValue]);
         }
+    }else if(metadata==TLinkNativeQueryMetadata::AppPaths){
+        if(parts.count>1){result[@"bundlePath"]=parts[1];result[@"dataPath"]=parts.count>2?parts[2]:@"";}
     }else if(parts.count>1){
         result[key]=numeric?@([parts[1] intValue]):parts[1];
         if(alias)result[alias]=parts[1];
@@ -677,7 +679,7 @@ NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *context)
 // BEGIN typed app query task entry.
 static NSDictionary *zx_nativeAppQueryExecute(int taskType,NSString *bundleId,TLinkTaskExecutionContext *context)
 {
-    if(taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO)return zx_typedTouchFailure(@"invalid_payload");
+    if(taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO&&taskType!=TASK_APP_PATHS)return zx_typedTouchFailure(@"invalid_payload");
     TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
     auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
     @try {try{
@@ -695,13 +697,16 @@ static NSDictionary *zx_nativeAppQueryExecute(int taskType,NSString *bundleId,TL
         NSString *normalized=[input canBeConvertedToEncoding:NSASCIIStringEncoding]?input:[NSString stringWithFormat:@"%s",input.UTF8String];
         const bool state=taskType==TASK_APP_STATE;
         const bool info=taskType==TASK_APP_INFO;
+        const bool paths=taskType==TASK_APP_PATHS;
         NSError *error=nil;NSString *value=nil;
         if(info)value=appInfoForBundleIdentifier(normalized,&error);
+        else if(paths)value=appPathsForBundleIdentifier(normalized,&error);
         else value=state?appStateForBundleIdentifier(normalized,&error):appPidForBundleIdentifier(normalized,&error);
         if(budget->stopped())return zx_typedTouchStopped(budget);
         if(error)return zx_typedTouchReply(error.localizedDescription,budget);
         NSDictionary *result=nil;
         if(info)result=zx_nativeStringQueryResult(value,@"bundleId",false,nil,budget,TLinkNativeQueryMetadata::AppInfo);
+        else if(paths)result=zx_nativeStringQueryResult(value?:@";;",@"bundlePath",false,nil,budget,TLinkNativeQueryMetadata::AppPaths);
         else result=zx_nativeStringQueryResult(state?value:(value?:@"0"),state?@"state":@"pid",true,nil,budget,state?TLinkNativeQueryMetadata::State:TLinkNativeQueryMetadata::Scalar);
         if(budget->stopped())return zx_typedTouchStopped(budget);
         return result;
@@ -725,6 +730,10 @@ NSDictionary *TLinkExecuteNativeAppState(NSString *bundleId,TLinkTaskExecutionCo
 NSDictionary *TLinkExecuteNativeAppInfo(NSString *bundleId,TLinkTaskExecutionContext *context)
 {
     return zx_nativeAppQuery(TASK_APP_INFO,bundleId,context);
+}
+NSDictionary *TLinkExecuteNativeAppPaths(NSString *bundleId,TLinkTaskExecutionContext *context)
+{
+    return zx_nativeAppQuery(TASK_APP_PATHS,bundleId,context);
 }
 // END typed app query task entry.
 

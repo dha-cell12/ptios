@@ -2,6 +2,7 @@
 NSString *appPidForBundleIdentifier(NSString *,NSError **);
 NSString *appStateForBundleIdentifier(NSString *,NSError **);
 NSString *appInfoForBundleIdentifier(NSString *,NSError **);
+NSString *appPathsForBundleIdentifier(NSString *,NSError **);
 #include "AppPidCoreUnderTest.inc"
 #define appPidFromRawData legacyAppPidFromRawData
 #include "fixtures/app-pid-core-legacy-v1.inc"

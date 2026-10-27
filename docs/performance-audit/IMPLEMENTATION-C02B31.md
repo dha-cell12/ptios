@@ -1,7 +1,7 @@
 # C02b31 — direct appInfo query
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `aca0719`; the user reported C02b30 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b32; published source baseline `0bad9fe`; independent device/performance qualification pending**.
 Finding: **P0-13, task-33 application-info adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS fixtures compile the actual Process metadata/parser core, bridge, shar
 Cases include 160 ordinary applications, absent proxy/app, nil metadata, wide state values, Unicode, unexpected description-compatible property objects, delimiter/newline/NUL/encoding fields, exact/short output caps, a long provider field, exact/over-limit multibyte ingress, invalid arguments, one task-33 gate, stop/deadline, NS/C++ faults at proxy/getter/state boundaries, RAW errors and input/metadata/NSError lifetime across pool teardown. Existing appPid/appState/frontmost/path fixtures cover the shared metadata-mode change. Fixture dependency order is checked on every host. Actual LS/SpringBoard behavior and device/performance acceptance remain pending.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b32. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B32.md.
 
 Build rootfull/roothide variants and compare typed/helper appInfo with RAW task 33 for installed/running/stopped/missing apps and Unicode names/versions. Check exact metadata/error replies, caller stop/deadline, license denial/revocation and input/output caps. Recheck appPid/appState/frontmost/path after the formatter change. Measure bridge overhead separately from LS/state work. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
