@@ -282,6 +282,11 @@ NSString* appInfoFromRawData(UInt8 *eventData, NSError **error)
 NSString* appPidFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *bundleId = [NSString stringWithFormat:@"%s", eventData];
+    return appPidForBundleIdentifier(bundleId, error);
+}
+
+NSString* appPidForBundleIdentifier(NSString *bundleId, NSError **error)
+{
     if ([bundleId length] == 0) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Missing bundle identifier.\r\n"}];

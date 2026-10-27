@@ -1,7 +1,7 @@
 # C02b28 — direct frontMostPid query
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `e5a4acb`; the user reported C02b27 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b29 (`b2ac272`); independent device/performance qualification pending**.
 Finding: **P0-13, task-51 foreground PID adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -29,5 +29,7 @@ New macOS coverage compiles the actual Process wrapper/core, bridge, task entry 
 Coverage also checks denied owner exemption, pre/gate cancellation and expiry, cancellation/expiry at the PID read, NS/C++ faults at either foreground/PID boundary, foreground identifier pass-through and reply lifetime after caller/pool teardown. Actual main contention, SpringBoard/PID discovery and device/performance acceptance require qualification.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b29. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B29.md.
 
 Build rootfull/roothide variants and compare typed/helper frontMostPid with RAW task 51 across SpringBoard, foreground apps, missing processes and app transitions. Verify license denial/revocation, caller stop/deadline and exact output caps. Measure bridge cost separately from unchanged main/PID lookup work. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

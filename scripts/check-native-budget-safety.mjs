@@ -257,6 +257,23 @@ try {
   assert.ok(frontPidLegacyCore.includes(frontPidSignature));
   // Preserve the frozen oracle; consume only its unused NSError parameter in the temporary include.
   await writeFile(join(temp,"FrontmostPidLegacyCoreUnderTest.inc"),frontPidLegacyCore.replace(frontPidSignature,frontPidSignature+"    (void)error;\n"));
+  const appBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodOpenApp]","    else if ([method isEqualToString:TLinkJSNativeMethodFrontMostPid])");
+  const appPidEntry=between(task,"// BEGIN typed app PID task entry.","// END typed app PID task entry.");
+  const appPidCore=between(processSource,"NSString* appPidFromRawData","NSString* frontMostPidFromRawData");
+  assert.match(appBridge,/TLinkautoJSValidProtocolString\(bundleId\)[\s\S]*TLinkJSNativeMethodAppPid\]\) return \[TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppPid\(bundleId,context\)\]/);
+  assert.equal([...appBridge.matchAll(/TLinkExecuteNativeAppPid\(/g)].length,1);
+  assert.match(appPidEntry,/input.length>8192-2[\s\S]*byteCount>32\*1024-2[\s\S]*memchr\(bytes,0,byteCount\)/);
+  assert.match(appPidEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_APP_PID,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*appPidForBundleIdentifier\(normalized,&error\)/);
+  assert.equal([...appPidEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(appPidEntry,/canBeConvertedToEncoding:NSASCIIStringEncoding\]\?input:\[NSString stringWithFormat:@"%s",input.UTF8String\]/);
+  assert.match(appPidEntry,/zx_nativeStringQueryResult\(value\?:@"0",@"pid",true,nil,budget\)/);
+  assert.doesNotMatch(appPidEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  assert.match(appPidCore,/return appPidForBundleIdentifier\(bundleId, error\);/);
+  const appPidLegacy=await read("test/fixtures/app-pid-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_APP_PID)","    else if (taskType == TASK_FRONTMOST_PID)").trim(),appPidLegacy.slice(appPidLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeAppQueryBridge.inc"),appBridge);
+  await writeFile(join(temp,"NativeAppPidEntry.inc"),appPidEntry);
+  await writeFile(join(temp,"AppPidCoreUnderTest.inc"),appPidCore);
   const pathBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodRootDir]","    else if ([method isEqualToString:TLinkJSNativeMethodInfo])");
   const pathEntry=between(task,"// BEGIN typed path task entry.","// END typed path task entry.");
   assert.match(pathBridge,/TLinkExecuteNativePath\(task,context\)/);
@@ -341,10 +358,10 @@ try {
     between(bridge,"static NSString *TLinkautoJSEncodeGesturePoints","static bool TLinkautoJSDecodePointColors") +
     between(bridge, "static NSString *TLinkNativeStopCode", "@protocol TLinkInProcessFacadeInterface") +
     between(bridge, "static NSString *TLinkautoJSOwnerField", "static BOOL TLinkautoJSValidToken") +
-    between(bridge,"static BOOL TLinkautoJSValidToken","static BOOL TLinkautoJSValidProtocolString") +
+    between(bridge,"static BOOL TLinkautoJSValidToken","static NSString *TLinkautoJSEncodeGesturePoints") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption") +
     between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);

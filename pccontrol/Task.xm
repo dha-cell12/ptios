@@ -667,6 +667,41 @@ NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *context)
 }
 // END typed frontmost PID task entry.
 
+// BEGIN typed app PID task entry.
+static NSDictionary *zx_nativeAppPidExecute(NSString *bundleId,TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(![bundleId isKindOfClass:[NSString class]]||!bundleId.length)return zx_typedTouchFailure(@"invalid_payload");
+        NSString *input=[bundleId copy];
+        if(input.length>8192-2)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger byteCount=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(!bytes||byteCount>32*1024-2||memchr(bytes,0,byteCount)||
+            [input rangeOfString:@";;"].location!=NSNotFound||[input rangeOfString:@"\r"].location!=NSNotFound||[input rangeOfString:@"\n"].location!=NSNotFound)return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_APP_PID,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        // Preserve the old %s conversion on non-ASCII input without rebuilding a task request.
+        NSString *normalized=[input canBeConvertedToEncoding:NSASCIIStringEncoding]?input:[NSString stringWithFormat:@"%s",input.UTF8String];
+        NSError *error=nil;NSString *value=appPidForBundleIdentifier(normalized,&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        NSDictionary *result=zx_nativeStringQueryResult(value?:@"0",@"pid",true,nil,budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeAppPid(NSString *bundleId,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeAppPidExecute(bundleId,context);}
+    return result;
+}
+// END typed app PID task entry.
+
 // BEGIN typed path task entry.
 static NSDictionary *zx_nativePathExecute(int taskType,TLinkTaskExecutionContext *context)
 {
