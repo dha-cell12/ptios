@@ -992,10 +992,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"bundlePath": TLinkautoJSSafeStringPart(parts, 1), @"dataPath": [parts count] > 2 ? TLinkautoJSSafeStringPart(parts, 2) : @""})];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFrontMostPid]) {
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_FRONTMOST_PID] context:context];
-        NSArray *parts = result[@"parts"];
-        if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
-        return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"pid": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrontmostPid(context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodListBundles]) {
         BOOL withInfo = [args count] > 0 ? [[args objectAtIndex:0] boolValue] : NO;

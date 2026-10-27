@@ -641,6 +641,32 @@ NSDictionary *TLinkExecuteNativeFrontmost(int taskType,TLinkTaskExecutionContext
 }
 // END typed frontmost task entry.
 
+// BEGIN typed frontmost PID task entry.
+static NSDictionary *zx_nativeFrontmostPidExecute(TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_FRONTMOST_PID,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *value=frontMostPidValue()?:@"0";
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSDictionary *result=zx_nativeStringQueryResult(value,@"pid",true,nil,budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeFrontmostPidExecute(context);}
+    return result;
+}
+// END typed frontmost PID task entry.
+
 // BEGIN typed path task entry.
 static NSDictionary *zx_nativePathExecute(int taskType,TLinkTaskExecutionContext *context)
 {

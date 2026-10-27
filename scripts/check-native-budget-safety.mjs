@@ -236,6 +236,27 @@ try {
   assert.equal(between(task,"    else if (taskType == TASK_FRONTMOST_APP_ID)","    else if (taskType == TASK_SET_AUTO_LAUNCH)").trim(),frontmostLegacy.slice(frontmostLegacy.indexOf('\n')+1).trim());
   await writeFile(join(temp,"NativeFrontmostBridge.inc"),frontmostBridge);
   await writeFile(join(temp,"NativeFrontmostEntry.inc"),frontmostEntry);
+  const processSource=await read("pccontrol/Process.xm");
+  const frontPidBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFrontMostPid])","    else if ([method isEqualToString:TLinkJSNativeMethodListBundles])");
+  const frontPidEntry=between(task,"// BEGIN typed frontmost PID task entry.","// END typed frontmost PID task entry.");
+  const frontPidCore=between(processSource,"NSString* frontMostPidFromRawData","NSString* appPathsFromRawData");
+  assert.match(frontPidBridge,/TLinkExecuteNativeFrontmostPid\(context\)/);
+  assert.doesNotMatch(frontPidBridge,/executeRawPayload|stringWithFormat|parts|SafeStringPart|CFWriteStream/);
+  assert.match(frontPidEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_FRONTMOST_PID,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*frontMostPidValue\(\)/);
+  assert.equal([...frontPidEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(frontPidEntry,/zx_nativeStringQueryResult\(value,@"pid",true,nil,budget\)[\s\S]*budget->stopped\(\)/);
+  assert.doesNotMatch(frontPidEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  assert.match(frontPidCore,/\(void\)error;[\s\S]*return frontMostPidValue\(\);[\s\S]*NSString\* frontMostPidValue\(void\)[\s\S]*frontMostAppId\(\)[\s\S]*zx_pidForBundleId\(bid\)/);
+  const frontPidLegacy=await read("test/fixtures/frontmost-pid-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_FRONTMOST_PID)","    else if (taskType == TASK_APP_PATHS)").trim(),frontPidLegacy.slice(frontPidLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeFrontmostPidBridge.inc"),frontPidBridge);
+  await writeFile(join(temp,"NativeFrontmostPidEntry.inc"),frontPidEntry);
+  await writeFile(join(temp,"FrontmostPidCoreUnderTest.inc"),frontPidCore);
+  const frontPidLegacyCore=await read("test/fixtures/frontmost-pid-core-legacy-v1.inc");
+  const frontPidSignature="NSString* frontMostPidFromRawData(UInt8 *eventData, NSError **error)\n{\n";
+  assert.ok(frontPidLegacyCore.includes(frontPidSignature));
+  // Preserve the frozen oracle; consume only its unused NSError parameter in the temporary include.
+  await writeFile(join(temp,"FrontmostPidLegacyCoreUnderTest.inc"),frontPidLegacyCore.replace(frontPidSignature,frontPidSignature+"    (void)error;\n"));
   const pathBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodRootDir]","    else if ([method isEqualToString:TLinkJSNativeMethodInfo])");
   const pathEntry=between(task,"// BEGIN typed path task entry.","// END typed path task entry.");
   assert.match(pathBridge,/TLinkExecuteNativePath\(task,context\)/);

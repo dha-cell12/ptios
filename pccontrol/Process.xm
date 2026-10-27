@@ -295,6 +295,12 @@ NSString* appPidFromRawData(UInt8 *eventData, NSError **error)
 NSString* frontMostPidFromRawData(UInt8 *eventData, NSError **error)
 {
     (void)eventData;
+    (void)error; // Compatibility: this query leaves the caller's error unchanged.
+    return frontMostPidValue();
+}
+
+NSString* frontMostPidValue(void)
+{
     NSString *bid = frontMostAppId();
     pid_t pid = zx_pidForBundleId(bid);
     return [NSString stringWithFormat:@"%d", pid];

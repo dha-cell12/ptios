@@ -60,6 +60,9 @@ enum {TASK_KEEP_AWAKE=40};
 NSDictionary *TLinkExecuteNativeIndicator(int,TLinkTaskExecutionContext *);
 static void indicatorLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_TOUCH_INDICATOR=26};
+NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *);
+static void frontmostPidLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_FRONTMOST_PID=51};
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
@@ -102,6 +105,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"frontmostPidRuntime"]&&lastPayload=="51"){frontmostPidLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"indicatorRuntime"]&&lastPayload.compare(0,2,"26")==0){indicatorLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"keepAwakeRuntime"]&&lastPayload.compare(0,2,"40")==0){keepAwakeLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"hardwareKeyRuntime"]&&lastPayload.compare(0,2,"30")==0){hardwareKeyLegacyTask(bytes,stream);return;}
@@ -187,9 +191,16 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyHardwareKey:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyKeepAwake:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyIndicator:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyFrontmostPid:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyFrontmostPid:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-frontmost-pid-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyIndicator:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -343,6 +354,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeHardwareKeyBridge.inc"
 #include "NativeKeepAwakeBridge.inc"
 #include "NativeIndicatorBridge.inc"
+#include "NativeFrontmostPidBridge.inc"
     return nil;
 }
 @end
@@ -904,6 +916,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-hardware-key-runtime-fixture.inc"
 #include "native-keep-awake-runtime-fixture.inc"
 #include "native-indicator-runtime-fixture.inc"
+#include "native-frontmost-pid-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2090,6 +2103,7 @@ int main() { @autoreleasepool {
     typedFrameColorsCases(bridge);
     typedFrameMultiCases(bridge);
     typedFrontmostCases(bridge);
+    typedFrontmostPidCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

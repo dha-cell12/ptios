@@ -1,7 +1,7 @@
 # C02b27 — direct touchIndicator action adapter
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `acc8648`; the user reported the corrected C02b26 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b28 (`e5a4acb`); independent device/performance qualification pending**.
 Finding: **P0-13, task-26 indicator adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles the actual bridge, task entry, strict RAW parser, pu
 Additional coverage checks strict RAW strings/nil input, one ordinary gate for stop/start/reload, denied owner exemption, pre/gate cancellation/expiry, effects after main admission, NS/C++ faults before/after the operation, pool/error lifetime, invalid direct input and zero typed RAW dispatch/response-vector capacity. Existing portable HID ownership tests remain in the shared workflow. The new fixture controls its main/UI/HID boundaries; real main contention, private HID, window rendering and device behavior require qualification.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b28. That report does not establish device or measured performance acceptance. The next checkpoint is documented in IMPLEMENTATION-C02B28.md.
 
 Build rootfull/roothide variants and compare typed/helper touchIndicator with RAW task 26 for stop/start/reload, duplicate start, invalid actions, missing/bad color configuration and exact error replies. On device verify the main-owned lifecycle and callbacks under repeated calls, license denial/revocation, caller stop/deadline and output rejection. Measure bridge cost separately from main-queue/config/HID work. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
