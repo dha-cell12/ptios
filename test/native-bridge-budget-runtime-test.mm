@@ -48,6 +48,9 @@ static void imageCaptureRollbackLegacyTask(UInt8 *,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeFrontmost(int,TLinkTaskExecutionContext *);
 static void frontmostLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_FRONTMOST_APP_ID=34,TASK_FRONTMOST_APP_ORIENTATION=35};
+NSDictionary *TLinkExecuteNativePath(int,TLinkTaskExecutionContext *);
+static void pathLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_ROOT_DIR=44,TASK_CURRENT_DIR=45,TASK_BOT_PATH=46};
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
@@ -91,6 +94,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
     if([mode isEqualToString:@"frontmostRuntime"]&&(lastPayload=="34"||lastPayload=="35")){frontmostLegacyTask(bytes,stream);return;}
+    if([mode isEqualToString:@"pathRuntime"]&&(lastPayload=="44"||lastPayload=="45"||lastPayload=="46")){pathLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"imageCaptureRuntime"]&&lastPayload.compare(0,5,"481;;")==0){imageCaptureLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"imageCaptureRuntime"]&&lastPayload.compare(0,5,"483;;")==0){imageCaptureRollbackLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"imageOpenRuntime"]&&lastPayload.compare(0,5,"482;;")==0){imageOpenLegacyTask(bytes,length,stream);return;}
@@ -170,9 +174,16 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyFrameOCR:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (NSDictionary *)executeRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrontmost:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyPath:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyPath:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-path-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyFrontmost:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -292,6 +303,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeImageOpenBridge.inc"
 #include "NativeImageCaptureBridge.inc"
 #include "NativeFrontmostBridge.inc"
+#include "NativePathBridge.inc"
 #include "NativeFramePickBridge.inc"
 #include "NativeFrameManyBridge.inc"
 #include "NativeFrameSearchBridge.inc"
@@ -859,6 +871,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
     assert(matches);
 }
 #include "native-frontmost-runtime-fixture.inc"
+#include "native-path-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2058,5 +2071,6 @@ int main() { @autoreleasepool {
     typedFrameColorsCases(bridge);
     typedFrameMultiCases(bridge);
     typedFrontmostCases(bridge);
+    typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

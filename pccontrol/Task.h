@@ -115,6 +115,7 @@
 #ifdef __cplusplus
 // Read-only task 34/35 entry with the legacy JS compatibility fields.
 NSDictionary *TLinkExecuteNativeFrontmost(int taskType,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);
 #include "../shared/TLinkNativeTouchRequest.h"
 #include "../shared/TLinkNativeColorRequest.h"
 #include "../shared/TLinkNativeColorRange.h"

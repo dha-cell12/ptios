@@ -236,6 +236,19 @@ try {
   assert.equal(between(task,"    else if (taskType == TASK_FRONTMOST_APP_ID)","    else if (taskType == TASK_SET_AUTO_LAUNCH)").trim(),frontmostLegacy.slice(frontmostLegacy.indexOf('\n')+1).trim());
   await writeFile(join(temp,"NativeFrontmostBridge.inc"),frontmostBridge);
   await writeFile(join(temp,"NativeFrontmostEntry.inc"),frontmostEntry);
+  const pathBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodRootDir]","    else if ([method isEqualToString:TLinkJSNativeMethodInfo])");
+  const pathEntry=between(task,"// BEGIN typed path task entry.","// END typed path task entry.");
+  assert.match(pathBridge,/TLinkExecuteNativePath\(task,context\)/);
+  assert.doesNotMatch(pathBridge,/executeRawPayload|stringWithFormat|componentsSeparatedByString|CFWriteStream/);
+  assert.match(pathEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*rootDirValue\(\)[\s\S]*currentDirValue\(\)[\s\S]*botPathValue\(\)/);
+  assert.equal([...pathEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(frontmostEntry,/static NSDictionary \*zx_nativeStringQueryResult\(/);
+  assert.match(pathEntry,/zx_nativeStringQueryResult\(value,key,false,@"path",budget\)[\s\S]*budget->stopped\(\)/);
+  assert.doesNotMatch(pathEntry,/processTaskWithContext|CFWriteStream|TLinkC01|\b(?:YES|NO)\b/);
+  const pathLegacy=await read("test/fixtures/path-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_ROOT_DIR)","    else if (taskType == TASK_SCREENSHOT)").trim(),pathLegacy.slice(pathLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativePathBridge.inc"),pathBridge);
+  await writeFile(join(temp,"NativePathEntry.inc"),pathEntry);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -277,6 +290,7 @@ try {
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
+  assert.match(runtimeFixture,/#include "native-frontmost-runtime-fixture.inc"\n#include "native-path-runtime-fixture.inc"/,'path fixture requires the shared scalar formatter first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

@@ -1,7 +1,7 @@
 # C02b23 — direct frontmost app ID and orientation queries
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `c3f2443`; the user reported C02d12 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **build reported passed by the user before C02b24 (`de4e01f`); device qualification pending**.
 Finding: **P0-13, frontMostAppId/orientation adapters**. Other native adapters, config invalidation and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ Cancellation/deadline/output failures retain normalized compatibility errors. Ba
 - Those new Foundation/ARC/ASan/UBSan cases cannot execute on this Windows host. Actual macOS/iOS builds, real foreground/orientation behavior and device performance remain pending.
 
 ## Acceptance and remaining work
+
+The user reported build `de4e01f` passed before the next path-adapter slice, `IMPLEMENTATION-C02B24.md`. This records the user report without independent device/performance qualification on this host.
 
 Build rootfull/roothide variants, compare JS/helper queries with RAW task 34/35 through foreground changes, SpringBoard fallback and portrait/landscape rotation. Exercise license denial/revocation, caller cancellation/deadline and output limits. Measure bridge allocations/time separately from Process/private API cost. Continue the other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
