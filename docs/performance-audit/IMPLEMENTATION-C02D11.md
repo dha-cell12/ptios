@@ -38,6 +38,14 @@ The actual macOS client/server fixture asserts 72 mixed status/ACK/wait exchange
 
 All 62 workflow runners (36 source-contract, 26 native), 521 direct source-grep assertions and standards-conforming assert preprocessing pass on Windows; 16 artifact-only checks require CI outputs. Focused helper checks were repeated after the final cache ownership changes. The new POSIX/cache/Foundation/ARC/ASan/UBSan tests cannot execute on this Windows host and await macOS CI. Full iOS/device integration, FD/memory recovery and latency/wakeup/energy measurement remain pending. The fixture's expected accept counts are coverage assertions, not device performance results.
 
+## Build regression correction — 2026-10-27
+
+The reported macOS assertion in connectionClientCases was the native ACK after 70 status requests. FixturePeer returned the generic status payload for nativeRPCResponse; the real protocol serializer requires requestId and result for that command, so it refused the fixture response and closed the channel without a valid ACK. The production acceptNativeRPCResponse handler already emits those fields.
+
+The controlled fixture now uses the production ACK payload shape, including the native request ID and ok/accepted/duplicate result flags. The mixed-channel case checks those fields and continuation counts of 25 after the ACK and 24 after the following wait, preserving the three-channel/72-exchange expectation. Production protocol validation and transport behavior are unchanged.
+
+Focused transport, identity, client-admission and change-wait runners, plus standards-conforming assert preprocessing, pass on Windows. The corrected Foundation/ARC/sanitizer case still requires macOS CI; these local checks do not establish that the reported Darwin failure has passed there.
+
 ## Remaining work
 
 P0-12 remains partial pending device/performance acceptance and unknown-start outcome recovery. Client cancellation still uses the bounded poll slices introduced in C02d7; larger event/cancellation transport changes require separate measurement and design. Qualify long native calls that outlive idle reuse, dropped ACK/status replies, slot contention, helper restart, stop in both wait phases, sleep/wake and mixed client/helper versions. Remaining P0-13 adapters and P1-40 invalidation continue separately. TouchPOC and production TrollStore execution source are unchanged; both build workflows run the shared suites. No measured CPU, energy, RSS or latency improvement is claimed.

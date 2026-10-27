@@ -52,6 +52,11 @@ static NSString *kTLinkJSHelperSocketPath;
     if(action==6)throw std::runtime_error("fixture handler exception");
     NSString *command=request[@"command"],*session=[command isEqual:@"start"]?@"session":request[@"sessionId"];
     NSDictionary *payload=@{@"state":@"running",@"activeSessionId":@"session"};
+    // Match acceptNativeRPCResponse: ACKs use the native-response wire schema,
+    // even when this fixture controls the business handler behind the real transport.
+    if([command isEqual:kTLinkJSHelperCmdNativeRPCResponse])
+        payload=@{kTLinkJSHelperKeyRequestId:request[@"payload"][@"requestId"],
+                  @"result":@{@"ok":@(true),@"accepted":@(true),@"duplicate":@(false)}};
     if(action==3)payload=@{@"huge":[@"" stringByPaddingToLength:MaxFrameBytes withString:@"x" startingAtIndex:0]};
     return [TLinkJSHelperProtocol envelopeWithCommand:command helperInstanceId:action==1?@"replacement":self.helperInstanceId
                                            sessionId:session requestId:action==2?@"wrong":request[@"requestId"] payload:payload];
@@ -239,7 +244,11 @@ static void connectionClientCases(){
         [client setConnectionReuseEnabled:true];
         for(unsigned n=0;n<70;++n){reply=[client statusForSessionId:@"session" timeoutMs:1000];assert([reply[@"ok"] boolValue]);}
         reply=[client sendNativeRPCResponse:@{@"ok":@(true)} requestId:@"native" sessionId:@"session" timeoutMs:1000];assert([reply[@"ok"] boolValue]);
+        NSDictionary *ack=reply[@"response"][@"payload"];
+        assert([ack[@"requestId"] isEqual:@"native"]&&[ack[@"result"][@"ok"] boolValue]&&[ack[@"result"][@"accepted"] boolValue]&&![ack[@"result"][@"duplicate"] boolValue]);
+        assert([reply[@"response"][@"connectionLease"][@"remaining"] unsignedIntValue]==25);
         reply=[client waitForChangeAfterSequence:1 sessionId:@"session" waitMs:10 timeoutMs:1000];assert([reply[@"ok"] boolValue]);
+        assert([reply[@"response"][@"connectionLease"][@"remaining"] unsignedIntValue]==24);
         [client setConnectionReuseEnabled:false];service.join();const auto stats=peer->_connectionAdmission.stats();
         assert(peer->effects==72&&stats.admitted==3&&stats.finished==3&&stats.active==0&&peer->_statusChanges.waiters()==0);
     }
