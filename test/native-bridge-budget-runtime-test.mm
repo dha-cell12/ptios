@@ -67,6 +67,10 @@ NSDictionary *TLinkExecuteNativeAppPid(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeAppState(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeAppInfo(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeAppPaths(NSString *,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeKillApp(NSString *,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeOpenApp(NSString *,TLinkTaskExecutionContext *);
+static void appOpenLegacyTask(UInt8 *,CFWriteStreamRef);
+static void appKillLegacyTask(UInt8 *,CFWriteStreamRef);
 static void appPathsLegacyTask(UInt8 *,CFWriteStreamRef);
 static void appInfoLegacyTask(UInt8 *,CFWriteStreamRef);
 static void appStateLegacyTask(UInt8 *,CFWriteStreamRef);
@@ -114,6 +118,8 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"appOpenRuntime"]&&lastPayload.compare(0,2,"11")==0){appOpenLegacyTask(bytes,stream);return;}
+    if([mode isEqualToString:@"appKillRuntime"]&&lastPayload.compare(0,2,"31")==0){appKillLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appPathsRuntime"]&&lastPayload.compare(0,2,"52")==0){appPathsLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appInfoRuntime"]&&lastPayload.compare(0,2,"33")==0){appInfoLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appStateRuntime"]&&lastPayload.compare(0,2,"32")==0){appStateLegacyTask(bytes,stream);return;}
@@ -942,6 +948,8 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-app-state-runtime-fixture.inc"
 #include "native-app-info-runtime-fixture.inc"
 #include "native-app-paths-runtime-fixture.inc"
+#include "native-app-kill-runtime-fixture.inc"
+#include "native-app-open-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2133,6 +2141,8 @@ int main() { @autoreleasepool {
     typedAppStateCases(bridge);
     typedAppInfoCases(bridge);
     typedAppPathsCases(bridge);
+    typedAppKillCases(bridge);
+    typedAppOpenCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

@@ -125,7 +125,7 @@ static void typedAppStateCases(TLinkInProcessNativeBridge *bridge){
     assert([heldError.localizedDescription isEqualToString:@"-1;;Missing bundle identifier.\r\n"]);
     const unsigned finalReads=appStateReads;gates=licenseCalls;
     failure(TLinkExecuteNativeAppState(nil,parent()),@"invalid_payload");
-    failure(zx_nativeAppQueryExecute(TASK_APP_KILL,@"com.app",parent()),@"invalid_payload");
+    failure(zx_nativeAppExecute(99,@"com.app",parent()),@"invalid_payload");
     assert(appStateReads==finalReads&&licenseCalls==gates&&!TLinkCurrentNativeBudget());
     stateApplication=nil;appStateBundle=nil;appStateQueries.clear();appStateOnLookup={};appStateOnSelector={};appStateBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
     puts("Typed app state passed: actual selector precedence/processState/isRunning/no-app paths with frozen JS/RAW/core parity, wide state/intValue/running/output, exact Unicode ingress, task-32 authority/cancel/faults and pool lifetime. App PID shared-entry regression retained.");

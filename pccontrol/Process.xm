@@ -105,19 +105,23 @@ int bringAppForeground(NSString *appIdentifier)
     
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     CFStringRef appBundleName = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@"), appIdentifier);
-    //[NSString stringWithFormat:@"%s", eventData];
-    NSLog(@"### com.tlinkauto.springboard: Switch to application: %@", appBundleName);
-    if (!openApp)
-        openApp = (int(*)(CFStringRef, Boolean))dlsym(sbServices,"SBSLaunchApplicationWithIdentifier");
+    if (!appBundleName) return -1;
+    @try {
+        NSLog(@"### com.tlinkauto.springboard: Switch to application: %@", appBundleName);
+        if (!openApp)
+            openApp = (int(*)(CFStringRef, Boolean))dlsym(sbServices,"SBSLaunchApplicationWithIdentifier");
+        if (!openApp) return -1;
 
-    int result = openApp(appBundleName, false);
-    
-    CFAbsoluteTime duration = CFAbsoluteTimeGetCurrent() - start;
-    if (duration > 0.1) {
-        NSLog(@"### com.tlinkauto.springboard: WARNING: bringAppForeground took %.2fms", duration * 1000.0);
+        int result = openApp(appBundleName, false);
+
+        CFAbsoluteTime duration = CFAbsoluteTimeGetCurrent() - start;
+        if (duration > 0.1) {
+            NSLog(@"### com.tlinkauto.springboard: WARNING: bringAppForeground took %.2fms", duration * 1000.0);
+        }
+        return result;
+    } @finally {
+        CFRelease(appBundleName);
     }
-    
-    return result;
 }
 
 id getFrontMostApplication()
@@ -193,6 +197,11 @@ static BOOL sendTerminationToApp(SBApplication *app)
 NSString* killAppFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *bundleId = [NSString stringWithFormat:@"%s", eventData];
+    return killAppForBundleIdentifier(bundleId, error);
+}
+
+NSString* killAppForBundleIdentifier(NSString *bundleId, NSError **error)
+{
     if ([bundleId length] == 0)
     {
         if (error)

@@ -676,10 +676,10 @@ NSDictionary *TLinkExecuteNativeFrontmostPid(TLinkTaskExecutionContext *context)
 }
 // END typed frontmost PID task entry.
 
-// BEGIN typed app query task entry.
-static NSDictionary *zx_nativeAppQueryExecute(int taskType,NSString *bundleId,TLinkTaskExecutionContext *context)
+// BEGIN typed app task entry.
+static NSDictionary *zx_nativeAppExecute(int taskType,NSString *bundleId,TLinkTaskExecutionContext *context)
 {
-    if(taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO&&taskType!=TASK_APP_PATHS)return zx_typedTouchFailure(@"invalid_payload");
+    if(taskType!=TASK_APP_PID&&taskType!=TASK_APP_STATE&&taskType!=TASK_APP_INFO&&taskType!=TASK_APP_PATHS&&taskType!=TASK_APP_KILL&&taskType!=TASK_PROCESS_BRING_FOREGROUND)return zx_typedTouchFailure(@"invalid_payload");
     TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
     auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
     @try {try{
@@ -698,12 +698,17 @@ static NSDictionary *zx_nativeAppQueryExecute(int taskType,NSString *bundleId,TL
         const bool state=taskType==TASK_APP_STATE;
         const bool info=taskType==TASK_APP_INFO;
         const bool paths=taskType==TASK_APP_PATHS;
+        const bool kill=taskType==TASK_APP_KILL;
+        const bool open=taskType==TASK_PROCESS_BRING_FOREGROUND;
         NSError *error=nil;NSString *value=nil;
-        if(info)value=appInfoForBundleIdentifier(normalized,&error);
+        if(open)(void)bringAppForeground(normalized);
+        else if(kill)value=killAppForBundleIdentifier(normalized,&error);
+        else if(info)value=appInfoForBundleIdentifier(normalized,&error);
         else if(paths)value=appPathsForBundleIdentifier(normalized,&error);
         else value=state?appStateForBundleIdentifier(normalized,&error):appPidForBundleIdentifier(normalized,&error);
         if(budget->stopped())return zx_typedTouchStopped(budget);
         if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        if(kill||open)return zx_typedTouchReply(@"0\r\n",budget);
         NSDictionary *result=nil;
         if(info)result=zx_nativeStringQueryResult(value,@"bundleId",false,nil,budget,TLinkNativeQueryMetadata::AppInfo);
         else if(paths)result=zx_nativeStringQueryResult(value?:@";;",@"bundlePath",false,nil,budget,TLinkNativeQueryMetadata::AppPaths);
@@ -713,29 +718,37 @@ static NSDictionary *zx_nativeAppQueryExecute(int taskType,NSString *bundleId,TL
     }catch(...){return zx_typedTouchFailure(@"native_exception");}}
     @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
 }
-static NSDictionary *zx_nativeAppQuery(int taskType,NSString *bundleId,TLinkTaskExecutionContext *context)
+static NSDictionary *zx_nativeAppCall(int taskType,NSString *bundleId,TLinkTaskExecutionContext *context)
 {
     NSDictionary *result=nil;
-    @autoreleasepool{result=zx_nativeAppQueryExecute(taskType,bundleId,context);}
+    @autoreleasepool{result=zx_nativeAppExecute(taskType,bundleId,context);}
     return result;
 }
 NSDictionary *TLinkExecuteNativeAppPid(NSString *bundleId,TLinkTaskExecutionContext *context)
 {
-    return zx_nativeAppQuery(TASK_APP_PID,bundleId,context);
+    return zx_nativeAppCall(TASK_APP_PID,bundleId,context);
 }
 NSDictionary *TLinkExecuteNativeAppState(NSString *bundleId,TLinkTaskExecutionContext *context)
 {
-    return zx_nativeAppQuery(TASK_APP_STATE,bundleId,context);
+    return zx_nativeAppCall(TASK_APP_STATE,bundleId,context);
 }
 NSDictionary *TLinkExecuteNativeAppInfo(NSString *bundleId,TLinkTaskExecutionContext *context)
 {
-    return zx_nativeAppQuery(TASK_APP_INFO,bundleId,context);
+    return zx_nativeAppCall(TASK_APP_INFO,bundleId,context);
 }
 NSDictionary *TLinkExecuteNativeAppPaths(NSString *bundleId,TLinkTaskExecutionContext *context)
 {
-    return zx_nativeAppQuery(TASK_APP_PATHS,bundleId,context);
+    return zx_nativeAppCall(TASK_APP_PATHS,bundleId,context);
 }
-// END typed app query task entry.
+NSDictionary *TLinkExecuteNativeKillApp(NSString *bundleId,TLinkTaskExecutionContext *context)
+{
+    return zx_nativeAppCall(TASK_APP_KILL,bundleId,context);
+}
+NSDictionary *TLinkExecuteNativeOpenApp(NSString *bundleId,TLinkTaskExecutionContext *context)
+{
+    return zx_nativeAppCall(TASK_PROCESS_BRING_FOREGROUND,bundleId,context);
+}
+// END typed app task entry.
 
 // BEGIN typed path task entry.
 static NSDictionary *zx_nativePathExecute(int taskType,TLinkTaskExecutionContext *context)

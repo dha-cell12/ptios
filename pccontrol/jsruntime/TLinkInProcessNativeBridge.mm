@@ -969,11 +969,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if ([method isEqualToString:TLinkJSNativeMethodAppState]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppState(bundleId,context)];
         if ([method isEqualToString:TLinkJSNativeMethodAppInfo]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppInfo(bundleId,context)];
         if ([method isEqualToString:TLinkJSNativeMethodAppPaths]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeAppPaths(bundleId,context)];
-        int task = TASK_PROCESS_BRING_FOREGROUND;
-        if ([method isEqualToString:TLinkJSNativeMethodOpenApp]) task = TASK_PROCESS_BRING_FOREGROUND;
-        else if ([method isEqualToString:TLinkJSNativeMethodKillApp]) task = TASK_APP_KILL;
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", task, bundleId] context:context];
-        return [TLinkJSNativeResponse responseWithValue:result];
+        if ([method isEqualToString:TLinkJSNativeMethodKillApp]) return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeKillApp(bundleId,context)];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeOpenApp(bundleId,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFrontMostPid]) {
         return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeFrontmostPid(context)];

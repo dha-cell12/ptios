@@ -1,7 +1,7 @@
 # C02b32 — direct appPaths query
 
 Date: 2026-10-27 (Asia/Bangkok). Baseline: `0bad9fe` (C02b31 source); the user reported C02b31 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b33 at source baseline `1e5c795`; independent device/performance qualification pending**.
 Finding: **P0-13, task-52 application-path adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles the actual parser/core, selector/KVC branches, URL-l
 Coverage includes 160 ordinary cases, four selector masks, nil/NSNull/no-path objects, absent proxy, KVC fallback and swallowed exceptions, escaping NS/C++ boundary faults, custom path objects, multipart/NUL/encoding fields, exact/short output, exact/over-limit Unicode ingress, authority/stop/deadline, RAW errors and input/path/NSError/result lifetime across pool teardown. Existing appPid/appState/appInfo/frontmost/path fixtures cover the expanded shared classifier/formatter. Private LS behavior and device/performance acceptance remain pending.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b33 (`1e5c795`). The next source checkpoint is IMPLEMENTATION-C02B33.md; the report does not replace LS/KVC/device/performance qualification.
 
 Build rootfull/roothide variants and compare typed/helper appPaths with RAW task 52 across installed/missing applications and available URL/KVC shapes. Verify exact path fields, caller stop/deadline, license denial/revocation and input/output limits. Recheck other shared query replies after the formatter change. Measure bridge overhead separately from LS/KVC/URL work. Continue other P0-13 adapters, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

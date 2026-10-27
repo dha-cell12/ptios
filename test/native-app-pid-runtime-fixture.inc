@@ -3,6 +3,8 @@ NSString *appPidForBundleIdentifier(NSString *,NSError **);
 NSString *appStateForBundleIdentifier(NSString *,NSError **);
 NSString *appInfoForBundleIdentifier(NSString *,NSError **);
 NSString *appPathsForBundleIdentifier(NSString *,NSError **);
+NSString *killAppForBundleIdentifier(NSString *,NSError **);
+int bringAppForeground(NSString *);
 #include "AppPidCoreUnderTest.inc"
 #define appPidFromRawData legacyAppPidFromRawData
 #include "fixtures/app-pid-core-legacy-v1.inc"
@@ -21,7 +23,7 @@ static void appPidLegacyTask(UInt8 *bytes,CFWriteStreamRef writeStreamRef){
 #pragma push_macro("NO")
 #undef YES
 #undef NO
-#include "NativeAppQueryEntry.inc"
+#include "NativeAppEntry.inc"
 #pragma pop_macro("NO")
 #pragma pop_macro("YES")
 static void typedAppPidCases(TLinkInProcessNativeBridge *bridge){
