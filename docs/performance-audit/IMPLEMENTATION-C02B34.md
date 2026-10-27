@@ -1,7 +1,7 @@
 # C02b34 — direct openApp task and launcher ownership
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: C02b33 working source, based on HEAD `1e5c795`; the user reported C02b33 built successfully. Its existing uncommitted changes are retained.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b35 at source baseline `68cd857`; independent device/performance qualification pending**.
 Finding: **P0-13, task-11 application-launch adapter**. Other adapters and performance qualification remain open.
 
 ## Result and compatibility
@@ -31,5 +31,7 @@ New macOS coverage compiles the actual Process launcher/parser, bridge and share
 Coverage includes 160 ordinary cases; cached and lazy resolution; signed/nonzero launcher results with unchanged ACK; exact and short output; exact/over-limit ASCII/CJK/emoji ingress; malformed/NUL/encoding inputs; license denial including owner authorization; cancellation/expiry before/during the gate, resolver or backend; NS/C++ faults before/after a fake effect and during resolution; missing-symbol recovery on a later explicit call; allocation failure; RAW parser/core return compatibility; immutable snapshots/result lifetime; and 1000 repeated balanced real CF lifecycles. Existing PID/state/info/paths/kill fixtures cover the shared entry regression.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b35; the combined C02b33/C02b34 source is committed as `68cd857`. The next source checkpoint is IMPLEMENTATION-C02B35.md; the build report does not replace SBS/device/performance qualification.
 
 The user reported C02b33 build success before this checkpoint; that report does not qualify the new task-11 path. Build rootfull/roothide variants and compare typed/helper openApp with RAW task 11 on disposable test applications, including invalid/missing applications and supported SBS versions. Check unchanged ACK/status semantics, symbol availability, license denial/revocation, input/output limits and caller stop/deadline. Confirm CF ownership under Instruments/sanitizers and recheck existing callers of bringAppForeground. Do not automatically retry an uncertain launch. Measure bridge overhead separately from SpringBoardServices/application lifecycle work. Continue remaining P0-13 adapters such as listBundles, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

@@ -380,7 +380,11 @@ NSString* listBundlesFromRawData(UInt8 *eventData, NSError **error)
         NSString *raw = [NSString stringWithFormat:@"%s", eventData];
         withInfo = ([raw intValue] == 1);
     }
+    return listBundlesWithInfo(withInfo, error);
+}
 
+NSString* listBundlesWithInfo(BOOL withInfo, NSError **error)
+{
     Class wsCls = NSClassFromString(@"LSApplicationWorkspace");
     if (!wsCls || ![wsCls respondsToSelector:@selector(defaultWorkspace)]) {
         if (error) {

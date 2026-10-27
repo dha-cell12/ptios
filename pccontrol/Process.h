@@ -25,6 +25,7 @@ NSString* frontMostPidValue(void);
 NSString* appPathsFromRawData(UInt8 *eventData, NSError **error);
 NSString* appPathsForBundleIdentifier(NSString *bundleId, NSError **error);
 NSString* listBundlesFromRawData(UInt8 *eventData, NSError **error);
+NSString* listBundlesWithInfo(BOOL withInfo, NSError **error);
 
 // Open URL / URL scheme
 NSString* openUrlFromRawData(UInt8 *eventData, NSError **error);

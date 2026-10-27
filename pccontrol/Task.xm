@@ -585,7 +585,7 @@ NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchReq
 
 // BEGIN typed frontmost task entry.
 // Shared scalar reply formatting for frontmost, path and application queries.
-enum class TLinkNativeQueryMetadata { Scalar, State, AppInfo, AppPaths };
+enum class TLinkNativeQueryMetadata { Scalar, State, AppInfo, AppPaths, Reply };
 static NSDictionary *zx_nativeStringQueryResult(NSString *value,NSString *key,bool numeric,NSString *alias,const TLinkNativeBudgetPtr &budget,TLinkNativeQueryMetadata metadata=TLinkNativeQueryMetadata::Scalar)
 {
     NSString *body=[value copy]?:@"(null)";
@@ -614,7 +614,7 @@ static NSDictionary *zx_nativeStringQueryResult(NSString *value,NSString *key,bo
         }
     }else if(metadata==TLinkNativeQueryMetadata::AppPaths){
         if(parts.count>1){result[@"bundlePath"]=parts[1];result[@"dataPath"]=parts.count>2?parts[2]:@"";}
-    }else if(parts.count>1){
+    }else if(metadata!=TLinkNativeQueryMetadata::Reply&&parts.count>1){
         result[key]=numeric?@([parts[1] intValue]):parts[1];
         if(alias)result[alias]=parts[1];
         if(metadata==TLinkNativeQueryMetadata::State)result[@"running"]=@([result[key] intValue]>0);
@@ -749,6 +749,33 @@ NSDictionary *TLinkExecuteNativeOpenApp(NSString *bundleId,TLinkTaskExecutionCon
     return zx_nativeAppCall(TASK_PROCESS_BRING_FOREGROUND,bundleId,context);
 }
 // END typed app task entry.
+
+// BEGIN typed list bundles task entry.
+static NSDictionary *zx_nativeListBundlesExecute(BOOL withInfo,TLinkTaskExecutionContext *context)
+{
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_LIST_BUNDLES,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;NSString *value=listBundlesWithInfo(withInfo,&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        NSDictionary *result=zx_nativeStringQueryResult(value?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeListBundles(BOOL withInfo,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeListBundlesExecute(withInfo,context);}
+    return result;
+}
+// END typed list bundles task entry.
 
 // BEGIN typed path task entry.
 static NSDictionary *zx_nativePathExecute(int taskType,TLinkTaskExecutionContext *context)

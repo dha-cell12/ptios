@@ -122,6 +122,7 @@ NSDictionary *TLinkExecuteNativeAppInfo(NSString *bundleId,TLinkTaskExecutionCon
 NSDictionary *TLinkExecuteNativeAppPaths(NSString *bundleId,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeKillApp(NSString *bundleId,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeOpenApp(NSString *bundleId,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeListBundles(BOOL withInfo,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeHardwareKey(int action,int keyType,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeKeepAwake(BOOL enabled,TLinkTaskExecutionContext *context);

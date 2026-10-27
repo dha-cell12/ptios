@@ -69,6 +69,9 @@ NSDictionary *TLinkExecuteNativeAppInfo(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeAppPaths(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeKillApp(NSString *,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeOpenApp(NSString *,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeListBundles(BOOL,TLinkTaskExecutionContext *);
+static void listBundlesLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_LIST_BUNDLES=53};
 static void appOpenLegacyTask(UInt8 *,CFWriteStreamRef);
 static void appKillLegacyTask(UInt8 *,CFWriteStreamRef);
 static void appPathsLegacyTask(UInt8 *,CFWriteStreamRef);
@@ -118,6 +121,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"listBundlesRuntime"]&&lastPayload.compare(0,2,"53")==0){listBundlesLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appOpenRuntime"]&&lastPayload.compare(0,2,"11")==0){appOpenLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appKillRuntime"]&&lastPayload.compare(0,2,"31")==0){appKillLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"appPathsRuntime"]&&lastPayload.compare(0,2,"52")==0){appPathsLegacyTask(bytes,stream);return;}
@@ -212,9 +216,16 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyIndicator:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrontmostPid:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyAppQuery:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyListBundles:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyListBundles:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-list-bundles-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyAppQuery:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -382,6 +393,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeIndicatorBridge.inc"
 #include "NativeFrontmostPidBridge.inc"
 #include "NativeAppQueryBridge.inc"
+#include "NativeListBundlesBridge.inc"
     return nil;
 }
 @end
@@ -950,6 +962,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-app-paths-runtime-fixture.inc"
 #include "native-app-kill-runtime-fixture.inc"
 #include "native-app-open-runtime-fixture.inc"
+#include "native-list-bundles-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2143,6 +2156,7 @@ int main() { @autoreleasepool {
     typedAppPathsCases(bridge);
     typedAppKillCases(bridge);
     typedAppOpenCases(bridge);
+    typedListBundlesCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

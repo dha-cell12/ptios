@@ -333,6 +333,30 @@ try {
   const openLegacy=await read("test/fixtures/app-open-handler-legacy-v1.inc");
   assert.equal(between(task,"    else if (taskType == TASK_PROCESS_BRING_FOREGROUND)","    else if (taskType == TASK_SHOW_ALERT_BOX)").trim(),openLegacy.slice(openLegacy.indexOf('\n')+1).trim());
   await writeFile(join(temp,"AppOpenCoreUnderTest.inc"),openCore);
+  const bundlesBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodListBundles])","    else if ([method isEqualToString:TLinkJSNativeMethodOpenUrl])");
+  const bundlesEntry=between(task,"// BEGIN typed list bundles task entry.","// END typed list bundles task entry.");
+  const bundlesCore=between(processSource,"NSString* listBundlesFromRawData","NSString* openUrlFromRawData");
+  assert.match(bundlesBridge,/boolValue[\s\S]*TLinkExecuteNativeListBundles\(withInfo,context\)/);
+  assert.doesNotMatch(bundlesBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const bundlesBridgeLegacy=await read("test/fixtures/native-list-bundles-legacy-v1.inc");
+  assert.equal(bundlesBridge.slice(bundlesBridge.indexOf('        NSArray *parts')).trim(),bundlesBridgeLegacy.slice(bundlesBridgeLegacy.indexOf('        NSArray *parts')).trim(),'list metadata decoding remains unchanged');
+  assert.match(bundlesEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_LIST_BUNDLES,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*listBundlesWithInfo\(withInfo,&error\)/);
+  assert.equal([...bundlesEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.ok(bundlesEntry.includes('zx_nativeStringQueryResult(value?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply)'));
+  assert.ok(frontmostEntry.includes('metadata!=TLinkNativeQueryMetadata::Reply&&parts.count>1'));
+  assert.doesNotMatch(bundlesEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  assert.match(bundlesCore,/return listBundlesWithInfo\(withInfo, error\);/);
+  const bundlesCoreLegacy=await read("test/fixtures/list-bundles-core-legacy-v1.inc");
+  assert.equal(bundlesCore.slice(bundlesCore.indexOf('    Class wsCls')).trim(),bundlesCoreLegacy.slice(bundlesCoreLegacy.indexOf('    Class wsCls')).trim(),'workspace enumeration and encoding remain unchanged');
+  const bundlesLegacy=await read("test/fixtures/list-bundles-handler-legacy-v1.inc");
+  assert.equal(between(task,"    else if (taskType == TASK_LIST_BUNDLES)","    else if (taskType == TASK_OPEN_URL)").trim(),bundlesLegacy.slice(bundlesLegacy.indexOf('\n')+1).trim());
+  const safeString=between(processSource,"static NSString *zx_safeString","static pid_t zx_pidForBundleId");
+  const safeStringLegacy=await read("test/fixtures/safe-string-legacy-v1.inc");
+  assert.equal(safeString.trim(),safeStringLegacy.slice(safeStringLegacy.indexOf('\n')+1).trim());
+  await writeFile(join(temp,"NativeListBundlesBridge.inc"),bundlesBridge);
+  await writeFile(join(temp,"NativeListBundlesEntry.inc"),bundlesEntry);
+  await writeFile(join(temp,"ListBundlesCoreUnderTest.inc"),bundlesCore);
+  await writeFile(join(temp,"SafeStringUnderTest.inc"),safeString);
   const pathBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodRootDir]","    else if ([method isEqualToString:TLinkJSNativeMethodInfo])");
   const pathEntry=between(task,"// BEGIN typed path task entry.","// END typed path task entry.");
   assert.match(pathBridge,/TLinkExecuteNativePath\(task,context\)/);
@@ -420,7 +444,7 @@ try {
     between(bridge,"static BOOL TLinkautoJSValidToken","static NSString *TLinkautoJSEncodeGesturePoints") +
     between(bridge, "static NSDictionary *TLinkautoJSResultByAdding", "static double TLinkautoJSDoubleOption") +
     between(bridge,"static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError","static NSDictionary *TLinkautoJSStateResult");
-  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
+  for (const name of new Set([...`${rawBridge}\n${press}\n${typedTouch}\n${batchBridge}\n${colorBridge}\n${framePickBridge}\n${frameManyBridge}\n${frameSearchBridge}\n${frameColorsBridge}\n${frameMultiBridge}\n${colorRangeBridge}\n${colorPointsBridge}\n${colorMultiBridge}\n${frameImageBridge}\n${frameOCRBridge}\n${frameReleaseBridge}\n${imageReleaseBridge}\n${imageCaptureBridge}\n${imageOpenBridge}\n${frameCaptureBridge}\n${appBridge}\n${bundlesBridge}`.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match => match[1]))) {
     assert.ok(helpers.includes(`${name}(`), `missing production helper in native fixture: ${name}`);
   }
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
@@ -454,6 +478,7 @@ try {
   assert.match(runtimeFixture,/#include "native-app-info-runtime-fixture.inc"\n#include "native-app-paths-runtime-fixture.inc"/,'app-paths fixture requires the shared app entry and Objective-C runtime imports');
   assert.match(runtimeFixture,/#include "native-app-paths-runtime-fixture.inc"\n#include "native-app-kill-runtime-fixture.inc"/,'app-kill fixture requires the app/state entry and controlled application boundary');
   assert.match(runtimeFixture,/#include "native-app-kill-runtime-fixture.inc"\n#include "native-app-open-runtime-fixture.inc"/,'app-open fixture requires the shared app entry first');
+  assert.match(runtimeFixture,/#include "native-app-open-runtime-fixture.inc"\n#include "native-list-bundles-runtime-fixture.inc"/,'list-bundles fixture requires the shared formatter and Objective-C runtime first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

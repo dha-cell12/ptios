@@ -977,7 +977,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
     }
     else if ([method isEqualToString:TLinkJSNativeMethodListBundles]) {
         BOOL withInfo = [args count] > 0 ? [[args objectAtIndex:0] boolValue] : NO;
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_LIST_BUNDLES, withInfo ? @"1" : @"0"] context:context];
+        NSDictionary *result = TLinkExecuteNativeListBundles(withInfo,context);
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         if (withInfo) {
