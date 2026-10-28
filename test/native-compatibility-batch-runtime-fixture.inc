@@ -71,7 +71,8 @@ static void typedCompatibilityBatchCases(TLinkInProcessNativeBridge *bridge){
     for(NSArray *commands in @[@[],@[@""],@[@"",@""],@[@"x",@""],@[@"6220;;30;;0|",@"6220;;30;;0"],@[@"6220;;30;;0||62"],@[@"1011190020000300",@"99bad"],@[@"1011190020000300",@"62"],@[@"1011190020000300",@"6220;;30;;0"]])parity(commands,4096,0,true);
     auto context=parent();reset(context,0);const int gates=licenseCalls;
     failure(TLinkExecuteNativeCompatibilityBatch((NSArray *)@"bad",context),@"invalid_payload");
-    failure(TLinkExecuteNativeCompatibilityBatch(@[@42],context),@"invalid_payload");
+    NSArray *nonStringCommands=@[@42]; // Deliberately erase generics for the runtime rejection probe.
+    failure(TLinkExecuteNativeCompatibilityBatch(nonStringCommands,context),@"invalid_payload");
     failure(TLinkExecuteNativeCompatibilityBatch(many,context),@"invalid_payload");assert(licenseCalls==gates&&injected.empty());
     context=parent();reset(context,6);
     failure([bridge executeRequest:request(normal) context:context error:nil].value,@"native_exception");assert(injected.size()==4&&injected.back().type==TOUCH_UP);

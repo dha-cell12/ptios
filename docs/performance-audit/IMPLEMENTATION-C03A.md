@@ -34,6 +34,8 @@ The new macOS fixture compiles the complete actual and frozen classes, their rea
 
 ## Acceptance and remaining work
 
+CI correction at baseline `8a44fbd1`: Clang rejected the intentionally invalid NSNumber array literal in the older compatibility-batch fixture because the call's NSArray<NSString *> parameter context typed the literal. Store that literal in a raw NSArray local before calling the API so the existing invalid_payload and no-gate/no-touch runtime assertions remain exercised. Keep the public API, production code and -Werror checks unchanged. An always-host guard requires this probe shape; focused Windows native-budget/extraction and assert checks pass, while corrected macOS compilation/runtime remains pending CI.
+
 Build rootfull/roothide, helper and TrollStore. Run mixed readLine/read/seek/write/append scripts against disposable files, including transfer boundaries and changes between calls. Profile realistic line-length distributions, read/seek counts, throughput and per-handle stack cost on devices.
 
 C03's bounded logger, history/config lock and persistence work, log retention, durability/error/recovery, status snapshots and other codecs remain open. C02 still has metadata copies, synchronous P1-40 invalidation and P0-12/device/performance qualification. This checkpoint does not close either group.

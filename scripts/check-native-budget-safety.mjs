@@ -925,6 +925,9 @@ try {
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
+  const compatibilityFixture=await read('test/native-compatibility-batch-runtime-fixture.inc');
+  assert.match(compatibilityFixture,/NSArray \*nonStringCommands=@\[@42\];[\s\S]*failure\(TLinkExecuteNativeCompatibilityBatch\(nonStringCommands,context\),@"invalid_payload"\)/,'heterogeneous input must reach the runtime validator without contextual NSString literal typing');
+  assert.doesNotMatch(compatibilityFixture,/TLinkExecuteNativeCompatibilityBatch\(@\[@42\]/);
   assert.match(runtimeFixture,/#define executeRawPayload legacyRawPayload\n#include "fixtures\/native-raw-dispatch-legacy-v1.inc"\n#undef executeRawPayload/,'the RAW oracle must recursively call its own frozen release path');
   assert.match(runtimeFixture,/typedCompatibilityBatchCases\(bridge\);\s*rawReplyCases\(bridge\);/);
   const appOpenFixture=await read('test/native-app-open-runtime-fixture.inc');
