@@ -90,6 +90,10 @@ NSDictionary *TLinkExecuteNativeSetAutoLaunch(NSString *,NSString *,BOOL,TLinkTa
 NSDictionary *TLinkExecuteNativeListAutoLaunch(TLinkTaskExecutionContext *);
 static void autoLaunchLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_SET_AUTO_LAUNCH=36,TASK_LIST_AUTO_LAUNCH=37};
+NSDictionary *TLinkExecuteNativeSetTimer(NSString *,double,BOOL,NSString *,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeRemoveTimer(NSString *,TLinkTaskExecutionContext *);
+static void timerLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_SET_TIMER=38,TASK_REMOVE_TIMER=39};
 static void clipboardTextLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_TEXT_INPUT=24};
 NSDictionary *TLinkExecuteNativeToast(int,NSString *,int,int,int,TLinkTaskExecutionContext *);
@@ -155,6 +159,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"timerRuntime"]&&(lastPayload.compare(0,2,"38")==0||lastPayload.compare(0,2,"39")==0)){timerLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"autoLaunchRuntime"]&&(lastPayload.compare(0,2,"36")==0||lastPayload.compare(0,2,"37")==0)){autoLaunchLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"dialogRuntime"]&&(lastPayload.compare(0,2,"42")==0||lastPayload.compare(0,2,"43")==0)){dialogLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"alertRuntime"]&&lastPayload.compare(0,2,"12")==0){alertLegacyTask(bytes,stream);return;}
@@ -271,10 +276,17 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyAlert:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyDialog:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyAutoLaunch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyTimer:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyTimer:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-timer-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyAutoLaunch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -522,6 +534,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeAlertBridge.inc"
 #include "NativeDialogBridge.inc"
 #include "NativeAutoLaunchBridge.inc"
+#include "NativeTimerBridge.inc"
 #include "NativeToastBridge.inc"
 #include "NativeRadioBridge.inc"
     return nil;
@@ -1109,6 +1122,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-alert-runtime-fixture.inc"
 #include "native-dialog-runtime-fixture.inc"
 #include "native-autolaunch-runtime-fixture.inc"
+#include "native-timer-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2315,6 +2329,7 @@ int main() { @autoreleasepool {
     typedAlertCases(bridge);
     typedDialogCases(bridge);
     typedAutoLaunchCases(bridge);
+    typedTimerCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

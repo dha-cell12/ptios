@@ -166,8 +166,13 @@ NSString* setTimerFromRawData(UInt8 *eventData, NSError **error)
     NSString *name = data[0];
     NSString *script = data[3];
     BOOL repeat = [data[2] intValue] != 0;
+    return TLinkSetTimer(name, data[1], repeat, script, error);
+}
+
+NSString* TLinkSetTimer(NSString *name, NSString *intervalText, BOOL repeat, NSString *script, NSError **error)
+{
     double interval = 0;
-    NSScanner *scanner = [NSScanner scannerWithString:data[1]];
+    NSScanner *scanner = [NSScanner scannerWithString:intervalText];
     uint64_t intervalNs = 0;
     if (![scanner scanDouble:&interval] || !scanner.isAtEnd ||
         !TLinkSchedulerInterval(interval, repeat, &intervalNs)) {
@@ -204,6 +209,11 @@ NSString* setTimerFromRawData(UInt8 *eventData, NSError **error)
 NSString* removeTimerFromRawData(UInt8 *eventData, NSError **error)
 {
     NSString *name = eventData ? [NSString stringWithUTF8String:(char*)eventData] : nil;
+    return TLinkRemoveTimer(name, error);
+}
+
+NSString* TLinkRemoveTimer(NSString *name, NSError **error)
+{
     if (name.length == 0) {
         if (error) *error = schedulerError(@"Timer name is required.");
         return nil;

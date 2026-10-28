@@ -11,6 +11,8 @@ NSString* listAutoLaunch(NSError **error);
 // In-memory timers: set/remove ACK after the serial owner commits. Repeat >= 1 second.
 NSString* setTimerFromRawData(UInt8 *eventData, NSError **error);
 NSString* removeTimerFromRawData(UInt8 *eventData, NSError **error);
+NSString* TLinkSetTimer(NSString *name, NSString *intervalText, BOOL repeat, NSString *script, NSError **error);
+NSString* TLinkRemoveTimer(NSString *name, NSError **error);
 NSString* keepAwakeFromRawData(UInt8 *eventData, NSError **error);
 // ACK means queued on main, as with the RAW adapter.
 void TLinkSetKeepAwakeEnabled(BOOL enabled);

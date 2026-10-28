@@ -704,6 +704,28 @@ try {
   await writeFile(join(temp,'AutoLaunchError.inc'),between(autoSource,'static NSError *schedulerError','// Scheduler license diagnostics.'));
   await writeFile(join(temp,'NativeAutoLaunchBridge.inc'),autoBridge);
   await writeFile(join(temp,'NativeAutoLaunchEntry.inc'),autoEntry);
+  const timerCore=between(autoSource,'NSString* setTimerFromRawData','NSString* keepAwakeFromRawData');
+  assert.equal(timerCore.replace('    return TLinkSetTimer(name, data[1], repeat, script, error);\n}\n\nNSString* TLinkSetTimer(NSString *name, NSString *intervalText, BOOL repeat, NSString *script, NSError **error)\n{\n','').replace('scannerWithString:intervalText','scannerWithString:data[1]').replace('    return TLinkRemoveTimer(name, error);\n}\n\nNSString* TLinkRemoveTimer(NSString *name, NSError **error)\n{\n','').trim(),await frozenBody('test/fixtures/timer-core-legacy-v1.inc'));
+  assert.equal(between(task,'    else if (taskType == TASK_SET_TIMER)','    else if (taskType == TASK_KEEP_AWAKE)').trim(),await frozenBody('test/fixtures/timer-handler-legacy-v1.inc'));
+  const timerBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodSetTimer])','    else if ([method isEqualToString:TLinkJSNativeMethodMatchTemplate])');
+  assert.equal(timerBridge.replace('TLinkExecuteNativeSetTimer(name,interval,repeat,script,context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%.3f;;%d;;%@", TASK_SET_TIMER, name, interval, repeat ? 1 : 0, script] context:context]').replace('TLinkExecuteNativeRemoveTimer(name,context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_REMOVE_TIMER, name] context:context]').trim(),await frozenBody('test/fixtures/native-timer-legacy-v1.inc'));
+  assert.doesNotMatch(timerBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const timerEntry=between(task,'// BEGIN typed timer task entry.','// END typed timer task entry.');
+  assert.match(timerEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*stringWithFormat:@"%.3f",interval[\s\S]*setting\?9\+time.length:2[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkSetTimer\(timerName,time,repeat,timerScript,&error\)/);
+  assert.equal([...timerEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(timerEntry,/TLinkRemoveTimer\(timerName,&error\)[\s\S]*budget->stopped\(\)[\s\S]*zx_typedTouchReply/);
+  assert.doesNotMatch(timerEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  const schedulerHeader=await read('pccontrol/Scheduler.h');
+  const [timerRuntimeFixture,schedulerRuntimeFixture]=await Promise.all([read('test/native-timer-runtime-fixture.inc'),read('test/scheduler-runtime-test.mm')]);
+  for(const declaration of ['NSString* TLinkSetTimer(NSString *name, NSString *intervalText, BOOL repeat, NSString *script, NSError **error);','NSString* TLinkRemoveTimer(NSString *name, NSError **error);']){
+    assert.ok(schedulerHeader.includes(declaration));
+    assert.ok(schedulerRuntimeFixture.indexOf(declaration)>=0&&schedulerRuntimeFixture.indexOf(declaration)<schedulerRuntimeFixture.indexOf('#include "SchedulerRuntimeUnderTest.inc"'));
+    assert.ok(timerRuntimeFixture.indexOf(declaration)>=0&&timerRuntimeFixture.indexOf(declaration)<timerRuntimeFixture.indexOf('#include "TimerCoreUnderTest.inc"'));
+  }
+  await writeFile(join(temp,'TimerOwnerUnderTest.inc'),between(autoSource,'struct TLinkSchedulerTimer {','// Scheduler license diagnostics.'));
+  await writeFile(join(temp,'TimerCoreUnderTest.inc'),between(autoSource,'// Registry mutation, timer callbacks','NSString* keepAwakeFromRawData'));
+  await writeFile(join(temp,'NativeTimerBridge.inc'),timerBridge);
+  await writeFile(join(temp,'NativeTimerEntry.inc'),timerEntry);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -774,6 +796,7 @@ try {
   assert.match(runtimeFixture,/#include "native-clipboard-image-runtime-fixture.inc"\n#include "native-alert-runtime-fixture.inc"/,'alert fixture requires shared entry/formatter and content fixtures first');
   assert.match(runtimeFixture,/#include "native-alert-runtime-fixture.inc"\n#include "native-dialog-runtime-fixture.inc"/,'dialog fixture requires CF notification declarations and shared content fixtures first');
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
+  assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

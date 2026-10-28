@@ -955,6 +955,55 @@ NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionCont
 }
 // END typed clipboard image task entry.
 
+// BEGIN typed timer task entry.
+static NSDictionary *zx_nativeTimerExecute(int taskType,NSString *name,double interval,BOOL repeat,NSString *script,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_SET_TIMER==38&&TASK_REMOVE_TIMER==39,"timer task classification changed");
+    if(taskType!=TASK_SET_TIMER&&taskType!=TASK_REMOVE_TIMER)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        const bool setting=taskType==TASK_SET_TIMER;
+        if(![name isKindOfClass:[NSString class]]||(setting&&![script isKindOfClass:[NSString class]]))return zx_typedTouchFailure(@"invalid_payload");
+        NSString *timerName=[name copy],*timerScript=setting?[script copy]:@"";
+        NSString *time=setting?[NSString stringWithFormat:@"%.3f",interval]:@"";
+        const NSUInteger prefix=setting?9+time.length:2; // task, three separators, repeat digit and interval
+        if(prefix>8192||timerName.length>8192-prefix||timerScript.length>8192-prefix-timerName.length)return zx_typedTouchFailure(@"input_too_large");
+        const char *n=timerName.UTF8String,*s=timerScript.UTF8String;
+        const NSUInteger nn=[timerName lengthOfBytesUsingEncoding:NSUTF8StringEncoding],sn=[timerScript lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(!n||!s||nn>32*1024-prefix||sn>32*1024-prefix-nn||memchr(n,0,nn)||memchr(s,0,sn))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(taskType,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;
+        if(setting){
+            // Preserve delimiter overlaps and the RAW parser's first-four-field policy.
+            if([timerName rangeOfString:@";"].location!=NSNotFound||[timerScript rangeOfString:@";"].location!=NSNotFound){
+                NSArray *fields=[[NSString stringWithFormat:@"%@;;%@;;%d;;%@",timerName,time,repeat?1:0,timerScript] componentsSeparatedByString:@";;"];
+                timerName=fields[0];time=fields[1];repeat=[fields[2] intValue]!=0;timerScript=fields[3];
+            }
+            TLinkSetTimer(timerName,time,repeat,timerScript,&error);
+        }else TLinkRemoveTimer(timerName,&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return zx_typedTouchReply(error?error.localizedDescription:@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeSetTimer(NSString *name,double interval,BOOL repeat,NSString *script,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeTimerExecute(TASK_SET_TIMER,name,interval,repeat,script,context);}
+    return result;
+}
+NSDictionary *TLinkExecuteNativeRemoveTimer(NSString *name,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeTimerExecute(TASK_REMOVE_TIMER,name,0,false,nil,context);}
+    return result;
+}
+// END typed timer task entry.
+
 // BEGIN typed auto-launch task entry.
 static NSDictionary *zx_nativeAutoLaunchExecute(int taskType,NSString *name,NSString *script,BOOL enabled,TLinkTaskExecutionContext *context)
 {

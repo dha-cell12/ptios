@@ -27,6 +27,8 @@ static int playScript(UInt8 *path, NSError **error) {
     return 0;
 }
 static void setLastScriptError(NSString *message) { (void)message; assert(false); }
+NSString* TLinkSetTimer(NSString *name, NSString *intervalText, BOOL repeat, NSString *script, NSError **error);
+NSString* TLinkRemoveTimer(NSString *name, NSError **error);
 #include "SchedulerRuntimeUnderTest.inc"
 
 static void set(NSString *payload) {
