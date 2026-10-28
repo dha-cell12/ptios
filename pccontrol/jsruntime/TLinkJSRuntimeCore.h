@@ -21,6 +21,8 @@
 - (BOOL)watchdogAvailable;
 - (NSString *)currentConsoleLogPath;
 - (NSString *)currentConsoleLatestLogPath;
+// Logger lifetime counters; pending bytes reserve the maximum for each entry.
+- (NSDictionary *)currentConsoleLogStats;
 - (NSDictionary *)currentManifest;
 - (NSString *)currentBundlePath;
 - (NSDictionary *)bundleStoragePathForRelativePath:(NSString *)relativePath createParent:(BOOL)createParent;

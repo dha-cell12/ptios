@@ -54,6 +54,7 @@ jobs:
           node scripts/check-license-hot-safety.mjs
           node scripts/check-helper-config-safety.mjs
           node scripts/check-file-handle-safety.mjs
+          node scripts/check-console-log-safety.mjs
           node scripts/check-helper-replay-safety.mjs
           node scripts/check-helper-identity-safety.mjs
           node scripts/check-helper-transport-safety.mjs

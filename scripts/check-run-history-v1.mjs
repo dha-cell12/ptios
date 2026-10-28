@@ -85,7 +85,10 @@ assert.match(rootPlayer, /beginRunHistoryForSession:session entryPath:session.en
 assert.match(rootPlayer, /session.licenseRevoked[\s\S]*state = @"license_revoked"/);
 assert.match(rootPlayer, /finishRunHistoryForSession:session state:state error:error/);
 assert.match(rootCore, /_consoleLogPath = \[dir stringByAppendingPathComponent/);
-assert.doesNotMatch(rootCore, /_consoleLogPath = nil;/);
+const rootCleanupStart=rootCore.indexOf('[deviceBridge closeOpenFiles]');
+const rootCleanupEnd=rootCore.indexOf('- (NSDictionary *)bundleStoragePathForRelativePath:',rootCleanupStart);
+assert.ok(rootCleanupStart>=0&&rootCleanupEnd>rootCleanupStart);
+assert.doesNotMatch(rootCore.slice(rootCleanupStart,rootCleanupEnd), /_console(?:Latest)?LogPath = nil;/,'completed-run log paths must survive cleanup for failure evidence');
 assert.match(rootTask, /@"run_history": TLinkRunHistorySnapshot\(20\)/);
 
 assert.match(trollServer, /TLinkRunHistoryBegin\(@"trollstore"/);

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <dlfcn.h>
 #include <math.h>
+#include "../../shared/TLinkConsoleLogBudget.h"
 
 typedef bool (*TLinkautoJSShouldTerminateCallback)(JSContextRef ctx, void *opaque);
 typedef void (*TLinkautoJSSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkautoJSShouldTerminateCallback callback, void *opaque);
@@ -101,10 +102,15 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     dispatch_queue_t _logQueue;
     os_unfair_lock _logStateLock;
     BOOL _acceptingLogs;
+    uint64_t _logGeneration;
+    std::shared_ptr<TLinkConsoleLogBudget> _logBudget; // Old formatters stay charged across run changes.
 }
 
 - (void)prepareConsoleLogFiles;
-- (void)appendLine:(NSString *)line toConsolePath:(NSString *)path;
+- (BOOL)appendConsoleData:(NSData *)data toConsolePath:(NSString *)path;
+- (BOOL)writeConsoleData:(NSData *)data runPath:(NSString *)runPath latestPath:(NSString *)latestPath;
+- (void)beginConsoleLogging;
+- (void)finishConsoleLogging;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath;
 - (void)installWatchdogForContext:(JSContext *)context;
@@ -128,6 +134,8 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
         _logQueue = dispatch_queue_create("com.tlinkauto.js.log", DISPATCH_QUEUE_SERIAL);
         _logStateLock = OS_UNFAIR_LOCK_INIT;
         _acceptingLogs = NO;
+        _logGeneration = 0;
+        _logBudget = std::make_shared<TLinkConsoleLogBudget>();
     }
     return self;
 }
@@ -186,6 +194,8 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
 }
 
 - (void)prepareConsoleLogFiles {
+    _consoleLogPath = nil;
+    _consoleLatestLogPath = nil;
     if (![_bundlePath isKindOfClass:[NSString class]] || [_bundlePath length] == 0 ||
         ![_runId isKindOfClass:[NSString class]] || [_runId length] == 0) {
         return;
@@ -210,10 +220,10 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     [header writeToFile:_consoleLatestLogPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-- (void)appendLine:(NSString *)line toConsolePath:(NSString *)path {
+- (BOOL)appendConsoleData:(NSData *)data toConsolePath:(NSString *)path {
     if (![path isKindOfClass:[NSString class]] || [path length] == 0 ||
-        ![line isKindOfClass:[NSString class]]) {
-        return;
+        ![data isKindOfClass:[NSData class]]) {
+        return NO;
     }
 
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
@@ -221,42 +231,94 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
     }
 
-    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-    if (!data) return;
-
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        [data writeToFile:path atomically:YES];
-        return;
+        return [data writeToFile:path atomically:YES];
     }
 
     NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
-    if (!handle) return;
+    if (!handle) return NO;
     @try {
         [handle seekToEndOfFile];
         [handle writeData:data];
     } @finally {
         [handle closeFile];
     }
+    return YES;
+}
+
+- (BOOL)writeConsoleData:(NSData *)data runPath:(NSString *)runPath latestPath:(NSString *)latestPath {
+    BOOL runOK=NO,latestOK=NO;
+    @try {try {runOK=[self appendConsoleData:data toConsolePath:runPath];}catch(...) {}} @catch(__unused NSException *exception) {}
+    @try {try {latestOK=[self appendConsoleData:data toConsolePath:latestPath];}catch(...) {}} @catch(__unused NSException *exception) {}
+    return runOK&&latestOK;
+}
+
+- (void)beginConsoleLogging {
+    os_unfair_lock_lock(&_logStateLock);
+    if(_logGeneration!=UINT64_MAX){++_logGeneration;_acceptingLogs=YES;}
+    os_unfair_lock_unlock(&_logStateLock);
+}
+
+- (NSDictionary *)currentConsoleLogStats {
+    const auto stats=_logBudget->snapshot();
+    return @{@"accepted":@(stats.accepted),@"dropped":@(stats.dropped),@"truncated":@(stats.truncated),@"writeFailures":@(stats.writeFailures),
+        @"pendingLines":@(stats.pending),@"pendingBytesReserved":@(stats.pending*TLinkConsoleLogLineBytes),@"peakPendingLines":@(stats.peakPending),
+        @"maxPendingLines":@(TLinkConsoleLogMaxPending),@"maxPendingBytes":@(TLinkConsoleLogMaxPending*TLinkConsoleLogLineBytes),@"maxLineBytes":@(TLinkConsoleLogLineBytes)};
+}
+
+- (void)finishConsoleLogging {
+    os_unfair_lock_lock(&_logStateLock);
+    _acceptingLogs=NO;
+    NSString *runId=_runId,*runPath=_consoleLogPath,*latestPath=_consoleLatestLogPath;
+    os_unfair_lock_unlock(&_logStateLock);
+    dispatch_sync(_logQueue, ^{
+        const auto stats=_logBudget->snapshot();
+        if(stats.dropped||stats.truncated||stats.writeFailures){
+            @autoreleasepool {
+                NSString *line=[NSString stringWithFormat:@"[%@][%@][warn] console logger lifetime totals: dropped=%llu truncated=%llu writeFailures=%llu\n",[NSDate date],runId?:@"",(unsigned long long)stats.dropped,(unsigned long long)stats.truncated,(unsigned long long)stats.writeFailures];
+                NSData *data=[line dataUsingEncoding:NSUTF8StringEncoding];
+                if(data&&data.length<=TLinkConsoleLogLineBytes)[self writeConsoleData:data runPath:runPath latestPath:latestPath];
+                NSLog(@"com.tlinkauto.jsruntime: %@",line);
+            }
+        }
+    });
 }
 
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message {
     os_unfair_lock_lock(&_logStateLock);
-    BOOL accepting = _acceptingLogs;
+    if(!_acceptingLogs){os_unfair_lock_unlock(&_logStateLock);return;}
+    const uint64_t generation=_logGeneration;
+    NSString *runId=_runId,*runPath=_consoleLogPath,*latestPath=_consoleLatestLogPath;
     os_unfair_lock_unlock(&_logStateLock);
-    if (!accepting) return;
-
-    NSString *safeLevel = TLinkautoJSSanitizeFileComponent(level ?: @"log");
-    NSString *safeMessage = [message isKindOfClass:[NSString class]] ? message : [message description];
-    safeMessage = [safeMessage ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"];
-    NSString *line = [NSString stringWithFormat:@"[%@][%@][%@] %@\n",
-                      [NSDate date], _runId ?: @"", safeLevel, safeMessage];
-    NSString *runPath = [_consoleLogPath copy];
-    NSString *latestPath = [_consoleLatestLogPath copy];
-
-    dispatch_async(_logQueue, ^{
-        [self appendLine:line toConsolePath:runPath];
-        [self appendLine:line toConsolePath:latestPath];
-    });
+    @autoreleasepool {
+    @try {try {
+        auto permit=TLinkConsoleLogPermit::acquire(_logBudget);if(!permit)return;
+        NSString *input=[message isKindOfClass:[NSString class]]?message:[message description];input=input?:@"";
+        const NSUInteger count=TLinkConsoleLogPrefix(input.length,TLinkConsoleLogMessageUnits,[input](size_t i){return [input characterAtIndex:i];});
+        BOOL truncated=count<input.length;
+        NSString *safeMessage=[[input substringToIndex:count] stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"];
+        if(truncated)safeMessage=[safeMessage stringByAppendingString:@" [truncated]"];
+        NSString *levelInput=[level isKindOfClass:[NSString class]]?level:(level?@"":@"log");
+        const NSUInteger levelCount=TLinkConsoleLogPrefix(levelInput.length,TLinkConsoleLogLevelUnits,[levelInput](size_t i){return [levelInput characterAtIndex:i];});
+        truncated=truncated||levelCount<levelInput.length;
+        NSString *safeLevel=TLinkautoJSSanitizeFileComponent([levelInput substringToIndex:levelCount]);
+        NSString *line=[NSString stringWithFormat:@"[%@][%@][%@] %@\n",[NSDate date],runId?:@"",safeLevel,safeMessage];
+        NSData *data=[line dataUsingEncoding:NSUTF8StringEncoding];
+        if(!data||data.length>TLinkConsoleLogLineBytes){_logBudget->dropped();return;}
+        os_unfair_lock_lock(&_logStateLock);
+        @try {
+            // Publish under the same lock that closes admission before drain.
+            if(!_acceptingLogs||generation!=_logGeneration){_logBudget->dropped();return;}
+            _logBudget->accepted(truncated);
+            dispatch_async(_logQueue, ^{
+                @autoreleasepool {
+                    @try {if(![self writeConsoleData:data runPath:runPath latestPath:latestPath])_logBudget->failed();}
+                    @finally {permit->finish();}
+                }
+            });
+        } @finally {os_unfair_lock_unlock(&_logStateLock);}
+    }catch(...) {_logBudget->dropped();}} @catch(__unused NSException *exception) {_logBudget->dropped();}
+    }
 }
 
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath {
@@ -341,9 +403,7 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     _bundlePath = [bundlePath copy];
     _manifest = [manifest isKindOfClass:[NSDictionary class]] ? [manifest copy] : @{};
     [self prepareConsoleLogFiles];
-    os_unfair_lock_lock(&_logStateLock);
-    _acceptingLogs = YES;
-    os_unfair_lock_unlock(&_logStateLock);
+    [self beginConsoleLogging];
     
     id<TLinkJSRuntimeFacadePrivate> runtimeFacade = (id<TLinkJSRuntimeFacadePrivate>)facade;
     [runtimeFacade beginOwnedHandleTracking];
@@ -559,10 +619,7 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
         _bundlePath = nil;
         _manifest = nil;
         
-        os_unfair_lock_lock(&_logStateLock);
-        _acceptingLogs = NO;
-        os_unfair_lock_unlock(&_logStateLock);
-        dispatch_sync(_logQueue, ^{}); // flush
+        [self finishConsoleLogging];
         
         _running = NO;
     }

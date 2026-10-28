@@ -1,7 +1,7 @@
 # C03a — chunked FileHandle readLine without a persistent tail cache
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `94634ed3`, containing C02b56; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/POSIX/JavaScriptCore/sanitizer CI and device qualification pending**.
+Status: **user reported corrected build `208bf6a0` passed before C03b; independent device/performance qualification pending**.
 Finding: **P1-43**. C03 begins; C02's remaining metadata/invalidation/qualification work stays open.
 
 ## Result and scope
