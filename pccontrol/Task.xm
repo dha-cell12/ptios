@@ -2104,6 +2104,81 @@ static TLinkShellResult *RunShellCore(NSString *command, TLinkTaskExecutionConte
     return result;
 }
 
+// BEGIN shared legacy shell normalization.
+static NSString *zx_shellLegacyCommand(NSString *rawPayload,double &timeout)
+{
+    timeout = kShellDefaultTimeout;
+    NSString *command = rawPayload;
+    NSRange sepRange = [rawPayload rangeOfString:@";;"];
+    if (sepRange.location != NSNotFound) {
+        NSString *maybeTimeout = [rawPayload substringToIndex:sepRange.location];
+        NSScanner *scanner = [NSScanner scannerWithString:maybeTimeout];
+        double parsed = 0;
+        if ([scanner scanDouble:&parsed] && [scanner isAtEnd] && parsed > 0) {
+            timeout = parsed;
+            command = [rawPayload substringFromIndex:sepRange.location + 2];
+        }
+    }
+    return command;
+}
+static NSString *zx_shellLegacyReply(TLinkShellResult *result,double timeout)
+{
+    NSString *combined = result.stderrStr.length > 0 ? [result.stdoutStr stringByAppendingString:result.stderrStr] : result.stdoutStr;
+    NSString *safeOutput = [[combined stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"] stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
+    if (result.stdoutTruncated || result.stderrTruncated) {
+        safeOutput = [safeOutput stringByAppendingFormat:@"\\n[output truncated: exceeded %lu bytes]", (unsigned long)kShellMaxCapturedOutputBytes];
+    }
+    if (result.timedOut) {
+        return [NSString stringWithFormat:@"-1;;Shell command timed out after %.0fs: %@\r\n", timeout, safeOutput];
+    } else if (result.cancelled) {
+        return [NSString stringWithFormat:@"-1;;Shell command cancelled: %@\r\n", safeOutput];
+    } else if (result.exitCode == 0) {
+        return [NSString stringWithFormat:@"0;;%@\r\n", safeOutput];
+    } else {
+        return [NSString stringWithFormat:@"-1;;Shell command failed (%d): %@\r\n", result.exitCode, safeOutput];
+    }
+}
+// END shared legacy shell normalization.
+
+// BEGIN typed shell task entry.
+static NSDictionary *zx_nativeRunShellExecute(NSString *command,double timeoutSeconds,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_RUN_SHELL==13,"shell task classification changed");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(![command isKindOfClass:[NSString class]])return zx_typedTouchFailure(@"invalid_payload");
+        NSString *input=[[NSString stringWithFormat:@"%@",command] copy];
+        const bool prefixed=std::isfinite(timeoutSeconds)&&timeoutSeconds>0;
+        NSString *time=prefixed?[NSString stringWithFormat:@"%.3f",timeoutSeconds]:nil;
+        const NSUInteger prefix=2+(prefixed?time.length+2:0);
+        if(input.length>8192-prefix)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger size=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(!bytes||size>32*1024-prefix||memchr(bytes,0,size))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_RUN_SHELL,&denial))return zx_nativeAlbumReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        double timeout=kShellDefaultTimeout;
+        if(prefixed){
+            NSScanner *scanner=[NSScanner scannerWithString:time];double parsed=0;
+            if([scanner scanDouble:&parsed]&&[scanner isAtEnd]&&parsed>0)timeout=parsed;
+            else input=zx_shellLegacyCommand([NSString stringWithFormat:@"%@;;%@",time,input],timeout);
+        }else input=zx_shellLegacyCommand(input,timeout);
+        TLinkShellResult *result=RunShellCore(input,call,timeout,SIZE_MAX);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return zx_nativeAlbumReply(zx_shellLegacyReply(result,timeout),budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeRunShell(NSString *command,double timeoutSeconds,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeRunShellExecute(command,timeoutSeconds,context);}
+    return result;
+}
+// END typed shell task entry.
+
 void processTaskLegacy(UInt8 *buff, CFWriteStreamRef writeStreamRef)
 {
     // Legacy callers own a complete NUL-terminated string; bounded ingress uses the explicit-length API.
@@ -2407,35 +2482,9 @@ void processTaskWithContext(UInt8 *buff, size_t actualLength, CFWriteStreamRef w
         @autoreleasepool{
             NSString *rawPayload = [NSString stringWithUTF8String:(const char *)eventData] ?: @"";
             double timeout = kShellDefaultTimeout;
-            NSString *command = rawPayload;
-            NSRange sepRange = [rawPayload rangeOfString:@";;"];
-            if (sepRange.location != NSNotFound) {
-                NSString *maybeTimeout = [rawPayload substringToIndex:sepRange.location];
-                NSScanner *scanner = [NSScanner scannerWithString:maybeTimeout];
-                double parsed = 0;
-                if ([scanner scanDouble:&parsed] && [scanner isAtEnd] && parsed > 0) {
-                    timeout = parsed;
-                    command = [rawPayload substringFromIndex:sepRange.location + 2];
-                }
-            }
-            
+            NSString *command = zx_shellLegacyCommand(rawPayload, timeout);
             TLinkShellResult *result = RunShellCore(command, context, timeout, SIZE_MAX);
-            
-            NSString *combined = result.stderrStr.length > 0 ? [result.stdoutStr stringByAppendingString:result.stderrStr] : result.stdoutStr;
-            NSString *safeOutput = [[combined stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"] stringByReplacingOccurrencesOfString:@"\n" withString:@"\\n"];
-            if (result.stdoutTruncated || result.stderrTruncated) {
-                safeOutput = [safeOutput stringByAppendingFormat:@"\\n[output truncated: exceeded %lu bytes]", (unsigned long)kShellMaxCapturedOutputBytes];
-            }
-            
-            if (result.timedOut) {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"-1;;Shell command timed out after %.0fs: %@\r\n", timeout, safeOutput] UTF8String], writeStreamRef);
-            } else if (result.cancelled) {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"-1;;Shell command cancelled: %@\r\n", safeOutput] UTF8String], writeStreamRef);
-            } else if (result.exitCode == 0) {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"0;;%@\r\n", safeOutput] UTF8String], writeStreamRef);
-            } else {
-                notifyClient((UInt8*)[[NSString stringWithFormat:@"-1;;Shell command failed (%d): %@\r\n", result.exitCode, safeOutput] UTF8String], writeStreamRef);
-            }
+            notifyClient((UInt8*)[zx_shellLegacyReply(result, timeout) UTF8String], writeStreamRef);
         }
     }
     else if (taskType == TASK_RUN_SHELL_V2)

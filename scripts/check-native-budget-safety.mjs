@@ -815,6 +815,37 @@ try {
   await writeFile(join(temp,'LegacyScreenMatch.inc'),stripImports(legacyScreenMatch));
   await writeFile(join(temp,'NativeTemplateMatchEntry.inc'),matchEntry);
   await writeFile(join(temp,'NativeTemplateMatchBridge.inc'),matchBridge);
+  const shellOwner=between(task,'// === runShell drain/timeout support (Group A) ===','// BEGIN shared legacy shell normalization.');
+  assert.equal(shellOwner.trim(),await frozenBody('test/fixtures/shell-owner-core-legacy-v1.inc'),'shell spawn/drain/process-group/timeout/termination policy remains unchanged');
+  assert.equal(between(task,'    else if (taskType == TASK_RUN_SHELL_V2)','    else if (taskType == TASK_TOUCH_RECORDING_START)').trim(),await frozenBody('test/fixtures/shell-v2-handler-legacy-v1.inc'));
+  const shellLegacy=await frozenBody('test/fixtures/shell-handler-legacy-v1.inc');
+  const shellHelpers=between(task,'// BEGIN shared legacy shell normalization.','// END shared legacy shell normalization.');
+  const sourceLines=s=>s.split('\n').map(line=>line.trim()).filter(Boolean).join('\n');
+  const oldParse=between(shellLegacy,'            NSString *command = rawPayload;','            TLinkShellResult *result');
+  const newParse=between(shellHelpers,'    NSString *command = rawPayload;','    return command;');
+  assert.equal(sourceLines(newParse),sourceLines(oldParse),'shared shell command/scanner normalization must preserve the frozen parser');
+  const oldReply=shellLegacy.slice(shellLegacy.indexOf('            NSString *combined'),shellLegacy.lastIndexOf('\n        }\n'));
+  const newReply=between(shellHelpers,'    NSString *combined','\n}\n');
+  const returnReply=oldReply.replaceAll('notifyClient((UInt8*)[[NSString stringWithFormat:','return [NSString stringWithFormat:').replaceAll('] UTF8String], writeStreamRef);','];');
+  assert.equal(sourceLines(newReply),sourceLines(returnReply),'shared shell reply must retain status precedence and escaping exactly');
+  const shellHandler=between(task,'    else if (taskType == TASK_RUN_SHELL)\n','    else if (taskType == TASK_RUN_SHELL_V2)');
+  assert.equal(sourceLines(shellHandler.replace('            NSString *command = zx_shellLegacyCommand(rawPayload, timeout);',oldParse).replace('            notifyClient((UInt8*)[zx_shellLegacyReply(result, timeout) UTF8String], writeStreamRef);',oldReply)),sourceLines(shellLegacy),'RAW task 13 changes only to the shared normalization/reply helpers');
+  const shellBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodRunShell])','    else if ([method isEqualToString:TLinkJSNativeMethodReadText])');
+  const legacyShellCall='        NSString *payload = command;\n        if (TLinkautoJSIsFiniteNumber(timeoutSeconds) && timeoutSeconds > 0) {\n            payload = [NSString stringWithFormat:@"%.3f;;%@", timeoutSeconds, command];\n        }\n        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_RUN_SHELL, payload] context:context];';
+  assert.equal(shellBridge.replace('        NSDictionary *result = TLinkExecuteNativeRunShell(command,timeoutSeconds,context);',legacyShellCall).trim(),await frozenBody('test/fixtures/native-shell-legacy-v1.inc'));
+  assert.doesNotMatch(shellBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const shellEntry=between(task,'// BEGIN typed shell task entry.','// END typed shell task entry.');
+  assert.match(shellEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*stringWithFormat:@"%.3f",timeoutSeconds[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_RUN_SHELL,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*RunShellCore\(input,call,timeout,SIZE_MAX\)[\s\S]*budget->stopped\(\)[\s\S]*zx_nativeAlbumReply\(zx_shellLegacyReply\(result,timeout\),budget\)/);
+  assert.equal([...shellEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(shellEntry,/processTaskWithContext|CFWriteStream|TLinkC01|posix_spawn|base64|removeItemAtPath|\b(?:YES|NO)\b/);
+  assert.ok((await read('pccontrol/Task.h')).includes('NSDictionary *TLinkExecuteNativeRunShell(NSString *command,double timeoutSeconds,TLinkTaskExecutionContext *context);'));
+  await writeFile(join(temp,'NativeShellHelpers.inc'),shellHelpers);
+  await writeFile(join(temp,'NativeShellResult.inc'),between(shellOwner,'@interface TLinkShellResult','static TLinkShellResult *RunShellCore'));
+  const shellConstants=[...shellOwner.matchAll(/^static const (?:NSUInteger kShellMaxCapturedOutputBytes|double kShellDefaultTimeout) = [^\n]+/gm)].map(match=>match[0]);
+  assert.equal(shellConstants.length,2,'shell fixture must include both production constants before helpers');
+  await writeFile(join(temp,'NativeShellConstants.h'),shellConstants.join('\n'));
+  await writeFile(join(temp,'NativeShellEntry.inc'),shellEntry);
+  await writeFile(join(temp,'NativeShellBridge.inc'),shellBridge);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -889,7 +920,7 @@ try {
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
   assert.match(runtimeFixture,/#include "native-timer-runtime-fixture.inc"\n#include "native-screenshot-album-runtime-fixture.inc"/,'screenshot album fixture requires shared bridge/entry helpers first');
-  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file screenshot/template fixtures require shared reply formatter and PNG writer first');
+  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-shell-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file/shell/template fixtures require shared reply formatter and PNG writer first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

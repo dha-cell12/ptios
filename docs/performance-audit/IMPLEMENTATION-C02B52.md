@@ -1,7 +1,7 @@
 # C02b52 — direct screenshot file/region adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `e782771`, containing C02b51; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `965913e`; independent device/performance qualification pending**.
 Finding: **P0-13, screenshotTo/screenshotRegion, task 29 action 1**. C02 remains partial.
 
 ## Result and compatibility

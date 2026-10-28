@@ -545,11 +545,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
             return [TLinkJSNativeResponse responseWithError:@"runShell(command) requires a non-empty single-line command" code:@-1];
         }
         
-        NSString *payload = command;
-        if (TLinkautoJSIsFiniteNumber(timeoutSeconds) && timeoutSeconds > 0) {
-            payload = [NSString stringWithFormat:@"%.3f;;%@", timeoutSeconds, command];
-        }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_RUN_SHELL, payload] context:context];
+        NSDictionary *result = TLinkExecuteNativeRunShell(command,timeoutSeconds,context);
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 3) return [TLinkJSNativeResponse responseWithValue:result];
         

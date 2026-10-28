@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C02b53 (28/10/2026): người dùng báo C02b52 build pass (`965913e`). runShell gọi trực tiếp task 13 và RunShellCore; RAW dùng chung helper scanner/phản hồi. Giữ %.3f/NSScanner, tiền tố số trong command, phản hồi text/metadata cũ, một license gate và context/deadline/output. Lõi spawn/drain/process-group và task 71 không đổi. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; fixture runner giả lập không chạy lệnh, chờ CI Foundation/macOS và nghiệm thu process/thiết bị. Chi tiết: IMPLEMENTATION-C02B53.md.
+
 Cập nhật triển khai C02b52 (28/10/2026): người dùng báo C02b51 build pass (`e782771`). screenshotTo/screenshotRegion gọi trực tiếp task 29 action 1 và lõi Screen giữ nguyên; giữ UTF-8, %.0f → floatValue, dấu chấm phẩy, lỗi/path/metadata, một license gate và context/deadline/output. Không rollback file đã ghi; lease action 4 và album không đổi. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; fixture dùng Screen giả lập và chỉ ghi PNG trong thư mục tạm riêng, chờ CI Foundation/macOS và nghiệm thu capture/crop/codec/I/O/thiết bị. Chi tiết: IMPLEMENTATION-C02B52.md.
 
 Cập nhật triển khai C02b51 (28/10/2026): người dùng báo C02b50 và bản sửa Unicode build pass (`2b06a1f`). Query/set VPN gọi entry trực tiếp task 59 và lõi chọn query/connect/disconnect dùng chung với RAW; giữ broker transport, diagnostics, boolValue/metadata, lỗi C-string và một license gate cùng context/deadline/output. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; fixture mới dùng broker giả lập, chờ CI Foundation/macOS và nghiệm thu broker/VPN/thiết bị. Chi tiết: IMPLEMENTATION-C02B51.md.

@@ -97,6 +97,9 @@ enum {TASK_SET_TIMER=38,TASK_REMOVE_TIMER=39};
 NSDictionary *TLinkExecuteNativeScreenshotAlbum(BOOL,NSString *,TLinkTaskExecutionContext *);
 static void screenshotAlbumLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_SCREENSHOT=29};
+NSDictionary *TLinkExecuteNativeRunShell(NSString *,double,TLinkTaskExecutionContext *);
+static void shellLegacyTask(UInt8 *,CFWriteStreamRef,TLinkTaskExecutionContext *);
+enum {TASK_RUN_SHELL=13};
 NSDictionary *TLinkExecuteNativeScreenshotFile(NSString *,BOOL,double,double,double,double,TLinkTaskExecutionContext *);
 static void screenshotFileLegacyTask(UInt8 *,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeTemplateMatch(NSString *,int,double,double,TLinkTaskExecutionContext *);
@@ -171,6 +174,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
     if([mode isEqualToString:@"templateMatchRuntime"]&&lastPayload.compare(0,2,"21")==0){templateMatchLegacyTask(bytes,length,stream);return;}
+    if([mode isEqualToString:@"shellRuntime"]&&lastPayload.compare(0,2,"13")==0){shellLegacyTask(bytes,stream,context);return;}
     if([mode isEqualToString:@"screenshotFileRuntime"]&&lastPayload.compare(0,2,"29")==0){screenshotFileLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"screenshotAlbumRuntime"]&&lastPayload.compare(0,2,"29")==0){screenshotAlbumLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"timerRuntime"]&&(lastPayload.compare(0,2,"38")==0||lastPayload.compare(0,2,"39")==0)){timerLegacyTask(bytes,stream);return;}
@@ -294,12 +298,19 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyTimer:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyScreenshotAlbum:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyScreenshotFile:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyShell:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyTemplateMatch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyVPN:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyShell:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-shell-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyScreenshotFile:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -583,6 +594,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeScreenshotAlbumBridge.inc"
 #include "NativeScreenshotFileRegionBridge.inc"
 #include "NativeScreenshotFileToBridge.inc"
+#include "NativeShellBridge.inc"
 #include "NativeToastBridge.inc"
 #include "NativeRadioBridge.inc"
     return nil;
@@ -1174,6 +1186,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-timer-runtime-fixture.inc"
 #include "native-screenshot-album-runtime-fixture.inc"
 #include "native-screenshot-file-runtime-fixture.inc"
+#include "native-shell-runtime-fixture.inc"
 #include "native-template-match-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
@@ -2385,6 +2398,7 @@ int main() { @autoreleasepool {
     typedTimerCases(bridge);
     typedScreenshotAlbumCases(bridge);
     typedScreenshotFileCases(bridge);
+    typedShellCases(bridge);
     typedTemplateMatchCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
