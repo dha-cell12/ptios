@@ -137,6 +137,8 @@ static std::string lastPayload;
 static TLinkTaskExecutionContext *observed;
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeCompatibilityBatch(NSArray<NSString *> *,TLinkTaskExecutionContext *);
+static void compatibilityBatchLegacyTask(UInt8 *,CFWriteStreamRef);
 static bool zx_handleNativeBatch(UInt8 *,NSError **);
 NSDictionary *TLinkExecuteNativeFrameRelease(const TLinkNativeFrameReleaseRequest &,TLinkTaskExecutionContext *);
 static void frameReleaseLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
@@ -214,6 +216,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
         assert([context nativeBudget]->cleanup()); ++releases;
         notifyClient((UInt8 *)"0\r\n", stream); return;
     }
+    if([mode isEqualToString:@"compatibilityBatchRuntime"]&&lastPayload.compare(0,2,"65")==0){compatibilityBatchLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"batchRuntime"]&&lastPayload.compare(0,2,"65")==0){
         NSError *error=nil;zx_handleNativeBatch(bytes+2,&error);
         notifyClient((UInt8 *)[(error.localizedDescription?:@"0\r\n") UTF8String],stream);return;
@@ -299,12 +302,19 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyScreenshotAlbum:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyScreenshotFile:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyShell:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyCompatibilityBatch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyTemplateMatch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyVPN:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyCompatibilityBatch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-compatibility-batch-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyShell:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -1187,6 +1197,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-screenshot-album-runtime-fixture.inc"
 #include "native-screenshot-file-runtime-fixture.inc"
 #include "native-shell-runtime-fixture.inc"
+#include "native-compatibility-batch-runtime-fixture.inc"
 #include "native-template-match-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
@@ -1468,14 +1479,18 @@ static void typedBatchCases(TLinkInProcessNativeBridge *bridge){
     assert(injected.size()==4&&injected.back().type==TOUCH_UP);fakeTiming=true;
     // RAW/mixed, string/negative/extreme duration and embedded-NUL compatibility.
     mode=@"batchRuntime";
-    for(id duration:@[@-1,@60001,@(1e100),@"16"]){context=parent();reset(context);const int before=calls;
+    for(id duration:@[@-1,@60001,@(1e100),@"16"]){context=parent();reset(context);const int before=calls,gates=licenseCalls;
         NSArray *commands=@[@{@"type":@"tap",@"x":@20,@"y":@30,@"duration":duration}];
-        NSString *expected=[@"65" stringByAppendingString:legacyBatchWire(commands)];
+        NSString *wire=legacyBatchWire(commands);
         TLinkJSNativeResponse *result=invoke(commands,context);
-        assert(result.ok);assert(calls==before+1);
-        assert(lastPayload==expected.UTF8String);}
+        assert(result.ok&&calls==before&&licenseCalls==gates+1&&lastLicenseTask==65);
+        const auto points=injected;const auto times=frameTimes;reset(context);NSError *error=nil;
+        {TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,NO,NO) nativeBudget]);zx_handleNativeBatch((UInt8 *)wire.UTF8String,&error);}
+        assert([result.value[@"raw"] isEqual:(error.localizedDescription?:@"0\r\n")]&&points.size()==injected.size()&&times==frameTimes);
+        for(size_t i=0;i<points.size();++i)assert(points[i].type==injected[i].type&&points[i].index==injected[i].index&&points[i].x==injected[i].x&&points[i].y==injected[i].y);
+    }
     context=parent();reset(context);const int beforeRaw=calls;
-    auto fallback=invoke(@[tap,@"62",tap],context);assert(fallback.ok&&![fallback.value[@"ok"] boolValue]&&calls==beforeRaw+1&&injected.size()==2);
+    auto fallback=invoke(@[tap,@"62",tap],context);assert(fallback.ok&&![fallback.value[@"ok"] boolValue]&&calls==beforeRaw&&injected.size()==2);
     context=parent();reset(context);unichar zero=0;NSString *nul=[@"62" stringByAppendingString:[NSString stringWithCharacters:&zero length:1]];
     const int beforeNul=calls;failure(invoke(@[tap,nul],context).value,@"invalid_payload");assert(injected.empty()&&calls==beforeNul);
     context=parent();reset(context);const int beforeDelimiter=calls;
@@ -2399,6 +2414,7 @@ int main() { @autoreleasepool {
     typedScreenshotAlbumCases(bridge);
     typedScreenshotFileCases(bridge);
     typedShellCases(bridge);
+    typedCompatibilityBatchCases(bridge);
     typedTemplateMatchCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");

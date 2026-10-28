@@ -223,6 +223,22 @@ try {
   const structuredBatch=between(batchBridge,"        if(structured) {","        NSMutableArray<NSString *> *wireCommands");
   assert.doesNotMatch(structuredBatch,/executeRawPayload|componentsJoinedByString|CFWriteStream|UTF8String/);
   assert.match(structuredBatch,/input.fits\(\)[\s\S]*TLinkExecuteNativeTouchBatch\(touches,context\)/);
+  const batchFrozen=async path=>{const source=await read(path);return source.slice(source.indexOf('\n')+1).trim();};
+  const batchLines=source=>source.split('\n').map(line=>line.trim()).filter(Boolean).join('\n');
+  const oldBatchCall='[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_BATCH, [wireCommands componentsJoinedByString:@"||"]] context:context]';
+  assert.equal(batchBridge.replace('TLinkExecuteNativeCompatibilityBatch(wireCommands,context)',oldBatchCall).trim(),await batchFrozen('test/fixtures/native-compatibility-batch-legacy-v1.inc'));
+  assert.doesNotMatch(batchBridge,/executeRawPayload|CFWriteStream|componentsJoinedByString/);
+  const compatibilityCore=between(task,'static bool zx_executeCompatibilityBatch','static bool zx_handleNativeBatch');
+  const compatibilityWrapper=between(task,'static bool zx_handleNativeBatch','// BEGIN typed touch task entry.');
+  const compatibilityBody=compatibilityCore.slice(compatibilityCore.indexOf('{')+1,compatibilityCore.lastIndexOf('}'));
+  assert.equal(batchLines(compatibilityWrapper.replace('    return zx_executeCompatibilityBatch(commands, err);',compatibilityBody)),batchLines(await batchFrozen('test/fixtures/compatibility-batch-core-legacy-v1.inc')),'RAW wrapper and common executor preserve the frozen body');
+  assert.equal(between(task,'    else if (taskType == TASK_NATIVE_BATCH)','    else if (taskType == TASK_PROCESS_BRING_FOREGROUND)').trim(),await batchFrozen('test/fixtures/compatibility-batch-handler-legacy-v1.inc'));
+  const compatibilityEntry=between(task,'// BEGIN typed compatibility batch task entry.','// END typed compatibility batch task entry.');
+  assert.match(compatibilityEntry,/commands.count>256[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-2-separators[\s\S]*\[value copy\][\s\S]*32\*1024-2-separators[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_NATIVE_BATCH,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*split\?\[\[snapshots componentsJoinedByString:@"\|\|"\] componentsSeparatedByString:@"\|\|"\][\s\S]*zx_executeCompatibilityBatch\(input,&error\)[\s\S]*zx_typedTouchReply/);
+  assert.equal([...compatibilityEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(compatibilityEntry,/processTaskWithContext|CFWriteStream|TLinkC01|\b(?:YES|NO)\b/);
+  assert.ok((await read('pccontrol/Task.h')).includes('NSDictionary *TLinkExecuteNativeCompatibilityBatch(NSArray<NSString *> *commands,TLinkTaskExecutionContext *context);'));
+  await writeFile(join(temp,'NativeCompatibilityBatchEntry.inc'),compatibilityEntry);
   await writeFile(join(temp,"NativeBatchBridgeUnderTest.inc"),batchBridge);
   const frontmostBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodFrontMostAppId])","    else if ([method isEqualToString:TLinkJSNativeMethodOpenApp]");
   const frontmostEntry=between(task,"// BEGIN typed frontmost task entry.","// END typed frontmost task entry.");
@@ -920,7 +936,7 @@ try {
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
   assert.match(runtimeFixture,/#include "native-timer-runtime-fixture.inc"\n#include "native-screenshot-album-runtime-fixture.inc"/,'screenshot album fixture requires shared bridge/entry helpers first');
-  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-shell-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file/shell/template fixtures require shared reply formatter and PNG writer first');
+  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-shell-runtime-fixture.inc"\n#include "native-compatibility-batch-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file/shell/batch/template fixtures require shared reply formatter and PNG writer first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

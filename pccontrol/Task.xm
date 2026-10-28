@@ -459,15 +459,8 @@ static bool zx_handleNativeGesture(UInt8 *eventData, NSError **err)
     return zx_executeNativeGesture(points,durationMs,finger,err);
 }
 
-static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
+static bool zx_executeCompatibilityBatch(NSArray<NSString *> *commands, NSError **err)
 {
-    NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData];
-    if (!raw || raw.length == 0) {
-        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native batch format: command||command, command starts with 10/62/63/64.\r\n"}];
-        return false;
-    }
-
-    NSArray<NSString *> *commands = [raw componentsSeparatedByString:@"||"];
     TLinkRawTouches ownedTouches;
     bool completed = false;
     @try {
@@ -500,6 +493,18 @@ static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
     } @finally {
         if (!completed) ownedTouches.release([](const uint8_t *bytes, size_t length) { return performTouchFromRawData(bytes, length); });
     }
+}
+
+static bool zx_handleNativeBatch(UInt8 *eventData, NSError **err)
+{
+    NSString *raw = [[NSString alloc] initWithUTF8String:(char *)eventData];
+    if (!raw || raw.length == 0) {
+        if (err) *err = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Native batch format: command||command, command starts with 10/62/63/64.\r\n"}];
+        return false;
+    }
+
+    NSArray<NSString *> *commands = [raw componentsSeparatedByString:@"||"];
+    return zx_executeCompatibilityBatch(commands, err);
 }
 
 // BEGIN typed touch task entry.
@@ -583,6 +588,49 @@ NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchReq
     @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
 }
 // END typed touch task entry.
+
+// BEGIN typed compatibility batch task entry.
+static NSDictionary *zx_nativeCompatibilityBatchExecute(NSArray<NSString *> *commands,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_NATIVE_BATCH==65,"compatibility batch classification changed");
+    if(![commands isKindOfClass:[NSArray class]]||commands.count>256)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        const NSUInteger separators=commands.count?2*(commands.count-1):0;
+        NSUInteger remaining=8192-2-separators;NSMutableArray<NSString *> *snapshots=[NSMutableArray arrayWithCapacity:commands.count];bool split=false;
+        // Count the whole original task before byte/NUL checks, as RAW ingress
+        // does. JS has already validated every mixed command before this call.
+        for(id value in commands){
+            if(![value isKindOfClass:[NSString class]])return zx_typedTouchFailure(@"invalid_payload");
+            NSString *command=[value copy];if(command.length>remaining)return zx_typedTouchFailure(@"input_too_large");remaining-=command.length;
+            [snapshots addObject:command];if([command rangeOfString:@"|"].location!=NSNotFound)split=true;
+        }
+        remaining=32*1024-2-separators;
+        for(NSString *command in snapshots){const char *bytes=command.UTF8String;const NSUInteger size=[command lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            if(!bytes||size>remaining||memchr(bytes,0,size))return zx_typedTouchFailure(@"invalid_payload");remaining-=size;
+        }
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_NATIVE_BATCH,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(snapshots.count==0||(snapshots.count==1&&[snapshots[0] length]==0))return zx_typedTouchReply(@"-1;;Native batch format: command||command, command starts with 10/62/63/64.\r\n",budget);
+        // A single pipe can overlap the joining || separator. Gesture text also
+        // keeps the exact split grammar; ordinary tap/swipe arrays avoid joining.
+        NSArray<NSString *> *input=split?[[snapshots componentsJoinedByString:@"||"] componentsSeparatedByString:@"||"]:[snapshots copy];
+        NSError *error=nil;zx_executeCompatibilityBatch(input,&error);
+        // RAW task 65 reports NSError rather than the executor's BOOL result.
+        return zx_typedTouchReply(error.localizedDescription?:@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeCompatibilityBatch(NSArray<NSString *> *commands,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeCompatibilityBatchExecute(commands,context);}
+    return result;
+}
+// END typed compatibility batch task entry.
 
 // BEGIN typed frontmost task entry.
 // Shared scalar reply formatting for frontmost, path and application queries.

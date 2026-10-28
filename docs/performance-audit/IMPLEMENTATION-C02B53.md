@@ -1,7 +1,7 @@
 # C02b53 — direct legacy shell adapter
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `965913e`, containing C02b52; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `64a6458` passed before C02b54; independent device/performance qualification pending**.
 Finding: **P0-13, runShell, task 13**. C02 remains partial.
 
 ## Result and compatibility

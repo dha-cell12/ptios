@@ -178,6 +178,7 @@ NSDictionary *TLinkExecuteNativeFrameSearch(const TLinkNativeFrameSearchRequest 
 // Licensed numeric entry; preserves task context, deadlines and compatibility result fields.
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &request, TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &requests, TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeCompatibilityBatch(NSArray<NSString *> *commands,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeColorPick(const TLinkNativeColorPickRequest &request, TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeFramePick(const TLinkNativeFramePickRequest &request, TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeFramePickMany(const TLinkNativeFramePickManyRequest &request, TLinkTaskExecutionContext *context);

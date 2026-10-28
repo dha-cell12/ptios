@@ -534,7 +534,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
                 return [TLinkJSNativeResponse responseWithError:[NSString stringWithFormat:@"unsupported batch command type: %@", type ?: @""] code:@-1];
             }
         }
-        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_NATIVE_BATCH, [wireCommands componentsJoinedByString:@"||"]] context:context]];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeCompatibilityBatch(wireCommands,context)];
     }
     
     else if ([method isEqualToString:TLinkJSNativeMethodRunShell]) {
