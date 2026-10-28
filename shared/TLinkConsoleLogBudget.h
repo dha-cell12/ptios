@@ -9,11 +9,13 @@
 #include <mutex>
 #include <utility>
 static const size_t TLinkConsoleLogLineBytes=16*1024;
+static const size_t TLinkConsoleLogSystemBytes=16*1024;
+static const size_t TLinkConsoleLogEntryBytes=TLinkConsoleLogLineBytes+TLinkConsoleLogSystemBytes;
 static const size_t TLinkConsoleLogMaxPending=64;
 static const size_t TLinkConsoleLogMessageUnits=4096;
 static const size_t TLinkConsoleLogLevelUnits=64;
 struct TLinkConsoleLogStats {
-    uint64_t accepted=0,dropped=0,truncated=0,writeFailures=0;
+    uint64_t accepted=0,dropped=0,truncated=0,writeFailures=0,systemFailures=0;
     size_t pending=0,peakPending=0;
 };
 class TLinkConsoleLogBudget {
@@ -25,6 +27,7 @@ public:
     void accepted(bool truncated){std::lock_guard<std::mutex> guard(mutex_);increment(stats_.accepted);if(truncated)increment(stats_.truncated);}
     void dropped(){std::lock_guard<std::mutex> guard(mutex_);increment(stats_.dropped);}
     void failed(){std::lock_guard<std::mutex> guard(mutex_);increment(stats_.writeFailures);}
+    void systemFailed(){std::lock_guard<std::mutex> guard(mutex_);increment(stats_.systemFailures);}
     TLinkConsoleLogStats snapshot(){std::lock_guard<std::mutex> guard(mutex_);return stats_;}
 };
 class TLinkConsoleLogPermit {

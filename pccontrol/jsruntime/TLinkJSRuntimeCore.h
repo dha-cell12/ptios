@@ -21,7 +21,7 @@
 - (BOOL)watchdogAvailable;
 - (NSString *)currentConsoleLogPath;
 - (NSString *)currentConsoleLatestLogPath;
-// Logger lifetime counters; pending bytes reserve the maximum for each entry.
+// Lifetime counters; disk and system-text reservations are reported separately.
 - (NSDictionary *)currentConsoleLogStats;
 - (NSDictionary *)currentManifest;
 - (NSString *)currentBundlePath;

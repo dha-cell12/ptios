@@ -87,10 +87,10 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
 
 struct TLinkConsoleLogEntry {
     NSData *data;
-    NSString *runPath,*latestPath;
+    NSString *runPath,*latestPath,*runId,*systemLevel,*systemMessage;
     std::shared_ptr<TLinkConsoleLogPermit> permit;
-    TLinkConsoleLogEntry(NSData *value,NSString *run,NSString *latest,std::shared_ptr<TLinkConsoleLogPermit> charge)
-        :data(value),runPath(run),latestPath(latest),permit(std::move(charge)){}
+    TLinkConsoleLogEntry(NSData *value,NSString *run,NSString *latest,NSString *identifier,NSString *level,NSString *message,std::shared_ptr<TLinkConsoleLogPermit> charge)
+        :data(value),runPath(run),latestPath(latest),runId(identifier),systemLevel(level),systemMessage(message),permit(std::move(charge)){}
 };
 
 @interface TLinkJSRuntimeCore () {
@@ -121,6 +121,7 @@ struct TLinkConsoleLogEntry {
 - (BOOL)appendConsoleData:(NSData *)data toConsolePath:(NSString *)path;
 - (BOOL)writeConsoleData:(NSData *)data runPath:(NSString *)runPath latestPath:(NSString *)latestPath;
 - (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path;
+- (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (void)drainConsoleLogs;
 - (void)beginConsoleLogging;
 - (void)finishConsoleLogging;
@@ -296,6 +297,14 @@ struct TLinkConsoleLogEntry {
     return failed;
 }
 
+- (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry {
+    @try {try {
+        NSLog(@"com.tlinkauto.jsruntime[%@][%@]: %@",entry.runId?:@"",entry.systemLevel,entry.systemMessage);
+        return YES;
+    }catch(...) {}} @catch(__unused NSException *exception) {}
+    return NO;
+}
+
 - (void)drainConsoleLogs {
     for(;;){
         std::vector<std::shared_ptr<TLinkConsoleLogEntry>> batch;
@@ -310,6 +319,7 @@ struct TLinkConsoleLogEntry {
         @autoreleasepool {
             uint64_t failed=TLinkConsoleLogBatchMask(0,batch.size());
             @try {try {
+                for(const auto &entry:batch)if(![self emitConsoleSystemLog:*entry])_logBudget->systemFailed();
                 const uint64_t runFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->runPath];
                 const uint64_t latestFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->latestPath];
                 failed=runFailed|latestFailed;
@@ -335,6 +345,8 @@ struct TLinkConsoleLogEntry {
 - (NSDictionary *)currentConsoleLogStats {
     const auto stats=_logBudget->snapshot();
     return @{@"accepted":@(stats.accepted),@"dropped":@(stats.dropped),@"truncated":@(stats.truncated),@"writeFailures":@(stats.writeFailures),
+        @"systemFailures":@(stats.systemFailures),@"pendingSystemBytesReserved":@(stats.pending*TLinkConsoleLogSystemBytes),@"pendingTotalBytesReserved":@(stats.pending*TLinkConsoleLogEntryBytes),
+        @"maxPendingTotalBytes":@(TLinkConsoleLogMaxPending*TLinkConsoleLogEntryBytes),@"maxSystemTextBytes":@(TLinkConsoleLogSystemBytes),
         @"pendingLines":@(stats.pending),@"pendingBytesReserved":@(stats.pending*TLinkConsoleLogLineBytes),@"peakPendingLines":@(stats.peakPending),
         @"maxPendingLines":@(TLinkConsoleLogMaxPending),@"maxPendingBytes":@(TLinkConsoleLogMaxPending*TLinkConsoleLogLineBytes),@"maxLineBytes":@(TLinkConsoleLogLineBytes)};
 }
@@ -346,12 +358,12 @@ struct TLinkConsoleLogEntry {
     os_unfair_lock_unlock(&_logStateLock);
     dispatch_sync(_logQueue, ^{
         const auto stats=_logBudget->snapshot();
-        if(stats.dropped||stats.truncated||stats.writeFailures){
+        if(stats.dropped||stats.truncated||stats.writeFailures||stats.systemFailures){
             @autoreleasepool {
-                NSString *line=[NSString stringWithFormat:@"[%@][%@][warn] console logger lifetime totals: dropped=%llu truncated=%llu writeFailures=%llu\n",[NSDate date],runId?:@"",(unsigned long long)stats.dropped,(unsigned long long)stats.truncated,(unsigned long long)stats.writeFailures];
+                NSString *line=[NSString stringWithFormat:@"[%@][%@][warn] console logger lifetime totals: dropped=%llu truncated=%llu writeFailures=%llu systemFailures=%llu\n",[NSDate date],runId?:@"",(unsigned long long)stats.dropped,(unsigned long long)stats.truncated,(unsigned long long)stats.writeFailures,(unsigned long long)stats.systemFailures];
                 NSData *data=[line dataUsingEncoding:NSUTF8StringEncoding];
                 if(data&&data.length<=TLinkConsoleLogLineBytes)[self writeConsoleData:data runPath:runPath latestPath:latestPath];
-                NSLog(@"com.tlinkauto.jsruntime: %@",line);
+                @try {try {NSLog(@"com.tlinkauto.jsruntime: %@",line);}catch(...) {}} @catch(__unused NSException *exception) {}
             }
         }
     });
@@ -369,16 +381,22 @@ struct TLinkConsoleLogEntry {
         NSString *input=[message isKindOfClass:[NSString class]]?message:[message description];input=input?:@"";
         const NSUInteger count=TLinkConsoleLogPrefix(input.length,TLinkConsoleLogMessageUnits,[input](size_t i){return [input characterAtIndex:i];});
         BOOL truncated=count<input.length;
-        NSString *safeMessage=[[input substringToIndex:count] stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"];
-        if(truncated)safeMessage=[safeMessage stringByAppendingString:@" [truncated]"];
+        NSString *systemMessage=[[input substringToIndex:count] copy];
+        if(truncated)systemMessage=[systemMessage stringByAppendingString:@" [truncated]"];
+        NSString *safeMessage=[systemMessage stringByReplacingOccurrencesOfString:@"\r" withString:@"\\r"];
         NSString *levelInput=[level isKindOfClass:[NSString class]]?level:(level?@"":@"log");
         const NSUInteger levelCount=TLinkConsoleLogPrefix(levelInput.length,TLinkConsoleLogLevelUnits,[levelInput](size_t i){return [levelInput characterAtIndex:i];});
         truncated=truncated||levelCount<levelInput.length;
         NSString *safeLevel=TLinkautoJSSanitizeFileComponent([levelInput substringToIndex:levelCount]);
+        NSString *rawLevel=[level isKindOfClass:[NSString class]]?level:(level?[level description]:@"log");rawLevel=rawLevel?:@"";
+        const NSUInteger systemLevelCount=TLinkConsoleLogPrefix(rawLevel.length,TLinkConsoleLogLevelUnits,[rawLevel](size_t i){return [rawLevel characterAtIndex:i];});
+        truncated=truncated||systemLevelCount<rawLevel.length;
+        NSString *systemLevel=[[rawLevel substringToIndex:systemLevelCount] copy];
+        if((systemLevel.length+systemMessage.length)*sizeof(unichar)>TLinkConsoleLogSystemBytes){_logBudget->dropped();return;}
         NSString *line=[NSString stringWithFormat:@"[%@][%@][%@] %@\n",[NSDate date],runId?:@"",safeLevel,safeMessage];
         NSData *data=[line dataUsingEncoding:NSUTF8StringEncoding];
         if(!data||data.length>TLinkConsoleLogLineBytes){_logBudget->dropped();return;}
-        auto entry=std::make_shared<TLinkConsoleLogEntry>(data,runPath,latestPath,permit);
+        auto entry=std::make_shared<TLinkConsoleLogEntry>(data,runPath,latestPath,runId,systemLevel,systemMessage,permit);
         os_unfair_lock_lock(&_logStateLock);
         @try {
             // Publish under the same lock that closes admission before drain.
@@ -512,7 +530,6 @@ struct TLinkConsoleLogEntry {
     };
 
     void (^logBlock)(NSString *, NSString *) = ^(NSString *level, NSString *message) {
-        NSLog(@"com.tlinkauto.jsruntime[%@][%@]: %@", weakSelf.runId ?: @"", level ?: @"log", message ?: @"");
         TLinkJSRuntimeCore *strongSelf = weakSelf;
         if (strongSelf) [strongSelf appendConsoleLogWithLevel:level message:message];
     };

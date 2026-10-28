@@ -21,11 +21,19 @@ assert.match(batchWriter,/if\(!written\)failed\|=TLinkConsoleLogBatchMask\(begin
 const drain=between(methods,'- (void)drainConsoleLogs {','- (void)beginConsoleLogging {');
 assert.match(drain,/_logPending.empty\(\)[\s\S]*_logDrainScheduled=NO[\s\S]*batch.swap\(_logPending\)[\s\S]*writeConsoleBatch:batch toConsolePath:batch.front\(\)->runPath[\s\S]*writeConsoleBatch:batch toConsolePath:batch.front\(\)->latestPath[\s\S]*@finally[\s\S]*batch\[n\].reset\(\)[\s\S]*permit->finish\(\)/);
 assert.doesNotMatch(drain,/dispatch_after|dispatch_async/,'one committed drain handles all available work without delayed flushes');
+assert.match(drain,/emitConsoleSystemLog:\*entry[\s\S]*systemFailed\(\)[\s\S]*writeConsoleBatch/,'system backend failures must not skip disk writes');
+const emitter=between(methods,'- (BOOL)emitConsoleSystemLog:','- (void)drainConsoleLogs {');
+assert.match(emitter,/NSLog\(@"com.tlinkauto.jsruntime\[%@\]\[%@\]: %@",entry.runId[\s\S]*catch\(\.\.\.\)[\s\S]*@catch/);
+assert.match(append,/\[\[input substringToIndex:count\] copy\][\s\S]*\[\[rawLevel substringToIndex:systemLevelCount\] copy\][\s\S]*sizeof\(unichar\)>TLinkConsoleLogSystemBytes/,'snapshot bounded UTF16 text before enqueue');
 assert.match(methods,/_acceptingLogs=NO;[\s\S]*dispatch_sync\(_logQueue[\s\S]*console logger lifetime totals/);
 assert.match(source,/\[self prepareConsoleLogFiles\];\s*\[self beginConsoleLogging\];/);
 assert.match(source,/\[self finishConsoleLogging\];\s*_running = NO;/);
 assert.match(source,/_runId = \[\[NSUUID UUID\] UUIDString\];/,'production UUID run paths stay distinct from latest.log');
-assert.match(source,/NSLog\(@"com.tlinkauto.jsruntime\[%@\]\[%@\]: %@"[\s\S]*appendConsoleLogWithLevel:level message:message/);
+const callback=between(source,'void (^logBlock)(NSString *, NSString *)','    context[@"_tlinkautoLoadBundleText"]');
+assert.doesNotMatch(callback,/NSLog|dispatch_|dataUsingEncoding/,'console callback only submits to the existing bounded logger');
+const frozenCallback=(await read('test/fixtures/console-callback-legacy-v1.inc')).split('\n').slice(1).join('\n');
+assert.equal(callback.trim(),frozenCallback.replace(/^\s*NSLog\([^\n]+\);\n/m,'').trim(),'ordinary hook retains weak ownership and bridging; only the synchronous NSLog is removed');
+assert.equal([...source.matchAll(/dispatch_queue_create\("com.tlinkauto.js.log"/g)].length,1,'disk/system logging share one owner queue');
 assert.ok((await read('pccontrol/jsruntime/TLinkJSRuntimeCore.h')).includes('- (NSDictionary *)currentConsoleLogStats;'));
 const frozenText=await read('test/fixtures/console-log-legacy-v1.inc'),frozen=frozenText.slice(frozenText.indexOf('\n')+1);
 const prepare=between(methods,'- (void)prepareConsoleLogFiles {','- (BOOL)appendConsoleData:');
@@ -41,6 +49,7 @@ try{
     const helper=between(source,'static NSString *TLinkautoJSSanitizeFileComponent','struct TLinkConsoleLogEntry {');
     await writeFile(join(temp,'ConsoleLogHelpers.inc'),helper);
     await writeFile(join(temp,'ConsoleLogEntry.inc'),between(source,'struct TLinkConsoleLogEntry {','@interface TLinkJSRuntimeCore'));
+    await writeFile(join(temp,'ConsoleLogCallback.inc'),callback);
     const constant=source.match(/^static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 \* 1024;$/m);assert.ok(constant);
     await writeFile(join(temp,'ConsoleLogConstants.h'),constant[0]);
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
@@ -49,7 +58,7 @@ try{
     run(binary,[]);
     if(process.platform==='darwin'){
         const runtime=join(temp,'console-log-runtime');
-        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/console-log-runtime-test.mm'),'-o',runtime]);
+        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','JavaScriptCore','-I',temp,join(root,'test/console-log-runtime-test.mm'),'-o',runtime]);
         run(runtime,[temp]);
     }else console.log('macOS actual/frozen console formatter/queue/file/lifecycle integration is included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-console-log-'));await rm(temp,{recursive:true,force:true});}

@@ -1,7 +1,7 @@
 # C03c — coalesced console disk writes with line-boundary rotation
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `cf7ed56d` (C03b); user reported that build passed.
-Status: **source implemented; new Foundation/GCD/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `be66e2cf` passed before C03d; independent device/performance qualification pending**.
 Finding: **P1-42 disk-write batching slice**. C03 remains partial.
 
 ## Result and scope
