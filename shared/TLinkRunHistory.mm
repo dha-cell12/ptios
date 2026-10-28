@@ -217,6 +217,12 @@ static BOOL sTLinkRunHistoryRecovered = NO;
 // All accesses are protected by the existing process-local history monitor.
 static void TLinkRunHistoryPersistenceFailure(NSString *operation, NSString *stage, NSString *code)
 {
+    // A required mutation write may have changed files before reporting failure.
+    // Recheck the authoritative index on the next mutation in this process.
+    if (([operation isEqualToString:@"begin"] || [operation isEqualToString:@"finish"]) &&
+        ([stage isEqualToString:@"evidence"] || [stage isEqualToString:@"record"] || [stage isEqualToString:@"index"])) {
+        sTLinkRunHistoryRecovered = NO;
+    }
     if (sTLinkRunHistoryPersistenceFailures != UINT64_MAX) sTLinkRunHistoryPersistenceFailures++;
     sTLinkRunHistoryLastPersistenceFailure = @{
         @"operation": operation, @"stage": stage, @"code": code,

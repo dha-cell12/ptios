@@ -14,6 +14,7 @@ FOUNDATION_EXPORT NSString *TLinkRunHistoryEvidencePath(void);
 // Only a missing index starts empty; unreadable/invalid indexes are preserved.
 // First mutation per process repairs retained record/evidence metadata from that index.
 // Failed recovery blocks the mutation and is attempted again on the next call.
+// Required write failures re-enable recovery before a later mutation in this process.
 // The index is the commit point; inspect process-local persistence_diagnostics in status.
 FOUNDATION_EXPORT NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
                                                      NSString *bundlePath,

@@ -111,10 +111,20 @@ unset and records stage `recovery` with `recovery_invalid_index`,
 `recovery_read_failed`, `recovery_write_failed`, or `exception`. Repaired files
 may already have been written before a later repair fails; the next mutation
 rechecks them. After one successful pass, later mutations in the same process
-skip the artifact scan. Ordinary later write failures do not reset that gate;
-continuous repair after such failures remains future work. Status does not run
-recovery, and missing/corrupt index reconstruction, screenshot restoration,
-orphan retention, event replay and power-loss durability remain outside this pass.
+skip the artifact scan. A later begin/finish failure at the evidence/record/index
+write stage unsets that process's gate, even for a reported NO/NS/C++ exception
+after replacement. The next mutation re-reads the current index under flock and
+repairs retained metadata before doing its own work. The failed mutation/event
+is not replayed. Serialization failures at those stages conservatively re-enable
+recovery even when no file was written. The gate is invalidated independently of
+the saturating diagnostic counter.
+
+Lock/read/preparation failures and post-commit pruning diagnostics preserve the
+gate's current state. Status does not run recovery or clear the gate. Another
+already-warm process is not notified of a local failure; cross-process
+invalidation, missing/corrupt index reconstruction, external artifact-damage
+detection, screenshot restoration, orphan retention, event replay and power-loss
+durability remain outside this pass.
 
 ## Capability markers
 

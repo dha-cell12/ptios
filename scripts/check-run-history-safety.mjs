@@ -10,6 +10,11 @@ const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const [actual,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
 const beforeCommit=commitFrozen.slice(commitFrozen.indexOf('\n')+1);
+const invalidation=between(actual,'    // A required mutation write','    if (sTLinkRunHistoryPersistenceFailures');
+assert.match(invalidation,/operation isEqualToString:@"begin"[\s\S]*operation isEqualToString:@"finish"/);
+assert.match(invalidation,/stage isEqualToString:@"evidence"[\s\S]*stage isEqualToString:@"record"[\s\S]*stage isEqualToString:@"index"[\s\S]*sTLinkRunHistoryRecovered = NO/);
+const beforeRearm=actual.replace(invalidation,'');
+assert.equal(createHash('sha256').update(beforeRearm.trim()).digest('hex'),'ad9d6216ba7fc2f4167c72755309a802142bac10533124672a0639a3614b6a5b','reversing only required-write invalidation must reproduce complete C03i baseline 7f212b05');
 const recovery=between(actual,'// Repair only committed','static NSArray<NSDictionary *> *TLinkRunHistoryTrim');
 assert.match(recovery,/if \(sTLinkRunHistoryRecovered\) return YES/);
 assert.match(recovery,/runs.count <= kTLinkRunHistoryMaxRecords/);
@@ -22,7 +27,7 @@ assert.match(recovery,/errno == EINTR[\s\S]*@finally \{ close\(fd\); \}/);
 assert.match(recovery,/if \(!TLinkRunHistoryWriteJSON\(expected, path\)\)/);
 assert.match(recovery,/sTLinkRunHistoryRecovered = YES;\n    return YES;/);
 assert.doesNotMatch(recovery,/WriteIndex|EventChannelPublish|RemoveArtifact|removeItem|contentsOfDirectory|unlink\(/);
-let checked=actual.replace('#include <errno.h>\n','').replace('static BOOL sTLinkRunHistoryRecovered = NO;\n','').replace(recovery,'');
+let checked=beforeRearm.replace('#include <errno.h>\n','').replace('static BOOL sTLinkRunHistoryRecovered = NO;\n','').replace(recovery,'');
 for(const operation of ['begin','finish']){
     const gate=`            stage = @"recovery";\n            if (!TLinkRunHistoryRecover(runs, @"${operation}")) return @{};\n`;
     assert.ok(checked.includes(gate));checked=checked.replace(gate,'');
@@ -93,7 +98,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
-console.log('Run history source passed: startup retained-metadata recovery, fail-closed mutation reads, checked writes/index commit, post-commit cleanup, bounded diagnostics, finally and frozen record/status fields.');
+console.log('Run history source passed: required-write failure re-enables retained-metadata recovery, fail-closed reads, checked commit/cleanup, bounded diagnostics, finally and frozen record/status fields.');
 if(process.platform!=='darwin'){
     console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
 }else{

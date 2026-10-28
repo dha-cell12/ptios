@@ -1,7 +1,8 @@
 # C03i — recover retained history metadata on the first mutation per process
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `c8d2d085` (C03h), build passed according to the user.
-Status: **source implemented; new macOS Foundation/POSIX/ARC/sanitizer execution and device qualification pending**.
+Status: **build passed according to the user (`7f212b05`); device qualification pending**.
+Follow-up: C03j re-enables the same recovery pass after required mutation write failures in a running process. The behavior/verification below records C03i's original scope.
 Finding: **P1-53 retained record/evidence coherence after restart**. Full crash/durability/orphan/event recovery remains open.
 
 ## Result and trigger
