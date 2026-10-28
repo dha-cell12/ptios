@@ -19,9 +19,20 @@ static std::mutex historyMutex;
 static std::set<int> historyLocks;
 static std::atomic<unsigned> historyRegexBuilds{0},historyUUIDs{0};
 static std::atomic<uint64_t> historyClockMs{1000000};
+static unsigned historyReadFault=0;
+static bool historyLockDenied=false;
+static size_t historyIndexReads=0;
+static std::function<void()> historyStatusHook;
+static void historyIndexReadProbe(){
+    ++historyIndexReads;
+    if(historyReadFault==1)[NSException raise:@"HistoryFixture" format:@"index read fault"];
+    if(historyReadFault==2)throw std::runtime_error("index read fault");
+}
+static void historyStatusPreparationProbe(){if(historyStatusHook)historyStatusHook();}
 static int historyChmod(const char *path,mode_t mode){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(mode==0750||mode==0640);return 0;}
 static int historyChown(const char *path,uid_t uid,gid_t gid){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(uid==501&&gid==501);return 0;}
 static int historyFlock(int fd,int operation){
+    if(historyLockDenied&&operation==LOCK_EX){errno=EACCES;return -1;}
     const int result=::flock(fd,operation);
     if(!result){std::lock_guard<std::mutex> guard(historyMutex);if(operation==LOCK_EX)assert(historyLocks.insert(fd).second);else if(operation==LOCK_UN)assert(historyLocks.erase(fd)==1);}
     return result;
@@ -154,6 +165,58 @@ int main(int argc,char **argv){@autoreleasepool{
         assert([historyReadJSON(started[@"record_path"])[@"state"] isEqualToString:@"running"]);
         assert(Current::TLinkRunHistoryFinish(started[@"run_id"],@"failed",@"failure",@[],console,@"",nil,@{}).count>0);
     }
+    // Snapshot field preparation now permits a real child to acquire flock;
+    // the frozen implementation still holds it during that same preparation.
+    for(bool modern:{false,true}){
+        HistorySnapshot snapshot=modern?Current::TLinkRunHistorySnapshot:Legacy::TLinkRunHistorySnapshot;
+        NSString *root=modern?Current::fixtureRoot:Legacy::fixtureRoot;
+        historyStatusHook=[modern,root]{assert(historyChildCanLock([root stringByAppendingPathComponent:@"history.lock"])==modern);};
+        assert(snapshot(20).count>0);historyStatusHook={};
+    }
+    // A cooperating writer changes the private index after decode, while
+    // status construction is paused. The response must remain the old graph.
+    NSString *indexPath=[Current::fixtureRoot stringByAppendingPathComponent:@"index.json"];
+    NSString *lockPath=[Current::fixtureRoot stringByAppendingPathComponent:@"history.lock"];
+    NSData *beforeStatus=historyCanonical(Current::TLinkRunHistorySnapshot(50),Current::fixtureRoot);
+    historyStatusHook=[indexPath,lockPath]{
+        assert(historyLocks.empty());const int fd=::open(lockPath.fileSystemRepresentation,O_RDWR);assert(fd>=0&&::flock(fd,LOCK_EX|LOCK_NB)==0);
+        NSMutableDictionary *index=[historyReadJSON(indexPath) mutableCopy];NSMutableArray *runs=[index[@"runs"] mutableCopy];NSMutableDictionary *run=[runs[0] mutableCopy];
+        run[@"state"]=@"cancelled";run[@"error"]=@"changed-after-read";runs[0]=run;index[@"runs"]=runs;
+        NSData *data=[NSJSONSerialization dataWithJSONObject:index options:0 error:nil];assert(data&&[data writeToFile:indexPath atomically:YES]);assert(::flock(fd,LOCK_UN)==0&&::close(fd)==0);
+    };
+    const size_t readsBefore=historyIndexReads;
+    NSDictionary *captured=Current::TLinkRunHistorySnapshot(50);historyStatusHook={};
+    assert(historyIndexReads==readsBefore+1&&[beforeStatus isEqual:historyCanonical(captured,Current::fixtureRoot)]);
+    NSDictionary *next=Current::TLinkRunHistorySnapshot(50);NSData *nextBytes=historyCanonical(next,Current::fixtureRoot);
+    assert([next[@"runs"][0][@"error"] isEqualToString:@"changed-after-read"]&&![beforeStatus isEqual:nextBytes]);
+    NSMutableDictionary *returned=next[@"runs"][0];returned[@"error"]=@"caller-edited";
+    assert([nextBytes isEqual:historyCanonical(Current::TLinkRunHistorySnapshot(50),Current::fixtureRoot)]);
+    // Index-read and formatting faults each unwind through the local monitor;
+    // no file lock or partial status escapes, and the next call recovers.
+    for(unsigned fault=1;fault<=4;++fault){
+        const NSUInteger eventCount=historyEvents.count;NSData *indexBefore=[NSData dataWithContentsOfFile:indexPath];bool threw=false;
+        if(fault<=2)historyReadFault=fault;
+        else historyStatusHook=[fault]{assert(historyLocks.empty());if(fault==3)[NSException raise:@"HistoryFixture" format:@"status fault"];throw std::runtime_error("status fault");};
+        @try{try{Current::TLinkRunHistorySnapshot(50);}catch(const std::runtime_error &){threw=true;}}@catch(__unused NSException *exception){threw=true;}
+        historyReadFault=0;historyStatusHook={};
+        assert(threw&&historyLocks.empty()&&historyEvents.count==eventCount&&historyChildCanLock(lockPath));
+        assert([indexBefore isEqual:[NSData dataWithContentsOfFile:indexPath]]&&[nextBytes isEqual:historyCanonical(Current::TLinkRunHistorySnapshot(50),Current::fixtureRoot)]);
+    }
+    // Preserve the existing lock-failure/read-fallback policy; this slice
+    // changes the successful read lock window, not status error semantics.
+    for(bool modern:{false,true}){
+        HistorySnapshot snapshot=modern?Current::TLinkRunHistorySnapshot:Legacy::TLinkRunHistorySnapshot;NSString *root=modern?Current::fixtureRoot:Legacy::fixtureRoot;
+        NSData *normal=historyCanonical(snapshot(20),root);historyLockDenied=true;NSDictionary *denied=snapshot(20);historyLockDenied=false;
+        assert(historyLocks.empty()&&[normal isEqual:historyCanonical(denied,root)]);
+    }
+    NSData *currentIndex=[NSData dataWithContentsOfFile:indexPath];NSString *oldIndexPath=[Legacy::fixtureRoot stringByAppendingPathComponent:@"index.json"];NSData *oldIndex=[NSData dataWithContentsOfFile:oldIndexPath];
+    for(NSString *invalid in @[@"",@"not-json",@"{\"runs\":42}",@"{\"runs\":[]}"]){
+        NSData *data=[invalid dataUsingEncoding:NSUTF8StringEncoding];assert([data writeToFile:indexPath atomically:YES]&&[data writeToFile:oldIndexPath atomically:YES]);
+        NSDictionary *fresh=Current::TLinkRunHistorySnapshot(0),*frozen=Legacy::TLinkRunHistorySnapshot(0);
+        assert([fresh[@"total_count"] intValue]==0&&[historyCanonical(fresh,Current::fixtureRoot) isEqual:historyCanonical(frozen,Legacy::fixtureRoot)]);
+    }
+    assert([currentIndex writeToFile:indexPath atomically:YES]&&[oldIndex writeToFile:oldIndexPath atomically:YES]);
     assert(historyLocks.empty());historyEvents=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
+    puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, unchanged lock-denial/malformed-index policy and exact frozen status fields. Local serialization retained; device qualification pending.");
 }}

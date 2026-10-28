@@ -369,7 +369,13 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
     @synchronized (TLinkRunHistoryLock()) {
         TLinkRunHistoryEnsureDirectories();
         int lockFd = TLinkRunHistoryAcquireFileLock();
-        NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndex();
+        NSMutableArray<NSDictionary *> *runs = nil;
+        @try {
+            runs = TLinkRunHistoryReadIndex();
+        } @finally {
+            TLinkRunHistoryReleaseFileLock(lockFd);
+        }
+        // The decoded graph belongs to this call; formatting needs no file lock.
         NSUInteger bounded = limit == 0 ? kTLinkRunHistorySnapshotDefault : MIN(limit, kTLinkRunHistorySnapshotMax);
         NSArray *selected = runs.count > bounded ? [runs subarrayWithRange:NSMakeRange(0, bounded)] : [runs copy];
         NSMutableArray<NSDictionary *> *statusRuns = [NSMutableArray arrayWithCapacity:selected.count];
@@ -429,7 +435,6 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
             @"failed_count": @(failed),
             @"runs": statusRuns,
         };
-        TLinkRunHistoryReleaseFileLock(lockFd);
         return snapshot;
     }
 }

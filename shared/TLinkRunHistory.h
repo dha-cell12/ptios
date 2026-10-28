@@ -22,6 +22,7 @@ FOUNDATION_EXPORT NSDictionary *TLinkRunHistoryFinish(NSString *runId,
                                                       NSString *screenshotPath,
                                                       NSString *screenshotError,
                                                       NSDictionary *extra);
+// Formats one decoded index after releasing the file lock, under the local monitor.
 FOUNDATION_EXPORT NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit);
 
 #endif

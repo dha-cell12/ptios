@@ -25,14 +25,21 @@ let restored=source.replace(cache,oldRedaction).replace(preparation,'');
 restored=restored.replace('        record[@"schema"] = TLinkRunHistorySchemaV1;',terminal+'        record[@"schema"] = TLinkRunHistorySchemaV1;');
 restored=restored.replace('        record[@"error"] = redactedError;',errorPreparation+'        record[@"error"] = redactedError;');
 restored=restored.replace('        if (failed) {\n            NSString *metadataPath',failure+'        if (failed) {\n'+tailPreparation+'            NSString *metadataPath');
-assert.equal(restored.trim(),old.trim(),'only cache regex construction and move read-only error/tail preparation; all persistence/screenshot/prune/event/status code stays frozen');
+const snapshot=source.slice(source.indexOf('NSDictionary *TLinkRunHistorySnapshot'));
+const snapshotRead=between(snapshot,'        NSMutableArray<NSDictionary *> *runs = nil;','        NSUInteger bounded =');
+assert.match(snapshotRead,/@try[\s\S]*TLinkRunHistoryReadIndex\(\)[\s\S]*@finally[\s\S]*TLinkRunHistoryReleaseFileLock\(lockFd\)/);
+assert.equal([...snapshot.matchAll(/TLinkRunHistoryReleaseFileLock\(lockFd\)/g)].length,1,'release exactly once, before status preparation');
+assert.doesNotMatch(snapshot.slice(snapshot.indexOf('NSUInteger bounded =')),/TLinkRunHistoryReadIndex\(|TLinkRunHistoryAcquireFileLock\(|TLinkRunHistoryReleaseFileLock\(/);
+restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndex();\n');
+restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
+assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
-console.log('Run history preparation source passed: exact patterns/replacements, pre-flock error/tail work and otherwise frozen begin/finish/persistence/prune/events/status.');
+console.log('Run history preparation source passed: exact redaction, pre-flock error/tail work, snapshot read/finally release before formatting, and otherwise frozen persistence/prune/events/status fields.');
 if(process.platform!=='darwin'){
     console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
 }else{
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
-    const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'').replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;').replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:');
+    const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'').replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;').replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:').replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];').replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
         await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(source)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);

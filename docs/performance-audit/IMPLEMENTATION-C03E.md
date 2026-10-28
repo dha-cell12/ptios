@@ -1,7 +1,7 @@
 # C03e — prepare history error/log evidence before the file lock
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `10a952a5` (C03d); user reported that build passed.
-Status: **source implemented; new Foundation/POSIX/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `76fe52ec` passed before C03f; independent device/performance qualification pending**.
 Finding: **P1-49 error/log-tail preparation slice**. C03 remains partial.
 
 ## Result and scope
