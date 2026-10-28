@@ -1,4 +1,5 @@
 #import "TLinkJSFileHandle.h"
+#include "TLinkJSFileLine.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -64,6 +65,7 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
     int _fd;
     BOOL _readable;
     BOOL _writable;
+    BOOL _lineReadChunked;
     NSUInteger _maxTransferBytes;
 }
 @property(nonatomic, readwrite) NSUInteger handleId;
@@ -122,6 +124,8 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
     handle->_readable = !writing || plus;
     handle->_writable = writing;
     handle->_maxTransferBytes = MAX((NSUInteger)1, maxTransferBytes);
+    struct stat lineStat;
+    handle->_lineReadChunked = handle->_readable && fstat(fd, &lineStat) == 0 && S_ISREG(lineStat.st_mode) && lseek(fd, 0, SEEK_CUR) >= 0;
     handle.handleId = handleId;
     handle.path = path ?: @"";
     handle.mode = normalizedMode;
@@ -194,21 +198,13 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
         if (!_readable) return TLinkJSFileError(@"file_not_open_for_reading", self.path);
 
         NSMutableData *data = [NSMutableData data];
-        BOOL eof = NO;
-        while (data.length < _maxTransferBytes) {
-            uint8_t byte = 0;
-            ssize_t got = read(_fd, &byte, 1);
-            if (got == 0) {
-                eof = YES;
-                break;
-            }
-            if (got < 0) {
-                if (errno == EINTR) continue;
-                return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s", errno, strerror(errno)], self.path);
-            }
-            if (byte == '\n') break;
-            [data appendBytes:&byte length:1];
-        }
+        const int fd = _fd;
+        const auto line = TLinkJSFileReadLine(_maxTransferBytes, _lineReadChunked,
+            [fd](uint8_t *bytes, size_t count)->int64_t { return ::read(fd, bytes, count); },
+            [fd](size_t count)->bool { return ::lseek(fd, -static_cast<off_t>(count), SEEK_CUR) >= 0; },
+            [data](const uint8_t *bytes, size_t count) { [data appendBytes:bytes length:count]; });
+        if (line.error) return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s", line.error, strerror(line.error)], self.path);
+        BOOL eof = line.eof;
         if (data.length > 0) {
             const uint8_t *bytes = (const uint8_t *)data.bytes;
             if (bytes[data.length - 1] == '\r') [data setLength:data.length - 1];

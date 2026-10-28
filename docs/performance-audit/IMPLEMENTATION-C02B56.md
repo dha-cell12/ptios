@@ -1,7 +1,7 @@
 # C02b56 — avoid re-encoding listBundles JSON metadata
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `892d8de`, containing C02b55; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `94634ed3` passed before C03a; independent device/performance qualification pending**.
 Finding: **P0-13, metadata codecs/copies, listBundles(true)**. C02 remains partial.
 
 ## Result and scope
