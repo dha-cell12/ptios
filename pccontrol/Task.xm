@@ -1004,6 +1004,51 @@ NSDictionary *TLinkExecuteNativeScreenshotAlbum(BOOL clear,NSString *path,TLinkT
 }
 // END typed screenshot album task entry.
 
+// BEGIN typed screenshot file task entry.
+static NSDictionary *zx_nativeScreenshotFileExecute(NSString *path,BOOL hasRegion,double x,double y,double width,double height,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_SCREENSHOT==29&&SCREENSHOT_TASK_CAPTURE==1,"screenshot file classification changed");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        if(![path isKindOfClass:[NSString class]])return zx_typedTouchFailure(@"invalid_payload");
+        NSString *input=[path copy];NSArray *numbers=nil;NSUInteger prefix=5; // 291;;
+        if(hasRegion){
+            numbers=@[[NSString stringWithFormat:@"%.0f",x],[NSString stringWithFormat:@"%.0f",y],
+                [NSString stringWithFormat:@"%.0f",width],[NSString stringWithFormat:@"%.0f",height]];
+            prefix+=8;for(NSString *number in numbers)prefix+=number.length;
+        }
+        if(input.length>8192-prefix)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger size=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(!bytes||size>32*1024-prefix||memchr(bytes,0,size))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_SCREENSHOT,&denial))return zx_nativeAlbumReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        CGRect region=hasRegion?CGRectMake([numbers[0] floatValue],[numbers[1] floatValue],[numbers[2] floatValue],[numbers[3] floatValue]):CGRectZero;
+        // RAW uses UTF-8 here. Preserve overlapping ;; boundaries only for
+        // semicolon paths; ordinary input does not assemble/split a request.
+        if([input rangeOfString:@";"].location!=NSNotFound){
+            NSString *body=hasRegion?[NSString stringWithFormat:@"1;;%@;;%@",input,[numbers componentsJoinedByString:@";;"]]:[NSString stringWithFormat:@"1;;%@",input];
+            NSArray *fields=[body componentsSeparatedByString:@";;"];input=fields[1];region=CGRectZero;
+            if(fields.count>=6)region=CGRectMake([fields[2] floatValue],[fields[3] floatValue],[fields[4] floatValue],[fields[5] floatValue]);
+        }
+        NSError *error=nil;NSString *resultPath=[Screen screenShotToPath:input region:region error:&error];
+        // Preserve accepted writes after caller stop; never roll back a user path.
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(error)return zx_nativeAlbumReply(error.localizedDescription,budget);
+        return resultPath?zx_nativeStringQueryResult(resultPath,nil,false,nil,budget,TLinkNativeQueryMetadata::Reply):zx_typedTouchReply(@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeScreenshotFile(NSString *path,BOOL hasRegion,double x,double y,double width,double height,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeScreenshotFileExecute(path,hasRegion,x,y,width,height,context);}
+    return result;
+}
+// END typed screenshot file task entry.
+
 // BEGIN typed template match task entry.
 static NSDictionary *zx_nativeTemplateMatchExecute(NSString *path,int tries,double acceptable,double ratio,TLinkTaskExecutionContext *context)
 {

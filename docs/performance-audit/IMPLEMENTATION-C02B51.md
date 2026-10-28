@@ -1,7 +1,7 @@
 # C02b51 — direct VPN query/control adapter
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `2b06a1f`, containing C02b50 and its legacy Unicode conversion correction; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `e782771`; independent device/performance qualification pending**.
 Finding: **P0-13, connectivity VPN query/set, task 59**. C02 remains partial.
 
 ## Result and compatibility

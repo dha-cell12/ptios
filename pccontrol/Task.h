@@ -137,6 +137,7 @@ NSDictionary *TLinkExecuteNativeListAutoLaunch(TLinkTaskExecutionContext *contex
 NSDictionary *TLinkExecuteNativeSetTimer(NSString *name,double interval,BOOL repeat,NSString *script,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeRemoveTimer(NSString *name,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeScreenshotAlbum(BOOL clear,NSString *path,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeScreenshotFile(NSString *path,BOOL hasRegion,double x,double y,double width,double height,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeTemplateMatch(NSString *path,int tries,double acceptable,double ratio,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeToast(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeRadioState(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context);

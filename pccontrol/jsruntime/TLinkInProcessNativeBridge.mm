@@ -436,7 +436,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!TLinkautoJSIsFiniteNumber(x) || !TLinkautoJSIsFiniteNumber(y) || !TLinkautoJSIsFiniteNumber(width) || !TLinkautoJSIsFiniteNumber(height) || width <= 0 || height <= 0) {
             return [TLinkJSNativeResponse responseWithError:@"screenshotRegion(path, options) requires finite positive width/height" code:@-1];
         }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@;;%.0f;;%.0f;;%.0f;;%.0f", TASK_SCREENSHOT, targetPath, x, y, width, height] context:context];
+        NSDictionary *result = TLinkExecuteNativeScreenshotFile(targetPath,true,x,y,width,height,context);
         NSArray *parts = result[@"parts"];
         NSString *resultPath = [parts count] >= 2 ? TLinkautoJSSafeStringPart(parts, 1) : targetPath;
         return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"path": resultPath ?: @"", @"x": @(x), @"y": @(y), @"width": @(width), @"height": @(height)})];
@@ -666,7 +666,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if ([targetPath rangeOfString:@";;"].location != NSNotFound || [targetPath rangeOfString:@"\r"].location != NSNotFound || [targetPath rangeOfString:@"\n"].location != NSNotFound) {
             return [TLinkJSNativeResponse responseWithError:@"screenshot path contains unsupported protocol delimiter" code:@-1];
         }
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@", TASK_SCREENSHOT, targetPath] context:context];
+        NSDictionary *result = TLinkExecuteNativeScreenshotFile(targetPath,false,0,0,0,0,context);
         NSArray *parts = result[@"parts"];
         NSString *resultPath = [parts count] >= 2 ? parts[1] : targetPath;
         NSMutableDictionary *res = [NSMutableDictionary dictionaryWithDictionary:result];

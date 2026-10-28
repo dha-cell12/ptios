@@ -772,6 +772,26 @@ try {
   await writeFile(join(temp,'ScreenshotAlbumConstants.h'),[...(await read('pccontrol/Screen.h')).matchAll(/^#define SCREENSHOT_TASK_[^\n]+/gm)].map(match=>match[0]).join('\n'));
   await writeFile(join(temp,'NativeScreenshotAlbumBridge.inc'),albumBridge);
   await writeFile(join(temp,'NativeScreenshotAlbumEntry.inc'),albumEntry);
+  assert.equal(between(screenSource,'+ (NSString*)screenShotToPath:','+ (PHAssetCollection').trim(),await frozenBody('test/fixtures/screenshot-file-core-legacy-v1.inc'),'screenshot file/crop/codec/keep/lease/write core must remain unchanged');
+  const fileRegionBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodScreenshotRegion])','    else if ([method isEqualToString:TLinkJSNativeMethodBatch])');
+  const fileToBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodScreenshotTo])','    else if ([method isEqualToString:TLinkJSNativeMethodCaptureFrame])');
+  assert.equal(fileRegionBridge.replace('TLinkExecuteNativeScreenshotFile(targetPath,true,x,y,width,height,context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@;;%.0f;;%.0f;;%.0f;;%.0f", TASK_SCREENSHOT, targetPath, x, y, width, height] context:context]').trim(),await frozenBody('test/fixtures/native-screenshot-file-region-legacy-v1.inc'));
+  assert.equal(fileToBridge.replace('TLinkExecuteNativeScreenshotFile(targetPath,false,0,0,0,0,context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d1;;%@", TASK_SCREENSHOT, targetPath] context:context]').trim(),await frozenBody('test/fixtures/native-screenshot-file-to-legacy-v1.inc'));
+  assert.doesNotMatch(fileRegionBridge+fileToBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const fileEntry=between(task,'// BEGIN typed screenshot file task entry.','// END typed screenshot file task entry.');
+  assert.match(fileEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*stringWithFormat:@"%.0f",x[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_SCREENSHOT,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*floatValue[\s\S]*\[Screen screenShotToPath:input region:region error:&error\][\s\S]*budget->stopped\(\)/);
+  assert.equal([...fileEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(fileEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|TLinkCaptureReceiver|removeItemAtPath|\b(?:YES|NO)\b/);
+  assert.doesNotMatch(fileEntry,/stringWithFormat:@"%s"/,'file screenshot RAW parser decodes UTF-8, not Foundation %s');
+  assert.ok((await read('pccontrol/Task.h')).includes('NSDictionary *TLinkExecuteNativeScreenshotFile(NSString *path,BOOL hasRegion,double x,double y,double width,double height,TLinkTaskExecutionContext *context);'));
+  const captureOnly=parser=>{const a=parser.indexOf('    else if (action == SCREENSHOT_TASK_SAVE_TO_ALBUM)'),b=parser.indexOf('\n    if (error)\n',a);assert.ok(a>0&&b>a);return parser.slice(0,a)+parser.slice(b);};
+  // Action 1 plus the unchanged action-4 admission fence; album adapters retain
+  // their separate fixture. Full parser equality above prevents adapter drift.
+  await writeFile(join(temp,'NativeFileCaptureParser.inc'),captureOnly(screenshotParser));
+  await writeFile(join(temp,'LegacyFileCaptureParser.inc'),captureOnly(await frozenBody('test/fixtures/screenshot-parser-legacy-v1.inc')));
+  await writeFile(join(temp,'NativeScreenshotFileEntry.inc'),fileEntry);
+  await writeFile(join(temp,'NativeScreenshotFileRegionBridge.inc'),fileRegionBridge);
+  await writeFile(join(temp,'NativeScreenshotFileToBridge.inc'),fileToBridge);
   const screenMatch=await read('pccontrol/ScreenMatch.xm');
   const legacyScreenMatch=await frozenBody('test/fixtures/screen-match-legacy-v1.inc');
   assert.equal(screenMatch.replace('    @try {\n        return [templateMatch templateMatchWithCGImage:screen templatePath:templatePath error:err];\n    } @finally {\n        CGImageRelease(screen);\n    }','    CGRect result = [templateMatch templateMatchWithCGImage:screen templatePath:templatePath error:err];\n    CGImageRelease(screen);\n    return result;').trim(),legacyScreenMatch);
@@ -869,7 +889,7 @@ try {
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
   assert.match(runtimeFixture,/#include "native-timer-runtime-fixture.inc"\n#include "native-screenshot-album-runtime-fixture.inc"/,'screenshot album fixture requires shared bridge/entry helpers first');
-  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'template match fixture requires shared reply formatter and PNG writer first');
+  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file screenshot/template fixtures require shared reply formatter and PNG writer first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
