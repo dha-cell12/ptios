@@ -701,7 +701,8 @@ try {
   assert.equal([...autoCompile.matchAll(/\(void\)(?:error|stop);/g)].length,2);
   await writeFile(join(temp,'AutoLaunchCoreUnderTest.inc'),autoCore);
   await writeFile(join(temp,'LegacyAutoLaunchCore.inc'),autoCompile);
-  await writeFile(join(temp,'AutoLaunchError.inc'),between(autoSource,'static NSError *schedulerError','// Scheduler license diagnostics.'));
+  const schedulerErrorCore=between(autoSource,'static NSError *schedulerError','// Scheduler license diagnostics.');
+  await writeFile(join(temp,'AutoLaunchError.inc'),schedulerErrorCore);
   await writeFile(join(temp,'NativeAutoLaunchBridge.inc'),autoBridge);
   await writeFile(join(temp,'NativeAutoLaunchEntry.inc'),autoEntry);
   const timerCore=between(autoSource,'NSString* setTimerFromRawData','NSString* keepAwakeFromRawData');
@@ -722,7 +723,15 @@ try {
     assert.ok(schedulerRuntimeFixture.indexOf(declaration)>=0&&schedulerRuntimeFixture.indexOf(declaration)<schedulerRuntimeFixture.indexOf('#include "SchedulerRuntimeUnderTest.inc"'));
     assert.ok(timerRuntimeFixture.indexOf(declaration)>=0&&timerRuntimeFixture.indexOf(declaration)<timerRuntimeFixture.indexOf('#include "TimerCoreUnderTest.inc"'));
   }
-  await writeFile(join(temp,'TimerOwnerUnderTest.inc'),between(autoSource,'struct TLinkSchedulerTimer {','// Scheduler license diagnostics.'));
+  // Auto-launch and timer fixtures share a translation unit. AutoLaunchError.inc
+  // already supplies schedulerError; keep the timer owner slice before it.
+  const timerOwner=between(autoSource,'struct TLinkSchedulerTimer {','static NSError *schedulerError');
+  assert.match(timerOwner,/static void schedulerPerformSync\(dispatch_block_t operation\)/);
+  assert.doesNotMatch(timerOwner,/\bschedulerError\b/,'timer owner must reuse the preceding auto-launch error helper');
+  assert.equal([...`${schedulerErrorCore}\n${timerOwner}`.matchAll(/static NSError \*schedulerError\s*\(/g)].length,1,'combined scheduler fixtures must define schedulerError exactly once');
+  assert.equal([...autoFixture.matchAll(/^#include "AutoLaunchError.inc"$/gm)].length,1);
+  assert.doesNotMatch(timerRuntimeFixture,/#include "AutoLaunchError.inc"/);
+  await writeFile(join(temp,'TimerOwnerUnderTest.inc'),timerOwner);
   await writeFile(join(temp,'TimerCoreUnderTest.inc'),between(autoSource,'// Registry mutation, timer callbacks','NSString* keepAwakeFromRawData'));
   await writeFile(join(temp,'NativeTimerBridge.inc'),timerBridge);
   await writeFile(join(temp,'NativeTimerEntry.inc'),timerEntry);
