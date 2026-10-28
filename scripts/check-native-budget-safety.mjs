@@ -630,6 +630,28 @@ try {
     assert.equal(toastFixture.slice(pool,at).trim(),'@autoreleasepool{\n        TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,false,false) nativeBudget]);',
       'toast error lifetime probes must install a non-cleanup native budget inside the caller pool');
   }
+  const alertSource=await read('pccontrol/AlertBox.xm');
+  const alertCore=alertSource.slice(alertSource.indexOf('void showAlertBoxFromRawData'));
+  const alertLegacyCore=await frozenBody('test/fixtures/alert-core-legacy-v1.inc');
+  assert.equal(alertCore.replace('    if (!alert) return;\n','').replace('    @try {\n','').replace('    } @finally {\n        CFRelease(alert);\n    }','    CFRelease(alert);').trim(),alertLegacyCore);
+  assert.match(alertCore,/if \(!alert\) return;[\s\S]*@try \{[\s\S]*CFUserNotificationReceiveResponse[\s\S]*@finally \{\s*CFRelease\(alert\);/);
+  assert.ok((await read('pccontrol/AlertBox.h')).includes('void showAlertBox(NSString* title, NSString* content, int dismissTime);'));
+  assert.equal(between(task,'    else if (taskType == TASK_SHOW_ALERT_BOX)','    else if (taskType == TASK_USLEEP)').trim(),await frozenBody('test/fixtures/alert-handler-legacy-v1.inc'));
+  const alertBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodAlert])','    else if ([method isEqualToString:TLinkJSNativeMethodDialog])');
+  const alertLegacyBridge=await frozenBody('test/fixtures/native-alert-legacy-v1.inc');
+  assert.equal(alertBridge.slice(0,alertBridge.indexOf('        return [TLinkJSNativeResponse')).trim(),alertLegacyBridge.slice(0,alertLegacyBridge.indexOf('        return [TLinkJSNativeResponse')).trim());
+  assert.match(alertBridge,/TLinkExecuteNativeAlert\(title \?: @"TLinkauto",message \?: @"",duration,context\)/);
+  assert.doesNotMatch(alertBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const alertEntry=between(task,'// BEGIN typed alert task entry.','// END typed alert task entry.');
+  assert.match(alertEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_SHOW_ALERT_BOX,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*duration==0[\s\S]*showAlertBox\(header,body,duration\)/);
+  assert.equal([...alertEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(alertEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  const alertFixture=await read('test/native-alert-runtime-fixture.inc');
+  assert.ok(alertFixture.indexOf('void showAlertBox(NSString *,NSString *,int);')<alertFixture.indexOf('#include "AlertCoreUnderTest.inc"'));
+  assert.ok(alertFixture.indexOf('void legacyShowAlertBox(NSString *,NSString *,int);')<alertFixture.indexOf('#include "fixtures/alert-core-legacy-v1.inc"'));
+  await writeFile(join(temp,'NativeAlertBridge.inc'),alertBridge);
+  await writeFile(join(temp,'NativeAlertEntry.inc'),alertEntry);
+  await writeFile(join(temp,'AlertCoreUnderTest.inc'),alertCore);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -695,6 +717,7 @@ try {
   assert.match(runtimeFixture,/#include "native-clipboard-text-runtime-fixture.inc"\n#include "native-toast-runtime-fixture.inc"/,'toast fixture requires shared entry/reply helpers first');
   assert.match(runtimeFixture,/#include "native-toast-runtime-fixture.inc"\n#include "native-keyboard-notification-runtime-fixture.inc"/,'keyboard notification fixture requires actual backend and controlled notification center first');
   assert.match(runtimeFixture,/#include "native-keyboard-notification-runtime-fixture.inc"\n#include "native-clipboard-image-runtime-fixture.inc"/,'clipboard image fixture requires the shared clipboard backend and pasteboard first');
+  assert.match(runtimeFixture,/#include "native-clipboard-image-runtime-fixture.inc"\n#include "native-alert-runtime-fixture.inc"/,'alert fixture requires shared entry/formatter and content fixtures first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

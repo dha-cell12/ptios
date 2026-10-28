@@ -129,6 +129,7 @@ NSDictionary *TLinkExecuteNativeOCRLanguages(TLinkTaskExecutionContext *context)
 NSDictionary *TLinkExecuteNativeClipboardText(int kind,id content,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeKeyboardNotification(int kind,id content,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeAlert(id title,id message,int duration,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeToast(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeRadioState(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);

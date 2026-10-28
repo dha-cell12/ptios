@@ -1,7 +1,7 @@
 # C02b44 — direct clipboard image adapter
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `d516066`, containing corrected C02b43; the user reported the build passed, including the toast fixture scope fix.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `78359d2` before C02b45; independent device/performance qualification pending**.
 Finding: **P0-13, keyboard task-24 kind 8**. Other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -30,4 +30,4 @@ Coverage includes 160 ordinary calls across four formats; byte/UTI/reply parity;
 
 ## Acceptance and remaining work
 
-The user reported corrected C02b43 build success at d516066; that does not qualify the new image path. Build rootfull/roothide and compare typed/helper keyboard image calls with RAW task 24 using real images, Unicode/delimiter paths, malformed/empty/large files, exact errors/ACK, permissions and missing pasteboard. Verify actual UTI/bytes and cross-app paste behavior separately from ACKs, including caller stop/output failures after accepted publication. Recheck clipboard text and keyboard notification routes. Measure bridge overhead separately from filesystem/pasteboard work. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
+The user reported C02b44 build success at 78359d2 before C02b45. Independent device/performance qualification remains pending: compare typed/helper keyboard image calls with RAW task 24 using real images, Unicode/delimiter paths, malformed/empty/large files, exact errors/ACK, permissions and missing pasteboard. Verify actual UTI/bytes and cross-app paste behavior separately from ACKs, including caller stop/output failures after accepted publication. Recheck clipboard text and keyboard notification routes. Measure bridge overhead separately from filesystem/pasteboard work. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

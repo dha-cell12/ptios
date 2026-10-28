@@ -27,7 +27,9 @@ void showAlertBox(NSString* title, NSString* content, int dismissTime)
     
     SInt32 error = 0;
     CFUserNotificationRef alert = CFUserNotificationCreate(NULL, 0, kCFUserNotificationPlainAlertLevel, &error, (__bridge CFDictionaryRef)dict);
+    if (!alert) return;
 
+    @try {
     CFOptionFlags response;
     
      if((error) || (CFUserNotificationReceiveResponse(alert, dismissTime, &response))) {
@@ -42,5 +44,7 @@ void showAlertBox(NSString* title, NSString* content, int dismissTime)
     }
     */
 
-    CFRelease(alert);
+    } @finally {
+        CFRelease(alert);
+    }
 }

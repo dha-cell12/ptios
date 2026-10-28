@@ -955,6 +955,44 @@ NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionCont
 }
 // END typed clipboard image task entry.
 
+// BEGIN typed alert task entry.
+static NSDictionary *zx_nativeAlertExecute(id title,id message,int duration,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_SHOW_ALERT_BOX==12,"alert task classification changed");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        NSString *header=[[NSString stringWithFormat:@"%@",title] copy],*body=[[NSString stringWithFormat:@"%@",message] copy];
+        NSString *time=[NSString stringWithFormat:@"%d",duration];const NSUInteger prefix=6+time.length;
+        if(header.length>8192-prefix||body.length>8192-prefix-header.length)return zx_typedTouchFailure(@"input_too_large");
+        const char *h=header.UTF8String,*b=body.UTF8String;
+        const NSUInteger hn=[header lengthOfBytesUsingEncoding:NSUTF8StringEncoding],bn=[body lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(!h||!b||hn>32*1024-prefix||bn>32*1024-prefix-hn||memchr(h,0,hn)||memchr(b,0,bn))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_SHOW_ALERT_BOX,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        // Preserve field shifting on legacy delimiter-containing text. Ordinary
+        // title/message calls use their structured fields without splitting.
+        if([header rangeOfString:@";"].location!=NSNotFound||[body rangeOfString:@";"].location!=NSNotFound){
+            NSArray *parts=[[NSString stringWithFormat:@"%@;;%@;;%@",header,body,time] componentsSeparatedByString:@";;"];
+            header=parts[0];body=parts[1];duration=[parts[2] intValue];
+        }
+        if(duration==0)return zx_typedTouchReply(@"-1;;Duration should be a integer that is greater than 0\r\n",budget);
+        showAlertBox(header,body,duration);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return zx_typedTouchReply(@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeAlert(id title,id message,int duration,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeAlertExecute(title,message,duration,context);}
+    return result;
+}
+// END typed alert task entry.
+
 // BEGIN typed toast task entry.
 static NSDictionary *zx_nativeToastExecute(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context)
 {
