@@ -1,0 +1,37 @@
+# C02b47 — direct auto-launch adapters and dialog reply correction
+
+Date: 2026-10-28 (Asia/Bangkok). Baseline: `d16db87`, containing C02b46; the user reported that build passed.
+Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Finding: **P0-13, setAutoLaunch task 36 and listAutoLaunch task 37**, with a C02b46 dialog success-classification correction. Other adapters, metadata codecs/copies and performance qualification remain open.
+
+## Result and compatibility
+
+The rootfull/roothide JS set/list auto-launch branches now call direct task-36/task-37 entries. RAW and direct setters share TLinkSetAutoLaunch, extracted around the existing TLinkAutoLaunchSetEntry transaction. The RAW task handlers and flat name-to-entry plist schema are unchanged. Ordinary typed calls avoid full RAW task formatting/encoding/parsing, processTaskWithContext, the compatibility CF stream and response-vector accumulation/copy. Input snapshots and reply/list formatting, plist serialization and JS metadata copies remain. Semicolon-containing set fields retain a bounded compatibility join/split, including separator overlaps; no RAW dispatch is used.
+
+Preserve JS name/script validation, boolValue/default-false normalization and conversion order. The full set input retains the task/separator/enabled-inclusive 8192 UTF-16 units, independent UTF-8 bound and embedded-NUL/encoding rejection before the ordinary gate. Extra set arguments and all list arguments stay ignored. The RAW parser still accepts its historical integer enabled values, first-three-field behavior and malformed-input errors.
+
+The common transaction retains the stable sibling flock, latest-file read under lock, malformed/unreadable-file refusal, atomic XML replacement, unknown unrelated entries and unlock before ACK. Direct success is still 0 followed by CRLF; failure messages retain the scheduler wrapper and precedence. There is no script execution, path normalization, new schema, retry or rollback. Other production writers continue using the same transaction.
+
+List retains its original unlocked Foundation read and empty-map fallback for missing/unreadable/malformed data. It skips non-dictionary rows, defaults non-string script to empty, checks enabled with respondsToSelector/boolValue and keeps existing enumeration order and name,,script,,enabled/;; formatting. JS items parsing and metadata copying remain unchanged, including delimiter collisions. The existing query formatter preserves successful data replies, C-string NUL truncation, newline trimming, encoding behavior and output limits. Full plist/list materialization still precedes output admission; this checkpoint adds no read/entry/RSS cap. Production TrollStore and TouchPOC execution sources are unchanged; both workflows run the shared safety suites. No CPU, allocation, latency or RSS improvement has been measured.
+
+## Dialog correction
+
+Review found that C02b46 sent its data-bearing 0;;response reply through zx_typedTouchReply, whose success case recognizes only the bare 0 ACK. That incorrectly set ok=false and suppressed JS response metadata. Dialog now uses the existing data-query formatter in Reply mode; clear keeps its bare-ACK formatter. The signed-long response, parts and JS intValue metadata are preserved. Existing frozen full-reply/metadata comparisons remain, and an always-host source guard now requires the proper formatter even when the Foundation runtime cannot run. The user-reported build result does not independently qualify this corrected runtime behavior; macOS CI/device checks remain pending.
+
+## Authority, effects and lifetime
+
+Set and list each retain one ordinary task-36/task-37 license gate, including disabled entries and owner automation requests. Child contexts retain owner fields, inherited deadlines, cancellation and output settings with response capture disabled; neither task adds C01. Stop is checked after conversion, before/after the gate and after opaque backend/reply work. Per-call pools retain snapshots/errors/results and restore scoped TLS.
+
+Accepted filesystem/lock/serialization work can continue beyond caller cancellation/deadline. An update may persist before a reported stop, output rejection or escaping exception; no early output floor, retry or rollback is added. NS/C++ faults escaping the direct entry normalize to native_exception. The common transaction's RAII lock still ends before its return. Actual filesystem permissions, external writers, boot consumers and device behavior require qualification.
+
+## Verification
+
+All 62 workflow runners (36 source-contract, 26 native), 521 direct workflow source-grep assertions, expanded standards-conforming assert preprocessing and git diff --check pass on Windows. The assert checker retains its rejecting negative control. New macOS/Foundation/ARC/sanitizer branches cannot run on this host. Sixteen artifact-only checks require CI outputs; no warning or sanitizer checks are disabled.
+
+The new macOS fixture compiles the actual scheduler parser/shared setter/list codec, common real Foundation/flock/atomic transaction, direct entry and complete JS branches against frozen d16db87 core/task/bridge fragments. A private temporary document root isolates real files. Narrow root/transaction wrappers record budget/effect ordering and inject faults before/after actual persistence. Production and frozen compile adapters explicitly use ignored list NSError/block-stop parameters; the frozen oracle itself remains unchanged. Source guards reconstruct the complete pre-extraction backend, compare both RAW handlers and the JS branches apart from their call sites, and verify required helpers/declarations.
+
+Coverage includes 160 ordinary updates; Unicode, single-semicolon overlaps, commas and bool normalization; invalid JS types/tokens, extra/missing arguments, exact/over-limit admission and NUL/encoding; full file/reply/items parity; empty/missing/malformed/array-root configs and malformed rows; list delimiter/newline/NUL behavior; exact/short output; one ordinary gate and owner denial; initial/gate/provider cancellation/deadline; NS/C++ faults before/after commit; failed lock/directory creation; immutable input/result lifetime; unchanged RAW/error outputs and 64 repeated set/list cycles. Existing scheduler qualification still covers eight processes plus eight threads, 1600 acknowledged updates, malformed/lock/write errors and recovery. No real auto-launch configuration is changed or script launched by the new fixture.
+
+## Acceptance and remaining work
+
+The user reported C02b46 build success at d16db87. Build rootfull/roothide with this checkpoint, rerun frozen dialog response/metadata parity, and compare typed/helper set/list calls with RAW tasks 36/37 on a controlled config. Verify permissions/errors, unknown entry preservation, concurrent production writers and actual boot consumption separately from ACKs. Check persistence after accepted caller stop/output failure; do not automatically retry an uncertain update. Measure bridge overhead separately from filesystem/lock work. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

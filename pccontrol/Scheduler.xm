@@ -109,6 +109,12 @@ NSString* setAutoLaunchFromRawData(UInt8 *eventData, NSError **error)
     NSString *script = data[1];
     BOOL enabled = [data[2] intValue] != 0;
 
+    return TLinkSetAutoLaunch(name, script, enabled, error);
+}
+
+NSString* TLinkSetAutoLaunch(NSString *name, NSString *script, BOOL enabled, NSError **error)
+{
+
     NSError *updateError = nil;
     if (!TLinkAutoLaunchSetEntry(autoLaunchFilePath(), name,
                                 @{@"script": script, @"enabled": @(enabled)}, &updateError)) {
@@ -121,9 +127,11 @@ NSString* setAutoLaunchFromRawData(UInt8 *eventData, NSError **error)
 
 NSString* listAutoLaunch(NSError **error)
 {
+    (void)error;
     NSMutableDictionary *config = loadAutoLaunchConfig();
     NSMutableArray<NSString*> *entries = [NSMutableArray array];
     [config enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSDictionary *obj, BOOL *stop) {
+        (void)stop;
         if (![obj isKindOfClass:[NSDictionary class]]) return;
         NSString *script = [obj[@"script"] isKindOfClass:[NSString class]] ? obj[@"script"] : @"";
         NSString *enabled = [obj[@"enabled"] respondsToSelector:@selector(boolValue)] && [obj[@"enabled"] boolValue] ? @"1" : @"0";

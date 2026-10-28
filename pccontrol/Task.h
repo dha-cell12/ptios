@@ -132,6 +132,8 @@ NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionCont
 NSDictionary *TLinkExecuteNativeAlert(id title,id message,int duration,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeDialog(id title,id message,id ok,id cancel,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeClearDialog(TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeSetAutoLaunch(NSString *name,NSString *script,BOOL enabled,TLinkTaskExecutionContext *context);
+NSDictionary *TLinkExecuteNativeListAutoLaunch(TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeToast(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativeRadioState(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context);
 NSDictionary *TLinkExecuteNativePath(int taskType,TLinkTaskExecutionContext *context);

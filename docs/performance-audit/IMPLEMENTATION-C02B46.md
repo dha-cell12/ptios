@@ -1,7 +1,7 @@
 # C02b46 — direct dialog and clear-dialog adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `03f7454`, containing C02b45; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `d16db87` before C02b47; dialog reply correction and independent device/performance qualification pending**.
 Finding: **P0-13, dialog task 42 and clearDialogValues task 43**. Other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -30,4 +30,6 @@ Coverage includes 160 ordinary calls, defaults/ignored arguments/descriptions, a
 
 ## Acceptance and remaining work
 
-The user reported C02b45 build success at 03f7454; that does not qualify the new dialog path. Build rootfull/roothide, then compare typed/helper dialog and clear calls with RAW tasks 42/43 for defaults, delimiter/Unicode text, button labels, response/metadata, ignored CF errors and license denial. Verify actual user response/dismissal and blocking/thread behavior, including caller stop/output rejection after accepted work. Check repeated and concurrent calls separately from ACKs. Measure bridge overhead separately from user wait. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
+The user reported C02b46 build success at d16db87 before C02b47. Subsequent review found that its bare-ACK formatter marked 0;;response as ok=false and suppressed response metadata. C02b47 replaces that dialog formatter with the existing data-query Reply mode, retaining clear's bare ACK. Existing frozen reply/metadata cases remain and an always-host guard requires the correct route; corrected Foundation/runtime checks remain pending CI. See IMPLEMENTATION-C02B47.md.
+
+Independent device/performance qualification remains pending: compare typed/helper dialog and clear calls with RAW tasks 42/43 for defaults, delimiter/Unicode text, button labels, response/metadata, ignored CF errors and license denial. Verify actual user response/dismissal and blocking/thread behavior, including caller stop/output rejection after accepted work. Check repeated and concurrent calls separately from ACKs. Measure bridge overhead separately from user wait. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

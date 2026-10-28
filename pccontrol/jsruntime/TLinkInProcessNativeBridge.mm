@@ -1104,10 +1104,10 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSString *script = [args count] > 1 ? [args objectAtIndex:1] : @"";
         BOOL enabled = [args count] > 2 ? [[args objectAtIndex:2] boolValue] : NO;
         if (!TLinkautoJSValidProtocolString(name) || !TLinkautoJSValidProtocolString(script)) return [TLinkJSNativeResponse responseWithError:@"setAutoLaunch(name, script, enabled) requires valid name and script path" code:@-1];
-        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%@;;%d", TASK_SET_AUTO_LAUNCH, name, script, enabled ? 1 : 0] context:context]];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeSetAutoLaunch(name,script,enabled,context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodListAutoLaunch]) {
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_LIST_AUTO_LAUNCH] context:context];
+        NSDictionary *result = TLinkExecuteNativeListAutoLaunch(context);
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:result];
         NSMutableArray *items = [NSMutableArray array];

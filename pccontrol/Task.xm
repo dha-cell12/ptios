@@ -955,6 +955,60 @@ NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionCont
 }
 // END typed clipboard image task entry.
 
+// BEGIN typed auto-launch task entry.
+static NSDictionary *zx_nativeAutoLaunchExecute(int taskType,NSString *name,NSString *script,BOOL enabled,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_SET_AUTO_LAUNCH==36&&TASK_LIST_AUTO_LAUNCH==37,"auto-launch task classification changed");
+    if(taskType!=TASK_SET_AUTO_LAUNCH&&taskType!=TASK_LIST_AUTO_LAUNCH)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        NSString *entryName=nil,*entryScript=nil;
+        if(taskType==TASK_SET_AUTO_LAUNCH){
+            if(![name isKindOfClass:[NSString class]]||![script isKindOfClass:[NSString class]])return zx_typedTouchFailure(@"invalid_payload");
+            entryName=[name copy];entryScript=[script copy];
+            const NSUInteger remaining=8192-7; // task 36, two ;; separators and enabled digit
+            if(entryName.length>remaining||entryScript.length>remaining-entryName.length)return zx_typedTouchFailure(@"input_too_large");
+            const char *n=entryName.UTF8String,*s=entryScript.UTF8String;
+            const NSUInteger nn=[entryName lengthOfBytesUsingEncoding:NSUTF8StringEncoding],sn=[entryScript lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            if(!n||!s||nn>32*1024-7||sn>32*1024-7-nn||memchr(n,0,nn)||memchr(s,0,sn))return zx_typedTouchFailure(@"invalid_payload");
+        }
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(taskType,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;NSString *body=nil;
+        if(taskType==TASK_SET_AUTO_LAUNCH){
+            // Single semicolons may overlap an inserted separator in the old parser.
+            if([entryName rangeOfString:@";"].location!=NSNotFound||[entryScript rangeOfString:@";"].location!=NSNotFound){
+                NSArray *fields=[[NSString stringWithFormat:@"%@;;%@;;%d",entryName,entryScript,enabled?1:0] componentsSeparatedByString:@";;"];
+                entryName=fields[0];entryScript=fields[1];enabled=[fields[2] intValue]!=0;
+            }
+            TLinkSetAutoLaunch(entryName,entryScript,enabled,&error);
+        }else body=listAutoLaunch(&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        NSDictionary *result=taskType==TASK_SET_AUTO_LAUNCH?zx_typedTouchReply(@"0\r\n",budget):
+            zx_nativeStringQueryResult(body?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeSetAutoLaunch(NSString *name,NSString *script,BOOL enabled,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeAutoLaunchExecute(TASK_SET_AUTO_LAUNCH,name,script,enabled,context);}
+    return result;
+}
+NSDictionary *TLinkExecuteNativeListAutoLaunch(TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeAutoLaunchExecute(TASK_LIST_AUTO_LAUNCH,nil,nil,false,context);}
+    return result;
+}
+// END typed auto-launch task entry.
+
 // BEGIN typed dialog task entry.
 static NSDictionary *zx_nativeDialogExecute(int taskType,id title,id message,id ok,id cancel,TLinkTaskExecutionContext *context)
 {
@@ -979,18 +1033,19 @@ static NSDictionary *zx_nativeDialogExecute(int taskType,id title,id message,id 
         NSString *denial=nil;
         if(!TLinkRootfullLicenseTaskAllowed(taskType,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
         if(budget->stopped())return zx_typedTouchStopped(budget);
-        NSString *raw=nil;
+        NSString *raw=nil,*value=nil;
         if(taskType==TASK_DIALOG){
             // Preserve overlapping delimiter boundaries only when text contains semicolons.
             bool split=false;for(NSString *field in fields)if([field rangeOfString:@";"].location!=NSNotFound){split=true;break;}
             if(split)fields=[[fields componentsJoinedByString:@";;"] componentsSeparatedByString:@";;"];
-            NSString *response=TLinkShowDialog(fields[0],fields[1],fields[2],fields[3]);
-            raw=[NSString stringWithFormat:@"0;;%@\r\n",response?:@""];
+            value=TLinkShowDialog(fields[0],fields[1],fields[2],fields[3]);
         }else{
             NSError *error=nil;clearDialogValues(&error);raw=error?error.localizedDescription:@"0\r\n";
         }
         if(budget->stopped())return zx_typedTouchStopped(budget);
-        return zx_typedTouchReply(raw,budget);
+        NSDictionary *result=taskType==TASK_DIALOG?zx_nativeStringQueryResult(value?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply):zx_typedTouchReply(raw,budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
     }catch(...){return zx_typedTouchFailure(@"native_exception");}}
     @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
 }

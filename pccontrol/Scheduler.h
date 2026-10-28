@@ -6,6 +6,7 @@
 BOOL TLinkSchedulerScriptLaunchAllowed(NSString *source);
 NSDictionary *TLinkSchedulerLicenseDiagnostics(void);
 NSString* setAutoLaunchFromRawData(UInt8 *eventData, NSError **error);
+NSString* TLinkSetAutoLaunch(NSString *name, NSString *script, BOOL enabled, NSError **error);
 NSString* listAutoLaunch(NSError **error);
 // In-memory timers: set/remove ACK after the serial owner commits. Repeat >= 1 second.
 NSString* setTimerFromRawData(UInt8 *eventData, NSError **error);

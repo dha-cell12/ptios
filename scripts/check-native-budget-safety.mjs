@@ -665,6 +665,7 @@ try {
   assert.match(dialogEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-8[\s\S]*32\*1024-8[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkShowDialog\(fields\[0\],fields\[1\],fields\[2\],fields\[3\]\)/);
   assert.equal([...dialogEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
   assert.match(dialogEntry,/clearDialogValues\(&error\)[\s\S]*budget->stopped\(\)[\s\S]*zx_typedTouchReply\(raw,budget\)/);
+  assert.match(dialogEntry,/taskType==TASK_DIALOG\?zx_nativeStringQueryResult\(value\?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply\):zx_typedTouchReply\(raw,budget\)/,'dialog data replies must retain success classification and response metadata');
   assert.doesNotMatch(dialogEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
   const dialogFixture=await read('test/native-dialog-runtime-fixture.inc');
   assert.match(dialogFixture,/NSString\* TLinkShowDialog\(NSString \*,NSString \*,NSString \*,NSString \*\);[\s\S]*#include "DialogCoreUnderTest.inc"/);
@@ -675,6 +676,29 @@ try {
   await writeFile(join(temp,'LegacyDialogCore.inc'),dialogCompile);
   await writeFile(join(temp,'NativeDialogBridge.inc'),dialogBridge);
   await writeFile(join(temp,'NativeDialogEntry.inc'),dialogEntry);
+  const autoSource=await read('pccontrol/Scheduler.xm');
+  const autoCore=between(autoSource,'static NSString* autoLaunchFilePath','// Registry mutation,');
+  const autoLegacyCore=await frozenBody('test/fixtures/autolaunch-core-legacy-v1.inc');
+  assert.equal(autoCore.replaceAll('    (void)error;\n','').replaceAll('        (void)stop;\n','').replace('\n    return TLinkSetAutoLaunch(name, script, enabled, error);\n}\n\nNSString* TLinkSetAutoLaunch(NSString *name, NSString *script, BOOL enabled, NSError **error)\n{\n','').trim(),autoLegacyCore);
+  assert.match(autoSource,/static NSString \*const kAutoLaunchFileName = @"autolaunch.plist";/);
+  assert.match(await read('pccontrol/Scheduler.h'),/NSString\* TLinkSetAutoLaunch\(NSString \*name, NSString \*script, BOOL enabled, NSError \*\*error\);/);
+  assert.equal(between(task,'    else if (taskType == TASK_SET_AUTO_LAUNCH)','    else if (taskType == TASK_SET_TIMER)').trim(),await frozenBody('test/fixtures/autolaunch-handler-legacy-v1.inc'));
+  const autoBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodSetAutoLaunch])','    else if ([method isEqualToString:TLinkJSNativeMethodSetTimer])');
+  assert.equal(autoBridge.replace('TLinkExecuteNativeSetAutoLaunch(name,script,enabled,context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%@;;%d", TASK_SET_AUTO_LAUNCH, name, script, enabled ? 1 : 0] context:context]').replace('TLinkExecuteNativeListAutoLaunch(context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_LIST_AUTO_LAUNCH] context:context]').trim(),await frozenBody('test/fixtures/native-autolaunch-legacy-v1.inc'));
+  assert.doesNotMatch(autoBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const autoEntry=between(task,'// BEGIN typed auto-launch task entry.','// END typed auto-launch task entry.');
+  assert.match(autoEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-7[\s\S]*32\*1024-7[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkSetAutoLaunch\(entryName,entryScript,enabled,&error\)/);
+  assert.equal([...autoEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(autoEntry,/listAutoLaunch\(&error\)[\s\S]*budget->stopped\(\)[\s\S]*zx_nativeStringQueryResult\(body\?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply\)/);
+  assert.doesNotMatch(autoEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  assert.match(await read('test/native-autolaunch-runtime-fixture.inc'),/NSString\* TLinkSetAutoLaunch\(NSString \*,NSString \*,BOOL,NSError \*\*\);[\s\S]*#include "AutoLaunchCoreUnderTest.inc"/);
+  const autoCompile=autoLegacyCore.replace('NSString* listAutoLaunch(NSError **error)\n{\n','NSString* listAutoLaunch(NSError **error)\n{\n    (void)error;\n').replace('BOOL *stop) {\n','BOOL *stop) {\n        (void)stop;\n');
+  assert.equal([...autoCompile.matchAll(/\(void\)(?:error|stop);/g)].length,2);
+  await writeFile(join(temp,'AutoLaunchCoreUnderTest.inc'),autoCore);
+  await writeFile(join(temp,'LegacyAutoLaunchCore.inc'),autoCompile);
+  await writeFile(join(temp,'AutoLaunchError.inc'),between(autoSource,'static NSError *schedulerError','// Scheduler license diagnostics.'));
+  await writeFile(join(temp,'NativeAutoLaunchBridge.inc'),autoBridge);
+  await writeFile(join(temp,'NativeAutoLaunchEntry.inc'),autoEntry);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -694,6 +718,8 @@ try {
   }
   for(const name of new Set([...clipboardBridge.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match=>match[1])))
     assert.ok(helpers.includes(`${name}(`),`missing clipboard production helper in native fixture: ${name}`);
+  for(const name of new Set([...autoBridge.matchAll(/\b(TLinkautoJS\w+)\s*\(/g)].map(match=>match[1])))
+    assert.ok(helpers.includes(`${name}(`),`missing auto-launch production helper in native fixture: ${name}`);
   await writeFile(join(temp, "NativeBridgeUnderTest.inc"), rawBridge);
   await writeFile(join(temp, "NativeHelpersUnderTest.inc"), helpers);
   await writeFile(join(temp, "NativeRequestPreludeUnderTest.inc"),
@@ -742,6 +768,7 @@ try {
   assert.match(runtimeFixture,/#include "native-keyboard-notification-runtime-fixture.inc"\n#include "native-clipboard-image-runtime-fixture.inc"/,'clipboard image fixture requires the shared clipboard backend and pasteboard first');
   assert.match(runtimeFixture,/#include "native-clipboard-image-runtime-fixture.inc"\n#include "native-alert-runtime-fixture.inc"/,'alert fixture requires shared entry/formatter and content fixtures first');
   assert.match(runtimeFixture,/#include "native-alert-runtime-fixture.inc"\n#include "native-dialog-runtime-fixture.inc"/,'dialog fixture requires CF notification declarations and shared content fixtures first');
+  assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
