@@ -726,6 +726,30 @@ try {
   await writeFile(join(temp,'TimerCoreUnderTest.inc'),between(autoSource,'// Registry mutation, timer callbacks','NSString* keepAwakeFromRawData'));
   await writeFile(join(temp,'NativeTimerBridge.inc'),timerBridge);
   await writeFile(join(temp,'NativeTimerEntry.inc'),timerEntry);
+  const screenSource=await read('pccontrol/Screen.xm');
+  const albumCore=between(screenSource,'+ (PHAssetCollection*)fetchTLinkautoAlbum','\n@end');
+  const screenshotParser=between(screenSource,'NSString* handleScreenshotTaskFromRawData','void handleScreenKeepTaskFromRawData');
+  assert.equal(albumCore.trim(),await frozenBody('test/fixtures/screenshot-album-core-legacy-v1.inc'));
+  assert.equal(screenshotParser.trim(),await frozenBody('test/fixtures/screenshot-parser-legacy-v1.inc'));
+  assert.equal(between(task,'    else if (taskType == TASK_SCREENSHOT)','    else if (taskType == TASK_UPDATE_CACHE)').trim(),await frozenBody('test/fixtures/screenshot-handler-legacy-v1.inc'));
+  const albumBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodSaveScreenshotToAlbum])','    else if ([method isEqualToString:TLinkJSNativeMethodSetAutoLaunch])');
+  assert.equal(albumBridge.replace('TLinkExecuteNativeScreenshotAlbum(false,path,context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d2;;%@", TASK_SCREENSHOT, path] context:context]').replace('TLinkExecuteNativeScreenshotAlbum(true,nil,context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d3", TASK_SCREENSHOT] context:context]').trim(),await frozenBody('test/fixtures/native-screenshot-album-legacy-v1.inc'));
+  assert.doesNotMatch(albumBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const albumEntry=between(task,'// BEGIN typed screenshot album task entry.','// END typed screenshot album task entry.');
+  assert.match(albumEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-5[\s\S]*32\*1024-5[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_SCREENSHOT,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*\[Screen clearSystemAlbum:&error\][\s\S]*\[Screen saveToSystemAlbum:input error:&error\][\s\S]*budget->stopped\(\)/);
+  assert.equal([...albumEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(albumEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b|requestAuthorization/);
+  assert.match(albumEntry,/while\(wire&&size<=budget->outputLimit\(\)&&wire\[size\]\)[\s\S]*if\(!size\)return @\{/);
+  // Only the unchanged album/clear parser branches are compiled here. Owned/file
+  // screenshot actions retain their separate capture-lease qualification suite.
+  const captureBranch=between(screenshotParser,'    if (action == SCREENSHOT_TASK_CAPTURE','    else if (action == SCREENSHOT_TASK_SAVE_TO_ALBUM)');
+  const albumParser=screenshotParser.replace(captureBranch,'').replace('    else if (action == SCREENSHOT_TASK_SAVE_TO_ALBUM)','    if (action == SCREENSHOT_TASK_SAVE_TO_ALBUM)');
+  assert.doesNotMatch(albumParser,/kTLinkOwnedCaptureAction|TLinkCaptureReceiverSlot|screenShotToPath|CGRect/);
+  await writeFile(join(temp,'ScreenshotAlbumCore.inc'),albumCore);
+  await writeFile(join(temp,'ScreenshotAlbumParser.inc'),albumParser);
+  await writeFile(join(temp,'ScreenshotAlbumConstants.h'),[...(await read('pccontrol/Screen.h')).matchAll(/^#define SCREENSHOT_TASK_[^\n]+/gm)].map(match=>match[0]).join('\n'));
+  await writeFile(join(temp,'NativeScreenshotAlbumBridge.inc'),albumBridge);
+  await writeFile(join(temp,'NativeScreenshotAlbumEntry.inc'),albumEntry);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -797,12 +821,13 @@ try {
   assert.match(runtimeFixture,/#include "native-alert-runtime-fixture.inc"\n#include "native-dialog-runtime-fixture.inc"/,'dialog fixture requires CF notification declarations and shared content fixtures first');
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
+  assert.match(runtimeFixture,/#include "native-timer-runtime-fixture.inc"\n#include "native-screenshot-album-runtime-fixture.inc"/,'screenshot album fixture requires shared bridge/entry helpers first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
     const runtime = join(temp, "native-bridge-runtime-test");
     run(compiler, ["-std=c++14", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", "-Wno-deprecated-declarations",
-      "-fobjc-arc", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-framework", "Foundation", "-framework", "CoreFoundation", "-framework", "CoreGraphics",
+      "-fobjc-arc", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-framework", "Foundation", "-framework", "CoreFoundation", "-framework", "CoreGraphics", "-framework", "ImageIO",
       "-I", temp, "-I", join(root, "pccontrol"), join(root, "test/native-bridge-budget-runtime-test.mm"),
       join(root, "pccontrol/TLinkTaskContext.mm"), join(root, "pccontrol/jsruntime/TLinkJSNativeRequest.mm"),
       join(root, "pccontrol/jsruntime/TLinkJSNativeResponse.mm"), "-x", "objective-c++", join(root, "pccontrol/SocketResponder.xm"), "-o", runtime]);

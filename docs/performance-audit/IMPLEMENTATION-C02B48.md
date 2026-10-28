@@ -1,7 +1,7 @@
 # C02b48 — direct set/remove timer adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `5025221`, containing corrected C02b47; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `a97c1b0` before C02b49; independent device/performance qualification pending**.
 Finding: **P0-13, setTimer task 38 and removeTimer task 39**. Other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -32,4 +32,4 @@ The existing separate scheduler-runtime test continues using actual production G
 
 ## Acceptance and remaining work
 
-The user reported corrected C02b47 build success at 5025221, including the plist fixture fix and dialog response correction. Build rootfull/roothide with C02b48, compare typed/helper timer calls with RAW tasks 38/39 for rounding, repeat/one-shot policy, delimiter text, exact ACK/errors and license denial. Verify real timers, busy/denied launch handling, replacement/removal and waiting behind an admitted callback; include accepted stop/output rejection and retained scripts across pools. Measure bridge overhead separately from queue wait and timer delivery. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
+The user reported C02b48 build success at a97c1b0 before C02b49. Independent device/performance qualification remains pending: compare typed/helper timer calls with RAW tasks 38/39 for rounding, repeat/one-shot policy, delimiter text, exact ACK/errors and license denial. Verify real timers, busy/denied launch handling, replacement/removal and waiting behind an admitted callback; include accepted stop/output rejection and retained scripts across pools. Measure bridge overhead separately from queue wait and timer delivery. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

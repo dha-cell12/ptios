@@ -955,6 +955,55 @@ NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionCont
 }
 // END typed clipboard image task entry.
 
+// BEGIN typed screenshot album task entry.
+static NSDictionary *zx_nativeAlbumReply(NSString *raw,const TLinkNativeBudgetPtr &budget)
+{
+    const char *wire=raw.UTF8String;size_t size=0;
+    while(wire&&size<=budget->outputLimit()&&wire[size])++size;
+    if(!budget->outputAllowed(size)||budget->stopped())return zx_typedTouchStopped(budget);
+    // notifyClient used a C string; an empty/unencodable error produced an empty sink.
+    if(!size)return @{@"ok":@(true),@"raw":@"0\r\n",@"parts":@[@"0"]};
+    NSString *reply=[[NSString alloc] initWithBytes:wire length:size encoding:NSUTF8StringEncoding];
+    if(!reply)return zx_typedTouchFailure(@"invalid_response_encoding");
+    if([reply isEqualToString:@"0\r\n"])return zx_typedTouchReply(reply,budget);
+    NSArray *parts=[[reply stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"];
+    return @{@"ok":@([parts[0] isEqualToString:@"0"]),@"raw":reply,@"parts":parts};
+}
+static NSDictionary *zx_nativeScreenshotAlbumExecute(BOOL clear,NSString *path,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_SCREENSHOT==29&&SCREENSHOT_TASK_SAVE_TO_ALBUM==2&&SCREENSHOT_TASK_CLEAR_ALBUM==3,"screenshot album classification changed");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        NSString *input=nil;
+        if(!clear){
+            if(![path isKindOfClass:[NSString class]])return zx_typedTouchFailure(@"invalid_payload");
+            input=[path copy];
+            if(input.length>8192-5)return zx_typedTouchFailure(@"input_too_large"); // 292;; prefix
+            const char *bytes=input.UTF8String;const NSUInteger size=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            if(!bytes||size>32*1024-5||memchr(bytes,0,size))return zx_typedTouchFailure(@"invalid_payload");
+            NSRange separator=[input rangeOfString:@";;"];
+            if(separator.location!=NSNotFound)input=[input substringToIndex:separator.location];
+        }
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_SCREENSHOT,&denial))return zx_nativeAlbumReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSError *error=nil;
+        if(clear)[Screen clearSystemAlbum:&error];else [Screen saveToSystemAlbum:input error:&error];
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return error?zx_nativeAlbumReply(error.localizedDescription,budget):zx_typedTouchReply(@"0\r\n",budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeScreenshotAlbum(BOOL clear,NSString *path,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeScreenshotAlbumExecute(clear,path,context);}
+    return result;
+}
+// END typed screenshot album task entry.
+
 // BEGIN typed timer task entry.
 static NSDictionary *zx_nativeTimerExecute(int taskType,NSString *name,double interval,BOOL repeat,NSString *script,TLinkTaskExecutionContext *context)
 {
