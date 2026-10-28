@@ -1027,6 +1027,10 @@ static NSDictionary *zx_nativeTemplateMatchExecute(NSString *path,int tries,doub
         NSString *denial=nil;
         if(!TLinkRootfullLicenseTaskAllowed(TASK_TEMPLATE_MATCH,&denial))return zx_nativeAlbumReply(denial?:@"-1;;license_required\r\n",replyBudget);
         if(TLinkNativeStopped())return zx_nativeAlbumReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        // RAW decodes UTF-8 bytes through Foundation's %s formatter, whose
+        // non-ASCII interpretation can differ from NSString's UTF-8 decoder.
+        // Preserve that conversion after admission/authority without a task request.
+        if(![input canBeConvertedToEncoding:NSASCIIStringEncoding])input=[NSString stringWithFormat:@"%s",bytes];
         // A semicolon at a field boundary can overlap the old ;; separator.
         // Ordinary paths bypass whole-request assembly and splitting.
         if([input rangeOfString:@";"].location!=NSNotFound){

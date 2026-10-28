@@ -112,7 +112,8 @@ static void typedTemplateMatchCases(TLinkInProcessNativeBridge *bridge){
     puts("Template match Foundation: actual adapter/parser and owned CGImage; matcher controlled");fflush(stdout);mode=@"templateMatchRuntime";
     NSString *directory=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"tlink-native-match-" stringByAppendingString:[NSUUID UUID].UUIDString]];
     NSFileManager *fm=NSFileManager.defaultManager;assert([fm createDirectoryAtPath:directory withIntermediateDirectories:false attributes:nil error:NULL]);
-    NSString *path=[directory stringByAppendingPathComponent:@"ảnh;测试.png"];matchPNG=path;nativeAlbumWritePNG(path);
+    // Successful backend/fault probes must not depend on the host's %s decoding.
+    NSString *path=[directory stringByAppendingPathComponent:@"sample.png"];matchPNG=path;nativeAlbumWritePNG(path);
     const auto reset=[](TLinkTaskExecutionContext *context){
         assert(matchCreated==matchReleased&&matchEngines==matchDestroyed);matchCreated=matchReleased=matchCalls=matchFault=matchEngines=matchDestroyed=0;
         matchNoScreen=matchFail=false;matchSeenPath=nil;matchErrorText=@"-1;;controlled matcher failure\r\n";matchRect=CGRectMake(1.235,-2.345,3.455,4.565);
@@ -145,6 +146,20 @@ static void typedTemplateMatchCases(TLinkInProcessNativeBridge *bridge){
         return [actual.value[@"raw"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
     };
     for(unsigned n=0;n<160;++n)parity(@[path,@{@"maxTryTimes":@(n%9),@"acceptable":@(0.12345+(n%8)*0.1),@"scaleRatio":@(0.2+(n%12)*0.1)}]);
+    puts("Template match Foundation: legacy %s Unicode paths, missing and decoded-name files");fflush(stdout);
+    NSString *semicolonPath=[directory stringByAppendingPathComponent:@"sample;tag.png"];nativeAlbumWritePNG(semicolonPath);parity(@[semicolonPath]);
+    for(NSString *leaf in @[@"ảnh;测试.png",@"é.png",@"emoji-😀.png"]){
+        NSString *unicodePath=[directory stringByAppendingPathComponent:leaf];nativeAlbumWritePNG(unicodePath);
+        // The frozen RAW parser supplies the host-specific decoder oracle.
+        // First compare with only the original file, then provide the decoded
+        // spelling too, so passing cannot mean merely rejecting Unicode paths.
+        parity(@[unicodePath]);
+        NSString *decoded=[NSString stringWithFormat:@"%s",unicodePath.UTF8String];
+        assert(decoded&&decoded.length);if(![fm fileExistsAtPath:decoded])nativeAlbumWritePNG(decoded);
+        parity(@[unicodePath]);parity(@[unicodePath],4096,1);parity(@[unicodePath],4096,2);
+        auto unicodeContext=parent();reset(unicodeContext);
+        assert([invoke(@[unicodePath],unicodeContext).value[@"ok"] boolValue]&&matchCalls==1&&[matchSeenPath isEqual:decoded]);
+    }
     for(unsigned scenario=0;scenario<=5;++scenario){const NSUInteger size=parity(@[path],4096,scenario);assert(size);parity(@[path],size,scenario);if(size>1)parity(@[path],size-1,scenario);}
     parity(@[path],4096,6);parity(@[path],4096,7);
     for(NSNumber *value in @[@(-1),@0,@8,@9,@(INT_MIN),@(INT_MAX)])parity(@[path,@{@"maxTryTimes":value}]);

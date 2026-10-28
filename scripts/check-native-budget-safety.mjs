@@ -771,6 +771,10 @@ try {
   assert.ok((await read('pccontrol/Task.h')).includes('NSDictionary *TLinkExecuteNativeTemplateMatch(NSString *path,int tries,double acceptable,double ratio,TLinkTaskExecutionContext *context);'));
   assert.match(matchEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*stringWithFormat:@"%.4f",acceptable[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*TLinkC01TaskBudget\(task,sizeof\(task\),replyBudget\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_TEMPLATE_MATCH,&denial\)[\s\S]*TLinkNativeStopped\(\)[\s\S]*\[ScreenMatch matchCurrentScreenWithTemplate:input[\s\S]*threshold.floatValue[\s\S]*scale.floatValue/);
   assert.equal([...matchEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(matchEntry,/TLinkRootfullLicenseTaskAllowed\(TASK_TEMPLATE_MATCH,&denial\)[^\n]*\n\s*if\(TLinkNativeStopped\(\)\)return zx_nativeAlbumReply[^\n]*\n[\s\S]*if\(!\[input canBeConvertedToEncoding:NSASCIIStringEncoding\]\)input=\[NSString stringWithFormat:@"%s",bytes\];[\s\S]*NSArray \*fields=[\s\S]*\[ScreenMatch matchCurrentScreenWithTemplate:input/,'template paths must retain the RAW %s conversion after authority and before field splitting/backend lookup');
+  const matchFixture=await read('test/native-template-match-runtime-fixture.inc');
+  assert.match(matchFixture,/stringByAppendingPathComponent:@"sample.png"/,'successful matcher/fault coverage must use a stable ASCII path');
+  assert.match(matchFixture,/NSString \*decoded=\[NSString stringWithFormat:@"%s",unicodePath.UTF8String\];[\s\S]*nativeAlbumWritePNG\(decoded\)[\s\S]*\[matchSeenPath isEqual:decoded\]/,'Unicode coverage must exercise successful legacy-decoded paths as well as missing-path errors');
   assert.doesNotMatch(matchEntry,/processTaskWithContext|CFWriteStream|FromRawData|\b(?:YES|NO)\b/);
   assert.match(matchEntry,/if\(replyBudget->stopped\(\)\)return zx_typedTouchStopped\(replyBudget\);\s*return zx_nativeAlbumReply\(raw,replyBudget\);/);
   const stripImports=source=>source.replace(/^#(?:include|import)[^\n]*\n/gm,'');
