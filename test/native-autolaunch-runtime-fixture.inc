@@ -64,7 +64,12 @@ static void autoLaunchLegacyTask(UInt8 *bytes,CFWriteStreamRef writeStreamRef){
 #undef setAutoLaunchFromRawData
 }
 static NSData *autoLaunchEncode(id value){
-    NSData *data=[NSPropertyListSerialization dataWithPropertyList:value format:NSPropertyListBinaryFormat_v1_0 options:0 error:NULL];assert(data);return data;
+    const bool valid=[NSPropertyListSerialization propertyList:value isValidForFormat:NSPropertyListBinaryFormat_v1_0];
+    if(!valid){fprintf(stdout,"Auto-launch fixture: invalid property-list seed: %s\n",[value description].UTF8String?:"(null)");fflush(stdout);}
+    assert(valid);
+    NSError *error=nil;NSData *data=[NSPropertyListSerialization dataWithPropertyList:value format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];
+    if(!data){fprintf(stdout,"Auto-launch fixture: seed serialization failed: %s\n",error.description.UTF8String?:"(no error)");fflush(stdout);}
+    assert(data);return data;
 }
 static NSString *autoLaunchFixturePath(){return [autoLaunchRoot stringByAppendingPathComponent:kAutoLaunchFileName];}
 static id autoLaunchSnapshot(){
@@ -72,7 +77,9 @@ static id autoLaunchSnapshot(){
     id value=data?[NSPropertyListSerialization propertyListWithData:data options:0 format:NULL error:NULL]:nil;return value?:data;
 }
 static void typedAutoLaunchCases(TLinkInProcessNativeBridge *bridge){
+    @try {try{
     mode=@"autoLaunchRuntime";
+    puts("Auto-launch Foundation: actual JS/wire/file parity and ingress");fflush(stdout);
     autoLaunchRoot=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"tlink-native-autolaunch-" stringByAppendingString:[NSUUID UUID].UUIDString]];
     NSFileManager *fm=[NSFileManager defaultManager];bool created=[fm createDirectoryAtPath:autoLaunchRoot withIntermediateDirectories:false attributes:nil error:NULL];assert(created);
     autoLaunchSeed=autoLaunchEncode(@{@"legacy":@{@"script":@"old",@"enabled":@(false),@"unknown":@42},@"skip":@17});
@@ -95,7 +102,9 @@ static void typedAutoLaunchCases(TLinkInProcessNativeBridge *bridge){
         auto context=parent(30,cap);reset(context);int gates=licenseCalls;TLinkJSNativeResponse *expected=[bridge legacyAutoLaunch:request(list,args) context:context];
         id state=autoLaunchSnapshot();const auto order=autoLaunchOrder;const unsigned roots=autoLaunchRoots,updates=autoLaunchUpdates,commits=autoLaunchCommits;const int gateDelta=licenseCalls-gates;
         context=parent(30,cap);reset(context);gates=licenseCalls;const int rawCalls=calls;TLinkJSNativeResponse *actual=invoke(list,args,context);
-        assert(actual.ok==expected.ok&&((actual.value==expected.value)||[actual.value isEqual:expected.value]));
+        const bool replyMatches=actual.ok==expected.ok&&((actual.value==expected.value)||[actual.value isEqual:expected.value]);
+        if(!replyMatches){fprintf(stdout,"Auto-launch parity failure: %s\n",[NSString stringWithFormat:@"list=%d cap=%lu args=%@ expected=%@ actual=%@",list,(unsigned long)cap,args,expected.value,actual.value].UTF8String);fflush(stdout);}
+        assert(replyMatches);
         if(!actual.ok)assert([actual.errorCode isEqual:expected.errorCode]&&[actual.errorMessage isEqual:expected.errorMessage]);
         id actualState=autoLaunchSnapshot();assert((actualState==state)||[actualState isEqual:state]);
         assert(autoLaunchRoots==roots&&autoLaunchUpdates==updates&&autoLaunchCommits==commits&&autoLaunchOrder==order&&licenseCalls==gates+gateDelta&&calls==rawCalls);
@@ -116,7 +125,10 @@ static void typedAutoLaunchCases(TLinkInProcessNativeBridge *bridge){
     }
     NSString *nul=[NSString stringWithFormat:@"before%Cafter",(unichar)0];const unichar lone=0xd800;NSString *invalid=[[NSString alloc] initWithCharacters:&lone length:1];
     parity(false,@[nul,@"script",@1],4096);parity(false,@[@"job",nul,@1],4096);if(invalid){parity(false,@[invalid,@"s"],4096);parity(false,@[@"n",invalid],4096);}
-    for(id config in @[@{},@{@"entry":@{@"script":@"x",@"enabled":@1}},@{@"a,,b":@{@"script":@"x;;y\r\n",@"enabled":@"YES"},@"skip":@1},@{@"x":@{@"script":@17,@"enabled":[NSNull null]}},@{@"x":@{@"script":nul,@"enabled":@1}},@[]]){
+    puts("Auto-launch Foundation: persisted metadata, malformed configs and errors");fflush(stdout);
+    // NSData is plist-compatible and does not implement boolValue. NSNull is
+    // only valid as a JS ingress test value, not as persisted plist content.
+    for(id config in @[@{},@{@"entry":@{@"script":@"x",@"enabled":@1}},@{@"a,,b":@{@"script":@"x;;y\r\n",@"enabled":@"YES"},@"skip":@1},@{@"x":@{@"script":@17,@"enabled":[NSData data]}},@{@"x":@{@"script":nul,@"enabled":@1}},@[]]){
         autoLaunchSeed=autoLaunchEncode(config);const NSUInteger bytes=parity(true,@[@"ignored"],4096);assert(bytes>0);parity(true,@[],bytes);if(bytes>1)parity(true,@[],bytes-1);
     }
     for(NSData *seed in @[[NSData data],[@"broken plist" dataUsingEncoding:NSUTF8StringEncoding],autoLaunchEncode(@[])]){
@@ -124,6 +136,7 @@ static void typedAutoLaunchCases(TLinkInProcessNativeBridge *bridge){
     }
     autoLaunchSeed=nil;parity(true,@[],4096);parity(false,@[@"job",@"script",@1],4096);
     autoLaunchSeed=autoLaunchEncode(@{@"legacy":@{@"script":@"old",@"enabled":@(false),@"unknown":@42}});
+    puts("Auto-launch Foundation: ordinary gates and opaque committed effects");fflush(stdout);
     for(bool list:{false,true}){
         auto context=parent();reset(context);licenseAllowed=false;context.allowsAutomationForOwner=^BOOL(NSString *owner){(void)owner;return true;};
         failure(invoke(list,@[@"job",@"script",@1],context).value,list?@"license_required task=37":@"license_required task=36");assert(!autoLaunchRoots&&!autoLaunchCommits);
@@ -146,6 +159,7 @@ static void typedAutoLaunchCases(TLinkInProcessNativeBridge *bridge){
     context=parent();reset(context);NSString *blocked=[autoLaunchRoot stringByAppendingPathComponent:@"blocked"];
     assert([[@"file" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:blocked atomically:true]);autoLaunchRootOverride=[blocked stringByAppendingPathComponent:@"child"];
     failure(invoke(false,@[@"job",@"script",@1],context).value,@"Failed to create auto launch directory.");assert(!autoLaunchCommits);
+    puts("Auto-launch Foundation: snapshots, RAW compatibility and lifecycle");fflush(stdout);
     context=parent();reset(context);NSMutableString *name=[@"snapshot" mutableCopy],*script=[@"original" mutableCopy];autoLaunchOnStage=[name,script](NSString *stage){if([stage isEqualToString:@"root"]){[name setString:@"changed"];[script setString:@"changed"];}};
     NSDictionary *held=nil;@autoreleasepool{held=invoke(false,@[name,script,@1],context).value;context=nil;}assert([held[@"ok"] boolValue]&&[autoLaunchSnapshot()[@"snapshot"][@"script"] isEqualToString:@"original"]);
     context=parent();reset(context);NativeAutoLaunchBoolFixture *enabled=[NativeAutoLaunchBoolFixture new];TLinkCancellationToken *token=context.cancellationToken;
@@ -167,4 +181,7 @@ static void typedAutoLaunchCases(TLinkInProcessNativeBridge *bridge){
     assert([fm removeItemAtPath:autoLaunchRoot error:NULL]);autoLaunchRoot=nil;autoLaunchRootOverride=nil;autoLaunchSeed=nil;autoLaunchBudget.reset();autoLaunchFaultStage=nil;autoLaunchOrder.clear();autoLaunchOnStage={};autoLaunchOnBool={};licenseBudget.reset();touchToken=nil;mode=@"echo";
     assert(!TLinkCurrentNativeBudget());
     puts("Typed auto-launch passed: actual flock/atomic persistence/list codec with frozen JS/RAW file/reply/metadata parity, delimiter overlap, ingress/output/task-36/37 authority, malformed/lock/directory errors, opaque stop/fault/commit behavior, snapshots and repeated lifecycles. Only private temporary config changed.");
+    }catch(const std::exception &exception){fprintf(stdout,"Auto-launch fixture: uncaught C++ exception: %s\n",exception.what());fflush(stdout);throw;}
+    catch(...){puts("Auto-launch fixture: uncaught non-standard C++ exception");fflush(stdout);throw;}}
+    @catch(NSException *exception){fprintf(stdout,"Auto-launch fixture: uncaught Objective-C exception: %s\n",exception.description.UTF8String?:"(no description)");fflush(stdout);@throw;}
 }

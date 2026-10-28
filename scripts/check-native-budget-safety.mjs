@@ -691,7 +691,12 @@ try {
   assert.equal([...autoEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
   assert.match(autoEntry,/listAutoLaunch\(&error\)[\s\S]*budget->stopped\(\)[\s\S]*zx_nativeStringQueryResult\(body\?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply\)/);
   assert.doesNotMatch(autoEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
-  assert.match(await read('test/native-autolaunch-runtime-fixture.inc'),/NSString\* TLinkSetAutoLaunch\(NSString \*,NSString \*,BOOL,NSError \*\*\);[\s\S]*#include "AutoLaunchCoreUnderTest.inc"/);
+  const autoFixture=await read('test/native-autolaunch-runtime-fixture.inc');
+  assert.match(autoFixture,/NSString\* TLinkSetAutoLaunch\(NSString \*,NSString \*,BOOL,NSError \*\*\);[\s\S]*#include "AutoLaunchCoreUnderTest.inc"/);
+  const persistedAutoCases=between(autoFixture,'    for(id config in','    for(NSData *seed in');
+  assert.doesNotMatch(persistedAutoCases,/\[NSNull null\]/,'persisted auto-launch fixtures must contain valid plist values');
+  assert.match(persistedAutoCases,/@"enabled":\[NSData data\]/,'retain unsupported boolValue metadata coverage with a plist-compatible value');
+  assert.match(autoFixture,/propertyList:value isValidForFormat:NSPropertyListBinaryFormat_v1_0/);
   const autoCompile=autoLegacyCore.replace('NSString* listAutoLaunch(NSError **error)\n{\n','NSString* listAutoLaunch(NSError **error)\n{\n    (void)error;\n').replace('BOOL *stop) {\n','BOOL *stop) {\n        (void)stop;\n');
   assert.equal([...autoCompile.matchAll(/\(void\)(?:error|stop);/g)].length,2);
   await writeFile(join(temp,'AutoLaunchCoreUnderTest.inc'),autoCore);
