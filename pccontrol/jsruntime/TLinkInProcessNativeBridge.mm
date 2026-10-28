@@ -47,6 +47,24 @@ static NSString *TLinkautoJSBase64Decode(NSString *text)
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
 }
 
+static id TLinkautoJSBase64JSON(NSString *text)
+{
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) return nil;
+    NSData *data = [[NSData alloc] initWithBase64EncodedString:text options:0];
+    // Retain Foundation's UTF8 validation before its auto-detecting JSON parser.
+    // Parse the original decoded bytes rather than UTF8-encoding the text again.
+    if (!data) return nil;
+    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!json) return nil;
+    // Preserve the former text conversion for leading BOMs, including repeats.
+    const unsigned char *bytes = (const unsigned char *)data.bytes;
+    if (data.length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf) {
+        data = [json dataUsingEncoding:NSUTF8StringEncoding];
+        if (!data) return nil;
+    }
+    return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+}
+
 static NSDictionary *TLinkautoJSResultByAdding(NSDictionary *result, NSDictionary *extra)
 {
     NSMutableDictionary *out = [NSMutableDictionary dictionaryWithDictionary:result ?: @{}];
@@ -976,9 +994,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         if (withInfo) {
-            NSString *json = TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 1));
-            NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
-            id obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+            id obj = TLinkautoJSBase64JSON(TLinkautoJSSafeStringPart(parts, 1));
             NSArray *items = [obj isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)obj)[@"items"] : @[];
             return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"items": [items isKindOfClass:[NSArray class]] ? items : @[]})];
         }

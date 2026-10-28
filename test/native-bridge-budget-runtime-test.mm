@@ -1213,6 +1213,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-shell-runtime-fixture.inc"
 #include "native-compatibility-batch-runtime-fixture.inc"
 #include "native-raw-reply-runtime-fixture.inc"
+#include "native-base64-json-runtime-fixture.inc"
 #include "native-template-match-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
@@ -2431,6 +2432,7 @@ int main() { @autoreleasepool {
     typedShellCases(bridge);
     typedCompatibilityBatchCases(bridge);
     rawReplyCases(bridge);
+    base64JSONCases();
     typedTemplateMatchCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");

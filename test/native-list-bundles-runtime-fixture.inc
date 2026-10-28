@@ -3,6 +3,7 @@ static int bundlesMode=3,bundlesFaultStage=-1;
 static unsigned bundlesFault=0,bundlesJSONFailure=0,bundlesKVCThrows=0;
 static NSArray *bundlesApps=nil;
 static NSData *bundlesJSONData=nil;
+static NSData *bundlesJSONOverride=nil;
 static std::vector<int> bundlesOrder;
 static TLinkNativeBudgetPtr bundlesBudget;
 static std::function<void(int)> bundlesOnRead;
@@ -63,7 +64,7 @@ static Class bundlesClass(NSString *name){assert([name isEqualToString:@"LSAppli
 @end
 @implementation NativeBundlesJSONFixture
 + (NSData *)dataWithJSONObject:(id)object options:(NSJSONWritingOptions)options error:(NSError **)error {
-    bundlesObserve(400);assert(options==0);bundlesJSONData=[NSJSONSerialization dataWithJSONObject:object options:options error:error];
+    bundlesObserve(400);assert(options==0);bundlesJSONData=bundlesJSONOverride?:[NSJSONSerialization dataWithJSONObject:object options:options error:error];
     if(bundlesJSONFailure==1)return nil;
     if(bundlesJSONFailure==2&&error)*error=[NSError errorWithDomain:@"BundlesFixture" code:1 userInfo:nil];
     return bundlesJSONData;
@@ -103,7 +104,7 @@ static void typedListBundlesCases(TLinkInProcessNativeBridge *bridge){
     mode=@"listBundlesRuntime";
     const auto reset=[](TLinkTaskExecutionContext *context,int selection=3){
         bundlesMode=selection;bundlesFaultStage=-1;bundlesFault=bundlesJSONFailure=bundlesKVCThrows=0;
-        bundlesOrder.clear();bundlesJSONData=nil;bundlesBudget.reset();bundlesOnRead={};bundlesWorkspace=[NativeBundleWorkspaceFixture new];
+        bundlesOrder.clear();bundlesJSONData=bundlesJSONOverride=nil;bundlesBudget.reset();bundlesOnRead={};bundlesWorkspace=[NativeBundleWorkspaceFixture new];
         touchToken=context.cancellationToken;licenseAllowed=true;stopInLicense=false;licenseDelayMs=0;
     };
     const auto proxy=[](NSArray *fields,unsigned mask)->NativeBundleProxyFixture *{NativeBundleProxyFixture *p=[NativeBundleProxyFixture new];p.fields=fields;p.mask=mask;return p;};
@@ -112,15 +113,16 @@ static void typedListBundlesCases(TLinkInProcessNativeBridge *bridge){
     const auto invoke=[bridge,request](NSArray *args,TLinkTaskExecutionContext *context)->TLinkJSNativeResponse *{
         TLinkJSNativeResponse *result=[bridge executeRequest:request(args) context:context error:nil];assert(!TLinkCurrentNativeBudget());return result;
     };
-    const auto parity=[bridge,reset,decode,request,invoke](NSArray *args,int selection,NSUInteger cap,unsigned kvc=0)->NSUInteger{
-        const bool info=args.count&&[args[0] boolValue];TLinkTaskExecutionContext *context=parent(1,cap);reset(context,selection);bundlesKVCThrows=kvc;
+    const auto parity=[bridge,reset,decode,request,invoke](NSArray *args,int selection,NSUInteger cap,unsigned kvc=0,NSData *jsonOverride=nil)->NSUInteger{
+        const bool info=args.count&&[args[0] boolValue];TLinkTaskExecutionContext *context=parent(1,cap);reset(context,selection);bundlesKVCThrows=kvc;bundlesJSONOverride=jsonOverride;
         const int oldGates=licenseCalls;TLinkJSNativeResponse *expected=[bridge legacyListBundles:request(args) context:context];const auto order=bundlesOrder;const int gateDelta=licenseCalls-oldGates;
-        context=parent(1,cap);reset(context,selection);bundlesKVCThrows=kvc;const int gates=licenseCalls,rawCalls=calls;
+        context=parent(1,cap);reset(context,selection);bundlesKVCThrows=kvc;bundlesJSONOverride=jsonOverride;const int gates=licenseCalls,rawCalls=calls;
         TLinkJSNativeResponse *actual=invoke(args,context);NSDictionary *want=expected.value,*got=actual.value;
         assert(actual.ok==expected.ok&&actual.ok&&bundlesOrder==order&&licenseCalls==gates+gateDelta&&calls==rawCalls);
         if(info&&[want[@"ok"] boolValue]){
             // Foundation JSON dictionary key order is unspecified; compare decoded payloads and exact captured wire.
-            assert([decode(got[@"parts"][1]) isEqual:decode(want[@"parts"][1])]&&[got[@"items"] isEqual:want[@"items"]]);
+            id gotJSON=decode(got[@"parts"][1]),wantJSON=decode(want[@"parts"][1]);
+            assert((gotJSON==wantJSON||[gotJSON isEqual:wantJSON])&&[got[@"items"] isEqual:want[@"items"]]);
             NSString *wire=[NSString stringWithFormat:@"0;;%@\r\n",[bundlesJSONData base64EncodedStringWithOptions:0]];
             assert([got[@"raw"] isEqual:wire]&&[got[@"parts"] count]==2&&got.count==want.count);
         }else assert([got isEqual:want]);
@@ -130,6 +132,15 @@ static void typedListBundlesCases(TLinkInProcessNativeBridge *bridge){
     };
     NSArray *ordinary=@[@"com.example.app",@"Example",@"1.2",@"123"];
     for(unsigned n=0;n<160;++n){bundlesApps=@[proxy(ordinary,n%16),proxy(@[@"",@"ignored",@"",@""],15),proxy(@[@"com.second",@"Ứng dụng",@"2",@"5"],15)];parity(@[@(n%2)],3,1024*1024);}
+    for(NSString *json in @[@"",@"{}",@"[]",@"{\"items\":null}",@"{\"items\":17}",@"{\"items\":{}}",@"{\"items\":[1,\"ảnh 测试\",null]}",@"{broken"]){
+        for(NSStringEncoding encoding:{NSUTF8StringEncoding,NSUTF16StringEncoding,NSUTF16LittleEndianStringEncoding,NSUTF32StringEncoding}){
+            NSData *data=[json dataUsingEncoding:encoding];parity(@[@1],3,4096,0,data);
+        }
+    }
+    for(unsigned count:{1U,2U}){
+        std::string json;for(unsigned n=0;n<count;++n)json+="\xef\xbb\xbf";json+="{\"items\":[1,\"BOM\"]}";
+        NSData *data=[NSData dataWithBytes:json.data() length:json.size()];parity(@[@1],3,4096,0,data);
+    }
     for(int selection:{0,1,2,3,4,5,6})for(bool info:{false,true}){
         bundlesApps=@[proxy(ordinary,15)];const NSUInteger bytes=parity(@[@(info)],selection,1024);
         parity(@[@(info)],selection,bytes);parity(@[@(info)],selection,bytes-1);

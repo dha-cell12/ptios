@@ -1,7 +1,7 @@
 # C02b55 — remove the intermediate RAW response NSData
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `be14508`, containing C02b54; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `892d8de` passed before C02b56; independent device/performance qualification pending**.
 Finding: **P0-13, remaining RAW response copies**. C02 remains partial.
 
 ## Result and scope

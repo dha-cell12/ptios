@@ -363,7 +363,18 @@ try {
   assert.match(bundlesBridge,/boolValue[\s\S]*TLinkExecuteNativeListBundles\(withInfo,context\)/);
   assert.doesNotMatch(bundlesBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
   const bundlesBridgeLegacy=await read("test/fixtures/native-list-bundles-legacy-v1.inc");
-  assert.equal(bundlesBridge.slice(bundlesBridge.indexOf('        NSArray *parts')).trim(),bundlesBridgeLegacy.slice(bundlesBridgeLegacy.indexOf('        NSArray *parts')).trim(),'list metadata decoding remains unchanged');
+  const oldBundlesJSON='            NSString *json = TLinkautoJSBase64Decode(TLinkautoJSSafeStringPart(parts, 1));\n            NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];\n            id obj = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;';
+  const restoredBundles=bundlesBridge.replace('            id obj = TLinkautoJSBase64JSON(TLinkautoJSSafeStringPart(parts, 1));',oldBundlesJSON);
+  assert.equal(restoredBundles.slice(restoredBundles.indexOf('        NSArray *parts')).trim(),bundlesBridgeLegacy.slice(bundlesBridgeLegacy.indexOf('        NSArray *parts')).trim(),'metadata shape/filtering stays frozen after restoring only the former JSON decode');
+  const bundlesCodecFrozen=await read('test/fixtures/native-list-bundles-codec-legacy-v1.inc');
+  assert.equal(restoredBundles.trim(),bundlesCodecFrozen.slice(bundlesCodecFrozen.indexOf('\n')+1).trim());
+  const base64JSON=between(bridge,'static id TLinkautoJSBase64JSON','static NSDictionary *TLinkautoJSResultByAdding');
+  assert.match(base64JSON,/isKindOfClass:[\s\S]*initWithBase64EncodedString:text options:0[\s\S]*initWithData:data encoding:NSUTF8StringEncoding[\s\S]*JSONObjectWithData:data options:0 error:nil/);
+  assert.match(base64JSON,/if \(data.length >= 3 && bytes\[0\] == 0xef && bytes\[1\] == 0xbb && bytes\[2\] == 0xbf\) \{\s*data = \[json dataUsingEncoding:NSUTF8StringEncoding\];\s*if \(!data\) return nil;\s*\}/);
+  assert.equal([...base64JSON.matchAll(/dataUsingEncoding/g)].length,1,'only the leading-BOM compatibility branch may re-encode');
+  assert.doesNotMatch(base64JSON,/IgnoreUnknownCharacters|AllowFragments|NoCopy|initWithBytes/);
+  const base64Frozen=await read('test/fixtures/native-base64-json-legacy-v1.inc');
+  assert.equal(between(bridge,'static NSString *TLinkautoJSBase64Decode','static id TLinkautoJSBase64JSON').trim(),between(base64Frozen,'static NSString *TLinkautoJSBase64Decode','static id TLinkautoJSBase64JSON').trim(),'standalone base64 text consumers stay unchanged');
   assert.match(bundlesEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_LIST_BUNDLES,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*listBundlesWithInfo\(withInfo,&error\)/);
   assert.equal([...bundlesEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
   assert.ok(bundlesEntry.includes('zx_nativeStringQueryResult(value?:@"",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply)'));
@@ -944,7 +955,7 @@ try {
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
   assert.match(runtimeFixture,/#include "native-timer-runtime-fixture.inc"\n#include "native-screenshot-album-runtime-fixture.inc"/,'screenshot album fixture requires shared bridge/entry helpers first');
-  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-shell-runtime-fixture.inc"\n#include "native-compatibility-batch-runtime-fixture.inc"\n#include "native-raw-reply-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file/shell/batch/RAW/template fixtures require shared reply formatter and PNG writer first');
+  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-shell-runtime-fixture.inc"\n#include "native-compatibility-batch-runtime-fixture.inc"\n#include "native-raw-reply-runtime-fixture.inc"\n#include "native-base64-json-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file/shell/batch/RAW/codec/template fixtures require shared reply formatter and PNG writer first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
