@@ -1,7 +1,7 @@
 # C03d — bounded asynchronous console system logging
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `be66e2cf` (C03c); user reported that build passed.
-Status: **source implemented; new Foundation/JavaScriptCore/GCD/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `10a952a5` passed before C03e; independent device/performance qualification pending**.
 Finding: **P1-42 per-console-call synchronous NSLog slice**. Other C03 work remains open.
 
 ## Result and scope

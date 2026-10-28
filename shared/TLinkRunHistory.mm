@@ -131,17 +131,31 @@ static BOOL TLinkRunHistoryWriteIndex(NSArray<NSDictionary *> *runs)
     }, TLinkRunHistoryIndexPath());
 }
 
+static NSArray<NSRegularExpression *> *TLinkRunHistoryRedactionPatterns(void)
+{
+    static NSArray<NSRegularExpression *> *compiled = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSArray<NSString *> *patterns = @[
+        @"(?i)(license[_-]?key|setup[_-]?secret|vpn[_-]?password|shared[_-]?secret|private[_-]?key|admin[_-]?token)[\"']?\\s*[:=]\\s*[\"']?([^\\s,;\"']+)",
+        @"(?i)bearer\\s+[A-Za-z0-9._~+\\/-]+=*",
+        ];
+        NSMutableArray<NSRegularExpression *> *expressions = [NSMutableArray arrayWithCapacity:patterns.count];
+        for (NSString *pattern in patterns) {
+            NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:pattern options:0 error:nil];
+            [expressions addObject:regex];
+        }
+        compiled = [expressions copy];
+    });
+    return compiled;
+}
+
 static NSString *TLinkRunHistoryRedactText(NSString *value)
 {
     NSString *text = [value isKindOfClass:[NSString class]] ? value : @"";
-    NSArray<NSString *> *patterns = @[
-        @"(?i)(license[_-]?key|setup[_-]?secret|vpn[_-]?password|shared[_-]?secret|private[_-]?key|admin[_-]?token)[\"']?\\s*[:=]\\s*[\"']?([^\\s,;\"']+)",
-        @"(?i)bearer\\s+[A-Za-z0-9._~+\\/-]+=*",
-    ];
+    NSArray<NSRegularExpression *> *patterns = TLinkRunHistoryRedactionPatterns();
     for (NSUInteger index = 0; index < patterns.count; index++) {
-        NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:patterns[index]
-                                                                                 options:0
-                                                                                   error:nil];
+        NSRegularExpression *regex = patterns[index];
         NSString *replacement = index == 0 ? @"$1=[REDACTED]" : @"Bearer [REDACTED]";
         text = [regex stringByReplacingMatchesInString:text
                                                 options:0
@@ -264,6 +278,18 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
     if (runId.length == 0) return @{};
     @synchronized (TLinkRunHistoryLock()) {
         TLinkRunHistoryEnsureDirectories();
+        // Preparation is process-serialized, but does not hold the shared file lock.
+        NSString *terminalState = state.length > 0 ? state : @"finished";
+        NSString *redactedError = TLinkRunHistoryRedactText(error ?: @"");
+        if (redactedError.length > kTLinkFailureErrorMaxCharacters) {
+            redactedError = [redactedError substringToIndex:kTLinkFailureErrorMaxCharacters];
+        }
+        BOOL failed = [terminalState isEqualToString:@"failed"] || [terminalState isEqualToString:@"license_revoked"];
+        NSArray *tail = @[];
+        if (failed) {
+            tail = TLinkRunHistoryBoundedLogTail(logTail);
+            if (tail.count == 0) tail = TLinkRunHistoryTailFromConsoleFile(consoleLogPath);
+        }
         int lockFd = TLinkRunHistoryAcquireFileLock();
         if (lockFd < 0) return @{};
         NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndex();
@@ -275,23 +301,15 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
         NSMutableDictionary *record = index != NSNotFound ? [runs[index] mutableCopy] : [NSMutableDictionary dictionary];
         uint64_t endedAt = TLinkRunHistoryNowMs();
         uint64_t startedAt = [record[@"started_at_ms"] unsignedLongLongValue];
-        NSString *terminalState = state.length > 0 ? state : @"finished";
         record[@"schema"] = TLinkRunHistorySchemaV1;
         record[@"run_id"] = runId;
         record[@"state"] = terminalState;
         record[@"ended_at_ms"] = @(endedAt);
         record[@"duration_ms"] = @(endedAt >= startedAt ? endedAt - startedAt : 0);
-        NSString *redactedError = TLinkRunHistoryRedactText(error ?: @"");
-        if (redactedError.length > kTLinkFailureErrorMaxCharacters) {
-            redactedError = [redactedError substringToIndex:kTLinkFailureErrorMaxCharacters];
-        }
         record[@"error"] = redactedError;
         if (extra.count > 0) record[@"extra"] = extra;
 
-        BOOL failed = [terminalState isEqualToString:@"failed"] || [terminalState isEqualToString:@"license_revoked"];
         if (failed) {
-            NSArray *tail = TLinkRunHistoryBoundedLogTail(logTail);
-            if (tail.count == 0) tail = TLinkRunHistoryTailFromConsoleFile(consoleLogPath);
             NSString *metadataPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:
                 [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
             NSDictionary *screenshotAttributes = screenshotPath.length > 0
