@@ -1,7 +1,7 @@
 # C02b45 — direct alert adapter and CF notification ownership
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `78359d2`, containing C02b44; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `03f7454` before C02b46; independent device/performance qualification pending**.
 Finding: **P0-13, alert task 12**. Other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -30,4 +30,4 @@ Coverage includes 160 ordinary cases, defaults/description/intValue behavior, Un
 
 ## Acceptance and remaining work
 
-The user reported C02b44 build success at 78359d2; that does not qualify the new alert path. Build rootfull/roothide, then compare typed/helper alerts with RAW task 12 for normal and delimiter/Unicode text, duration normalization, exact replies and license denial. Verify actual display/dismissal/timeout behavior and repeated CF lifecycles, including caller stop/output failure after an accepted alert. Measure bridge overhead separately from user-response wait. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
+The user reported C02b45 build success at 03f7454 before C02b46. Independent device/performance qualification remains pending: compare typed/helper alerts with RAW task 12 for normal and delimiter/Unicode text, duration normalization, exact replies and license denial. Verify actual display/dismissal/timeout behavior and repeated CF lifecycles, including caller stop/output failure after an accepted alert. Measure bridge overhead separately from user-response wait. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

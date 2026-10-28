@@ -652,6 +652,29 @@ try {
   await writeFile(join(temp,'NativeAlertBridge.inc'),alertBridge);
   await writeFile(join(temp,'NativeAlertEntry.inc'),alertEntry);
   await writeFile(join(temp,'AlertCoreUnderTest.inc'),alertCore);
+  const dialogCore=between(await read('pccontrol/RuntimeUtils.xm'),'NSString* dialogFromRawData','NSString* rootDirValue');
+  const dialogLegacyCore=await frozenBody('test/fixtures/dialog-core-legacy-v1.inc');
+  assert.equal(dialogCore.replaceAll('    (void)error;\n','').replace('\n    return TLinkShowDialog(title, message, ok, cancel);\n}\n\nNSString* TLinkShowDialog(NSString *title, NSString *message, NSString *ok, NSString *cancel)\n{\n','').trim(),dialogLegacyCore);
+  assert.match(await read('pccontrol/RuntimeUtils.h'),/NSString\* TLinkShowDialog\(NSString \*title, NSString \*message, NSString \*ok, NSString \*cancel\);/);
+  assert.equal(between(task,'    else if (taskType == TASK_DIALOG)','    else if (taskType == TASK_ROOT_DIR)').trim(),await frozenBody('test/fixtures/dialog-handler-legacy-v1.inc'));
+  const dialogBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodDialog])','    else if ([method isEqualToString:TLinkJSNativeMethodKeyboard])');
+  const dialogLegacyBridge=await frozenBody('test/fixtures/native-dialog-legacy-v1.inc');
+  assert.equal(dialogBridge.replace('TLinkExecuteNativeDialog(title ?: @"TLinkauto",message ?: @"",ok ?: @"OK",cancel ?: @"Cancel",context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%@;;%@;;%@", TASK_DIALOG, title ?: @"TLinkauto", message ?: @"", ok ?: @"OK", cancel ?: @"Cancel"] context:context]').replace('TLinkExecuteNativeClearDialog(context)','[self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_CLEAR_DIALOG] context:context]').trim(),dialogLegacyBridge);
+  assert.doesNotMatch(dialogBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const dialogEntry=between(task,'// BEGIN typed dialog task entry.','// END typed dialog task entry.');
+  assert.match(dialogEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-8[\s\S]*32\*1024-8[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(taskType,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkShowDialog\(fields\[0\],fields\[1\],fields\[2\],fields\[3\]\)/);
+  assert.equal([...dialogEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.match(dialogEntry,/clearDialogValues\(&error\)[\s\S]*budget->stopped\(\)[\s\S]*zx_typedTouchReply\(raw,budget\)/);
+  assert.doesNotMatch(dialogEntry,/processTaskWithContext|CFWriteStream|FromRawData|TLinkC01|\b(?:YES|NO)\b/);
+  const dialogFixture=await read('test/native-dialog-runtime-fixture.inc');
+  assert.match(dialogFixture,/NSString\* TLinkShowDialog\(NSString \*,NSString \*,NSString \*,NSString \*\);[\s\S]*#include "DialogCoreUnderTest.inc"/);
+  // The frozen functions ignored their NSError output; mark it used only in the compile adapter.
+  const dialogCompile=dialogLegacyCore.replaceAll('NSError **error)\n{\n','NSError **error)\n{\n    (void)error;\n');
+  assert.equal([...dialogCompile.matchAll(/\(void\)error;/g)].length,2);
+  await writeFile(join(temp,'DialogCoreUnderTest.inc'),dialogCore);
+  await writeFile(join(temp,'LegacyDialogCore.inc'),dialogCompile);
+  await writeFile(join(temp,'NativeDialogBridge.inc'),dialogBridge);
+  await writeFile(join(temp,'NativeDialogEntry.inc'),dialogEntry);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -718,6 +741,7 @@ try {
   assert.match(runtimeFixture,/#include "native-toast-runtime-fixture.inc"\n#include "native-keyboard-notification-runtime-fixture.inc"/,'keyboard notification fixture requires actual backend and controlled notification center first');
   assert.match(runtimeFixture,/#include "native-keyboard-notification-runtime-fixture.inc"\n#include "native-clipboard-image-runtime-fixture.inc"/,'clipboard image fixture requires the shared clipboard backend and pasteboard first');
   assert.match(runtimeFixture,/#include "native-clipboard-image-runtime-fixture.inc"\n#include "native-alert-runtime-fixture.inc"/,'alert fixture requires shared entry/formatter and content fixtures first');
+  assert.match(runtimeFixture,/#include "native-alert-runtime-fixture.inc"\n#include "native-dialog-runtime-fixture.inc"/,'dialog fixture requires CF notification declarations and shared content fixtures first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

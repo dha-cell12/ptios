@@ -955,6 +955,59 @@ NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionCont
 }
 // END typed clipboard image task entry.
 
+// BEGIN typed dialog task entry.
+static NSDictionary *zx_nativeDialogExecute(int taskType,id title,id message,id ok,id cancel,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_DIALOG==42&&TASK_CLEAR_DIALOG==43,"dialog task classification changed");
+    if(taskType!=TASK_DIALOG&&taskType!=TASK_CLEAR_DIALOG)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        NSArray *fields=nil;
+        if(taskType==TASK_DIALOG){
+            fields=@[[[NSString stringWithFormat:@"%@",title] copy],[[NSString stringWithFormat:@"%@",message] copy],
+                [[NSString stringWithFormat:@"%@",ok] copy],[[NSString stringWithFormat:@"%@",cancel] copy]];
+            NSUInteger remaining=8192-8; // task 42 and three ;; separators
+            for(NSString *field in fields){if(field.length>remaining)return zx_typedTouchFailure(@"input_too_large");remaining-=field.length;}
+            remaining=32*1024-8;
+            for(NSString *field in fields){
+                const char *bytes=field.UTF8String;const NSUInteger size=[field lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+                if(!bytes||size>remaining||memchr(bytes,0,size))return zx_typedTouchFailure(@"invalid_payload");remaining-=size;
+            }
+        }
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(taskType,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *raw=nil;
+        if(taskType==TASK_DIALOG){
+            // Preserve overlapping delimiter boundaries only when text contains semicolons.
+            bool split=false;for(NSString *field in fields)if([field rangeOfString:@";"].location!=NSNotFound){split=true;break;}
+            if(split)fields=[[fields componentsJoinedByString:@";;"] componentsSeparatedByString:@";;"];
+            NSString *response=TLinkShowDialog(fields[0],fields[1],fields[2],fields[3]);
+            raw=[NSString stringWithFormat:@"0;;%@\r\n",response?:@""];
+        }else{
+            NSError *error=nil;clearDialogValues(&error);raw=error?error.localizedDescription:@"0\r\n";
+        }
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return zx_typedTouchReply(raw,budget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeDialog(id title,id message,id ok,id cancel,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeDialogExecute(TASK_DIALOG,title,message,ok,cancel,context);}
+    return result;
+}
+NSDictionary *TLinkExecuteNativeClearDialog(TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeDialogExecute(TASK_CLEAR_DIALOG,nil,nil,nil,nil,context);}
+    return result;
+}
+// END typed dialog task entry.
+
 // BEGIN typed alert task entry.
 static NSDictionary *zx_nativeAlertExecute(id title,id message,int duration,TLinkTaskExecutionContext *context)
 {

@@ -1036,13 +1036,13 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSString *message = [args count] > 1 ? [args objectAtIndex:1] : @"";
         NSString *ok = [args count] > 2 ? [args objectAtIndex:2] : @"OK";
         NSString *cancel = [args count] > 3 ? [args objectAtIndex:3] : @"Cancel";
-        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@;;%@;;%@;;%@", TASK_DIALOG, title ?: @"TLinkauto", message ?: @"", ok ?: @"OK", cancel ?: @"Cancel"] context:context];
+        NSDictionary *result = TLinkExecuteNativeDialog(title ?: @"TLinkauto",message ?: @"",ok ?: @"OK",cancel ?: @"Cancel",context);
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
         return [TLinkJSNativeResponse responseWithValue:TLinkautoJSResultByAdding(result, @{@"response": @([TLinkautoJSSafeStringPart(parts, 1) intValue])})];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodClearDialogValues]) {
-        return [TLinkJSNativeResponse responseWithValue:[self executeRawPayload:[NSString stringWithFormat:@"%02d", TASK_CLEAR_DIALOG] context:context]];
+        return [TLinkJSNativeResponse responseWithValue:TLinkExecuteNativeClearDialog(context)];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodKeyboard]) {
         int kind = [args count] > 0 ? [[args objectAtIndex:0] intValue] : 0;

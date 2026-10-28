@@ -82,6 +82,10 @@ NSDictionary *TLinkExecuteNativeClipboardImage(id,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeAlert(id,id,int,TLinkTaskExecutionContext *);
 static void alertLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_SHOW_ALERT_BOX=12};
+NSDictionary *TLinkExecuteNativeDialog(id,id,id,id,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeClearDialog(TLinkTaskExecutionContext *);
+static void dialogLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_DIALOG=42,TASK_CLEAR_DIALOG=43};
 static void clipboardTextLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_TEXT_INPUT=24};
 NSDictionary *TLinkExecuteNativeToast(int,NSString *,int,int,int,TLinkTaskExecutionContext *);
@@ -147,6 +151,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"dialogRuntime"]&&(lastPayload.compare(0,2,"42")==0||lastPayload.compare(0,2,"43")==0)){dialogLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"alertRuntime"]&&lastPayload.compare(0,2,"12")==0){alertLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"toastRuntime"]&&lastPayload.compare(0,2,"22")==0){toastLegacyTask(bytes,stream);return;}
     if(([mode isEqualToString:@"clipboardTextRuntime"]||[mode isEqualToString:@"keyboardNotificationRuntime"])&&lastPayload.compare(0,2,"24")==0){clipboardTextLegacyTask(bytes,stream);return;}
@@ -259,10 +264,17 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyKeyboardNotification:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyClipboardImage:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyAlert:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyDialog:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyDialog:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-dialog-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyAlert:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -496,6 +508,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 #include "NativeOCRLanguagesBridge.inc"
 #include "NativeClipboardTextBridge.inc"
 #include "NativeAlertBridge.inc"
+#include "NativeDialogBridge.inc"
 #include "NativeToastBridge.inc"
 #include "NativeRadioBridge.inc"
     return nil;
@@ -1081,6 +1094,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-keyboard-notification-runtime-fixture.inc"
 #include "native-clipboard-image-runtime-fixture.inc"
 #include "native-alert-runtime-fixture.inc"
+#include "native-dialog-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2285,6 +2299,7 @@ int main() { @autoreleasepool {
     typedKeyboardNotificationCases(bridge);
     typedClipboardImageCases(bridge);
     typedAlertCases(bridge);
+    typedDialogCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }
