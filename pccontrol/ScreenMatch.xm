@@ -48,9 +48,11 @@ CGRect screenMatchFromRawData(UInt8 *eventData, NSError **error)
         return CGRect();
     }
 
-    CGRect result = [templateMatch templateMatchWithCGImage:screen templatePath:templatePath error:err];
-    CGImageRelease(screen);
-    return result;
+    @try {
+        return [templateMatch templateMatchWithCGImage:screen templatePath:templatePath error:err];
+    } @finally {
+        CGImageRelease(screen);
+    }
 }
 
 

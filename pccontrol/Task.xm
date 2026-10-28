@@ -1004,6 +1004,54 @@ NSDictionary *TLinkExecuteNativeScreenshotAlbum(BOOL clear,NSString *path,TLinkT
 }
 // END typed screenshot album task entry.
 
+// BEGIN typed template match task entry.
+static NSDictionary *zx_nativeTemplateMatchExecute(NSString *path,int tries,double acceptable,double ratio,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_TEMPLATE_MATCH==21,"template match classification changed");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto replyBudget=[call nativeBudget];TLinkNativeBudgetScope callScope(replyBudget);
+    @try {try{
+        if(![path isKindOfClass:[NSString class]])return zx_typedTouchFailure(@"invalid_payload");
+        NSString *input=[path copy];
+        // Preserve JS %.4f -> Foundation floatValue, including signed zero,
+        // rounding into/out of the backend's valid range and nonfinite values.
+        NSString *count=[NSString stringWithFormat:@"%d",tries],*threshold=[NSString stringWithFormat:@"%.4f",acceptable],*scale=[NSString stringWithFormat:@"%.4f",ratio];
+        const NSUInteger prefix=8+count.length+threshold.length+scale.length;
+        if(input.length>8192-prefix)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger size=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(!bytes||size>32*1024-prefix||memchr(bytes,0,size))return zx_typedTouchFailure(@"invalid_payload");
+        if(replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        const uint8_t task[]={'2','1'};
+        TLinkNativeBudgetScope c01Scope(TLinkC01TaskBudget(task,sizeof(task),replyBudget));
+        if(TLinkNativeStopped())return zx_nativeAlbumReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_TEMPLATE_MATCH,&denial))return zx_nativeAlbumReply(denial?:@"-1;;license_required\r\n",replyBudget);
+        if(TLinkNativeStopped())return zx_nativeAlbumReply(@"1;;native_cancelled_or_timed_out\r\n",replyBudget);
+        // A semicolon at a field boundary can overlap the old ;; separator.
+        // Ordinary paths bypass whole-request assembly and splitting.
+        if([input rangeOfString:@";"].location!=NSNotFound){
+            NSArray *fields=[[NSString stringWithFormat:@"%@;;%@;;%@;;%@",input,count,threshold,scale] componentsSeparatedByString:@";;"];
+            if(fields.count!=4)return zx_nativeAlbumReply(@"-1;;The data format should be \"template_path[;;max_try_times;;acceptable_value;;scaleRation]\"\r\n",replyBudget);
+            input=fields[0];count=fields[1];threshold=fields[2];scale=fields[3];
+        }
+        NSError *error=nil;
+        CGRect rect=[ScreenMatch matchCurrentScreenWithTemplate:input maxTryTimes:count.intValue acceptableValue:threshold.floatValue scaleRation:scale.floatValue error:&error];
+        NSString *raw=error?error.localizedDescription:[NSString stringWithFormat:@"0;;%.2f;;%.2f;;%.2f;;%.2f\r\n",rect.origin.x,rect.origin.y,rect.size.width,rect.size.height];
+        // C01-local expiry keeps the backend's response; the caller budget
+        // remains authoritative after an opaque operation has been accepted.
+        if(replyBudget->stopped())return zx_typedTouchStopped(replyBudget);
+        return zx_nativeAlbumReply(raw,replyBudget);
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeTemplateMatch(NSString *path,int tries,double acceptable,double ratio,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeTemplateMatchExecute(path,tries,acceptable,ratio,context);}
+    return result;
+}
+// END typed template match task entry.
+
 // BEGIN typed timer task entry.
 static NSDictionary *zx_nativeTimerExecute(int taskType,NSString *name,double interval,BOOL repeat,NSString *script,TLinkTaskExecutionContext *context)
 {

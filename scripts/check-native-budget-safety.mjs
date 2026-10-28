@@ -759,6 +759,25 @@ try {
   await writeFile(join(temp,'ScreenshotAlbumConstants.h'),[...(await read('pccontrol/Screen.h')).matchAll(/^#define SCREENSHOT_TASK_[^\n]+/gm)].map(match=>match[0]).join('\n'));
   await writeFile(join(temp,'NativeScreenshotAlbumBridge.inc'),albumBridge);
   await writeFile(join(temp,'NativeScreenshotAlbumEntry.inc'),albumEntry);
+  const screenMatch=await read('pccontrol/ScreenMatch.xm');
+  const legacyScreenMatch=await frozenBody('test/fixtures/screen-match-legacy-v1.inc');
+  assert.equal(screenMatch.replace('    @try {\n        return [templateMatch templateMatchWithCGImage:screen templatePath:templatePath error:err];\n    } @finally {\n        CGImageRelease(screen);\n    }','    CGRect result = [templateMatch templateMatchWithCGImage:screen templatePath:templatePath error:err];\n    CGImageRelease(screen);\n    return result;').trim(),legacyScreenMatch);
+  assert.match(screenMatch,/@try \{[\s\S]*return \[templateMatch templateMatchWithCGImage:screen[\s\S]*@finally \{\s*CGImageRelease\(screen\);/,'the screenshot owner must release across NS/C++ matcher unwind');
+  assert.equal(between(task,'    else if (taskType == TASK_TEMPLATE_MATCH)','    else if (taskType == TASK_SHOW_TOAST)').trim(),await frozenBody('test/fixtures/screen-match-handler-legacy-v1.inc'));
+  const matchBridge=between(bridge,'    else if ([method isEqualToString:TLinkJSNativeMethodMatchTemplate])','    else if ([method isEqualToString:TLinkJSNativeMethodFindColor])');
+  assert.equal(matchBridge.replace('        NSDictionary *result = TLinkExecuteNativeTemplateMatch(path,maxTryTimes,acceptable,scaleRatio,context);','        NSString *payload = [NSString stringWithFormat:@"%@;;%d;;%.4f;;%.4f", path, maxTryTimes, acceptable, scaleRatio];\n        NSDictionary *result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEMPLATE_MATCH, payload] context:context];').trim(),await frozenBody('test/fixtures/native-template-match-legacy-v1.inc'));
+  assert.doesNotMatch(matchBridge,/executeRawPayload|stringWithFormat|CFWriteStream/);
+  const matchEntry=between(task,'// BEGIN typed template match task entry.','// END typed template match task entry.');
+  assert.ok((await read('pccontrol/Task.h')).includes('NSDictionary *TLinkExecuteNativeTemplateMatch(NSString *path,int tries,double acceptable,double ratio,TLinkTaskExecutionContext *context);'));
+  assert.match(matchEntry,/TLinkNativeCallContext\(context,false,false\)[\s\S]*stringWithFormat:@"%.4f",acceptable[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*TLinkC01TaskBudget\(task,sizeof\(task\),replyBudget\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_TEMPLATE_MATCH,&denial\)[\s\S]*TLinkNativeStopped\(\)[\s\S]*\[ScreenMatch matchCurrentScreenWithTemplate:input[\s\S]*threshold.floatValue[\s\S]*scale.floatValue/);
+  assert.equal([...matchEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(matchEntry,/processTaskWithContext|CFWriteStream|FromRawData|\b(?:YES|NO)\b/);
+  assert.match(matchEntry,/if\(replyBudget->stopped\(\)\)return zx_typedTouchStopped\(replyBudget\);\s*return zx_nativeAlbumReply\(raw,replyBudget\);/);
+  const stripImports=source=>source.replace(/^#(?:include|import)[^\n]*\n/gm,'');
+  await writeFile(join(temp,'ScreenMatchUnderTest.inc'),stripImports(screenMatch));
+  await writeFile(join(temp,'LegacyScreenMatch.inc'),stripImports(legacyScreenMatch));
+  await writeFile(join(temp,'NativeTemplateMatchEntry.inc'),matchEntry);
+  await writeFile(join(temp,'NativeTemplateMatchBridge.inc'),matchBridge);
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -831,6 +850,7 @@ try {
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
   assert.match(runtimeFixture,/#include "native-timer-runtime-fixture.inc"\n#include "native-screenshot-album-runtime-fixture.inc"/,'screenshot album fixture requires shared bridge/entry helpers first');
+  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'template match fixture requires shared reply formatter and PNG writer first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

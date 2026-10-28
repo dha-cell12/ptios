@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C02b50 (28/10/2026): người dùng báo C02b49 và bản sửa fixture schedulerError build pass (`6aa9104`). matchTemplate gọi trực tiếp task 21 và ScreenMatch; giữ %.4f → floatValue, đường dẫn có dấu chấm phẩy, lỗi/metadata, một license gate và C01 tám giây. Sửa giải phóng CGImage khi matcher ném ngoại lệ; RAW parser/handler không đổi. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; fixture mới dùng PNG/CGImage thật và matcher giả lập, chờ CI Foundation/macOS cùng nghiệm thu OpenCV/thiết bị. Chi tiết: IMPLEMENTATION-C02B50.md.
+
 Cập nhật triển khai C02b49 (28/10/2026): người dùng báo C02b48 build pass (`a97c1b0`). Save/clear screenshot album gọi trực tiếp task 29 action 2/3, dùng lại nguyên lõi Screen/Photos; giữ lỗi/ACK, cắt NUL, một license gate và context/deadline/output. Capture/file/lease không đổi. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; fixture mới dùng PNG/ImageIO thật và Photos giả lập, chờ CI Foundation/macOS cùng nghiệm thu Photos/thiết bị. Chi tiết: IMPLEMENTATION-C02B49.md.
 
 Cập nhật triển khai C02b48 (28/10/2026): người dùng báo C02b47 đã sửa build pass (`5025221`). Set/remove timer gọi trực tiếp task 38/39 và lõi scanner/owner dùng chung với RAW; giữ định dạng %.3f, ngưỡng repeat, chồng dấu phân cách, một license gate mỗi task và context/deadline/output. Registry/GCD và ACK sau commit không đổi. Fixture bridge giữ nguồn GCD ở FOREVER để so sánh ổn định; bộ scheduler riêng vẫn kiểm tra delivery thật. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; chờ CI Foundation/macOS và nghiệm thu thiết bị. Chi tiết: IMPLEMENTATION-C02B48.md.

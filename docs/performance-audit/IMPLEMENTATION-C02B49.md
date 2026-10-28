@@ -1,7 +1,7 @@
 # C02b49 — direct screenshot album adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `a97c1b0`, containing C02b48; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `6aa9104`, including the schedulerError fixture correction; independent device/performance qualification pending**.
 Finding: **P0-13, saveScreenshotToAlbum/clearScreenshotAlbum, task 29 actions 2/3**. Other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -28,4 +28,4 @@ Coverage includes 160 ordinary save/clear cases; existing/missing/empty collecti
 
 ## Acceptance and remaining work
 
-The user reported C02b48 build success at a97c1b0. Build rootfull/roothide with C02b49 and compare typed/helper album calls against RAW task 29 actions 2/3 using a controlled library. Verify image loading, fixed collection creation/refetch, save/delete effects, empty/missing cases, errors/ACKs and license denial. Check accepted caller stop/output failure separately from library state and avoid automatically retrying an uncertain effect. Recheck screenshotTo/Region and owned capture isolation. Measure bridge overhead separately from image/Photos work. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
+The user reported C02b49 build success at 6aa9104, including the schedulerError fixture correction. Independent qualification still needs typed/helper album comparisons against RAW task 29 actions 2/3 using a controlled library. Verify image loading, fixed collection creation/refetch, save/delete effects, empty/missing cases, errors/ACKs and license denial. Check accepted caller stop/output failure separately from library state and avoid automatically retrying an uncertain effect. Recheck screenshotTo/Region and owned capture isolation. Measure bridge overhead separately from image/Photos work. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.
