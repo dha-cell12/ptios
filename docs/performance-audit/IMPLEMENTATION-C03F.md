@@ -1,7 +1,7 @@
 # C03f — release the history file lock before status formatting
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `76fe52ec` (C03e); user reported that build passed.
-Status: **source implemented; new Foundation/POSIX/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build `2eb7deaa` passed before C03g; independent device/performance qualification pending**.
 Finding: **P1-49/P1-51 snapshot file-lock window slice**. Persistence-read caching and other C03 work remain open.
 
 ## Result and scope

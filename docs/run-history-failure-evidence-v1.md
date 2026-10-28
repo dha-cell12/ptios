@@ -2,7 +2,7 @@
 
 Status: implemented for rootfull and TrollStore; device promotion pending.
 
-Every accepted script run receives a UUID `run_id` and is written under
+Every successfully persisted history begin receives a UUID `run_id` under
 `/var/mobile/Library/TLinkauto/run-history`. Task `60` includes the newest 20
 runs in `run_history`; task `97` publishes the capability contract. Existing
 task `19/20/60` response shapes remain compatible.
@@ -51,6 +51,27 @@ as `screenshot_error` while history remains valid.
 
 The StreamControl Logs view displays recent run IDs, states, durations and
 evidence paths. WebTango exposes `device.getRunHistory()`.
+
+## Persistence failures
+
+Begin/finish check required evidence, record and index writes. A reported write
+failure returns an empty history result and suppresses its `script.run` event;
+the existing script lifecycle continues. The atomic index write is the history
+commit point. Old artifacts are removed only after index-write success, while
+the same file lock is still held. Cleanup is best effort.
+
+Task `60` adds optional `run_history.persistence_diagnostics` with `scope: process`,
+a saturating `failure_count`, and bounded `last_failure` fields `operation`,
+`stage`, `code`, `at_ms`. Codes include `write_failed`, `exception` and
+`history_lock_failed`. No script error, log tail or credentials are copied into
+these diagnostics. Counts are local to the responding process and reset on
+process restart; successful operations do not clear the last failure.
+
+Record/evidence/index files are separate atomic writes. A failed or interrupted
+operation may leave partial/orphan artifacts, or an uncertain outcome after an
+index replacement; this is not a crash-atomic multi-file transaction. No
+automatic rollback/retry or event replay is added. Recovery/retention of those
+artifacts and event-journal delivery remain separate work.
 
 ## Capability markers
 

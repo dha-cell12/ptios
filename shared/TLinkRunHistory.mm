@@ -2,6 +2,7 @@
 #import "TLinkEventChannel.h"
 
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -208,15 +209,39 @@ static void TLinkRunHistoryRemoveArtifact(NSString *path)
     }
 }
 
-static void TLinkRunHistoryPrune(NSMutableArray<NSDictionary *> *runs)
+static uint64_t sTLinkRunHistoryPersistenceFailures = 0;
+static NSDictionary *sTLinkRunHistoryLastPersistenceFailure = nil;
+
+// All accesses are protected by the existing process-local history monitor.
+static void TLinkRunHistoryPersistenceFailure(NSString *operation, NSString *stage, NSString *code)
 {
+    if (sTLinkRunHistoryPersistenceFailures != UINT64_MAX) sTLinkRunHistoryPersistenceFailures++;
+    sTLinkRunHistoryLastPersistenceFailure = @{
+        @"operation": operation, @"stage": stage, @"code": code,
+        @"at_ms": @(TLinkRunHistoryNowMs()),
+    };
+}
+
+static NSArray<NSDictionary *> *TLinkRunHistoryTrim(NSMutableArray<NSDictionary *> *runs)
+{
+    NSMutableArray<NSDictionary *> *retired = [NSMutableArray array];
     while (runs.count > kTLinkRunHistoryMaxRecords) {
-        NSDictionary *oldest = runs.lastObject;
-        TLinkRunHistoryRemoveArtifact(oldest[@"record_path"]);
-        NSDictionary *evidence = [oldest[@"failure_evidence"] isKindOfClass:[NSDictionary class]] ? oldest[@"failure_evidence"] : @{};
-        TLinkRunHistoryRemoveArtifact(evidence[@"metadata_path"]);
-        TLinkRunHistoryRemoveArtifact(evidence[@"screenshot_path"]);
+        [retired addObject:runs.lastObject];
         [runs removeLastObject];
+    }
+    return retired;
+}
+
+static void TLinkRunHistoryPrune(NSArray<NSDictionary *> *retired)
+{
+    for (NSDictionary *oldest in retired) {
+        @try { try {
+            TLinkRunHistoryRemoveArtifact(oldest[@"record_path"]);
+            NSDictionary *evidence = [oldest[@"failure_evidence"] isKindOfClass:[NSDictionary class]] ? oldest[@"failure_evidence"] : @{};
+            TLinkRunHistoryRemoveArtifact(evidence[@"metadata_path"]);
+            TLinkRunHistoryRemoveArtifact(evidence[@"screenshot_path"]);
+        } catch (...) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); } }
+        @catch (__unused NSException *exception) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); }
     }
 }
 
@@ -228,32 +253,42 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
     @synchronized (TLinkRunHistoryLock()) {
         TLinkRunHistoryEnsureDirectories();
         int lockFd = TLinkRunHistoryAcquireFileLock();
-        if (lockFd < 0) return @{};
-        NSString *runId = [NSUUID UUID].UUIDString.lowercaseString;
-        uint64_t now = TLinkRunHistoryNowMs();
-        NSString *recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:
-            [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
-        NSDictionary *record = @{
-            @"schema": TLinkRunHistorySchemaV1,
-            @"run_id": runId,
-            @"runtime": runtime ?: @"unknown",
-            @"bundle_path": bundlePath ?: @"",
-            @"entry_path": entryPath ?: @"",
-            @"state": @"running",
-            @"started_at_ms": @(now),
-            @"ended_at_ms": @0,
-            @"duration_ms": @0,
-            @"error": @"",
-            @"play_settings": [playSettings isKindOfClass:[NSDictionary class]] ? playSettings : @{},
-            @"failure_evidence": @{},
-            @"record_path": recordPath,
-        };
-        NSMutableArray *runs = TLinkRunHistoryReadIndex();
-        [runs insertObject:record atIndex:0];
-        TLinkRunHistoryPrune(runs);
-        TLinkRunHistoryWriteJSON(record, recordPath);
-        TLinkRunHistoryWriteIndex(runs);
-        TLinkRunHistoryReleaseFileLock(lockFd);
+        if (lockFd < 0) { TLinkRunHistoryPersistenceFailure(@"begin", @"lock", @"history_lock_failed"); return @{}; }
+        NSString *runId = nil;
+        NSDictionary *record = nil;
+        NSString *stage = @"prepare";
+        @try { try {
+            runId = [NSUUID UUID].UUIDString.lowercaseString;
+            uint64_t now = TLinkRunHistoryNowMs();
+            NSString *recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:
+                [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
+            record = @{
+                @"schema": TLinkRunHistorySchemaV1,
+                @"run_id": runId,
+                @"runtime": runtime ?: @"unknown",
+                @"bundle_path": bundlePath ?: @"",
+                @"entry_path": entryPath ?: @"",
+                @"state": @"running",
+                @"started_at_ms": @(now),
+                @"ended_at_ms": @0,
+                @"duration_ms": @0,
+                @"error": @"",
+                @"play_settings": [playSettings isKindOfClass:[NSDictionary class]] ? playSettings : @{},
+                @"failure_evidence": @{},
+                @"record_path": recordPath,
+            };
+            stage = @"read";
+            NSMutableArray *runs = TLinkRunHistoryReadIndex();
+            [runs insertObject:record atIndex:0];
+            NSArray *retired = TLinkRunHistoryTrim(runs);
+            stage = @"record";
+            if (!TLinkRunHistoryWriteJSON(record, recordPath)) { TLinkRunHistoryPersistenceFailure(@"begin", stage, @"write_failed"); return @{}; }
+            stage = @"index";
+            if (!TLinkRunHistoryWriteIndex(runs)) { TLinkRunHistoryPersistenceFailure(@"begin", stage, @"write_failed"); return @{}; }
+            TLinkRunHistoryPrune(retired);
+        } catch (...) { TLinkRunHistoryPersistenceFailure(@"begin", stage, @"exception"); return @{}; } }
+        @catch (__unused NSException *exception) { TLinkRunHistoryPersistenceFailure(@"begin", stage, @"exception"); return @{}; }
+        @finally { TLinkRunHistoryReleaseFileLock(lockFd); }
         TLinkEventChannelPublish(runtime ?: @"unknown",
                                  @"script.run",
                                  @"started",
@@ -291,65 +326,75 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
             if (tail.count == 0) tail = TLinkRunHistoryTailFromConsoleFile(consoleLogPath);
         }
         int lockFd = TLinkRunHistoryAcquireFileLock();
-        if (lockFd < 0) return @{};
-        NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndex();
-        NSUInteger index = [runs indexOfObjectPassingTest:^BOOL(NSDictionary *record, NSUInteger idx, BOOL *stop) {
-            (void)idx;
-            if ([record[@"run_id"] isEqualToString:runId]) { *stop = YES; return YES; }
-            return NO;
-        }];
-        NSMutableDictionary *record = index != NSNotFound ? [runs[index] mutableCopy] : [NSMutableDictionary dictionary];
-        uint64_t endedAt = TLinkRunHistoryNowMs();
-        uint64_t startedAt = [record[@"started_at_ms"] unsignedLongLongValue];
-        record[@"schema"] = TLinkRunHistorySchemaV1;
-        record[@"run_id"] = runId;
-        record[@"state"] = terminalState;
-        record[@"ended_at_ms"] = @(endedAt);
-        record[@"duration_ms"] = @(endedAt >= startedAt ? endedAt - startedAt : 0);
-        record[@"error"] = redactedError;
-        if (extra.count > 0) record[@"extra"] = extra;
+        if (lockFd < 0) { TLinkRunHistoryPersistenceFailure(@"finish", @"lock", @"history_lock_failed"); return @{}; }
+        NSMutableDictionary *record = nil;
+        NSString *stage = @"read";
+        @try { try {
+            NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndex();
+            stage = @"prepare";
+            NSUInteger index = [runs indexOfObjectPassingTest:^BOOL(NSDictionary *record, NSUInteger idx, BOOL *stop) {
+                (void)idx;
+                if ([record[@"run_id"] isEqualToString:runId]) { *stop = YES; return YES; }
+                return NO;
+            }];
+            record = index != NSNotFound ? [runs[index] mutableCopy] : [NSMutableDictionary dictionary];
+            uint64_t endedAt = TLinkRunHistoryNowMs();
+            uint64_t startedAt = [record[@"started_at_ms"] unsignedLongLongValue];
+            record[@"schema"] = TLinkRunHistorySchemaV1;
+            record[@"run_id"] = runId;
+            record[@"state"] = terminalState;
+            record[@"ended_at_ms"] = @(endedAt);
+            record[@"duration_ms"] = @(endedAt >= startedAt ? endedAt - startedAt : 0);
+            record[@"error"] = redactedError;
+            if (extra.count > 0) record[@"extra"] = extra;
 
-        if (failed) {
-            NSString *metadataPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:
-                [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
-            NSDictionary *screenshotAttributes = screenshotPath.length > 0
-                ? [[NSFileManager defaultManager] attributesOfItemAtPath:screenshotPath error:nil] : nil;
-            BOOL screenshotPresent = [screenshotAttributes fileSize] > 0;
-            if (screenshotPresent) {
-                chmod(screenshotPath.fileSystemRepresentation, 0640);
-                lchown(screenshotPath.fileSystemRepresentation, 501, 501);
+            if (failed) {
+                stage = @"evidence";
+                NSString *metadataPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
+                NSDictionary *screenshotAttributes = screenshotPath.length > 0
+                    ? [[NSFileManager defaultManager] attributesOfItemAtPath:screenshotPath error:nil] : nil;
+                BOOL screenshotPresent = [screenshotAttributes fileSize] > 0;
+                if (screenshotPresent) {
+                    chmod(screenshotPath.fileSystemRepresentation, 0640);
+                    lchown(screenshotPath.fileSystemRepresentation, 501, 501);
+                }
+                NSDictionary *evidence = @{
+                    @"schema": TLinkFailureEvidenceSchemaV1,
+                    @"run_id": runId,
+                    @"captured_at_ms": @(endedAt),
+                    @"error": redactedError,
+                    @"log_tail": tail ?: @[],
+                    @"log_tail_truncated": @([logTail isKindOfClass:[NSArray class]] && logTail.count > kTLinkFailureLogTailMaxLines),
+                    @"console_log_path": consoleLogPath ?: @"",
+                    @"screenshot_path": screenshotPresent ? screenshotPath : @"",
+                    @"screenshot_captured": @(screenshotPresent),
+                    @"screenshot_error": screenshotPresent ? @"" : (screenshotError ?: @"not_captured"),
+                    @"metadata_path": metadataPath,
+                };
+                if (!TLinkRunHistoryWriteJSON(evidence, metadataPath)) { TLinkRunHistoryPersistenceFailure(@"finish", stage, @"write_failed"); return @{}; }
+                record[@"failure_evidence"] = evidence;
+            } else {
+                record[@"failure_evidence"] = @{};
             }
-            NSDictionary *evidence = @{
-                @"schema": TLinkFailureEvidenceSchemaV1,
-                @"run_id": runId,
-                @"captured_at_ms": @(endedAt),
-                @"error": redactedError,
-                @"log_tail": tail ?: @[],
-                @"log_tail_truncated": @([logTail isKindOfClass:[NSArray class]] && logTail.count > kTLinkFailureLogTailMaxLines),
-                @"console_log_path": consoleLogPath ?: @"",
-                @"screenshot_path": screenshotPresent ? screenshotPath : @"",
-                @"screenshot_captured": @(screenshotPresent),
-                @"screenshot_error": screenshotPresent ? @"" : (screenshotError ?: @"not_captured"),
-                @"metadata_path": metadataPath,
-            };
-            TLinkRunHistoryWriteJSON(evidence, metadataPath);
-            record[@"failure_evidence"] = evidence;
-        } else {
-            record[@"failure_evidence"] = @{};
-        }
 
-        NSString *recordPath = [record[@"record_path"] isKindOfClass:[NSString class]] ? record[@"record_path"] : @"";
-        if (recordPath.length == 0) {
-            recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:
-                [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
-            record[@"record_path"] = recordPath;
-        }
-        if (index != NSNotFound) [runs replaceObjectAtIndex:index withObject:record];
-        else [runs insertObject:record atIndex:0];
-        TLinkRunHistoryPrune(runs);
-        TLinkRunHistoryWriteJSON(record, recordPath);
-        TLinkRunHistoryWriteIndex(runs);
-        TLinkRunHistoryReleaseFileLock(lockFd);
+            NSString *recordPath = [record[@"record_path"] isKindOfClass:[NSString class]] ? record[@"record_path"] : @"";
+            if (recordPath.length == 0) {
+                recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
+                record[@"record_path"] = recordPath;
+            }
+            if (index != NSNotFound) [runs replaceObjectAtIndex:index withObject:record];
+            else [runs insertObject:record atIndex:0];
+            NSArray *retired = TLinkRunHistoryTrim(runs);
+            stage = @"record";
+            if (!TLinkRunHistoryWriteJSON(record, recordPath)) { TLinkRunHistoryPersistenceFailure(@"finish", stage, @"write_failed"); return @{}; }
+            stage = @"index";
+            if (!TLinkRunHistoryWriteIndex(runs)) { TLinkRunHistoryPersistenceFailure(@"finish", stage, @"write_failed"); return @{}; }
+            TLinkRunHistoryPrune(retired);
+        } catch (...) { TLinkRunHistoryPersistenceFailure(@"finish", stage, @"exception"); return @{}; } }
+        @catch (__unused NSException *exception) { TLinkRunHistoryPersistenceFailure(@"finish", stage, @"exception"); return @{}; }
+        @finally { TLinkRunHistoryReleaseFileLock(lockFd); }
         TLinkEventChannelPublish(record[@"runtime"] ?: @"unknown",
                                  @"script.run",
                                  terminalState,
@@ -424,6 +469,7 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
             @"schema": TLinkRunHistorySchemaV1,
             @"state": @"implemented",
             @"root_path": TLinkRunHistoryRootPath(),
+            @"persistence_diagnostics": @{@"scope": @"process", @"failure_count": @(sTLinkRunHistoryPersistenceFailures), @"last_failure": sTLinkRunHistoryLastPersistenceFailure ?: @{}},
             @"retention_max_runs": @(kTLinkRunHistoryMaxRecords),
             @"failure_log_tail_max_lines": @(kTLinkFailureLogTailMaxLines),
             @"failure_error_max_characters": @(kTLinkFailureErrorMaxCharacters),

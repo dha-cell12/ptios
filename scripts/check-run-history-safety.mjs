@@ -7,7 +7,35 @@ import {spawnSync} from 'node:child_process';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [source,frozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc'].map(read));
+const [actual,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const beforeCommit=commitFrozen.slice(commitFrozen.indexOf('\n')+1);
+const cleanup=between(actual,'static uint64_t sTLinkRunHistoryPersistenceFailures','NSDictionary *TLinkRunHistoryBegin');
+assert.match(cleanup,/sTLinkRunHistoryPersistenceFailures != UINT64_MAX/);
+assert.doesNotMatch(between(cleanup,'static NSArray<NSDictionary *> *TLinkRunHistoryTrim','static void TLinkRunHistoryPrune'),/RemoveArtifact|removeItem/,'trim must only change the pending index');
+assert.match(cleanup,/for \(NSDictionary \*oldest in retired\)[\s\S]*RemoveArtifact\(oldest\[@"record_path"\]\)[\s\S]*RemoveArtifact\(evidence\[@"metadata_path"\]\)[\s\S]*RemoveArtifact\(evidence\[@"screenshot_path"\]\)[\s\S]*@catch/);
+let source=actual.replace('#include <stdint.h>\n','').replace(cleanup,between(beforeCommit,'static void TLinkRunHistoryPrune','NSDictionary *TLinkRunHistoryBegin'));
+for(const [operation,start,end] of [['begin','NSDictionary *TLinkRunHistoryBegin','NSDictionary *TLinkRunHistoryFinish'],['finish','NSDictionary *TLinkRunHistoryFinish','NSDictionary *TLinkRunHistorySnapshot']]){
+    const section=between(source,start,end);
+    assert.ok(section.indexOf('if (!TLinkRunHistoryWriteIndex(runs))')<section.indexOf('TLinkRunHistoryPrune(retired)'));
+    assert.match(section,/@finally \{ TLinkRunHistoryReleaseFileLock\(lockFd\); \}[\s\S]*TLinkEventChannelPublish/,'release before publishing committed state');
+    const wrapper=between(section,operation==='begin'?'        NSString *runId = nil;':'        NSMutableDictionary *record = nil;','        TLinkEventChannelPublish');
+    let body=between(wrapper,'        @try { try {\n',`        } catch (...) { TLinkRunHistoryPersistenceFailure(@"${operation}"`).slice('        @try { try {\n'.length);
+    body=body.split('\n').map(line=>line.startsWith('    ')?line.slice(4):line).join('\n');
+    body=body.replace(/^        stage = @"(?:read|prepare|record|index)";\n/gm,'').replace('            stage = @"evidence";\n','');
+    for(const [call,indent] of [['TLinkRunHistoryWriteJSON(record, recordPath)','        '],['TLinkRunHistoryWriteIndex(runs)','        '],...(operation==='finish'?[['TLinkRunHistoryWriteJSON(evidence, metadataPath)','            ']]:[])]){
+        const guard=`${indent}if (!${call}) { TLinkRunHistoryPersistenceFailure(@"${operation}", stage, @"write_failed"); return @{}; }`;
+        assert.ok(body.includes(guard),`${operation}: ${call} must fail without success/event`);body=body.replace(guard,`${indent}${call};`);
+    }
+    body=body.replace('        NSArray *retired = TLinkRunHistoryTrim(runs);','        TLinkRunHistoryPrune(runs);').replace('        TLinkRunHistoryPrune(retired);\n','');
+    if(operation==='begin')body=body.replace('        runId = ','        NSString *runId = ').replace('        record = @{','        NSDictionary *record = @{');
+    else body=body.replace('        record = index','        NSMutableDictionary *record = index');
+    let restoredSection=section.replace(wrapper,body+'        TLinkRunHistoryReleaseFileLock(lockFd);\n');
+    restoredSection=restoredSection.replace(`        if (lockFd < 0) { TLinkRunHistoryPersistenceFailure(@"${operation}", @"lock", @"history_lock_failed"); return @{}; }`,'        if (lockFd < 0) return @{};');
+    source=source.replace(section,restoredSection);
+}
+const diagnostics='            @"persistence_diagnostics": @{@"scope": @"process", @"failure_count": @(sTLinkRunHistoryPersistenceFailures), @"last_failure": sTLinkRunHistoryLastPersistenceFailure ?: @{}},\n';
+assert.ok(source.includes(diagnostics));source=source.replace(diagnostics,'');
+assert.equal(source.trim(),beforeCommit.trim(),'only checked writes, post-index artifact cleanup, exception-safe transaction release and additive diagnostics change C03f');
 const old=frozen.slice(frozen.indexOf('\n')+1);
 const cache=between(source,'static NSArray<NSRegularExpression *> *TLinkRunHistoryRedactionPatterns','static NSArray<NSString *> *TLinkRunHistoryBoundedLogTail');
 const oldRedaction=between(old,'static NSString *TLinkRunHistoryRedactText','static NSArray<NSString *> *TLinkRunHistoryBoundedLogTail');
@@ -34,15 +62,15 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
-console.log('Run history preparation source passed: exact redaction, pre-flock error/tail work, snapshot read/finally release before formatting, and otherwise frozen persistence/prune/events/status fields.');
+console.log('Run history source passed: checked writes/index commit, post-commit cleanup, bounded diagnostics, transaction finally and frozen redaction/status/record fields.');
 if(process.platform!=='darwin'){
     console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
 }else{
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
-    const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'').replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;').replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:').replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];').replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0');
+    const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'').replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;').replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:').replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];').replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0').replace('![data writeToFile:path atomically:YES]','!historyWriteData(data,path)').replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(source)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(actual)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
         const binary=join(temp,'run-history-runtime');
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
         run(binary,[temp]);

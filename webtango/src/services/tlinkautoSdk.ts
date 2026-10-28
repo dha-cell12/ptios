@@ -759,6 +759,11 @@ export type RunHistorySnapshot = {
   schema: 'run_history_v1';
   state: 'implemented';
   root_path: string;
+  persistence_diagnostics?: {
+    scope: 'process';
+    failure_count: number;
+    last_failure: { operation?: 'begin' | 'finish' | 'prune'; stage?: string; code?: string; at_ms?: number };
+  };
   retention_max_runs: number;
   failure_log_tail_max_lines: number;
   failure_error_max_characters: number;

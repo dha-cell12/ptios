@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <set>
@@ -23,6 +24,27 @@ static unsigned historyReadFault=0;
 static bool historyLockDenied=false;
 static size_t historyIndexReads=0;
 static std::function<void()> historyStatusHook;
+static NSString *historyWriteStage;
+static unsigned historyWriteFault=0;
+static NSMutableArray *historyWriteAttempts;
+static unsigned historyPruneFault=0;
+static BOOL historyRemoveArtifact(NSString *path){
+    if(historyPruneFault==1)[NSException raise:@"HistoryFixture" format:@"cleanup failed"];
+    if(historyPruneFault==2)throw std::runtime_error("cleanup failed");
+    return [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+}
+static BOOL historyWriteData(NSData *data,NSString *path){
+    NSString *stage=[path.lastPathComponent isEqualToString:@"index.json"]?@"index":([path containsString:@"/evidence/"]?@"evidence":@"record");
+    [historyWriteAttempts addObject:stage];
+    if([stage isEqualToString:historyWriteStage]){
+        if(historyWriteFault==1)return NO;
+        if(historyWriteFault==2)[NSException raise:@"HistoryFixture" format:@"write failed"];
+        if(historyWriteFault==3)throw std::runtime_error("write failed");
+    }
+    const BOOL written=[data writeToFile:path atomically:YES];
+    if([stage isEqualToString:historyWriteStage]&&historyWriteFault==4)return NO;
+    return written;
+}
 static void historyIndexReadProbe(){
     ++historyIndexReads;
     if(historyReadFault==1)[NSException raise:@"HistoryFixture" format:@"index read fault"];
@@ -92,7 +114,7 @@ static NSString *fixtureRoot;
 static id historyNormalize(id value,NSString *root){
     if([value isKindOfClass:[NSString class]])return [value stringByReplacingOccurrencesOfString:root withString:@"$HISTORY"];
     if([value isKindOfClass:[NSArray class]]){NSMutableArray *result=[NSMutableArray array];for(id item in value)[result addObject:historyNormalize(item,root)];return result;}
-    if([value isKindOfClass:[NSDictionary class]]){NSMutableDictionary *result=[NSMutableDictionary dictionary];for(NSString *key in value)result[key]=historyNormalize(value[key],root);return result;}
+    if([value isKindOfClass:[NSDictionary class]]){NSMutableDictionary *result=[NSMutableDictionary dictionary];for(NSString *key in value)if(![key isEqualToString:@"persistence_diagnostics"])result[key]=historyNormalize(value[key],root);return result;}
     return value;
 }
 static NSData *historyCanonical(id value,NSString *root){NSData *data=[NSJSONSerialization dataWithJSONObject:historyNormalize(value,root) options:NSJSONWritingSortedKeys error:nil];assert(data);return data;}
@@ -135,8 +157,74 @@ static bool historyChildCanLock(NSString *path){
     if(!child){for(int fd:inherited)::close(fd);const int fd=::open(name,O_RDWR);if(fd<0)::_exit(2);const int result=::flock(fd,LOCK_EX|LOCK_NB);const int saved=errno;if(!result)::flock(fd,LOCK_UN);::close(fd);::_exit(!result?0:((saved==EWOULDBLOCK||saved==EAGAIN)?1:2));}
     int status=0;pid_t waited;do{waited=::waitpid(child,&status,0);}while(waited<0&&errno==EINTR);assert(waited==child&&WIFEXITED(status)&&WEXITSTATUS(status)!=2);return WEXITSTATUS(status)==0;
 }
+static NSDictionary *historyDiagnostics(){return Current::TLinkRunHistorySnapshot(0)[@"persistence_diagnostics"];}
+static void historyCommitCases(NSString *console,NSString *screenshot){
+    NSString *root=Current::fixtureRoot,*indexPath=[root stringByAppendingPathComponent:@"index.json"],*lockPath=[root stringByAppendingPathComponent:@"history.lock"];
+    NSDictionary *initial=historyDiagnostics();assert([initial[@"scope"] isEqualToString:@"process"]&&[initial[@"failure_count"] unsignedLongLongValue]==0&&[initial[@"last_failure"] count]==0);
+    for(bool beginning:{true,false}){
+        NSArray *stages=beginning?@[@"record",@"index"]:@[@"evidence",@"record",@"index"];
+        for(NSString *stage in stages)for(unsigned fault=1;fault<=3;++fault){
+            NSString *runId=[NSString stringWithFormat:@"write-fault-%@-%u",stage,fault];NSData *indexBefore=[NSData dataWithContentsOfFile:indexPath];
+            NSDictionary *oldest=[historyReadJSON(indexPath)[@"runs"] lastObject];NSMutableDictionary *victims=[NSMutableDictionary dictionary];
+            NSDictionary *evidence=oldest[@"failure_evidence"];
+            for(id raw in @[oldest[@"record_path"]?:@"",evidence[@"metadata_path"]?:@"",evidence[@"screenshot_path"]?:@""]){NSString *path=raw;
+                if([path hasPrefix:[root stringByAppendingString:@"/"]]){NSData *bytes=[NSData dataWithContentsOfFile:path];if(bytes)victims[path]=bytes;}}
+            assert(victims.count>0);const NSUInteger eventCount=historyEvents.count;const uint64_t failures=[historyDiagnostics()[@"failure_count"] unsignedLongLongValue];[historyWriteAttempts removeAllObjects];
+            historyWriteStage=stage;historyWriteFault=fault;
+            NSDictionary *failed=beginning?Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"write-fault.js",@{}):Current::TLinkRunHistoryFinish(runId,@"failed",@"original script error license_key=secret",@[],console,screenshot,nil,@{});
+            historyWriteStage=nil;historyWriteFault=0;NSDictionary *diagnostics=historyDiagnostics();
+            assert(failed.count==0&&historyEvents.count==eventCount&&historyLocks.empty()&&historyChildCanLock(lockPath));
+            assert([indexBefore isEqual:[NSData dataWithContentsOfFile:indexPath]]&&[diagnostics[@"failure_count"] unsignedLongLongValue]==failures+1);
+            assert([diagnostics[@"last_failure"][@"operation"] isEqualToString:beginning?@"begin":@"finish"]&&[diagnostics[@"last_failure"][@"stage"] isEqualToString:stage]);
+            NSString *code=fault==1?@"write_failed":@"exception";assert([diagnostics[@"last_failure"][@"code"] isEqualToString:code]);
+            const NSUInteger attempts=[stage isEqualToString:@"evidence"]?1:([stage isEqualToString:@"record"]?(beginning?1:2):(beginning?2:3));
+            assert(historyWriteAttempts.count==attempts);
+            for(NSString *path in victims)assert([victims[path] isEqual:[NSData dataWithContentsOfFile:path]]);
+            NSData *encoded=[NSJSONSerialization dataWithJSONObject:diagnostics options:0 error:nil];assert(encoded.length<=512);
+            NSString *diagnosticText=[[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding];assert(![diagnosticText containsString:@"secret"]&&![diagnosticText containsString:@"original script error"]);
+            NSDictionary *recovered=beginning?Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"recovered.js",@{}):Current::TLinkRunHistoryFinish(runId,@"failed",@"original script error",@[],console,screenshot,nil,@{});
+            assert(recovered.count&&historyEvents.count==eventCount+1&&historyLocks.empty());
+            assert([historyDiagnostics()[@"failure_count"] unsignedLongLongValue]==failures+1);
+            for(NSString *path in victims)assert(![[NSFileManager defaultManager] fileExistsAtPath:path]);
+            assert([Current::TLinkRunHistorySnapshot(50)[@"total_count"] intValue]==50);
+        }
+    }
+    for(bool beginning:{true,false})for(unsigned fault=1;fault<=3;++fault){
+        const uint64_t failures=[historyDiagnostics()[@"failure_count"] unsignedLongLongValue];const NSUInteger eventCount=historyEvents.count;NSData *indexBefore=[NSData dataWithContentsOfFile:indexPath];[historyWriteAttempts removeAllObjects];
+        if(fault==3)historyLockDenied=true;else historyReadFault=fault;
+        NSDictionary *result=beginning?Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"read-fault.js",@{}):Current::TLinkRunHistoryFinish(@"read-fault",@"finished",@"",@[],@"",@"",nil,@{});
+        historyLockDenied=false;historyReadFault=0;NSDictionary *diagnostics=historyDiagnostics();
+        assert(!result.count&&historyLocks.empty()&&historyEvents.count==eventCount&&historyWriteAttempts.count==0&&historyChildCanLock(lockPath));
+        assert([indexBefore isEqual:[NSData dataWithContentsOfFile:indexPath]]&&[diagnostics[@"failure_count"] unsignedLongLongValue]==failures+1);
+        assert([diagnostics[@"last_failure"][@"stage"] isEqualToString:fault==3?@"lock":@"read"]);
+    }
+    const NSUInteger serializationEvents=historyEvents.count;NSData *serializationIndex=[NSData dataWithContentsOfFile:indexPath];[historyWriteAttempts removeAllObjects];
+    NSDictionary *unsupported=@{@"not_json":[NSObject new]};
+    assert(!Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"invalid-settings.js",unsupported).count);
+    assert(historyEvents.count==serializationEvents&&historyWriteAttempts.count==0&&[serializationIndex isEqual:[NSData dataWithContentsOfFile:indexPath]]&&historyLocks.empty());
+    assert([historyDiagnostics()[@"last_failure"][@"stage"] isEqualToString:@"record"]);
+    for(unsigned fault=1;fault<=2;++fault){
+        const uint64_t failures=[historyDiagnostics()[@"failure_count"] unsignedLongLongValue];const NSUInteger eventCount=historyEvents.count;
+        NSString *victim=[historyReadJSON(indexPath)[@"runs"] lastObject][@"record_path"];NSData *victimBytes=[NSData dataWithContentsOfFile:victim];
+        historyPruneFault=fault;NSDictionary *committed=Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"cleanup-fault.js",@{});historyPruneFault=0;
+        assert(committed.count&&historyEvents.count==eventCount+1&&historyLocks.empty()&&[victimBytes isEqual:[NSData dataWithContentsOfFile:victim]]);
+        assert([historyDiagnostics()[@"failure_count"] unsignedLongLongValue]==failures+1&&[historyDiagnostics()[@"last_failure"][@"operation"] isEqualToString:@"prune"]);
+        assert([Current::TLinkRunHistorySnapshot(1)[@"runs"][0][@"run_id"] isEqualToString:committed[@"run_id"]]);
+    }
+    // A reported failure can follow a committed atomic write. Suppress success
+    // and leave artifacts alone; no rollback/replay of an uncertain outcome.
+    NSDictionary *oldest=[historyReadJSON(indexPath)[@"runs"] lastObject];NSString *oldPath=oldest[@"record_path"];NSData *oldBytes=[NSData dataWithContentsOfFile:oldPath];
+    NSData *indexBefore=[NSData dataWithContentsOfFile:indexPath];const NSUInteger eventsBefore=historyEvents.count;
+    historyWriteStage=@"index";historyWriteFault=4;NSDictionary *unknown=Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"uncertain.js",@{});historyWriteStage=nil;historyWriteFault=0;
+    assert(!unknown.count&&historyEvents.count==eventsBefore&&historyLocks.empty());
+    assert(![indexBefore isEqual:[NSData dataWithContentsOfFile:indexPath]]&&[oldBytes isEqual:[NSData dataWithContentsOfFile:oldPath]]);
+    assert([Current::TLinkRunHistorySnapshot(1)[@"runs"][0][@"entry_path"] isEqualToString:@"uncertain.js"]);
+    const uint64_t saved=Current::sTLinkRunHistoryPersistenceFailures;Current::sTLinkRunHistoryPersistenceFailures=UINT64_MAX-1;historyLockDenied=true;
+    assert(!Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"max.js",@{}).count&&!Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"max.js",@{}).count);historyLockDenied=false;
+    assert([historyDiagnostics()[@"failure_count"] unsignedLongLongValue]==UINT64_MAX);Current::sTLinkRunHistoryPersistenceFailures=saved;
+}
 int main(int argc,char **argv){@autoreleasepool{
-    assert(argc==2);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];
+    assert(argc==2);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];
     Current::fixtureRoot=[historyTestRoot stringByAppendingPathComponent:@"current"];
     Legacy::fixtureRoot=[historyTestRoot stringByAppendingPathComponent:@"legacy"];
     puts("History Foundation: actual/frozen redaction, persistence/evidence and pre-flock preparation");fflush(stdout);
@@ -216,7 +304,9 @@ int main(int argc,char **argv){@autoreleasepool{
         assert([fresh[@"total_count"] intValue]==0&&[historyCanonical(fresh,Current::fixtureRoot) isEqual:historyCanonical(frozen,Legacy::fixtureRoot)]);
     }
     assert([currentIndex writeToFile:indexPath atomically:YES]&&[oldIndex writeToFile:oldIndexPath atomically:YES]);
-    assert(historyLocks.empty());historyEvents=nil;
+    historyCommitCases(console,screenshot);
+    assert(historyLocks.empty());historyEvents=nil;historyWriteAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, unchanged lock-denial/malformed-index policy and exact frozen status fields. Local serialization retained; device qualification pending.");
+    puts("History commit Foundation passed: record/evidence/index false and NS/C++ failures suppress success/events, retain old-index artifacts until commit, release locks, report bounded process diagnostics and recover; read/lock failures, counter saturation and uncertain post-write outcome without rollback/replay. Multi-file crash recovery remains pending.");
 }}
