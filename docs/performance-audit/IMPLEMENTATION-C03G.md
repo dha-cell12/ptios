@@ -1,7 +1,8 @@
 # C03g — check history write results before acknowledging mutations
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `2eb7deaa` (C03f); user reported that build passed.
-Status: **source implemented; new Foundation/POSIX/ARC/sanitizer CI and device qualification pending**.
+Status: **build passed according to the user (`c2a3bec5`); device qualification pending**.
+Follow-up: user reported the C03g build at `c2a3bec5` passed before C03h. Device qualification and the recovery limitations below remain open; the verification section records checks available when C03g was implemented.
 Finding: **P1-53 checked-write/acknowledgment slice**. Multi-file recovery remains open.
 
 ## Result and commit policy

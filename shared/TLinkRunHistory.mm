@@ -222,6 +222,45 @@ static void TLinkRunHistoryPersistenceFailure(NSString *operation, NSString *sta
     };
 }
 
+// Mutations must distinguish a first run from unreadable or damaged history.
+// Keep the permissive status reader separate; never rebuild an index from artifacts.
+static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadIndexForMutation(NSString *operation)
+{
+    NSError *readError = nil;
+    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError];
+    if (!data) {
+        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&
+            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {
+            return [NSMutableArray array];
+        }
+        TLinkRunHistoryPersistenceFailure(operation, @"read", @"read_failed");
+        return nil;
+    }
+    id object = data.length > 0
+        ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
+    BOOL valid = [object isKindOfClass:[NSDictionary class]];
+    id schema = valid ? object[@"schema"] : nil;
+    id records = valid ? object[@"runs"] : nil;
+    valid = [schema isKindOfClass:[NSString class]] && [schema isEqualToString:TLinkRunHistorySchemaV1] &&
+        [records isKindOfClass:[NSArray class]];
+    NSMutableSet<NSString *> *identities = [NSMutableSet set];
+    if (valid) {
+        for (id record in records) {
+            id runId = [record isKindOfClass:[NSDictionary class]] ? record[@"run_id"] : nil;
+            if (![runId isKindOfClass:[NSString class]] || [runId length] == 0 || [identities containsObject:runId]) {
+                valid = NO;
+                break;
+            }
+            [identities addObject:runId];
+        }
+    }
+    if (!valid) {
+        TLinkRunHistoryPersistenceFailure(operation, @"read", @"invalid_index");
+        return nil;
+    }
+    return [records mutableCopy];
+}
+
 static NSArray<NSDictionary *> *TLinkRunHistoryTrim(NSMutableArray<NSDictionary *> *runs)
 {
     NSMutableArray<NSDictionary *> *retired = [NSMutableArray array];
@@ -278,7 +317,8 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
                 @"record_path": recordPath,
             };
             stage = @"read";
-            NSMutableArray *runs = TLinkRunHistoryReadIndex();
+            NSMutableArray *runs = TLinkRunHistoryReadIndexForMutation(@"begin");
+            if (!runs) return @{};
             [runs insertObject:record atIndex:0];
             NSArray *retired = TLinkRunHistoryTrim(runs);
             stage = @"record";
@@ -330,7 +370,8 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
         NSMutableDictionary *record = nil;
         NSString *stage = @"read";
         @try { try {
-            NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndex();
+            NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndexForMutation(@"finish");
+            if (!runs) return @{};
             stage = @"prepare";
             NSUInteger index = [runs indexOfObjectPassingTest:^BOOL(NSDictionary *record, NSUInteger idx, BOOL *stop) {
                 (void)idx;

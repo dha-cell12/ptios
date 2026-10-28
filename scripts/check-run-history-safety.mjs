@@ -9,12 +9,24 @@ const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const [actual,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
 const beforeCommit=commitFrozen.slice(commitFrozen.indexOf('\n')+1);
+const mutationReader=between(actual,'// Mutations must distinguish','static NSArray<NSDictionary *> *TLinkRunHistoryTrim');
+assert.match(mutationReader,/options:0 error:&readError/);
+assert.match(mutationReader,/NSCocoaErrorDomain[\s\S]*NSFileReadNoSuchFileError[\s\S]*NSFileNoSuchFileError/);
+assert.match(mutationReader,/schema isEqualToString:TLinkRunHistorySchemaV1/);
+assert.match(mutationReader,/records isKindOfClass:\[NSArray class\]/);
+assert.match(mutationReader,/record isKindOfClass:\[NSDictionary class\][\s\S]*runId isKindOfClass:\[NSString class\][\s\S]*identities containsObject:runId/);
+assert.match(mutationReader,/PersistenceFailure\(operation, @"read", @"read_failed"\)/);
+assert.match(mutationReader,/PersistenceFailure\(operation, @"read", @"invalid_index"\)/);
+assert.doesNotMatch(mutationReader,/WriteJSON|WriteIndex|RemoveArtifact|removeItem|EventChannelPublish|contentsOfDirectory/);
 const cleanup=between(actual,'static uint64_t sTLinkRunHistoryPersistenceFailures','NSDictionary *TLinkRunHistoryBegin');
 assert.match(cleanup,/sTLinkRunHistoryPersistenceFailures != UINT64_MAX/);
 assert.doesNotMatch(between(cleanup,'static NSArray<NSDictionary *> *TLinkRunHistoryTrim','static void TLinkRunHistoryPrune'),/RemoveArtifact|removeItem/,'trim must only change the pending index');
 assert.match(cleanup,/for \(NSDictionary \*oldest in retired\)[\s\S]*RemoveArtifact\(oldest\[@"record_path"\]\)[\s\S]*RemoveArtifact\(evidence\[@"metadata_path"\]\)[\s\S]*RemoveArtifact\(evidence\[@"screenshot_path"\]\)[\s\S]*@catch/);
 let source=actual.replace('#include <stdint.h>\n','').replace(cleanup,between(beforeCommit,'static void TLinkRunHistoryPrune','NSDictionary *TLinkRunHistoryBegin'));
 for(const [operation,start,end] of [['begin','NSDictionary *TLinkRunHistoryBegin','NSDictionary *TLinkRunHistoryFinish'],['finish','NSDictionary *TLinkRunHistoryFinish','NSDictionary *TLinkRunHistorySnapshot']]){
+    const read=`TLinkRunHistoryReadIndexForMutation(@"${operation}");\n            if (!runs) return @{};`;
+    assert.ok(between(source,start,end).includes(read),'required index read must stop before evidence/record/index writes');
+    source=source.replace(read,'TLinkRunHistoryReadIndex();');
     const section=between(source,start,end);
     assert.ok(section.indexOf('if (!TLinkRunHistoryWriteIndex(runs))')<section.indexOf('TLinkRunHistoryPrune(retired)'));
     assert.match(section,/@finally \{ TLinkRunHistoryReleaseFileLock\(lockFd\); \}[\s\S]*TLinkEventChannelPublish/,'release before publishing committed state');
@@ -62,12 +74,12 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
-console.log('Run history source passed: checked writes/index commit, post-commit cleanup, bounded diagnostics, transaction finally and frozen redaction/status/record fields.');
+console.log('Run history source passed: fail-closed mutation index reads, checked writes/index commit, post-commit cleanup, bounded diagnostics, transaction finally and frozen redaction/status/record fields.');
 if(process.platform!=='darwin'){
     console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
 }else{
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
-    const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'').replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;').replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:').replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];').replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0').replace('![data writeToFile:path atomically:YES]','!historyWriteData(data,path)').replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)');
+    const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'').replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;').replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:').replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];').replace('[NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError]','historyReadMutationData(TLinkRunHistoryIndexPath(), &readError)').replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0').replace('![data writeToFile:path atomically:YES]','!historyWriteData(data,path)').replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
         await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(actual)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);

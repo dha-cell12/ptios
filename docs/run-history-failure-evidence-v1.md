@@ -54,6 +54,15 @@ evidence paths. WebTango exposes `device.getRunHistory()`.
 
 ## Persistence failures
 
+Begin/finish read the index under the file lock before writing evidence/record/index files.
+Only a Cocoa file-not-found result starts an empty index. Unreadable files,
+empty/truncated JSON, unsupported/missing schema, a non-array `runs`, non-record
+entries, or missing/empty/non-string/duplicate run IDs stop the mutation. The
+existing index and artifacts are preserved; no success event is published.
+Valid `run_history_v1` empty indexes and extra envelope keys remain accepted.
+The status reader retains its existing permissive fallback policy; this is a
+mutation guard, not a complete validator for every stored record field.
+
 Begin/finish check required evidence, record and index writes. A reported write
 failure returns an empty history result and suppresses its `script.run` event;
 the existing script lifecycle continues. The atomic index write is the history
@@ -63,7 +72,8 @@ the same file lock is still held. Cleanup is best effort.
 Task `60` adds optional `run_history.persistence_diagnostics` with `scope: process`,
 a saturating `failure_count`, and bounded `last_failure` fields `operation`,
 `stage`, `code`, `at_ms`. Codes include `write_failed`, `exception` and
-`history_lock_failed`. No script error, log tail or credentials are copied into
+`history_lock_failed`, `read_failed` and `invalid_index`. The last two use stage
+`read`; exceptions still use `exception`. No script error, log tail or credentials are copied into
 these diagnostics. Counts are local to the responding process and reset on
 process restart; successful operations do not clear the last failure.
 
@@ -72,6 +82,10 @@ operation may leave partial/orphan artifacts, or an uncertain outcome after an
 index replacement; this is not a crash-atomic multi-file transaction. No
 automatic rollback/retry or event replay is added. Recovery/retention of those
 artifacts and event-journal delivery remain separate work.
+An invalid/unreadable index is not automatically replaced or rebuilt from loose
+files. Mutations can resume after the underlying read problem is resolved or a
+valid index is explicitly restored. A missing index still bootstraps empty;
+orphan files do not provide an automatic reconstruction source.
 
 ## Capability markers
 

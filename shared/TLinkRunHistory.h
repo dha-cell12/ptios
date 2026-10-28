@@ -10,7 +10,8 @@ FOUNDATION_EXPORT NSString *TLinkRunHistoryRootPath(void);
 FOUNDATION_EXPORT NSString *TLinkRunHistoryRunsPath(void);
 FOUNDATION_EXPORT NSString *TLinkRunHistoryEvidencePath(void);
 
-// Begin/finish return an empty dictionary when a required history write fails.
+// Begin/finish return an empty dictionary when a required history read/write fails.
+// Only a missing index starts empty; unreadable/invalid indexes are preserved.
 // The index is the commit point; inspect process-local persistence_diagnostics in status.
 FOUNDATION_EXPORT NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
                                                      NSString *bundlePath,
