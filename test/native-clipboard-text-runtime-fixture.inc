@@ -36,10 +36,13 @@ static void clipboardObserve(NSString *stage){
 - (void)postNotificationName:(NSString *)name object:(id)object userInfo:(NSDictionary *)info deliverImmediately:(BOOL)immediately;
 @end
 static NSDictionary *clipboardNotification=nil;
+static std::function<void(NSString *)> clipboardNotificationObserver;
 @implementation NativeClipboardNotificationsFixture
 + (instancetype)defaultCenter {static NativeClipboardNotificationsFixture *center=nil;if(!center)center=[NativeClipboardNotificationsFixture new];return center;}
 - (void)postNotificationName:(NSString *)name object:(id)object userInfo:(NSDictionary *)info deliverImmediately:(BOOL)immediately {
-    assert([name isEqualToString:@"com.tlinkauto.tlinkauto.keyboardcontrol"]&&!object&&immediately);clipboardNotification=[info copy];
+    assert([name isEqualToString:@"com.tlinkauto.tlinkauto.keyboardcontrol"]&&!object&&immediately);
+    if(clipboardNotificationObserver)clipboardNotificationObserver(@"before");clipboardNotification=[info copy];
+    if(clipboardNotificationObserver)clipboardNotificationObserver(@"committed");
 }
 @end
 @interface NativeClipboardContentFixture : NSObject
@@ -152,8 +155,8 @@ static void typedClipboardTextCases(TLinkInProcessNativeBridge *bridge){
         const int gates=licenseCalls;result=native?invoke(@[@7,object],context):[bridge legacyClipboardText:request(@[@7,object]) context:context];
         failure(result.value,@"AbortError");assert(clipboardDescriptions==1&&licenseCalls==gates&&clipboardOrder.empty());
     }
-    // Remaining keyboard kinds use RAW, including image validation and notification content rules.
-    for(NSArray *args in @[@[],@[@0,@"insert"],@[@1,@"a;;b"],@[@8],@[@8,@"wrong;;path"],@[@(-1)],@[@123,@"one"]]){
+    // Clipboard image kind retains RAW validation; notification kinds have their own direct fixture.
+    for(NSArray *args in @[@[@8],@[@8,@"wrong;;path"]]){
         auto context=parent();reset(context,ordinary);TLinkJSNativeResponse *expected=[bridge legacyClipboardText:request(args) context:context];NSDictionary *notification=clipboardNotification;
         context=parent();reset(context,ordinary);const int rawCalls=calls;TLinkJSNativeResponse *actual=invoke(args,context);
         assert(actual.ok&&expected.ok&&[actual.value isEqual:expected.value]&&calls==rawCalls+1);assert((notification==clipboardNotification)||[notification isEqual:clipboardNotification]);

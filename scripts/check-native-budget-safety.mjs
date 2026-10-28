@@ -541,7 +541,11 @@ try {
   const oldGet='        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];\n\n        if (!pasteboard.string)\n            return @"";\n\n        return pasteboard.string;';
   const oldSet='        UIPasteboard *pb = [UIPasteboard generalPasteboard];\n        pb.string = data[1];';
   assert.ok(clipboardLegacyCore.includes(oldGet)&&clipboardLegacyCore.includes(oldSet));
-  assert.equal(clipboardCore.replace(clipboardPrimitives,'').trim(),clipboardLegacyCore.replace(oldGet,'        return TLinkReadClipboardText();').replace(oldSet,'        TLinkWriteClipboardText(data[1]);'));
+  const oldKeyboardNotification=clipboardLegacyCore.slice(clipboardLegacyCore.lastIndexOf('    [[NSDistributedNotificationCenter'),clipboardLegacyCore.lastIndexOf('\n\n}'));
+  assert.ok(oldKeyboardNotification.includes('return @"Successfully notify the appdelegate tweak. But not sure whether it works...";'));
+  assert.equal(clipboardCore.replace(clipboardPrimitives,'').replace('    return TLinkNotifyKeyboardCommand(data[0],taskContent);',oldKeyboardNotification).trim(),clipboardLegacyCore.replace(oldGet,'        return TLinkReadClipboardText();').replace(oldSet,'        TLinkWriteClipboardText(data[1]);'));
+  const keyboardNotificationCore=between(clipboardCore,'NSString *TLinkNotifyKeyboardCommand','NSString* inputTextFromRawData');
+  assert.equal(keyboardNotificationCore.trim(),('NSString *TLinkNotifyKeyboardCommand(NSString *taskId,NSString *content)\n{\n'+oldKeyboardNotification.replace('data[0]','taskId').replace('taskContent','content')+'\n}').trim());
   assert.match(clipboardPrimitives,/if \(!pasteboard.string\) return @"";\s*return pasteboard.string;/);
   assert.match(clipboardPrimitives,/void TLinkWriteClipboardText\(NSString \*text\)[\s\S]*pb.string = text;/);
   const clipboardHeader=await read("pccontrol/UIKeyboard.h");
@@ -549,7 +553,7 @@ try {
   assert.equal(between(task,"    else if (taskType == TASK_TEXT_INPUT)","    else if (taskType == TASK_GET_DEVICE_INFO)").trim(),await frozenBody("test/fixtures/clipboard-text-handler-legacy-v1.inc"));
   const clipboardBridge=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodKeyboard])","    else if ([method isEqualToString:TLinkJSNativeMethodHardwareKey])");
   const clipboardLegacyBridge=await frozenBody("test/fixtures/native-clipboard-text-legacy-v1.inc");
-  assert.match(clipboardBridge,/if\(kind==6\|\|kind==7\)result=TLinkExecuteNativeClipboardText\(kind,content,context\);\s*else\{[\s\S]*executeRawPayload/);
+  assert.match(clipboardBridge,/if\(kind==6\|\|kind==7\)result=TLinkExecuteNativeClipboardText\(kind,content,context\);\s*else if\(kind!=8\)result=TLinkExecuteNativeKeyboardNotification\(kind,content,context\);\s*else\{[\s\S]*executeRawPayload/);
   assert.equal(clipboardBridge.slice(clipboardBridge.indexOf('        if (kind != 6)')).trim(),clipboardLegacyBridge.slice(clipboardLegacyBridge.indexOf('        if (kind != 6)')).trim());
   assert.ok(clipboardBridge.includes('result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEXT_INPUT, payload] context:context];'));
   const clipboardEntry=between(task,"// BEGIN typed clipboard text task entry.","// END typed clipboard text task entry.");
@@ -559,6 +563,14 @@ try {
   await writeFile(join(temp,"NativeClipboardTextBridge.inc"),clipboardBridge);
   await writeFile(join(temp,"NativeClipboardTextEntry.inc"),clipboardEntry);
   await writeFile(join(temp,"ClipboardTextCoreUnderTest.inc"),clipboardCore);
+  const keyboardLegacyBridge=await frozenBody('test/fixtures/native-keyboard-notification-legacy-v1.inc');
+  assert.equal(clipboardBridge.replace('        else if(kind!=8)result=TLinkExecuteNativeKeyboardNotification(kind,content,context);\n','').trim(),keyboardLegacyBridge);
+  assert.ok(clipboardHeader.includes('NSString *TLinkNotifyKeyboardCommand(NSString *taskId,NSString *content);'));
+  const keyboardNotificationEntry=between(task,'// BEGIN typed keyboard notification task entry.','// END typed keyboard notification task entry.');
+  assert.match(keyboardNotificationEntry,/kind==6\|\|kind==7\|\|kind==8[\s\S]*TLinkNativeCallContext\(context,false,false\)[\s\S]*8192-prefix[\s\S]*32\*1024-prefix[\s\S]*memchr[\s\S]*budget->stopped\(\)[\s\S]*TLinkRootfullLicenseTaskAllowed\(TASK_TEXT_INPUT,&denial\)[\s\S]*budget->stopped\(\)[\s\S]*TLinkNotifyKeyboardCommand\(taskId,taskContent\)/);
+  assert.equal([...keyboardNotificationEntry.matchAll(/TLinkRootfullLicenseTaskAllowed\(/g)].length,1);
+  assert.doesNotMatch(keyboardNotificationEntry,/processTaskWithContext|CFWriteStream|FromRawData|componentsSeparatedByString|TLinkC01|\b(?:YES|NO)\b/);
+  await writeFile(join(temp,'NativeKeyboardNotificationEntry.inc'),keyboardNotificationEntry);
   const toastSource=await read('pccontrol/Toast.xm');
   const toastCore=between(toastSource,'// BEGIN toast task core.','// END toast task core.');
   const toastLegacyCore=await frozenBody('test/fixtures/toast-core-legacy-v1.inc');
@@ -591,6 +603,13 @@ try {
   const toastFixture=await read('test/native-toast-runtime-fixture.inc');
   assert.match(toastFixture,/void TLinkShowToast\(int,NSString \*,int,int,int,NSError \*\*\);[\s\S]*#include "ToastCoreUnderTest.inc"/,'RAW parser needs the numeric helper declaration before its body');
   assert.ok(toastFixture.includes('#include "ToastLegacyCoreUnderTest.inc"'),'old toast value oracle must not repeat its unsafe NSError pool writeback');
+  for(const payload of ['bad','0;;hide;;0']){
+    const call=`showToastFromRawData((UInt8 *)"${payload}",&heldError);`;
+    const at=toastFixture.indexOf(call),pool=toastFixture.lastIndexOf('@autoreleasepool{',at);
+    assert.ok(at>=0&&pool>=0,'missing toast NSError lifetime probe');
+    assert.equal(toastFixture.slice(pool,at).trim(),'@autoreleasepool{\n        TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,false,false) nativeBudget]);',
+      'toast error lifetime probes must install a non-cleanup native budget inside the caller pool');
+  }
   const helpers = between(bridge,"static NSString *TLinkautoJSSafeStringPart","static NSString *TLinkautoJSBase64Encode") +
     between(bridge,"static NSString *TLinkautoJSBase64Encode","static NSDictionary *TLinkautoJSResultByAdding") +
     between(bridge,"static BOOL TLinkautoJSIsFiniteNumber","static const unsigned long long") +
@@ -654,6 +673,7 @@ try {
   assert.ok(runtimeFixture.includes('#import "../pccontrol/TesseractOCRTask.h"'),'language entry requires its production backend declaration');
   assert.match(runtimeFixture,/#include "native-ocr-languages-runtime-fixture.inc"\n#include "native-clipboard-text-runtime-fixture.inc"/,'clipboard text fixture requires the bounded query formatter first');
   assert.match(runtimeFixture,/#include "native-clipboard-text-runtime-fixture.inc"\n#include "native-toast-runtime-fixture.inc"/,'toast fixture requires shared entry/reply helpers first');
+  assert.match(runtimeFixture,/#include "native-toast-runtime-fixture.inc"\n#include "native-keyboard-notification-runtime-fixture.inc"/,'keyboard notification fixture requires actual backend and controlled notification center first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {

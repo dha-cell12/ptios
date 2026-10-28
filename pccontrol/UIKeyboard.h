@@ -7,5 +7,6 @@
 NSString* inputTextFromRawData(UInt8 *eventData, NSError **error);
 NSString *TLinkReadClipboardText(void);
 void TLinkWriteClipboardText(NSString *text);
+NSString *TLinkNotifyKeyboardCommand(NSString *taskId,NSString *content);
 
 #endif

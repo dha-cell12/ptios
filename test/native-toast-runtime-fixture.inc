@@ -128,10 +128,16 @@ static void typedToastCases(TLinkInProcessNativeBridge *bridge){
     context=parent();reset(context);failure(TLinkExecuteNativeToast(5,@"x",1,0,14,context),@"Unknown type. The type ranges from 0-3. Please refer to the documentation on Github.");assert(!toastPending.count);
     failure(TLinkExecuteNativeToast(3,@"x",0,0,14,context),@"Duration should be a positive float number.");assert(!toastPending.count);
     NSError *heldError=nil;
-    @autoreleasepool{showToastFromRawData((UInt8 *)"bad",&heldError);}
+    @autoreleasepool{
+        TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,false,false) nativeBudget]);
+        showToastFromRawData((UInt8 *)"bad",&heldError);
+    }
     assert([heldError.localizedDescription hasPrefix:@"-1;;The data format should be"]);
     NSError *existing=heldError;
-    @autoreleasepool{showToastFromRawData((UInt8 *)"0;;hide;;0",&heldError);}
+    @autoreleasepool{
+        TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,false,false) nativeBudget]);
+        showToastFromRawData((UInt8 *)"0;;hide;;0",&heldError);
+    }
     assert(heldError==existing&&toastPending.count==1);toastDrain();
     // Public native-field ingress counts every decimal column and separator,
     // independent of the JS adapter's much smaller 180-unit sanitized message.

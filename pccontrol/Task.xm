@@ -882,6 +882,43 @@ NSDictionary *TLinkExecuteNativeClipboardText(int kind,id content,TLinkTaskExecu
 }
 // END typed clipboard text task entry.
 
+// BEGIN typed keyboard notification task entry.
+static NSDictionary *zx_nativeKeyboardNotificationExecute(int kind,id content,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_TEXT_INPUT==24,"keyboard notification task classification changed");
+    if(kind==6||kind==7||kind==8)return zx_typedTouchFailure(@"invalid_payload");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        NSString *input=content?[[NSString stringWithFormat:@"%@",content] copy]:nil;
+        NSString *taskId=[NSString stringWithFormat:@"%d",kind];
+        const NSUInteger prefix=2+taskId.length+(content?2:0);
+        if(input.length>8192-prefix)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger byteCount=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(content&&(!bytes||byteCount>32*1024-prefix||memchr(bytes,0,byteCount)))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_TEXT_INPUT,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        // RAW uses content only for exactly two fields, dropping it when an
+        // additional ;; is present. Unknown/negative kinds still notify.
+        NSString *taskContent=input&&[input rangeOfString:@";;"].location==NSNotFound?input:@"";
+        NSString *value=TLinkNotifyKeyboardCommand(taskId,taskContent);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSDictionary *result=zx_nativeStringQueryResult(value,nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeKeyboardNotification(int kind,id content,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeKeyboardNotificationExecute(kind,content,context);}
+    return result;
+}
+// END typed keyboard notification task entry.
+
 // BEGIN typed toast task entry.
 static NSDictionary *zx_nativeToastExecute(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context)
 {

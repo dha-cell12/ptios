@@ -46,6 +46,12 @@ void TLinkWriteClipboardText(NSString *text)
     pb.string = text;
 }
 
+NSString *TLinkNotifyKeyboardCommand(NSString *taskId,NSString *content)
+{
+    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"com.tlinkauto.tlinkauto.keyboardcontrol" object:NULL userInfo:@{@"task_id": taskId, @"task_content": content} deliverImmediately: true];
+    return @"Successfully notify the appdelegate tweak. But not sure whether it works...";
+}
+
 NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
 {
     NSArray *data = [[NSString stringWithUTF8String:(char*)eventData] componentsSeparatedByString:@";;"];
@@ -140,7 +146,6 @@ NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
     {
         taskContent = data[1];
     }
-    [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"com.tlinkauto.tlinkauto.keyboardcontrol" object:NULL userInfo:@{@"task_id": data[0], @"task_content": taskContent} deliverImmediately: true];
-    return @"Successfully notify the appdelegate tweak. But not sure whether it works...";
+    return TLinkNotifyKeyboardCommand(data[0],taskContent);
 
 }

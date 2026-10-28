@@ -1,7 +1,7 @@
 # C02b42 — direct toast adapter and RAW error lifetime
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `df1283d`, containing C02b41; the user reported C02b41 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build success before C02b43 at source baseline `023e926`; independent device/performance qualification pending**.
 Finding: **P0-13, toast task-22 adapter**. Other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -24,6 +24,10 @@ Accepted enqueue can survive caller cancellation/deadline, output rejection or a
 
 ## Verification
 
+CI correction during C02b43: the reported macOS abort was the toastEnqueue assertion requiring a non-cleanup budget. The NSError lifetime probe called the successful RAW hide path outside any native budget scope, although the enqueue test double requires one. Install TLinkNativeBudgetScope inside both caller-pool probes, matching the other RAW cases. Keep the enqueue assertion and cross-pool error/success-writeback checks. An always-host source guard rejects a missing probe scope. Focused native-budget/extraction, expanded assert preprocessing and diff checks pass on Windows; corrected macOS runtime remains pending CI. This correction changes the fixture and its guard, not production toast behavior.
+
+CI correction during C02b43: the reported macOS abort was the toastEnqueue assertion requiring a non-cleanup budget. The NSError lifetime probe called the successful RAW hide path outside any native budget scope, although the enqueue test double requires one. Install TLinkNativeBudgetScope inside both caller-pool probes, matching the other RAW cases. Keep the enqueue assertion and cross-pool error/success-writeback checks. An always-host source guard rejects a missing probe scope. Focused native-budget/extraction, expanded assert preprocessing and diff checks pass on Windows; corrected macOS runtime remains pending CI. This correction changes the fixture and its guard, not production toast behavior.
+
 All 62 workflow runners (36 source-contract, 26 native), 521 direct workflow source-grep assertions, expanded standards-conforming assert preprocessing and git diff --check pass on Windows. Focused native-budget/extraction and assert checks also pass after the final fixture guards. The assert checker retains its rejecting negative control. Sixteen artifact-only checks require CI outputs. No warning or sanitizer checks were disabled. Windows cannot execute the new macOS/Foundation/ARC/sanitizer branches.
 
 New macOS coverage compiles actual normalization, RAW parser/error wrapper, numeric enqueue, direct entry and bridge. Frozen JS/task/backend fragments from df1283d provide the value/effect oracle. The frozen source remains intact; its generated runtime include omits only the unsafe old inner autorelease pool so ARC can safely return its error values to the oracle caller. Production retains a real pool and is separately tested across nested pool/writeback boundaries. ARC and sanitizer checks remain enabled.
@@ -31,5 +35,7 @@ New macOS coverage compiles actual normalization, RAW parser/error wrapper, nume
 A controlled enqueue queue records accepted blocks; a controlled Toast class records hide/show arguments without displaying UI. Coverage includes 160 ordinary cases; type/duration/default/signed option behavior; description and intValue conversions; sanitization, empty messages and 180/181-unit boundaries; Unicode, split surrogate and NUL admission, including ignored suffixes beyond truncation; exact/short output and native-field exact/over-limit ingress; ordinary task-22 show/hide authority, caller/gate stop and queued cancellation/deadline; NS/C++ faults before/after enqueue; late mutable-input snapshots and retained results; complete RAW errors/optional columns and retained NSError/preserved success writeback. A final block is delivered through real global dispatch with a bounded group join. No real toast is displayed.
 
 ## Acceptance and remaining work
+
+The user reported this checkpoint built successfully before C02b43; source baseline is `023e926`. The next source checkpoint is IMPLEMENTATION-C02B43.md. This build report does not replace queue/UIKit/device/performance qualification.
 
 The user reported C02b41 build success at df1283d; that does not qualify the new toast path or error wrapper. Build rootfull/roothide and compare typed/helper toast with RAW task 22 for sanitized Unicode text, hide/show types, signed positions/fonts, default/long durations, exact ACK/errors, license denial/revocation and caller/output failures after accepted enqueue. Verify UI overlap/close timing and message lifetime after caller teardown; qualify RAW NSError/writeback under ARC/sanitizers. Measure bridge overhead separately from queue/UI work. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

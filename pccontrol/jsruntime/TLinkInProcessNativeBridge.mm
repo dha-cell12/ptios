@@ -1049,6 +1049,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSString *content = [args count] > 1 && [args objectAtIndex:1] != [NSNull null] ? [args objectAtIndex:1] : nil;
         NSDictionary *result=nil;
         if(kind==6||kind==7)result=TLinkExecuteNativeClipboardText(kind,content,context);
+        else if(kind!=8)result=TLinkExecuteNativeKeyboardNotification(kind,content,context);
         else{
             NSString *payload = content ? [NSString stringWithFormat:@"%d;;%@", kind, content] : [NSString stringWithFormat:@"%d", kind];
             result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEXT_INPUT, payload] context:context];
