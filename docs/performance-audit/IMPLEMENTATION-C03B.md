@@ -1,7 +1,7 @@
 # C03b — bounded disk-console log admission and run retirement
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `208bf6a0`, containing C03a and the compatibility-batch fixture correction; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/GCD/sanitizer CI and device qualification pending**.
+Status: **user reported build `cf7ed56d` passed before C03c; independent device/performance qualification pending**.
 Finding: **P1-42, bounded disk-log queue slice**. C03 remains partial.
 
 ## Result and scope

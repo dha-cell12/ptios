@@ -1,4 +1,5 @@
 #include "../shared/TLinkConsoleLogBudget.h"
+#include "../shared/TLinkConsoleLogBatch.h"
 #include <cassert>
 #include <cstdio>
 #include <thread>
@@ -24,5 +25,35 @@ int main(){
         size_t want=std::min(length,limit);if(want&&want<length&&text[want-1]>=0xd800&&text[want-1]<=0xdbff&&text[want]>=0xdc00&&text[want]<=0xdfff)--want;
         assert(count==want&&count<=limit&&count<=length);
     }
-    puts("Console log core passed: 64-entry/1-MiB reservations, duplicate/stale release, 100k lifecycles, 8 x 10k concurrent admissions and 100k UTF16 prefix boundaries; zero pending charges.");
+    const uint64_t threshold=512*1024;
+    for(unsigned n=0;n<100000;++n){
+        seed=seed*1664525+1013904223;
+        const uint64_t initial=n%3==0?threshold:seed%(threshold+32768);
+        const size_t total=1+(seed>>16)%64;
+        std::vector<uint64_t> lengths(total);
+        for(auto &length:lengths){seed=seed*1664525+1013904223;length=1+seed%TLinkConsoleLogLineBytes;}
+        // Independent frozen per-line rotation oracle, then actual batch plans.
+        std::vector<size_t> expected,actual;
+        uint64_t bytes=initial;
+        for(size_t i=0;i<total;++i){if(bytes>threshold){expected.clear();bytes=0;}expected.push_back(i);bytes+=lengths[i];}
+        uint64_t batchedBytes=initial;
+        for(size_t begin=0;begin<total;){
+            const bool rotate=batchedBytes>threshold;
+            const size_t count=rotate?1:TLinkConsoleLogBatchCount(batchedBytes,threshold,total-begin,[&lengths,begin](size_t i){return lengths[begin+i];});
+            assert(count&&count<=total-begin);
+            if(rotate){actual.clear();batchedBytes=0;}
+            for(size_t i=0;i<count;++i){actual.push_back(begin+i);batchedBytes+=lengths[begin+i];}
+            begin+=count;
+        }
+        assert(actual==expected&&batchedBytes==bytes);
+        for(size_t begin=0;begin<total;++begin){const size_t count=total-begin;uint64_t mask=0;
+            for(size_t i=begin;i<total;++i)mask|=uint64_t(1)<<i;
+            assert(TLinkConsoleLogBatchMask(begin,count)==mask);
+        }
+    }
+    assert(TLinkConsoleLogBatchMask(0,64)==UINT64_MAX&&TLinkConsoleLogBatchMask(64,1)==0&&TLinkConsoleLogBatchMask(0,0)==0);
+    assert(TLinkConsoleLogBatchCount(UINT64_MAX-1,UINT64_MAX-1,2,[](size_t){return uint64_t(2);})==1);
+    const std::vector<uint64_t> exact{1,1};
+    assert(TLinkConsoleLogBatchCount(threshold,threshold,2,[&exact](size_t i){return exact[i];})==1);
+    puts("Console log core passed: 64-entry/1-MiB reservations, duplicate/stale release, 100k lifecycles, 8 x 10k concurrent admissions, 100k UTF16 boundaries and 100k exact rotation/mask plans; zero pending charges.");
 }

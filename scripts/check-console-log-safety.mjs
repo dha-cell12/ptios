@@ -10,14 +10,21 @@ const source=await read('pccontrol/jsruntime/TLinkJSRuntimeCore.mm');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const methods=between(source,'- (void)prepareConsoleLogFiles {','- (NSDictionary *)bundleTextForRelativePath:');
 const append=methods.slice(methods.indexOf('- (void)appendConsoleLogWithLevel:'));
-assert.match(append,/TLinkConsoleLogPermit::acquire[\s\S]*TLinkConsoleLogPrefix[\s\S]*dataUsingEncoding:NSUTF8StringEncoding[\s\S]*data.length>TLinkConsoleLogLineBytes[\s\S]*generation!=_logGeneration[\s\S]*dispatch_async[\s\S]*@finally \{permit->finish\(\);\}/);
+assert.match(append,/TLinkConsoleLogPermit::acquire[\s\S]*TLinkConsoleLogPrefix[\s\S]*dataUsingEncoding:NSUTF8StringEncoding[\s\S]*data.length>TLinkConsoleLogLineBytes[\s\S]*generation!=_logGeneration[\s\S]*_logPending.push_back\(entry\)[\s\S]*if\(!_logDrainScheduled\)[\s\S]*dispatch_async\(_logQueue, \^\{\[self drainConsoleLogs\];\}\)/);
 assert.match(append,/@finally \{os_unfair_lock_unlock\(&_logStateLock\);\}/);
 assert.match(append,/@autoreleasepool[\s\S]*TLinkConsoleLogPermit::acquire/,'drain temporary formatter objects on the caller as well as the worker');
 assert.doesNotMatch(append,/dispatch_sync|appendLine:|NSLog/);
 assert.equal([...append.matchAll(/dataUsingEncoding/g)].length,1,'encode once before publishing to both files');
+const batchWriter=between(methods,'- (uint64_t)writeConsoleBatch:','- (void)drainConsoleLogs {');
+assert.match(batchWriter,/bytes<=kTLinkautoJSMaxConsoleLogBytes[\s\S]*TLinkConsoleLogBatchCount[\s\S]*count>1[\s\S]*appendData:batch\[begin\+n\]->data[\s\S]*appendConsoleData:data toConsolePath:path/);
+assert.match(batchWriter,/if\(!written\)failed\|=TLinkConsoleLogBatchMask\(begin,count\);\s*begin\+=count/,'a failed group advances without replay');
+const drain=between(methods,'- (void)drainConsoleLogs {','- (void)beginConsoleLogging {');
+assert.match(drain,/_logPending.empty\(\)[\s\S]*_logDrainScheduled=NO[\s\S]*batch.swap\(_logPending\)[\s\S]*writeConsoleBatch:batch toConsolePath:batch.front\(\)->runPath[\s\S]*writeConsoleBatch:batch toConsolePath:batch.front\(\)->latestPath[\s\S]*@finally[\s\S]*batch\[n\].reset\(\)[\s\S]*permit->finish\(\)/);
+assert.doesNotMatch(drain,/dispatch_after|dispatch_async/,'one committed drain handles all available work without delayed flushes');
 assert.match(methods,/_acceptingLogs=NO;[\s\S]*dispatch_sync\(_logQueue[\s\S]*console logger lifetime totals/);
 assert.match(source,/\[self prepareConsoleLogFiles\];\s*\[self beginConsoleLogging\];/);
 assert.match(source,/\[self finishConsoleLogging\];\s*_running = NO;/);
+assert.match(source,/_runId = \[\[NSUUID UUID\] UUIDString\];/,'production UUID run paths stay distinct from latest.log');
 assert.match(source,/NSLog\(@"com.tlinkauto.jsruntime\[%@\]\[%@\]: %@"[\s\S]*appendConsoleLogWithLevel:level message:message/);
 assert.ok((await read('pccontrol/jsruntime/TLinkJSRuntimeCore.h')).includes('- (NSDictionary *)currentConsoleLogStats;'));
 const frozenText=await read('test/fixtures/console-log-legacy-v1.inc'),frozen=frozenText.slice(frozenText.indexOf('\n')+1);
@@ -31,8 +38,9 @@ const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-console
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
     await writeFile(join(temp,'ConsoleLogMethods.inc'),methods);
-    const helper=between(source,'static NSString *TLinkautoJSSanitizeFileComponent','@interface TLinkJSRuntimeCore');
+    const helper=between(source,'static NSString *TLinkautoJSSanitizeFileComponent','struct TLinkConsoleLogEntry {');
     await writeFile(join(temp,'ConsoleLogHelpers.inc'),helper);
+    await writeFile(join(temp,'ConsoleLogEntry.inc'),between(source,'struct TLinkConsoleLogEntry {','@interface TLinkJSRuntimeCore'));
     const constant=source.match(/^static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 \* 1024;$/m);assert.ok(constant);
     await writeFile(join(temp,'ConsoleLogConstants.h'),constant[0]);
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));

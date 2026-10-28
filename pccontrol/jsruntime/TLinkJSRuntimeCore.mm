@@ -6,6 +6,7 @@
 #include <dlfcn.h>
 #include <math.h>
 #include "../../shared/TLinkConsoleLogBudget.h"
+#include "../../shared/TLinkConsoleLogBatch.h"
 
 typedef bool (*TLinkautoJSShouldTerminateCallback)(JSContextRef ctx, void *opaque);
 typedef void (*TLinkautoJSSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkautoJSShouldTerminateCallback callback, void *opaque);
@@ -84,6 +85,14 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     return [joined length] > 0 ? joined : @"script";
 }
 
+struct TLinkConsoleLogEntry {
+    NSData *data;
+    NSString *runPath,*latestPath;
+    std::shared_ptr<TLinkConsoleLogPermit> permit;
+    TLinkConsoleLogEntry(NSData *value,NSString *run,NSString *latest,std::shared_ptr<TLinkConsoleLogPermit> charge)
+        :data(value),runPath(run),latestPath(latest),permit(std::move(charge)){}
+};
+
 @interface TLinkJSRuntimeCore () {
     TLinkautoJSCancelState *_cancelState;
     NSCondition *_sleepCondition;
@@ -104,11 +113,15 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     BOOL _acceptingLogs;
     uint64_t _logGeneration;
     std::shared_ptr<TLinkConsoleLogBudget> _logBudget; // Old formatters stay charged across run changes.
+    std::vector<std::shared_ptr<TLinkConsoleLogEntry>> _logPending;
+    BOOL _logDrainScheduled;
 }
 
 - (void)prepareConsoleLogFiles;
 - (BOOL)appendConsoleData:(NSData *)data toConsolePath:(NSString *)path;
 - (BOOL)writeConsoleData:(NSData *)data runPath:(NSString *)runPath latestPath:(NSString *)latestPath;
+- (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path;
+- (void)drainConsoleLogs;
 - (void)beginConsoleLogging;
 - (void)finishConsoleLogging;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
@@ -136,6 +149,7 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
         _acceptingLogs = NO;
         _logGeneration = 0;
         _logBudget = std::make_shared<TLinkConsoleLogBudget>();
+        _logDrainScheduled = NO;
     }
     return self;
 }
@@ -253,6 +267,65 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     return runOK&&latestOK;
 }
 
+- (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path {
+    if(![path isKindOfClass:[NSString class]]||!path.length)return TLinkConsoleLogBatchMask(0,batch.size());
+    uint64_t failed=0;
+    for(size_t begin=0;begin<batch.size();){
+        size_t count=1;
+        BOOL written=NO;
+        @autoreleasepool {
+        @try {try {
+            const uint64_t bytes=[[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileSize] unsignedLongLongValue];
+            // An already-oversize file uses the original one-line rotation path,
+            // including its behavior when remove fails. Replan the next group.
+            if(bytes<=kTLinkautoJSMaxConsoleLogBytes)
+                count=TLinkConsoleLogBatchCount(bytes,kTLinkautoJSMaxConsoleLogBytes,batch.size()-begin,[&batch,begin](size_t n){return batch[begin+n]->data.length;});
+            NSData *data=batch[begin]->data;
+            if(count>1){
+                NSMutableData *joined=[NSMutableData data];
+                for(size_t n=0;n<count;++n)[joined appendData:batch[begin+n]->data];
+                data=joined;
+            }
+            written=[self appendConsoleData:data toConsolePath:path];
+        }catch(...) {}} @catch(__unused NSException *exception) {}
+        }
+        // A failed group is not replayed: it may already have written bytes.
+        if(!written)failed|=TLinkConsoleLogBatchMask(begin,count);
+        begin+=count;
+    }
+    return failed;
+}
+
+- (void)drainConsoleLogs {
+    for(;;){
+        std::vector<std::shared_ptr<TLinkConsoleLogEntry>> batch;
+        os_unfair_lock_lock(&_logStateLock);
+        if(_logPending.empty()){
+            _logDrainScheduled=NO;
+            os_unfair_lock_unlock(&_logStateLock);
+            return;
+        }
+        batch.swap(_logPending);
+        os_unfair_lock_unlock(&_logStateLock);
+        @autoreleasepool {
+            uint64_t failed=TLinkConsoleLogBatchMask(0,batch.size());
+            @try {try {
+                const uint64_t runFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->runPath];
+                const uint64_t latestFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->latestPath];
+                failed=runFailed|latestFailed;
+            }catch(...) {}} @catch(__unused NSException *exception) {}
+            @finally {
+                for(size_t n=0;n<batch.size();++n){
+                    if(failed&(uint64_t(1)<<n))_logBudget->failed();
+                    auto permit=std::move(batch[n]->permit);
+                    batch[n].reset(); // Retire the payload before reopening its slot.
+                    permit->finish();
+                }
+            }
+        }
+    }
+}
+
 - (void)beginConsoleLogging {
     os_unfair_lock_lock(&_logStateLock);
     if(_logGeneration!=UINT64_MAX){++_logGeneration;_acceptingLogs=YES;}
@@ -305,17 +378,17 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
         NSString *line=[NSString stringWithFormat:@"[%@][%@][%@] %@\n",[NSDate date],runId?:@"",safeLevel,safeMessage];
         NSData *data=[line dataUsingEncoding:NSUTF8StringEncoding];
         if(!data||data.length>TLinkConsoleLogLineBytes){_logBudget->dropped();return;}
+        auto entry=std::make_shared<TLinkConsoleLogEntry>(data,runPath,latestPath,permit);
         os_unfair_lock_lock(&_logStateLock);
         @try {
             // Publish under the same lock that closes admission before drain.
             if(!_acceptingLogs||generation!=_logGeneration){_logBudget->dropped();return;}
+            _logPending.push_back(entry);
             _logBudget->accepted(truncated);
-            dispatch_async(_logQueue, ^{
-                @autoreleasepool {
-                    @try {if(![self writeConsoleData:data runPath:runPath latestPath:latestPath])_logBudget->failed();}
-                    @finally {permit->finish();}
-                }
-            });
+            if(!_logDrainScheduled){
+                _logDrainScheduled=YES;
+                dispatch_async(_logQueue, ^{[self drainConsoleLogs];});
+            }
         } @finally {os_unfair_lock_unlock(&_logStateLock);}
     }catch(...) {_logBudget->dropped();}} @catch(__unused NSException *exception) {_logBudget->dropped();}
     }
