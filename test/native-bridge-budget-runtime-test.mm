@@ -134,6 +134,8 @@ enum {TASK_APP_PID=50,TASK_APP_STATE=32,TASK_APP_INFO=33,TASK_APP_KILL=31,TASK_A
 static NSString *mode;
 static int calls, releases;
 static std::string lastPayload;
+static std::vector<std::string> rawReplyChunks,rawReplyPayloads;
+static unsigned rawReplyScenario=0;
 static TLinkTaskExecutionContext *observed;
 NSDictionary *TLinkExecuteNativeTouch(const TLinkNativeTouchRequest &,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeTouchBatch(const std::vector<TLinkNativeTouchRequest> &,TLinkTaskExecutionContext *);
@@ -175,6 +177,14 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     ++calls; observed = context;
     lastPayload.assign(reinterpret_cast<char *>(bytes), length);
     assert(bytes[length] == 0 && [context nativeBudget] == TLinkCurrentNativeBudget());
+    if([mode isEqualToString:@"rawReplyRuntime"]){
+        rawReplyPayloads.push_back(lastPayload);
+        if(lastPayload.compare(0,2,"67")==0||lastPayload.compare(0,5,"483;;")==0){assert([context nativeBudget]->cleanup());++releases;notifyClient((UInt8 *)"0\r\n",stream);return;}
+        for(const auto &chunk:rawReplyChunks)notifyClient((UInt8 *)chunk.c_str(),stream);
+        if(rawReplyScenario==1)[context.cancellationToken cancel];
+        if(rawReplyScenario==2)[NSException raise:@"RawReplyFixture" format:@"task throws after writing"];
+        return;
+    }
     if([mode isEqualToString:@"templateMatchRuntime"]&&lastPayload.compare(0,2,"21")==0){templateMatchLegacyTask(bytes,length,stream);return;}
     if([mode isEqualToString:@"shellRuntime"]&&lastPayload.compare(0,2,"13")==0){shellLegacyTask(bytes,stream,context);return;}
     if([mode isEqualToString:@"screenshotFileRuntime"]&&lastPayload.compare(0,2,"29")==0){screenshotFileLegacyTask(bytes,stream);return;}
@@ -280,6 +290,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyFrameImage:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrameOCR:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (NSDictionary *)executeRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context;
+- (NSDictionary *)legacyRawPayload:(NSString *)payload context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyFrontmost:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyPath:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyHardwareKey:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
@@ -309,6 +320,9 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+#define executeRawPayload legacyRawPayload
+#include "fixtures/native-raw-dispatch-legacy-v1.inc"
+#undef executeRawPayload
 - (TLinkJSNativeResponse *)legacyCompatibilityBatch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -1198,6 +1212,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-screenshot-file-runtime-fixture.inc"
 #include "native-shell-runtime-fixture.inc"
 #include "native-compatibility-batch-runtime-fixture.inc"
+#include "native-raw-reply-runtime-fixture.inc"
 #include "native-template-match-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
@@ -2415,6 +2430,7 @@ int main() { @autoreleasepool {
     typedScreenshotFileCases(bridge);
     typedShellCases(bridge);
     typedCompatibilityBatchCases(bridge);
+    rawReplyCases(bridge);
     typedTemplateMatchCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");

@@ -268,8 +268,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         return TLinkNativeFailure(@"native_exception");
     } @finally { CFWriteStreamClose(stream); CFRelease(stream); }
     const auto &written = budget->response();
-    NSData *data = [NSData dataWithBytes:written.data() length:written.size()];
-    NSString *raw = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"0\r\n";
+    // Decode synchronously into an owned string before the scoped buffer retires.
+    NSString *raw = written.empty() ? @"0\r\n" : [[NSString alloc] initWithBytes:written.data() length:written.size() encoding:NSUTF8StringEncoding];
     if (!raw) return TLinkNativeFailure(@"invalid_response_encoding");
     NSArray<NSString *> *parts = [[raw stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsSeparatedByString:@";;"];
     NSString *status = parts.count ? parts[0] : @"1";

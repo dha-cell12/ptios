@@ -75,6 +75,12 @@ try {
   run(binary, []);
   // Extract and check fixture dependencies on every host, even when Foundation is unavailable.
   const rawBridge = between(bridge, "// BEGIN bounded native dispatch", "// END bounded native dispatch.");
+  const rawFrozen=await read('test/fixtures/native-raw-dispatch-legacy-v1.inc');
+  const rawDecode='    // Decode synchronously into an owned string before the scoped buffer retires.\n    NSString *raw = written.empty() ? @"0\\r\\n" : [[NSString alloc] initWithBytes:written.data() length:written.size() encoding:NSUTF8StringEncoding];';
+  const oldRawDecode='    NSData *data = [NSData dataWithBytes:written.data() length:written.size()];\n    NSString *raw = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"0\\r\\n";';
+  assert.ok(rawBridge.includes(rawDecode),'RAW response must copy directly into its owned UTF8 string');
+  assert.equal(rawBridge.replace(rawDecode,oldRawDecode).trim(),rawFrozen.slice(rawFrozen.indexOf('\n')+1).trim(),'only the intermediate response NSData is removed; RAW dispatch/codec/rollback policy stays frozen');
+  assert.doesNotMatch(between(rawBridge,'    const auto &written','    if (!raw)'),/NSData|initWithData|NoCopy|CFStringCreate/);
   const press = between(bridge, "    else if ([method isEqualToString:TLinkJSNativeMethodPressHardwareKey])",
     "    else if ([method isEqualToString:TLinkJSNativeMethodKeepAwake])");
   const typedTouch=between(bridge,"    else if ([method isEqualToString:TLinkJSNativeMethodTap])","    else if ([method isEqualToString:TLinkJSNativeMethodPickColor])");
@@ -908,6 +914,8 @@ try {
   assert.match(typedTouch,/TLinkNativeGestureInputFits/);
   assert.doesNotMatch(entry,/\b(?:YES|NO)\b/,'typed Task entry must compile after Image.h undefines Objective-C boolean macros');
   const runtimeFixture=await read('test/native-bridge-budget-runtime-test.mm');
+  assert.match(runtimeFixture,/#define executeRawPayload legacyRawPayload\n#include "fixtures\/native-raw-dispatch-legacy-v1.inc"\n#undef executeRawPayload/,'the RAW oracle must recursively call its own frozen release path');
+  assert.match(runtimeFixture,/typedCompatibilityBatchCases\(bridge\);\s*rawReplyCases\(bridge\);/);
   const appOpenFixture=await read('test/native-app-open-runtime-fixture.inc');
   assert.match(appOpenFixture,/int legacyBringAppForeground\(NSString \*appIdentifier\);\s*#define bringAppForeground legacyBringAppForeground\s*#define switchProcessForegroundFromRawData legacySwitchProcessForegroundFromRawData\s*#include "fixtures\/app-open-core-legacy-v1.inc"/,'the renamed legacy launcher must be declared before its RAW adapter calls it');
   assert.match(runtimeFixture,/#include "native-frontmost-runtime-fixture.inc"\n#include "native-path-runtime-fixture.inc"/,'path fixture requires the shared scalar formatter first');
@@ -936,7 +944,7 @@ try {
   assert.match(runtimeFixture,/#include "native-dialog-runtime-fixture.inc"\n#include "native-autolaunch-runtime-fixture.inc"/,'auto-launch fixture requires shared entry/metadata helpers first');
   assert.match(runtimeFixture,/#include "native-autolaunch-runtime-fixture.inc"\n#include "native-timer-runtime-fixture.inc"/,'timer fixture requires shared scheduler error and entry helpers first');
   assert.match(runtimeFixture,/#include "native-timer-runtime-fixture.inc"\n#include "native-screenshot-album-runtime-fixture.inc"/,'screenshot album fixture requires shared bridge/entry helpers first');
-  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-shell-runtime-fixture.inc"\n#include "native-compatibility-batch-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file/shell/batch/template fixtures require shared reply formatter and PNG writer first');
+  assert.match(runtimeFixture,/#include "native-screenshot-album-runtime-fixture.inc"\n#include "native-screenshot-file-runtime-fixture.inc"\n#include "native-shell-runtime-fixture.inc"\n#include "native-compatibility-batch-runtime-fixture.inc"\n#include "native-raw-reply-runtime-fixture.inc"\n#include "native-template-match-runtime-fixture.inc"/,'file/shell/batch/RAW/template fixtures require shared reply formatter and PNG writer first');
   assert.match(runtimeFixture,/#undef YES\n#undef NO\n#include "NativeTouchEntryUnderTest.inc"\n#include "NativeColorEntryUnderTest.inc"\n#include "NativeColorRangeEntry.inc"\n#include "NativeColorPointsEntry.inc"\n#include "NativeColorMultiEntry.inc"\n#include "NativeFrameImageEntry.inc"\n#include "NativeFrameOCREntry.inc"\n#include "NativeFramePickEntry.inc"/);
   console.log("macOS fixture extraction: production bridge helpers present on this host.");
   if (process.platform === "darwin") {
