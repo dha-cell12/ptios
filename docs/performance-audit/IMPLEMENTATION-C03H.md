@@ -1,7 +1,8 @@
 # C03h — preserve history when mutation index reads fail
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `c2a3bec5` (C03g), build passed according to the user.
-Status: **source implemented; new Foundation/POSIX/ARC/sanitizer execution and device qualification pending**.
+Status: **build passed according to the user (`c8d2d085`); device qualification pending**.
+Follow-up: C03i adds lazy first-mutation recovery of retained metadata; the verification/limits below describe C03h when implemented.
 Finding: **P1-53 read-failure/data-preservation prerequisite for recovery**. Multi-file recovery remains open.
 
 ## Result

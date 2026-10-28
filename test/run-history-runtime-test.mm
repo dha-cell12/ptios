@@ -3,6 +3,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <spawn.h>
 #include <unistd.h>
 #include <cassert>
 #include <atomic>
@@ -29,6 +30,29 @@ static NSString *historyWriteStage;
 static unsigned historyWriteFault=0;
 static NSMutableArray *historyWriteAttempts;
 static unsigned historyPruneFault=0;
+static unsigned historyRecoveryReadFault=0;
+static bool historyRecoveryOpenFault=false,historyRecoveryStatFault=false;
+static size_t historyRecoveryOpens=0,historyRecoveryReads=0,historyRecoveryBytes=0;
+static std::set<int> historyRecoveryFds;
+extern char **environ;
+static int historyRecoveryOpen(const char *path,int flags){
+    assert(flags==(O_RDONLY|O_NONBLOCK|O_NOFOLLOW));assert(historyLocks.size()==1);++historyRecoveryOpens;
+    if(historyRecoveryOpenFault){errno=EACCES;return -1;}
+    const int fd=::open(path,flags);if(fd>=0)assert(historyRecoveryFds.insert(fd).second);return fd;
+}
+static int historyRecoveryStat(int fd,struct stat *info){
+    assert(historyRecoveryFds.count(fd));if(historyRecoveryStatFault){errno=EIO;return -1;}return ::fstat(fd,info);
+}
+static ssize_t historyRecoveryRead(int fd,void *bytes,size_t count){
+    assert(historyRecoveryFds.count(fd)&&count<=65536);++historyRecoveryReads;
+    if(historyRecoveryReadFault==1){historyRecoveryReadFault=6;errno=EINTR;return -1;}
+    if(historyRecoveryReadFault==2){errno=EIO;return -1;}
+    if(historyRecoveryReadFault==3)return 0;
+    if(historyRecoveryReadFault==4)[NSException raise:@"HistoryFixture" format:@"recovery read failed"];
+    if(historyRecoveryReadFault==5)throw std::runtime_error("recovery read failed");
+    const ssize_t got=::read(fd,bytes,historyRecoveryReadFault==6?MIN(count,(size_t)17):count);
+    if(got>0)historyRecoveryBytes+=(size_t)got;return got;
+}
 static BOOL historyRemoveArtifact(NSString *path){
     if(historyPruneFault==1)[NSException raise:@"HistoryFixture" format:@"cleanup failed"];
     if(historyPruneFault==2)throw std::runtime_error("cleanup failed");
@@ -69,7 +93,7 @@ static int historyFlock(int fd,int operation){
     if(!result){std::lock_guard<std::mutex> guard(historyMutex);if(operation==LOCK_EX)assert(historyLocks.insert(fd).second);else if(operation==LOCK_UN)assert(historyLocks.erase(fd)==1);}
     return result;
 }
-static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}return ::close(fd);}
+static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);return ::close(fd);}
 static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *type,NSDictionary *payload){
     std::lock_guard<std::mutex> guard(historyMutex);assert(historyLocks.empty());
     NSDictionary *event=@{@"runtime":runtime,@"topic":topic,@"type":type,@"payload":payload};[historyEvents addObject:event];return event;
@@ -296,8 +320,136 @@ static void historyMutationReadCases(){
     for(bool beginning:{true,false}){assert([empty writeToFile:path atomically:YES]);assert(historyMutation(beginning).count);}
     Current::fixtureRoot=savedRoot;
 }
+static void historyRecoveryReject(bool beginning,NSString *code){
+    NSString *path=[Current::fixtureRoot stringByAppendingPathComponent:@"index.json"];
+    NSData *index=[NSData dataWithContentsOfFile:path];const NSUInteger events=historyEvents.count;const uint64_t failures=Current::sTLinkRunHistoryPersistenceFailures;
+    Current::sTLinkRunHistoryRecovered=NO;[historyWriteAttempts removeAllObjects];
+    assert(!historyMutation(beginning).count&&!Current::sTLinkRunHistoryRecovered);
+    assert(historyEvents.count==events&&[index isEqual:[NSData dataWithContentsOfFile:path]]&&historyLocks.empty()&&historyRecoveryFds.empty());
+    assert(historyChildCanLock([Current::fixtureRoot stringByAppendingPathComponent:@"history.lock"]));
+    NSDictionary *last=Current::sTLinkRunHistoryLastPersistenceFailure;
+    assert(Current::sTLinkRunHistoryPersistenceFailures==failures+1&&[last[@"operation"] isEqualToString:beginning?@"begin":@"finish"]);
+    assert([last[@"stage"] isEqualToString:@"recovery"]&&[last[@"code"] isEqualToString:code]);
+}
+static void historyRecoveryCases(const char *executable){
+    NSString *savedRoot=Current::fixtureRoot;Current::fixtureRoot=[historyTestRoot stringByAppendingPathComponent:@"recovery"];
+    Current::sTLinkRunHistoryRecovered=NO;NSFileManager *fm=[NSFileManager defaultManager];
+    NSString *root=Current::fixtureRoot,*indexPath=[root stringByAppendingPathComponent:@"index.json"];
+    NSDictionary *started=Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"interrupted.js",@{});
+    assert(started.count);NSData *indexBefore=[NSData dataWithContentsOfFile:indexPath];const NSUInteger eventsBefore=historyEvents.count;
+    // Real production finish advances evidence/record, then fails the index write.
+    historyWriteStage=@"index";historyWriteFault=1;
+    assert(!Current::TLinkRunHistoryFinish(started[@"run_id"],@"failed",@"uncommitted error",@[@"line"],@"",@"",nil,@{}).count);
+    historyWriteStage=nil;historyWriteFault=0;
+    assert([indexBefore isEqual:[NSData dataWithContentsOfFile:indexPath]]&&historyEvents.count==eventsBefore);
+    assert([historyReadJSON(started[@"record_path"])[@"state"] isEqualToString:@"failed"]);
+    NSString *orphanEvidence=[Current::TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:[started[@"run_id"] stringByAppendingString:@".json"]];
+    NSData *orphanEvidenceBytes=[NSData dataWithContentsOfFile:orphanEvidence];assert(orphanEvidenceBytes);
+    NSDictionary *failedStart=Current::TLinkRunHistoryBegin(@"trollstore",@"/bundle",@"committed-failure.js",@{});
+    NSString *outside=[historyTestRoot stringByAppendingPathComponent:@"recovery-screen.bin"];NSData *outsideBytes=[@"unchanged screen" dataUsingEncoding:NSUTF8StringEncoding];
+    assert([outsideBytes writeToFile:outside atomically:YES]);
+    NSDictionary *failed=Current::TLinkRunHistoryFinish(failedStart[@"run_id"],@"failed",@"committed failure",@[@"kept line"],@"",outside,nil,@{});
+    assert(failed.count);NSString *metadata=failed[@"failure_evidence"][@"metadata_path"];
+    assert([fm removeItemAtPath:metadata error:nil]);assert([[@"truncated" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:failed[@"record_path"] atomically:YES]);
+    // A false return after index replacement must use the NEW committed index.
+    historyWriteStage=@"index";historyWriteFault=4;assert(!Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"uncertain-recovery.js",@{}).count);historyWriteStage=nil;historyWriteFault=0;
+    NSDictionary *uncertain=historyReadJSON(indexPath)[@"runs"][0];assert([fm removeItemAtPath:uncertain[@"record_path"] error:nil]);
+    NSString *orphan=[Current::TLinkRunHistoryRunsPath() stringByAppendingPathComponent:@"orphan.json"];NSData *orphanBytes=[@"orphan stays" dataUsingEncoding:NSUTF8StringEncoding];assert([orphanBytes writeToFile:orphan atomically:YES]);
+    // A new executable process starts with a fresh gate and uses public begin.
+    const char *base=historyTestRoot.fileSystemRepresentation;char mode[]="--recover";
+    char *args[]={const_cast<char *>(executable),const_cast<char *>(base),mode,nullptr};pid_t child=0;
+    assert(::posix_spawn(&child,executable,nullptr,nullptr,args,environ)==0);int status=0;pid_t waited;
+    do{waited=::waitpid(child,&status,0);}while(waited<0&&errno==EINTR);assert(waited==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    assert([historyReadJSON(started[@"record_path"]) isEqual:started]);
+    assert([historyReadJSON(failed[@"record_path"]) isEqual:failed]&&[historyReadJSON(metadata) isEqual:failed[@"failure_evidence"]]);
+    assert([historyReadJSON(uncertain[@"record_path"]) isEqual:uncertain]);
+    assert([orphanEvidenceBytes isEqual:[NSData dataWithContentsOfFile:orphanEvidence]]&&[orphanBytes isEqual:[NSData dataWithContentsOfFile:orphan]]&&[outsideBytes isEqual:[NSData dataWithContentsOfFile:outside]]);
+    // Both public entries block on false/NS/C++/post-write failures, then retry.
+    for(bool beginning:{true,false})for(NSString *stage in @[@"record",@"evidence"])for(unsigned fault=1;fault<=4;++fault){
+        NSString *target=[stage isEqualToString:@"record"]?started[@"record_path"]:metadata;
+        assert([fm removeItemAtPath:target error:nil]);historyWriteStage=stage;historyWriteFault=fault;
+        historyRecoveryReject(beginning,(fault==1||fault==4)?@"recovery_write_failed":@"exception");
+        assert(historyWriteAttempts.count==1);historyWriteStage=nil;historyWriteFault=0;
+        assert(historyMutation(beginning).count&&Current::sTLinkRunHistoryRecovered&&historyRecoveryFds.empty());
+        assert([historyReadJSON(target) isEqual:[stage isEqualToString:@"record"]?started:failed[@"failure_evidence"]]);
+    }
+    // Repeated READ faults and exceptional unwind never retain an artifact FD.
+    for(unsigned fault=2;fault<=5;++fault){
+        historyRecoveryReadFault=fault;historyRecoveryReject(true,fault<=3?@"recovery_read_failed":@"exception");historyRecoveryReadFault=0;
+        assert(!historyWriteAttempts.count&&historyMutation(true).count);
+    }
+    historyRecoveryOpenFault=true;historyRecoveryReject(false,@"recovery_read_failed");historyRecoveryOpenFault=false;assert(historyMutation(false).count);
+    historyRecoveryStatFault=true;historyRecoveryReject(true,@"recovery_read_failed");historyRecoveryStatFault=false;assert(historyMutation(true).count);
+    // EINTR and short positive reads preserve logical JSON and make no repairs.
+    Current::sTLinkRunHistoryRecovered=NO;historyRecoveryReadFault=1;const size_t reads=historyRecoveryReads;[historyWriteAttempts removeAllObjects];
+    assert(historyMutation(true).count&&historyRecoveryReads>reads+1&&historyWriteAttempts.count==2&&historyRecoveryFds.empty());historyRecoveryReadFault=0;
+    // Large mismatching files are replaced without reading their full length.
+    NSMutableData *large=[NSMutableData dataWithLength:8*1024*1024];assert([large writeToFile:started[@"record_path"] atomically:YES]);
+    Current::sTLinkRunHistoryRecovered=NO;historyRecoveryBytes=0;assert(historyMutation(true).count&&historyRecoveryBytes<1024*1024);
+    assert([historyReadJSON(started[@"record_path"]) isEqual:started]);
+    NSMutableData *invalidJSON=[NSMutableData dataWithLength:[NSData dataWithContentsOfFile:started[@"record_path"]].length];
+    assert([invalidJSON writeToFile:started[@"record_path"] atomically:YES]);Current::sTLinkRunHistoryRecovered=NO;
+    assert(historyMutation(true).count&&[historyReadJSON(started[@"record_path"]) isEqual:started]);
+    // Leaf symlinks and directories are rejected without modifying the target.
+    NSString *target=started[@"record_path"];NSData *targetBytes=[NSData dataWithContentsOfFile:target];assert([fm removeItemAtPath:target error:nil]);
+    assert(::symlink(outside.fileSystemRepresentation,target.fileSystemRepresentation)==0);historyRecoveryReject(true,@"recovery_read_failed");
+    assert([outsideBytes isEqual:[NSData dataWithContentsOfFile:outside]]&&::unlink(target.fileSystemRepresentation)==0);
+    assert([fm createDirectoryAtPath:target withIntermediateDirectories:NO attributes:nil error:nil]);historyRecoveryReject(false,@"recovery_read_failed");
+    assert([fm removeItemAtPath:target error:nil]);assert(::mkfifo(target.fileSystemRepresentation,0600)==0);historyRecoveryReject(true,@"recovery_read_failed");
+    assert(::unlink(target.fileSystemRepresentation)==0&&[targetBytes writeToFile:target atomically:YES]);assert(historyMutation(true).count);
+    // A bad LAST record must be rejected before repairing a damaged first file.
+    NSData *healthy=[NSData dataWithContentsOfFile:indexPath];NSDictionary *index=historyReadJSON(indexPath);NSArray *runs=index[@"runs"];
+    NSString *firstPath=runs[0][@"record_path"];NSDictionary *first=historyReadJSON(firstPath);
+    assert([[@"damaged first file" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:firstPath atomically:YES]);
+    for(unsigned invalid=0;invalid<8;++invalid){
+        NSMutableArray *bad=[runs mutableCopy];NSMutableDictionary *last=[bad.lastObject mutableCopy];
+        if(invalid==0)last[@"record_path"]=outside;
+        if(invalid==1)last[@"schema"]=@"future";
+        if(invalid==2)last[@"failure_evidence"]=[NSNull null];
+        if(invalid>=3&&invalid<=5){
+            NSMutableDictionary *evidence=[failed[@"failure_evidence"] mutableCopy];evidence[@"run_id"]=last[@"run_id"];
+            evidence[@"metadata_path"]=[Current::TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:[last[@"run_id"] stringByAppendingString:@".json"]];
+            if(invalid==3)evidence[@"metadata_path"]=outside;
+            if(invalid==4)evidence[@"run_id"]=@"different";
+            if(invalid==5)evidence[@"schema"]=@"future";
+            last[@"failure_evidence"]=evidence;
+        }
+        bad[bad.count-1]=last;
+        if(invalid>=6){
+            [bad removeAllObjects];
+            for(unsigned n=0;n<(invalid==6?2U:51U);++n){
+                NSMutableDictionary *item=[started mutableCopy];NSString *identity=invalid==6?(n?@"shared?a":@"shared/a"):[NSString stringWithFormat:@"limit-%u",n];
+                item[@"run_id"]=identity;item[@"record_path"]=[Current::TLinkRunHistoryRunsPath() stringByAppendingPathComponent:[Current::TLinkRunHistorySanitize(identity) stringByAppendingString:@".json"]];[bad addObject:item];
+            }
+        }
+        NSMutableDictionary *changed=[index mutableCopy];changed[@"runs"]=bad;
+        NSData *bytes=[NSJSONSerialization dataWithJSONObject:changed options:0 error:nil];assert([bytes writeToFile:indexPath atomically:YES]);
+        NSDictionary *files=historyDiskBytes(root);const size_t opens=historyRecoveryOpens;historyRecoveryReject(true,@"recovery_invalid_index");
+        assert(historyRecoveryOpens==opens&&!historyWriteAttempts.count&&[files isEqual:historyDiskBytes(root)]);
+    }
+    assert([healthy writeToFile:indexPath atomically:YES]);assert(historyMutation(true).count&&[first isEqual:historyReadJSON(firstPath)]);
+    // Directory symlinks must not redirect even an empty recovery set.
+    Current::fixtureRoot=[historyTestRoot stringByAppendingPathComponent:@"recovery-parent"];Current::TLinkRunHistoryEnsureDirectories();
+    NSString *linked=Current::TLinkRunHistoryEvidencePath(),*destination=[historyTestRoot stringByAppendingPathComponent:@"outside-metadata"];
+    assert([fm createDirectoryAtPath:destination withIntermediateDirectories:NO attributes:nil error:nil]);assert([fm removeItemAtPath:linked error:nil]);
+    assert(::symlink(destination.fileSystemRepresentation,linked.fileSystemRepresentation)==0);
+    NSData *empty=[@"{\"schema\":\"run_history_v1\",\"runs\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+    assert([empty writeToFile:[Current::fixtureRoot stringByAppendingPathComponent:@"index.json"] atomically:YES]);
+    historyRecoveryReject(true,@"recovery_read_failed");assert(![fm contentsOfDirectoryAtPath:destination error:nil].count);
+    assert(::unlink(linked.fileSystemRepresentation)==0);assert(historyMutation(true).count);
+    Current::fixtureRoot=savedRoot;Current::sTLinkRunHistoryRecovered=YES;
+}
 int main(int argc,char **argv){@autoreleasepool{
-    assert(argc==2);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];
+    assert(argc==2||argc==3);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];
+    if(argc==3){
+        assert([[NSString stringWithUTF8String:argv[2]] isEqualToString:@"--recover"]&&!Current::sTLinkRunHistoryRecovered);
+        Current::fixtureRoot=[historyTestRoot stringByAppendingPathComponent:@"recovery"];historyUUIDs=100000;
+        assert(Current::TLinkRunHistoryBegin(@"rootfull",@"/bundle",@"after-restart.js",@{}).count&&Current::sTLinkRunHistoryRecovered);
+        assert(historyEvents.count==1&&historyWriteAttempts.count==6&&historyRecoveryFds.empty()&&historyLocks.empty());
+        const size_t opens=historyRecoveryOpens;[historyWriteAttempts removeAllObjects];
+        assert(Current::TLinkRunHistoryFinish(@"restart-probe",@"finished",@"",@[],@"",@"",nil,@{}).count);
+        assert(historyRecoveryOpens==opens&&historyWriteAttempts.count==2&&historyEvents.count==2);return 0;
+    }
     Current::fixtureRoot=[historyTestRoot stringByAppendingPathComponent:@"current"];
     Legacy::fixtureRoot=[historyTestRoot stringByAppendingPathComponent:@"legacy"];
     puts("History Foundation: actual/frozen redaction, persistence/evidence and pre-flock preparation");fflush(stdout);
@@ -379,9 +531,11 @@ int main(int argc,char **argv){@autoreleasepool{
     assert([currentIndex writeToFile:indexPath atomically:YES]&&[oldIndex writeToFile:oldIndexPath atomically:YES]);
     historyCommitCases(console,screenshot);
     historyMutationReadCases();
+    historyRecoveryCases(argv[0]);
     assert(historyLocks.empty());historyEvents=nil;historyWriteAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, unchanged lock-denial/malformed-index policy and exact frozen status fields. Local serialization retained; device qualification pending.");
     puts("History commit Foundation passed: record/evidence/index false and NS/C++ failures suppress success/events, retain old-index artifacts until commit, release locks, report bounded process diagnostics and recover; read/lock failures, counter saturation and uncertain post-write outcome without rollback/replay. Multi-file crash recovery remains pending.");
     puts("History mutation reads passed: missing-index bootstrap, 32 invalid schema/shape/identity cases, read permission/domain/nil-error faults, real directory rejection, unchanged files/events, lock release and explicit repair followed by successful mutation. Status fallback unchanged; multi-file recovery pending.");
+    puts("History startup recovery passed: new-process public entry repairs retained metadata from old/new authoritative index, leaves orphans/screenshots/events alone, gates once, retries false/NS/C++/uncertain writes, releases FDs/flock, handles read/EINTR/short/size bounds and rejects invalid paths/symlinks/directories. Orphan/event recovery and device qualification pending.");
 }}

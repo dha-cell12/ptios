@@ -79,13 +79,42 @@ process restart; successful operations do not clear the last failure.
 
 Record/evidence/index files are separate atomic writes. A failed or interrupted
 operation may leave partial/orphan artifacts, or an uncertain outcome after an
-index replacement; this is not a crash-atomic multi-file transaction. No
-automatic rollback/retry or event replay is added. Recovery/retention of those
-artifacts and event-journal delivery remain separate work.
+index replacement; this is not a crash-atomic multi-file transaction. Failed
+mutations and events are not automatically replayed. The retained metadata
+repair below does not replay those operations; orphan retention and event-journal
+delivery remain separate work.
 An invalid/unreadable index is not automatically replaced or rebuilt from loose
 files. Mutations can resume after the underlying read problem is resolved or a
 valid index is explicitly restored. A missing index still bootstraps empty;
 orphan files do not provide an automatic reconstruction source.
+
+## Retained metadata recovery
+
+At the first begin/finish mutation in each process, while holding the existing
+monitor and flock, validate at most 50 retained record/evidence destinations and
+repair their JSON from the committed index. A failed index write can leave a
+record ahead of the old index; recovery restores the old indexed record. If the
+index replacement actually committed before a reported failure, recovery uses
+that new index. The recovery pass itself never changes index bytes or run state.
+
+All destinations must be exact per-ID record/evidence paths, with matching
+schemas/identities and no filename aliases. Direct history directories and
+artifact leaves must not be symlinks; non-regular artifact files are rejected.
+For matching file sizes, read at most the authoritative JSON's encoded length
+in chunks of at most 64 KiB and compare decoded JSON. Other sizes are replaced
+without reading their full contents. Missing/mismatching files are atomically
+rewritten with the existing JSON/permission policy. Recovery does not access
+screenshot contents, remove orphans or publish events.
+
+Recovery failure returns an empty mutation result, leaves the completion gate
+unset and records stage `recovery` with `recovery_invalid_index`,
+`recovery_read_failed`, `recovery_write_failed`, or `exception`. Repaired files
+may already have been written before a later repair fails; the next mutation
+rechecks them. After one successful pass, later mutations in the same process
+skip the artifact scan. Ordinary later write failures do not reset that gate;
+continuous repair after such failures remains future work. Status does not run
+recovery, and missing/corrupt index reconstruction, screenshot restoration,
+orphan retention, event replay and power-loss durability remain outside this pass.
 
 ## Capability markers
 

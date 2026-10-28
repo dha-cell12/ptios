@@ -2,6 +2,7 @@
 #import "TLinkEventChannel.h"
 
 #include <fcntl.h>
+#include <errno.h>
 #include <stdint.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -211,6 +212,7 @@ static void TLinkRunHistoryRemoveArtifact(NSString *path)
 
 static uint64_t sTLinkRunHistoryPersistenceFailures = 0;
 static NSDictionary *sTLinkRunHistoryLastPersistenceFailure = nil;
+static BOOL sTLinkRunHistoryRecovered = NO;
 
 // All accesses are protected by the existing process-local history monitor.
 static void TLinkRunHistoryPersistenceFailure(NSString *operation, NSString *stage, NSString *code)
@@ -259,6 +261,89 @@ static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadIndexForMutation(NSStr
         return nil;
     }
     return [records mutableCopy];
+}
+
+// Repair only committed, retained metadata. Caller holds the monitor and flock.
+static BOOL TLinkRunHistoryRepairJSON(NSDictionary *expected, NSString *path, NSString *operation)
+{
+    NSData *encoded = [NSJSONSerialization dataWithJSONObject:expected options:NSJSONWritingPrettyPrinted error:nil];
+    if (!encoded) { TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_invalid_index"); return NO; }
+    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    if (fd < 0 && errno != ENOENT) {
+        TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed");
+        return NO;
+    }
+    if (fd >= 0) {
+        @try {
+            struct stat info;
+            if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0) {
+                TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed");
+                return NO;
+            }
+            // Different sizes already prove a mismatch. Never read an arbitrary
+            // artifact's full length; cap reads at the authoritative JSON size.
+            if ((uint64_t)info.st_size == encoded.length) {
+                NSMutableData *data = [NSMutableData dataWithLength:encoded.length];
+                NSUInteger offset = 0;
+                while (offset < data.length) {
+                    size_t count = MIN(data.length - offset, (NSUInteger)65536);
+                    ssize_t got = read(fd, (uint8_t *)data.mutableBytes + offset, count);
+                    if (got < 0 && errno == EINTR) continue;
+                    if (got <= 0) { TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed"); return NO; }
+                    offset += (NSUInteger)got;
+                }
+                id stored = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                if ([stored isEqual:expected]) return YES;
+            }
+        } @finally { close(fd); }
+    }
+    if (!TLinkRunHistoryWriteJSON(expected, path)) {
+        TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_write_failed");
+        return NO;
+    }
+    return YES;
+}
+
+static BOOL TLinkRunHistoryRecover(NSArray<NSDictionary *> *runs, NSString *operation)
+{
+    if (sTLinkRunHistoryRecovered) return YES;
+    // Preflight the whole repair set before touching any file. Never follow
+    // persisted paths outside the exact per-ID locations or alias two IDs.
+    BOOL valid = runs.count <= kTLinkRunHistoryMaxRecords;
+    NSMutableSet<NSString *> *paths = [NSMutableSet set];
+    for (NSDictionary *record in runs) {
+        NSString *runId = record[@"run_id"];
+        NSString *name = [TLinkRunHistorySanitize(runId) stringByAppendingString:@".json"];
+        NSString *recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:name];
+        id evidence = record[@"failure_evidence"];
+        valid = valid && [record[@"schema"] isEqual:TLinkRunHistorySchemaV1] &&
+            [record[@"record_path"] isKindOfClass:[NSString class]] && [record[@"record_path"] isEqual:recordPath] &&
+            ![paths containsObject:recordPath] && [evidence isKindOfClass:[NSDictionary class]];
+        if (valid && [evidence count] > 0) {
+            NSString *metadataPath = [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:name];
+            valid = [evidence[@"schema"] isEqual:TLinkFailureEvidenceSchemaV1] &&
+                [evidence[@"run_id"] isEqual:runId] && [evidence[@"metadata_path"] isEqual:metadataPath];
+        }
+        if (!valid) break;
+        [paths addObject:recordPath];
+    }
+    if (!valid) { TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_invalid_index"); return NO; }
+    for (NSString *directory in @[TLinkRunHistoryRootPath(), TLinkRunHistoryRunsPath(), TLinkRunHistoryEvidencePath()]) {
+        struct stat info;
+        if (lstat(directory.fileSystemRepresentation, &info) != 0 || !S_ISDIR(info.st_mode)) {
+            TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed");
+            return NO;
+        }
+    }
+    for (NSDictionary *record in runs) {
+        @autoreleasepool {
+            NSDictionary *evidence = record[@"failure_evidence"];
+            if (evidence.count > 0 && !TLinkRunHistoryRepairJSON(evidence, evidence[@"metadata_path"], operation)) return NO;
+            if (!TLinkRunHistoryRepairJSON(record, record[@"record_path"], operation)) return NO;
+        }
+    }
+    sTLinkRunHistoryRecovered = YES;
+    return YES;
 }
 
 static NSArray<NSDictionary *> *TLinkRunHistoryTrim(NSMutableArray<NSDictionary *> *runs)
@@ -319,6 +404,8 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
             stage = @"read";
             NSMutableArray *runs = TLinkRunHistoryReadIndexForMutation(@"begin");
             if (!runs) return @{};
+            stage = @"recovery";
+            if (!TLinkRunHistoryRecover(runs, @"begin")) return @{};
             [runs insertObject:record atIndex:0];
             NSArray *retired = TLinkRunHistoryTrim(runs);
             stage = @"record";
@@ -372,6 +459,8 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
         @try { try {
             NSMutableArray<NSDictionary *> *runs = TLinkRunHistoryReadIndexForMutation(@"finish");
             if (!runs) return @{};
+            stage = @"recovery";
+            if (!TLinkRunHistoryRecover(runs, @"finish")) return @{};
             stage = @"prepare";
             NSUInteger index = [runs indexOfObjectPassingTest:^BOOL(NSDictionary *record, NSUInteger idx, BOOL *stop) {
                 (void)idx;
