@@ -110,6 +110,9 @@ static void radioLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_WIFI=55,TASK_BLUETOOTH=56};
 static void auxRadioLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_AIRPLANE=57,TASK_CELLULAR_DATA=58};
+static void vpnLegacyTask(UInt8 *,CFWriteStreamRef);
+enum {TASK_VPN=59};
+static NSDictionary *zx_nativeAlbumReply(NSString *,const TLinkNativeBudgetPtr &);
 static void deviceInfoLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_GET_DEVICE_INFO=25};
 static void openUrlLegacyTask(UInt8 *,CFWriteStreamRef);
@@ -174,6 +177,7 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
     if([mode isEqualToString:@"toastRuntime"]&&lastPayload.compare(0,2,"22")==0){toastLegacyTask(bytes,stream);return;}
     if(([mode isEqualToString:@"clipboardTextRuntime"]||[mode isEqualToString:@"keyboardNotificationRuntime"])&&lastPayload.compare(0,2,"24")==0){clipboardTextLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"ocrLanguagesRuntime"]&&lastPayload.compare(0,2,"91")==0){ocrLanguagesLegacyTask(bytes,length,stream);return;}
+    if([mode isEqualToString:@"vpnRuntime"]&&lastPayload.compare(0,2,"59")==0){vpnLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"auxRadioRuntime"]&&(lastPayload.compare(0,2,"57")==0||lastPayload.compare(0,2,"58")==0)){auxRadioLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"radioRuntime"]&&(lastPayload.compare(0,2,"55")==0||lastPayload.compare(0,2,"56")==0)){radioLegacyTask(bytes,stream);return;}
     if([mode isEqualToString:@"deviceInfoRuntime"]&&lastPayload.compare(0,2,"25")==0){deviceInfoLegacyTask(bytes,stream);return;}
@@ -287,10 +291,17 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyTimer:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyScreenshotAlbum:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyTemplateMatch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyVPN:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyVPN:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-vpn-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyTemplateMatch:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -1138,6 +1149,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-device-info-runtime-fixture.inc"
 #include "native-radio-runtime-fixture.inc"
 #include "native-aux-radio-runtime-fixture.inc"
+#include "native-vpn-runtime-fixture.inc"
 #include "native-ocr-languages-runtime-fixture.inc"
 #include "native-clipboard-text-runtime-fixture.inc"
 #include "native-toast-runtime-fixture.inc"
@@ -2347,6 +2359,7 @@ int main() { @autoreleasepool {
     typedDeviceInfoCases(bridge);
     typedRadioCases(bridge);
     typedAuxRadioCases(bridge);
+    typedVPNCases(bridge);
     typedOCRLanguagesCases(bridge);
     typedClipboardTextCases(bridge);
     typedToastCases(bridge);

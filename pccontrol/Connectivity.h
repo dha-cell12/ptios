@@ -15,5 +15,6 @@ NSString* cellularDataTaskFromRawData(UInt8 *eventData, NSError **error);
 NSString* airplaneTaskWithAction(int action, int value, NSError **error);
 NSString* cellularDataTaskWithAction(int action, int value, NSError **error);
 NSString* vpnTaskFromRawData(UInt8 *eventData, NSError **error);
+NSString* vpnTaskWithAction(int action, int value, NSError **error);
 
 #endif

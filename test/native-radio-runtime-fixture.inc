@@ -172,8 +172,8 @@ static void typedRadioCases(TLinkInProcessNativeBridge *bridge){
         context=parent();reset(context,missing);NSError *heldError=nil;@autoreleasepool{TLinkNativeBudgetScope scope([TLinkNativeCallContext(context,false,false) nativeBudget]);if(task==55)wifiTaskWithAction(0,0,&heldError);else bluetoothTaskWithAction(0,0,&heldError);}assert(heldError.localizedDescription.length>0);
         context=parent();reset(context,ordinary);NSDictionary *held=nil;@autoreleasepool{held=invoke(@[@(task),@"enabled",@1],context).value;context=nil;radioManager=nil;}assert([held[@"ok"] boolValue]&&[held[@"enabled"] boolValue]);
     }
-    for(int task:{0,54,59,100,INT_MIN,INT_MAX})parity(@[@(task),@"enabled",@1],ordinary,4096);
-    auto context=parent();reset(context,ordinary);const int gates=licenseCalls;failure(TLinkExecuteNativeRadioState(59,true,true,context),@"invalid_payload");assert(radioOrder.empty()&&licenseCalls==gates);
+    for(int task:{0,54,60,100,INT_MIN,INT_MAX})parity(@[@(task),@"enabled",@1],ordinary,4096);
+    auto context=parent();reset(context,ordinary);const int gates=licenseCalls;failure(TLinkExecuteNativeRadioState(60,true,true,context),@"invalid_payload");assert(radioOrder.empty()&&licenseCalls==gates);
     radioManager=nil;radioOrder.clear();radioEffects.clear();radioFaultStage=nil;radioOnRead={};radioOnValue={};radioBudget.reset();licenseBudget.reset();touchToken=nil;mode=@"echo";
     assert(!TLinkCurrentNativeBudget());
     puts("Typed Wi-Fi/Bluetooth passed: actual helpers/parser/managers with frozen JS/RAW parity, singleton/set/get precedence, BOOL/fallback/error/metadata keys, exact output, ordinary license/stop/committed effects, faults/lifetime and other-task RAW fallback. No real radios changed.");

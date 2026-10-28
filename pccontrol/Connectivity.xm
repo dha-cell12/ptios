@@ -327,6 +327,11 @@ NSString* vpnTaskFromRawData(UInt8 *eventData, NSError **error)
         return base64;
     }
 
+    return vpnTaskWithAction(action, value, error);
+}
+
+NSString* vpnTaskWithAction(int action, int value, NSError **error)
+{
     if (action != 0 && action != 1) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp"

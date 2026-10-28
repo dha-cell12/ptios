@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C02b51 (28/10/2026): người dùng báo C02b50 và bản sửa Unicode build pass (`2b06a1f`). Query/set VPN gọi entry trực tiếp task 59 và lõi chọn query/connect/disconnect dùng chung với RAW; giữ broker transport, diagnostics, boolValue/metadata, lỗi C-string và một license gate cùng context/deadline/output. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; fixture mới dùng broker giả lập, chờ CI Foundation/macOS và nghiệm thu broker/VPN/thiết bị. Chi tiết: IMPLEMENTATION-C02B51.md.
+
 Cập nhật triển khai C02b50 (28/10/2026): người dùng báo C02b49 và bản sửa fixture schedulerError build pass (`6aa9104`). matchTemplate gọi trực tiếp task 21 và ScreenMatch; giữ %.4f → floatValue, đường dẫn có dấu chấm phẩy, lỗi/metadata, một license gate và C01 tám giây. Sửa giải phóng CGImage khi matcher ném ngoại lệ; RAW parser/handler không đổi. 62 runner, 521 kiểm tra nguồn và assert preprocessing pass trên Windows; fixture mới dùng PNG/CGImage thật và matcher giả lập, chờ CI Foundation/macOS cùng nghiệm thu OpenCV/thiết bị. Chi tiết: IMPLEMENTATION-C02B50.md.
 
 Sửa CI C02b50 tại `393d8bb`: adapter thiếu phép chuyển đổi đường dẫn non-ASCII qua Foundation `%s` của RAW, khiến CI macOS trả lỗi file không tồn tại ở bản cũ nhưng matching thành công ở bản mới. Đã khôi phục chuyển đổi sau admission/license, giữ nguyên parser/oracle; dùng file ASCII cho các ca matcher và thêm ca Unicode có file theo tên sau giải mã. Kiểm tra tập trung trên Windows pass; runtime đã sửa chờ CI macOS.

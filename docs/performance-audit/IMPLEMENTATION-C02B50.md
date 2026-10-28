@@ -1,7 +1,7 @@
 # C02b50 — direct template match adapter
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `6aa9104`, containing C02b49 and the duplicate schedulerError fixture correction; the user reported that build passed.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported build passed at `2b06a1f`, including the legacy Unicode conversion correction; independent device/performance qualification pending**.
 Finding: **P0-13, matchTemplate, task 21**. C02 remains partial.
 
 ## Result and compatibility

@@ -1000,7 +1000,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSString *enabledKey = [args count] > 1 ? [args objectAtIndex:1] : @"enabled";
         id value = [args count] > 2 ? [args objectAtIndex:2] : [NSNull null];
         BOOL setting = value && value != [NSNull null];
-        if (task == TASK_WIFI || task == TASK_BLUETOOTH || task == TASK_AIRPLANE || task == TASK_CELLULAR_DATA) {
+        if (task == TASK_WIFI || task == TASK_BLUETOOTH || task == TASK_AIRPLANE || task == TASK_CELLULAR_DATA || task == TASK_VPN) {
             NSDictionary *result = TLinkExecuteNativeRadioState(task,setting,setting ? [value boolValue] : false,context);
             return [TLinkJSNativeResponse responseWithValue:TLinkautoJSStateResult(result, enabledKey)];
         }

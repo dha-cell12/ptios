@@ -1288,8 +1288,8 @@ NSDictionary *TLinkExecuteNativeToast(int type,NSString *message,int duration,in
 // BEGIN typed radio task entry.
 static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enabled,TLinkTaskExecutionContext *context)
 {
-    static_assert(TASK_WIFI==55&&TASK_BLUETOOTH==56&&TASK_AIRPLANE==57&&TASK_CELLULAR_DATA==58,"radio task classification changed");
-    if(taskType!=TASK_WIFI&&taskType!=TASK_BLUETOOTH&&taskType!=TASK_AIRPLANE&&taskType!=TASK_CELLULAR_DATA)return zx_typedTouchFailure(@"invalid_payload");
+    static_assert(TASK_WIFI==55&&TASK_BLUETOOTH==56&&TASK_AIRPLANE==57&&TASK_CELLULAR_DATA==58&&TASK_VPN==59,"radio task classification changed");
+    if(taskType!=TASK_WIFI&&taskType!=TASK_BLUETOOTH&&taskType!=TASK_AIRPLANE&&taskType!=TASK_CELLULAR_DATA&&taskType!=TASK_VPN)return zx_typedTouchFailure(@"invalid_payload");
     TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
     auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
     @try {try{
@@ -1303,9 +1303,10 @@ static NSDictionary *zx_nativeRadioExecute(int taskType,BOOL setting,BOOL enable
         if(taskType==TASK_WIFI)state=wifiTaskWithAction(action,value,&error);
         else if(taskType==TASK_BLUETOOTH)state=bluetoothTaskWithAction(action,value,&error);
         else if(taskType==TASK_AIRPLANE)state=airplaneTaskWithAction(action,value,&error);
-        else state=cellularDataTaskWithAction(action,value,&error);
+        else if(taskType==TASK_CELLULAR_DATA)state=cellularDataTaskWithAction(action,value,&error);
+        else state=vpnTaskWithAction(action,value,&error);
         if(budget->stopped())return zx_typedTouchStopped(budget);
-        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        if(error)return taskType==TASK_VPN?zx_nativeAlbumReply(error.localizedDescription,budget):zx_typedTouchReply(error.localizedDescription,budget);
         NSDictionary *result=zx_nativeStringQueryResult(state?:@"0",nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
         if(budget->stopped())return zx_typedTouchStopped(budget);
         return result;
