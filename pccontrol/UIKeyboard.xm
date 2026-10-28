@@ -52,48 +52,14 @@ NSString *TLinkNotifyKeyboardCommand(NSString *taskId,NSString *content)
     return @"Successfully notify the appdelegate tweak. But not sure whether it works...";
 }
 
-NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
+NSString *TLinkWriteClipboardImage(NSString *sourceType,NSString *imagePath,NSError **error)
 {
-    NSArray *data = [[NSString stringWithUTF8String:(char*)eventData] componentsSeparatedByString:@";;"];
-
-    NSString *taskContent = @"";
-    if ([data count] < 1)
-    {
-        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event length error. You have to specify the task id.\r\n"}];
-        return nil;
-    }
-    int taskType = [data[0] intValue];
-    if (taskType == TASK_GET_TEXT_FROM_CLIPBOARD)
-    {
-        return TLinkReadClipboardText();
-    }
-    else if (taskType == TASK_SAVE_TEXT_TO_CLIPBOARD)
-    {  
-        if ([data count] < 2)
-        {
-            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event error. You have to specify the content you want to paste to clipboard.\r\n"}];
-            return nil;
-        }
-        
-        TLinkWriteClipboardText(data[1]);
-        return @"";
-    }
-    else if (taskType == TASK_SAVE_IMAGE_TO_CLIPBOARD)
-    {
-        if ([data count] < 3)
-        {
-            *error = TLinkautoKeyboardError(@"Keyboard related event error. You have to specify image source type and file path.");
-            return nil;
-        }
-
-        NSString *sourceType = data[1];
         if (![sourceType isEqualToString:@"file"])
         {
             *error = TLinkautoKeyboardError(@"Unsupported clipboard image source type. Only file is supported.");
             return nil;
         }
 
-        NSString *imagePath = [[data subarrayWithRange:NSMakeRange(2, [data count] - 2)] componentsJoinedByString:@";;"];
         if ([imagePath length] == 0)
         {
             *error = TLinkautoKeyboardError(@"Clipboard image path cannot be empty.");
@@ -139,6 +105,43 @@ NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
         UIPasteboard *pb = [UIPasteboard generalPasteboard];
         pb.items = @[@{pasteboardType: imageData}];
         return @"";
+}
+
+NSString* inputTextFromRawData(UInt8 *eventData, NSError **error)
+{
+    NSArray *data = [[NSString stringWithUTF8String:(char*)eventData] componentsSeparatedByString:@";;"];
+
+    NSString *taskContent = @"";
+    if ([data count] < 1)
+    {
+        *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event length error. You have to specify the task id.\r\n"}];
+        return nil;
+    }
+    int taskType = [data[0] intValue];
+    if (taskType == TASK_GET_TEXT_FROM_CLIPBOARD)
+    {
+        return TLinkReadClipboardText();
+    }
+    else if (taskType == TASK_SAVE_TEXT_TO_CLIPBOARD)
+    {
+        if ([data count] < 2)
+        {
+            *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Keyboard related event error. You have to specify the content you want to paste to clipboard.\r\n"}];
+            return nil;
+        }
+
+        TLinkWriteClipboardText(data[1]);
+        return @"";
+    }
+    else if (taskType == TASK_SAVE_IMAGE_TO_CLIPBOARD)
+    {
+        if ([data count] < 3)
+        {
+            *error = TLinkautoKeyboardError(@"Keyboard related event error. You have to specify image source type and file path.");
+            return nil;
+        }
+
+        return TLinkWriteClipboardImage(data[1],[[data subarrayWithRange:NSMakeRange(2, [data count] - 2)] componentsJoinedByString:@";;"],error);
     }
 
     // otherwise, send it to appdelegate

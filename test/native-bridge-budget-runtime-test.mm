@@ -78,6 +78,7 @@ NSDictionary *TLinkExecuteNativeOCRLanguages(TLinkTaskExecutionContext *);
 static void ocrLanguagesLegacyTask(UInt8 *,size_t,CFWriteStreamRef);
 NSDictionary *TLinkExecuteNativeClipboardText(int,id,TLinkTaskExecutionContext *);
 NSDictionary *TLinkExecuteNativeKeyboardNotification(int,id,TLinkTaskExecutionContext *);
+NSDictionary *TLinkExecuteNativeClipboardImage(id,TLinkTaskExecutionContext *);
 static void clipboardTextLegacyTask(UInt8 *,CFWriteStreamRef);
 enum {TASK_TEXT_INPUT=24};
 NSDictionary *TLinkExecuteNativeToast(int,NSString *,int,int,int,TLinkTaskExecutionContext *);
@@ -252,10 +253,17 @@ static void processTaskWithContext(UInt8 *bytes, size_t length, CFWriteStreamRef
 - (TLinkJSNativeResponse *)legacyClipboardText:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyToast:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyKeyboardNotification:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
+- (TLinkJSNativeResponse *)legacyClipboardImage:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)legacyRadio:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context;
 - (TLinkJSNativeResponse *)executeRequest:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context error:(NSError **)error;
 @end
 @implementation TLinkInProcessNativeBridge
+- (TLinkJSNativeResponse *)legacyClipboardImage:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
+#include "NativeRequestPreludeUnderTest.inc"
+    if(false){}
+#include "fixtures/native-clipboard-image-legacy-v1.inc"
+    return nil;
+}
 - (TLinkJSNativeResponse *)legacyKeyboardNotification:(TLinkJSNativeRequest *)request context:(TLinkTaskExecutionContext *)context {
 #include "NativeRequestPreludeUnderTest.inc"
     if(false){}
@@ -1059,6 +1067,7 @@ static void failure(NSDictionary *result, NSString *code, unsigned callerLine = 
 #include "native-clipboard-text-runtime-fixture.inc"
 #include "native-toast-runtime-fixture.inc"
 #include "native-keyboard-notification-runtime-fixture.inc"
+#include "native-clipboard-image-runtime-fixture.inc"
 static void checkGesture(bool (*handler)(UInt8 *, NSError **), NSString *payload, int fingerCount, int cancelAfter) {
     injected.clear(); touchToken = [TLinkCancellationToken new]; cancelAt = cancelAfter;
     auto context = parent(); context.cancellationToken = touchToken;
@@ -2261,6 +2270,7 @@ int main() { @autoreleasepool {
     typedClipboardTextCases(bridge);
     typedToastCases(bridge);
     typedKeyboardNotificationCases(bridge);
+    typedClipboardImageCases(bridge);
     typedPathCases(bridge);
     std::puts("macOS actual bridge/context/sink/queue and gesture cancellation integration passed.");
 } }

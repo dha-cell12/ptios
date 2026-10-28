@@ -1,6 +1,7 @@
 // Actual clipboard primitives/RAW parser and direct entry; controlled pasteboard/notification boundary.
 static NSArray *clipboardReadValues=nil;
 static NSString *clipboardWritten=nil;
+static NSArray *clipboardImageItems=nil;
 static bool clipboardMissing=false;
 static unsigned clipboardReads=0,clipboardWrites=0,clipboardFault=0;
 static NSString *clipboardFaultStage=nil;
@@ -30,6 +31,8 @@ static void clipboardObserve(NSString *stage){
     id value=clipboardReadValues[index];return value==[NSNull null]?nil:value;
 }
 - (void)setString:(NSString *)value {clipboardObserve(@"set");++clipboardWrites;clipboardWritten=[value copy];clipboardObserve(@"committed");}
+- (NSArray *)items {return clipboardImageItems;}
+- (void)setItems:(NSArray *)items {clipboardObserve(@"itemsSet");++clipboardWrites;clipboardImageItems=[items copy];clipboardObserve(@"imageCommitted");}
 @end
 @interface NativeClipboardNotificationsFixture : NSObject
 + (instancetype)defaultCenter;
@@ -155,11 +158,11 @@ static void typedClipboardTextCases(TLinkInProcessNativeBridge *bridge){
         const int gates=licenseCalls;result=native?invoke(@[@7,object],context):[bridge legacyClipboardText:request(@[@7,object]) context:context];
         failure(result.value,@"AbortError");assert(clipboardDescriptions==1&&licenseCalls==gates&&clipboardOrder.empty());
     }
-    // Clipboard image kind retains RAW validation; notification kinds have their own direct fixture.
+    // Clipboard image invalid-input parity stays covered after its direct adapter is installed.
     for(NSArray *args in @[@[@8],@[@8,@"wrong;;path"]]){
         auto context=parent();reset(context,ordinary);TLinkJSNativeResponse *expected=[bridge legacyClipboardText:request(args) context:context];NSDictionary *notification=clipboardNotification;
         context=parent();reset(context,ordinary);const int rawCalls=calls;TLinkJSNativeResponse *actual=invoke(args,context);
-        assert(actual.ok&&expected.ok&&[actual.value isEqual:expected.value]&&calls==rawCalls+1);assert((notification==clipboardNotification)||[notification isEqual:clipboardNotification]);
+        assert(actual.ok&&expected.ok&&[actual.value isEqual:expected.value]&&calls==rawCalls);assert((notification==clipboardNotification)||[notification isEqual:clipboardNotification]);
     }
     // The shared RAW backend remains byte-compatible after primitive extraction.
     for(NSString *raw in @[@"6",@"6;;ignored",@"7",@"7;;",@"7;;a;;b",@"07;;text",@"bad",@"0;;a;;b",@"8",@"8;;wrong;;path"]){

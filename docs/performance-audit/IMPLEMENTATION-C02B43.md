@@ -1,7 +1,7 @@
 # C02b43 — direct keyboard notification adapters
 
 Date: 2026-10-28 (Asia/Bangkok). Baseline: `023e926`, containing C02b42; the user reported C02b42 built successfully.
-Status: **source implemented; new macOS/Foundation/ARC/sanitizer CI and device qualification pending**.
+Status: **user reported corrected build success before C02b44 at source baseline `d516066`; independent device/performance qualification pending**.
 Finding: **P0-13, keyboard task-24 notification kinds**. Clipboard image kind 8, other adapters, metadata codecs/copies and performance qualification remain open.
 
 ## Result and compatibility
@@ -33,5 +33,7 @@ New macOS coverage compiles actual shared notification/backend functions, comple
 Coverage compares complete ACK/payload/effect order across 160 ordinary cases; signed/unknown kinds and intValue aliases; missing/empty/NSNull/content descriptions; Unicode/newlines/delimiters/NUL/invalid encoding; exact/over-limit ASCII/Unicode inputs and exact/short output; full admission of ignored suffixes; ordinary task-24/owner denial; pre-cancel/expiry and gate-time stop; accepted notification cancellation/deadline, NSException parity and direct C++ guards before/after effects; conversion-time cancellation; mutable input snapshots and retained result/payload lifetime; direct rejection of clipboard kinds and RAW task_id spelling/field-count compatibility. Existing clipboard read/write fixtures remain, and their RAW fallback check now focuses on kind 8.
 
 ## Acceptance and remaining work
+
+The user reported the corrected C02b43 build, including the toast lifetime-probe scope fix, passed before C02b44; source baseline is `d516066`. The next source checkpoint is IMPLEMENTATION-C02B44.md. This build report does not replace OS/appdelegate/device/performance qualification.
 
 The user reported C02b42 build success at 023e926; that does not qualify the new notification adapter. Build rootfull/roothide and compare typed/helper keyboard notification calls with RAW task 24 for supported/unknown kinds, Unicode/newlines, missing/empty content, additional ;; fields, exact limits, license denial/revocation and caller/output failures after accepted delivery. Verify notification payloads and actual appdelegate keyboard behavior separately from ACKs, including reentry and late delivery. Recheck direct clipboard 6/7 and image 8 RAW paths. Measure bridge overhead separately from OS/receiver work. Continue other P0-13 adapters and metadata codecs/copies, P1-40 invalidation and P0-12 qualification/unknown-start cases; C02 remains partial.

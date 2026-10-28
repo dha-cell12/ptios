@@ -919,6 +919,42 @@ NSDictionary *TLinkExecuteNativeKeyboardNotification(int kind,id content,TLinkTa
 }
 // END typed keyboard notification task entry.
 
+// BEGIN typed clipboard image task entry.
+static NSDictionary *zx_nativeClipboardImageExecute(id content,TLinkTaskExecutionContext *context)
+{
+    static_assert(TASK_TEXT_INPUT==24,"clipboard image task classification changed");
+    TLinkTaskExecutionContext *call=TLinkNativeCallContext(context,false,false);
+    auto budget=[call nativeBudget];TLinkNativeBudgetScope scope(budget);
+    @try {try{
+        NSString *input=content?[[NSString stringWithFormat:@"%@",content] copy]:nil;
+        const NSUInteger prefix=content?5:3; // task 24, kind 8, optional ;;
+        if(input.length>8192-prefix)return zx_typedTouchFailure(@"input_too_large");
+        const char *bytes=input.UTF8String;const NSUInteger byteCount=[input lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        if(content&&(!bytes||byteCount>32*1024-prefix||memchr(bytes,0,byteCount)))return zx_typedTouchFailure(@"invalid_payload");
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSString *denial=nil;
+        if(!TLinkRootfullLicenseTaskAllowed(TASK_TEXT_INPUT,&denial))return zx_typedTouchReply(denial?:@"-1;;license_required\r\n",budget);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        NSRange separator=input?[input rangeOfString:@";;"]:NSMakeRange(NSNotFound,0);
+        if(separator.location==NSNotFound)return zx_typedTouchReply(@"-1;;Keyboard related event error. You have to specify image source type and file path.\r\n",budget);
+        NSString *source=[input substringToIndex:separator.location],*path=[input substringFromIndex:separator.location+separator.length];
+        NSError *error=nil;NSString *value=TLinkWriteClipboardImage(source,path,&error);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        if(error)return zx_typedTouchReply(error.localizedDescription,budget);
+        NSDictionary *result=zx_nativeStringQueryResult(value,nil,false,nil,budget,TLinkNativeQueryMetadata::Reply);
+        if(budget->stopped())return zx_typedTouchStopped(budget);
+        return result;
+    }catch(...){return zx_typedTouchFailure(@"native_exception");}}
+    @catch(__unused NSException *exception){return zx_typedTouchFailure(@"native_exception");}
+}
+NSDictionary *TLinkExecuteNativeClipboardImage(id content,TLinkTaskExecutionContext *context)
+{
+    NSDictionary *result=nil;
+    @autoreleasepool{result=zx_nativeClipboardImageExecute(content,context);}
+    return result;
+}
+// END typed clipboard image task entry.
+
 // BEGIN typed toast task entry.
 static NSDictionary *zx_nativeToastExecute(int type,NSString *message,int duration,int position,int fontSize,TLinkTaskExecutionContext *context)
 {

@@ -1050,10 +1050,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSDictionary *result=nil;
         if(kind==6||kind==7)result=TLinkExecuteNativeClipboardText(kind,content,context);
         else if(kind!=8)result=TLinkExecuteNativeKeyboardNotification(kind,content,context);
-        else{
-            NSString *payload = content ? [NSString stringWithFormat:@"%d;;%@", kind, content] : [NSString stringWithFormat:@"%d", kind];
-            result = [self executeRawPayload:[NSString stringWithFormat:@"%02d%@", TASK_TEXT_INPUT, payload] context:context];
-        }
+        else result=TLinkExecuteNativeClipboardImage(content,context);
         if (kind != 6) return [TLinkJSNativeResponse responseWithValue:result];
         NSArray *parts = result[@"parts"];
         if (![result[@"ok"] boolValue] || [parts count] < 2) return [TLinkJSNativeResponse responseWithValue:result];
