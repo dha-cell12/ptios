@@ -6,6 +6,9 @@ FOUNDATION_EXPORT NSString * const TLinkEventChannelSchemaV1;
 FOUNDATION_EXPORT NSString * const TLinkEventSchemaV1;
 
 FOUNDATION_EXPORT NSString *TLinkEventChannelRootPath(void);
+// Returns a persisted event or a fixed state/error dictionary. Only a missing journal bootstraps.
+// Invalid/unreadable journals are preserved; locked publication exceptions release the file lock.
+// Reported write failure can follow replacement; retry reads disk, without automatic replay.
 FOUNDATION_EXPORT NSDictionary *TLinkEventChannelPublish(NSString *runtime,
                                                          NSString *topic,
                                                          NSString *type,
@@ -24,8 +27,10 @@ FOUNDATION_EXPORT NSDictionary *TLinkEventChannelPollBody(NSString *_Nullable bo
 typedef NSString *_Nullable (^TLinkEventPollAuthorization)(void);
 typedef void (^TLinkEventPollCompletion)(TLinkEventPollRequest *request, NSDictionary *_Nullable batch, NSString *_Nullable error);
 // Completion is asynchronous on the event owner queue. Never synchronously wait from that queue.
+// Invalid/unreadable journals complete authorized polls with an error and no batch; the cursor is not advanced.
 FOUNDATION_EXPORT TLinkEventPollRequest *TLinkEventChannelBeginPoll(NSString *_Nullable body,
     TLinkEventPollAuthorization _Nullable authorization, TLinkEventPollCompletion completion);
+// Healthy status is implemented; journal load failure is state=error with a fixed error code.
 FOUNDATION_EXPORT NSDictionary *TLinkEventChannelStatus(void);
 
 NS_ASSUME_NONNULL_END

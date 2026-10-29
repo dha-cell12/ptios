@@ -10,6 +10,13 @@
 #include <thread>
 #include <functional>
 #include <atomic>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <cerrno>
+#include <set>
+#include <stdexcept>
 #include "../shared/TLinkEventChannel.h"
 #include <notify.h>
 extern char **environ;
@@ -19,7 +26,38 @@ static uint32_t FixtureRegisterNotification(const char *name, int *token, dispat
     uint32_t result = notify_register_dispatch(name,token,queue,^(int value) { if (!ignoreNotifications.load()) handler(value); });
     assert(result == NOTIFY_STATUS_OK); return result;
 }
-static uint32_t FixtureNotifyPost(const char *name) { return suppressNotify ? 0 : notify_post(name); }
+static std::atomic<unsigned> fixturePosts{0},fixtureWrites{0},fixturePublishReads{0};
+static std::atomic<unsigned> fixtureReadFault{0},fixtureWriteFault{0};
+static std::atomic<bool> fixtureReaderLockDenied{false};
+static thread_local std::set<int> fixtureEventLocks;
+static uint32_t FixtureNotifyPost(const char *name) { assert(fixtureEventLocks.empty());++fixturePosts;return suppressNotify ? 0 : notify_post(name); }
+static int FixtureEventFlock(int fd,int operation) {
+    if((operation&LOCK_SH)&&fixtureReaderLockDenied.load()){errno=EWOULDBLOCK;return -1;}
+    const int result=::flock(fd,operation);
+    if(!result){if(operation==LOCK_UN)assert(fixtureEventLocks.erase(fd)==1);else assert(fixtureEventLocks.insert(fd).second);}
+    return result;
+}
+static int FixtureEventClose(int fd) { assert(!fixtureEventLocks.count(fd));return ::close(fd); }
+static NSData *FixtureEventRead(NSString *path,NSError **error) {
+    assert(fixtureEventLocks.size()==1);++fixturePublishReads;
+    if(fixtureReadFault==4)[NSException raise:@"EventFixture" format:@"read failed"];
+    if(fixtureReadFault==5)throw std::runtime_error("read failed");
+    if(fixtureReadFault){
+        *error=fixtureReadFault==1?[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoPermissionError userInfo:nil]:
+            (fixtureReadFault==2?[NSError errorWithDomain:NSPOSIXErrorDomain code:ENOENT userInfo:nil]:nil);return nil;
+    }
+    return [NSData dataWithContentsOfFile:path options:0 error:error];
+}
+static BOOL FixtureEventWrite(NSData *data,NSString *path) {
+    assert(fixtureEventLocks.size()==1);++fixtureWrites;
+    if(fixtureWriteFault==1)return NO;
+    if(fixtureWriteFault==2)[NSException raise:@"EventFixture" format:@"write failed"];
+    if(fixtureWriteFault==3)throw std::runtime_error("write failed");
+    const BOOL result=[data writeToFile:path atomically:YES];
+    if(fixtureWriteFault==4)return NO;
+    if(fixtureWriteFault==5)[NSException raise:@"EventFixture" format:@"post-write failed"];
+    if(fixtureWriteFault==6)throw std::runtime_error("post-write failed");return result;
+}
 #include "EventChannelUnderTest.inc"
 static dispatch_queue_t socketQueue() { static dispatch_queue_t q = dispatch_queue_create("test.event-socket", DISPATCH_QUEUE_SERIAL); return q; }
 static dispatch_queue_t POCSocketQueue() { return socketQueue(); }
@@ -71,15 +109,198 @@ static void childPublish(const char *executable, const char *mode) {
     assert(posix_spawn(&pid, executable, nullptr, nullptr, args, environ) == 0);
     int status; assert(waitpid(pid,&status,0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
+static NSData *fixtureJournalData(NSDictionary *journal) {
+    NSData *data=[NSJSONSerialization dataWithJSONObject:journal options:0 error:nil];assert(data);return data;
+}
+static NSDictionary *fixtureStoredEvent(uint64_t sequence) {
+    return @{@"schema":TLinkEventSchemaV1,@"sequence":@(sequence),@"timestamp_ms":@0,@"event_id":@"existing-event",
+        @"runtime":@"fixture",@"topic":@"script.run",@"type":@"updated",@"payload":@{@"kept":@(YES)}};
+}
+static NSDictionary *fixtureJournal(uint64_t next,NSArray *events) {
+    return @{@"schema":TLinkEventChannelSchemaV1,@"next_sequence":@(next),@"events":events,@"extra":@{@"kept":@"ảnh 测试"}};
+}
+static void fixtureOtherOwnerCanLock() {
+    const char *path=TLinkEventLockPath().fileSystemRepresentation;int descriptors[2];assert(::pipe(descriptors)==0);
+    const pid_t child=::fork();assert(child>=0);
+    if(!child){
+        ::close(descriptors[0]);const int fd=::open(path,O_RDWR);int result=fd>=0?::flock(fd,LOCK_EX|LOCK_NB):-1;
+        const char ok=result==0?'Y':'N';if(!result)::flock(fd,LOCK_UN);if(fd>=0)::close(fd);
+        if(::write(descriptors[1],&ok,1)!=1)::_exit(2);::close(descriptors[1]);::_exit(0);
+    }
+    ::close(descriptors[1]);char ok=0;assert(::read(descriptors[0],&ok,1)==1&&ok=='Y');::close(descriptors[0]);
+    int status=0;assert(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+}
+static void fixtureRejectedPublication(NSString *code,NSData *expected,unsigned attemptedWrites=0) {
+    const unsigned posts=fixturePosts.load(),writes=fixtureWrites.load(),reads=fixturePublishReads.load();
+    NSDictionary *reply=TLinkEventChannelPublish(@"fixture",@"script.run",@"updated",@{@"new":@1});
+    assert([reply[@"state"] isEqual:@"error"]&&[reply[@"error"] isEqual:code]&&reply.count==2);
+    assert(fixturePosts==posts&&fixtureWrites==writes+attemptedWrites&&fixturePublishReads==reads+1&&fixtureEventLocks.empty());
+    if(expected)assert([expected isEqual:[NSData dataWithContentsOfFile:TLinkEventJournalPath()]]);
+    fixtureOtherOwnerCanLock();
+}
+static void fixtureCheckedPublicationCases() {
+    // Run before the async owner exists; all files are under the runner's private temporary root.
+    TLinkEventEnsureDirectory();NSString *path=TLinkEventJournalPath();NSFileManager *fm=[NSFileManager defaultManager];
+    NSDictionary *first=fixtureStoredEvent(7),*second=fixtureStoredEvent(8),*healthy=fixtureJournal(9,@[first,second]);
+    NSData *bytes=fixtureJournalData(healthy);
+    assert(![fm fileExistsAtPath:path]);const unsigned initial=fixturePosts.load();assert(publish()==1&&fixturePosts==initial+1);
+    assert([bytes writeToFile:path atomically:YES]);NSDictionary *appended=TLinkEventChannelPublish(@"Fixture",@"Script.Run",@"Updated",@{@"new":@1});
+    assert([appended[@"sequence"] unsignedLongLongValue]==9&&[appended[@"runtime"] isEqual:@"fixture"]&&[appended[@"topic"] isEqual:@"script.run"]);
+    NSDictionary *stored=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:path] options:0 error:nil];
+    assert([stored[@"next_sequence"] unsignedLongLongValue]==10&&[stored[@"events"][0] isEqual:first]&&[stored[@"events"][1] isEqual:second]&&[stored[@"extra"] isEqual:healthy[@"extra"]]);
+    NSMutableArray *bad=[NSMutableArray arrayWithArray:@[@{},@{@"schema":TLinkEventChannelSchemaV1},@{@"schema":@"other",@"next_sequence":@9,@"events":@[]}]];
+    for(id value in @[@0,@(-1),@1.5,@(YES),@"9",[NSNull null]]){NSMutableDictionary *item=[healthy mutableCopy];item[@"next_sequence"]=value;[bad addObject:item];}
+    for(id value in @[@1,[NSNull null],@{},@[@1]]){NSMutableDictionary *item=[healthy mutableCopy];item[@"events"]=value;[bad addObject:item];}
+    for(id value in @[@0,@(-1),@7.5,@(YES),@"7",[NSNull null],@9,@6]){
+        NSMutableDictionary *event=[first mutableCopy];event[@"sequence"]=value;[bad addObject:fixtureJournal(9,@[event,second])];
+    }
+    [bad addObject:fixtureJournal(9,@[second,first])];[bad addObject:fixtureJournal(9,@[first,first])];
+    [bad addObject:fixtureJournal(10,@[first,second])]; // latest retained does not precede next
+    for(NSString *key in @[@"schema",@"event_id",@"runtime",@"topic",@"type",@"payload",@"timestamp_ms"]){
+        for(id value in @[[NSNull null],@""]){NSMutableDictionary *event=[first mutableCopy];event[key]=value;[bad addObject:fixtureJournal(9,@[event,second])];}
+    }
+    NSMutableArray *over=[NSMutableArray array];for(unsigned n=1;n<=257;++n)[over addObject:fixtureStoredEvent(n)];[bad addObject:fixtureJournal(258,over)];
+    for(NSDictionary *item in bad){NSData *invalid=fixtureJournalData(item);assert([invalid writeToFile:path atomically:YES]);fixtureRejectedPublication(@"event_journal_invalid",invalid);}
+    for(NSString *text in @[@"",@"not-json",@"[]",@"null",@"{\"schema\":"]){NSData *invalid=[text dataUsingEncoding:NSUTF8StringEncoding];assert([invalid writeToFile:path atomically:YES]);fixtureRejectedPublication(@"event_journal_invalid",invalid);}
+    // An unsigned out-of-range JSON number must not wrap into a reused cursor.
+    NSData *overflow=[@"{\"schema\":\"event_channel_v1\",\"next_sequence\":18446744073709551616,\"events\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+    assert([overflow writeToFile:path atomically:YES]);fixtureRejectedPublication(@"event_journal_invalid",overflow);
+    assert([bytes writeToFile:path atomically:YES]);
+    for(unsigned fault=1;fault<=5;++fault){fixtureReadFault=fault;fixtureRejectedPublication(fault<4?@"event_journal_read_failed":@"event_journal_exception",bytes);fixtureReadFault=0;}
+    assert([fm removeItemAtPath:path error:nil]&&[fm createDirectoryAtPath:path withIntermediateDirectories:NO attributes:nil error:nil]);
+    fixtureRejectedPublication(@"event_journal_read_failed",nil);BOOL directory=NO;assert([fm fileExistsAtPath:path isDirectory:&directory]&&directory);
+    assert([fm removeItemAtPath:path error:nil]);
+    // Both ordinary writer failure and exceptions retain no success notification.
+    for(unsigned fault=1;fault<=6;++fault){
+        assert([bytes writeToFile:path atomically:YES]);const unsigned posts=fixturePosts.load(),writes=fixtureWrites.load();fixtureWriteFault=fault;
+        NSDictionary *reply=TLinkEventChannelPublish(@"fixture",@"script.run",@"updated",@{});fixtureWriteFault=0;
+        assert([reply[@"error"] isEqual:(fault==1||fault==4)?@"event_journal_write_failed":@"event_journal_exception"]&&fixturePosts==posts&&fixtureWrites==writes+1&&fixtureEventLocks.empty());
+        fixtureOtherOwnerCanLock();
+        NSDictionary *now=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:path] options:0 error:nil];
+        assert([now[@"next_sequence"] unsignedLongLongValue]==(fault<=3?9:10));
+        // Retrying reads the actual disk outcome, not an in-memory cursor or cached reset.
+        assert(publish()==(fault<=3?9:10)&&fixturePosts==posts+1);
+    }
+    // Preserve an explicitly restored empty history's nonzero cursor; max is terminal, not a rollover.
+    assert([fixtureJournalData(fixtureJournal(500,@[])) writeToFile:path atomically:YES]&&publish()==500);
+    assert([fixtureJournalData(fixtureJournal(UINT64_MAX-1,@[])) writeToFile:path atomically:YES]);
+    assert(publish()==UINT64_MAX-1);NSData *terminal=[NSData dataWithContentsOfFile:path];fixtureRejectedPublication(@"event_journal_sequence_exhausted",terminal);
+    // Explicit repair permits publishing again, without replaying any failed publication.
+    assert([bytes writeToFile:path atomically:YES]&&publish()==9);
+    assert([fm removeItemAtPath:path error:nil]); // Original B06 cases start at the genuine missing-file bootstrap.
+    assert(fixtureEventLocks.empty());
+    puts("Event publication passed: missing-only bootstrap, retained sequence/schema/shape authority, malformed/read/NS/C++ preservation, UINT64 exhaustion, writer pre/post-effect failures, no false notification, real lock release and explicit repair. Read-only corruption/epoch/power-loss recovery remains pending.");
+}
+static void fixtureReadFailure(uint64_t cursor,NSString *code,NSData *expected) {
+    const unsigned writes=fixtureWrites.load(),posts=fixturePosts.load();
+    NSDictionary *status=TLinkEventChannelStatus();
+    assert([status[@"state"] isEqual:@"error"]&&[status[@"error"] isEqual:code]&&[status[@"transport"] isEqual:@"task95_long_poll_v1"]);
+    NSString *error=nil;NSDictionary *batch=TLinkEventChannelPollBody(body(cursor,0),&error);
+    assert([error isEqual:code]&&!batch.count&&sTLinkEventActivePolls==0);
+    dispatch_sync(TLinkEventOwnerQueue(),^{assert(fixtureEventLocks.empty()&&!sTLinkEventSnapshot&&!sTLinkEventWaiters.count);});
+    assert(fixtureEventLocks.empty()&&fixtureWrites==writes&&fixturePosts==posts&&[expected isEqual:[NSData dataWithContentsOfFile:TLinkEventJournalPath()]]);
+    fixtureOtherOwnerCanLock();
+}
+static void fixtureCheckedReadCases(uint64_t cursor) {
+    const bool savedNotify=suppressNotify;suppressNotify=true; // Use owner barriers/gates, without leaving late hints for B06 quiet-read checks.
+    NSString *path=TLinkEventJournalPath();NSData *healthy=[NSData dataWithContentsOfFile:path];assert(healthy);
+    NSData *invalid=[@"not-json" dataUsingEncoding:NSUTF8StringEncoding];
+    // Missing is a genuine empty bootstrap, not an error, and read-only calls never create journal JSON.
+    const unsigned initialWrites=fixtureWrites.load(),initialPosts=fixturePosts.load();
+    assert([[NSFileManager defaultManager] removeItemAtPath:path error:nil]);
+    assert([TLinkEventChannelStatus()[@"state"] isEqual:@"implemented"]);
+    NSString *bootstrapError=nil;NSDictionary *bootstrap=TLinkEventChannelPollBody(body(0,0),&bootstrapError);
+    assert(!bootstrapError&&[bootstrap[@"state"] isEqual:@"ready"]&&[bootstrap[@"next_cursor"] unsignedLongLongValue]==0);
+    assert(![[NSFileManager defaultManager] fileExistsAtPath:path]&&fixtureWrites==initialWrites&&fixturePosts==initialPosts);
+    // Publication exhaustion does not prohibit reading the last valid cursor.
+    assert([fixtureJournalData(fixtureJournal(UINT64_MAX,@[])) writeToFile:path atomically:YES]);
+    NSDictionary *terminal=TLinkEventChannelPollBody(body(UINT64_MAX-1,0),&bootstrapError);
+    assert(!bootstrapError&&[terminal[@"state"] isEqual:@"ready"]&&[terminal[@"latest_cursor"] unsignedLongLongValue]==UINT64_MAX-1);
+    assert([healthy writeToFile:path atomically:YES]);
+    NSArray *malformed=@[@{},@{@"schema":TLinkEventChannelSchemaV1,@"next_sequence":@1,@"events":@[@1]},
+        fixtureJournal(0,@[]),fixtureJournal(3,@[fixtureStoredEvent(1)]),fixtureJournal(4,@[fixtureStoredEvent(2),fixtureStoredEvent(1)])];
+    for(NSDictionary *journal in malformed){NSData *bad=fixtureJournalData(journal);assert([bad writeToFile:path atomically:YES]);fixtureReadFailure(cursor,@"event_journal_invalid",bad);}
+    assert([invalid writeToFile:path atomically:YES]);fixtureReadFailure(cursor,@"event_journal_invalid",invalid);
+    assert([healthy writeToFile:path atomically:YES]);
+    for(unsigned fault=1;fault<=5;++fault){fixtureReadFault=fault;fixtureReadFailure(cursor,fault<4?@"event_journal_read_failed":@"event_journal_exception",healthy);fixtureReadFault=0;}
+    fixtureReaderLockDenied=true;fixtureReadFailure(cursor,@"event_journal_unavailable",healthy);fixtureReaderLockDenied=false;
+    // Authorization denial precedes journal access, including while storage is corrupt.
+    assert([invalid writeToFile:path atomically:YES]);const unsigned reads=fixturePublishReads.load();
+    dispatch_semaphore_t denied=dispatch_semaphore_create(0);
+    TLinkEventChannelBeginPoll(body(cursor,0),^NSString *{return @"fixture_denied";},^(TLinkEventPollRequest *,NSDictionary *value,NSString *reason){
+        assert(!value&&[reason isEqual:@"fixture_denied"]);dispatch_semaphore_signal(denied);
+    });
+    assert(dispatch_semaphore_wait(denied,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&fixturePublishReads==reads&&sTLinkEventActivePolls==0);
+    assert([healthy writeToFile:path atomically:YES]);
+    // Keep an unauthorized waiter so Rearm cannot hide missing cache invalidation when the ready poll leaves.
+    for(bool hard:{true,false}){
+        dispatch_semaphore_t entered=dispatch_semaphore_create(0),release=dispatch_semaphore_create(0),readyDone=dispatch_semaphore_create(0),authDone=dispatch_semaphore_create(0);
+        __block unsigned readyCalls=0;__block NSDictionary *recovered=nil;
+        TLinkEventPollRequest *auth=TLinkEventChannelBeginPoll(body(cursor),^NSString *{
+            dispatch_semaphore_signal(entered);assert(dispatch_semaphore_wait(release,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);return nil;
+        },^(TLinkEventPollRequest *,NSDictionary *value,NSString *reason){assert(!reason&&[value[@"events"] count]==1);recovered=value;dispatch_semaphore_signal(authDone);});
+        assert(dispatch_semaphore_wait(entered,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+        TLinkEventPollRequest *ready=TLinkEventChannelBeginPoll(body(cursor),nil,^(TLinkEventPollRequest *,NSDictionary *value,NSString *reason){
+            ++readyCalls;assert(hard&&!value&&[reason isEqual:@"event_journal_invalid"]);dispatch_semaphore_signal(readyDone);
+        });
+        dispatch_sync(TLinkEventOwnerQueue(),^{assert(sTLinkEventSnapshot&&sTLinkEventWaiters.count==2);});
+        if(hard)assert([invalid writeToFile:path atomically:YES]);else fixtureReaderLockDenied=true;
+        dispatch_sync(TLinkEventOwnerQueue(),^{TLinkEventSweep(YES);assert(!sTLinkEventSnapshot&&!sTLinkEventFingerprint);});
+        if(hard){assert(dispatch_semaphore_wait(readyDone,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&readyCalls==1);}
+        else{assert(!readyCalls&&sTLinkEventActivePolls==2);[ready cancel];}
+        dispatch_sync(TLinkEventOwnerQueue(),^{assert(sTLinkEventWaiters.count==1&&!sTLinkEventSnapshot);});
+        fixtureReaderLockDenied=false;assert([healthy writeToFile:path atomically:YES]);
+        const uint64_t sequence=publish();assert(sequence==cursor+1);dispatch_semaphore_signal(release);
+        assert(dispatch_semaphore_wait(authDone,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&[recovered[@"next_cursor"] unsignedLongLongValue]==sequence&&!auth.isCancelled);
+        dispatch_sync(TLinkEventOwnerQueue(),^{assert(!sTLinkEventWaiters.count&&!sTLinkEventSnapshot);});
+        assert(sTLinkEventActivePolls==0&&sTLinkEventAuthorizations==0&&[healthy writeToFile:path atomically:YES]);
+    }
+    // Real lock contention retains the timeout/unavailable policy, without serving an old snapshot.
+    const int writer=TLinkEventAcquireFileLock(NO,NO);assert(writer>=0);NSString *error=nil;uint64_t started=TLinkEventMonotonicMs();
+    NSDictionary *batch=TLinkEventChannelPollBody(body(cursor,60),&error);TLinkEventReleaseFileLock(writer);
+    assert([error isEqual:@"event_journal_unavailable"]&&!batch.count&&TLinkEventMonotonicMs()-started>=60&&sTLinkEventActivePolls==0);
+    // Corruption errors flow through existing legacy/JSON/TrollStore/remote encoders with no ready batch.
+    assert([invalid writeToFile:path atomically:YES]);wireWrites=[NSMutableArray array];
+    ZXClientContext *root=[ZXClientContext new];root.writeStream=(CFWriteStreamRef)(uintptr_t)1;
+    dispatch_sync(socketQueue(),^{zx_deferLegacyEventPoll(root,body(cursor,0));});
+    waitFor([]{__block BOOL done;dispatch_sync(socketQueue(),^{done=wireWrites.count==1;});return (bool)done;});
+    dispatch_sync(socketQueue(),^{
+        NSString *line=[[NSString alloc] initWithData:wireWrites[0] encoding:NSUTF8StringEncoding];assert([line isEqual:@"-1;;event_journal_invalid\r\n"]);
+        [wireWrites removeAllObjects];zx_deferJSONEventPoll(root,body(cursor,0),@42);
+    });
+    waitFor([]{__block BOOL done;dispatch_sync(socketQueue(),^{done=wireWrites.count==1;});return (bool)done;});
+    dispatch_sync(socketQueue(),^{
+        NSData *wire=wireWrites[0];assert(wire.length>10);
+        NSDictionary *value=[NSJSONSerialization JSONObjectWithData:[wire subdataWithRange:NSMakeRange(10,wire.length-10)] options:0 error:nil];
+        assert([value[@"id"] isEqual:@42]&&![value[@"ok"] boolValue]&&[value[@"error"] isEqual:@"event_journal_invalid"]);[wireWrites removeAllObjects];
+    });
+    POCClientContext *troll=[POCClientContext new];troll.writeStream=(CFWriteStreamRef)(uintptr_t)2;
+    dispatch_sync(socketQueue(),^{POCDeferEventPoll(troll,body(cursor,0));});
+    waitFor([]{__block BOOL done;dispatch_sync(socketQueue(),^{done=wireWrites.count==1;});return (bool)done;});
+    dispatch_sync(socketQueue(),^{NSString *line=[[NSString alloc] initWithData:wireWrites[0] encoding:NSUTF8StringEncoding];assert([line isEqual:@"-1;;event_journal_invalid\r\n"]);[wireWrites removeAllObjects];});
+    dispatch_semaphore_t remoteDone=dispatch_semaphore_create(0);
+    NSData *remoteLine=[[@"95;;" stringByAppendingFormat:@"%@\r\n",body(cursor,0)] dataUsingEncoding:NSUTF8StringEncoding];
+    TLinkBeginRemoteEventPoll(remoteLine,^(TLinkEventPollRequest *,NSData *response){
+        NSString *line=[[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding];assert([line isEqual:@"-1;;event_journal_invalid\r\n"]);dispatch_semaphore_signal(remoteDone);
+    });
+    assert(dispatch_semaphore_wait(remoteDone,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0&&[invalid isEqual:[NSData dataWithContentsOfFile:path]]);
+    assert([healthy writeToFile:path atomically:YES]);error=nil;batch=TLinkEventChannelPollBody(body(cursor,0),&error);
+    assert(!error&&[batch[@"state"] isEqual:@"ready"]&&[batch[@"next_cursor"] unsignedLongLongValue]==cursor&&[TLinkEventChannelStatus()[@"state"] isEqual:@"implemented"]);
+    dispatch_sync(TLinkEventOwnerQueue(),^{assert(!sTLinkEventWaiters.count&&!sTLinkEventSnapshot);});fixtureOtherOwnerCanLock();
+    assert(sTLinkEventActivePolls==0&&sTLinkEventAuthorizations==0);suppressNotify=savedNotify;
+    puts("Event checked reads passed: status/poll malformed/read/NS/C++ errors, no reset or stale-cache delivery, cache invalidation with held authorization, transient contention/cancel/recovery, unchanged error wire adapters and balanced leases/locks. Missing-file epoch recovery pending.");
+}
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
+    fixtureCheckedPublicationCases();
     uint64_t one = publish(), unrelated = publish(@"other"), three = publish(), tail = publish(@"other");
     assert(one && unrelated == one + 1 && three == one + 2 && tail == one + 3);
     NSDictionary *batch = poll(0,1); assert([batch[@"has_more"] boolValue] && [batch[@"next_cursor"] unsignedLongLongValue] == unrelated);
     batch = poll(unrelated,1); assert(![batch[@"has_more"] boolValue] && [batch[@"next_cursor"] unsignedLongLongValue] == tail && [batch[@"events"] count] == 1);
     NSString *error = nil; (void)TLinkEventChannelPollBody(@"0;;0;;8;;a*b",&error); assert([error isEqual:@"event_topic_invalid"]);
     error = nil; (void)TLinkEventChannelPollBody(@"18446744073709551616;;0;;8;;*",&error); assert([error isEqual:@"event_request_invalid"]);
+    fixtureCheckedReadCases(tail);
     fputs("Event runtime: quiet wait, cross-process notification and lost-hint reconciliation\n",stderr);
     dispatch_semaphore_t delivered = dispatch_semaphore_create(0);
     __block NSDictionary *received = nil;

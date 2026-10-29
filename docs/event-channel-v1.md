@@ -74,3 +74,64 @@ Probe tám disconnect trên thiết bị yên lặng: thêm `-RunCancellationStr
 `scripts/Test-TLinkEventChannelV1.ps1`. Build/device và kiểm thử Foundation mới
 cần được xác nhận; chi tiết giới hạn và kế hoạch đo ở
 [IMPLEMENTATION-B06.md](performance-audit/IMPLEMENTATION-B06.md).
+
+## C03n: bảo vệ journal khi publish
+
+Publisher chỉ khởi tạo sequence 1 khi reader nhận lỗi Cocoa xác nhận file chưa
+tồn tại. File trống, JSON/schema hỏng, lỗi đọc hoặc NSError không xác định trả
+`state=error` và giữ journal; không ghi đè bằng journal rỗng hay phát notification.
+Lỗi trả về qua API publish nội bộ gồm `event_journal_read_failed`,
+`event_journal_invalid`, `event_journal_sequence_exhausted` và
+`event_journal_exception`; lỗi lock/write hiện có giữ nguyên tên.
+
+Reader dành riêng cho publish kiểm tra schema, tối đa 256 event, các trường
+chuẩn đúng kiểu và sequence nguyên dương, liên tiếp, kết thúc tại
+`next_sequence - 1`. Boolean, chuỗi, phân số, số âm và số vượt uint64 không được
+chấp nhận làm sequence. Journal rỗng có next_sequence hợp lệ khác 1 vẫn được
+giữ cursor đó; không tự reset. Khi next_sequence bằng UINT64_MAX, publisher
+dừng thay vì cộng tràn hoặc dùng lại sequence.
+
+Ngoại lệ NS/C++ trong phần đọc/kiểm tra/dựng/ghi dưới khóa trả lỗi cố định;
+`finally` nhả khóa. Chỉ sau ghi thành công và unlock mới phát Darwin notification.
+Lỗi báo sau khi atomic write đã có hiệu lực có thể để lại event đã commit trên
+đĩa nhưng chưa phát hint; lần publish sau đọc journal thực tế, không tự phát lại
+publication lỗi. Poll vẫn có reconciliation để bù hint bị mất.
+
+C03n chỉ bảo vệ publisher; C03o bên dưới mở rộng reader kiểm tra sang poll/status. Không phục hồi file hỏng, tái dựng epoch khi file bị mất,
+replay event lỗi hay thêm fsync/power-loss guarantee. History và event journal
+vẫn là hai giao dịch riêng; script lifecycle giữ chính sách phát event best effort.
+Schema, task 95, payload/retention, wire và các trường thành công không đổi.
+Đọc/parse/rewrite journal toàn phần và đo chi phí validation trên thiết bị còn
+trong backlog C03/P1-54/P1-58; fixture Foundation mới chờ CI macOS.
+
+## C03o: báo lỗi đọc ở poll/status và bỏ snapshot cũ
+
+Publisher, poll và status dùng chung reader kiểm tra schema/shape/cursor của
+C03n. Journal hỏng trả `event_journal_invalid`; lỗi đọc trả
+`event_journal_read_failed`; NS/C++ exception trả `event_journal_exception`.
+Loader bắt ngoại lệ và nhả shared flock/descriptor bằng finally. Không sửa hoặc
+ghi lại journal khi đọc lỗi.
+
+Poll đã được authorization gặp lỗi dữ liệu/đọc/exception kết thúc ngay với
+error và không có batch. Adapter legacy/TrollStore/remote trả đường lỗi hiện có,
+root JSON trả ok=false; client giữ cursor đã commit và có thể retry sau khi
+storage được sửa. Authorization denial vẫn đi trước việc đọc dữ liệu. Không
+biến lỗi đọc thành batch ready rỗng, gap hay next_cursor=0.
+
+Mỗi lần tải snapshot thất bại đều bỏ snapshot và fingerprint đã cache, kể cả
+khi còn poll khác đang chờ authorization. Nếu lấy khóa nonblocking thất bại,
+owner vẫn giữ poll tới timeout và báo `event_journal_unavailable`; nó không
+phục vụ snapshot cũ trong lúc đó. Hủy vẫn trả capacity ngay; lần yêu cầu hoặc
+reconciliation kế tiếp có thể đọc lại sau khi lỗi hết.
+
+Status khỏe mạnh giữ state=implemented và các trường cũ. Khi tải thất bại,
+status trả state=error cùng error cố định; latest_cursor=0 lúc lỗi là giá trị
+chưa biết, không phải xác nhận journal đã reset. Consumer phải kiểm tra state
+và không cập nhật cursor từ status lỗi.
+
+File thực sự chưa tồn tại vẫn được đọc như journal rỗng, không tạo journal JSON
+mới. Journal next_sequence=UINT64_MAX vẫn đọc được cursor cuối, dù publisher
+không thể cấp sequence mới. Thay đổi không bổ sung epoch khi mất file, sửa file
+hỏng, replay hay fsync/power-loss durability. Cache vẫn dựa vào fingerprint và
+reconciliation cũ; thay đổi ngoài giao thức không có bảo đảm phát hiện tức thì.
+Fixture Foundation/POSIX/transport mới và đo thiết bị còn chờ CI/nghiệm thu.

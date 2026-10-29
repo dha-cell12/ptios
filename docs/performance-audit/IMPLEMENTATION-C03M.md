@@ -1,7 +1,7 @@
 # C03m — compact run-history index encoding
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: C03l working source, build passed according to the user. HEAD is still `0c5de74d`; no separate C03k/C03l commit is inferred. Normalized complete history source SHA-256 before this stage: `76ef6fa6e9d4fa9f1a8ac983a6ed69a58f56c425ae2e7c2506b01bb1232355a3`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; device qualification pending**.
+Status: **build passed according to the user before C03n (`87aae836`); independent device qualification pending**.
 Finding: **P1-48 index encoding/write volume**, a partial optimization without a persistence-schema migration.
 
 ## Change

@@ -109,22 +109,52 @@ static void TLinkEventReleaseFileLock(int fd)
     close(fd);
 }
 
-static NSMutableDictionary *TLinkEventReadJournal(void)
+// Checked reads must never replace damaged persisted sequence state with an empty journal.
+static BOOL TLinkEventJournalInteger(id value, uint64_t *result)
+{
+    if (![value isKindOfClass:[NSNumber class]] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) return NO;
+    NSString *text = [value stringValue];
+    if (text.length == 0) return NO;
+    for (NSUInteger i = 0; i < text.length; i++) {
+        unichar c = [text characterAtIndex:i];
+        if (c < '0' || c > '9') return NO;
+    }
+    return TLinkEventParseUnsignedCursor(text, result);
+}
+
+static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
 {
     sTLinkEventJournalReads.fetch_add(1);
-    NSData *data = [NSData dataWithContentsOfFile:TLinkEventJournalPath()];
-    id object = data.length > 0
-        ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]
-        : nil;
-    if ([object isKindOfClass:[NSDictionary class]] &&
-        [object[@"events"] isKindOfClass:[NSArray class]]) {
-        return [object mutableCopy];
+    NSError *readError = nil;
+    NSData *data = [NSData dataWithContentsOfFile:TLinkEventJournalPath() options:0 error:&readError];
+    if (!data) {
+        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&
+            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {
+            return [@{@"schema": TLinkEventChannelSchemaV1, @"next_sequence": @1, @"events": @[]} mutableCopy];
+        }
+        *error = @"event_journal_read_failed";
+        return nil;
     }
-    return [@{
-        @"schema": TLinkEventChannelSchemaV1,
-        @"next_sequence": @1,
-        @"events": [NSMutableArray array],
-    } mutableCopy];
+    id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    uint64_t next = 0, previous = 0;
+    BOOL valid = [object isKindOfClass:[NSDictionary class]] && [object[@"schema"] isEqual:TLinkEventChannelSchemaV1] &&
+        TLinkEventJournalInteger(object[@"next_sequence"], &next) && next > 0 &&
+        [object[@"events"] isKindOfClass:[NSArray class]] && [object[@"events"] count] <= kTLinkEventJournalMaxEvents;
+    if (valid) for (id event in object[@"events"]) {
+        uint64_t sequence = 0, timestamp = 0;
+        valid = [event isKindOfClass:[NSDictionary class]] && [event[@"schema"] isEqual:TLinkEventSchemaV1] &&
+            TLinkEventJournalInteger(event[@"sequence"], &sequence) && sequence > 0 && sequence < next &&
+            (!previous || sequence == previous + 1) && TLinkEventJournalInteger(event[@"timestamp_ms"], &timestamp) &&
+            [event[@"payload"] isKindOfClass:[NSDictionary class]];
+        if (valid) for (NSString *key in @[@"event_id", @"runtime", @"topic", @"type"]) {
+            if (![event[key] isKindOfClass:[NSString class]] || [event[key] length] == 0) { valid = NO; break; }
+        }
+        if (!valid) break;
+        previous = sequence;
+    }
+    valid = valid && (!previous || previous == next - 1);
+    if (!valid) { *error = @"event_journal_invalid"; return nil; }
+    return [object mutableCopy];
 }
 
 static BOOL TLinkEventWriteJournal(NSDictionary *journal)
@@ -172,27 +202,35 @@ NSDictionary *TLinkEventChannelPublish(NSString *runtime,
     @synchronized (TLinkEventProcessLock()) {
         int lockFd = TLinkEventAcquireFileLock(NO, NO);
         if (lockFd < 0) return @{@"state": @"error", @"error": @"event_journal_lock_failed"};
-        NSMutableDictionary *journal = TLinkEventReadJournal();
-        NSMutableArray *events = [journal[@"events"] mutableCopy] ?: [NSMutableArray array];
-        uint64_t sequence = MAX((uint64_t)1, [journal[@"next_sequence"] unsignedLongLongValue]);
-        NSDictionary *event = @{
-            @"schema": TLinkEventSchemaV1,
-            @"sequence": @(sequence),
-            @"event_id": [NSUUID UUID].UUIDString.lowercaseString,
-            @"timestamp_ms": @(TLinkEventNowMs()),
-            @"runtime": TLinkEventToken(runtime, @"unknown"),
-            @"topic": TLinkEventToken(topic, @"system"),
-            @"type": TLinkEventToken(type, @"updated"),
-            @"payload": TLinkEventBoundedPayload(payload),
-        };
-        [events addObject:event];
-        while (events.count > kTLinkEventJournalMaxEvents) [events removeObjectAtIndex:0];
-        journal[@"schema"] = TLinkEventChannelSchemaV1;
-        journal[@"next_sequence"] = @(sequence + 1);
-        journal[@"events"] = events;
-        journal[@"updated_at_ms"] = @(TLinkEventNowMs());
-        BOOL persisted = TLinkEventWriteJournal(journal);
-        TLinkEventReleaseFileLock(lockFd);
+        NSDictionary *event = nil;
+        BOOL persisted = NO;
+        @try { try {
+            NSString *readError = nil;
+            NSMutableDictionary *journal = TLinkEventReadJournal(&readError);
+            if (!journal) return @{@"state": @"error", @"error": readError};
+            NSMutableArray *events = [journal[@"events"] mutableCopy] ?: [NSMutableArray array];
+            uint64_t sequence = [journal[@"next_sequence"] unsignedLongLongValue];
+            if (sequence == UINT64_MAX) return @{@"state": @"error", @"error": @"event_journal_sequence_exhausted"};
+            event = @{
+                @"schema": TLinkEventSchemaV1,
+                @"sequence": @(sequence),
+                @"event_id": [NSUUID UUID].UUIDString.lowercaseString,
+                @"timestamp_ms": @(TLinkEventNowMs()),
+                @"runtime": TLinkEventToken(runtime, @"unknown"),
+                @"topic": TLinkEventToken(topic, @"system"),
+                @"type": TLinkEventToken(type, @"updated"),
+                @"payload": TLinkEventBoundedPayload(payload),
+            };
+            [events addObject:event];
+            while (events.count > kTLinkEventJournalMaxEvents) [events removeObjectAtIndex:0];
+            journal[@"schema"] = TLinkEventChannelSchemaV1;
+            journal[@"next_sequence"] = @(sequence + 1);
+            journal[@"events"] = events;
+            journal[@"updated_at_ms"] = @(TLinkEventNowMs());
+            persisted = TLinkEventWriteJournal(journal);
+        } catch (...) { return @{@"state": @"error", @"error": @"event_journal_exception"}; } }
+        @catch (__unused NSException *exception) { return @{@"state": @"error", @"error": @"event_journal_exception"}; }
+        @finally { TLinkEventReleaseFileLock(lockFd); }
         if (!persisted) return @{@"state": @"error", @"error": @"event_journal_write_failed"};
         notify_post(kTLinkEventNotification); // Wake hint only, after the journal commit and unlock.
         return event;
@@ -334,14 +372,21 @@ static NSString *TLinkEventFileFingerprint(void) {
         (long long)info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec,
         (long long)info.st_ctimespec.tv_sec, info.st_ctimespec.tv_nsec];
 }
-static NSDictionary *TLinkEventLoadSnapshot(BOOL nonBlocking, NSString **fingerprint) {
-    int fd = TLinkEventAcquireFileLock(YES, nonBlocking);
-    if (fd < 0) return nil;
+static NSDictionary *TLinkEventLoadSnapshot(BOOL nonBlocking, NSString **fingerprint, NSString **error) {
+    int fd = -1;
     NSDictionary *journal = nil;
-    @try {
-        journal = TLinkEventReadJournal();
+    if (fingerprint) *fingerprint = nil;
+    if (error) *error = nil;
+    @try { try {
+        fd = TLinkEventAcquireFileLock(YES, nonBlocking);
+        if (fd < 0) { if (error) *error = @"event_journal_unavailable"; return nil; }
+        NSString *readError = nil;
+        journal = TLinkEventReadJournal(&readError);
+        if (!journal) { if (error) *error = readError; return nil; }
         if (fingerprint) *fingerprint = TLinkEventFileFingerprint();
-    } @finally { TLinkEventReleaseFileLock(fd); }
+    } catch (...) { if (error) *error = @"event_journal_exception"; return nil; } }
+    @catch (__unused NSException *exception) { if (error) *error = @"event_journal_exception"; return nil; }
+    @finally { TLinkEventReleaseFileLock(fd); }
     return journal;
 }
 static void TLinkEventSweep(BOOL forceRead) {
@@ -350,11 +395,13 @@ static void TLinkEventSweep(BOOL forceRead) {
     BOOL ready = NO;
     for (TLinkEventPendingPoll *request in sTLinkEventWaiters) if (request->authorized && !request.isCancelled) ready = YES;
     BOOL loaded = YES, changed = NO;
+    NSString *readError = nil;
     if (ready && (forceRead || !sTLinkEventSnapshot || ![TLinkEventFileFingerprint() isEqual:sTLinkEventFingerprint])) {
         NSString *fingerprint = nil;
-        NSDictionary *journal = TLinkEventLoadSnapshot(YES, &fingerprint); // Never park the owner on flock.
+        NSDictionary *journal = TLinkEventLoadSnapshot(YES, &fingerprint, &readError); // Never park the owner on flock.
         loaded = journal != nil;
         if (loaded) { sTLinkEventSnapshot = journal; sTLinkEventFingerprint = fingerprint; changed = YES; }
+        else { sTLinkEventSnapshot = nil; sTLinkEventFingerprint = nil; }
     }
     for (TLinkEventPendingPoll *request in [sTLinkEventWaiters allObjects]) {
         if (request.isCancelled) { [sTLinkEventWaiters removeObject:request]; request->completion = nil; continue; }
@@ -364,7 +411,9 @@ static void TLinkEventSweep(BOOL forceRead) {
             continue;
         }
         if (!loaded || !sTLinkEventSnapshot) {
-            if (expired) TLinkEventComplete(request, nil, @"event_journal_unavailable");
+            if (readError && ![readError isEqualToString:@"event_journal_unavailable"])
+                TLinkEventComplete(request, nil, readError);
+            else if (expired) TLinkEventComplete(request, nil, @"event_journal_unavailable");
             continue;
         }
         if (!changed && !expired) continue;
@@ -473,10 +522,11 @@ NSDictionary *TLinkEventChannelPoll(uint64_t cursor, NSArray<NSString *> *topics
 // END event wait adapter.
 NSDictionary *TLinkEventChannelStatus(void)
 {
-    NSDictionary *journal = TLinkEventLoadSnapshot(NO, NULL);
+    NSString *readError = nil;
+    NSDictionary *journal = TLinkEventLoadSnapshot(NO, NULL, &readError);
     NSDictionary *batch = journal ? TLinkEventBatchFromJournal(journal, UINT64_MAX, [NSSet set], 1, NO) : @{};
-    return @{
-        @"schema": TLinkEventChannelSchemaV1, @"state": @"implemented", @"transport": @"task95_long_poll_v1",
+    NSDictionary *status = @{
+        @"schema": TLinkEventChannelSchemaV1, @"state": journal ? @"implemented" : @"error", @"transport": @"task95_long_poll_v1",
         @"journal_max_events": @(kTLinkEventJournalMaxEvents), @"poll_timeout_max_ms": @(kTLinkEventPollMaxTimeoutMs),
         @"poll_max_events": @(kTLinkEventPollMaxEvents), @"max_concurrent_polls": @(kTLinkEventMaxConcurrentPolls),
         @"latest_cursor": batch[@"latest_cursor"] ?: @0, @"active_polls": @(sTLinkEventActivePolls.load()),
@@ -485,4 +535,10 @@ NSDictionary *TLinkEventChannelStatus(void)
         @"wait_strategy": @"darwin_notify_async_v1", @"reconcile_interval_ms": @(kTLinkEventReconcileMs),
         @"root_path": TLinkEventChannelRootPath(),
     };
+    if (!journal) {
+        NSMutableDictionary *failed = [status mutableCopy];
+        failed[@"error"] = readError ?: @"event_journal_unavailable";
+        return [failed copy];
+    }
+    return status;
 }
