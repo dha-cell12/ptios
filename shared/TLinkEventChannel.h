@@ -6,6 +6,9 @@ FOUNDATION_EXPORT NSString * const TLinkEventChannelSchemaV1;
 FOUNDATION_EXPORT NSString * const TLinkEventSchemaV1;
 
 FOUNDATION_EXPORT NSString *TLinkEventChannelRootPath(void);
+// Cooperating actors must keep a direct directory root and one regular, singly-linked lock inode.
+// Never replace, unlink or alias the lock while any event operation can be active.
+// Journal reads require a regular non-symlink file of at most 4 MiB; failed reads preserve it.
 // Returns a persisted event or a fixed state/error dictionary. Only a missing journal bootstraps.
 // Invalid/unreadable journals are preserved; locked publication exceptions release the file lock.
 // Reported write failure can follow replacement; retry reads disk, without automatic replay.

@@ -17,6 +17,7 @@ NSString * const TLinkEventChannelSchemaV1 = @"event_channel_v1";
 NSString * const TLinkEventSchemaV1 = @"tlink_event_v1";
 
 static const NSUInteger kTLinkEventJournalMaxEvents = 256;
+static const NSUInteger kTLinkEventJournalMaxBytes = 4 * 1024 * 1024;
 static const NSUInteger kTLinkEventPollDefaultTimeoutMs = 20000;
 static const NSUInteger kTLinkEventPollMaxTimeoutMs = 25000;
 static const NSUInteger kTLinkEventPollDefaultMaxEvents = 16;
@@ -130,6 +131,46 @@ static void TLinkEventReleaseFileLock(int fd)
     close(fd);
 }
 
+// Bounded journal file reads: caller holds the existing shared/exclusive flock.
+static NSData *TLinkEventReadJournalData(BOOL *missing, NSString **error)
+{
+    NSString *path = TLinkEventJournalPath();
+    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) {
+        if (errno == ENOENT) *missing = YES;
+        else *error = @"event_journal_read_failed";
+        return nil;
+    }
+    @try {
+        struct stat info;
+        if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0) {
+            *error = @"event_journal_read_failed"; return nil;
+        }
+        if ((uint64_t)info.st_size > kTLinkEventJournalMaxBytes) {
+            *error = @"event_journal_too_large"; return nil;
+        }
+        NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)info.st_size];
+        if (!data) { *error = @"event_journal_read_failed"; return nil; }
+        NSUInteger offset = 0;
+        while (offset < data.length) {
+            size_t count = MIN(data.length - offset, (NSUInteger)65536);
+            ssize_t got = read(fd, (uint8_t *)data.mutableBytes + offset, count);
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) { *error = @"event_journal_read_failed"; return nil; }
+            offset += (NSUInteger)got;
+        }
+        // Atomic cooperating writers leave this opened inode stable. Refuse observed growth.
+        uint8_t extra;
+        ssize_t got;
+        do { got = read(fd, &extra, 1); } while (got < 0 && errno == EINTR);
+        if (got != 0) {
+            *error = got > 0 && data.length == kTLinkEventJournalMaxBytes ? @"event_journal_too_large" : @"event_journal_read_failed";
+            return nil;
+        }
+        return data;
+    } @finally { close(fd); }
+}
+
 // Checked reads must never replace damaged persisted sequence state with an empty journal.
 static BOOL TLinkEventJournalInteger(id value, uint64_t *result)
 {
@@ -146,14 +187,10 @@ static BOOL TLinkEventJournalInteger(id value, uint64_t *result)
 static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
 {
     sTLinkEventJournalReads.fetch_add(1);
-    NSError *readError = nil;
-    NSData *data = [NSData dataWithContentsOfFile:TLinkEventJournalPath() options:0 error:&readError];
+    BOOL missing = NO;
+    NSData *data = TLinkEventReadJournalData(&missing, error);
     if (!data) {
-        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&
-            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {
-            return [@{@"schema": TLinkEventChannelSchemaV1, @"next_sequence": @1, @"events": @[]} mutableCopy];
-        }
-        *error = @"event_journal_read_failed";
+        if (missing) return [@{@"schema": TLinkEventChannelSchemaV1, @"next_sequence": @1, @"events": @[]} mutableCopy];
         return nil;
     }
     id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
@@ -183,7 +220,7 @@ static BOOL TLinkEventWriteJournal(NSDictionary *journal)
     if (![NSJSONSerialization isValidJSONObject:journal]) return NO;
     NSData *data = [NSJSONSerialization dataWithJSONObject:journal options:0 error:nil];
     NSString *path = TLinkEventJournalPath();
-    if (!data || ![data writeToFile:path atomically:YES]) return NO;
+    if (!data || data.length > kTLinkEventJournalMaxBytes || ![data writeToFile:path atomically:YES]) return NO;
     chmod(path.fileSystemRepresentation, 0640);
     lchown(path.fileSystemRepresentation, 501, 501);
     return YES;

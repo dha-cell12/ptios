@@ -1,7 +1,7 @@
 # C03o — checked event reads, explicit poll/status errors and cache invalidation
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: user-passed C03n working source; HEAD remains `87aae836`. No separate C03n commit is inferred. Complete normalized event source SHA-256 before this stage: `840748c9e52d871581b492b604225d32a1e3c767c67102c95951b3b3ab81fffa`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan execution pending macOS CI; device qualification pending**.
+Status: **build passed according to the user before C03p (`7569c26d`); independent device qualification pending**.
 Finding: **P1-58 read-only corruption/error reporting and stale snapshot policy**. Missing-file epochs and persistence reconstruction/durability remain open.
 
 ## Change

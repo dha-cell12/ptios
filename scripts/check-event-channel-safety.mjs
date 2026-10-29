@@ -9,6 +9,21 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const [event, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
 function between(s,a,b) { const start = s.indexOf(a), end = s.indexOf(b,start+a.length); assert.ok(start >= 0 && end > start,a); return s.slice(start,end); }
+const oldJournalRead = "    NSError *readError = nil;\n    NSData *data = [NSData dataWithContentsOfFile:TLinkEventJournalPath() options:0 error:&readError];\n    if (!data) {\n        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&\n            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {\n            return [@{@\"schema\": TLinkEventChannelSchemaV1, @\"next_sequence\": @1, @\"events\": @[]} mutableCopy];\n        }\n        *error = @\"event_journal_read_failed\";\n        return nil;\n    }\n";
+const boundedRead = between(event,'// Bounded journal file reads:','// Checked reads must never replace');
+assert.match(event,/kTLinkEventJournalMaxBytes = 4 \* 1024 \* 1024/);
+assert.match(boundedRead,/O_RDONLY \| O_NOFOLLOW \| O_NONBLOCK/);
+assert.match(boundedRead,/fstat\(fd, &info\)[\s\S]*S_ISREG\(info.st_mode\)/);
+assert.ok(boundedRead.indexOf('info.st_size > kTLinkEventJournalMaxBytes')<boundedRead.indexOf('dataWithLength:'));
+assert.match(boundedRead,/MIN\(data.length - offset, \(NSUInteger\)65536\)/);
+assert.match(boundedRead,/errno == EINTR/);
+assert.match(boundedRead,/read\(fd, &extra, 1\)[\s\S]*@finally \{ close\(fd\); \}/);
+const currentJournalRead = between(event,'    BOOL missing = NO;','    id object = ');
+let beforeBounds = event.replace('static const NSUInteger kTLinkEventJournalMaxBytes = 4 * 1024 * 1024;\n','')
+    .replace(boundedRead,'').replace(currentJournalRead,oldJournalRead)
+    .replace('if (!data || data.length > kTLinkEventJournalMaxBytes || ![data writeToFile:path atomically:YES])','if (!data || ![data writeToFile:path atomically:YES])');
+assert.ok(event.includes('if (!data || data.length > kTLinkEventJournalMaxBytes || ![data writeToFile:path atomically:YES])'));
+assert.equal(createHash('sha256').update(beforeBounds.trim()).digest('hex'),'6ccb48528fe7a59792a7f70c5a730598403476db99841aa6ea20efaeec73b020','reversing only bounded journal bytes/IO and encoded write cap reproduces full user-passed C03p source at a39ec7b7');
 const oldDirectoryLock = "static void TLinkEventEnsureDirectory(void)\n{\n    NSFileManager *fm = [NSFileManager defaultManager];\n    [fm createDirectoryAtPath:TLinkEventChannelRootPath()\n   withIntermediateDirectories:YES\n                    attributes:@{NSFilePosixPermissions: @0750}\n                         error:nil];\n    chmod(TLinkEventChannelRootPath().fileSystemRepresentation, 0750);\n    lchown(TLinkEventChannelRootPath().fileSystemRepresentation, 501, 501);\n}\n\nstatic int TLinkEventAcquireFileLock(BOOL reader, BOOL nonBlocking)\n{\n    TLinkEventEnsureDirectory();\n    NSString *path = TLinkEventLockPath();\n    int fd = open(path.fileSystemRepresentation, O_CREAT | O_RDWR, 0640);\n    if (fd < 0) return -1;\n    chmod(path.fileSystemRepresentation, 0640);\n    lchown(path.fileSystemRepresentation, 501, 501);\n    int operation = reader ? LOCK_SH : LOCK_EX;\n    if (nonBlocking) operation |= LOCK_NB;\n    if (flock(fd, operation) != 0) {\n        close(fd);\n        return -1;\n    }\n    return fd;\n}\n\n";
 const directoryLock = between(event,'static BOOL TLinkEventEnsureDirectory(void)','static void TLinkEventReleaseFileLock');
 assert.match(directoryLock,/lstat\(root.fileSystemRepresentation, &info\)[\s\S]*S_ISDIR\(info.st_mode\)/);
@@ -19,7 +34,7 @@ assert.match(directoryLock,/flock\(fd, LOCK_UN\);\n        close\(fd\);\n       
 assert.match(directoryLock,/fchmod\(fd, 0640\);\n    fchown\(fd, 501, 501\);/);
 assert.ok(directoryLock.indexOf('current.st_ino')>directoryLock.indexOf('flock(fd, operation)'));
 assert.ok(directoryLock.indexOf('fchmod(fd')>directoryLock.indexOf('current.st_ino'));
-const beforeLock = event.replace(directoryLock,oldDirectoryLock);
+const beforeLock = beforeBounds.replace(directoryLock,oldDirectoryLock);
 assert.equal(createHash('sha256').update(beforeLock.trim()).digest('hex'),'8a16c9ec819f44bad5cdfaa9e2dabd313d3e370f8493612f9003a3115c7917c3','reversing only validated root/lock inode admission reproduces complete user-passed C03o source at 7569c26d');
 const oldReadOnlyReader = "static NSMutableDictionary *TLinkEventReadJournal(void)\n{\n    sTLinkEventJournalReads.fetch_add(1);\n    NSData *data = [NSData dataWithContentsOfFile:TLinkEventJournalPath()];\n    id object = data.length > 0\n        ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil]\n        : nil;\n    if ([object isKindOfClass:[NSDictionary class]] &&\n        [object[@\"events\"] isKindOfClass:[NSArray class]]) {\n        return [object mutableCopy];\n    }\n    return [@{\n        @\"schema\": TLinkEventChannelSchemaV1,\n        @\"next_sequence\": @1,\n        @\"events\": [NSMutableArray array],\n    } mutableCopy];\n}\n\n";
 const oldLoader = "static NSDictionary *TLinkEventLoadSnapshot(BOOL nonBlocking, NSString **fingerprint) {\n    int fd = TLinkEventAcquireFileLock(YES, nonBlocking);\n    if (fd < 0) return nil;\n    NSDictionary *journal = nil;\n    @try {\n        journal = TLinkEventReadJournal();\n        if (fingerprint) *fingerprint = TLinkEventFileFingerprint();\n    } @finally { TLinkEventReleaseFileLock(fd); }\n    return journal;\n}\n";
@@ -73,7 +88,7 @@ assert.match(event,/reader \? LOCK_SH : LOCK_EX/); assert.match(event,/operation
 assert.ok(event.indexOf('notify_post(kTLinkEventNotification)') > event.indexOf('if (!persisted)'));
 assert.match(event,/notify_register_dispatch/); assert.match(event,/TLinkEventMonotonicMs/);
 assert.match(event,/DISPATCH_TIME_FOREVER/);
-console.log('Event root/lock inode source passed; checked read/cache/status source passed; publication source passed: checked journal authority, sequence coherence/exhaustion, finally unlock and complete frozen success/poll/status source.');
+console.log('Event bounded journal IO source passed; root/lock inode source passed; checked read/cache/status source passed; publication source passed: checked journal authority, sequence coherence/exhaustion, finally unlock and complete frozen success/poll/status source.');
 for (const source of [socket,troll]) {
  assert.match(source,/\[ctx.eventPollRequest cancel\]/);
  assert.match(source,/owner.eventPollRequest != request/);
@@ -88,7 +103,7 @@ function run(command,args) {
 }
 try {
  const fixture = event.replace('@"/var/mobile/Library/TLinkauto/event-channel"',`(fixtureEventRootOverride ?: @${JSON.stringify(join(temp,'journal'))})`).replace('notify_post(kTLinkEventNotification)', 'FixtureNotifyPost(kTLinkEventNotification)').replace('notify_register_dispatch(', 'FixtureRegisterNotification(')
-  .replace('[NSData dataWithContentsOfFile:TLinkEventJournalPath() options:0 error:&readError]','FixtureEventRead(TLinkEventJournalPath(), &readError)')
+  .replace('TLinkEventReadJournalData(&missing, error)','FixtureEventReadData(&missing, error)')
   .replace('![data writeToFile:path atomically:YES]','!FixtureEventWrite(data, path)')
   .replace('flock(fd, operation)', 'FixtureEventFlock(fd, operation)')
   .replaceAll('flock(fd, LOCK_UN)', 'FixtureEventFlock(fd, LOCK_UN)')
@@ -96,7 +111,12 @@ try {
   .replace('open(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)','FixtureEventOpen(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)')
   .replace('fstat(fd, &opened)','FixtureEventLockStat(fd, &opened)')
   .replace('fchmod(fd, 0640)','FixtureEventFchmod(fd, 0640)')
-  .replace('fchown(fd, 501, 501)','FixtureEventFchown(fd, 501, 501)');
+  .replace('fchown(fd, 501, 501)','FixtureEventFchown(fd, 501, 501)')
+  .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)','FixtureJournalOpen(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)')
+  .replace('fstat(fd, &info)','FixtureJournalStat(fd, &info)')
+  .replace('[NSMutableData dataWithLength:(NSUInteger)info.st_size]','FixtureJournalBuffer((NSUInteger)info.st_size, kTLinkEventJournalMaxBytes)')
+  .replace('read(fd, (uint8_t *)data.mutableBytes + offset, count)','FixtureJournalRead(fd, (uint8_t *)data.mutableBytes + offset, count)')
+  .replace('read(fd, &extra, 1)','FixtureJournalRead(fd, &extra, 1)');
  assert.notEqual(fixture,event);
  const fixtures = {
   'EventChannelUnderTest.inc': fixture,

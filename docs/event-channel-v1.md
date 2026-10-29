@@ -135,3 +135,60 @@ không thể cấp sequence mới. Thay đổi không bổ sung epoch khi mất 
 hỏng, replay hay fsync/power-loss durability. Cache vẫn dựa vào fingerprint và
 reconciliation cũ; thay đổi ngoài giao thức không có bảo đảm phát hiện tức thì.
 Fixture Foundation/POSIX/transport mới và đo thiết bị còn chờ CI/nghiệm thu.
+
+## C03p: kiểm tra root và inode khóa
+
+Root trực tiếp phải là directory thực; nếu chưa có thì tạo như trước. Từ chối
+root là symlink/file trước khi áp dụng quyền hoặc mở khóa. Ancestor của đường
+dẫn cố định vẫn theo bố trí filesystem hiện có.
+
+Mở journal.lock với O_NOFOLLOW và O_NONBLOCK, kiểm tra fstat phải là file thường
+có đúng một hardlink trước flock. Sau khi lấy khóa, lstat đường dẫn phải khớp
+device/inode đã mở, vẫn là file thường một link và root trực tiếp vẫn là directory.
+Nếu đường dẫn bị thay/mất/thêm hardlink trong lúc chờ, nhả khóa và đóng descriptor
+trước khi đọc journal. Chỉ sau xác thực mới fchmod/fchown descriptor khóa; không
+sửa quyền pathname thay thế. Kết quả lỗi dùng nhãn hiện có:
+publisher event_journal_lock_failed; status/poll event_journal_unavailable.
+Poll vẫn giữ chính sách timeout khi không lấy được khóa.
+
+O_NONBLOCK bảo vệ bước open file đặc biệt; flock của publisher/status vẫn có
+chính sách blocking hiện tại, owner poll vẫn nonblocking. Reader giữ LOCK_SH,
+writer LOCK_EX. Lỗi open/stat/type/identity không đọc/ghi journal hoặc phát hint;
+không tự xóa, thay hay sửa file khóa bị từ chối.
+
+Mọi writer/reader/maintenance cùng deployment phải giữ một inode khóa ổn định:
+không replace, unlink hoặc alias nó khi còn operation có thể hoạt động. Các kiểm
+tra này phát hiện đường dẫn không hợp lệ ở thời điểm admission; không tạo bảo
+đảm chống mọi race do actor ngoài giao thức. Chính sách best effort khi syscall
+áp dụng permission báo lỗi vẫn giữ nguyên. Không thêm epoch, fsync hoặc cam kết
+durability. Chi phí metadata/lock và hành vi filesystem trên thiết bị còn cần đo.
+
+## C03q: giới hạn byte và kiểu file journal trước parse
+
+Reader dùng chung mở journal.json bằng O_RDONLY|O_NOFOLLOW|O_NONBLOCK dưới flock
+hiện có. Chỉ nhận file thường, size không âm và tối đa 4 MiB trước khi cấp buffer
+hoặc parse JSON. Chỉ errno ENOENT từ open mới xác nhận journal chưa tồn tại;
+không còn dựa vào NSError của NSData để bootstrap. Symlink (kể cả dangling),
+FIFO, directory và lỗi open/stat trả event_journal_read_failed, không bị đọc như
+journal rỗng. Không sửa/xóa file bị từ chối.
+
+File lớn hơn 4 MiB trả event_journal_too_large qua publisher, poll và status;
+poll giữ cursor và trả lỗi theo adapter sẵn có. Đọc đúng size đã kiểm tra, mỗi
+syscall tối đa 64 KiB, thử lại EINTR và xử lý short reads. EOF sớm/lỗi đọc trả
+read_failed; một probe thêm tối đa một byte kiểm tra tăng size. Growth ở ranh
+4 MiB trả too_large; growth trong file nhỏ hơn trả read_failed. Descriptor được
+nhả trong finally, kể cả NS/C++ exception; reconciliation/explicit retry có thể
+đọc lại sau khi storage được sửa.
+
+Writer cũng từ chối dữ liệu JSON đã mã hóa vượt 4 MiB trước atomic write, dùng
+lỗi event_journal_write_failed hiện có, không phát hint hoặc thay file cũ. Journal
+đúng ngưỡng vẫn được reader nhận. 256 event với payload 4096 byte và metadata
+chuẩn còn cách xa ngưỡng này; extension data bên ngoài quá lớn cần được giảm
+hoặc khôi phục bằng thao tác bảo trì rõ ràng, không tự truncate.
+
+Giới hạn này áp dụng cho byte file/buffer đọc và byte đầu ra journal. Nó không
+là trần RSS/JSON graph, thời gian I/O hoặc bước mã hóa payload đầu vào. Writer
+vẫn encode trước kiểm tra output; journal vẫn được read/parse/rewrite toàn phần.
+Schema/wire/retention/cursor và giao thức inode không đổi. Không thêm epoch,
+fsync, phục hồi file hỏng hoặc bảo đảm cho actor sửa file ngoài giao thức atomic
+write/flock. Các ca Foundation/POSIX mới và số đo thiết bị còn chờ CI/nghiệm thu.

@@ -52,16 +52,48 @@ static int FixtureEventFlock(int fd,int operation) {
     if(!result){if(operation==LOCK_UN)assert(fixtureEventLocks.erase(fd)==1);else{assert(fixtureEventLocks.insert(fd).second);if(fixtureAfterLock)fixtureAfterLock();}}
     return result;
 }
-static int FixtureEventClose(int fd) { assert(!fixtureEventLocks.count(fd)&&fixtureEventFds.erase(fd)==1);--fixtureLiveEventFds;return ::close(fd); }
-static NSData *FixtureEventRead(NSString *path,NSError **error) {
+static thread_local std::set<int> fixtureJournalFds;
+static std::atomic<unsigned> fixtureLiveJournalFds{0},fixtureJournalOpens{0},fixtureJournalReads{0},fixtureJournalAllocations{0};
+static std::atomic<uint64_t> fixtureJournalBytes{0};
+static std::atomic<unsigned> fixtureJournalOpenFault{0},fixtureJournalStatFault{0},fixtureJournalReadFault{0};
+static int FixtureEventClose(int fd) {
+    assert(!fixtureEventLocks.count(fd));
+    if(fixtureJournalFds.erase(fd))--fixtureLiveJournalFds;
+    else{assert(fixtureEventFds.erase(fd)==1);--fixtureLiveEventFds;}
+    return ::close(fd);
+}
+static int FixtureJournalOpen(const char *path,int flags) {
+    assert(fixtureEventLocks.size()==1&&flags==(O_RDONLY|O_NOFOLLOW|O_NONBLOCK));++fixtureJournalOpens;
+    if(fixtureJournalOpenFault){errno=fixtureJournalOpenFault==1?EACCES:EMFILE;return -1;}
+    const int fd=::open(path,flags);if(fd>=0){assert(fixtureJournalFds.insert(fd).second);++fixtureLiveJournalFds;}return fd;
+}
+static int FixtureJournalStat(int fd,struct stat *info) {
+    assert(fixtureJournalFds.count(fd));if(fixtureJournalStatFault==1){errno=EIO;return -1;}
+    const int result=::fstat(fd,info);
+    if(!result&&fixtureJournalStatFault==2)info->st_size=4*1024*1024+1;
+    if(!result&&fixtureJournalStatFault==3)info->st_size=-1;return result;
+}
+static NSMutableData *FixtureJournalBuffer(NSUInteger length,NSUInteger limit) {
+    assert(length<=limit);++fixtureJournalAllocations;return [NSMutableData dataWithLength:length];
+}
+static ssize_t FixtureJournalRead(int fd,void *bytes,size_t count) {
+    assert(fixtureJournalFds.count(fd)&&count>0&&count<=65536);++fixtureJournalReads;
+    if(fixtureJournalReadFault==1){fixtureJournalReadFault=6;errno=EINTR;return -1;}
+    if(fixtureJournalReadFault==2){errno=EIO;return -1;}
+    if(fixtureJournalReadFault==3)return 0;
+    if(fixtureJournalReadFault==4)[NSException raise:@"EventFixture" format:@"journal read failed"];
+    if(fixtureJournalReadFault==5)throw std::runtime_error("journal read failed");
+    if(fixtureJournalReadFault==7&&count==1){*(uint8_t *)bytes=0;++fixtureJournalBytes;return 1;}
+    const ssize_t got=::read(fd,bytes,fixtureJournalReadFault==6?MIN(count,(size_t)17):count);
+    if(got>0)fixtureJournalBytes+=(uint64_t)got;return got;
+}
+static NSData *TLinkEventReadJournalData(BOOL *missing,NSString **error);
+static NSData *FixtureEventReadData(BOOL *missing,NSString **error) {
     assert(fixtureEventLocks.size()==1);++fixturePublishReads;
     if(fixtureReadFault==4)[NSException raise:@"EventFixture" format:@"read failed"];
     if(fixtureReadFault==5)throw std::runtime_error("read failed");
-    if(fixtureReadFault){
-        *error=fixtureReadFault==1?[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoPermissionError userInfo:nil]:
-            (fixtureReadFault==2?[NSError errorWithDomain:NSPOSIXErrorDomain code:ENOENT userInfo:nil]:nil);return nil;
-    }
-    return [NSData dataWithContentsOfFile:path options:0 error:error];
+    if(fixtureReadFault){*error=@"event_journal_read_failed";return nil;}
+    return TLinkEventReadJournalData(missing,error);
 }
 static BOOL FixtureEventWrite(NSData *data,NSString *path) {
     assert(fixtureEventLocks.size()==1);++fixtureWrites;
@@ -374,6 +406,75 @@ static void fixtureValidatedLockCases() {
     assert(fixtureEventLocks.empty()&&fixtureEventFds.empty()&&!fixtureLiveEventFds);
     puts("Event lock passed: real regular/single-link inode admission, pre-stat failure, symlink/FIFO/directory/hardlink/root refusal, post-flock replacement/unlink/link/root swaps, descriptor permissions, stable inode and zero live descriptors. Cooperating-writer protocol required; arbitrary race/power-loss guarantees remain separate.");
 }
+static void fixtureBoundedReadRejected(NSString *code) {
+    const unsigned writes=fixtureWrites.load(),posts=fixturePosts.load();
+    NSDictionary *reply=TLinkEventChannelPublish(@"fixture",@"script.run",@"updated",@{});
+    assert([reply[@"state"] isEqual:@"error"]&&[reply[@"error"] isEqual:code]);
+    NSDictionary *status=TLinkEventChannelStatus();assert([status[@"state"] isEqual:@"error"]&&[status[@"error"] isEqual:code]);
+    NSString *error=nil;NSDictionary *batch=TLinkEventChannelPollBody(body(8,0),&error);
+    assert([error isEqual:code]&&!batch.count&&fixtureWrites==writes&&fixturePosts==posts&&sTLinkEventActivePolls==0);
+    dispatch_sync(TLinkEventOwnerQueue(),^{assert(fixtureJournalFds.empty()&&fixtureEventFds.empty()&&!sTLinkEventWaiters.count);});
+    assert(!fixtureLiveJournalFds&&!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureJournalFds.empty());fixtureOtherOwnerCanLock();
+}
+static void fixtureBoundedJournalCases() {
+    const bool savedNotify=suppressNotify;suppressNotify=true;
+    NSString *path=TLinkEventJournalPath();NSFileManager *fm=[NSFileManager defaultManager];
+    NSData *savedJournal=[NSData dataWithContentsOfFile:path];
+    NSData *healthy=fixtureJournalData(fixtureJournal(9,@[fixtureStoredEvent(7),fixtureStoredEvent(8)]));assert([healthy writeToFile:path atomically:YES]);
+    // Refuse a real sparse oversized file before a journal buffer or a single payload read.
+    int fd=::open(path.fileSystemRepresentation,O_WRONLY|O_TRUNC);assert(fd>=0&&::ftruncate(fd,(off_t)kTLinkEventJournalMaxBytes+1)==0&&::close(fd)==0);
+    fixtureJournalReads=0;fixtureJournalAllocations=0;fixtureBoundedReadRejected(@"event_journal_too_large");
+    struct stat info;assert(::lstat(path.fileSystemRepresentation,&info)==0&&info.st_size==(off_t)kTLinkEventJournalMaxBytes+1&&!fixtureJournalReads&&!fixtureJournalAllocations);
+    assert([healthy writeToFile:path atomically:YES]);
+    for(unsigned fault=1;fault<=2;++fault){fixtureJournalOpenFault=fault;fixtureBoundedReadRejected(@"event_journal_read_failed");fixtureJournalOpenFault=0;}
+    for(unsigned fault=1;fault<=3;++fault){
+        fixtureJournalStatFault=fault;fixtureJournalReads=0;fixtureJournalAllocations=0;
+        fixtureBoundedReadRejected(fault==2?@"event_journal_too_large":@"event_journal_read_failed");fixtureJournalStatFault=0;
+        assert(!fixtureJournalReads&&!fixtureJournalAllocations);
+    }
+    for(unsigned fault:{2U,3U,4U,5U,7U}){
+        fixtureJournalReadFault=fault;fixtureBoundedReadRejected(fault==4||fault==5?@"event_journal_exception":@"event_journal_read_failed");fixtureJournalReadFault=0;
+        assert([healthy isEqual:[NSData dataWithContentsOfFile:path]]);
+    }
+    fixtureJournalReadFault=1;fixtureJournalReads=0;fixtureJournalBytes=0;
+    NSDictionary *status=TLinkEventChannelStatus();fixtureJournalReadFault=0;
+    assert([status[@"state"] isEqual:@"implemented"]&&[status[@"latest_cursor"] unsignedLongLongValue]==8&&fixtureJournalReads>2&&fixtureJournalBytes==healthy.length);
+    // A valid journal padded to exactly the cap is accepted with at most the cap plus one-byte EOF probe.
+    NSMutableData *padded=[NSMutableData dataWithLength:kTLinkEventJournalMaxBytes];memset(padded.mutableBytes,' ',padded.length);memcpy(padded.mutableBytes,healthy.bytes,healthy.length);
+    assert([padded writeToFile:path atomically:YES]);fixtureJournalReads=0;fixtureJournalBytes=0;
+    status=TLinkEventChannelStatus();assert([status[@"state"] isEqual:@"implemented"]&&fixtureJournalBytes==kTLinkEventJournalMaxBytes&&fixtureJournalReads>=65);
+    assert([padded isEqual:[NSData dataWithContentsOfFile:path]]);padded=nil;
+    assert([healthy writeToFile:path atomically:YES]);
+    NSString *stash=[path stringByAppendingString:@".bounded-saved"],*outside=[TLinkEventChannelRootPath() stringByAppendingPathComponent:@"bounded-outside.json"];
+    assert(::rename(path.fileSystemRepresentation,stash.fileSystemRepresentation)==0&&[healthy writeToFile:outside atomically:YES]&&::chmod(outside.fileSystemRepresentation,0600)==0);
+    assert(::symlink(outside.fileSystemRepresentation,path.fileSystemRepresentation)==0);fixtureBoundedReadRejected(@"event_journal_read_failed");
+    assert([healthy isEqual:[NSData dataWithContentsOfFile:outside]]&&::stat(outside.fileSystemRepresentation,&info)==0&&(info.st_mode&0777)==0600);
+    assert(::unlink(path.fileSystemRepresentation)==0&&::symlink([outside stringByAppendingString:@".absent"].fileSystemRepresentation,path.fileSystemRepresentation)==0);
+    fixtureBoundedReadRejected(@"event_journal_read_failed");assert(::lstat(path.fileSystemRepresentation,&info)==0&&S_ISLNK(info.st_mode));
+    assert(::unlink(path.fileSystemRepresentation)==0&&::mkfifo(path.fileSystemRepresentation,0600)==0);fixtureBoundedReadRejected(@"event_journal_read_failed");
+    assert(::unlink(path.fileSystemRepresentation)==0&&[fm createDirectoryAtPath:path withIntermediateDirectories:NO attributes:nil error:nil]);
+    NSString *child=[path stringByAppendingPathComponent:@"keep"];assert([healthy writeToFile:child atomically:YES]);fixtureBoundedReadRejected(@"event_journal_read_failed");
+    assert([healthy isEqual:[NSData dataWithContentsOfFile:child]]&&[fm removeItemAtPath:path error:nil]&&::rename(stash.fileSystemRepresentation,path.fileSystemRepresentation)==0);
+    // Maximum normal event count/payload/token fields leave ample room below the journal cap.
+    NSDictionary *payload=@{@"x":[@"" stringByPaddingToLength:4088 withString:@"a" startingAtIndex:0]};assert(fixtureJournalData(payload).length==4096);
+    NSMutableArray *events=[NSMutableArray array];NSString *token=[@"" stringByPaddingToLength:64 withString:@"a" startingAtIndex:0];
+    for(unsigned n=1;n<=256;++n){NSMutableDictionary *event=[fixtureStoredEvent(n) mutableCopy];
+        event[@"payload"]=payload;event[@"runtime"]=token;event[@"topic"]=token;event[@"type"]=token;event[@"event_id"]=@"ffffffff-ffff-ffff-ffff-ffffffffffff";event[@"timestamp_ms"]=@(UINT64_MAX);[events addObject:event];}
+    NSDictionary *canonical=fixtureJournal(257,events);const int writer=TLinkEventAcquireFileLock(NO,NO);assert(writer>=0&&TLinkEventWriteJournal(canonical));TLinkEventReleaseFileLock(writer);
+    assert([[NSData dataWithContentsOfFile:path] length]<kTLinkEventJournalMaxBytes&&publish()==257);
+    // Valid extension data can fill the cap; an append that exceeds it must not commit an unreadable file.
+    NSMutableDictionary *near=[fixtureJournal(9,@[fixtureStoredEvent(7),fixtureStoredEvent(8)]) mutableCopy];near[@"blob"]=@"";
+    const NSUInteger base=fixtureJournalData(near).length;near[@"blob"]=[@"" stringByPaddingToLength:kTLinkEventJournalMaxBytes-base withString:@"a" startingAtIndex:0];
+    NSData *full=fixtureJournalData(near);assert(full.length==kTLinkEventJournalMaxBytes&&[full writeToFile:path atomically:YES]);
+    const unsigned writes=fixtureWrites.load(),posts=fixturePosts.load();NSDictionary *reply=TLinkEventChannelPublish(@"fixture",@"script.run",@"updated",@{});
+    assert([reply[@"error"] isEqual:@"event_journal_write_failed"]&&fixtureWrites==writes&&fixturePosts==posts&&[full isEqual:[NSData dataWithContentsOfFile:path]]);
+    assert([healthy writeToFile:path atomically:YES]&&publish()==9&&[TLinkEventChannelStatus()[@"state"] isEqual:@"implemented"]);
+    dispatch_sync(TLinkEventOwnerQueue(),^{assert(!sTLinkEventWaiters.count&&!sTLinkEventSnapshot&&fixtureJournalFds.empty());});
+    assert(!fixtureLiveJournalFds&&!fixtureLiveEventFds);
+    if(savedJournal)assert([savedJournal writeToFile:path atomically:YES]);else assert([fm removeItemAtPath:path error:nil]);
+    suppressNotify=savedNotify;
+    puts("Event bounded journal passed: regular/no-follow/nonblocking reads, 4-MiB admission before buffer allocation/payload IO, 64-KiB chunks, EOF probe, EINTR/short/error/NS/C++ cleanup, real sparse/FIFO/directory/symlink cases, exact-cap/maximum-normal journals and write-cap preservation. This is not an overall JSON/RSS or IO-time bound.");
+}
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
@@ -386,6 +487,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     NSString *error = nil; (void)TLinkEventChannelPollBody(@"0;;0;;8;;a*b",&error); assert([error isEqual:@"event_topic_invalid"]);
     error = nil; (void)TLinkEventChannelPollBody(@"18446744073709551616;;0;;8;;*",&error); assert([error isEqual:@"event_request_invalid"]);
     fixtureCheckedReadCases(tail);
+    fixtureBoundedJournalCases();
     fputs("Event runtime: quiet wait, cross-process notification and lost-hint reconciliation\n",stderr);
     dispatch_semaphore_t delivered = dispatch_semaphore_create(0);
     __block NSDictionary *received = nil;
@@ -478,6 +580,6 @@ int main(int argc, char **argv) { @autoreleasepool {
     for (unsigned n = 0; n < 260; ++n) publish(); batch = poll(1); assert([batch[@"gap"] boolValue] && [batch[@"events"] count] == 8);
     waitFor([] { return sTLinkEventAuthorizations == 0; });
     dispatch_sync(TLinkEventOwnerQueue(), ^{ assert(!sTLinkEventWaiters.count); dispatch_source_cancel(sTLinkEventTimer); notify_cancel(sTLinkEventNotifyToken); });
-    assert(!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureEventLocks.empty());
+    assert(!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureEventLocks.empty()&&!fixtureLiveJournalFds&&fixtureJournalFds.empty());
     puts("Event Foundation passed: real journal/locks, cross-process and missed notifications, quiet/idle I/O, eight cancellations, blocked authorization, deadlines, pagination/gap and root/TrollStore/remote wire adapters.");
 } }
