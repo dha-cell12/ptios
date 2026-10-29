@@ -1,7 +1,8 @@
 # C03j — re-enable retained metadata recovery after mutation write failures
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `7f212b05` (C03i), build passed according to the user.
-Status: **source implemented; new macOS Foundation/POSIX/ARC/sanitizer execution and device qualification pending**.
+Status: **build passed according to the user (`0c5de74d`); device qualification pending**.
+Follow-up: C03k adds file-backed pending-state coordination between cooperating history writers. The behavior/limits below describe C03j when implemented.
 Finding: **P1-53 retained metadata coherence after local write failures in a running process**.
 
 ## Result

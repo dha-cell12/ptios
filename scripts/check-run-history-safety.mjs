@@ -10,12 +10,67 @@ const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const [actual,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
 const beforeCommit=commitFrozen.slice(commitFrozen.indexOf('\n')+1);
-const invalidation=between(actual,'    // A required mutation write','    if (sTLinkRunHistoryPersistenceFailures');
+const encoder=between(actual,'static BOOL TLinkRunHistoryWriteJSON','static BOOL TLinkRunHistoryWriteIndex');
+assert.ok(encoder.includes('NSJSONWritingOptions options = NSJSONWritingPrettyPrinted'));
+assert.ok(encoder.includes('dataWithJSONObject:object options:options error:nil'));
+assert.match(between(actual,'static BOOL TLinkRunHistoryWriteIndex','static NSArray<NSRegularExpression *>'), /\}, TLinkRunHistoryIndexPath\(\), 0\);/);
+const beforeCompact=actual
+    .replace('static BOOL TLinkRunHistoryWriteJSON(id object, NSString *path, NSJSONWritingOptions options = NSJSONWritingPrettyPrinted)','static BOOL TLinkRunHistoryWriteJSON(id object, NSString *path)')
+    .replace('dataWithJSONObject:object options:options error:nil','dataWithJSONObject:object options:NSJSONWritingPrettyPrinted error:nil')
+    .replace('}, TLinkRunHistoryIndexPath(), 0);','}, TLinkRunHistoryIndexPath());');
+assert.notEqual(actual,beforeCompact);
+assert.equal(createHash('sha256').update(beforeCompact.trim()).digest('hex'),'76ef6fa6e9d4fa9f1a8ac983a6ed69a58f56c425ae2e7c2506b01bb1232355a3','reversing only compact index serialization must reproduce complete user-passed C03l working source');
+const ownedCleanup=between(beforeCompact,'// Retirement owns only exact per-ID leaves','NSDictionary *TLinkRunHistoryBegin');
+assert.match(ownedCleanup,/retained containsObject:path/);
+assert.match(ownedCleanup,/path isEqualToString:expected/);
+assert.match(ownedCleanup,/lstat\(directory.fileSystemRepresentation, &info\)[\s\S]*S_ISDIR/);
+assert.match(ownedCleanup,/PersistenceFailure\(@"prune", @"artifacts", @"remove_failed"\)/);
+assert.doesNotMatch(ownedCleanup,/WriteJSON|WriteIndex|EventChannelPublish|removeItemAtPath/);
+const removal=between(beforeCompact,'static BOOL TLinkRunHistoryRemoveArtifact','static uint64_t sTLinkRunHistoryPersistenceFailures');
+assert.match(removal,/unlink\(path.fileSystemRepresentation\)[\s\S]*errno == EINTR[\s\S]*errno == ENOENT/);
+const oldRemoval=between(beforeCommit,'static void TLinkRunHistoryRemoveArtifact','static void TLinkRunHistoryPrune');
+const oldCleanup=`static void TLinkRunHistoryPrune(NSArray<NSDictionary *> *retired)
+{
+    for (NSDictionary *oldest in retired) {
+        @try { try {
+            TLinkRunHistoryRemoveArtifact(oldest[@"record_path"]);
+            NSDictionary *evidence = [oldest[@"failure_evidence"] isKindOfClass:[NSDictionary class]] ? oldest[@"failure_evidence"] : @{};
+            TLinkRunHistoryRemoveArtifact(evidence[@"metadata_path"]);
+            TLinkRunHistoryRemoveArtifact(evidence[@"screenshot_path"]);
+        } catch (...) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); } }
+        @catch (__unused NSException *exception) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); }
+    }
+}
+
+`;
+const beforeCleanup=beforeCompact.replace(removal,oldRemoval).replace(ownedCleanup,oldCleanup).replaceAll('TLinkRunHistoryPrune(retired, runs);','TLinkRunHistoryPrune(retired);');
+assert.equal(createHash('sha256').update(beforeCleanup.trim()).digest('hex'),'b9f1354a2fa793ae8bf56f68907621c3309c8973941fa8d33ec3da55e67b5129','reversing only checked per-ID retirement must reproduce the complete user-passed C03k working baseline');
+const marker=between(beforeCleanup,'// The held lock inode','static NSArray<NSDictionary *> *TLinkRunHistoryTrim');
+assert.ok(beforeCleanup.includes('O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640'));
+assert.match(marker,/ftruncate\(lockFd, pending \? 1 : 0\)[\s\S]*errno == EINTR/);
+assert.match(marker,/fstat\(lockFd, &marker\)/);
+assert.match(marker,/S_ISREG\(marker.st_mode\)[\s\S]*marker.st_nlink != 1[\s\S]*marker.st_size > 1/);
+assert.match(marker,/marker.st_size == 1\) sTLinkRunHistoryRecovered = NO/);
+assert.match(marker,/!sTLinkRunHistoryRecovered[\s\S]*SetPending\(lockFd, YES[\s\S]*return TLinkRunHistoryRecover\(runs, operation\)/);
+assert.doesNotMatch(marker,/WriteJSON|WriteIndex|EventChannelPublish|unlink\(|removeItem/);
+let beforeMarker=beforeCleanup.replace(marker,'').replace('O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640','O_CREAT | O_RDWR, 0640');
+for(const operation of ['begin','finish']){
+    const section=between(beforeCleanup,operation==='begin'?'NSDictionary *TLinkRunHistoryBegin':'NSDictionary *TLinkRunHistoryFinish',operation==='begin'?'NSDictionary *TLinkRunHistoryFinish':'NSDictionary *TLinkRunHistorySnapshot');
+    assert.ok(section.indexOf(`TLinkRunHistorySetPending(lockFd, YES, @"${operation}"`)<section.indexOf('TLinkRunHistoryWriteJSON('),'intent precedes artifact writes');
+    assert.ok(section.indexOf(`TLinkRunHistorySetPending(lockFd, NO, @"${operation}"`)>section.indexOf('if (!TLinkRunHistoryWriteIndex(runs))'),'clear only after positive index acknowledgment');
+    beforeMarker=beforeMarker.replace(`TLinkRunHistoryPrepareRecovery(runs, @"${operation}", lockFd)`,`TLinkRunHistoryRecover(runs, @"${operation}")`);
+    const intent=`            stage = @"intent";\n            if (!TLinkRunHistorySetPending(lockFd, YES, @"${operation}", stage)) return @{};\n`;
+    const clear=`            stage = @"commit_marker";\n            (void)TLinkRunHistorySetPending(lockFd, NO, @"${operation}", stage);\n`;
+    assert.ok(beforeMarker.includes(intent)&&beforeMarker.includes(clear));
+    beforeMarker=beforeMarker.replace(intent,'').replace(clear,'');
+}
+assert.equal(createHash('sha256').update(beforeMarker.trim()).digest('hex'),'c6392f8e6e2b98f044a77de64c2cebe319e0d69652688f518d14682c3eb843e6','reversing only lock-inode intent coordination must reproduce complete C03j baseline 0c5de74d');
+const invalidation=between(beforeCleanup,'    // A required mutation write','    if (sTLinkRunHistoryPersistenceFailures');
 assert.match(invalidation,/operation isEqualToString:@"begin"[\s\S]*operation isEqualToString:@"finish"/);
 assert.match(invalidation,/stage isEqualToString:@"evidence"[\s\S]*stage isEqualToString:@"record"[\s\S]*stage isEqualToString:@"index"[\s\S]*sTLinkRunHistoryRecovered = NO/);
-const beforeRearm=actual.replace(invalidation,'');
+const beforeRearm=beforeMarker.replace(invalidation,'');
 assert.equal(createHash('sha256').update(beforeRearm.trim()).digest('hex'),'ad9d6216ba7fc2f4167c72755309a802142bac10533124672a0639a3614b6a5b','reversing only required-write invalidation must reproduce complete C03i baseline 7f212b05');
-const recovery=between(actual,'// Repair only committed','static NSArray<NSDictionary *> *TLinkRunHistoryTrim');
+const recovery=between(beforeMarker,'// Repair only committed','static NSArray<NSDictionary *> *TLinkRunHistoryTrim');
 assert.match(recovery,/if \(sTLinkRunHistoryRecovered\) return YES/);
 assert.match(recovery,/runs.count <= kTLinkRunHistoryMaxRecords/);
 assert.match(recovery,/paths containsObject:recordPath/);
@@ -98,7 +153,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
-console.log('Run history source passed: required-write failure re-enables retained-metadata recovery, fail-closed reads, checked commit/cleanup, bounded diagnostics, finally and frozen record/status fields.');
+console.log('Run history source passed: compact index with unchanged artifact formatting and logical payloads, checked per-ID retirement and retained-reference protection, lock-inode pending marker coordinates warm owners, required-write recovery, fail-closed reads, checked commit/cleanup, diagnostics, finally and frozen record/status fields.');
 if(process.platform!=='darwin'){
     console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
 }else{
@@ -110,10 +165,13 @@ if(process.platform!=='darwin'){
         .replace('[NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError]','historyReadMutationData(TLinkRunHistoryIndexPath(), &readError)')
         .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)','historyRecoveryOpen(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)')
         .replace('fstat(fd, &info)','historyRecoveryStat(fd, &info)')
+        .replace('fstat(lockFd, &marker)','historyMarkerStat(lockFd, &marker)')
+        .replace('ftruncate(lockFd, pending ? 1 : 0)','historyMarkerTruncate(lockFd, pending ? 1 : 0)')
         .replace('read(fd, (uint8_t *)data.mutableBytes + offset, count)','historyRecoveryRead(fd, (uint8_t *)data.mutableBytes + offset, count)')
         .replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0')
         .replace('![data writeToFile:path atomically:YES]','!historyWriteData(data,path)')
-        .replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)');
+        .replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)')
+        .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
         await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(actual)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);

@@ -62,7 +62,7 @@ assert.match(sharedImpl, /kTLinkStatusLogLineMaxCharacters = 240/);
 assert.match(sharedImpl, /kTLinkStatusErrorMaxCharacters = 500/);
 assert.match(sharedImpl, /kTLinkFailureConsoleLogMaxBytes = 256 \* 1024/);
 assert.match(sharedImpl, /while \(runs\.count > kTLinkRunHistoryMaxRecords\)/);
-assert.match(sharedImpl, /TLinkRunHistoryRemoveArtifact\(evidence\[@"screenshot_path"\]\)/);
+assert.match(sharedImpl, /TLinkRunHistoryPruneArtifact\(evidence\[@"screenshot_path"\],[^\n]+@"\.png"[^\n]+retained\)/);
 assert.match(sharedImpl, /BOOL failed = \[terminalState isEqualToString:@"failed"\] \|\| \[terminalState isEqualToString:@"license_revoked"\]/);
 assert.match(sharedImpl, /BOOL screenshotPresent = \[screenshotAttributes fileSize\] > 0/);
 assert.match(sharedImpl, /screenshotPresent \? screenshotPath : @""/);

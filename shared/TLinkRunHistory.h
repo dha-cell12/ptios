@@ -15,7 +15,11 @@ FOUNDATION_EXPORT NSString *TLinkRunHistoryEvidencePath(void);
 // First mutation per process repairs retained record/evidence metadata from that index.
 // Failed recovery blocks the mutation and is attempted again on the next call.
 // Required write failures re-enable recovery before a later mutation in this process.
+// A pending marker on the held lock inode also forces recovery in another warm process.
+// All writers must use this marker protocol; the lock file must never be replaced.
 // The index is the commit point; inspect process-local persistence_diagnostics in status.
+// Post-commit retirement only unlinks owned per-ID leaves not referenced by retained runs.
+// Cleanup errors preserve committed success and are reported through those diagnostics.
 FOUNDATION_EXPORT NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
                                                      NSString *bundlePath,
                                                      NSString *entryPath,

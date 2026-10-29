@@ -52,6 +52,24 @@ as `screenshot_error` while history remains valid.
 The StreamControl Logs view displays recent run IDs, states, durations and
 evidence paths. WebTango exposes `device.getRunHistory()`.
 
+## Index encoding
+
+New index writes use compact JSON, removing indentation and formatting line
+breaks while retaining the same `run_history_v1` envelope, records and embedded
+evidence. Record and evidence artifact JSON keeps its existing pretty format.
+Consumers must parse JSON; whitespace and key ordering are not a file contract.
+Both existing pretty indexes and compact indexes are accepted by the current
+readers. Snapshot does not rewrite either format. A successful normal mutation
+writes the index in compact form through the same checked atomic-write path;
+there is no separate migration job or additional file.
+
+This changes neither the logical index commit point nor pending-marker,
+recovery, retention, event or status behavior. All cooperating writers must
+still use the pending-marker protocol below. Removing whitespace reduces the
+encoded index bytes; CPU time, filesystem write amplification, latency and RSS
+improvements need measurement on devices. The index still embeds evidence and
+is still fully encoded/rewritten on each mutation.
+
 ## Persistence failures
 
 Begin/finish read the index under the file lock before writing evidence/record/index files.
@@ -120,11 +138,67 @@ recovery even when no file was written. The gate is invalidated independently of
 the saturating diagnostic counter.
 
 Lock/read/preparation failures and post-commit pruning diagnostics preserve the
-gate's current state. Status does not run recovery or clear the gate. Another
-already-warm process is not notified of a local failure; cross-process
-invalidation, missing/corrupt index reconstruction, external artifact-damage
-detection, screenshot restoration, orphan retention, event replay and power-loss
-durability remain outside this pass.
+local gate's current state. Status does not run recovery or clear the gate.
+
+## Pending marker between cooperating writers
+
+While holding `flock`, mutations inspect the same `history.lock` inode: length
+0 means clean, length 1 means a pending update. A pending marker forces even an
+already-warm owner to reconcile retained metadata from the latest index before
+its own work. Set pending before any repair writes and before mutation writes;
+clear it only after the required index write succeeds. Failed operations or a
+process exiting between writes leave pending for the next owner. Repair itself
+does not replay the failed operation/event, and marker cleanup waits for a
+successful mutation commit.
+
+Marker read/admission errors stop new mutation artifact writes, reporting
+`recovery_marker` or `intent` with `history_marker_read_failed`,
+`history_marker_invalid` or `history_marker_write_failed`. An index already
+acknowledged stays successful if marker clearing reports failure: emit its
+normal event, invalidate the local gate and report `commit_marker`. A remaining
+pending marker causes another owner's next mutation to check metadata again.
+If clearing actually completed before its error, the committed metadata is
+already coherent. EINTR retries are safe for the idempotent length changes.
+
+The lock must be regular, have one link and an understood length; opens reject
+symlinks and do not block on special files. Direct-root validation precedes
+truncation. Cooperating writers/maintenance must never replace or unlink this
+inode, and all writers must be upgraded to this protocol. Older binaries ignore
+the marker and cannot provide its failure guarantees. Clean updates add constant
+marker metadata/length operations on the existing descriptor, without a new
+file or normal full metadata scan. Snapshot remains read-only and does not
+consume or clear pending state.
+
+No fsync/write-ordering guarantee for power loss is added. Missing/corrupt index
+reconstruction, detection of arbitrary external artifact damage, screenshot
+restoration, orphan retention and event replay remain separate work.
+
+## Retired artifact ownership and cleanup
+
+After index acknowledgment, under the same lock, retirement may unlink only
+`runs/<sanitized-run-id>.json`, `evidence/<sanitized-run-id>.json` and
+`evidence/<sanitized-run-id>.png` when that exact standardized path is present
+in the retired record. A path referenced by any retained record/evidence field
+is protected, including aliases caused by run-ID sanitization. Empty/non-string
+claims and outside-history paths are ignored. In-root claims to other leaves,
+control files or directories report `prune` / `artifacts` / `path_not_owned`.
+Root and immediate artifact parents must be real directories, not symlinks.
+
+Deletion uses nonrecursive `unlink`: an owned leaf symlink itself can be removed
+without following its target; directories are preserved. Missing files are
+benign, EINTR is retried, other syscall failures report `remove_failed` and
+continue with other artifacts. NS/C++ cleanup exceptions report `exception`
+and are contained; the rest of that victim is skipped. Committed return values,
+index/event state and the local recovery gate remain successful after cleanup
+errors. Diagnostics contain fixed labels only, with no paths or exception text.
+No retirement work is done when no records were evicted.
+
+This is one post-commit cleanup attempt, without an orphan discovery/retry
+queue, crash-resumable pruning or a disk-byte bound. Console `_logs` and
+external screenshots remain outside this ownership contract. All cooperating
+writers/maintenance must honor the same lock and inode protocol; no protection
+against arbitrary noncooperating filesystem races is claimed. Device I/O and
+latency qualification remains pending.
 
 ## Capability markers
 
