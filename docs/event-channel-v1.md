@@ -208,6 +208,27 @@ giữ cách truyền lỗi trước đây. Nhánh legacy root, TrollStore và re
 authorization, cancellation, request identity và output owner cũng giữ nguyên.
 
 Đối chiếu fixture với encoder frozen ở build `0340a8e3` kiểm tra envelope/base64,
-ID/lỗi, ngưỡng frame và vòng đời qua autorelease pool. Các ca Foundation/ARC mới
-chờ CI macOS; chưa có số đo allocation/RSS/latency trên thiết bị. Base64 và toàn
+ID/lỗi, ngưỡng frame và vòng đời qua autorelease pool. Build C03r đã pass theo
+người dùng; chưa có số đo allocation/RSS/latency trên thiết bị. Base64 và toàn
 bộ JSON serialization vẫn còn, nên P1-56 chưa được đóng toàn bộ.
+
+## C03s: encoder byte dùng chung cho phản hồi legacy Task 95
+
+Rootfull/roothide và production TrollStore dựng phản hồi thành công trực tiếp
+bằng NSData: serialize batch thành JSON bytes, tạo base64 NSData với options 0,
+ghép prefix ASCII `0;;` và suffix CRLF. Bỏ chuỗi base64, chuỗi formatted line và
+chuyển UTF8 ở bước đóng gói này. Byte gửi vẫn là `0;;<base64 JSON>\r\n`;
+không đổi schema, cursor hoặc yêu cầu client/SDK.
+
+Encoder dùng chung cho async legacy, remote qua adapter TrollStore và fallback
+Task 95 đồng bộ ở hai runtime. JSON-v1 trực tiếp của C03r giữ nguyên. Lỗi vẫn qua
+nhánh cũ: nil/empty JSON dùng event_channel_json_failed; denial đã định dạng,
+Unicode/NUL/delimiter/newline giữ cách xử lý riêng của mỗi runtime. Exception
+serialization giữ cách truyền lỗi cũ. Không đổi authorization, cancel/request
+identity, journal, queue/output owner hoặc giới hạn phản hồi hiện có.
+
+Fixture đối chiếu byte với encoder frozen của build `b8207e7a`, đủ ba trường hợp
+padding base64, cả wrapper đồng bộ, lỗi và dữ liệu qua autorelease pool. Ca
+Foundation/ARC mới chờ CI macOS; chưa có số đo allocation/RSS/latency trên thiết
+bị. JSON/base64 và các buffer byte vẫn được cấp; không thêm trần producer hay
+bảo đảm durability. P1-56 còn cần nghiệm thu thiết bị.

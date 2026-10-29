@@ -9,6 +9,29 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const [event, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
 function between(s,a,b) { const start = s.indexOf(a), end = s.indexOf(b,start+a.length); assert.ok(start >= 0 && end > start,a); return s.slice(start,end); }
+const eventWire = await read('shared/TLinkEventWire.h');
+assert.match(eventWire,/base64EncodedDataWithOptions:0/);
+assert.match(eventWire,/dataWithBytes:"0;;" length:3/);
+assert.match(eventWire,/appendBytes:"\\r\\n" length:2/);
+assert.doesNotMatch(eventWire,/base64EncodedStringWithOptions|UTF8String|stringWithFormat/);
+assert.equal((eventWire.match(/dataWithJSONObject:batch/g)||[]).length,1);
+assert.ok(socket.includes('#include "../shared/TLinkEventWire.h"'));
+assert.ok(troll.includes('#import "../../shared/TLinkEventWire.h"'));
+const frozenEventEncoder = await read('test/fixtures/event-batch-root-legacy-v1.inc');
+const frozenTrollEventEncoder = await read('test/fixtures/event-batch-troll-legacy-v1.inc');
+const rootLegacyEncoder = frozenEventEncoder.slice(frozenEventEncoder.indexOf('static NSData *')).replace('fixtureLegacyEventBatchResponse(', 'zx_eventBatchResponse(');
+const trollLegacyEncoder = frozenTrollEventEncoder.slice(frozenTrollEventEncoder.indexOf('static NSData *')).replace('fixtureLegacyTrollEventBatchResponse(', 'POCEventBatchResponse(');
+const oldRootSyncEncoder = "static NSData *zx_eventChannelResponse(NSString *body)\n{\n    NSString *error = nil;\n    NSDictionary *batch = TLinkEventChannelPollBody(body, &error);\n    if (error.length > 0) {\n        return zx_dataFromCString([[NSString stringWithFormat:@\"-1;;%@\\r\\n\", error] UTF8String]);\n    }\n    NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];\n    if (json.length == 0) return zx_dataFromCString(\"-1;;event_channel_json_failed\\r\\n\");\n    NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @\"\";\n    return zx_dataFromCString([[NSString stringWithFormat:@\"0;;%@\\r\\n\", base64] UTF8String]);\n}\n\n";
+const oldTrollSyncEncoder = "    if (taskType == 95) {\n        NSString *eventError = nil;\n        NSDictionary *batch = TLinkEventChannelPollBody(body, &eventError);\n        if (eventError.length > 0) return TLinkError(eventError);\n        NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];\n        if (json.length == 0) return TLinkError(@\"event_channel_json_failed\");\n        return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @\"\");\n    }\n\n";
+const rootWireEncoder = between(socket,'static NSData *zx_eventBatchResponse(', '// BEGIN direct event JSON-v1 envelope.');
+const rootSyncEncoder = between(socket,'static NSData *zx_eventChannelResponse(', 'static NSData *zx_eventBatchResponse(');
+const trollWireEncoder = between(troll,'static NSData *POCEventBatchResponse(', 'static TLinkEventPollRequest *POCBeginEventPoll(');
+const trollSyncEncoder = between(troll,'    if (taskType == 95) {','    if (taskType == 96) {');
+for(const encoder of [rootWireEncoder,rootSyncEncoder,trollWireEncoder,trollSyncEncoder]) assert.match(encoder,/TLinkEventLegacyBatchResponse\(batch\)/);
+const beforeWireSocket = socket.replace('#include "../shared/TLinkEventWire.h"\n','').replace(rootWireEncoder,rootLegacyEncoder).replace(rootSyncEncoder,oldRootSyncEncoder);
+const beforeWireTroll = troll.replace('#import "../../shared/TLinkEventWire.h"\n','').replace(trollWireEncoder,trollLegacyEncoder).replace(trollSyncEncoder,oldTrollSyncEncoder);
+assert.equal(createHash('sha256').update(beforeWireSocket.trim()).digest('hex'),'bc5ea783caad88ca7eeccbadeb570e547a9f96749464eccd3ef1642a033f6189','reversing only shared legacy wire encoding reproduces complete user-passed root socket at b8207e7a');
+assert.equal(createHash('sha256').update(beforeWireTroll.trim()).digest('hex'),'99f1e8da43f663d95a4072e879be9d41663e5a8687f435e3f94f5448aca111f7','reversing only shared legacy wire encoding reproduces complete user-passed TrollStore socket at b8207e7a');
 const directEnvelope = between(socket,'// BEGIN direct event JSON-v1 envelope.','static BOOL zx_beginEventPoll(');
 assert.match(directEnvelope,/if \(error.length\) return zx_jsonResponseFromLegacy\(zx_eventBatchResponse\(batch, error\), requestId\)/);
 assert.match(directEnvelope,/@"data": @\[\[data base64EncodedStringWithOptions:0\]\]/);
@@ -17,9 +40,8 @@ assert.match(directEnvelope,/event_channel_json_failed/);
 const oldCompletionEncoding = '        NSData *legacy = zx_eventBatchResponse(batch, error);\n        NSData *response = json ? zx_frameJSONResponse(zx_jsonResponseFromLegacy(legacy, requestId)) : legacy;';
 const directCompletionEncoding = '        NSData *response = json ? zx_frameJSONResponse(zx_eventBatchJSONResponse(batch, error, requestId))\n            : zx_eventBatchResponse(batch, error);';
 assert.ok(socket.includes(directCompletionEncoding));
-const beforeEnvelope = socket.replace(directEnvelope,'').replace(directCompletionEncoding,oldCompletionEncoding);
+const beforeEnvelope = beforeWireSocket.replace(directEnvelope,'').replace(directCompletionEncoding,oldCompletionEncoding);
 assert.equal(createHash('sha256').update(beforeEnvelope.trim()).digest('hex'),'12fe0aa807c4bab89648035fd060caea2525532441499261d6c6f90051a63b20','reversing only direct root event JSON envelope/helper reproduces complete user-passed SocketServer at 0340a8e3');
-const frozenEventEncoder = await read('test/fixtures/event-batch-root-legacy-v1.inc');
 assert.equal(frozenEventEncoder.slice(frozenEventEncoder.indexOf('static NSData *')).replace('fixtureLegacyEventBatchResponse(', 'zx_eventBatchResponse('),between(beforeEnvelope,'static NSData *zx_eventBatchResponse(','static BOOL zx_beginEventPoll('));
 const oldJournalRead = "    NSError *readError = nil;\n    NSData *data = [NSData dataWithContentsOfFile:TLinkEventJournalPath() options:0 error:&readError];\n    if (!data) {\n        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&\n            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {\n            return [@{@\"schema\": TLinkEventChannelSchemaV1, @\"next_sequence\": @1, @\"events\": @[]} mutableCopy];\n        }\n        *error = @\"event_journal_read_failed\";\n        return nil;\n    }\n";
 const boundedRead = between(event,'// Bounded journal file reads:','// Checked reads must never replace');
@@ -101,6 +123,7 @@ assert.ok(event.indexOf('notify_post(kTLinkEventNotification)') > event.indexOf(
 assert.match(event,/notify_register_dispatch/); assert.match(event,/TLinkEventMonotonicMs/);
 assert.match(event,/DISPATCH_TIME_FOREVER/);
 console.log('Event bounded journal IO source passed; root/lock inode source passed; checked read/cache/status source passed; publication source passed: checked journal authority, sequence coherence/exhaustion, finally unlock and complete frozen success/poll/status source.');
+console.log('Root/TrollStore legacy NSData wire source passed: complete socket reversals, shared byte encoder and unchanged error/transport policy.');
 console.log('Root event direct JSON envelope source passed: complete socket source reversal, frozen legacy encoder and unchanged error/base64/framing/cancellation/transport policy.');
 for (const source of [socket,troll]) {
  assert.match(source,/\[ctx.eventPollRequest cancel\]/);
@@ -131,7 +154,14 @@ try {
   .replace('read(fd, (uint8_t *)data.mutableBytes + offset, count)','FixtureJournalRead(fd, (uint8_t *)data.mutableBytes + offset, count)')
   .replace('read(fd, &extra, 1)','FixtureJournalRead(fd, &extra, 1)');
  assert.notEqual(fixture,event);
+ const syncFixture = source => source.replaceAll('TLinkEventChannelPollBody(body,', 'FixtureEventSyncPoll(body,')
+  .replaceAll('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)');
+ const trollSyncFixture = (name,source) => `static NSData *${name}(int taskType,NSString *body) {\n${syncFixture(source)}    return nil;\n}\n`;
  const fixtures = {
+  'EventWireUnderTest.inc': eventWire.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)'),
+  'EventLegacyTrollBatchUnderTest.inc': frozenTrollEventEncoder.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)'),
+  'EventSyncUnderTest.inc': syncFixture(rootSyncEncoder)+syncFixture(oldRootSyncEncoder).replace('zx_eventChannelResponse(', 'fixtureLegacyRootSyncResponse(')
+   +trollSyncFixture('fixtureTrollSyncResponse',trollSyncEncoder)+trollSyncFixture('fixtureLegacyTrollSyncResponse',oldTrollSyncEncoder),
   'EventChannelUnderTest.inc': fixture,
   'EventConstantsUnderTest.inc': between(socket,'static const UInt8 kZXTPMagic','static std::atomic<uint64_t>'),
   'EventJSONUnderTest.inc': between(socket,'static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId)\n{','// BEGIN socket work adapter.'),

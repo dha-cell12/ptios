@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "../shared/TLinkEventWire.h"
 #import <CoreFoundation/CoreFoundation.h>
 #include <dispatch/dispatch.h>
 #include <sys/socket.h>

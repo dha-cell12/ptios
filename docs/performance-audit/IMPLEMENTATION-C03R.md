@@ -1,7 +1,7 @@
 # C03r — direct Task-95 JSON-v1 success envelopes
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `0340a8e3`, C03q build passed according to the user. Complete normalized baseline `tlinkauto-binary/SocketServer.mm` SHA-256: `12fe0aa807c4bab89648035fd060caea2525532441499261d6c6f90051a63b20`.
-Status: **source implemented; new Foundation/ARC/ASan/UBSan cases pending macOS CI; independent device qualification pending**.
+Status: **build passed according to the user before C03s; committed at `b8207e7a`; independent device qualification pending**.
 Finding: **P1-56 response conversion amplification**, limited to the asynchronous root JSON-v1 Task-95 success path.
 
 ## Change

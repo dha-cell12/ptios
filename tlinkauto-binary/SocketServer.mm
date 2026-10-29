@@ -8,6 +8,7 @@
 #include "IPCConstants.h"
 #include "../shared/TLinkRootfullLicenseBuild.h"
 #include "../shared/TLinkEventChannel.h"
+#include "../shared/TLinkEventWire.h"
 #include "../shared/TLinkAdaptiveStreaming.h"
 #include "../shared/TLinkLicenseVerifier.h"
 #include "../shared/TLinkRootfullLicensePolicy.h"
@@ -102,10 +103,8 @@ static NSData *zx_eventChannelResponse(NSString *body)
     if (error.length > 0) {
         return zx_dataFromCString([[NSString stringWithFormat:@"-1;;%@\r\n", error] UTF8String]);
     }
-    NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
-    if (json.length == 0) return zx_dataFromCString("-1;;event_channel_json_failed\r\n");
-    NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
-    return zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String]);
+    NSData *response = TLinkEventLegacyBatchResponse(batch);
+    return response ?: zx_dataFromCString("-1;;event_channel_json_failed\r\n");
 }
 
 static NSData *zx_eventBatchResponse(NSDictionary *batch, NSString *error)
@@ -114,9 +113,8 @@ static NSData *zx_eventBatchResponse(NSDictionary *batch, NSString *error)
         NSString *line = [error hasPrefix:@"-1;;"] ? error : [NSString stringWithFormat:@"-1;;%@\r\n", error];
         return zx_dataFromCString(line.UTF8String);
     }
-    NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
-    return json.length ? zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", [json base64EncodedStringWithOptions:0]] UTF8String])
-        : zx_dataFromCString("-1;;event_channel_json_failed\r\n");
+    NSData *response = TLinkEventLegacyBatchResponse(batch);
+    return response ?: zx_dataFromCString("-1;;event_channel_json_failed\r\n");
 }
 // BEGIN direct event JSON-v1 envelope.
 static NSDictionary *zx_eventBatchJSONResponse(NSDictionary *batch, NSString *error, NSNumber *requestId)

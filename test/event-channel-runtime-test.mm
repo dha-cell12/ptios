@@ -28,8 +28,12 @@ static uint32_t FixtureRegisterNotification(const char *name, int *token, dispat
 }
 static std::atomic<unsigned> fixturePosts{0},fixtureWrites{0},fixturePublishReads{0};
 static std::atomic<unsigned> fixtureCStringConversions{0},fixtureLegacyParses{0},fixtureBatchEncodes{0};
+static std::atomic<unsigned> fixtureSuccessStringConversions{0};
 static NSData *fixtureBatchJSONOverride;
 static unsigned fixtureBatchEncodeFault=0;
+static NSDictionary *fixtureSyncBatch;
+static NSString *fixtureSyncError;
+static unsigned fixtureSyncPolls=0;
 static std::atomic<unsigned> fixtureReadFault{0},fixtureWriteFault{0};
 static std::atomic<bool> fixtureReaderLockDenied{false};
 static thread_local std::set<int> fixtureEventLocks;
@@ -126,7 +130,7 @@ static NSMutableArray *wireWrites;
 static void zx_writeAll(CFWriteStreamRef stream, NSData *data) { assert(stream && data); [wireWrites addObject:data]; }
 static void POCWriteAll(CFWriteStreamRef stream, NSData *data) { zx_writeAll(stream,data); }
 static NSData *zx_dataFromCString(const char *s) { ++fixtureCStringConversions;return [NSData dataWithBytes:s length:strlen(s)]; }
-static NSData *TLinkSuccess(NSString *text) { return [[NSString stringWithFormat:@"0;;%@\r\n",text] dataUsingEncoding:NSUTF8StringEncoding]; }
+static NSData *TLinkSuccess(NSString *text) { ++fixtureSuccessStringConversions;return [[NSString stringWithFormat:@"0;;%@\r\n",text] dataUsingEncoding:NSUTF8StringEncoding]; }
 static NSData *TLinkError(NSString *text) { return [[NSString stringWithFormat:@"-1;;%@\r\n",text] dataUsingEncoding:NSUTF8StringEncoding]; }
 static std::atomic<bool> allowed{true};
 static std::atomic<unsigned> late{0};
@@ -148,6 +152,12 @@ static NSData *FixtureEventBatchJSON(NSDictionary *batch) {
     return fixtureBatchJSONOverride ?: [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
 }
 #include "EventLegacyBatchUnderTest.inc"
+#include "EventLegacyTrollBatchUnderTest.inc"
+#include "EventWireUnderTest.inc"
+static NSDictionary *FixtureEventSyncPoll(NSString *body,NSString **error) {
+    assert([body isEqual:@"fixture"]);++fixtureSyncPolls;*error=fixtureSyncError;return fixtureSyncBatch;
+}
+#include "EventSyncUnderTest.inc"
 #include "EventRootSocketUnderTest.inc"
 #include "EventBodyUnderTest.inc"
 #include "EventTrollSocketUnderTest.inc"
@@ -491,10 +501,12 @@ static void fixtureBoundedJournalCases() {
     puts("Event bounded journal passed: regular/no-follow/nonblocking reads, 4-MiB admission before buffer allocation/payload IO, 64-KiB chunks, EOF probe, EINTR/short/error/NS/C++ cleanup, real sparse/FIFO/directory/symlink cases, exact-cap/maximum-normal journals and write-cap preservation. This is not an overall JSON/RSS or IO-time bound.");
 }
 #include "event-envelope-runtime-fixture.inc"
+#include "event-wire-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
     fixtureEventEnvelopeCases();
+    fixtureEventWireCases();
     fixtureValidatedLockCases();
     fixtureCheckedPublicationCases();
     uint64_t one = publish(), unrelated = publish(@"other"), three = publish(), tail = publish(@"other");

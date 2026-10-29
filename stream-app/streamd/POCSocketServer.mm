@@ -10,6 +10,7 @@
 #import "H264Stream.h"
 #import "../../shared/TLinkJSFileHandle.h"
 #import "../../shared/TLinkEventChannel.h"
+#import "../../shared/TLinkEventWire.h"
 #import "../../shared/TLinkAdaptiveStreaming.h"
 #import "../../shared/TLinkLicenseVerifier.h"
 #import "../../shared/TLinkSmartWaitPrelude.h"
@@ -10490,9 +10491,8 @@ static NSData *TLinkHandleTaskLine(const char *line)
         NSString *eventError = nil;
         NSDictionary *batch = TLinkEventChannelPollBody(body, &eventError);
         if (eventError.length > 0) return TLinkError(eventError);
-        NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
-        if (json.length == 0) return TLinkError(@"event_channel_json_failed");
-        return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
+        NSData *response = TLinkEventLegacyBatchResponse(batch);
+        return response ?: TLinkError(@"event_channel_json_failed");
     }
 
     if (taskType == 96) {
@@ -10738,8 +10738,8 @@ static void POCWriteAll(CFWriteStreamRef stream, NSData *data)
 static NSData *POCEventBatchResponse(NSDictionary *batch, NSString *error)
 {
     if (error.length) return [error hasPrefix:@"-1;;"] ? [error dataUsingEncoding:NSUTF8StringEncoding] : TLinkError(error);
-    NSData *json = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
-    return json.length ? TLinkSuccess([json base64EncodedStringWithOptions:0]) : TLinkError(@"event_channel_json_failed");
+    NSData *response = TLinkEventLegacyBatchResponse(batch);
+    return response ?: TLinkError(@"event_channel_json_failed");
 }
 static TLinkEventPollRequest *POCBeginEventPoll(NSString *body, TLinkEventPollCompletion completion)
 {
