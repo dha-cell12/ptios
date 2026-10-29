@@ -1,7 +1,7 @@
 # C03q — bounded journal file reads and encoded output
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline source: `a39ec7b7`, including C03p, build passed according to the user. Previous documentation/header edits remain in the working tree. Complete normalized event source SHA-256 before this stage: `6ccb48528fe7a59792a7f70c5a730598403476db99841aa6ea20efaeec73b020`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; device qualification pending**.
+Status: **build passed according to the user before C03r; committed at `0340a8e3`; independent device qualification pending**.
 Finding: **C03/P1-54/P1-58 predecode journal admission**, without changing the retained JSON schema or publishing algorithm.
 
 ## Change

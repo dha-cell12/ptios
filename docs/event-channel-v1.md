@@ -191,4 +191,23 @@ là trần RSS/JSON graph, thời gian I/O hoặc bước mã hóa payload đầ
 vẫn encode trước kiểm tra output; journal vẫn được read/parse/rewrite toàn phần.
 Schema/wire/retention/cursor và giao thức inode không đổi. Không thêm epoch,
 fsync, phục hồi file hỏng hoặc bảo đảm cho actor sửa file ngoài giao thức atomic
-write/flock. Các ca Foundation/POSIX mới và số đo thiết bị còn chờ CI/nghiệm thu.
+write/flock. Build C03q đã pass theo người dùng; số đo và nghiệm thu thiết bị còn mở.
+
+## C03r: envelope JSON-v1 trực tiếp cho Task 95 trên root
+
+Phản hồi Task 95 bất đồng bộ dùng JSON-v1 trên rootfull/roothide tạo envelope
+thành công trực tiếp từ JSON batch và base64, bỏ bước dựng chuỗi legacy rồi
+chuyển UTF8/tách lại. Hợp đồng giữ nguyên: `id` theo request (mặc định 0),
+`ok=true`, `data=["<base64 JSON batch>"]`, `error=null`. Không chuyển `data`
+thành object batch; client/SDK không cần đổi. Bộ đóng frame ZXTP, giới hạn body
+1 MiB và lỗi response_too_large/response_encode_failed giữ nguyên.
+
+Lỗi vẫn qua encoder/parser legacy hiện có để giữ cách xử lý denial đã định dạng,
+delimiter, newline, NUL và lỗi event_channel_json_failed. Serialization exception
+giữ cách truyền lỗi trước đây. Nhánh legacy root, TrollStore và remote không đổi;
+authorization, cancellation, request identity và output owner cũng giữ nguyên.
+
+Đối chiếu fixture với encoder frozen ở build `0340a8e3` kiểm tra envelope/base64,
+ID/lỗi, ngưỡng frame và vòng đời qua autorelease pool. Các ca Foundation/ARC mới
+chờ CI macOS; chưa có số đo allocation/RSS/latency trên thiết bị. Base64 và toàn
+bộ JSON serialization vẫn còn, nên P1-56 chưa được đóng toàn bộ.

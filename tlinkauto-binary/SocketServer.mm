@@ -118,6 +118,18 @@ static NSData *zx_eventBatchResponse(NSDictionary *batch, NSString *error)
     return json.length ? zx_dataFromCString([[NSString stringWithFormat:@"0;;%@\r\n", [json base64EncodedStringWithOptions:0]] UTF8String])
         : zx_dataFromCString("-1;;event_channel_json_failed\r\n");
 }
+// BEGIN direct event JSON-v1 envelope.
+static NSDictionary *zx_eventBatchJSONResponse(NSDictionary *batch, NSString *error, NSNumber *requestId)
+{
+    // Preserve legacy error normalization, including preformatted license denials.
+    if (error.length) return zx_jsonResponseFromLegacy(zx_eventBatchResponse(batch, error), requestId);
+    NSData *data = [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
+    if (!data.length) return zx_jsonResponseFromLegacy(zx_dataFromCString("-1;;event_channel_json_failed\r\n"), requestId);
+    // JSON-v1 clients still expect one base64 string in data, not a nested batch.
+    return @{@"id": requestId ?: @0, @"ok": @true,
+             @"data": @[[data base64EncodedStringWithOptions:0]], @"error": [NSNull null]};
+}
+// END direct event JSON-v1 envelope.
 static BOOL zx_beginEventPoll(ZXClientContext *ctx, NSString *body, NSNumber *requestId, BOOL json)
 {
     if (!ctx || !ctx.writeStream) return false;
@@ -133,8 +145,8 @@ static BOOL zx_beginEventPoll(ZXClientContext *ctx, NSString *body, NSNumber *re
         return TLinkRootfullLicenseTaskAllowed(95, &denial) ? nil : (denial ?: @"license_required");
     }, ^(TLinkEventPollRequest *request, NSDictionary *batch, NSString *error) {
         if (request.isCancelled) return;
-        NSData *legacy = zx_eventBatchResponse(batch, error);
-        NSData *response = json ? zx_frameJSONResponse(zx_jsonResponseFromLegacy(legacy, requestId)) : legacy;
+        NSData *response = json ? zx_frameJSONResponse(zx_eventBatchJSONResponse(batch, error, requestId))
+            : zx_eventBatchResponse(batch, error);
         dispatch_async(socketQueue(), ^{
             ZXClientContext *owner = weakContext;
             if (!owner || request.isCancelled || owner.eventPollRequest != request) return;

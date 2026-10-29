@@ -9,6 +9,18 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const [event, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
 function between(s,a,b) { const start = s.indexOf(a), end = s.indexOf(b,start+a.length); assert.ok(start >= 0 && end > start,a); return s.slice(start,end); }
+const directEnvelope = between(socket,'// BEGIN direct event JSON-v1 envelope.','static BOOL zx_beginEventPoll(');
+assert.match(directEnvelope,/if \(error.length\) return zx_jsonResponseFromLegacy\(zx_eventBatchResponse\(batch, error\), requestId\)/);
+assert.match(directEnvelope,/@"data": @\[\[data base64EncodedStringWithOptions:0\]\]/);
+assert.match(directEnvelope,/@"id": requestId \?: @0, @"ok": @true/);
+assert.match(directEnvelope,/event_channel_json_failed/);
+const oldCompletionEncoding = '        NSData *legacy = zx_eventBatchResponse(batch, error);\n        NSData *response = json ? zx_frameJSONResponse(zx_jsonResponseFromLegacy(legacy, requestId)) : legacy;';
+const directCompletionEncoding = '        NSData *response = json ? zx_frameJSONResponse(zx_eventBatchJSONResponse(batch, error, requestId))\n            : zx_eventBatchResponse(batch, error);';
+assert.ok(socket.includes(directCompletionEncoding));
+const beforeEnvelope = socket.replace(directEnvelope,'').replace(directCompletionEncoding,oldCompletionEncoding);
+assert.equal(createHash('sha256').update(beforeEnvelope.trim()).digest('hex'),'12fe0aa807c4bab89648035fd060caea2525532441499261d6c6f90051a63b20','reversing only direct root event JSON envelope/helper reproduces complete user-passed SocketServer at 0340a8e3');
+const frozenEventEncoder = await read('test/fixtures/event-batch-root-legacy-v1.inc');
+assert.equal(frozenEventEncoder.slice(frozenEventEncoder.indexOf('static NSData *')).replace('fixtureLegacyEventBatchResponse(', 'zx_eventBatchResponse('),between(beforeEnvelope,'static NSData *zx_eventBatchResponse(','static BOOL zx_beginEventPoll('));
 const oldJournalRead = "    NSError *readError = nil;\n    NSData *data = [NSData dataWithContentsOfFile:TLinkEventJournalPath() options:0 error:&readError];\n    if (!data) {\n        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&\n            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {\n            return [@{@\"schema\": TLinkEventChannelSchemaV1, @\"next_sequence\": @1, @\"events\": @[]} mutableCopy];\n        }\n        *error = @\"event_journal_read_failed\";\n        return nil;\n    }\n";
 const boundedRead = between(event,'// Bounded journal file reads:','// Checked reads must never replace');
 assert.match(event,/kTLinkEventJournalMaxBytes = 4 \* 1024 \* 1024/);
@@ -89,6 +101,7 @@ assert.ok(event.indexOf('notify_post(kTLinkEventNotification)') > event.indexOf(
 assert.match(event,/notify_register_dispatch/); assert.match(event,/TLinkEventMonotonicMs/);
 assert.match(event,/DISPATCH_TIME_FOREVER/);
 console.log('Event bounded journal IO source passed; root/lock inode source passed; checked read/cache/status source passed; publication source passed: checked journal authority, sequence coherence/exhaustion, finally unlock and complete frozen success/poll/status source.');
+console.log('Root event direct JSON envelope source passed: complete socket source reversal, frozen legacy encoder and unchanged error/base64/framing/cancellation/transport policy.');
 for (const source of [socket,troll]) {
  assert.match(source,/\[ctx.eventPollRequest cancel\]/);
  assert.match(source,/owner.eventPollRequest != request/);
@@ -122,7 +135,10 @@ try {
   'EventChannelUnderTest.inc': fixture,
   'EventConstantsUnderTest.inc': between(socket,'static const UInt8 kZXTPMagic','static std::atomic<uint64_t>'),
   'EventJSONUnderTest.inc': between(socket,'static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId)\n{','// BEGIN socket work adapter.'),
-  'EventRootSocketUnderTest.inc': between(socket,'static NSData *zx_eventBatchResponse(', 'static dispatch_queue_t socketQueue()\n{'),
+  'EventRootSocketUnderTest.inc': between(socket,'static NSData *zx_eventBatchResponse(', 'static dispatch_queue_t socketQueue()\n{')
+   .replaceAll('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)')
+   .replaceAll('zx_jsonResponseFromLegacy(', 'FixtureEventLegacyJSON('),
+  'EventLegacyBatchUnderTest.inc': frozenEventEncoder.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)'),
   'EventBodyUnderTest.inc': between(troll,'static NSString *TLinkBodyFromLine(', 'static NSArray<NSString *> *TLinkSplitBody('),
   'EventTrollSocketUnderTest.inc': between(troll,'// BEGIN TrollStore event socket adapter.', '// END TrollStore event socket adapter.'),
  };

@@ -27,6 +27,9 @@ static uint32_t FixtureRegisterNotification(const char *name, int *token, dispat
     assert(result == NOTIFY_STATUS_OK); return result;
 }
 static std::atomic<unsigned> fixturePosts{0},fixtureWrites{0},fixturePublishReads{0};
+static std::atomic<unsigned> fixtureCStringConversions{0},fixtureLegacyParses{0},fixtureBatchEncodes{0};
+static NSData *fixtureBatchJSONOverride;
+static unsigned fixtureBatchEncodeFault=0;
 static std::atomic<unsigned> fixtureReadFault{0},fixtureWriteFault{0};
 static std::atomic<bool> fixtureReaderLockDenied{false};
 static thread_local std::set<int> fixtureEventLocks;
@@ -122,7 +125,7 @@ static dispatch_queue_t POCSocketQueue() { return socketQueue(); }
 static NSMutableArray *wireWrites;
 static void zx_writeAll(CFWriteStreamRef stream, NSData *data) { assert(stream && data); [wireWrites addObject:data]; }
 static void POCWriteAll(CFWriteStreamRef stream, NSData *data) { zx_writeAll(stream,data); }
-static NSData *zx_dataFromCString(const char *s) { return [NSData dataWithBytes:s length:strlen(s)]; }
+static NSData *zx_dataFromCString(const char *s) { ++fixtureCStringConversions;return [NSData dataWithBytes:s length:strlen(s)]; }
 static NSData *TLinkSuccess(NSString *text) { return [[NSString stringWithFormat:@"0;;%@\r\n",text] dataUsingEncoding:NSUTF8StringEncoding]; }
 static NSData *TLinkError(NSString *text) { return [[NSString stringWithFormat:@"-1;;%@\r\n",text] dataUsingEncoding:NSUTF8StringEncoding]; }
 static std::atomic<bool> allowed{true};
@@ -133,6 +136,18 @@ static NSData *TLinkLicenseDeniedResponse(int, NSString *, NSString *error) { re
 static const NSUInteger kMaxBuffer = 65536;
 #include "EventConstantsUnderTest.inc"
 #include "EventJSONUnderTest.inc"
+static NSDictionary *FixtureEventLegacyJSON(NSData *legacy,NSNumber *requestId) {
+    ++fixtureLegacyParses;return zx_jsonResponseFromLegacy(legacy,requestId);
+}
+static NSData *FixtureEventBatchJSON(NSDictionary *batch) {
+    ++fixtureBatchEncodes;
+    if(fixtureBatchEncodeFault==1)return nil;
+    if(fixtureBatchEncodeFault==2)return [NSData data];
+    if(fixtureBatchEncodeFault==3)[NSException raise:@"EventFixture" format:@"batch encode failed"];
+    if(fixtureBatchEncodeFault==4)throw std::runtime_error("batch encode failed");
+    return fixtureBatchJSONOverride ?: [NSJSONSerialization dataWithJSONObject:batch options:0 error:nil];
+}
+#include "EventLegacyBatchUnderTest.inc"
 #include "EventRootSocketUnderTest.inc"
 #include "EventBodyUnderTest.inc"
 #include "EventTrollSocketUnderTest.inc"
@@ -475,9 +490,11 @@ static void fixtureBoundedJournalCases() {
     suppressNotify=savedNotify;
     puts("Event bounded journal passed: regular/no-follow/nonblocking reads, 4-MiB admission before buffer allocation/payload IO, 64-KiB chunks, EOF probe, EINTR/short/error/NS/C++ cleanup, real sparse/FIFO/directory/symlink cases, exact-cap/maximum-normal journals and write-cap preservation. This is not an overall JSON/RSS or IO-time bound.");
 }
+#include "event-envelope-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
+    fixtureEventEnvelopeCases();
     fixtureValidatedLockCases();
     fixtureCheckedPublicationCases();
     uint64_t one = publish(), unrelated = publish(@"other"), three = publish(), tail = publish(@"other");
@@ -562,9 +579,31 @@ int main(int argc, char **argv) { @autoreleasepool {
         NSData *wire = wireWrites.lastObject; assert(wire.length > 10);
         NSDictionary *object = [NSJSONSerialization JSONObjectWithData:[wire subdataWithRange:NSMakeRange(10,wire.length-10)] options:0 error:NULL];
         assert([object[@"id"] isEqual:@42] && [object[@"ok"] boolValue]);
+        assert([object[@"data"] count]==1);
+        NSData *decoded=[[NSData alloc] initWithBase64EncodedString:object[@"data"][0] options:0];
+        NSDictionary *eventBatch=[NSJSONSerialization JSONObjectWithData:decoded options:0 error:nil];
+        assert([eventBatch[@"schema"] isEqual:TLinkEventChannelSchemaV1]&&[eventBatch[@"timed_out"] boolValue]);
+        assert([eventBatch[@"next_cursor"] unsignedLongLongValue]==latest);
         [wireWrites removeAllObjects]; zx_deferLegacyEventPoll(root,body(latest));
         [root.eventPollRequest cancel]; root.eventPollRequest = nil; root.writeStream = NULL; root.eventPollPending = NO;
     });
+    ZXClientContext *rootErrors=[ZXClientContext new];rootErrors.writeStream=(CFWriteStreamRef)(uintptr_t)3;
+    dispatch_sync(socketQueue(), ^{
+        zx_deferJSONEventPoll(rootErrors,body(latest),@76);
+        zx_deferJSONEventPoll(rootErrors,body(latest),@77);
+        assert(wireWrites.count==1);
+        NSDictionary *object=fixtureEnvelopeFrameObject(wireWrites.lastObject);
+        assert([object[@"id"] isEqual:@77]&&[object[@"error"] isEqual:@"event_poll_already_pending"]);
+        [rootErrors.eventPollRequest cancel];rootErrors.eventPollRequest=nil;rootErrors.eventPollPending=NO;
+        [wireWrites removeAllObjects];
+    });
+    allowed=false;dispatch_sync(socketQueue(), ^{zx_deferJSONEventPoll(rootErrors,body(latest,0),@88);});
+    waitFor([] {__block BOOL done;dispatch_sync(socketQueue(), ^{done=wireWrites.count==1;});return (bool)done;});
+    dispatch_sync(socketQueue(), ^{
+        NSDictionary *object=fixtureEnvelopeFrameObject(wireWrites.lastObject);
+        assert([object[@"id"] isEqual:@88]&&[object[@"error"] isEqual:@"license_required"]);
+        [wireWrites removeAllObjects];rootErrors.writeStream=NULL;
+    });allowed=true;
     POCClientContext *troll = [POCClientContext new]; troll.writeStream = (CFWriteStreamRef)(uintptr_t)2;
     dispatch_sync(socketQueue(), ^{ POCDeferEventPoll(troll,body(latest,0)); });
     waitFor([] { __block BOOL done; dispatch_sync(socketQueue(), ^{ done = wireWrites.count == 1; }); return (bool)done; });
