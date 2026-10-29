@@ -30,14 +30,29 @@ static std::atomic<unsigned> fixturePosts{0},fixtureWrites{0},fixturePublishRead
 static std::atomic<unsigned> fixtureReadFault{0},fixtureWriteFault{0};
 static std::atomic<bool> fixtureReaderLockDenied{false};
 static thread_local std::set<int> fixtureEventLocks;
+static thread_local std::set<int> fixtureEventFds;
+static std::atomic<unsigned> fixtureLiveEventFds{0},fixtureLockPermissions{0};
+static bool fixtureLockStatFault=false;
+static NSString *fixtureEventRootOverride;
+static std::function<void()> fixtureAfterLock;
+static int FixtureEventOpen(const char *path,int flags,mode_t mode) {
+    assert(flags==(O_CREAT|O_RDWR|O_NOFOLLOW|O_NONBLOCK)&&mode==0640);
+    const int fd=::open(path,flags,mode);if(fd>=0){assert(fixtureEventFds.insert(fd).second);++fixtureLiveEventFds;}return fd;
+}
+static int FixtureEventLockStat(int fd,struct stat *info) {
+    assert(fixtureEventFds.count(fd));if(fixtureLockStatFault){errno=EIO;return -1;}return ::fstat(fd,info);
+}
+static int FixtureEventFchmod(int fd,mode_t mode) {assert(fixtureEventLocks.count(fd)&&mode==0640);++fixtureLockPermissions;return ::fchmod(fd,mode);}
+static int FixtureEventFchown(int fd,uid_t uid,gid_t gid) {assert(fixtureEventLocks.count(fd)&&uid==501&&gid==501);++fixtureLockPermissions;return ::fchown(fd,uid,gid);}
+
 static uint32_t FixtureNotifyPost(const char *name) { assert(fixtureEventLocks.empty());++fixturePosts;return suppressNotify ? 0 : notify_post(name); }
 static int FixtureEventFlock(int fd,int operation) {
     if((operation&LOCK_SH)&&fixtureReaderLockDenied.load()){errno=EWOULDBLOCK;return -1;}
     const int result=::flock(fd,operation);
-    if(!result){if(operation==LOCK_UN)assert(fixtureEventLocks.erase(fd)==1);else assert(fixtureEventLocks.insert(fd).second);}
+    if(!result){if(operation==LOCK_UN)assert(fixtureEventLocks.erase(fd)==1);else{assert(fixtureEventLocks.insert(fd).second);if(fixtureAfterLock)fixtureAfterLock();}}
     return result;
 }
-static int FixtureEventClose(int fd) { assert(!fixtureEventLocks.count(fd));return ::close(fd); }
+static int FixtureEventClose(int fd) { assert(!fixtureEventLocks.count(fd)&&fixtureEventFds.erase(fd)==1);--fixtureLiveEventFds;return ::close(fd); }
 static NSData *FixtureEventRead(NSString *path,NSError **error) {
     assert(fixtureEventLocks.size()==1);++fixturePublishReads;
     if(fixtureReadFault==4)[NSException raise:@"EventFixture" format:@"read failed"];
@@ -290,9 +305,79 @@ static void fixtureCheckedReadCases(uint64_t cursor) {
     assert(sTLinkEventActivePolls==0&&sTLinkEventAuthorizations==0);suppressNotify=savedNotify;
     puts("Event checked reads passed: status/poll malformed/read/NS/C++ errors, no reset or stale-cache delivery, cache invalidation with held authorization, transient contention/cancel/recovery, unchanged error wire adapters and balanced leases/locks. Missing-file epoch recovery pending.");
 }
+static void fixtureLockRejected(NSData *healthy,NSString *journalPath) {
+    const unsigned reads=fixturePublishReads.load(),writes=fixtureWrites.load(),posts=fixturePosts.load(),permissions=fixtureLockPermissions.load();
+    NSDictionary *reply=TLinkEventChannelPublish(@"fixture",@"script.run",@"updated",@{});
+    assert([reply[@"state"] isEqual:@"error"]&&[reply[@"error"] isEqual:@"event_journal_lock_failed"]);
+    NSDictionary *status=TLinkEventChannelStatus();assert([status[@"state"] isEqual:@"error"]&&[status[@"error"] isEqual:@"event_journal_unavailable"]);
+    NSString *fingerprint=@"stale",*error=nil;
+    assert(!TLinkEventLoadSnapshot(YES,&fingerprint,&error)&&!fingerprint&&[error isEqual:@"event_journal_unavailable"]);
+    assert(fixturePublishReads==reads&&fixtureWrites==writes&&fixturePosts==posts&&fixtureLockPermissions==permissions);
+    assert(!fixtureLiveEventFds&&fixtureEventLocks.empty()&&fixtureEventFds.empty()&&[healthy isEqual:[NSData dataWithContentsOfFile:journalPath]]);
+}
+static void fixtureValidatedLockCases() {
+    const bool savedNotify=suppressNotify;suppressNotify=true;
+    assert(TLinkEventEnsureDirectory()&&publish()==1);
+    NSString *root=TLinkEventChannelRootPath(),*path=TLinkEventLockPath(),*journal=TLinkEventJournalPath();
+    NSData *healthy=[NSData dataWithContentsOfFile:journal];NSFileManager *fm=[NSFileManager defaultManager];assert(healthy);
+    struct stat original;assert(::lstat(path.fileSystemRepresentation,&original)==0&&S_ISREG(original.st_mode)&&original.st_nlink==1);
+    for(bool reader:{false,true})for(bool nonblocking:{false,true}){
+        const unsigned permissions=fixtureLockPermissions.load();const int fd=TLinkEventAcquireFileLock(reader,nonblocking);assert(fd>=0);
+        struct stat info;assert(::fstat(fd,&info)==0&&info.st_ino==original.st_ino&&info.st_dev==original.st_dev&&fixtureLockPermissions==permissions+2);
+        TLinkEventReleaseFileLock(fd);assert(!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureEventLocks.empty());
+    }
+    fixtureLockStatFault=true;fixtureLockRejected(healthy,journal);fixtureLockStatFault=false;
+    NSString *stash=[path stringByAppendingString:@".saved"],*alias=[path stringByAppendingString:@".alias"];
+    assert(::link(path.fileSystemRepresentation,alias.fileSystemRepresentation)==0);fixtureLockRejected(healthy,journal);assert(::unlink(alias.fileSystemRepresentation)==0);
+    assert(::rename(path.fileSystemRepresentation,stash.fileSystemRepresentation)==0);
+    NSString *outside=[root stringByAppendingPathComponent:@"outside-lock"];
+    NSData *outsideBytes=[@"outside ownership remains" dataUsingEncoding:NSUTF8StringEncoding];assert([outsideBytes writeToFile:outside atomically:YES]&&::chmod(outside.fileSystemRepresentation,0600)==0);
+    assert(::symlink(outside.fileSystemRepresentation,path.fileSystemRepresentation)==0);fixtureLockRejected(healthy,journal);
+    struct stat outsideInfo;assert(::stat(outside.fileSystemRepresentation,&outsideInfo)==0&&(outsideInfo.st_mode&0777)==0600&&[outsideBytes isEqual:[NSData dataWithContentsOfFile:outside]]);
+    assert(::unlink(path.fileSystemRepresentation)==0&&::mkfifo(path.fileSystemRepresentation,0600)==0);fixtureLockRejected(healthy,journal);
+    assert(::unlink(path.fileSystemRepresentation)==0&&[fm createDirectoryAtPath:path withIntermediateDirectories:NO attributes:nil error:nil]);
+    NSString *child=[path stringByAppendingPathComponent:@"keep.txt"];assert([outsideBytes writeToFile:child atomically:YES]);fixtureLockRejected(healthy,journal);
+    assert([outsideBytes isEqual:[NSData dataWithContentsOfFile:child]]&&[fm removeItemAtPath:path error:nil]&&::rename(stash.fileSystemRepresentation,path.fileSystemRepresentation)==0);
+    // Root refusal happens before create/chmod/lock open, without following a known leaf symlink or file.
+    NSString *rootLink=[root stringByAppendingPathComponent:@"root-link"],*rootFile=[root stringByAppendingPathComponent:@"root-file"];
+    assert(::symlink(root.fileSystemRepresentation,rootLink.fileSystemRepresentation)==0&&[outsideBytes writeToFile:rootFile atomically:YES]&&::chmod(rootFile.fileSystemRepresentation,0600)==0);
+    for(NSString *badRoot in @[rootLink,rootFile]){fixtureEventRootOverride=badRoot;fixtureLockRejected(healthy,journal);fixtureEventRootOverride=nil;}
+    assert(::stat(rootFile.fileSystemRepresentation,&outsideInfo)==0&&(outsideInfo.st_mode&0777)==0600&&[outsideBytes isEqual:[NSData dataWithContentsOfFile:rootFile]]);
+    assert(::unlink(rootLink.fileSystemRepresentation)==0);
+    // Real pathname changes after successful flock must release the old inode without touching replacement permissions.
+    for(unsigned mode=0;mode<4;++mode){
+        const unsigned permissions=fixtureLockPermissions.load(),reads=fixturePublishReads.load();
+        NSString *moved=[root stringByAppendingString:@".moved"];
+        fixtureAfterLock=[path,stash,alias,root,moved,mode]{
+            if(mode<2){
+                assert(::rename(path.fileSystemRepresentation,stash.fileSystemRepresentation)==0);
+                if(mode==0){const int replacement=::open(path.fileSystemRepresentation,O_CREAT|O_RDWR,0600);assert(replacement>=0&&::close(replacement)==0);}
+            }else if(mode==2)assert(::link(path.fileSystemRepresentation,alias.fileSystemRepresentation)==0);
+            else assert(::rename(root.fileSystemRepresentation,moved.fileSystemRepresentation)==0&&::symlink(moved.fileSystemRepresentation,root.fileSystemRepresentation)==0);
+        };
+        assert(TLinkEventAcquireFileLock(NO,NO)<0);fixtureAfterLock={};
+        assert(!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureEventLocks.empty()&&fixtureLockPermissions==permissions&&fixturePublishReads==reads);
+        if(mode<2){
+            const int probe=::open(stash.fileSystemRepresentation,O_RDWR);assert(probe>=0&&::flock(probe,LOCK_EX|LOCK_NB)==0&&::flock(probe,LOCK_UN)==0&&::close(probe)==0);
+            if(mode==0){struct stat replacement;assert(::stat(path.fileSystemRepresentation,&replacement)==0&&(replacement.st_mode&0777)==0600&&::unlink(path.fileSystemRepresentation)==0);}
+            assert(::rename(stash.fileSystemRepresentation,path.fileSystemRepresentation)==0);
+        }else if(mode==2)assert(::unlink(alias.fileSystemRepresentation)==0);
+        else assert(::unlink(root.fileSystemRepresentation)==0&&::rename(moved.fileSystemRepresentation,root.fileSystemRepresentation)==0);
+        assert([healthy isEqual:[NSData dataWithContentsOfFile:journal]]);fixtureOtherOwnerCanLock();
+    }
+    struct stat restored;assert(::lstat(path.fileSystemRepresentation,&restored)==0&&restored.st_ino==original.st_ino&&restored.st_dev==original.st_dev);
+    assert(publish()==2&&[TLinkEventChannelStatus()[@"state"] isEqual:@"implemented"]&&!fixtureLiveEventFds);
+    // A genuinely absent direct root is still created and supports an independent normal journal.
+    fixtureEventRootOverride=[root stringByAppendingPathComponent:@"new-root"];assert(publish()==1&&[TLinkEventChannelStatus()[@"state"] isEqual:@"implemented"]);
+    NSString *created=fixtureEventRootOverride;fixtureEventRootOverride=nil;assert([fm removeItemAtPath:created error:nil]);
+    assert([fm removeItemAtPath:journal error:nil]);suppressNotify=savedNotify;
+    assert(fixtureEventLocks.empty()&&fixtureEventFds.empty()&&!fixtureLiveEventFds);
+    puts("Event lock passed: real regular/single-link inode admission, pre-stat failure, symlink/FIFO/directory/hardlink/root refusal, post-flock replacement/unlink/link/root swaps, descriptor permissions, stable inode and zero live descriptors. Cooperating-writer protocol required; arbitrary race/power-loss guarantees remain separate.");
+}
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
+    fixtureValidatedLockCases();
     fixtureCheckedPublicationCases();
     uint64_t one = publish(), unrelated = publish(@"other"), three = publish(), tail = publish(@"other");
     assert(one && unrelated == one + 1 && three == one + 2 && tail == one + 3);
@@ -393,5 +478,6 @@ int main(int argc, char **argv) { @autoreleasepool {
     for (unsigned n = 0; n < 260; ++n) publish(); batch = poll(1); assert([batch[@"gap"] boolValue] && [batch[@"events"] count] == 8);
     waitFor([] { return sTLinkEventAuthorizations == 0; });
     dispatch_sync(TLinkEventOwnerQueue(), ^{ assert(!sTLinkEventWaiters.count); dispatch_source_cancel(sTLinkEventTimer); notify_cancel(sTLinkEventNotifyToken); });
+    assert(!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureEventLocks.empty());
     puts("Event Foundation passed: real journal/locks, cross-process and missed notifications, quiet/idle I/O, eight cancellations, blocked authorization, deadlines, pagination/gap and root/TrollStore/remote wire adapters.");
 } }
