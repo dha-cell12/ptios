@@ -74,6 +74,8 @@ static ssize_t historyIndexRead(int fd,void *bytes,size_t count){
     if(got>0)historyIndexBytes+=(uint64_t)got;return got;
 }
 static std::function<void()> historyStatusHook;
+static std::function<void()> historyIndexLockHook;
+static std::set<int> historySharedLocks;
 static NSString *historyWriteStage;
 static unsigned historyWriteFault=0;
 static unsigned historyCrashIndex=0;
@@ -162,18 +164,22 @@ static void historyIndexReadProbe(){
 }
 static void historyStatusPreparationProbe(){if(historyStatusHook)historyStatusHook();}
 static NSData *historyReadBoundedData(BOOL *missing,NSString **code,NSString *operation,NSData *(*reader)(BOOL *,NSString **)){
-    assert(historyLocks.size()==1);historyIndexReadProbe();
+    assert(historyLocks.size()==1);if(historyIndexLockHook)historyIndexLockHook();historyIndexReadProbe();
     if([operation isEqualToString:@"snapshot"]?historySnapshotReadFault:historyMutationReadFault){*code=@"read_failed";return nil;}
     return reader(missing,code);
 }
 static int historyChmod(const char *path,mode_t mode){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(mode==0750||mode==0640);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return 0;}
 static int historyChown(const char *path,uid_t uid,gid_t gid){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(uid==501&&gid==501);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return 0;}
 static int historyFlock(int fd,int operation){
-    if(historyLockDenied&&operation==LOCK_EX){errno=EACCES;return -1;}
+    const bool acquiring=operation==LOCK_EX||operation==LOCK_SH;
+    if(historyLockDenied&&acquiring){errno=EACCES;return -1;}
     const int result=::flock(fd,operation);
     if(!result){
-        {std::lock_guard<std::mutex> guard(historyMutex);if(operation==LOCK_EX)assert(historyLocks.insert(fd).second);else if(operation==LOCK_UN)assert(historyLocks.erase(fd)==1);}
-        if(operation==LOCK_EX&&historyAfterLock)historyAfterLock();
+        {std::lock_guard<std::mutex> guard(historyMutex);
+            if(acquiring){assert(historyLocks.insert(fd).second);if(operation==LOCK_SH)assert(historySharedLocks.insert(fd).second);}
+            else if(operation==LOCK_UN){assert(historyLocks.erase(fd)==1);historySharedLocks.erase(fd);}
+        }
+        if(acquiring&&historyAfterLock)historyAfterLock();
     }
     return result;
 }
@@ -268,11 +274,11 @@ static NSData *historyTransactions(bool modern,NSString *console,NSString *scree
     return historyCanonical(results,root);
 }
 // Only POSIX calls in the child: no Foundation/Objective-C after fork.
-static bool historyChildCanLock(NSString *path){
+static bool historyChildCanLock(NSString *path,int operation=LOCK_EX){
     const char *name=path.fileSystemRepresentation;std::vector<int> inherited;
     {std::lock_guard<std::mutex> guard(historyMutex);inherited.assign(historyLocks.begin(),historyLocks.end());}
     const pid_t child=::fork();assert(child>=0);
-    if(!child){for(int fd:inherited)::close(fd);const int fd=::open(name,O_RDWR);if(fd<0)::_exit(2);const int result=::flock(fd,LOCK_EX|LOCK_NB);const int saved=errno;if(!result)::flock(fd,LOCK_UN);::close(fd);::_exit(!result?0:((saved==EWOULDBLOCK||saved==EAGAIN)?1:2));}
+    if(!child){for(int fd:inherited)::close(fd);const int fd=::open(name,O_RDWR);if(fd<0)::_exit(2);const int result=::flock(fd,operation|LOCK_NB);const int saved=errno;if(!result)::flock(fd,LOCK_UN);::close(fd);::_exit(!result?0:((saved==EWOULDBLOCK||saved==EAGAIN)?1:2));}
     int status=0;pid_t waited;do{waited=::waitpid(child,&status,0);}while(waited<0&&errno==EINTR);assert(waited==child&&WIFEXITED(status)&&WEXITSTATUS(status)!=2);return WEXITSTATUS(status)==0;
 }
 static NSDictionary *historyDiagnostics(){return Current::TLinkRunHistorySnapshot(0)[@"persistence_diagnostics"];}
@@ -893,6 +899,7 @@ static void historyCompactIndexCases(){
 #include "history-snapshot-runtime-fixture.inc"
 #include "history-index-runtime-fixture.inc"
 #include "history-lock-runtime-fixture.inc"
+#include "history-shared-lock-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2||argc==3||argc==5||argc==6);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];historyPruneAttempts=[NSMutableArray array];
     if(argc==5){assert([[NSString stringWithUTF8String:argv[2]] isEqualToString:@"--marker-worker"]);return historyMarkerWorker([[NSString stringWithUTF8String:argv[3]] intValue],[NSString stringWithUTF8String:argv[4]]);}
@@ -1008,6 +1015,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyCheckedSnapshotCases();
     historyBoundedIndexCases();
     historyValidatedLockCases();
+    historySharedSnapshotLockCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

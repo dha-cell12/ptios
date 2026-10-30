@@ -8,7 +8,16 @@ import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [admittedCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const [sharedCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const sharedSnapshot=sharedCurrent.slice(sharedCurrent.indexOf('NSDictionary *TLinkRunHistorySnapshot('));
+assert.match(sharedCurrent,/AcquireFileLock\(BOOL shared = NO\)/);
+assert.match(sharedCurrent,/flock\(fd, shared \? LOCK_SH : LOCK_EX\)/);
+assert.match(sharedSnapshot,/int lockFd = TLinkRunHistoryAcquireFileLock\(YES\)/);
+assert.equal((sharedCurrent.match(/TLinkRunHistoryAcquireFileLock\(YES\)/g)||[]).length,1,'only snapshot requests a shared lock');
+const admittedCurrent=sharedCurrent.replace('AcquireFileLock(BOOL shared = NO)','AcquireFileLock(void)')
+    .replace('flock(fd, shared ? LOCK_SH : LOCK_EX)','flock(fd, LOCK_EX)')
+    .replace('int lockFd = TLinkRunHistoryAcquireFileLock(YES);','int lockFd = TLinkRunHistoryAcquireFileLock();');
+assert.equal(createHash('sha256').update(admittedCurrent.trim()).digest('hex'),'c5be9dddc9420019a767030fe68a5374ab13bdd6f2b7fa362860f1608dd30410','reversing only snapshot shared lock selection reproduces complete user-passed C03v source at 6be7edb0');
 const [historyRuntime,indexFixture]=await Promise.all(['test/run-history-runtime-test.mm','test/history-index-runtime-fixture.inc'].map(read));
 assert.match(historyRuntime,/TLinkRunHistoryFinish\(@"validation-finish",@"failed"/);
 assert.ok(indexFixture.includes('NSArray *expectedWrites=beginning?@[@"record"]:@[@"evidence",@"record"];'),'oversized-index oracle must retain the failed-finish evidence write');
@@ -203,6 +212,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
+console.log('History shared snapshot lock source passed: snapshot-only LOCK_SH, default exclusive writers, unchanged complete admission/IO/recovery/format source.');
 console.log('History directory/lock source passed: real direct directories, regular single-link descriptor, post-flock identity and descriptor permissions; complete previous source retained.');
 console.log('History bounded index source passed: 32-MiB preallocation/read and encoded index cap, regular descriptor/ENOENT/chunk/EOF/finally policy and complete prior source.');
 console.log('History checked snapshot source passed: no unlocked read/fallback, fixed errors, read-only recovery state, caught read/format faults and complete frozen success/mutation source.');
@@ -237,7 +247,7 @@ if(process.platform!=='darwin'){
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(admittedCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(sharedCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
         const binary=join(temp,'run-history-runtime');
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
         run(binary,[temp]);

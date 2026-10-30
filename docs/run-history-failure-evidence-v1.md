@@ -276,7 +276,8 @@ file or FIFO is refused before permissions can follow it. Newly created private
 directories can remain if a later path fails. Fixed ancestors are unchanged.
 
 Before lock open, require all three direct directories to be real. Retain
-O_CREAT|O_RDWR|O_NOFOLLOW|O_NONBLOCK and blocking exclusive flock. Require a
+O_CREAT|O_RDWR|O_NOFOLLOW|O_NONBLOCK and blocking flock (exclusive for mutations;
+shared for status since C03w below). Require a
 regular single-link descriptor before flock. After flock, the lock pathname
 must remain regular/single-link with matching device/inode, and all direct
 directories must still validate. Missing/replaced/aliased paths fail before
@@ -299,6 +300,22 @@ inode, never unlink/replace it while actors may be active. These checks validate
 specific admission points; they do not prevent arbitrary races after checks or
 establish ancestor pinning, epochs, fsync or power-loss durability. Additional
 metadata/lock latency and new Foundation/POSIX cases require CI/device validation.
+
+## Shared history snapshot locks (C03w)
+
+Snapshot acquires LOCK_SH on the same validated stable lock inode. Cooperating
+reader processes can read/decode together; begin/finish, recovery and pending
+marker changes retain LOCK_EX. An exclusive writer cannot enter until every
+shared reader releases its lock. Existing exclusive readers remain compatible.
+
+Keep directory/inode checks, descriptor permissions and preparation metadata
+operations, checked index reads, failure envelopes and finally unlock/close.
+Release the file lock before status formatting as before. No unlocked fallback,
+index cache, marker/recovery writes or event publication is added to snapshot.
+The local process monitor remains serial; full bounded index IO/parse occurs
+on every call. Blocking lock admission has no time or writer-fairness guarantee.
+Reader overlap and unwind cases are included in macOS CI; on-device contention,
+writer wait and throughput need separate qualification.
 
 ## Capability markers
 

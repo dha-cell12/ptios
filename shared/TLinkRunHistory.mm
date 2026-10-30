@@ -104,7 +104,7 @@ static void TLinkRunHistoryEnsureDirectories(void)
     }
 }
 
-static int TLinkRunHistoryAcquireFileLock(void)
+static int TLinkRunHistoryAcquireFileLock(BOOL shared = NO)
 {
     if (!TLinkRunHistoryDirectoriesValid()) return -1;
     NSString *path = TLinkRunHistoryFileLockPath();
@@ -115,7 +115,7 @@ static int TLinkRunHistoryAcquireFileLock(void)
         close(fd);
         return -1;
     }
-    if (flock(fd, LOCK_EX) != 0) {
+    if (flock(fd, shared ? LOCK_SH : LOCK_EX) != 0) {
         close(fd);
         return -1;
     }
@@ -713,7 +713,7 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
         @try { try {
             TLinkRunHistoryEnsureDirectories();
             stage = @"lock";
-            int lockFd = TLinkRunHistoryAcquireFileLock();
+            int lockFd = TLinkRunHistoryAcquireFileLock(YES);
             if (lockFd < 0) {
                 TLinkRunHistoryPersistenceFailure(@"snapshot", stage, @"history_lock_failed");
                 return TLinkRunHistorySnapshotFailure(@"history_snapshot_lock_failed");

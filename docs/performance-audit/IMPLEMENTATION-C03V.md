@@ -1,7 +1,7 @@
 # C03v — validated history directories and stable lock inode
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `d4f8fa95`, C03u build passed according to the user. Complete normalized `shared/TLinkRunHistory.mm` SHA-256: `efd86cd685eb6b9179fc4f5c949e6836bd9cb070917aa3b5b58d183fc9db1f66`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; independent device qualification pending**.
+Status: **user reported corrected build `6be7edb0` passed before C03w; independent device qualification pending**. That build includes the C03u failed-finish fixture correction documented in IMPLEMENTATION-C03U.md.
 Finding: **P1-53 cooperative lock/marker authority**.
 
 ## Change
