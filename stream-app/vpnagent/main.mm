@@ -15,9 +15,15 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include "../../shared/TLinkHelperClientAdmission.h"
+#include "../../shared/TLinkHelperSocketIO.h"
+#include "../../shared/TLinkVPNBrokerIngress.h"
+#include "../../shared/TLinkVPNBrokerBudget.h"
+#include "../../shared/TLinkVPNBrokerOperations.h"
 
 static const uint16_t kTLinkVPNAgentPort = 6016;
 static const NSUInteger kTLinkVPNAgentMaxRequest = 1024;
+static const size_t kTLinkVPNAgentMaxClients = 8;
 
 static void TLinkVPNAgentKeepAliveTimer(
     __unused CFRunLoopTimerRef timer,
@@ -25,23 +31,47 @@ static void TLinkVPNAgentKeepAliveTimer(
 {
 }
 
+// BEGIN pending VPN manager operation admission.
+static TLinkVPNBrokerOperations &TLinkVPNAgentOperationOwner(void)
+{
+    static TLinkVPNBrokerOperations operations;
+    return operations;
+}
+// END pending VPN manager operation admission.
+
 static NSDictionary *TLinkVPNAgentWait(
     void (^operation)(TLinkVPNResultCompletion),
-    NSTimeInterval timeout)
+    NSTimeInterval timeout,
+    const TLinkVPNBrokerIngress::Window &request)
 {
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    __block NSDictionary *result = nil;
-    operation(^(NSDictionary *value) {
-        result = value;
-        dispatch_semaphore_signal(semaphore);
-    });
-    long waitResult = dispatch_semaphore_wait(
-        semaphore,
-        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)));
-    if (waitResult != 0 || !result) {
-        return @{ @"ok": @0, @"code": @"vpnagent_operation_timeout" };
+    NSDictionary *expired = @{@"ok": @0, @"code": @"vpnagent_operation_timeout"};
+    if (!std::isfinite(timeout) || timeout <= 0 || timeout > 30.0) return expired;
+    const TLinkVPNBrokerBudget::WaitWindow budget(
+        request, TLinkHelperIO::nowMs(), static_cast<int>(timeout * 1000.0));
+    if (!budget.remaining(TLinkHelperIO::nowMs())) return expired;
+    auto ticket = TLinkVPNAgentOperationOwner().acquire();
+    if (!ticket) return @{@"ok": @0, @"code": @"vpn_broker_busy"};
+    auto completion = std::make_shared<TLinkVPNBrokerCompletion>();
+    TLinkVPNBrokerCompletionScope scope{completion};
+    if (!completion->valid() || !budget.remaining(TLinkHelperIO::nowMs())) return expired;
+    if (!ticket->start()) return @{@"ok": @0, @"code": @"vpn_broker_busy"};
+    {
+        TLinkVPNBrokerStarterScope starter{ticket};
+        operation(^(NSDictionary *value) {
+            (void)ticket->complete();
+            completion->complete(value);
+        });
     }
-    return result;
+    for (;;) {
+        const int remaining = budget.remaining(TLinkHelperIO::nowMs());
+        if (!remaining) return expired;
+        // Short slices recheck the continuous clock after device sleep.
+        if (completion->wait(std::min(remaining, 250))) break;
+    }
+    NSDictionary *result = completion->finishChecked([&budget] {
+        return budget.remaining(TLinkHelperIO::nowMs()) > 0;
+    });
+    return result ?: expired;
 }
 
 static NSDictionary *TLinkVPNAgentPreflight(void)
@@ -64,7 +94,29 @@ static BOOL TLinkVPNAgentEntitlementReady(NSDictionary *snapshot)
            [snapshot[@"network_extension"][@"manager_class_available"] boolValue];
 }
 
-static NSString *TLinkVPNAgentDiagnosticsResponse(void)
+// BEGIN serialized broker mutations.
+static TLinkVPNBrokerOperations &TLinkVPNAgentMutationOwner(void)
+{
+    static TLinkVPNBrokerOperations mutations(0, 1);
+    return mutations;
+}
+
+static void TLinkVPNAgentSetConnected(BOOL connected, TLinkVPNResultCompletion completion)
+{
+    auto ticket = TLinkVPNAgentMutationOwner().acquire();
+    if (!ticket || !ticket->start()) {
+        completion(@{@"ok": @0, @"code": @"vpn_broker_busy"});
+        return;
+    }
+    TLinkVPNBrokerStarterScope starter{ticket};
+    TLinkVPNSetConnected(connected, 20.0, ^(NSDictionary *value) {
+        (void)ticket->complete();
+        completion(value);
+    });
+}
+// END serialized broker mutations.
+
+static NSString *TLinkVPNAgentDiagnosticsResponse(const TLinkVPNBrokerIngress::Window &request)
 {
     NSMutableDictionary *diagnostics = [TLinkVPNAgentPreflight() mutableCopy];
     BOOL entitlementReady = TLinkVPNAgentEntitlementReady(diagnostics);
@@ -72,7 +124,7 @@ static NSString *TLinkVPNAgentDiagnosticsResponse(void)
         ^(TLinkVPNResultCompletion completion) {
             TLinkVPNReadManagerStatus(completion);
         },
-        8.0);
+        8.0, request);
     BOOL managerAvailable = [status[@"ok"] boolValue];
 
     diagnostics[@"phase"] = @5;
@@ -137,8 +189,9 @@ static NSString *TLinkVPNAgentDiagnosticsResponse(void)
         [json base64EncodedStringWithOptions:0] ?: @""];
 }
 
-static NSString *TLinkVPNAgentResponse(NSString *command)
+static NSString *TLinkVPNAgentResponse(NSString *command, const TLinkVPNBrokerIngress::Window &request)
 {
+    if (!request.remaining(TLinkHelperIO::nowMs())) return @"-1;;vpnagent_operation_timeout\r\n";
     NSString *clean = [command stringByTrimmingCharactersInSet:
         [NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([clean isEqualToString:@"ping"]) {
@@ -147,7 +200,7 @@ static NSString *TLinkVPNAgentResponse(NSString *command)
             getuid(), geteuid(), getgid(), getegid()];
     }
     if ([clean isEqualToString:@"diagnostics"]) {
-        return TLinkVPNAgentDiagnosticsResponse();
+        return TLinkVPNAgentDiagnosticsResponse(request);
     }
 
     NSString *licenseError = nil;
@@ -159,12 +212,14 @@ static NSString *TLinkVPNAgentResponse(NSString *command)
         return @"-1;;vpnagent_entitlement_unavailable\r\n";
     }
 
+    if (!request.remaining(TLinkHelperIO::nowMs())) return @"-1;;vpnagent_operation_timeout\r\n";
+
     if ([clean isEqualToString:@"query"]) {
         NSDictionary *status = TLinkVPNAgentWait(
             ^(TLinkVPNResultCompletion completion) {
                 TLinkVPNReadManagerStatus(completion);
             },
-            8.0);
+            8.0, request);
         if (![status[@"ok"] boolValue]) {
             return [NSString stringWithFormat:@"-1;;%@\r\n",
                 status[@"code"] ?: @"vpn_query_failed"];
@@ -178,9 +233,9 @@ static NSString *TLinkVPNAgentResponse(NSString *command)
         BOOL requestedConnected = [clean isEqualToString:@"connect"];
         NSDictionary *result = TLinkVPNAgentWait(
             ^(TLinkVPNResultCompletion completion) {
-                TLinkVPNSetConnected(requestedConnected, 20.0, completion);
+                TLinkVPNAgentSetConnected(requestedConnected, completion);
             },
-            24.0);
+            24.0, request);
         if (![result[@"ok"] boolValue]) {
             return [NSString stringWithFormat:@"-1;;%@\r\n",
                 result[@"code"] ?: @"vpn_transition_failed"];
@@ -191,8 +246,11 @@ static NSString *TLinkVPNAgentResponse(NSString *command)
     return @"-1;;vpnagent_unknown_command\r\n";
 }
 
-static void TLinkVPNAgentHandleClient(int client)
+static void TLinkVPNAgentHandleClient(int client, uint64_t acceptedAt)
 {
+    const TLinkVPNBrokerIngress::Window ingress(acceptedAt);
+    const auto readOps = TLinkVPNBrokerIngress::posixReadOps();
+    if (!ingress.remaining(readOps.now(readOps.context))) return;
     struct timeval timeout = {30, 0};
     setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
@@ -206,8 +264,9 @@ static void TLinkVPNAgentHandleClient(int client)
     while (requestData.length < kTLinkVPNAgentMaxRequest) {
         NSUInteger capacity = MIN(sizeof(buffer),
             kTLinkVPNAgentMaxRequest - requestData.length);
-        ssize_t received = recv(client, buffer, capacity, 0);
-        if (received <= 0) break;
+        size_t received = 0;
+        if (!TLinkVPNBrokerIngress::readChunk(readOps, client, buffer, capacity, ingress, received).ok()) return;
+        if (received == 0) break;
         [requestData appendBytes:buffer length:(NSUInteger)received];
         if (memchr(buffer, '\n', (size_t)received)) break;
     }
@@ -215,21 +274,51 @@ static void TLinkVPNAgentHandleClient(int client)
         ? [[NSString alloc] initWithData:requestData
                                 encoding:NSUTF8StringEncoding]
         : @"";
+    if (!ingress.remaining(readOps.now(readOps.context))) return;
     NSString *response = request.length > 0
-        ? TLinkVPNAgentResponse(request)
+        ? TLinkVPNAgentResponse(request, ingress)
         : @"-1;;vpnagent_empty_request\r\n";
+    if (!ingress.remaining(readOps.now(readOps.context))) return;
     NSData *responseData =
         [response dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
-    const uint8_t *cursor = (const uint8_t *)responseData.bytes;
-    NSUInteger remaining = responseData.length;
-    while (remaining > 0) {
-        ssize_t sent = send(client, cursor, remaining, 0);
-        if (sent <= 0) break;
-        cursor += sent;
-        remaining -= (NSUInteger)sent;
-    }
-    close(client);
+    const auto writeOps = TLinkVPNBrokerBudget::posixWriteOps();
+    (void)TLinkVPNBrokerBudget::writeResponse(
+        writeOps, client, (const uint8_t *)responseData.bytes, responseData.length, ingress);
 }
+
+// BEGIN bounded VPN broker clients.
+static void TLinkVPNAgentEnqueueClient(
+    TLinkHelperClientAdmission &admission, dispatch_queue_t queue, int client)
+{
+    try {
+        @try {
+            TLinkHelperIO::Socket descriptor(client);
+            auto lease = admission.acquire(client, TLinkHelperIO::nowMs(), [](int fd){ (void)::close(fd); });
+            if (!lease) return; // Refuse without blocking the accept loop on a reply.
+            (void)descriptor.release(); // The lease owns the socket throughout handler I/O.
+            dispatch_async(queue, ^{
+                try {
+                    @try {
+                        @autoreleasepool {
+                            if (lease->isOpen()) TLinkVPNAgentHandleClient(client, lease->acceptedAt());
+                        }
+                    } @catch (NSException *exception) {
+                        NSLog(@"[TLinkVPNAgent] client exception %@", exception.name);
+                    }
+                } catch (...) {
+                    NSLog(@"[TLinkVPNAgent] client C++ exception");
+                }
+                lease->finish(); // Close and release capacity after I/O and pool drain.
+                // A discarded block also releases its last shared lease.
+            });
+        } @catch (NSException *exception) {
+            NSLog(@"[TLinkVPNAgent] enqueue exception %@", exception.name);
+        }
+    } catch (...) {
+        NSLog(@"[TLinkVPNAgent] enqueue C++ exception");
+    }
+}
+// END bounded VPN broker clients.
 
 static void TLinkVPNAgentRunServer(void)
 {
@@ -250,18 +339,15 @@ static void TLinkVPNAgentRunServer(void)
         close(server);
         return;
     }
+    TLinkHelperClientAdmission admission(kTLinkVPNAgentMaxClients);
     while (1) {
         int client = accept(server, NULL, NULL);
         if (client < 0) {
             if (errno == EINTR) continue;
             break;
         }
-        dispatch_async(
-            dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                @autoreleasepool {
-                    TLinkVPNAgentHandleClient(client);
-                }
-            });
+        TLinkVPNAgentEnqueueClient(
+            admission, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), client);
     }
     close(server);
 }
