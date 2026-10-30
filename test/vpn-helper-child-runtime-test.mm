@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "../shared/TLinkVPNPrivateRequest.h"
 #include "../shared/TLinkVPNHelperChild.h"
 #include <cassert>
 #include <cstdio>
@@ -16,6 +17,8 @@ static NSString *fixtureDirectory;
 static unsigned fixtureTimeout=TimeoutMs;
 static unsigned mode=0,spawns=0;
 static pid_t lastChild=-1;
+static dispatch_block_t spawnHook;
+static dispatch_block_t resultStatHook;
 static uid_t fixtureUID(){return 501;}
 static gid_t fixtureGID(){return 501;}
 static int fixturePersona(posix_spawnattr_t *attr,uid_t uid,uint32_t flags){(void)attr;(void)uid;(void)flags;return 0;}
@@ -24,6 +27,7 @@ static int fixturePersonaGID(posix_spawnattr_t *attr,gid_t gid){(void)attr;(void
 static int fixtureLstat(const char *path,struct stat *value){
     const int result=::lstat(path,value);
     if(result==0)value->st_uid=501; // Exercise actual modes/links/lengths under a controlled identity.
+    if(resultStatHook&&[[NSString stringWithUTF8String:path] hasSuffix:@".result"])resultStatHook();
     return result;
 }
 static int fixtureSpawn(pid_t *pid,const char *path,const posix_spawn_file_actions_t *actions,
@@ -40,6 +44,7 @@ static int fixtureSpawn(pid_t *pid,const char *path,const posix_spawn_file_actio
         assert([data writeToFile:resultPath atomically:NO]);
         assert(chmod(resultPath.fileSystemRepresentation,mode==5?0644:0600)==0);
     }
+    if(spawnHook)spawnHook();
     char executable[]="/bin/sh",flag[]="-c",success[]="exit 0",failure[]="exit 7",hold[]="exec /bin/sleep 10";
     char *childArgs[]={executable,flag,mode==6?hold:(mode==1?failure:success),nullptr};
     const int result=::posix_spawn(pid,executable,nullptr,nullptr,childArgs,environ);
@@ -66,6 +71,15 @@ namespace Legacy {
 #undef posix_spawnattr_set_persona_np
 #undef posix_spawnattr_set_persona_uid_np
 #undef posix_spawnattr_set_persona_gid_np
+@interface TLinkScriptSession:NSObject
+@property(nonatomic,assign) BOOL stopRequested;
+@end
+@implementation TLinkScriptSession
+@end
+namespace Script {
+using Current::TLinkVPNRunPrivateConfigurationHelperWithStop;
+#include "VPNScriptStopUnderTest.inc"
+}
 static void drain(){
     const auto ops=posixOps();const uint64_t start=ops.now(nullptr);
     while(pending()!=0&&remaining(start,ops.now(nullptr),5000))ops.sleep(nullptr,10);
@@ -76,6 +90,7 @@ static void assertEmpty(){
     assert(files&&files.count==0);
 }
 static void assertReaped(pid_t pid){int status=0;errno=0;assert(::waitpid(pid,&status,WNOHANG)==-1&&errno==ECHILD);}
+static NSDictionary *fixtureConfiguration(){return @{@"profile_type":@"IKEv2",@"server":@"fixture.invalid",@"username":@"fixture",@"password":@"fixture-secret"};}
 static void transportCases(NSString *helper){
     NSDictionary *configuration=@{@"profile_type":@"IKEv2",@"server":@"fixture.invalid",@"username":@"fixture",@"password":@"fixture-secret"};
     for(mode=0;mode<6;++mode){
@@ -104,6 +119,45 @@ static void transportCases(NSString *helper){
         assert([busy[@"code"] isEqualToString:@"vpn_private_helper_busy"]&&spawns==before);assertEmpty();
     }
     drain();
+}
+static void callerCases(NSString *helper){
+    mode=6;fixtureTimeout=TimeoutMs;
+    for(unsigned gate=1;gate<=3;++gate){
+        const unsigned before=spawns;__block unsigned calls=0;
+        NSDictionary *result=Current::TLinkVPNRunPrivateConfigurationHelperWithStop(helper,fixtureConfiguration(),^BOOL{return ++calls>=gate;});
+        assert([result[@"code"] isEqualToString:@"vpn_private_helper_cancelled"]&&spawns==before&&calls==gate);
+        drain();assertEmpty();
+    }
+    TLinkScriptSession *session=[TLinkScriptSession new];
+    spawnHook=^{@synchronized(session){session.stopRequested=YES;}};
+    NSDictionary *cancelled=Script::CallScript(session,helper,fixtureConfiguration());
+    spawnHook=nil;
+    assert([cancelled[@"code"] isEqualToString:@"vpn_private_helper_cancelled"]&&Script::TLinkScriptStopRequested(session));
+    drain();assertReaped(lastChild);assertEmpty();
+    const unsigned before=spawns;
+    assert([Script::CallScript(session,helper,fixtureConfiguration())[@"code"] isEqualToString:@"vpn_private_helper_cancelled"]&&spawns==before);
+    assert([Script::CallScript(nil,helper,fixtureConfiguration())[@"code"] isEqualToString:@"vpn_private_helper_cancelled"]&&spawns==before);
+    for(unsigned fault=0;fault<2;++fault){
+        bool caught=false;__block unsigned calls=0;
+        try{
+            @try{
+                Current::TLinkVPNRunPrivateConfigurationHelperWithStop(helper,fixtureConfiguration(),^BOOL{
+                    if(++calls==3){if(fault==0)throw std::runtime_error("caller");[NSException raise:@"Caller" format:@"stop"];}
+                    return NO;
+                });
+            }@catch(NSException *exception){(void)exception;caught=true;}
+        }catch(...){caught=true;}
+        assert(caught&&spawns==before);drain();assertEmpty();
+    }
+    // A stop observed after a successful result file was read still discards that result.
+    mode=0;__block BOOL stoppedAfterResult=NO;
+    resultStatHook=^{stoppedAfterResult=YES;};
+    NSDictionary *late=Current::TLinkVPNRunPrivateConfigurationHelperWithStop(helper,fixtureConfiguration(),^BOOL{
+        return stoppedAfterResult;
+    });
+    resultStatHook=nil;
+    assert(stoppedAfterResult&&[late[@"code"] isEqualToString:@"vpn_private_helper_cancelled"]);
+    drain();assertReaped(lastChild);assertEmpty();
 }
 static pid_t spawnSleeping(){
     char path[]="/bin/sleep",duration[]="10";char *args[]={path,duration,nullptr};pid_t pid=-1;
@@ -185,6 +239,39 @@ static void deferredCases(){
     assert([@"late" writeToFile:result atomically:NO encoding:NSUTF8StringEncoding error:nullptr]);
     held.finished=true;drain();assertEmpty(); // Last cleanup happens after late result publication, without replay.
 }
+static void cancellationOwnershipCases(){
+    for(unsigned fault=0;fault<2;++fault){
+        unsigned probes=0,signals=0,reads=0;
+        struct Context {unsigned *probes,*signals;} context{&probes,&signals};
+        Ops ops=posixOps();ops.context=&context;
+        ops.probe=[](void *opaque,int pid,int &status,int &error){
+            (void)error;auto &c=*static_cast<Context *>(opaque);assert(pid==42&&++*c.probes==1);status=0;return Probe::Reaped;
+        };
+        ops.signal=[](void *opaque,int pid,Signal kind){(void)pid;(void)kind;++*static_cast<Context *>(opaque)->signals;return 0;};
+        struct Reader {unsigned *reads;unsigned fault;} reader{&reads,fault};
+        Stop stop(&reader,[](void *opaque){
+            auto &r=*static_cast<Reader *>(opaque);
+            if(++*r.reads==2){if(r.fault==0)throw std::runtime_error("after reap");[NSException raise:@"Caller" format:@"after reap"];}
+            return false;
+        });
+        bool caught=false;
+        try{@try{Owner owner(ops);assert(owner.ready());owner.adopted(42);owner.wait(100,20,stop);}
+            @catch(NSException *exception){(void)exception;caught=true;}}
+        catch(...){caught=true;}
+        drain();assert(caught&&probes==1&&signals==0);
+    }
+    HeldChild held;__weak NSObject *released;
+    @autoreleasepool{
+        NSObject *capture=[NSObject new];released=capture;
+        auto callback=[capture]{(void)capture;return true;};
+        using Callback=decltype(callback);
+        Stop stop(&callback,[](void *opaque){return (*static_cast<Callback *>(opaque))();});
+        Owner owner(held.ops());assert(owner.ready());owner.adopted(42);
+        Result result=owner.wait(100,0,stop);assert(result.reason==Reason::Stopped&&!result.retired);
+    }
+    assert(pending()==1&&!released); // No caller/block/session ownership in the live reaper.
+    held.finished=true;drain();
+}
 int main(){@autoreleasepool{
     NSString *root=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"tlink-vpn-helper-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
     fixtureDirectory=[root stringByAppendingPathComponent:@"requests"];
@@ -192,8 +279,8 @@ int main(){@autoreleasepool{
     assert([[NSFileManager defaultManager] createDirectoryAtPath:bundle withIntermediateDirectories:YES attributes:nil error:nullptr]);
     assert([@"#!/bin/sh\nexit 0\n" writeToFile:helper atomically:NO encoding:NSUTF8StringEncoding error:nullptr]);assert(chmod(helper.fileSystemRepresentation,0700)==0);
     puts("VPN helper child Foundation: actual/frozen request transport, POSIX child waits, unwind and held deferred reaper");
-    transportCases(helper);ownerCases();deferredCases();
+    transportCases(helper);callerCases(helper);ownerCases();deferredCases();cancellationOwnershipCases();
     for(unsigned n=0;n<64;++n){@autoreleasepool{Owner owner;assert(owner.ready());owner.adopted(spawnSleeping());}drain();}
     assertEmpty();assert([[NSFileManager defaultManager] removeItemAtPath:root error:nullptr]);
-    puts("VPN helper child Foundation passed: frozen healthy/result faults, real timeout/TERM/reap, NS/C++ unwind, ECHILD, foreign paths, four-child admission, retained deferred ownership, late file cleanup and 64 balanced cycles. Identity/persona/private effects are controlled; device qualification pending.");
+    puts("VPN helper child Foundation passed: frozen healthy/result faults, timeout/TERM/reap, script caller preflight/in-flight stop, late success refusal, predicate NS/C++ unwind before/after reap, borrowed callback lifetime, ECHILD, foreign paths, four-child admission, late cleanup and 64 balanced cycles. Identity/persona/private effects are controlled; device qualification pending.");
 }return 0;}

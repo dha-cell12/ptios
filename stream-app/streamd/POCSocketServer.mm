@@ -2300,7 +2300,9 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
             };
             NSString *helperPath = TLinkPrivhelperPath();
             lastVPNConfResult =
-                TLinkVPNRunPrivateConfigurationHelper(helperPath, request)
+                TLinkVPNRunPrivateConfigurationHelperWithStop(helperPath, request, ^BOOL {
+                    return TLinkScriptStopRequested(strongSession);
+                })
                 ?: @{@"ok": @NO, @"code": @"vpnconf_unknown_error"};
             TLinkScriptAppendLog(strongSession, [NSString stringWithFormat:
                 @"vpnconf.create type=%@ code=%@ ok=%d",

@@ -5,3 +5,10 @@
 FOUNDATION_EXPORT NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
     NSString *helperPath,
     NSDictionary *configuration);
+
+// The optional callback is synchronous and is not retained by deferred reaping.
+typedef BOOL (^TLinkVPNPrivateRequestShouldStop)(void);
+FOUNDATION_EXPORT NSDictionary *TLinkVPNRunPrivateConfigurationHelperWithStop(
+    NSString *helperPath,
+    NSDictionary *configuration,
+    TLinkVPNPrivateRequestShouldStop shouldStop);

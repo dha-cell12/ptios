@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {beforeVPNTaskLane} from './lib/vpn-task-lane-baseline.mjs';
+import {restoreVPNPrivateCaller} from './lib/vpn-private-stop-baseline.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const [event, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
@@ -36,7 +37,7 @@ const beforeVPN = beforeTaskLane.replace('#include "../shared/TLinkVPNIPC.h"\n',
     .replace('    if(waitForResponse&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_sendVPNIPC(payload);\n','');
 assert.equal(createHash('sha256').update(beforeVPN).digest('hex'),'98a399ae2ebed67cf25b0aa6cf36c0769b55730bd0c00b0e5e80f627678c64b3','reverse independently guarded C04h VPN routing before historical event source comparisons');
 const beforeWireSocket = beforeVPN.replace('#include "../shared/TLinkEventWire.h"\n','').replace(rootWireEncoder,rootLegacyEncoder).replace(rootSyncEncoder,oldRootSyncEncoder);
-const trollBeforeByteCount = troll.replace('NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];');
+const trollBeforeByteCount = restoreVPNPrivateCaller(troll).replace('NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];');
 assert.notEqual(trollBeforeByteCount,troll,'reverse the independently guarded C03z storage byte count before the event baseline comparison');
 const beforeWireTroll = trollBeforeByteCount.replace('#import "../../shared/TLinkEventWire.h"\n','').replace(trollWireEncoder,trollLegacyEncoder).replace(trollSyncEncoder,oldTrollSyncEncoder);
 assert.equal(createHash('sha256').update(beforeWireSocket.trim()).digest('hex'),'bc5ea783caad88ca7eeccbadeb570e547a9f96749464eccd3ef1642a033f6189','reversing only shared legacy wire encoding reproduces complete user-passed root socket at b8207e7a');

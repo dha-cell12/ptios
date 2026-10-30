@@ -4,10 +4,12 @@
 #include <cstdio>
 #include <thread>
 #include <vector>
+#include <stdexcept>
 using namespace TLinkVPNHelperChild;
 struct Fake {
     uint64_t now=100,exitAt=UINT64_MAX;
-    unsigned probes=0,terms=0,kills=0,retries=0;
+    unsigned probes=0,terms=0,kills=0,retries=0,cancelAfterProbe=UINT32_MAX;
+    uint64_t cancelAt=UINT64_MAX;
     bool retired=false,missing=false,waitError=false,termExit=false,killExit=false,denySignals=false;
     Ops ops(){return {this,
         [](void *p){return static_cast<Fake *>(p)->now;},
@@ -28,6 +30,7 @@ struct Fake {
         },
         [](void *p,unsigned ms){assert(ms<=PollMs);static_cast<Fake *>(p)->now+=ms;}};
     }
+    Stop stop(){return Stop(this,[](void *p){const Fake &f=*static_cast<Fake *>(p);return f.now>=f.cancelAt||f.probes>=f.cancelAfterProbe;});}
 };
 static void cases(){
     {Fake f;f.exitAt=100;Result r=wait(f.ops(),42);assert(r.reason==Reason::Finished&&r.retired&&r.status==73&&f.terms==0&&f.kills==0);}
@@ -62,4 +65,23 @@ static void admission(){
     for(auto &worker:workers)worker.join();
     assert(pending()==0);
 }
-int main(){cases();admission();puts("VPN helper child core passed: exact-PID exits/EINTR/ECHILD/errors, TERM/KILL grace, denied signals, unreaped ownership, 100k deadlines and 80k bounded admission lifecycles.");}
+static void cancellation(){
+    {Fake f;f.cancelAt=100;f.termExit=true;Result r=wait(f.ops(),42,100,20,f.stop());assert(r.reason==Reason::Stopped&&r.retired&&f.terms==1&&f.kills==0);}
+    {Fake f;f.cancelAt=120;f.killExit=true;Result r=wait(f.ops(),42,100,20,f.stop());assert(r.reason==Reason::Stopped&&r.retired&&f.now<200&&f.kills==1);}
+    {Fake f;f.cancelAfterProbe=1;f.exitAt=100;Result r=wait(f.ops(),42,100,20,f.stop());assert(r.reason==Reason::Stopped&&r.retired&&f.terms==0&&f.kills==0);}
+    {Fake f;f.cancelAt=120;f.retries=1000;Result r=wait(f.ops(),42,100,20,f.stop());assert(r.reason==Reason::Stopped&&!r.retired&&f.now==160&&f.kills==0);}
+    {Fake f;f.cancelAt=100;f.denySignals=true;Result r=wait(f.ops(),42,100,20,f.stop());assert(r.reason==Reason::Stopped&&!r.retired&&f.terms==1&&f.kills==1&&r.signalError==EPERM);}
+    {
+        Fake f;f.exitAt=100;unsigned reads=0;
+        Stop stop(&reads,[](void *p){if(++*static_cast<unsigned *>(p)==2)throw std::runtime_error("after reap");return false;});
+        Result result;bool caught=false;
+        try{waitInto(f.ops(),42,result,100,20,stop);}catch(const std::runtime_error &){caught=true;}
+        assert(caught&&f.retired&&result.retired&&f.kills==0);
+    }
+    for(unsigned n=0;n<100000;++n){
+        Fake f;f.cancelAt=100+n%3;f.termExit=n%3==0;f.killExit=n%3==1;
+        Result r=wait(f.ops(),42,100,2,f.stop());
+        assert(r.reason==Reason::Stopped&&r.retired==(n%3!=2)&&f.now<=114);
+    }
+}
+int main(){cases();admission();cancellation();puts("VPN helper child core passed: exact-PID exits/EINTR/ECHILD/errors, TERM/KILL grace, denied signals, 100k deadlines, 100k caller cancellations, retirement before predicate unwind and 80k bounded admission lifecycles.");}

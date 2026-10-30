@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {restoreVPNPrivateCaller} from './lib/vpn-private-stop-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const [source,header,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
@@ -42,7 +43,9 @@ assert.match(utf8View,/initWithBytesNoCopy:[\s\S]*deallocator:[\s\S]*\[snapshot 
 assert.doesNotMatch(utf8View,/\[snapshot UTF8String\]|strlen|free\(/);
 console.log('Storage readJSON source passed: direct immutable CF UTF8 storage with retained owner, original encoder fallback and complete previous reader/policy source.');
 for(const [path,start,end,legacyName,output,hash] of storageSpecs){
-    const text=storageBeforeJSON.get(path)||await read(path),chunk=between(text,start,end),legacy=(await read('test/fixtures/'+legacyName)).split('\n').slice(1).join('\n');
+    const currentText=storageBeforeJSON.get(path)||await read(path);
+    const text=path==='stream-app/streamd/POCSocketServer.mm'?restoreVPNPrivateCaller(currentText):currentText;
+    const chunk=between(text,start,end),legacy=(await read('test/fixtures/'+legacyName)).split('\n').slice(1).join('\n');
     const restoredChunk=chunk.replace('NSUInteger bytes = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSData *data = [safeText dataUsingEncoding:NSUTF8StringEncoding];')
         .replace('if (bytes >','if ([data length] >').replace('@(bytes)','@([data length])')
         .replace('NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];');

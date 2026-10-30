@@ -6,7 +6,7 @@
 
 namespace TLinkVPNHelperChild {
 enum class Probe {Running, Reaped, Missing, Retry, Error};
-enum class Reason {Finished, Timeout, WaitFailed};
+enum class Reason {Finished, Timeout, WaitFailed, Stopped};
 enum class Signal {Term, Kill};
 struct Ops {
     void *context;
@@ -19,6 +19,13 @@ struct Result {
     Reason reason=Reason::Finished;
     int status=0,error=0,signalError=0;
     bool retired=false,termAttempted=false,killAttempted=false;
+};
+// Borrowed for the synchronous wait only; never stored by the deferred reaper.
+struct Stop {
+    void *context;
+    bool (*requested)(void *);
+    explicit Stop(void *value=nullptr,bool (*predicate)(void *)=nullptr):context(value),requested(predicate){}
+    bool stopped()const{return requested&&requested(context);}
 };
 enum : unsigned {TimeoutMs=30000, GraceMs=250, PollMs=10, MaxChildren=4};
 inline std::atomic<unsigned> &pending(){static std::atomic<unsigned> count{0};return count;}
@@ -52,15 +59,17 @@ inline void signal(const Ops &ops,int pid,Signal kind,Result &result){
 }
 // Only the exact positive child PID is probed/signalled. Never wait synchronously
 // after SIGKILL: an uninterruptible child must keep its owner and admission slot.
-inline Result wait(const Ops &ops,int pid,unsigned timeout=TimeoutMs,unsigned grace=GraceMs){
-    Result result;
-    if(pid<=0){result.reason=Reason::WaitFailed;result.retired=true;return result;}
+inline void waitInto(const Ops &ops,int pid,Result &result,unsigned timeout,unsigned grace,const Stop &stop){
+    result=Result();
+    if(pid<=0){result.reason=Reason::WaitFailed;result.retired=true;return;}
     const uint64_t start=ops.now(ops.context);
     for(;;){
+        if(stop.stopped()){result.reason=Reason::Stopped;break;}
         if(!remaining(start,ops.now(ops.context),timeout)){result.reason=Reason::Timeout;break;}
         const Probe probe=observe(ops,pid,result);
+        if(stop.stopped()){result.reason=Reason::Stopped;break;}
         if(!remaining(start,ops.now(ops.context),timeout)){result.reason=Reason::Timeout;break;}
-        if(probe==Probe::Reaped)return result;
+        if(probe==Probe::Reaped)return;
         if(probe==Probe::Missing||probe==Probe::Error){result.reason=Reason::WaitFailed;break;}
         ops.sleep(ops.context,std::min<unsigned>(PollMs,remaining(start,ops.now(ops.context),timeout)));
     }
@@ -78,6 +87,10 @@ inline Result wait(const Ops &ops,int pid,unsigned timeout=TimeoutMs,unsigned gr
         }
     }
     if(!result.retired)observe(ops,pid,result);
+}
+inline Result wait(const Ops &ops,int pid,unsigned timeout=TimeoutMs,unsigned grace=GraceMs,const Stop &stop=Stop()){
+    Result result;
+    waitInto(ops,pid,result,timeout,grace,stop);
     return result;
 }
 }
@@ -155,7 +168,7 @@ public:
         if(!state->timer)return;
         std::lock_guard<std::mutex> guard(state->mutex);
         state->removeFiles(); // Remove credential paths immediately; repeat after a late child exit.
-        if(state->pid<=0){state->retire();return;}
+        if(state->pid<=0||state->result.retired){state->pid=0;state->retire();return;}
         const Probe probe=observe(state->ops,state->pid,state->result);
         if(state->result.retired){state->pid=0;state->retire();return;}
         if(probe==Probe::Running&&!state->result.killAttempted)signal(state->ops,state->pid,Signal::Kill,state->result);
@@ -166,8 +179,9 @@ public:
     void paths(const char *request,const char *result){state_->requestPath=request;state_->resultPath=result;}
     void createdRequest(){state_->requestOwned=true;}
     void adopted(int pid){state_->pid=pid;state_->resultOwned=true;}
-    Result wait(unsigned timeout=TimeoutMs,unsigned grace=GraceMs){
-        state_->result=TLinkVPNHelperChild::wait(state_->ops,state_->pid,timeout,grace);
+    Result wait(unsigned timeout=TimeoutMs,unsigned grace=GraceMs,const Stop &stop=Stop()){
+        // Publish retirement before a later caller predicate can unwind.
+        TLinkVPNHelperChild::waitInto(state_->ops,state_->pid,state_->result,timeout,grace,stop);
         if(state_->result.retired)state_->pid=0;
         return state_->result;
     }

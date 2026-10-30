@@ -53,9 +53,10 @@ static BOOL TLinkVPNRequestWriteAll(int fd, NSData *data)
     return YES;
 }
 
-NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
+NSDictionary *TLinkVPNRunPrivateConfigurationHelperWithStop(
     NSString *helperPath,
-    NSDictionary *configuration)
+    NSDictionary *configuration,
+    TLinkVPNPrivateRequestShouldStop shouldStop)
 {
     uid_t callerUID = geteuid();
     gid_t callerGID = getegid();
@@ -78,6 +79,13 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
             NO, @"vpn_private_request_invalid", nil);
     }
 
+    // BEGIN VPN helper caller stop.
+    const TLinkVPNPrivateRequestShouldStop capturedStop = [shouldStop copy];
+    auto stopped = [capturedStop]{ return capturedStop && capturedStop(); };
+    using StopCallback = decltype(stopped);
+    TLinkVPNHelperChild::Stop cancellation(&stopped, [](void *opaque){return (*static_cast<StopCallback *>(opaque))();});
+    if (stopped()) return TLinkVPNRequestResult(NO, @"vpn_private_helper_cancelled", nil);
+    // END VPN helper caller stop.
     // BEGIN bounded VPN helper admission.
     TLinkVPNHelperChild::Owner child;
     if (!child.admitted()) {
@@ -149,6 +157,7 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
             });
     }
 
+    if (stopped()) return TLinkVPNRequestResult(NO, @"vpn_private_helper_cancelled", nil);
     int requestFd = open(requestPath.fileSystemRepresentation,
         O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
     if (requestFd < 0) {
@@ -169,6 +178,7 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
             NO, @"vpn_private_request_write_failed", nil);
     }
 
+    if (stopped()) return TLinkVPNRequestResult(NO, @"vpn_private_helper_cancelled", nil);
     const char *cpath = helperPath.fileSystemRepresentation;
     char *arg0 = strdup(cpath);
     char *arg1 = strdup("--configure-vpn");
@@ -222,12 +232,13 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
     }
 
     // BEGIN bounded VPN helper wait.
-    const TLinkVPNHelperChild::Result childResult = child.wait();
+    const TLinkVPNHelperChild::Result childResult = child.wait(TLinkVPNHelperChild::TimeoutMs, TLinkVPNHelperChild::GraceMs, cancellation);
     const int status = childResult.status;
     const pid_t waited = childResult.retired && childResult.reason == TLinkVPNHelperChild::Reason::Finished ? pid : -1;
     if (childResult.reason != TLinkVPNHelperChild::Reason::Finished) {
         return TLinkVPNRequestResult(NO,
-            childResult.reason == TLinkVPNHelperChild::Reason::Timeout
+            childResult.reason == TLinkVPNHelperChild::Reason::Stopped
+                ? @"vpn_private_helper_cancelled" : childResult.reason == TLinkVPNHelperChild::Reason::Timeout
                 ? @"vpn_private_helper_timeout" : @"vpn_private_helper_wait_failed", @{
                 @"native_errno": @(childResult.error),
                 @"signal_errno": @(childResult.signalError),
@@ -237,6 +248,7 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
     // END bounded VPN helper wait.
     [fm removeItemAtPath:requestPath error:nil];
 
+    if (stopped()) return TLinkVPNRequestResult(NO, @"vpn_private_helper_cancelled", nil);
     struct stat resultStat = {};
     NSDictionary *result = nil;
     if (lstat(resultPath.fileSystemRepresentation, &resultStat) == 0 &&
@@ -263,10 +275,18 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
                 @"helper_wait": @(waited),
             });
     }
+    if (stopped()) return TLinkVPNRequestResult(NO, @"vpn_private_helper_cancelled", nil);
     NSMutableDictionary *clean = [result mutableCopy];
     [clean removeObjectForKey:@"request_id"];
     [clean removeObjectForKey:@"version"];
     clean[@"helper_exit"] = @(
         waited == pid && WIFEXITED(status) ? WEXITSTATUS(status) : -1);
     return clean;
+}
+
+NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
+    NSString *helperPath,
+    NSDictionary *configuration)
+{
+    return TLinkVPNRunPrivateConfigurationHelperWithStop(helperPath, configuration, nil);
 }
