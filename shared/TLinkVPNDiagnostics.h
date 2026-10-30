@@ -2,6 +2,8 @@
 
 FOUNDATION_EXPORT NSString *TLinkVPNManagedProfileIdentifier(void);
 
+// Successful current-process entitlement reads are memoized immutably; read
+// errors retry. Connection state and other mutable diagnostics remain fresh.
 FOUNDATION_EXPORT NSDictionary *TLinkVPNDiagnosticsSnapshot(
     NSString *runtime,
     NSString *state,

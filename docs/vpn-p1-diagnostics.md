@@ -114,6 +114,13 @@ compiled or packaged into StreamControl.
 
 ## Device check
 
+Performance follow-up C04a memoizes successful current-process entitlement
+reads as immutable values. Failed queries retry; a fully resolved set avoids
+new SecTask queries. Restart the relevant runtime after changing its process
+entitlements. Connection/profile/license state and the remaining diagnostics
+continue to follow their existing live paths. Details and qualification status:
+[IMPLEMENTATION-C04A.md](performance-audit/IMPLEMENTATION-C04A.md).
+
 After installing and restarting the relevant runtime:
 
 ```powershell

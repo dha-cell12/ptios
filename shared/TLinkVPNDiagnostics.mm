@@ -53,22 +53,52 @@ static NSArray<NSString *> *TLinkVPNNormalizedEntitlementValues(CFTypeRef value)
     if ([object isKindOfClass:[NSArray class]]) {
         for (id item in (NSArray *)object) {
             if ([item isKindOfClass:[NSString class]]) {
-                [values addObject:item];
+                [values addObject:[item copy]];
             }
         }
     } else if ([object isKindOfClass:[NSString class]]) {
-        [values addObject:object];
+        [values addObject:[object copy]];
     } else if ([object respondsToSelector:@selector(boolValue)] &&
                [object boolValue]) {
         [values addObject:@"true"];
     }
-    return values;
+    return [values copy];
 }
 
-static NSDictionary *TLinkVPNEntitlementProbe(void)
+// BEGIN process-local immutable entitlement cache.
+// Caller serializes access. Failed reads/copies are never memoized.
+static CFTypeRef TLinkVPNReadEntitlement(
+    NSMutableDictionary *cache, SecTaskRef task, CFStringRef entitlement,
+    CFErrorRef *error)
 {
-    SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
-    if (!task) {
+    NSString *key = (__bridge NSString *)entitlement;
+    id cached = cache[key];
+    if (cached) {
+        return cached == [NSNull null] ? NULL : CFRetain((__bridge CFTypeRef)cached);
+    }
+    CFTypeRef value = SecTaskCopyValueForEntitlement(task, entitlement, error);
+    if (*error) return value;
+    CFPropertyListRef immutable = NULL;
+    // Optional memoization must not change the current probe on copy failures.
+    @try {
+        try {
+            if (value) immutable = CFPropertyListCreateDeepCopy(
+                kCFAllocatorDefault, value, kCFPropertyListImmutable);
+            if (!value || immutable) cache[key] = value ? (__bridge id)immutable : [NSNull null];
+        } catch (...) {
+        }
+    } @catch (NSException *exception) {
+        (void)exception;
+    }
+    if (immutable) CFRelease(immutable);
+    return value;
+}
+// END process-local immutable entitlement cache.
+
+static NSDictionary *TLinkVPNEntitlementProbeUsingCache(NSMutableDictionary *cache)
+{
+    SecTaskRef task = cache.count == 10 ? NULL : SecTaskCreateFromSelf(kCFAllocatorDefault);
+    if (!task && cache.count != 10) {
         return @{
             @"probe_source": @"sec_task_current_process",
             @"probe_available": @0,
@@ -92,16 +122,16 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
     }
 
     CFErrorRef vpnError = NULL;
-    CFTypeRef vpnValue = SecTaskCopyValueForEntitlement(
-        task,
+    CFTypeRef vpnValue = TLinkVPNReadEntitlement(
+        cache, task,
         (__bridge CFStringRef)kTLinkVPNAPIEntitlement,
         &vpnError);
     NSArray<NSString *> *vpnValues =
         TLinkVPNNormalizedEntitlementValues(vpnValue);
 
     CFErrorRef networkExtensionError = NULL;
-    CFTypeRef networkExtensionValue = SecTaskCopyValueForEntitlement(
-        task,
+    CFTypeRef networkExtensionValue = TLinkVPNReadEntitlement(
+        cache, task,
         (__bridge CFStringRef)kTLinkNetworkExtensionEntitlement,
         &networkExtensionError);
     NSArray<NSString *> *networkExtensionValues =
@@ -109,46 +139,46 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
 
     CFErrorRef privateConfigurationError = NULL;
     CFTypeRef privateConfigurationValue =
-        SecTaskCopyValueForEntitlement(
-            task,
+        TLinkVPNReadEntitlement(
+            cache, task,
             (__bridge CFStringRef)kTLinkPrivateConfigurationEntitlement,
             &privateConfigurationError);
     NSArray<NSString *> *privateConfigurationValues =
         TLinkVPNNormalizedEntitlementValues(privateConfigurationValue);
 
     CFErrorRef keychainGroupsError = NULL;
-    CFTypeRef keychainGroupsValue = SecTaskCopyValueForEntitlement(
-        task,
+    CFTypeRef keychainGroupsValue = TLinkVPNReadEntitlement(
+        cache, task,
         (__bridge CFStringRef)kTLinkKeychainAccessGroupsEntitlement,
         &keychainGroupsError);
     NSArray<NSString *> *keychainGroups =
         TLinkVPNNormalizedEntitlementValues(keychainGroupsValue);
 
     CFErrorRef scPreferencesError = NULL;
-    CFTypeRef scPreferencesValue = SecTaskCopyValueForEntitlement(
-        task, (__bridge CFStringRef)kTLinkSCPreferencesWriteEntitlement,
+    CFTypeRef scPreferencesValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkSCPreferencesWriteEntitlement,
         &scPreferencesError);
     NSArray<NSString *> *scPreferencesValues =
         TLinkVPNNormalizedEntitlementValues(scPreferencesValue);
     CFErrorRef dynamicStoreError = NULL;
-    CFTypeRef dynamicStoreValue = SecTaskCopyValueForEntitlement(
-        task, (__bridge CFStringRef)kTLinkSCDynamicStoreWriteEntitlement,
+    CFTypeRef dynamicStoreValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkSCDynamicStoreWriteEntitlement,
         &dynamicStoreError);
     CFErrorRef profiledError = NULL;
-    CFTypeRef profiledValue = SecTaskCopyValueForEntitlement(
-        task, (__bridge CFStringRef)kTLinkProfiledAccessEntitlement,
+    CFTypeRef profiledValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkProfiledAccessEntitlement,
         &profiledError);
     CFErrorRef mdmdError = NULL;
-    CFTypeRef mdmdValue = SecTaskCopyValueForEntitlement(
-        task, (__bridge CFStringRef)kTLinkMDMDAccessEntitlement,
+    CFTypeRef mdmdValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkMDMDAccessEntitlement,
         &mdmdError);
     CFErrorRef preferenceReadError = NULL;
-    CFTypeRef preferenceReadValue = SecTaskCopyValueForEntitlement(
-        task, (__bridge CFStringRef)kTLinkUserPreferenceReadEntitlement,
+    CFTypeRef preferenceReadValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkUserPreferenceReadEntitlement,
         &preferenceReadError);
     CFErrorRef preferenceWriteError = NULL;
-    CFTypeRef preferenceWriteValue = SecTaskCopyValueForEntitlement(
-        task, (__bridge CFStringRef)kTLinkUserPreferenceWriteEntitlement,
+    CFTypeRef preferenceWriteValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkUserPreferenceWriteEntitlement,
         &preferenceWriteError);
 
     NSDictionary *probe = @{
@@ -208,8 +238,18 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
     if (preferenceReadError) CFRelease(preferenceReadError);
     if (preferenceWriteValue) CFRelease(preferenceWriteValue);
     if (preferenceWriteError) CFRelease(preferenceWriteError);
-    CFRelease(task);
+    if (task) CFRelease(task);
     return probe;
+}
+
+static NSDictionary *TLinkVPNEntitlementProbe(void)
+{
+    static dispatch_once_t onceToken;
+    static NSMutableDictionary *cache = nil;
+    dispatch_once(&onceToken, ^{ cache = [NSMutableDictionary dictionaryWithCapacity:10]; });
+    @synchronized (cache) {
+        return TLinkVPNEntitlementProbeUsingCache(cache);
+    }
 }
 
 static NSDictionary *TLinkVPNFrameworkProbe(void)

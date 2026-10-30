@@ -284,6 +284,9 @@ jobs:
           test -f test/fixtures/secure-pairing-contract-v1.json
           test -f scripts/check-vpn-p0-baseline.mjs
           test -f scripts/check-vpn-p1-diagnostics.mjs
+          test -f scripts/check-vpn-diagnostics-cache-safety.mjs
+          test -f test/vpn-diagnostics-cache-runtime-test.mm
+          test -f test/fixtures/vpn-diagnostics-before-c04a.mm
           test -f scripts/check-vpn-p2-rootfull-broker.mjs
           test -f scripts/check-vpn-p3-trollstore-foreground.mjs
           test -f scripts/check-vpn-p4-on-demand.mjs
@@ -359,6 +362,7 @@ jobs:
           node scripts/check-secure-pairing-p0.mjs
           node scripts/check-vpn-p0-baseline.mjs
           node scripts/check-vpn-p1-diagnostics.mjs
+          node scripts/check-vpn-diagnostics-cache-safety.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
           node scripts/check-vpn-p3-trollstore-foreground.mjs
           node scripts/check-vpn-p4-on-demand.mjs

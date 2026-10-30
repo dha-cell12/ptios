@@ -1,7 +1,7 @@
 # C03ab — bounded local monotonic run durations
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `e1f20e22`, C03aa build passed according to the user. Complete normalized history source SHA-256: `fc3231d21d671e2317b2b544eea5f2a9bfbe1ef18ee827f796cbde7ea9dffeee`.
-Status: **source/core implemented; new Foundation/POSIX/ARC/ASan/UBSan and actual Darwin clock cases pending macOS CI; device clock/sleep qualification pending**.
+Status: **user reported build passed at `3ed8519e` before C04a; independent device clock/sleep qualification pending**.
 Finding: **P2-16 wall-clock run durations**, partial improvement.
 
 ## Change
