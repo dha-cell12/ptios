@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {restoreSupervisorStartPermission,restoreSupervisorStartHeader} from './lib/background-supervisor-admission-baseline.mjs';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,basename,join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -10,9 +11,10 @@ const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n'
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);};
 const [source,before,owner,header]=await Promise.all(['stream-app/app/StreamSupervisor.mm','test/fixtures/supervisor-before-c06c.inc','shared/TLinkVPNHelperChild.h','stream-app/app/StreamSupervisor.h'].map(read));
 assert.equal(createHash('sha256').update(before).digest('hex'),'851abce84156b80eabfab2dd110e8edd53861d91223b1b08a166f948bda929f4');
-let restored=source;
+const previousStage=restoreSupervisorStartPermission(source),previousHeader=restoreSupervisorStartHeader(header);
+let restored=previousStage;
 for(const [start,end] of [['- (int)runPrivhelperKillStreamdLocked\n','- (int)runPrivhelperEnsureStreamdLocked:'],['- (int)runPrivhelperEnsureStreamdLocked:(BOOL)replaceExisting\n','- (BOOL)preparePortForSpawnLocked']]){
-    const chunk=between(source,start,end),old=between(before,start,end);
+    const chunk=between(previousStage,start,end),old=between(before,start,end);
     const admission=between(chunk,'    // BEGIN supervised helper owner.','    // END supervised helper owner.\n')+'    // END supervised helper owner.\n';
     const wait=between(chunk,'    // BEGIN supervised helper wait.','    // END supervised helper wait.\n')+'    // END supervised helper wait.';
     const attributes=between(chunk,'    int attrResult = posix_spawnattr_init(&attr);','    int persona =');
@@ -45,7 +47,7 @@ try{
         const legacy=adapt(before).replaceAll('SCStreamSupervisor','SCLegacySupervisor').replaceAll('kSCRespawnThrottle','kLegacyRespawnThrottle')
             .replaceAll('kSCRequiredStreamdServiceMarker','kLegacyRequiredStreamdServiceMarker').replaceAll('kSCRequiredVPNServiceMarker','kLegacyRequiredVPNServiceMarker');
         await Promise.all([writeFile(join(temp,'SupervisorUnderTest.inc'),adapt(source)),writeFile(join(temp,'SupervisorLegacy.inc'),legacy),
-            writeFile(join(temp,'LegacySupervisor.h'),header.replaceAll('SCStreamSupervisor','SCLegacySupervisor'))]);
+            writeFile(join(temp,'LegacySupervisor.h'),previousHeader.replaceAll('SCStreamSupervisor','SCLegacySupervisor'))]);
         const runtime=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/supervisor-helper-runtime-test.mm'),'-o',runtime]);run(runtime,[]);
     }else console.log('macOS complete current/frozen supervisor/helper lifecycle runtime included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-supervisor-helper-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}

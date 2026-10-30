@@ -206,7 +206,9 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
                             run->finish(NO, @"background_scheduler_unavailable", nil);
                             return;
                         }
-                        [scheduler.supervisor ensureServiceWithCompletion:^(BOOL running, NSString *detail) {
+                        [scheduler.supervisor ensureServiceWithStartPermission:^BOOL {
+                            return run->beginSupervisor();
+                        } completion:^(BOOL running, NSString *detail) {
                             NSString *combined = [NSString stringWithFormat:@"license=%@ streamd=%@",
                                 licenseDetail ?: @"unknown", detail ?: @"streamd_ensure_completed_without_detail"];
                             run->finish(licenseSuccess && running, combined, @{

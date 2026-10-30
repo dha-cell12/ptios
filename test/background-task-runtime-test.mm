@@ -77,15 +77,31 @@ static BOOL expireOnInstall=NO;
 @end
 @interface SCStreamSupervisor : NSObject
 @property(nonatomic,copy) RefreshReply reply;
+@property(nonatomic,copy) RefreshReply queuedReply;
+@property(nonatomic,copy) BOOL (^startPermission)(void);
+@property BOOL holdStart;
 @property unsigned calls;
 @property int fault;
 - (void)ensureServiceWithCompletion:(RefreshReply)completion;
+- (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission completion:(RefreshReply)completion;
+- (void)releaseStart;
 @end
 @implementation SCStreamSupervisor
 - (void)ensureServiceWithCompletion:(RefreshReply)completion {
     ++_calls;_reply=[completion copy];
     if(_fault==1)[NSException raise:@"Fixture" format:@"ensure"];
     if(_fault==2)throw std::runtime_error("ensure");
+}
+- (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission completion:(RefreshReply)completion {
+    if(_holdStart){_startPermission=[startPermission copy];_queuedReply=[completion copy];return;}
+    if(!startPermission||startPermission())[self ensureServiceWithCompletion:completion];
+    else completion(NO,@"supervisor_ensure_cancelled_before_start");
+}
+- (void)releaseStart {
+    BOOL (^permission)(void)=_startPermission;RefreshReply completion=_queuedReply;
+    _startPermission=nil;_queuedReply=nil;assert(permission&&completion);
+    if(permission())[self ensureServiceWithCompletion:completion];
+    else completion(NO,@"supervisor_ensure_cancelled_before_start");
 }
 @end
 #import "../stream-app/app/BackgroundServiceScheduler.h"
@@ -364,6 +380,30 @@ static void independentRunsCase(){
     }
     reset();
 }
+static void queuedSupervisorCases(){
+    for(unsigned terminal=0;terminal<2;++terminal){
+        SCStreamSupervisor *supervisor=[SCStreamSupervisor new];supervisor.holdStart=YES;
+        SCLicenseLifecycleCoordinator *coordinator=[SCLicenseLifecycleCoordinator new];__weak BGTask *releasedTask;
+        NSDictionary *before;id<TestScheduler> value=scheduler(NO,supervisor,coordinator);
+        @autoreleasepool{
+            BGTask *task=[BGTask new];releasedTask=task;[value handleTask:task kind:@"refresh"];coordinator.reply(YES,@"accepted-license");
+            assert(supervisor.startPermission&&supervisor.calls==0);
+            if(terminal)watchdog(NO);else expire(task);
+            assert(task.completions==1&&!task.success);before=[value snapshot];coordinator.reply=nil;
+        }
+        reset();assert(!releasedTask);[supervisor releaseStart];
+        assert(supervisor.calls==0&&[before isEqual:[value snapshot]]&&!supervisor.startPermission&&!supervisor.queuedReply);
+    }
+    @autoreleasepool{
+        SCStreamSupervisor *supervisor=[SCStreamSupervisor new];supervisor.holdStart=YES;
+        SCLicenseLifecycleCoordinator *coordinator=[SCLicenseLifecycleCoordinator new];id<TestScheduler> value=scheduler(NO,supervisor,coordinator);
+        BGTask *task=[BGTask new];[value handleTask:task kind:@"processing"];coordinator.reply(YES,@"license");
+        BOOL (^duplicatePermission)(void)=supervisor.startPermission;
+        [supervisor releaseStart];assert(supervisor.calls==1&&!duplicatePermission());supervisor.reply(YES,@"probe");
+        assert(task.completions==1&&task.success);coordinator.reply=nil;supervisor.reply=nil;
+    }
+    reset();
+}
 static void realTimerCase(){
     @autoreleasepool{
         realTimer=true;SCStreamSupervisor *supervisor=[SCStreamSupervisor new];SCLicenseLifecycleCoordinator *coordinator=[SCLicenseLifecycleCoordinator new];
@@ -379,8 +419,8 @@ static void realTimerCase(){
 int main(){@autoreleasepool{
     timers=[NSMutableDictionary dictionary];legacyTimers=[NSMutableArray array];
     puts("Background task Foundation: complete current/frozen scheduler, controlled BGTask/providers and real resumed GCD sources");
-    parityCases();lateCases();faultCases();lifetimeCases();raceCases();independentRunsCase();realTimerCase();
+    parityCases();lateCases();faultCases();lifetimeCases();raceCases();independentRunsCase();queuedSupervisorCases();realTimerCase();
     for(unsigned n=0;n<128;++n){@autoreleasepool{(void)outcome(NO,n%2,NO,YES,YES,0);}reset();}
     assert(created.load()==cancelled.load()&&liveTasks.load()==0);
-    puts("Background task passed: frozen replies/rescheduling, duplicate/late callback refusal, first-result diagnostics, allocation/installation/NS/C++ faults, early task release with retained callbacks, 200 policy/64 actual callback races, independent runs, reentry, real timeout delivery and 128 balanced source/task lifecycles. HTTP/supervisor cancellation and device qualification remain pending.");
+    puts("Background task passed: frozen replies/rescheduling, duplicate/late callback refusal, first-result diagnostics, allocation/installation/NS/C++ faults, early task release with retained callbacks, 200 policy/64 actual callback races, independent runs, owner-start permission after queued expiration/timeout, reentry, real timeout delivery and 128 balanced source/task lifecycles. HTTP/active supervisor cancellation and device qualification remain pending.");
 }return 0;}

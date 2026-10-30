@@ -7,7 +7,7 @@
 
 // Admission is linearized against completion. Already admitted external work is not preempted.
 class TLinkBackgroundTaskRun {
-    enum class Phase { Ready, Refreshing, Ensuring, Finished };
+    enum class Phase { Ready, Refreshing, Ensuring, SupervisorStarted, Finished };
     mutable std::mutex mutex_;
     Phase phase_=Phase::Ready;
     dispatch_source_t timer_=nullptr;
@@ -36,6 +36,13 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         if (phase_!=Phase::Refreshing) return false;
         phase_=Phase::Ensuring;
+        return true;
+    }
+    // Called on the supervisor owner queue, after its queue residence.
+    bool beginSupervisor() {
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (phase_!=Phase::Ensuring) return false;
+        phase_=Phase::SupervisorStarted;
         return true;
     }
     // The caller resumes an initially unarmed source before transferring ownership.

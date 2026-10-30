@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C06e (31/10/2026): người dùng báo C06d build pass (`e8a56fa1`). Thêm start permission trên queue supervisor trước auto-respawn/probe/helper; BGTask đã hết hạn trong lúc chờ queue từ chối ensure, không đổi kết quả/diagnostics đã chốt. API cũ dùng nil permission giữ hành vi cũ; lỗi predicate từ chối an toàn, callback trên main. 73 runner Windows và 521 source check pass; Foundation mới chờ macOS CI/device. Ensure đã thắng start permission và HTTP shared refresh vẫn có thể chạy tiếp; active cancellation còn mở. Chi tiết: IMPLEMENTATION-C06E.md.
+
 Cập nhật triển khai C06d (31/10/2026): người dùng báo C06c build pass (`c999a8f7`). BGTask có owner riêng, chốt refresh/ensure một lần trước terminal; callback license đến sau expiration/timeout không được gửi ensure, callback supervisor muộn không ghi diagnostics. Watchdog GCD có thể hủy, bỏ task/expiration captures ngay khi kết thúc; giữ lịch và kết quả thường. 73 runner Windows và 521 source check pass; Foundation mới chờ macOS CI/device. HTTP và ensure đã được nhận trước terminal vẫn có thể chạy, cancellation xuống coordinator/supervisor còn mở. Chi tiết: IMPLEMENTATION-C06D.md.
 
 Cập nhật triển khai C06c (31/10/2026): người dùng báo C06b build pass (`573ea337`). Hai lượt ensure/kill privhelper trong supervisor dùng owner với hạn 30s, TERM/KILL grace và deferred reap. Một lane supervisor/process giữ đến hết ownership, trong cap chung bốn child. Khi lane còn bận, lifecycle/fallback bị chặn; ensure callback báo pending, stop tắt auto-respawn nhưng cần retry phần cleanup. Kiểm tra lỗi khởi tạo spawn attributes; giữ argv/persona/exit/probe/watchdog cũ. 72 runner Windows pass, native mới chờ macOS CI/device. Chi tiết: IMPLEMENTATION-C06C.md.
@@ -249,7 +251,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 | C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58, P2-16 | **C03a–C03ab đã build pass theo người dùng; device qualification còn mở.** Còn elapsed liên tiến trình, codec JSON, power-loss/index/orphan/event recovery, phần khóa/retention/status còn lại. Giữ text/base64 và chốt durability trước thay journal format. |
 | C04 | P0-19, P1-62, P1-63 | **C04a–C04k build pass theo người dùng; device qualification còn mở: IMPLEMENTATION-C04K.md.** Còn CF wait không preempt, legacy/direct callers, manager cancel/coalescing và private backend; capability khác. Chưa đóng qualification toàn đường gọi. |
 | C05 | P0-20, P1-59, P1-60, P1-61, P1-64 | AX scanned-work budget, cancellation, string/output ceiling; selector scan hợp đồng rõ; cache symbol/capability; giữ foreground safety guard. |
-| C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | **C06a–c build pass theo người dùng; C06d BGTask terminal admission/watchdog ownership đã triển khai source, chờ macOS CI/device: IMPLEMENTATION-C06D.md.** Còn caller khác/end-to-end deadline, supervisor cancellation/coalescing; BGTask cancel xuống HTTP và ensure đã được nhận/đang đợi queue; coalesce decision trước localStatus; broker/poll/preflight; observer cleanup. Transaction lease/checkpoint cần crash recovery riêng. |
+| C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | **C06a–d build pass theo người dùng; C06e supervisor ensure start permission sau queue residence đã triển khai source, chờ macOS CI/device: IMPLEMENTATION-C06E.md.** Còn caller khác/end-to-end deadline, supervisor active cancellation/coalescing; BGTask cancel xuống HTTP và ensure đã thắng start permission; coalesce decision trước localStatus; broker/poll/preflight; observer cleanup. Transaction lease/checkpoint cần crash recovery riêng. |
 
 ### Đợt 4: đo trước hoặc theo phạm vi
 
@@ -357,7 +359,7 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P1-73 | Tối ưu có trust contract | Authority client/local verifier lặp lease/key/proof; cache artifact nhưng vẫn ký nonce/freshness đúng. B05. |
 | P1-74 | Tối ưu rủi ro cao | stream-app/app/LicenseManager.mm:321 save lease nhiều pass/checkpoint reset; giữ validation và rollback recovery. C06. |
 | P1-75 | Tối ưu | stream-app/app/LicenseLifecycleCoordinator.mm refreshForTrigger gọi localStatus trước beginOperation. C06. |
-| P1-76 | Sửa từng phần | C06d source: per-run terminal gate chặn callback license muộn/duplicate gửi ensure, chặn diagnostics muộn; hủy watchdog và bỏ task/expiration captures khi finish. HTTP shared refresh và ensure đã được nhận trước terminal (kể cả chờ queue) vẫn có thể chạy; cancellation/preemption/device còn mở. IMPLEMENTATION-C06D.md. |
+| P1-76 | Sửa từng phần | C06d build pass theo người dùng; C06e source: quyền bắt đầu trên owner queue chặn ensure còn chờ khi BGTask đã chốt, trước auto-respawn/probe/helper. API cũ giữ hành vi, predicate lỗi từ chối và callback main. HTTP shared refresh và ensure đã thắng start permission vẫn có thể chạy; active cancellation/coalescing/device còn mở. IMPLEMENTATION-C06E.md. |
 | P1-77 | Tối ưu | stream-app/app/LicenseLifecycleCoordinator.mm:237,255 diagnostics plist RMW nhiều lần/operation. C06. |
 | P1-78 | Tối ưu | tlinkauto-binary/SocketServer.mm:825–891 diagnostic tasks gọi full status trực tiếp. B05, API freshness rõ. |
 

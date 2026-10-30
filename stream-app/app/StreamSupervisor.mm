@@ -110,7 +110,33 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 
 - (void)ensureServiceWithCompletion:(void (^)(BOOL running, NSString *detail))completion
 {
+    [self ensureServiceWithStartPermission:nil completion:completion];
+}
+
+- (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission
+                            completion:(void (^)(BOOL running, NSString *detail))completion
+{
     dispatch_async(_queue, ^{
+        // BEGIN supervisor ensure start permission.
+        if (startPermission) {
+            BOOL admitted = NO;
+            NSString *refusal = @"supervisor_ensure_cancelled_before_start";
+            @try {
+                try {
+                    admitted = startPermission();
+                } catch (...) {
+                    refusal = @"supervisor_ensure_admission_exception";
+                }
+            } @catch (NSException *exception) {
+                (void)exception;
+                refusal = @"supervisor_ensure_admission_exception";
+            }
+            if (!admitted) {
+                if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, refusal); });
+                return;
+            }
+        }
+        // END supervisor ensure start permission.
         if ([self helperBusyLocked:@"ensure"]) {
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, @"supervisor_helper_pending"); });
             return;

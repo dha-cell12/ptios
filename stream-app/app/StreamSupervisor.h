@@ -39,6 +39,12 @@
 // is delivered on the main queue and is suitable for BGTask completion.
 - (void)ensureServiceWithCompletion:(void (^)(BOOL running, NSString *detail))completion;
 
+// Optional admission runs once on the supervisor queue before any ensure effects.
+// NO or an exception refuses this request; completion remains asynchronous on main.
+// This does not cancel work after admission. The permission must be short/nonblocking.
+- (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission
+                            completion:(void (^)(BOOL running, NSString *detail))completion;
+
 // Terminate streamd and disable respawn for this stop.
 - (void)stop;
 
