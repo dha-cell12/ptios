@@ -87,8 +87,10 @@ static BOOL TLinkRunHistoryDirectoriesValid(void)
 static void TLinkRunHistoryEnsureDirectories(void)
 {
     NSArray *paths = @[TLinkRunHistoryRootPath(), TLinkRunHistoryRunsPath(), TLinkRunHistoryEvidencePath()];
+    struct stat directoryInfo[3];
+    NSUInteger index = 0;
     for (NSString *path in paths) {
-        struct stat info;
+        struct stat &info = directoryInfo[index++];
         if (lstat(path.fileSystemRepresentation, &info) != 0) {
             if (errno != ENOENT) return;
             [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES
@@ -98,9 +100,11 @@ static void TLinkRunHistoryEnsureDirectories(void)
         if (!S_ISDIR(info.st_mode)) return;
     }
     // Do not apply directory permissions until every direct directory passed preflight.
+    index = 0;
     for (NSString *path in paths) {
-        chmod(path.fileSystemRepresentation, 0750);
-        lchown(path.fileSystemRepresentation, 501, 501);
+        const struct stat &info = directoryInfo[index++];
+        if ((info.st_mode & 07777) != 0750) chmod(path.fileSystemRepresentation, 0750);
+        if (info.st_uid != 501 || info.st_gid != 501) lchown(path.fileSystemRepresentation, 501, 501);
     }
 }
 
@@ -126,8 +130,8 @@ static int TLinkRunHistoryAcquireFileLock(BOOL shared = NO)
         close(fd);
         return -1;
     }
-    fchmod(fd, 0640);
-    fchown(fd, 501, 501);
+    if ((current.st_mode & 07777) != 0640) fchmod(fd, 0640);
+    if (current.st_uid != 501 || current.st_gid != 501) fchown(fd, 501, 501);
     return fd;
 }
 

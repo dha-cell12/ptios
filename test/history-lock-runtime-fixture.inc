@@ -28,7 +28,8 @@ static void historyValidatedLockCases(){
         const size_t permissions=historyLockPermissions;int fd=Current::TLinkRunHistoryAcquireFileLock();assert(fd>=0);
         struct stat opened,current;assert(::fstat(fd,&opened)==0&&::lstat(lock.fileSystemRepresentation,&current)==0);
         assert(opened.st_ino==original.st_ino&&opened.st_dev==original.st_dev&&current.st_ino==opened.st_ino);
-        assert(historyLockPermissions==permissions+2);Current::TLinkRunHistoryReleaseFileLock(fd);
+        const size_t repairs=((current.st_mode&07777)!=0640?1:0)+(current.st_uid!=501||current.st_gid!=501?1:0);
+        assert(historyLockPermissions==permissions+repairs);Current::TLinkRunHistoryReleaseFileLock(fd);
     }
     for(unsigned op=0;op<3;++op){historyLockOpenFault=true;historyLockRejected(op);historyLockOpenFault=false;}
     for(unsigned op=0;op<3;++op){historyLockStatFault=true;historyLockRejected(op);historyLockStatFault=false;}

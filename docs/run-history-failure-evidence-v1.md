@@ -338,6 +338,24 @@ all decoded objects/RSS or IO time. It does not make the file immutable during
 in-place writes, pin ancestor directories or add durability. Runtime race/fault
 cases require macOS CI; device IO and latency qualification remain separate.
 
+## Conditional directory/lock permissions (C03y)
+
+Keep the complete direct-directory preflight and lock identity validation above.
+Reuse directory stat results to compare all 07777 mode bits with 0750 and UID/GID
+with 501/501. Apply chmod and lchown independently only for mismatches, after all
+three direct directories have passed preflight. For history.lock, compare the
+post-flock validated metadata with 0640 and 501/501; update only mismatched fields
+through fchmod/fchown on the descriptor. Artifact permissions are unchanged.
+
+No extra stat or permission-success cache is introduced. Permission-update
+failures retain their existing best-effort policy; later operations obtain fresh
+metadata and retry mismatches. Shared status and exclusive mutation admission
+remain unchanged. Correct metadata can skip eight update syscalls per entry,
+but all type/identity checks and persistence reads remain. This is not atomic
+against metadata changes after observation and does not add a durability or
+permission-repair-success guarantee. Controlled cases require macOS CI; device
+metadata/write/latency qualification remains separate.
+
 ## Capability markers
 
 ```text

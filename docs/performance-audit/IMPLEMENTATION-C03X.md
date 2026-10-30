@@ -1,7 +1,7 @@
 # C03x — descriptor-bounded failure console tail
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `e6b1580a`, C03w build passed according to the user. Complete normalized `shared/TLinkRunHistory.mm` SHA-256: `6534189312096e6ebd45383b63b0a57b7c90efa5787eb2b3387e52adfe102727`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; device IO qualification pending**.
+Status: **user reported build `0b7887e2` passed before C03y; device IO qualification pending**.
 Finding: **P1-49 failure-evidence preparation**, partial improvement.
 
 ## Problem and change

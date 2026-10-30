@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C03y (30/10/2026): người dùng báo C03x build pass (`0b7887e2`). History dùng lại stat preflight để chỉ chmod/chown thư mục khi mode/UID/GID sai; quyền khóa kiểm tra từ metadata đã xác thực sau flock và vẫn sửa qua descriptor. Không thêm stat/cache, giữ best-effort và thử lại khi sai lệch còn tồn tại. Thêm 256 tổ hợp, drift UID/GID, lỗi/retry và public status/writer; Foundation mới chờ macOS CI. Chi tiết: IMPLEMENTATION-C03Y.md.
+
 Cập nhật triển khai C03x (30/10/2026): người dùng báo C03w build pass (`e6b1580a`). Console-tail fallback dùng fstat trên descriptor đã mở và cửa sổ cố định tối đa 256 KiB, pread tối đa 64 KiB/lần, không kéo dài theo append. Giữ tail/redaction/UTF8 và chuẩn bị ngoài flock; lỗi/EOF sớm bỏ tail chưa đủ, finally nhả FD. Thêm ca actual/frozen, append/rename/truncate và public evidence; Foundation mới chờ macOS CI. Chi tiết: IMPLEMENTATION-C03X.md.
 
 Cập nhật triển khai C03w (30/10/2026): người dùng báo build `6be7edb0` đã pass, gồm C03v và sửa oracle evidence/record của C03u. Snapshot history dùng khóa shared để các tiến trình đọc có thể đồng thời; begin/finish/recovery vẫn exclusive. Giữ kiểm tra inode/thư mục, checked read, lỗi và nhả khóa trước format. Thêm probe flock liên tiến trình trong actual reader/writer và ca exception/nhả reader cuối. Foundation mới chờ macOS CI; chưa đo contention/latency trên thiết bị. Chi tiết: IMPLEMENTATION-C03W.md.
@@ -208,7 +210,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 |---|---|---|
 | C01 | P0-10, P0-11, P1-25, P1-27, P1-28, P1-29, P1-30, P1-31, P1-32, P1-33, P1-34, P1-35, P1-36, P1-37, P1-38, P1-39 | **C01a–C01d3 build pass theo người dùng; còn engine/device qualification và retention bảo thủ với dữ liệu không đủ bằng chứng: IMPLEMENTATION-C01D3.md.** OCR/template/color: cache/pixel/scale/tries budget; deadline gồm queue/preprocess/compute; dọn lỗi Vision/ColorPicker; frame reuse; cấu hình OpenCV một lần nếu phù hợp. Không tăng OCR parallelism trước memory budget. |
 | C02 | P0-12, P0-13, P1-04, P1-05, P1-40, P1-41 | **Các checkpoint đến C02d12 và C02b56 đã build pass theo người dùng.** Batch hỗn hợp đã có entry trực tiếp; rawTask, cleanup tương thích và connectivity task chưa biết giữ RAW. Còn codec/copy metadata; P0-12 còn các kết quả start chưa thể xác minh và qualification; P1-40 còn metadata/invalidation đồng bộ sau cache C02c1; P1-41 còn qualification Foundation/device sau byte cap C02c2 và sink streaming C02c3. Giữ ordering, reconnect/dedupe và không lặp side effect. |
-| C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58 | **C03a–C03w đã build pass theo người dùng. C03x descriptor-bounded console tail đã triển khai source, chờ CI/device: IMPLEMENTATION-C03X.md.** Còn power-loss/index/orphan/event recovery, phần khóa/retention/status còn lại và encoder theo protocol. Giữ text/base64 và chốt durability trước thay journal format. |
+| C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58 | **C03a–C03x đã build pass theo người dùng. C03y conditional history permissions đã triển khai source, chờ CI/device: IMPLEMENTATION-C03Y.md.** Còn power-loss/index/orphan/event recovery, phần khóa/retention/status còn lại và encoder theo protocol. Giữ text/base64 và chốt durability trước thay journal format. |
 | C04 | P0-19, P1-62, P1-63 | VPN rootfull khỏi IPC callback đồng bộ dài; deadline bao các bước; admission/coalescing; cache capability bất biến. Không chỉ kéo outer timeout lên 30s rồi giữ nguyên HOL. |
 | C05 | P0-20, P1-59, P1-60, P1-61, P1-64 | AX scanned-work budget, cancellation, string/output ceiling; selector scan hợp đồng rõ; cache symbol/capability; giữ foreground safety guard. |
 | C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | StreamControl/TrollStore: helper deadline/terminate/reap; lifecycle queue không chờ vô hạn; BGTask cancel xuống HTTP và chặn late ensure; coalesce decision trước localStatus; broker/poll/preflight; observer cleanup. Transaction lease/checkpoint cần crash recovery riêng. |
@@ -339,7 +341,9 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P2-11, P2-12 | Sửa kèm subsystem | JS NSDate deadline và hardware key sleep 50ms không interruptible; ưu tiên sau native context. A06/C02. |
 | P2-13 | Đo | VM/context/prelude mới mỗi run là startup cost; không pool trước đo và kiểm tra isolation. |
 | P2-14, P2-15 | Điều kiện | Timer process-lifetime; chưa thấy auto-launch consumer trong pccontrol nhưng streamd có. Chốt yêu cầu restart/component deployment trước sửa. |
-| P2-16, P2-17, P2-18 | Sửa/tối ưu kèm subsystem | History duration dùng wall time; snapshot thiếu lockFd<0 guard; directory/permission metadata lặp. C03. |
+| P2-16 | Còn mở | History duration dùng wall time; cần elapsed policy giữ dữ liệu qua process/restart. C03. |
+| P2-17 | Đã sửa source | C03t checked snapshot từ chối khi lockFd<0, không đọc persistence fallback. IMPLEMENTATION-C03T.md. |
+| P2-18 | Tối ưu từng phần | C03y chỉ sửa quyền directory/lock khi mode/UID/GID sai, dùng stat đã có và vẫn retry khi thất bại. Stat/identity/artifact metadata và đo thiết bị còn mở. IMPLEMENTATION-C03Y.md. |
 | P2-19 | Sửa | Event timeout unsigned wall-clock elapsed có thể underflow. B06. |
 | P2-20, P2-21 | Tối ưu nhỏ | Regex compile mỗi request, không mỗi poll iteration; cursor có thể advance qua trailing unmatched đã quét, giữ pagination đúng. B06. |
 | P2-22, P2-23 | Sửa budget / đo fallback | AX wall deadline, remote attribute có thể overshoot; PID fallback scan process/plist không phải đường thường khi PID sẵn có. C05. |

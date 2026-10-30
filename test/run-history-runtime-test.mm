@@ -60,6 +60,31 @@ static size_t historyLockPermissions=0;
 static bool historyLockOpenFault=false,historyLockStatFault=false;
 static std::function<void()> historyAfterLock;
 static NSMutableArray *historyPermissionPaths;
+struct HistoryPermissionState { mode_t mode;uid_t uid;gid_t gid; };
+static HistoryPermissionState historyPermissionState[4];
+static NSArray<NSString *> *historyPermissionTargets;
+static NSMutableArray<NSString *> *historyPermissionRepairs;
+static unsigned historyPermissionFailureMask=0;
+static NSUInteger historyPermissionIndex(const char *path){
+    return historyPermissionTargets?[historyPermissionTargets indexOfObject:[NSString stringWithUTF8String:path]]:NSNotFound;
+}
+static int historyPermissionStat(const char *path,struct stat *info){
+    const int result=::lstat(path,info);const NSUInteger index=historyPermissionIndex(path);
+    if(!result&&index!=NSNotFound){
+        assert(index<4);const auto &state=historyPermissionState[index];
+        info->st_mode=(info->st_mode&S_IFMT)|state.mode;info->st_uid=state.uid;info->st_gid=state.gid;
+    }
+    return result;
+}
+static int historyPermissionRepair(NSUInteger index,bool owner,bool descriptor){
+    if(index==NSNotFound)return 0;assert(index<4&&(!descriptor||index==3));
+    [historyPermissionRepairs addObject:[NSString stringWithFormat:@"%@:%lu",owner?@"owner":@"mode",(unsigned long)index]];
+    const unsigned bit=descriptor?(owner?8U:4U):(owner?2U:1U);
+    if(historyPermissionFailureMask&bit){errno=EACCES;return -1;}
+    if(owner){historyPermissionState[index].uid=501;historyPermissionState[index].gid=501;}
+    else historyPermissionState[index].mode=index==3?0640:0750;
+    return 0;
+}
 static int historyLockOpen(const char *path,int flags,mode_t mode){
     assert(flags==(O_CREAT|O_RDWR|O_NOFOLLOW|O_NONBLOCK)&&mode==0640);
     if(historyLockOpenFault){errno=EACCES;return -1;}
@@ -68,8 +93,8 @@ static int historyLockOpen(const char *path,int flags,mode_t mode){
 static int historyLockStat(int fd,struct stat *info){
     assert(historyLockFds.count(fd));if(historyLockStatFault){errno=EIO;return -1;}return ::fstat(fd,info);
 }
-static int historyLockFchmod(int fd,mode_t mode){assert(historyLocks.count(fd)&&historyLockFds.count(fd)&&mode==0640);++historyLockPermissions;return 0;}
-static int historyLockFchown(int fd,uid_t uid,gid_t gid){assert(historyLocks.count(fd)&&historyLockFds.count(fd)&&uid==501&&gid==501);++historyLockPermissions;return 0;}
+static int historyLockFchmod(int fd,mode_t mode){assert(historyLocks.count(fd)&&historyLockFds.count(fd)&&mode==0640);++historyLockPermissions;return historyPermissionRepair(historyPermissionTargets?3:NSNotFound,false,true);}
+static int historyLockFchown(int fd,uid_t uid,gid_t gid){assert(historyLocks.count(fd)&&historyLockFds.count(fd)&&uid==501&&gid==501);++historyLockPermissions;return historyPermissionRepair(historyPermissionTargets?3:NSNotFound,true,true);}
 static std::atomic<unsigned> historyRegexBuilds{0},historyUUIDs{0};
 static std::atomic<uint64_t> historyClockMs{1000000};
 static unsigned historyReadFault=0;
@@ -201,8 +226,8 @@ static NSData *historyReadBoundedData(BOOL *missing,NSString **code,NSString *op
     if([operation isEqualToString:@"snapshot"]?historySnapshotReadFault:historyMutationReadFault){*code=@"read_failed";return nil;}
     return reader(missing,code);
 }
-static int historyChmod(const char *path,mode_t mode){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(mode==0750||mode==0640);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return 0;}
-static int historyChown(const char *path,uid_t uid,gid_t gid){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(uid==501&&gid==501);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return 0;}
+static int historyChmod(const char *path,mode_t mode){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(mode==0750||mode==0640);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return historyPermissionRepair(historyPermissionIndex(path),false,false);}
+static int historyChown(const char *path,uid_t uid,gid_t gid){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(uid==501&&gid==501);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return historyPermissionRepair(historyPermissionIndex(path),true,false);}
 static int historyFlock(int fd,int operation){
     const bool acquiring=operation==LOCK_EX||operation==LOCK_SH;
     if(historyLockDenied&&acquiring){errno=EACCES;return -1;}
@@ -934,6 +959,7 @@ static void historyCompactIndexCases(){
 #include "history-lock-runtime-fixture.inc"
 #include "history-shared-lock-runtime-fixture.inc"
 #include "history-console-tail-runtime-fixture.inc"
+#include "history-permission-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2||argc==3||argc==5||argc==6);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];historyPruneAttempts=[NSMutableArray array];
     if(argc==5){assert([[NSString stringWithUTF8String:argv[2]] isEqualToString:@"--marker-worker"]);return historyMarkerWorker([[NSString stringWithUTF8String:argv[3]] intValue],[NSString stringWithUTF8String:argv[4]]);}
@@ -1051,6 +1077,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyValidatedLockCases();
     historySharedSnapshotLockCases();
     historyConsoleTailCases();
+    historyConditionalPermissionCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

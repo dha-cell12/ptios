@@ -8,7 +8,21 @@ import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [consoleCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const [permissionCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const permissionBlock=between(permissionCurrent,'static void TLinkRunHistoryEnsureDirectories','static void TLinkRunHistoryReleaseFileLock');
+assert.match(permissionBlock,/struct stat directoryInfo\[3\][\s\S]*struct stat &info = directoryInfo\[index\+\+\]/);
+assert.match(permissionBlock,/if \(\(info.st_mode & 07777\) != 0750\) chmod/);
+assert.match(permissionBlock,/if \(info.st_uid != 501 \|\| info.st_gid != 501\) lchown/);
+assert.match(permissionBlock,/if \(\(current.st_mode & 07777\) != 0640\) fchmod/);
+assert.match(permissionBlock,/if \(current.st_uid != 501 \|\| current.st_gid != 501\) fchown/);
+const consoleCurrent=permissionCurrent.replace('    struct stat directoryInfo[3];\n    NSUInteger index = 0;\n','')
+    .replace('struct stat &info = directoryInfo[index++];','struct stat info;')
+    .replace('    index = 0;\n','').replace('        const struct stat &info = directoryInfo[index++];\n','')
+    .replace('if ((info.st_mode & 07777) != 0750) chmod','chmod')
+    .replace('if (info.st_uid != 501 || info.st_gid != 501) lchown','lchown')
+    .replace('if ((current.st_mode & 07777) != 0640) fchmod','fchmod')
+    .replace('if (current.st_uid != 501 || current.st_gid != 501) fchown','fchown');
+assert.equal(createHash('sha256').update(consoleCurrent.trim()).digest('hex'),'b9aaf589f7a7748775b88df8f81f4d6c96eb25b005e38203ff5913560fe662f3','reversing only metadata permission predicates reproduces complete user-passed C03x source at 0b7887e2');
 const consoleTail=between(consoleCurrent,'static NSArray<NSString *> *TLinkRunHistoryTailFromConsoleFile','static BOOL TLinkRunHistoryRemoveArtifact');
 const oldConsoleTail=between(frozen,'static NSArray<NSString *> *TLinkRunHistoryTailFromConsoleFile','static void TLinkRunHistoryRemoveArtifact');
 assert.match(consoleTail,/O_RDONLY \| O_NOFOLLOW \| O_NONBLOCK/);
@@ -224,6 +238,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
+console.log('History metadata permissions source passed: reuse preflight stats, mode/owner-specific repairs and post-validation descriptor targeting; complete previous source retained.');
 console.log('History console tail source passed: same-descriptor regular-file size, fixed 256-KiB window, bounded pread/EINTR/EOF and finally close; complete previous source retained.');
 console.log('History shared snapshot lock source passed: snapshot-only LOCK_SH, default exclusive writers, unchanged complete admission/IO/recovery/format source.');
 console.log('History directory/lock source passed: real direct directories, regular single-link descriptor, post-flock identity and descriptor permissions; complete previous source retained.');
@@ -254,6 +269,8 @@ if(process.platform!=='darwin'){
         .replace('fstat(lockFd, &marker)','historyMarkerStat(lockFd, &marker)')
         .replace('open(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)','historyLockOpen(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)')
         .replace('fstat(fd, &opened)','historyLockStat(fd, &opened)')
+        .replaceAll('lstat(path.fileSystemRepresentation, &info)','historyPermissionStat(path.fileSystemRepresentation, &info)')
+        .replace('lstat(path.fileSystemRepresentation, &current)','historyPermissionStat(path.fileSystemRepresentation, &current)')
         .replace('fchmod(fd, 0640)','historyLockFchmod(fd, 0640)')
         .replace('fchown(fd, 501, 501)','historyLockFchown(fd, 501, 501)')
         .replace('ftruncate(lockFd, pending ? 1 : 0)','historyMarkerTruncate(lockFd, pending ? 1 : 0)')
@@ -264,7 +281,7 @@ if(process.platform!=='darwin'){
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(consoleCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(permissionCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
         const binary=join(temp,'run-history-runtime');
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
         run(binary,[temp]);
