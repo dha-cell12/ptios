@@ -136,9 +136,18 @@ static NSDictionary *scenario(BOOL legacy,BOOL connect,unsigned kind){
     if(!legacy){assert(lastTimer.cancelled);dispatch_block_t late=lastTimer.handler;late();pump();assert(results.count==1);}
     return results[0];
 }
-static void parityCases(){for(unsigned connect=0;connect<2;++connect)for(unsigned kind=0;kind<6;++kind){@autoreleasepool{
-    NSDictionary *expected=scenario(YES,connect,kind);NSDictionary *actual=scenario(NO,connect,kind);assert([expected isEqual:actual]);
-}}reset();}
+static void parityCases(){
+    for(unsigned connect=0;connect<2;++connect){
+        for(unsigned kind=0;kind<6;++kind){
+            @autoreleasepool{
+                NSDictionary *expected=scenario(YES,connect,kind);
+                NSDictionary *actual=scenario(NO,connect,kind);
+                assert([expected isEqual:actual]);
+            }
+        }
+    }
+    reset();
+}
 static void ownershipCases(){
     reset();__weak NEVPNManager *releasedManager;
     @autoreleasepool{
@@ -155,12 +164,17 @@ static void ownershipCases(){
     reset();createFailure=true;
     @autoreleasepool{NEVPNManager *manager=managerFor(YES);NSMutableArray *results=[NSMutableArray array];begin(NO,manager,YES,30,^(NSDictionary *value){[results addObject:value];});pump();assert(results.count==1&&[results[0][@"code"] isEqualToString:@"vpn_transition_timer_failed"]&&manager.connection.starts==0&&observers.count==0);}
     reset();
-    for(unsigned site=0;site<2;++site)for(unsigned kind=1;kind<=2;++kind){@autoreleasepool{
-        NEVPNManager *manager=managerFor(YES);if(site==0)registrationFault=static_cast<int>(kind);else manager.connection.fault=static_cast<int>(kind);
-        auto deliveries=std::make_shared<std::atomic<unsigned>>(0);bool caught=false;
-        try{@try{begin(NO,manager,YES,30,^(__unused NSDictionary *value){++*deliveries;});}@catch(NSException *exception){(void)exception;caught=true;}}catch(...){caught=true;}
-        pump();assert(caught&&deliveries->load()==0&&lastTimer.cancelled&&observers.count==0);registrationFault=0;
-    }}reset();
+    for(unsigned site=0;site<2;++site){
+        for(unsigned kind=1;kind<=2;++kind){
+            @autoreleasepool{
+                NEVPNManager *manager=managerFor(YES);if(site==0)registrationFault=static_cast<int>(kind);else manager.connection.fault=static_cast<int>(kind);
+                auto deliveries=std::make_shared<std::atomic<unsigned>>(0);bool caught=false;
+                try{@try{begin(NO,manager,YES,30,^(__unused NSDictionary *value){++*deliveries;});}@catch(NSException *exception){(void)exception;caught=true;}}catch(...){caught=true;}
+                pump();assert(caught&&deliveries->load()==0&&lastTimer.cancelled&&observers.count==0);registrationFault=0;
+            }
+        }
+    }
+    reset();
 }
 static void raceCases(){
     for(unsigned n=0;n<200;++n){@autoreleasepool{
