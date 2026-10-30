@@ -1,4 +1,6 @@
 #import "StreamSupervisor.h"
+#include "../../shared/TLinkVPNHelperChild.h"
+#include "../../shared/TLinkSupervisorHelper.h"
 #import <spawn.h>
 #import <signal.h>
 #import <sys/wait.h>
@@ -109,6 +111,10 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 - (void)ensureServiceWithCompletion:(void (^)(BOOL running, NSString *detail))completion
 {
     dispatch_async(_queue, ^{
+        if ([self helperBusyLocked:@"ensure"]) {
+            if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, @"supervisor_helper_pending"); });
+            return;
+        }
         self->_autoRespawn = YES;
         BOOL running = [self ensureServiceLockedWithReplace:NO reason:@"ensure"];
         if (!running) {
@@ -136,6 +142,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 {
     dispatch_async(_queue, ^{
         self->_autoRespawn = NO;
+        if ([self helperBusyLocked:@"stop"]) return;
         [self requestTaskServerShutdownLocked:@"stop"];
         if (self->_pid > 0) {
             [self emitLog:[NSString stringWithFormat:@"supervisor: terminating pid=%d", self->_pid]];
@@ -157,6 +164,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 - (void)restart
 {
     dispatch_async(_queue, ^{
+        if ([self helperBusyLocked:@"restart"]) return;
         [self emitLog:@"supervisor: restart requested; replacing service streamd"];
         self->_autoRespawn = NO;
         self->_running = NO;
@@ -331,6 +339,15 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     }
 }
 
+// BEGIN supervisor helper fence.
+- (BOOL)helperBusyLocked:(NSString *)operation
+{
+    if (!TLinkSupervisorHelper::busy()) return NO;
+    [self emitLog:[NSString stringWithFormat:@"supervisor: helper pending; %@ requires retry", operation]];
+    return YES;
+}
+// END supervisor helper fence.
+
 - (int)runPrivhelperKillStreamdLocked
 {
     NSString *path = [self privhelperPath];
@@ -339,6 +356,22 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return -1;
     }
 
+    // BEGIN supervised helper owner.
+    auto helperLease = std::make_shared<TLinkSupervisorHelper::Lease>();
+    if (!helperLease->held()) {
+        [self emitLog:@"supervisor: helper admission busy"];
+        return -EBUSY;
+    }
+    TLinkVPNHelperChild::Owner child(TLinkVPNHelperChild::posixOps(), helperLease);
+    if (!child.admitted()) {
+        [self emitLog:@"supervisor: shared helper capacity busy"];
+        return -EBUSY;
+    }
+    if (!child.ready()) {
+        [self emitLog:@"supervisor: helper monitor unavailable"];
+        return -ENOMEM;
+    }
+    // END supervised helper owner.
     const char *cpath = [path fileSystemRepresentation];
     NSString *except = self->_pid > 0 ? [NSString stringWithFormat:@"%d", self->_pid] : @"-1";
     char *arg0 = strdup(cpath);
@@ -353,13 +386,19 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     char *const argv[] = { arg0, arg1, arg2, arg3, NULL };
 
     posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
+    int attrResult = posix_spawnattr_init(&attr);
+    if (attrResult != 0) {
+        free(arg0); free(arg1); free(arg2); free(arg3);
+        [self emitLog:@"supervisor: helper spawn attributes failed"];
+        return attrResult;
+    }
     int persona = posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
     int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 0);
     int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 0);
 
     pid_t pid = -1;
     int rc = posix_spawn(&pid, cpath, NULL, &attr, argv, environ);
+    if (rc == 0) child.adopted(pid);
     posix_spawnattr_destroy(&attr);
     free(arg0); free(arg1); free(arg2); free(arg3);
 
@@ -368,9 +407,17 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return rc;
     }
 
-    int status = 0;
-    pid_t w = waitpid(pid, &status, 0);
-    int exitCode = -1;
+    // BEGIN supervised helper wait.
+    const TLinkVPNHelperChild::Result result = child.wait();
+    const int status = result.status;
+    const pid_t w = result.reason == TLinkVPNHelperChild::Reason::Finished && result.retired ? pid : -1;
+    int exitCode = result.reason == TLinkVPNHelperChild::Reason::Timeout ? -ETIMEDOUT :
+        (result.reason == TLinkVPNHelperChild::Reason::WaitFailed ? -ECHILD : -1);
+    if (result.reason != TLinkVPNHelperChild::Reason::Finished) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: helper wait failed exit=%d errno=%d signal_errno=%d reap_pending=%d",
+                       exitCode, result.error, result.signalError, result.retired ? 0 : 1]];
+    }
+    // END supervised helper wait.
     if (w == pid && WIFEXITED(status)) exitCode = WEXITSTATUS(status);
     [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper pid=%d wait=%d status=%d exit=%d persona=%d uid=%d gid=%d",
                    pid, w, status, exitCode, persona, personaUid, personaGid]];
@@ -390,6 +437,22 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return -2;
     }
 
+    // BEGIN supervised helper owner.
+    auto helperLease = std::make_shared<TLinkSupervisorHelper::Lease>();
+    if (!helperLease->held()) {
+        [self emitLog:@"supervisor: helper admission busy"];
+        return -EBUSY;
+    }
+    TLinkVPNHelperChild::Owner child(TLinkVPNHelperChild::posixOps(), helperLease);
+    if (!child.admitted()) {
+        [self emitLog:@"supervisor: shared helper capacity busy"];
+        return -EBUSY;
+    }
+    if (!child.ready()) {
+        [self emitLog:@"supervisor: helper monitor unavailable"];
+        return -ENOMEM;
+    }
+    // END supervised helper owner.
     const char *cpath = [helperPath fileSystemRepresentation];
     char *arg0 = strdup(cpath);
     char *arg1 = strdup("--ensure-streamd");
@@ -403,13 +466,19 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     char *const argv[] = { arg0, arg1, arg2, arg3, NULL };
 
     posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
+    int attrResult = posix_spawnattr_init(&attr);
+    if (attrResult != 0) {
+        free(arg0); free(arg1); free(arg2); free(arg3);
+        [self emitLog:@"supervisor: helper spawn attributes failed"];
+        return attrResult;
+    }
     int persona = posix_spawnattr_set_persona_np(&attr, 99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
     int personaUid = posix_spawnattr_set_persona_uid_np(&attr, 0);
     int personaGid = posix_spawnattr_set_persona_gid_np(&attr, 0);
 
     pid_t pid = -1;
     int rc = posix_spawn(&pid, cpath, NULL, &attr, argv, environ);
+    if (rc == 0) child.adopted(pid);
     posix_spawnattr_destroy(&attr);
     free(arg0); free(arg1); free(arg2); free(arg3);
 
@@ -418,9 +487,17 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return rc;
     }
 
-    int status = 0;
-    pid_t w = waitpid(pid, &status, 0);
-    int exitCode = -1;
+    // BEGIN supervised helper wait.
+    const TLinkVPNHelperChild::Result result = child.wait();
+    const int status = result.status;
+    const pid_t w = result.reason == TLinkVPNHelperChild::Reason::Finished && result.retired ? pid : -1;
+    int exitCode = result.reason == TLinkVPNHelperChild::Reason::Timeout ? -ETIMEDOUT :
+        (result.reason == TLinkVPNHelperChild::Reason::WaitFailed ? -ECHILD : -1);
+    if (result.reason != TLinkVPNHelperChild::Reason::Finished) {
+        [self emitLog:[NSString stringWithFormat:@"supervisor: helper wait failed exit=%d errno=%d signal_errno=%d reap_pending=%d",
+                       exitCode, result.error, result.signalError, result.retired ? 0 : 1]];
+    }
+    // END supervised helper wait.
     if (w == pid && WIFEXITED(status)) exitCode = WEXITSTATUS(status);
     [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper ensure pid=%d wait=%d status=%d exit=%d persona=%d uid=%d gid=%d",
                    pid, w, status, exitCode, persona, personaUid, personaGid]];
@@ -439,6 +516,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     [self requestTaskServerShutdownLocked:@"spawn"];
     [self killStaleStreamdLocked];
     [self runPrivhelperKillStreamdLocked];
+    if ([self helperBusyLocked:@"spawn cleanup"]) return NO;
     usleep(300000);
 
     NSString *after = [self sendLocalTaskLineLocked:@"97\n" timeout:1];
@@ -509,6 +587,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 }
 - (void)spawnLocked
 {
+    if ([self helperBusyLocked:@"spawn"]) return;
     NSString *path = [self streamdPath];
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
         [self emitLog:[NSString stringWithFormat:@"supervisor: streamd not found at %@", path]];

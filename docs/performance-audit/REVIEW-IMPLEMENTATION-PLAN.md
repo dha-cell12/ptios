@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C06c (31/10/2026): người dùng báo C06b build pass (`573ea337`). Hai lượt ensure/kill privhelper trong supervisor dùng owner với hạn 30s, TERM/KILL grace và deferred reap. Một lane supervisor/process giữ đến hết ownership, trong cap chung bốn child. Khi lane còn bận, lifecycle/fallback bị chặn; ensure callback báo pending, stop tắt auto-respawn nhưng cần retry phần cleanup. Kiểm tra lỗi khởi tạo spawn attributes; giữ argv/persona/exit/probe/watchdog cũ. 72 runner Windows pass, native mới chờ macOS CI/device. Chi tiết: IMPLEMENTATION-C06C.md.
+
 Cập nhật triển khai C06b (31/10/2026): người dùng báo build `f9cacba2` pass, gồm C06a và sửa fixture queued completion. Truyền stop của đúng script session vào transport cấu hình VPN qua API tùy chọn; kiểm tra trước tạo request/spawn preparation, trong wait và trước trả kết quả. Stop vẫn TERM/KILL/reap và giữ slot đến retirement; callback không vào reaper nền. Latch retirement trước callback có thể throw, tránh probe/signal lại PID đã reap. API cũ không callback giữ hành vi trước. Core và 71 runner Windows pass; Foundation mới chờ macOS CI/device. Chi tiết: IMPLEMENTATION-C06B.md.
 
 Cập nhật triển khai C06a (31/10/2026): người dùng báo build `91b13d41` pass, gồm C04k và sửa indentation fixture transition. P0-22 thay waitpid chặn trong transport cấu hình VPN bằng cửa sổ chờ 30s, TERM/KILL có grace và probe không chặn. Giới hạn bốn owner/process trước tạo request; child chưa reap giữ slot/timer nền, không chặn caller hay nhả capacity sớm. Giữ transport/permission/persona/kết quả bình thường; timeout không tự replay và không rollback side effect đã commit. 71 runner Windows pass; runtime thực chờ macOS CI/device. Chưa truyền cancellation của caller hay sửa supervisor. Chi tiết: IMPLEMENTATION-C06A.md.
@@ -245,7 +247,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 | C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58, P2-16 | **C03a–C03ab đã build pass theo người dùng; device qualification còn mở.** Còn elapsed liên tiến trình, codec JSON, power-loss/index/orphan/event recovery, phần khóa/retention/status còn lại. Giữ text/base64 và chốt durability trước thay journal format. |
 | C04 | P0-19, P1-62, P1-63 | **C04a–C04k build pass theo người dùng; device qualification còn mở: IMPLEMENTATION-C04K.md.** Còn CF wait không preempt, legacy/direct callers, manager cancel/coalescing và private backend; capability khác. Chưa đóng qualification toàn đường gọi. |
 | C05 | P0-20, P1-59, P1-60, P1-61, P1-64 | AX scanned-work budget, cancellation, string/output ceiling; selector scan hợp đồng rõ; cache symbol/capability; giữ foreground safety guard. |
-| C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | **C06a build pass theo người dùng; C06b script cancellation vào helper đã triển khai source, chờ macOS CI/device: IMPLEMENTATION-C06B.md.** Còn caller khác/end-to-end deadline, supervisor lifecycle queue; BGTask cancel xuống HTTP và chặn late ensure; coalesce decision trước localStatus; broker/poll/preflight; observer cleanup. Transaction lease/checkpoint cần crash recovery riêng. |
+| C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | **C06a/b build pass theo người dùng; C06c bounded supervisor helper waits/lane/fallback fence đã triển khai source, chờ macOS CI/device: IMPLEMENTATION-C06C.md.** Còn caller khác/end-to-end deadline, supervisor cancellation/coalescing; BGTask cancel xuống HTTP và chặn late ensure; coalesce decision trước localStatus; broker/poll/preflight; observer cleanup. Transaction lease/checkpoint cần crash recovery riêng. |
 
 ### Đợt 4: đo trước hoặc theo phạm vi
 
@@ -284,8 +286,8 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P0-19 | Sửa từng phần | C04c–i broker/client budget/admission/IPC/lane riêng đã build pass theo người dùng. Lane VPN tối đa hai trong cap cũ, deadline/token từ trước enqueue và nhả sau completion ACK. CF wait đang chạy không preempt, API/operation broker chưa cancel; legacy/direct callers và device còn mở. IMPLEMENTATION-C04I.md. |
 | P0-20 | Tối ưu có ràng buộc | shared/TLinkAccessibilityTree.mm:656,740 cap theo rows, find dựa snapshot và matches; giữ completeness/foreground contract. C05. |
 | P0-21 | Loại khỏi kế hoạch | poc-trollstore/TunnelExtension/ProviderTCPServer.mm:93,109 client loop cùng accept queue, EAGAIN ngủ 5ms. Không triển khai TouchPOC. |
-| P0-22 | Sửa từng phần | C06a build pass: cửa sổ 30s, TERM/KILL grace, owner/reaper và cap bốn/process. C06b source truyền stop script vào preflight/wait/result và không giữ caller trong reaper; runtime mới chờ CI macOS. Caller khác, end-to-end deadline, transaction và device còn mở. IMPLEMENTATION-C06B.md. |
-| P0-23 | Sửa | stream-app/app/StreamSupervisor.mm:372,422 helper wait vô hạn trên lifecycle serial queue; wait child streamd ở concurrent queue là nhánh khác. C06. |
+| P0-22 | Sửa từng phần | C06a/b build pass: cửa sổ 30s, TERM/KILL grace, owner/reaper/cap và stop script vào preflight/wait/result. Caller khác, end-to-end deadline, transaction và device còn mở. IMPLEMENTATION-C06B.md. |
+| P0-23 | Sửa từng phần | C06c source: hai helper wait có hạn 30s/grace/deferred reap; lane giữ đến retirement, lifecycle/direct fallback bị chặn khi pending. Vẫn chờ đồng bộ trong cửa sổ hạn; busy stop/restart cần retry, cancellation/coalescing/device còn mở. Direct streamd background waiter giữ nguyên. IMPLEMENTATION-C06C.md. |
 | P0-24 | Tối ưu quan trọng | shared/TLinkLicenseVerifier.mm:1333–1353 refresh TTL 5s trong dispatch_sync; pccontrol/Makefile bật authority client. B05. |
 
 ### P1

@@ -104,6 +104,7 @@ inline Result wait(const Ops &ops,int pid,unsigned timeout=TimeoutMs,unsigned gr
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -127,6 +128,7 @@ inline dispatch_queue_t reaperQueue(){
 class Owner {
     struct State {
         Slot slot;
+        std::shared_ptr<void> lifetime;
         Ops ops;
         std::mutex mutex;
         int pid=0;
@@ -134,7 +136,7 @@ class Owner {
         dispatch_source_t timer=nullptr;
         std::string requestPath,resultPath;
         bool requestOwned=false,resultOwned=false;
-        explicit State(Ops value):ops(value){}
+        State(Ops value,std::shared_ptr<void> retained):lifetime(std::move(retained)),ops(value){}
         void removeFiles(){
             if(requestOwned)::unlink(requestPath.c_str());
             if(resultOwned)::unlink(resultPath.c_str());
@@ -154,7 +156,7 @@ class Owner {
     };
     std::shared_ptr<State> state_;
 public:
-    explicit Owner(Ops ops=posixOps()):state_(std::make_shared<State>(ops)){
+    explicit Owner(Ops ops=posixOps(),std::shared_ptr<void> lifetime={}):state_(std::make_shared<State>(ops,std::move(lifetime))){
         const auto state=state_;
         if(!state->slot.held())return;
         state->timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,reaperQueue());
