@@ -1,7 +1,7 @@
 # C03y — conditional history permission updates
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `0b7887e2`, C03x build passed according to the user. Complete normalized `shared/TLinkRunHistory.mm` SHA-256: `b9aaf589f7a7748775b88df8f81f4d6c96eb25b005e38203ff5913560fe662f3`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; device metadata/IO qualification pending**.
+Status: **user reported build `adaf252c` passed before C03z; device metadata/IO qualification pending**.
 Finding: **P2-18 repeated directory/permission metadata**, partial improvement.
 
 ## Change

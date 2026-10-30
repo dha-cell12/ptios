@@ -29,9 +29,11 @@ const trollWireEncoder = between(troll,'static NSData *POCEventBatchResponse(', 
 const trollSyncEncoder = between(troll,'    if (taskType == 95) {','    if (taskType == 96) {');
 for(const encoder of [rootWireEncoder,rootSyncEncoder,trollWireEncoder,trollSyncEncoder]) assert.match(encoder,/TLinkEventLegacyBatchResponse\(batch\)/);
 const beforeWireSocket = socket.replace('#include "../shared/TLinkEventWire.h"\n','').replace(rootWireEncoder,rootLegacyEncoder).replace(rootSyncEncoder,oldRootSyncEncoder);
-const beforeWireTroll = troll.replace('#import "../../shared/TLinkEventWire.h"\n','').replace(trollWireEncoder,trollLegacyEncoder).replace(trollSyncEncoder,oldTrollSyncEncoder);
+const trollBeforeByteCount = troll.replace('NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];');
+assert.notEqual(trollBeforeByteCount,troll,'reverse the independently guarded C03z storage byte count before the event baseline comparison');
+const beforeWireTroll = trollBeforeByteCount.replace('#import "../../shared/TLinkEventWire.h"\n','').replace(trollWireEncoder,trollLegacyEncoder).replace(trollSyncEncoder,oldTrollSyncEncoder);
 assert.equal(createHash('sha256').update(beforeWireSocket.trim()).digest('hex'),'bc5ea783caad88ca7eeccbadeb570e547a9f96749464eccd3ef1642a033f6189','reversing only shared legacy wire encoding reproduces complete user-passed root socket at b8207e7a');
-assert.equal(createHash('sha256').update(beforeWireTroll.trim()).digest('hex'),'99f1e8da43f663d95a4072e879be9d41663e5a8687f435e3f94f5448aca111f7','reversing only shared legacy wire encoding reproduces complete user-passed TrollStore socket at b8207e7a');
+assert.equal(createHash('sha256').update(beforeWireTroll.trim()).digest('hex'),'99f1e8da43f663d95a4072e879be9d41663e5a8687f435e3f94f5448aca111f7','reversing C03z storage byte count and shared legacy wire encoding reproduces complete user-passed TrollStore socket at b8207e7a');
 const directEnvelope = between(socket,'// BEGIN direct event JSON-v1 envelope.','static BOOL zx_beginEventPoll(');
 assert.match(directEnvelope,/if \(error.length\) return zx_jsonResponseFromLegacy\(zx_eventBatchResponse\(batch, error\), requestId\)/);
 assert.match(directEnvelope,/@"data": @\[\[data base64EncodedStringWithOptions:0\]\]/);

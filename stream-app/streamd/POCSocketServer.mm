@@ -2079,7 +2079,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         NSError *writeErr = nil;
         NSString *safeText = text ?: @"";
         BOOL ok = [safeText writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&writeErr];
-        NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];
+        NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
         return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(byteCount)} : @{@"ok": @NO, @"path": path, @"error": writeErr.localizedDescription ?: @"write_failed"};
     };
     device[@"openFile"] = ^JSValue *(NSString *relativePath, NSString *mode) {
