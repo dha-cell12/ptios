@@ -473,7 +473,8 @@ try {
   const vpnLegacy=vpnLegacyFile.slice(vpnLegacyFile.indexOf('\n')+1).trim();
   assert.equal(vpnCore.replace('    return vpnTaskWithAction(action, value, error);\n}\n\nNSString* vpnTaskWithAction(int action, int value, NSError **error)\n{\n','').trim(),vpnLegacy,'VPN RAW parsing, diagnostics and broker command/error policy must remain unchanged');
   const vpnBrokerLegacy=await read('test/fixtures/vpn-broker-legacy-v1.inc');
-  assert.equal(between(radioSource,'static NSString *zx_vpnBrokerRequest','NSString* wifiTaskFromRawData').trim(),vpnBrokerLegacy.slice(vpnBrokerLegacy.indexOf('\n')+1).trim(),'VPN socket/broker transport remains unchanged');
+  const vpnTransportBefore=await read('test/fixtures/vpn-connectivity-before-c04f.inc');
+  assert.equal(between(vpnTransportBefore,'static NSString *zx_vpnBrokerRequest','NSString* wifiTaskFromRawData').trim(),vpnBrokerLegacy.slice(vpnBrokerLegacy.indexOf('\n')+1).trim(),'frozen VPN transport before C04f; actual transport has a separate complete-source/runtime guard');
   const vpnHandler=await read('test/fixtures/vpn-handler-legacy-v1.inc');
   assert.equal(between(task,'    else if (taskType == TASK_VPN)','    else if (taskType == TASK_HELLO_STATUS)').trim(),vpnHandler.slice(vpnHandler.indexOf('\n')+1).trim());
   const vpnBridgeLegacy=await read('test/fixtures/native-vpn-legacy-v1.inc');

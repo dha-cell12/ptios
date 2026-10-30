@@ -118,8 +118,10 @@ assert.match(manager, /vpn_transition_timeout/);
 assert.match(manager, /MIN\(MAX\(timeout, 5\.0\), 30\.0\)/);
 assert.doesNotMatch(manager, /NETunnelProviderManager|NEPacketTunnelProvider/);
 
-assert.match(connectivity, /htons\(6014\)/);
-assert.match(connectivity, /inet_pton\(AF_INET, "127\.0\.0\.1"/);
+const clientTransport = await read("shared/TLinkVPNBrokerClientIO.h");
+assert.match(connectivity, /TLinkVPNBrokerClientIO::posixConnectOps\(\)/);
+assert.match(clientTransport, /htons\(6014\)/);
+assert.match(clientTransport, /inet_pton\(AF_INET,\s*"127\.0\.0\.1"/);
 assert.match(connectivity, /@"query"/);
 assert.match(connectivity, /@"connect"/);
 assert.match(connectivity, /@"disconnect"/);

@@ -9,6 +9,7 @@
 
 #import "Connectivity.h"
 #import "../shared/TLinkVPNDiagnostics.h"
+#include "../shared/TLinkVPNBrokerClientIO.h"
 
 static BOOL zx_parseActionValue(UInt8 *eventData, int *outAction, int *outValue, NSError **error)
 {
@@ -73,56 +74,48 @@ static NSString *zx_boolString(BOOL v) { return v ? @"1" : @"0"; }
 
 static NSString *zx_vpnBrokerRequest(NSString *command, NSString **error)
 {
+    const auto baseIO = TLinkHelperIO::posixOps();
+    const TLinkVPNBrokerIngress::Window window(baseIO.now(baseIO.context));
+    TLinkVPNBrokerClientIO::BoundedOps bounded(baseIO, window);
+    const auto io = bounded.ops();
     int client = socket(AF_INET, SOCK_STREAM, 0);
+    TLinkHelperIO::Socket descriptor(client);
     if (client < 0) {
         if (error) *error = @"vpn_broker_socket_failed";
         return nil;
     }
-    struct timeval timeout = {30, 0};
-    setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-#ifdef SO_NOSIGPIPE
-    int noSigPipe = 1;
-    setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
-#endif
-
-    struct sockaddr_in address;
-    memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_port = htons(6014);
-    inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
-    if (connect(client, (struct sockaddr *)&address, sizeof(address)) != 0) {
-        close(client);
+    if (!descriptor.prepare().ok()) {
+        if (error) *error = @"vpn_broker_socket_failed";
+        return nil;
+    }
+    if (!TLinkVPNBrokerClientIO::connect(io, TLinkVPNBrokerClientIO::posixConnectOps(), client, window).ok()) {
         if (error) *error = @"vpn_broker_unavailable";
         return nil;
     }
 
     NSString *line = [NSString stringWithFormat:@"%@\r\n", command ?: @""];
     NSData *request = [line dataUsingEncoding:NSUTF8StringEncoding];
-    const uint8_t *requestBytes = (const uint8_t *)request.bytes;
-    NSUInteger remaining = request.length;
-    while (remaining > 0) {
-        ssize_t sent = send(client, requestBytes, remaining, 0);
-        if (sent <= 0) {
-            close(client);
-            if (error) *error = @"vpn_broker_send_failed";
-            return nil;
-        }
-        requestBytes += sent;
-        remaining -= (NSUInteger)sent;
+    if (!TLinkHelperIO::writeBytes(io, client, (const uint8_t *)request.bytes, request.length, window.deadline).ok()) {
+        if (error) *error = @"vpn_broker_send_failed";
+        return nil;
     }
 
     NSMutableData *response = [NSMutableData data];
     uint8_t buffer[4096];
     while (response.length < 1024 * 1024) {
-        ssize_t received = recv(client, buffer, sizeof(buffer), 0);
-        if (received <= 0) break;
+        size_t received = 0;
+        const size_t capacity = std::min<size_t>(sizeof(buffer), 1024 * 1024 - response.length);
+        if (!TLinkVPNBrokerIngress::readChunk(io, client, buffer, capacity, window, received).ok()) {
+            if (error) *error = @"vpn_broker_no_response";
+            return nil;
+        }
+        if (received == 0) break;
         [response appendBytes:buffer length:(NSUInteger)received];
         const uint8_t *bytes = (const uint8_t *)response.bytes;
         if (memchr(bytes, '\n', response.length)) break;
     }
-    close(client);
-    if (response.length == 0) {
+    descriptor.close();
+    if (response.length == 0 || !window.remaining(io.now(io.context))) {
         if (error) *error = @"vpn_broker_no_response";
         return nil;
     }
@@ -131,6 +124,10 @@ static NSString *zx_vpnBrokerRequest(NSString *command, NSString **error)
                                           encoding:NSUTF8StringEncoding];
     NSString *clean = [raw
         stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    if (!window.remaining(io.now(io.context))) {
+        if (error) *error = @"vpn_broker_no_response";
+        return nil;
+    }
     if ([clean hasPrefix:@"0;;"]) {
         return [clean substringFromIndex:3];
     }

@@ -286,6 +286,11 @@ jobs:
           test -f scripts/check-vpn-p1-diagnostics.mjs
           test -f scripts/check-vpn-diagnostics-cache-safety.mjs
           test -f scripts/check-vpn-broker-admission-safety.mjs
+          test -f scripts/check-vpn-client-io-safety.mjs
+          test -f shared/TLinkVPNBrokerClientIO.h
+          test -f test/vpn-client-io-safety-test.cpp
+          test -f test/vpn-client-io-runtime-test.mm
+          test -f test/fixtures/vpn-connectivity-before-c04f.inc
           test -f test/vpn-broker-admission-runtime-test.mm
           test -f test/vpn-broker-ingress-safety-test.cpp
           test -f test/vpn-broker-budget-safety-test.cpp
@@ -377,6 +382,7 @@ jobs:
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-diagnostics-cache-safety.mjs
           node scripts/check-vpn-broker-admission-safety.mjs
+          node scripts/check-vpn-client-io-safety.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
           node scripts/check-vpn-p3-trollstore-foreground.mjs
           node scripts/check-vpn-p4-on-demand.mjs

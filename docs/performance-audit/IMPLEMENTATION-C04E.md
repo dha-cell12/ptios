@@ -1,7 +1,7 @@
 # C04e — pending VPN manager operation admission
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `2c5eaf6c`, C04d build passed according to the user. Complete normalized broker source SHA-256 before this change: `5ce3789f5c46e1d941b4874269254b382103030bc1dca07b7c89388ed5b75f33`.
-Status: **source/core implemented; new Foundation/GCD/ARC/ASan/UBSan runtime pending macOS CI; independent device qualification pending**.
+Status: **user reported build passed at `038d1f03`, including the storage-json Objective-C++ fixture correction, before C04f; independent device qualification pending**.
 Finding: **P1-63 pending manager submissions**, distinct from C04b's eight client leases. P0-19 IPC isolation and operation cancellation/coalescing remain open.
 
 ## Change

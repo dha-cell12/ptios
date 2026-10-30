@@ -86,6 +86,7 @@ jobs:
           node scripts/check-vpn-p1-diagnostics.mjs
           node scripts/check-vpn-diagnostics-cache-safety.mjs
           node scripts/check-vpn-broker-admission-safety.mjs
+          node scripts/check-vpn-client-io-safety.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
           node scripts/check-vpn-p3-trollstore-foreground.mjs
           node scripts/check-vpn-p4-on-demand.mjs

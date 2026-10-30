@@ -251,6 +251,16 @@ no automatic expiry, operation cancellation or rollback. This counts broker
 submissions, not backend subtasks or work from other callers. See
 [IMPLEMENTATION-C04E.md](performance-audit/IMPLEMENTATION-C04E.md).
 
+C04f gives the SpringBoard client its own fixed 30-second window across socket
+setup, nonblocking connect, exact request writes and response reads. Polls recheck
+continuous time at intervals of at most 250 ms; incoming bytes do not renew the
+deadline. Timeout/fatal read errors discard an incomplete prefix, while normal
+LF/EOF framing and the response decoder stay compatible. The existing response
+cap is enforced at exactly 1 MiB. Socket ownership is scoped across exceptions.
+The client and broker windows are independent, and the outer IPC path remains
+synchronous; client timeout does not cancel manager effects. See
+[IMPLEMENTATION-C04F.md](performance-audit/IMPLEMENTATION-C04F.md).
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:
