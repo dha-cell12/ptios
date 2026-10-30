@@ -8,7 +8,8 @@
 #include <stdexcept>
 #include <cstdio>
 
-typedef CFTypeRef SecTaskRef;
+// The fake task is a retained CF object; leave the SDK's opaque SecTaskRef alone.
+using FixtureSecTaskRef = CFTypeRef;
 static NSMutableDictionary *providerValues;
 static NSMutableSet *providerErrors;
 static bool taskFailure=false;
@@ -17,8 +18,8 @@ static std::atomic<unsigned> taskCalls{0},valueCalls{0},copyCalls{0};
 static std::atomic<int> ownedCF{0};
 static CFTypeRef fixtureRetain(CFTypeRef value){assert(value);++ownedCF;return CFRetain(value);}
 static void fixtureRelease(CFTypeRef value){assert(value&&ownedCF>0);--ownedCF;CFRelease(value);}
-static SecTaskRef fixtureCreateTask(CFAllocatorRef allocator){(void)allocator;++taskCalls;return taskFailure?NULL:fixtureRetain(CFSTR("fixture-task"));}
-static CFTypeRef fixtureCopyEntitlement(SecTaskRef task,CFStringRef entitlement,CFErrorRef *error){
+static FixtureSecTaskRef fixtureCreateTask(CFAllocatorRef allocator){(void)allocator;++taskCalls;return taskFailure?NULL:fixtureRetain(CFSTR("fixture-task"));}
+static CFTypeRef fixtureCopyEntitlement(FixtureSecTaskRef task,CFStringRef entitlement,CFErrorRef *error){
     assert(task&&error&&!*error);++valueCalls;
     NSString *key=(__bridge NSString *)entitlement;
     if([providerErrors containsObject:key]){*error=CFErrorCreate(kCFAllocatorDefault,CFSTR("fixture-error"),1,NULL);assert(*error);++ownedCF;}

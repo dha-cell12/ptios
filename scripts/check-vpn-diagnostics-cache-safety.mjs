@@ -35,6 +35,7 @@ if(process.platform!=='darwin'){
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-vpn-diagnostics-'));
     const adapt=s=>(between(s,'static NSString *const kTLinkVPNAPIEntitlement','NSString *TLinkVPNManagedProfileIdentifier')+
         between(s,'static NSArray<NSString *> *TLinkVPNNormalizedEntitlementValues','static NSDictionary *TLinkVPNFrameworkProbe'))
+        .replace(/\bSecTaskRef\b/g,'FixtureSecTaskRef')
         .replaceAll('SecTaskCreateFromSelf(','fixtureCreateTask(').replaceAll('SecTaskCopyValueForEntitlement(','fixtureCopyEntitlement(')
         .replaceAll('CFPropertyListCreateDeepCopy(','fixtureDeepCopy(').replaceAll('CFRetain(','fixtureRetain(').replaceAll('CFRelease(','fixtureRelease(');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
