@@ -92,10 +92,21 @@ static void historyBoundedIndexCases(){
             historyEncodedIndexOverride=tooLarge;[historyWriteAttempts removeAllObjects];const NSUInteger count=historyEvents.count;
             assert(!historyMutation(beginning).count);historyEncodedIndexOverride=nil;
             assert([healthy isEqual:[NSData dataWithContentsOfFile:path]]&&historyEvents.count==count);
-            assert((historyWriteAttempts.count==1&&[historyWriteAttempts[0] isEqualToString:@"record"]));
+            // historyMutation(false) finishes as failed, so it writes evidence before its record.
+            NSArray *expectedWrites=beginning?@[@"record"]:@[@"evidence",@"record"];
+            if(![historyWriteAttempts isEqualToArray:expectedWrites]){
+                fprintf(stderr,"History oversized index %s: expected %s, received %s\n",beginning?"begin":"failed finish",
+                    expectedWrites.description.UTF8String,historyWriteAttempts.description.UTF8String);
+            }
+            assert([historyWriteAttempts isEqualToArray:expectedWrites]);
             assert([Current::sTLinkRunHistoryLastPersistenceFailure[@"stage"] isEqualToString:@"index"]);
             assert([Current::sTLinkRunHistoryLastPersistenceFailure[@"code"] isEqualToString:@"write_failed"]);
             assert(historyPendingSize()==1&&!Current::sTLinkRunHistoryRecovered&&historyLocks.empty()&&historyIndexFds.empty());
+            if(!beginning){
+                NSDictionary *ahead=historyReadJSON([Current::TLinkRunHistoryRunsPath() stringByAppendingPathComponent:@"validation-finish.json"]);
+                NSDictionary *evidence=historyReadJSON([Current::TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:@"validation-finish.json"]);
+                assert([ahead[@"state"] isEqualToString:@"failed"]&&[ahead[@"failure_evidence"] isEqual:evidence]);
+            }
             // Same production recovery/ACK semantics: the ahead record is not rolled back or replayed.
             assert(historyMutation(beginning).count&&historyPendingSize()==0&&Current::sTLinkRunHistoryRecovered&&historyEvents.count==count+1);
         }
