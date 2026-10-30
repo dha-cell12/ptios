@@ -61,4 +61,21 @@ static void concurrentCases(){
         callback.join();returned.join();assert(owner.stats().active==0);
     }
 }
-int main(){capacityCases();lifecycleCases();edgeCases();concurrentCases();puts("VPN operation admission passed: eight pending slots across waiter timeout, two-phase completion/return, 100k lifecycles, unknown/dropped/throwing starters, stale tokens, identity exhaustion, owner lifetime, 80k concurrent operations and 1000 completion/return races.");}
+static void configuredLimitCases(){
+    Owner disabled(0,0);assert(!disabled.acquire()&&disabled.stats().active==0);
+    Owner single(0,1);auto first=single.acquire();assert(first&&first->start()&&!single.acquire());
+    assert(first->returned()&&!single.acquire());assert(first->complete()&&single.stats().active==0);
+    auto next=single.acquire();assert(next&&!first->complete()&&single.stats().active==1);next.reset();
+    assert(single.stats().active==0&&single.stats().peak==1);
+    Owner clamped(0,SIZE_MAX);std::vector<Ticket> held;
+    for(unsigned n=0;n<8;++n){held.push_back(clamped.acquire());assert(held.back());}
+    assert(!clamped.acquire()&&clamped.stats().active==8);held.clear();assert(clamped.stats().active==0);
+    Owner concurrent(0,1);std::vector<std::thread> workers;
+    for(unsigned n=0;n<8;++n)workers.emplace_back([&concurrent]{
+        for(unsigned cycle=0;cycle<1000;++cycle){auto ticket=concurrent.acquire();if(!ticket)continue;
+            assert(ticket->start()&&ticket->returned()&&ticket->complete());}
+    });
+    for(auto &worker:workers)worker.join();
+    const auto stats=concurrent.stats();assert(stats.active==0&&stats.peak==1&&stats.admitted==stats.completed&&stats.admitted+stats.rejected==8000);
+}
+int main(){capacityCases();lifecycleCases();edgeCases();concurrentCases();configuredLimitCases();puts("VPN operation admission passed: eight pending slots across waiter timeout, two-phase completion/return, 100k lifecycles, unknown/dropped/throwing starters, stale tokens, identity exhaustion, owner lifetime, 80k concurrent operations, 1000 completion/return races and configurable zero/one/clamped limits with 8k contended single-slot attempts.");}

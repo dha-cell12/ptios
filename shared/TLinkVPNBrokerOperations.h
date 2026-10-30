@@ -15,8 +15,8 @@ public:
 private:
     struct Slot {uint64_t id=0;bool started=false,returned=false,completed=false;};
     struct State {
-        std::mutex mutex;std::array<Slot,Limit> slots{};Stats stats;uint64_t lastId;
-        explicit State(uint64_t cursor):lastId(cursor){}
+        std::mutex mutex;std::array<Slot,Limit> slots{};Stats stats;uint64_t lastId;size_t limit;
+        State(uint64_t cursor,size_t requestedLimit):lastId(cursor),limit(requestedLimit<Limit?requestedLimit:Limit){}
         static void bump(uint64_t &value){if(value!=UINT64_MAX)++value;}
         void retire(Slot &slot,bool completed){slot=Slot{};--stats.active;bump(completed?stats.completed:stats.cancelled);}
     };
@@ -51,12 +51,12 @@ public:
         }
     };
     // Cursor permits deterministic identity-exhaustion qualification; normal start is zero.
-    explicit TLinkVPNBrokerOperations(uint64_t lastTicket=0):state_(std::make_shared<State>(lastTicket)){}
+    explicit TLinkVPNBrokerOperations(uint64_t lastTicket=0,size_t limit=Limit):state_(std::make_shared<State>(lastTicket,limit)){}
     TLinkVPNBrokerOperations(const TLinkVPNBrokerOperations &)=delete;
     TLinkVPNBrokerOperations &operator=(const TLinkVPNBrokerOperations &)=delete;
     std::shared_ptr<Ticket> acquire(){
         std::lock_guard<std::mutex> guard(state_->mutex);
-        if(state_->stats.active<Limit&&state_->lastId!=UINT64_MAX){
+        if(state_->stats.active<state_->limit&&state_->lastId!=UINT64_MAX){
             for(size_t i=0;i<Limit;++i)if(!state_->slots[i].id){
                 const uint64_t id=state_->lastId+1;
                 auto ticket=std::make_shared<Ticket>(state_,i,id); // Allocate before publication.
