@@ -14,9 +14,12 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include "../shared/TLinkHelperClientAdmission.h"
+#include "../shared/TLinkHelperSocketIO.h"
 
 static const uint16_t kTLinkVPNBrokerPort = 6014;
 static const NSUInteger kTLinkVPNBrokerMaxRequest = 1024;
+static const size_t kTLinkVPNBrokerMaxClients = 8;
 
 static NSDictionary *TLinkVPNBrokerWait(
     void (^operation)(TLinkVPNResultCompletion),
@@ -164,7 +167,6 @@ static void TLinkVPNBrokerHandleClient(int client)
         if (memchr(buffer, '\n', (size_t)received)) break;
     }
     if (requestData.length == 0) {
-        close(client);
         return;
     }
     NSString *command =
@@ -181,8 +183,41 @@ static void TLinkVPNBrokerHandleClient(int client)
         bytes += sent;
         remaining -= (NSUInteger)sent;
     }
-    close(client);
 }
+
+// BEGIN bounded VPN broker clients.
+static void TLinkVPNBrokerEnqueueClient(
+    TLinkHelperClientAdmission &admission, dispatch_queue_t queue, int client)
+{
+    try {
+        @try {
+            TLinkHelperIO::Socket descriptor(client);
+            auto lease = admission.acquire(client, 0, [](int fd){ (void)::close(fd); });
+            if (!lease) return; // Refuse without blocking the accept loop on a reply.
+            (void)descriptor.release(); // The lease owns the socket throughout handler I/O.
+            dispatch_async(queue, ^{
+                try {
+                    @try {
+                        @autoreleasepool {
+                            if (lease->isOpen()) TLinkVPNBrokerHandleClient(client);
+                        }
+                    } @catch (NSException *exception) {
+                        NSLog(@"[TLinkVPNBroker] client exception %@", exception.name);
+                    }
+                } catch (...) {
+                    NSLog(@"[TLinkVPNBroker] client C++ exception");
+                }
+                lease->finish(); // Close and release capacity after I/O and pool drain.
+                // A discarded block also releases its last shared lease.
+            });
+        } @catch (NSException *exception) {
+            NSLog(@"[TLinkVPNBroker] enqueue exception %@", exception.name);
+        }
+    } catch (...) {
+        NSLog(@"[TLinkVPNBroker] enqueue C++ exception");
+    }
+}
+// END bounded VPN broker clients.
 
 static void TLinkVPNBrokerRunServer(void)
 {
@@ -208,18 +243,15 @@ static void TLinkVPNBrokerRunServer(void)
     NSLog(@"[TLinkVPNBroker] listening on 127.0.0.1:%u",
           (unsigned)kTLinkVPNBrokerPort);
 
+    TLinkHelperClientAdmission admission(kTLinkVPNBrokerMaxClients);
     while (true) {
         int client = accept(server, NULL, NULL);
         if (client < 0) {
             if (errno == EINTR) continue;
             break;
         }
-        dispatch_async(
-            dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                @autoreleasepool {
-                    TLinkVPNBrokerHandleClient(client);
-                }
-            });
+        TLinkVPNBrokerEnqueueClient(
+            admission, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), client);
     }
     close(server);
 }

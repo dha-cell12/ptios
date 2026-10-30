@@ -1,7 +1,7 @@
 # C04a — immutable per-process VPN entitlement memo
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `3ed8519e`, C03ab build passed according to the user. Complete normalized diagnostics source SHA-256 before this change: `7dcd41a5e6dde3988efb7525be61191d5e07e44c0fbc40d320c44d323ab3f7fb`.
-Status: **source implemented; new Foundation/CF/ARC/ASan/UBSan runtime pending macOS CI; device qualification pending**.
+Status: **user reported build passed at `08ddc0e9` before C04b; independent device qualification pending**.
 Finding: **P1-62 repeated static entitlement queries**, partial C04 improvement. P0-19/P1-63 broker timeout/admission remain open.
 
 ## Change

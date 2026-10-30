@@ -213,6 +213,15 @@ denied as well as task `59`.
 
 ## Known validation boundary
 
+Performance follow-up C04b limits port 6014 to eight admitted clients,
+including queued and running handlers. Additional accepted clients are closed
+immediately without a busy response; callers use their existing transport
+failure handling. Socket and capacity are released together after completion
+or exception. This does not replace the existing I/O/manager timeouts or bound
+every underlying asynchronous manager operation. See
+[IMPLEMENTATION-C04B.md](performance-audit/IMPLEMENTATION-C04B.md) for test and
+device qualification status. TrollStore foreground/agent listeners are separate.
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:
