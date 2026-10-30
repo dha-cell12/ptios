@@ -1,7 +1,7 @@
 # C03w — shared history snapshot locks
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `6be7edb0`, corrected C03v/C03u fixture build passed according to the user. Complete normalized `shared/TLinkRunHistory.mm` SHA-256: `c5be9dddc9420019a767030fe68a5374ab13bdd6f2b7fa362860f1608dd30410`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; device contention and latency qualification pending**.
+Status: **user reported build `e6b1580a` passed before C03x; device contention and latency qualification pending**.
 Finding: **P1-51 history status contention**, partial improvement.
 
 ## Change

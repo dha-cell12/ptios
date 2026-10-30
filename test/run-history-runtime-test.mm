@@ -23,6 +23,39 @@ static NSMutableArray *historyEvents;
 static std::mutex historyMutex;
 static std::set<int> historyLocks;
 static std::set<int> historyLockFds;
+static std::set<int> historyConsoleFds;
+static unsigned historyConsoleFault=0;
+static size_t historyConsoleReads=0,historyConsoleAllocations=0;
+static uint64_t historyConsoleBytes=0;
+static std::function<void(int)> historyConsoleAfterStat;
+static int historyConsoleOpen(const char *path,int flags){
+    assert(historyLocks.empty()&&flags==(O_RDONLY|O_NOFOLLOW|O_NONBLOCK));
+    if(historyConsoleFault==1){errno=EACCES;return -1;}
+    const int fd=::open(path,flags);if(fd>=0)assert(historyConsoleFds.insert(fd).second);return fd;
+}
+static int historyConsoleStat(int fd,struct stat *info){
+    assert(historyConsoleFds.count(fd));
+    if(historyConsoleFault==2){errno=EIO;return -1;}
+    const int result=::fstat(fd,info);
+    if(!result&&historyConsoleAfterStat)historyConsoleAfterStat(fd);
+    return result;
+}
+static NSMutableData *historyConsoleBuffer(NSUInteger length){
+    assert(length<=256*1024);++historyConsoleAllocations;
+    if(historyConsoleFault==8)[NSException raise:@"HistoryFixture" format:@"console allocation failed"];
+    if(historyConsoleFault==9)throw std::runtime_error("console allocation failed");
+    return [NSMutableData dataWithLength:length];
+}
+static ssize_t historyConsoleRead(int fd,void *bytes,size_t count,off_t offset){
+    assert(historyConsoleFds.count(fd)&&historyLocks.empty()&&count>0&&count<=65536&&offset>=0);++historyConsoleReads;
+    if(historyConsoleFault==3){historyConsoleFault=7;errno=EINTR;return -1;}
+    if(historyConsoleFault==4){errno=EIO;return -1;}
+    if(historyConsoleFault==5)return 0;
+    if(historyConsoleFault==6)[NSException raise:@"HistoryFixture" format:@"console read failed"];
+    if(historyConsoleFault==10)throw std::runtime_error("console read failed");
+    const ssize_t got=::pread(fd,bytes,historyConsoleFault==7?MIN(count,(size_t)37):count,offset);
+    if(got>0)historyConsoleBytes+=(uint64_t)got;return got;
+}
 static size_t historyLockPermissions=0;
 static bool historyLockOpenFault=false,historyLockStatFault=false;
 static std::function<void()> historyAfterLock;
@@ -183,7 +216,7 @@ static int historyFlock(int fd,int operation){
     }
     return result;
 }
-static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);historyIndexFds.erase(fd);historyLockFds.erase(fd);return ::close(fd);}
+static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);historyIndexFds.erase(fd);historyLockFds.erase(fd);historyConsoleFds.erase(fd);return ::close(fd);}
 static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *type,NSDictionary *payload){
     std::lock_guard<std::mutex> guard(historyMutex);assert(historyLocks.empty());
     NSDictionary *event=@{@"runtime":runtime,@"topic":topic,@"type":type,@"payload":payload};[historyEvents addObject:event];return event;
@@ -900,6 +933,7 @@ static void historyCompactIndexCases(){
 #include "history-index-runtime-fixture.inc"
 #include "history-lock-runtime-fixture.inc"
 #include "history-shared-lock-runtime-fixture.inc"
+#include "history-console-tail-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2||argc==3||argc==5||argc==6);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];historyPruneAttempts=[NSMutableArray array];
     if(argc==5){assert([[NSString stringWithUTF8String:argv[2]] isEqualToString:@"--marker-worker"]);return historyMarkerWorker([[NSString stringWithUTF8String:argv[3]] intValue],[NSString stringWithUTF8String:argv[4]]);}
@@ -1016,6 +1050,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyBoundedIndexCases();
     historyValidatedLockCases();
     historySharedSnapshotLockCases();
+    historyConsoleTailCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

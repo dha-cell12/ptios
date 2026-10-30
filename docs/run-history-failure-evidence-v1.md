@@ -34,7 +34,8 @@ evidence.
   characters per run; the durable evidence JSON retains the final 50 lines of
   up to 1,000 characters and 4,000 error characters.
 - Each evidence log line is capped at 1,000 characters.
-- Rootfull reads no more than 256 KiB from the end of its console log.
+- Since C03x, console-file fallback reads a fixed window of at most 256 KiB
+  ending at the opened descriptor's observed size; later appends do not extend it.
 - Directories are mode `0750`; files are mode `0640` and owned by mobile.
 - Common license, pairing, VPN, private-key, admin-token, and bearer-token
   values are redacted from errors and log tails. Scripts should still avoid
@@ -316,6 +317,26 @@ The local process monitor remains serial; full bounded index IO/parse occurs
 on every call. Blocking lock admission has no time or writer-fairness guarantee.
 Reader overlap and unwind cases are included in macOS CI; on-device contention,
 writer wait and throughput need separate qualification.
+
+## Bounded failure console-file fallback (C03x)
+
+Open the console leaf with O_RDONLY|O_NOFOLLOW|O_NONBLOCK and fstat that same
+descriptor. Only positive-size regular files are read. Fix a window ending at
+the observed size and beginning at most 256 KiB earlier; pread in at most
+64-KiB chunks, retry EINTR/short reads and close in finally. Pathname replacement
+does not switch the descriptor, and later appends cannot increase bytes read.
+
+Missing/inaccessible/empty/nonregular/symlink leaves, read errors and early EOF
+yield an empty best-effort tail. NS exceptions also yield an empty tail; C++
+exceptions retain the existing preparation unwind behavior, with the descriptor
+released. Keep UTF8/newline/redaction/line limits, including empty output for
+invalid UTF8 at a cut multibyte boundary. A failed run can still persist its
+original error without a tail. Supplied nonempty lines skip console-file IO.
+
+Preparation stays outside flock. This bounds fallback payload/buffer bytes, not
+all decoded objects/RSS or IO time. It does not make the file immutable during
+in-place writes, pin ancestor directories or add durability. Runtime race/fault
+cases require macOS CI; device IO and latency qualification remain separate.
 
 ## Capability markers
 
