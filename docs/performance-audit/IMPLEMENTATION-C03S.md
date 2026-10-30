@@ -1,7 +1,7 @@
 # C03s — shared NSData legacy Event Channel encoder
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `b8207e7a`, C03r build passed according to the user. Complete normalized source SHA-256: root `SocketServer.mm` = `bc5ea783caad88ca7eeccbadeb570e547a9f96749464eccd3ef1642a033f6189`; TrollStore `POCSocketServer.mm` = `99f1e8da43f663d95a4072e879be9d41663e5a8687f435e3f94f5448aca111f7`.
-Status: **source implemented; new Foundation/ARC/ASan/UBSan cases pending macOS CI; independent device qualification pending**.
+Status: **build passed according to the user before C03t; committed at `c20c70d9`; independent device qualification pending**.
 Finding: **P1-56 legacy response conversion amplification**.
 
 ## Change

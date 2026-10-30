@@ -8,7 +8,25 @@ import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [actual,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const [current,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const snapshotFrozenText=await read('test/fixtures/run-history-snapshot-legacy-v1.inc');
+const snapshotFrozen=snapshotFrozenText.slice(snapshotFrozenText.indexOf('\n')+1);
+const snapshotCurrent=current.slice(current.indexOf('NSDictionary *TLinkRunHistorySnapshot('));
+const snapshotFailure=between(current,'// Failed status counts/runs','NSDictionary *TLinkRunHistorySnapshot(');
+assert.match(snapshotCurrent,/lockFd < 0[\s\S]*history_snapshot_lock_failed[\s\S]*TLinkRunHistoryReadCheckedIndex\(@"snapshot"\)/);
+assert.match(snapshotCurrent,/@finally[\s\S]*TLinkRunHistoryReleaseFileLock\(lockFd\)/);
+assert.match(snapshotCurrent,/history_snapshot_invalid_index[\s\S]*history_snapshot_read_failed[\s\S]*stage = @"format"/);
+assert.match(snapshotCurrent,/catch \(\.\.\.\)[\s\S]*@catch[\s\S]*history_snapshot_exception/);
+assert.doesNotMatch(snapshotCurrent+snapshotFailure,/TLinkRunHistory(?:Write|Recover|Prune|SetPending)|EventChannelPublish/);
+assert.match(snapshotFailure,/@"state": @"error"[\s\S]*@"error": code[\s\S]*@"runs": @\[\]/);
+const statusFields=between(snapshotCurrent,'            NSUInteger bounded =','            return snapshot;').split('\n').map(line=>line.startsWith('    ')?line.slice(4):line).join('\n');
+assert.equal(statusFields,between(snapshotFrozen,'        NSUInteger bounded =','        return snapshot;'),'successful snapshot formatting/fields stay frozen');
+const oldStatusReader="static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadIndex(void)\n{\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];\n    if (data.length == 0) return [NSMutableArray array];\n    id object = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];\n    NSArray *records = [object isKindOfClass:[NSDictionary class]] ? object[@\"runs\"] : nil;\n    return [records isKindOfClass:[NSArray class]] ? [records mutableCopy] : [NSMutableArray array];\n}\n\n";
+const actual=current.replace(snapshotFailure,'').replace(snapshotCurrent,snapshotFrozen)
+    .replaceAll('TLinkRunHistoryReadCheckedIndex','TLinkRunHistoryReadIndexForMutation')
+    .replace('// All persisted reads distinguish a first run from unreadable or damaged history.\n// Read-only status never repairs metadata or rebuilds an index from artifacts.','// Mutations must distinguish a first run from unreadable or damaged history.\n// Keep the permissive status reader separate; never rebuild an index from artifacts.')
+    .replace('static BOOL TLinkRunHistoryWriteJSON',oldStatusReader+'static BOOL TLinkRunHistoryWriteJSON');
+assert.equal(createHash('sha256').update(actual.trim()).digest('hex'),'34b6f42b08b699ff32aa49b6dd9120db2f546e6ea4c00907589b3d6769701e58','reversing only checked snapshot reads/errors and common reader naming reproduces complete user-passed history at c20c70d9');
 const beforeCommit=commitFrozen.slice(commitFrozen.indexOf('\n')+1);
 const encoder=between(actual,'static BOOL TLinkRunHistoryWriteJSON','static BOOL TLinkRunHistoryWriteIndex');
 assert.ok(encoder.includes('NSJSONWritingOptions options = NSJSONWritingPrettyPrinted'));
@@ -153,6 +171,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
+console.log('History checked snapshot source passed: no unlocked read/fallback, fixed errors, read-only recovery state, caught read/format faults and complete frozen success/mutation source.');
 console.log('Run history source passed: compact index with unchanged artifact formatting and logical payloads, checked per-ID retirement and retained-reference protection, lock-inode pending marker coordinates warm owners, required-write recovery, fail-closed reads, checked commit/cleanup, diagnostics, finally and frozen record/status fields.');
 if(process.platform!=='darwin'){
     console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
@@ -162,7 +181,7 @@ if(process.platform!=='darwin'){
         .replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;')
         .replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:')
         .replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];')
-        .replace('[NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError]','historyReadMutationData(TLinkRunHistoryIndexPath(), &readError)')
+        .replace('[NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError]','historyReadCheckedData(TLinkRunHistoryIndexPath(), &readError, operation)')
         .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)','historyRecoveryOpen(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)')
         .replace('fstat(fd, &info)','historyRecoveryStat(fd, &info)')
         .replace('fstat(lockFd, &marker)','historyMarkerStat(lockFd, &marker)')
@@ -174,7 +193,7 @@ if(process.platform!=='darwin'){
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(actual)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(current)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
         const binary=join(temp,'run-history-runtime');
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
         run(binary,[temp]);

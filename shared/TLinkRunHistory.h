@@ -33,6 +33,8 @@ FOUNDATION_EXPORT NSDictionary *TLinkRunHistoryFinish(NSString *runId,
                                                       NSString *screenshotError,
                                                       NSDictionary *extra);
 // Formats one decoded index after releasing the file lock, under the local monitor.
+// Read/lock/format failures return state=error with a fixed error code; counts/runs
+// are unknown placeholders. Status never repairs or rewrites the persisted index.
 FOUNDATION_EXPORT NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit);
 
 #endif

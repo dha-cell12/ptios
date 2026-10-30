@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFile(resolve(root, path), "utf8");
@@ -109,6 +110,36 @@ for (const [key, value] of Object.entries(fixture.requiredCapabilityFields)) {
 
 assert.match(webSdk, /async getRunHistory\(\): Promise<RunHistorySnapshot>/);
 assert.match(webSdk, /history\.schema !== 'run_history_v1'/);
+assert.match(webSdk, /history\.state === 'error'/);
+// Exercise the complete actual SDK method with only its two TypeScript annotations erased.
+const methodStart = webSdk.indexOf('  async getRunHistory(): Promise<RunHistorySnapshot>');
+const methodEnd = webSdk.indexOf('  async pollEvents(', methodStart);
+assert.ok(methodStart >= 0 && methodEnd > methodStart);
+const method = webSdk.slice(methodStart, methodEnd)
+  .replace('getRunHistory(): Promise<RunHistorySnapshot>', 'getRunHistory()')
+  .replace('return history as RunHistorySnapshot;', 'return history;');
+const sdk = runInNewContext(`({${method}})`, {
+  decodeBase64Utf8: value => Buffer.from(value, 'base64').toString('utf8'),
+});
+let opened = 0, requests = 0;
+sdk.waitOpen = async () => { opened++; };
+const invokeHistory = async history => {
+  sdk.client = { requestWithTimeout: async (task, timeout) => {
+    assert.equal(task, 60); assert.equal(timeout, 5000); requests++;
+    return { ok: true, parts: [Buffer.from(JSON.stringify({ run_history: history })).toString('base64')] };
+  } };
+  return sdk.getRunHistory();
+};
+for (const code of ['history_snapshot_lock_failed', 'history_snapshot_read_failed', 'history_snapshot_invalid_index', 'history_snapshot_exception']) {
+  await assert.rejects(invokeHistory({ schema: 'run_history_v1', state: 'error', error: code, runs: [] }), { message: code });
+}
+for (const error of [undefined, '', 42, { secret: 'do not expose' }]) {
+  await assert.rejects(invokeHistory({ schema: 'run_history_v1', state: 'error', error, runs: [] }), { message: 'run history snapshot failed' });
+}
+await assert.rejects(invokeHistory({ schema: 'run_history_v1', state: 'error', error: 'failure', runs: null }), { message: 'run_history_v1 is unavailable' });
+const healthyHistory = { schema: 'run_history_v1', state: 'implemented', runs: [{ run_id: 'retained' }], extension: true };
+assert.equal(JSON.stringify(await invokeHistory(healthyHistory)), JSON.stringify(healthyHistory));
+assert.equal(opened, 10); assert.equal(requests, 10);
 assert.match(webSdk, /export type FailureEvidence/);
 assert.match(webSdk, /export type RunHistoryRecord/);
 assert.match(webSdk, /export type RunHistorySnapshot/);

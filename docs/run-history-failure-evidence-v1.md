@@ -200,6 +200,36 @@ writers/maintenance must honor the same lock and inode protocol; no protection
 against arbitrary noncooperating filesystem races is claimed. Device I/O and
 latency qualification remains pending.
 
+## Checked history status (C03t)
+
+Snapshot uses the same checked index reader as begin/finish under the existing
+history file lock. Only the established Cocoa missing-file result means a valid
+empty first history. Read failures, empty/invalid JSON, wrong schema/runs shape,
+invalid/empty/duplicate run IDs produce an error snapshot. Lock failure performs
+no index read. NS/C++ read and formatting faults are contained, and an acquired
+lock is released before formatting as before.
+
+Successful status fields and limit behavior are unchanged. Failure retains the
+schema/root/limit/diagnostics fields, with `state="error"`, an `error` label,
+`runs=[]`, `total_count=0` and `failed_count=0`. These counts/runs are unknown
+placeholders, not confirmation of an empty history. Fixed error labels are
+`history_snapshot_lock_failed`, `history_snapshot_read_failed`,
+`history_snapshot_invalid_index` and `history_snapshot_exception`.
+
+Process diagnostics record operation `snapshot`, its prepare/lock/read/format
+stage and a fixed code, without index content or exception messages. Status
+does not reset the mutation recovery flag, repair metadata, update the pending
+marker, rewrite/prune JSON or emit events. Existing directory/lock creation and
+permission setup remain. Explicit restoration followed by another status call
+reads the file anew; no stale snapshot fallback or new content cache is added.
+
+WebTango `getRunHistory()` rejects an error snapshot using its nonempty string
+code (or a fixed fallback for malformed error fields), preserving the existing
+task-60 request/envelope. Raw clients must inspect nested `run_history.state`
+before using its counts. Types include optional `error` and diagnostic operation
+`snapshot`. Index byte/graph limits, caching, lock wait latency, durability and
+device qualification remain separate work.
+
 ## Capability markers
 
 ```text

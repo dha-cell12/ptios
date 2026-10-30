@@ -87,6 +87,10 @@ export class TLinkautoDeviceSdk {
     if (!history || history.schema !== 'run_history_v1' || !Array.isArray(history.runs)) {
       throw new Error('run_history_v1 is unavailable');
     }
+    if (history.state === 'error') {
+      throw new Error(typeof history.error === 'string' && history.error.length > 0
+        ? history.error : 'run history snapshot failed');
+    }
     return history as RunHistorySnapshot;
   }
 
@@ -757,12 +761,13 @@ export type RunHistoryRecord = {
 
 export type RunHistorySnapshot = {
   schema: 'run_history_v1';
-  state: 'implemented';
+  state: 'implemented' | 'error';
+  error?: string;
   root_path: string;
   persistence_diagnostics?: {
     scope: 'process';
     failure_count: number;
-    last_failure: { operation?: 'begin' | 'finish' | 'prune'; stage?: string; code?: string; at_ms?: number };
+    last_failure: { operation?: 'begin' | 'finish' | 'prune' | 'snapshot'; stage?: string; code?: string; at_ms?: number };
   };
   retention_max_runs: number;
   failure_log_tail_max_lines: number;
