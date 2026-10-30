@@ -2,6 +2,7 @@
 #import "LicenseLifecycleCoordinator.h"
 #import "StreamSupervisor.h"
 #import <BackgroundTasks/BackgroundTasks.h>
+#include "../../shared/TLinkBackgroundTaskRun.h"
 
 static NSString *const kTLinkBackgroundRefreshIdentifier = @"com.tlinkauto.streamcontrol.refresh";
 static NSString *const kTLinkBackgroundProcessingIdentifier = @"com.tlinkauto.streamcontrol.processing";
@@ -157,50 +158,84 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
         @"last_result": @"running",
     }];
 
-    NSMutableDictionary *completionState = [@{@"finished": @NO} mutableCopy];
+    // BEGIN owned background task run.
     __weak SCBackgroundServiceScheduler *weakSelf = self;
-    void (^finish)(BOOL, NSString *) = ^(BOOL success, NSString *detail) {
-        @synchronized (completionState) {
-            if ([completionState[@"finished"] boolValue]) return;
-            completionState[@"finished"] = @YES;
-        }
+    auto run = std::make_shared<TLinkBackgroundTaskRun>(^(BOOL success, NSString *detail, NSDictionary *license) {
+        task.expirationHandler = nil;
         [task setTaskCompletedWithSuccess:success];
-        [weakSelf updateDiagnostics:@{
-            @"last_completed_at_ms": @([weakSelf nowMilliseconds]),
+        SCBackgroundServiceScheduler *scheduler = weakSelf;
+        NSMutableDictionary *values = [@{
+            @"last_completed_at_ms": @([scheduler nowMilliseconds]),
             @"last_completed_kind": kind ?: @"unknown",
             @"last_result": success ? @"success" : @"failed",
             @"last_detail": detail ?: @"",
-        }];
+        } mutableCopy];
+        if (license) [values addEntriesFromDictionary:license];
+        [scheduler updateDiagnostics:values];
         NSLog(@"[StreamControl][BackgroundService] %@ completed success=%d detail=%@",
               kind, success ? 1 : 0, detail ?: @"");
-    };
-
-    task.expirationHandler = ^{
-        finish(NO, @"ios_expired_task_before_license_refresh_and_streamd_probe_completed");
-    };
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTLinkTaskTimeout * NSEC_PER_SEC)),
-                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        finish(NO, @"license_refresh_or_streamd_ensure_timeout_22s");
     });
 
-    void (^ensureService)(BOOL, NSString *) = ^(BOOL licenseSuccess, NSString *licenseDetail) {
-        [weakSelf.supervisor ensureServiceWithCompletion:^(BOOL running, NSString *detail) {
-            NSString *combined = [NSString stringWithFormat:@"license=%@ streamd=%@",
-                                  licenseDetail ?: @"unknown",
-                                  detail ?: @"streamd_ensure_completed_without_detail"];
-            [weakSelf updateDiagnostics:@{
-                @"last_license_result": licenseSuccess ? @"success_or_skipped" : @"failed",
-                @"last_license_detail": licenseDetail ?: @"",
-            }];
-            finish(licenseSuccess && running, combined);
-        }];
-    };
-    if (self.licenseCoordinator) {
-        [self.licenseCoordinator performBackgroundRefreshWithCompletion:ensureService];
-    } else {
-        ensureService(YES, @"license_coordinator_unavailable_skipped");
+    @try {
+        try {
+            dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+            if (!timer) {
+                run->finish(NO, @"background_task_watchdog_unavailable", nil);
+                return;
+            }
+            dispatch_source_set_timer(timer, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
+            dispatch_source_set_event_handler(timer, ^{
+                run->finish(NO, @"license_refresh_or_streamd_ensure_timeout_22s", nil);
+            });
+            dispatch_resume(timer);
+            run->installTimer(timer);
+            task.expirationHandler = ^{
+                run->finish(NO, @"ios_expired_task_before_license_refresh_and_streamd_probe_completed", nil);
+            };
+            // Expiration may have won while its handler was being installed.
+            if (run->finished()) task.expirationHandler = nil;
+            run->arm((int64_t)(kTLinkTaskTimeout * NSEC_PER_SEC));
+
+            void (^ensureService)(BOOL, NSString *) = ^(BOOL licenseSuccess, NSString *licenseDetail) {
+                if (!run->beginEnsure()) return;
+                @try {
+                    try {
+                        SCBackgroundServiceScheduler *scheduler = weakSelf;
+                        if (!scheduler) {
+                            run->finish(NO, @"background_scheduler_unavailable", nil);
+                            return;
+                        }
+                        [scheduler.supervisor ensureServiceWithCompletion:^(BOOL running, NSString *detail) {
+                            NSString *combined = [NSString stringWithFormat:@"license=%@ streamd=%@",
+                                licenseDetail ?: @"unknown", detail ?: @"streamd_ensure_completed_without_detail"];
+                            run->finish(licenseSuccess && running, combined, @{
+                                @"last_license_result": licenseSuccess ? @"success_or_skipped" : @"failed",
+                                @"last_license_detail": licenseDetail ?: @"",
+                            });
+                        }];
+                    } catch (...) {
+                        run->finish(NO, @"background_streamd_ensure_exception", nil);
+                    }
+                } @catch (NSException *exception) {
+                    (void)exception;
+                    run->finish(NO, @"background_streamd_ensure_exception", nil);
+                }
+            };
+            if (!run->beginRefresh()) return;
+            if (self.licenseCoordinator) {
+                [self.licenseCoordinator performBackgroundRefreshWithCompletion:ensureService];
+            } else {
+                ensureService(YES, @"license_coordinator_unavailable_skipped");
+            }
+        } catch (...) {
+            run->finish(NO, @"background_task_setup_or_refresh_exception", nil);
+        }
+    } @catch (NSException *exception) {
+        (void)exception;
+        run->finish(NO, @"background_task_setup_or_refresh_exception", nil);
     }
+    // END owned background task run.
 }
 
 @end
