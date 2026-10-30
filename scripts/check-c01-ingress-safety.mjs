@@ -39,6 +39,8 @@ try{
  const dependencyProbe=join(temp,'C01FixtureDependencies.h');
  await writeFile(dependencyProbe,[...portableImports,...messageIDs.map(name=>`static_assert(${name} > 0, "IPC message ID must be declared by fixture imports");`)].join('\n')+'\n');
  await writeFile(join(temp,'C01IPCQueues.inc'),section(socket,'// BEGIN C01 IPC owner queues.','// END C01 IPC owner queues.'));
+ await writeFile(join(temp,'VPNIPCQueue.inc'),section(socket,'// BEGIN isolated VPN IPC sender.','static CFDataRef zx_sendVPNIPC('));
+ await writeFile(join(temp,'VPNIPCSender.inc'),section(socket,'static CFDataRef zx_sendVPNIPC(','// END isolated VPN IPC sender.'));
  await writeFile(join(temp,'C01IPCReceiver.inc'),section(ipc,'// BEGIN C01 isolated IPC receiver.','// END C01 isolated IPC receiver.'));
  await writeFile(join(temp,'C01IPCHandler.inc'),section(ipc,'static CFDataRef handleIPCMessage(','void startIPCServer()'));
  await writeFile(join(temp,'C01IPCSenderActual.inc'),sender);

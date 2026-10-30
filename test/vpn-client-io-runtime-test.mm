@@ -1,8 +1,10 @@
 #import <Foundation/Foundation.h>
 #include "../shared/TLinkVPNBrokerClientIO.h"
+#include "../shared/TLinkNativeBudget.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -11,13 +13,14 @@
 namespace Client=TLinkVPNBrokerClientIO;
 using namespace TLinkHelperIO;
 static uint64_t fixtureTime=100,connectCost=0,sendCost=0,readCost=0;
-static bool socketFault=false,prepareFault=false,realPeer=false;
+static bool socketFault=false,prepareFault=false,realPeer=false,pollReady=false;
 static int connectFault=0,sendFault=0,readFault=0,throwRead=0;
 static size_t responseOffset=0,chunk=SIZE_MAX,faultAfter=SIZE_MAX;
 static unsigned opens=0,closes=0,sendCalls=0,receiveCalls=0,waitCalls=0;
 static std::set<int> live;
 static std::string responseBytes,sentBytes;
 static uint16_t peerPort=0;
+static std::function<void()> onConnect,onSend,onRead,onPoll,onFinish;
 static int fixtureSocket(int domain,int type,int protocol){
     if(socketFault){errno=EMFILE;return -1;}
     const int fd=::socket(domain,type,protocol);assert(fd>=0&&live.insert(fd).second);++opens;return fd;
@@ -33,15 +36,18 @@ public:
 };
 static int fixtureConnect(int fd,const sockaddr *address,socklen_t length){
     (void)fd;(void)address;(void)length;fixtureTime+=connectCost;
+    if(onConnect)onConnect();
     if(connectFault){errno=connectFault;return -1;}return 0;
 }
 static ssize_t fixtureSend(int fd,const void *bytes,size_t count,int flags){
     (void)fd;(void)flags;++sendCalls;fixtureTime+=sendCost;
+    if(onSend)onSend();
     if(sendFault){errno=sendFault;return -1;}
     const size_t n=std::min(count,chunk);sentBytes.append(static_cast<const char *>(bytes),n);return static_cast<ssize_t>(n);
 }
 static ssize_t fixtureReceive(int fd,void *bytes,size_t capacity,int flags){
     (void)fd;(void)flags;++receiveCalls;fixtureTime+=readCost;
+    if(onRead)onRead();
     if(throwRead==1)[NSException raise:@"ReadFixture" format:@"read"];
     if(throwRead==2)throw std::runtime_error("read");
     if(readFault&&responseOffset>=faultAfter){errno=readFault;return -1;}
@@ -53,7 +59,9 @@ static Ops fixtureOps(){
         [](void *){return realPeer?nowMs():fixtureTime;},
         [](void *,int fd,bool writing,int timeout,int &error){
             assert(timeout>0&&timeout<=250);++waitCalls;
+            if(onPoll)onPoll();
             if(realPeer)return posixWait(nullptr,fd,writing,timeout,error);
+            if(pollReady)return 1;
             fixtureTime+=static_cast<uint64_t>(timeout);return 0;
         },
         [](void *,int fd,uint8_t *bytes,size_t count,int &error)->ptrdiff_t{
@@ -73,7 +81,7 @@ static Client::ConnectOps fixtureConnectOps(){
             else result=fixtureConnect(fd,nullptr,0);
             if(result<0)error=errno;return result;
         },
-        [](void *,int fd,int &error){if(realPeer)return Client::posixConnectOps().finish(nullptr,fd,error);return 0;}};
+        [](void *,int fd,int &error){if(onFinish)onFinish();if(realPeer)return Client::posixConnectOps().finish(nullptr,fd,error);return 0;}};
 }
 namespace Current {
 #include "VPNClientUnderTest.inc"
@@ -83,8 +91,9 @@ namespace Legacy {
 }
 static void reset(const std::string &response){
     assert(live.empty()&&opens==closes);fixtureTime=100;connectCost=sendCost=readCost=0;
-    socketFault=prepareFault=realPeer=false;connectFault=sendFault=readFault=throwRead=0;
+    socketFault=prepareFault=realPeer=pollReady=false;connectFault=sendFault=readFault=throwRead=0;
     responseOffset=0;chunk=faultAfter=SIZE_MAX;sendCalls=receiveCalls=waitCalls=0;responseBytes=response;sentBytes.clear();
+    onConnect={};onSend={};onRead={};onPoll={};onFinish={};
 }
 static void same(NSString *a,NSString *b){assert((a==b)||[a isEqualToString:b]);}
 static void parityCases(){
@@ -129,8 +138,49 @@ static void realSocketCase(){
     NSString *error=nil;NSString *result=Current::zx_vpnBrokerRequest(@"query",&error);peer.join();assert(::close(server)==0);
     same(result,@"1");assert(!error&&live.empty()&&opens==closes);realPeer=false;
 }
+static void callerCases(){
+    NSString *error=nil;
+    for(unsigned kind=0;kind<3;++kind){
+        reset("0;;1\r\n");auto token=std::make_shared<TLinkNativeCancellation>();
+        auto budget=std::make_shared<TLinkNativeBudget>(token,kind==1?TLinkNativeNowNs()-1:0,kind==2?1:4096);
+        if(kind==0)token->cancel();if(kind==2)assert(!budget->outputAllowed(2));
+        const unsigned before=opens;TLinkNativeBudgetScope scope(budget);
+        assert(!Current::zx_vpnBrokerRequest(@"query",&error));same(error,@"vpn_broker_unavailable");
+        assert(opens==before&&live.empty()&&sendCalls==0&&receiveCalls==0);
+    }
+    for(unsigned stage=0;stage<5;++stage){
+        reset("0;;1\r\n");auto token=std::make_shared<TLinkNativeCancellation>();
+        auto parent=std::make_shared<TLinkNativeBudget>(token,0,4096);
+        auto budget=std::make_shared<TLinkNativeBudget>(0,parent);TLinkNativeBudgetScope scope(budget);
+        const auto stop=[token]{token->cancel();};
+        if(stage==0)onConnect=stop;
+        if(stage==1){connectFault=EINPROGRESS;pollReady=true;onFinish=stop;}
+        if(stage==2)onSend=stop;
+        if(stage==3)onRead=stop;
+        if(stage==4){readFault=EAGAIN;faultAfter=0;onPoll=stop;}
+        assert(!Current::zx_vpnBrokerRequest(@"query",&error));
+        same(error,stage<2?@"vpn_broker_unavailable":stage==2?@"vpn_broker_send_failed":@"vpn_broker_no_response");
+        assert(budget->reason()==TLinkNativeStop::Cancelled&&live.empty()&&opens==closes);
+        if(stage<2)assert(sendCalls==0&&receiveCalls==0);
+        if(stage==2)assert(sentBytes=="query\r\n"&&receiveCalls==0); // Committed bytes are not replayed or rolled back.
+        if(stage==4)assert(waitCalls==1&&fixtureTime==350);
+    }
+    reset("0;;1\r\n");auto token=std::make_shared<TLinkNativeCancellation>();
+    auto parent=std::make_shared<TLinkNativeBudget>(token,0,4096);
+    auto child=std::make_shared<TLinkNativeBudget>(0,parent);
+    // A nested scope during a provider call must not replace the captured caller.
+    std::unique_ptr<TLinkNativeBudgetScope> nested;
+    onRead=[token,&nested]{nested.reset(new TLinkNativeBudgetScope(std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},0,4096)));token->cancel();assert(!TLinkNativeStopped());};
+    {TLinkNativeBudgetScope scope(child);assert(!Current::zx_vpnBrokerRequest(@"query",&error));same(error,@"vpn_broker_no_response");assert(!TLinkNativeStopped());nested.reset();assert(TLinkNativeStopped());}
+    reset("0;;1\r\n");auto expiredParent=std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},TLinkNativeNowNs()-1,4096);
+    {TLinkNativeBudgetScope scope(std::make_shared<TLinkNativeBudget>(0,expiredParent));const unsigned before=opens;assert(!Current::zx_vpnBrokerRequest(@"query",&error));assert(opens==before);}
+    reset("0;;1\r\n");
+    {TLinkNativeBudgetScope scope(std::make_shared<TLinkNativeBudget>(token,TLinkNativeNowNs()-1,4096,true));same(Current::zx_vpnBrokerRequest(@"query",nullptr),@"1");}
+    assert(!TLinkCurrentNativeBudget()&&live.empty());
+}
 int main(){@autoreleasepool{
     puts("VPN client Foundation: actual/frozen transport, real scoped sockets and controlled time/peer faults");
-    parityCases();failureCases();realSocketCase();
+    parityCases();failureCases();realSocketCase();callerCases();
     puts("VPN client Foundation passed: 180 frozen wire/EOF/Unicode/error cases, exact request/1MiB cap, setup/connect/send/read faults, trickle/deadline/prefix rejection, NS/C++ descriptor unwind, 128 lifecycles and real loopback nonblocking request/reply. IPC isolation/device qualification pending.");
+    puts("VPN captured caller Foundation passed: pre-cancel/native deadline/output before socket, parent cancellation during connect/completion/send/read/one poll, exact close and no replay, nested TLS isolation and inherited cleanup policy. Broker operation cancellation remains open.");
 }return 0;}

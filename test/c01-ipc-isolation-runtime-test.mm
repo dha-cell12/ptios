@@ -3,6 +3,7 @@
 #import <dispatch/dispatch.h>
 #import "../pccontrol/SocketServer.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkVPNIPC.h"
 #include "../shared/TLinkIPCPolicy.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkNativeDispatch.h"
@@ -37,8 +38,10 @@ static CFRunLoopSourceRef FixtureSource(CFAllocatorRef allocator,CFMessagePortRe
 #define CFMessagePortCreateRunLoopSource FixtureSource
 #include "C01IPCReceiver.inc"
 #undef CFMessagePortCreateRunLoopSource
+#include "VPNIPCQueue.inc"
 #include "C01IPCQueues.inc"
 static bool zx_isHotPathPayload(const char *){return true;}
+#include "VPNIPCSender.inc"
 #include "C01IPCSenderActual.inc"
 // The actual installation function is run on a controllable owner thread so
 // the harness can stop/join each real CF run loop and balance all CF objects.

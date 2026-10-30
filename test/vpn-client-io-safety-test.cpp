@@ -1,7 +1,9 @@
 #include "../shared/TLinkVPNBrokerClientIO.h"
+#include "../shared/TLinkNativeBudget.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 using namespace TLinkHelperIO;
@@ -14,9 +16,11 @@ struct Peer {
     unsigned readInterrupts=0,sendInterrupts=0,readBlocks=0,sendBlocks=0;
     bool stalled=false,zeroWrite=false,lateReady=false;
     size_t chunk=SIZE_MAX,offset=0;std::string input="0;;1\r\n",output;
+    std::function<void()> onWait,onSend,onRead,onConnect,onFinish;
     static uint64_t now(void *p){return static_cast<Peer *>(p)->time;}
     static int wait(void *p,int,bool,int timeout,int &error){
         auto &s=*static_cast<Peer *>(p);assert(timeout>0&&timeout<=250);++s.waits;
+        if(s.onWait)s.onWait();
         if(s.pollError){error=s.pollError;s.pollError=0;++s.time;return -1;}
         if(s.lateReady){s.time+=30000;return 1;}
         if(s.stalled||s.emptyPolls){if(s.emptyPolls)--s.emptyPolls;s.time+=static_cast<uint64_t>(timeout);return 0;}
@@ -24,6 +28,7 @@ struct Peer {
     }
     static ptrdiff_t send(void *p,int,const uint8_t *bytes,size_t count,int &error){
         auto &s=*static_cast<Peer *>(p);++s.sends;s.time+=s.sendCost;
+        if(s.onSend)s.onSend();
         if(s.sendInterrupts){--s.sendInterrupts;error=EINTR;return -1;}
         if(s.sendBlocks||s.stalled){if(s.sendBlocks)--s.sendBlocks;error=EAGAIN;return -1;}
         if(s.sendError){error=s.sendError;return -1;}if(s.zeroWrite)return 0;
@@ -31,20 +36,67 @@ struct Peer {
     }
     static ptrdiff_t receive(void *p,int,uint8_t *bytes,size_t count,int &error){
         auto &s=*static_cast<Peer *>(p);++s.reads;s.time+=s.readCost;
+        if(s.onRead)s.onRead();
         if(s.readInterrupts){--s.readInterrupts;error=EINTR;return -1;}
         if(s.readBlocks||s.stalled){if(s.readBlocks)--s.readBlocks;error=EWOULDBLOCK;return -1;}
         if(s.readError){error=s.readError;return -1;}
         const size_t n=std::min(std::min(count,s.chunk),s.input.size()-s.offset);
         std::memcpy(bytes,s.input.data()+s.offset,n);s.offset+=n;return static_cast<ptrdiff_t>(n);
     }
-    static int begin(void *p,int,int &error){auto &s=*static_cast<Peer *>(p);++s.begins;s.time+=s.connectCost;error=s.beginError;return error?-1:0;}
-    static int finish(void *p,int,int &error){auto &s=*static_cast<Peer *>(p);++s.finishes;s.time+=s.finishCost;error=s.finishError;return error?-1:0;}
+    static int begin(void *p,int,int &error){auto &s=*static_cast<Peer *>(p);++s.begins;s.time+=s.connectCost;if(s.onConnect)s.onConnect();error=s.beginError;return error?-1:0;}
+    static int finish(void *p,int,int &error){auto &s=*static_cast<Peer *>(p);++s.finishes;s.time+=s.finishCost;if(s.onFinish)s.onFinish();error=s.finishError;return error?-1:0;}
     Ops ops(){return {this,now,wait,receive,send};}
     Client::ConnectOps connector(){return {this,begin,finish};}
 };
 static Result connect(Peer &s,const Window &window){Client::BoundedOps bounded(s.ops(),window);return Client::connect(bounded.ops(),s.connector(),0,window);}
 static Result write(Peer &s,const Window &window,const std::string &bytes){Client::BoundedOps bounded(s.ops(),window);return writeBytes(bounded.ops(),0,reinterpret_cast<const uint8_t *>(bytes.data()),bytes.size(),window.deadline);}
 static Result read(Peer &s,const Window &window,size_t &count){Client::BoundedOps bounded(s.ops(),window);uint8_t bytes[4096];return TLinkVPNBrokerIngress::readChunk(bounded.ops(),0,bytes,sizeof(bytes),window,count);}
+static bool callerStopped(const void *p){const auto &budget=*static_cast<const TLinkNativeBudgetPtr *>(p);return budget&&budget->stopped();}
+static void callerCases(){
+    auto token=std::make_shared<TLinkNativeCancellation>();
+    TLinkNativeBudgetPtr budget=std::make_shared<TLinkNativeBudget>(token,0,1024);
+    Peer peer;Window window(100);Client::BoundedOps bounded(peer.ops(),window,&budget,callerStopped);const Ops io=bounded.ops();
+    token->cancel();size_t count=77;uint8_t bytes[32]{};
+    assert(Client::connect(io,peer.connector(),0,window).code==Code::Timeout&&peer.begins==0);
+    assert(writeBytes(io,0,bytes,sizeof(bytes),window.deadline).code==Code::Timeout&&peer.sends==0);
+    assert(TLinkVPNBrokerIngress::readChunk(io,0,bytes,sizeof(bytes),window,count).code==Code::Timeout&&count==0&&peer.reads==0);
+    int error=0;assert(io.send(io.context,0,bytes,1,error)<0&&error==ECANCELED&&peer.sends==0);
+    assert(io.receive(io.context,0,bytes,1,error)<0&&error==ECANCELED&&peer.reads==0);
+    for(unsigned stage=0;stage<5;++stage){
+        token=std::make_shared<TLinkNativeCancellation>();budget=std::make_shared<TLinkNativeBudget>(token,0,1024);peer=Peer{};
+        const auto stop=[token]{token->cancel();};
+        if(stage==0)peer.onConnect=stop;
+        if(stage==1){peer.beginError=EINPROGRESS;peer.onFinish=stop;}
+        if(stage==2)peer.onSend=stop;
+        if(stage==3)peer.onRead=stop;
+        if(stage==4){peer.stalled=true;peer.onWait=stop;}
+        Result result{Code::Ok};
+        if(stage<2)result=Client::connect(io,peer.connector(),0,window);
+        else if(stage==2)result=writeBytes(io,0,bytes,1,window.deadline);
+        else result=TLinkVPNBrokerIngress::readChunk(io,0,bytes,sizeof(bytes),window,count);
+        assert(result.code==Code::Timeout&&budget->reason()==TLinkNativeStop::Cancelled);
+        if(stage==4)assert(peer.waits==1&&peer.reads==1);
+    }
+    // Keep clock domains separate: native parent state, not a converted epoch.
+    auto parent=std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},TLinkNativeNowNs()-1,1024);
+    budget=std::make_shared<TLinkNativeBudget>(0,parent);peer=Peer{};
+    assert(Client::connect(io,peer.connector(),0,window).code==Code::Timeout&&peer.begins==0);
+    budget=std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},0,1);assert(!budget->outputAllowed(2));
+    assert(writeBytes(io,0,bytes,1,window.deadline).code==Code::Timeout&&peer.sends==0);
+    // Snapshot parent remains effective even if nested code changes TLS.
+    token=std::make_shared<TLinkNativeCancellation>();parent=std::make_shared<TLinkNativeBudget>(token,0,1024);budget=std::make_shared<TLinkNativeBudget>(0,parent);
+    {TLinkNativeBudgetScope scope(std::make_shared<TLinkNativeBudget>(std::shared_ptr<TLinkNativeCancellation>{},0,1024));token->cancel();assert(!TLinkNativeStopped()&&callerStopped(&budget));}
+    // Existing cleanup policy is inherited rather than overridden by the adapter.
+    budget=std::make_shared<TLinkNativeBudget>(token,TLinkNativeNowNs()-1,1024,true);assert(!callerStopped(&budget));
+    peer=Peer{};assert(Client::connect(io,peer.connector(),0,window).ok());
+    budget.reset();peer=Peer{};assert(Client::connect(io,peer.connector(),0,window).ok());
+    for(unsigned n=0;n<1000;++n){
+        token=std::make_shared<TLinkNativeCancellation>();budget=std::make_shared<TLinkNativeBudget>(token,0,1024);
+        std::thread stop([token]{token->cancel();});
+        while(!callerStopped(&budget))std::this_thread::yield();
+        stop.join();peer=Peer{};assert(Client::connect(io,peer.connector(),0,window).code==Code::Timeout&&peer.begins==0);
+    }
+}
 int main(){
     for(uint64_t n=0;n<100000;++n){Peer s;s.time=n;const Result result=connect(s,Window(100));assert(result.ok()==(n>=100&&n<30100));assert(s.begins==(result.ok()?1U:0U));}
     for(int error:std::vector<int>{EINPROGRESS,EINTR,EALREADY}){Peer s;s.beginError=error;s.pollError=EINTR;s.emptyPolls=2;assert(connect(s,Window(100)).ok()&&s.finishes==1&&s.waits==4&&s.time==601);}
@@ -71,5 +123,7 @@ int main(){
     Peer drip;drip.chunk=1;drip.readCost=10000;assert(read(drip,Window(100),count).ok()&&count==1);assert(read(drip,Window(100),count).ok());assert(read(drip,Window(100),count).code==Code::Timeout&&count==0);
     Peer blocked;blocked.stalled=true;assert(write(blocked,Window(100),request).code==Code::Timeout&&blocked.output.empty()&&blocked.waits==120);
     Peer interrupted;interrupted.readInterrupts=1000;interrupted.readCost=100;assert(read(interrupted,Window(100),count).code==Code::Timeout&&interrupted.reads==300&&count==0);
+    callerCases();
     puts("VPN client IO passed: 100k fixed-window plans, nonblocking connect completion/refusal, 250ms poll slices, EINTR/EAGAIN, shared connect/write/read budget, trickle/late rejection and exact writes/EOF/faults.");
+    puts("VPN caller stop passed: pre-connect/read/write rejection, in-flight phase/poll cancellation, inherited native deadline/output, captured parent versus nested TLS, cleanup/null policy and 1000 concurrent token publications.");
 }

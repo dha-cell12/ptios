@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkVPNIPC.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkSocketOutput.h"
 #include "../shared/TLinkIPCPolicy.h"

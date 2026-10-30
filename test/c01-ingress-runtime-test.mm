@@ -3,6 +3,7 @@
 #import "../pccontrol/TLinkTaskContext.h"
 #import "../pccontrol/SocketServer.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkVPNIPC.h"
 #include "../shared/TLinkIPCPolicy.h"
 #include "../tlinkauto-binary/IPCConstants.h"
 #include <cassert>
@@ -54,6 +55,7 @@ static SInt32 FixtureSend(CFMessagePortRef,SInt32 message,CFDataRef data,CFTimeI
     if(response)*response=CFDataCreate(NULL,(const UInt8 *)reply,strlen(reply));return kCFMessagePortSuccess;
 }
 static bool zx_isHotPathPayload(const char *){return true;}
+#include "VPNIPCSender.inc"
 #include "C01IPCSender.inc"
 static NSString *ownedReply(CFDataRef value){assert(value);NSData *data=CFBridgingRelease(value);return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];}
 int main(){@autoreleasepool{

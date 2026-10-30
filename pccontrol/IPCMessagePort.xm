@@ -1,5 +1,6 @@
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkVPNIPC.h"
 #include "IPCMessagePort.h"
 #import "TLinkDiagnostic.h"
 #include "IPCConstants.h"
@@ -35,6 +36,15 @@ static CFDataRef handleIPCMessage(CFMessagePortRef local, SInt32 msgid, CFDataRe
             const auto result=TLinkC01Decode(bytes,size_t(length),envelope);
             if(result!=TLinkC01DecodeResult::Valid){
                 const char *failure=result==TLinkC01DecodeResult::Expired?"1;;c01_request_expired\r\n":"1;;c01_ipc_envelope_invalid\r\n";
+                return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)failure,strlen(failure));
+            }
+            bytes=envelope.payload;length=CFIndex(envelope.length);ingressDeadline=envelope.deadline;
+        }
+        if(msgid==TLinkVPNIPCMessage){
+            TLinkVPNIPCEnvelope envelope;
+            const auto result=TLinkVPNIPCDecode(bytes,size_t(length),envelope);
+            if(result!=TLinkVPNIPCDecodeResult::Valid){
+                const char *failure=result==TLinkVPNIPCDecodeResult::Expired?"1;;vpn_ipc_expired\r\n":"1;;vpn_ipc_invalid\r\n";
                 return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)failure,strlen(failure));
             }
             bytes=envelope.payload;length=CFIndex(envelope.length);ingressDeadline=envelope.deadline;
@@ -229,9 +239,48 @@ static void startC01IPCServerOnBackgroundThread()
     });
 }
 
+// BEGIN isolated VPN IPC receiver.
+static CFDataRef handleVPNIPCMessage(CFMessagePortRef local,SInt32 msgid,CFDataRef data,void *info)
+{
+    auto failure=[](const char *line)->CFDataRef{return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)line,strlen(line));};
+    if(msgid!=TLinkVPNIPCMessage||!data)return failure("1;;vpn_ipc_envelope_required\r\n");
+    TLinkVPNIPCEnvelope envelope;
+    const auto decoded=TLinkVPNIPCDecode(CFDataGetBytePtr(data),size_t(CFDataGetLength(data)),envelope);
+    if(decoded!=TLinkVPNIPCDecodeResult::Valid)return failure(decoded==TLinkVPNIPCDecodeResult::Expired?"1;;vpn_ipc_expired\r\n":"1;;vpn_ipc_invalid\r\n");
+    static std::atomic_bool active{false};TLinkC01IPCAdmission admission(active);
+    if(!admission.admitted())return failure("1;;vpn_ipc_busy\r\n");
+    @autoreleasepool {try{@try{return handleIPCMessage(local,msgid,data,info);}
+        @catch(NSException *exception){(void)exception;return failure("1;;request_failed\r\n");}}
+        catch(...){return failure("1;;request_failed\r\n");}}
+}
+static bool zx_installVPNIPCSource(CFStringRef name,CFMessagePortRef *port,CFRunLoopSourceRef *source)
+{
+    *port=NULL;*source=NULL;CFMessagePortContext context={0,NULL,NULL,NULL,NULL};Boolean shouldFree=false;
+    *port=CFMessagePortCreateLocal(kCFAllocatorDefault,name,handleVPNIPCMessage,&context,&shouldFree);
+    if(!*port)return false;
+    *source=CFMessagePortCreateRunLoopSource(kCFAllocatorDefault,*port,0);
+    if(!*source){CFMessagePortInvalidate(*port);CFRelease(*port);*port=NULL;return false;}
+    CFRunLoopAddSource(CFRunLoopGetCurrent(),*source,kCFRunLoopCommonModes);return true;
+}
+static void startVPNIPCServerOnBackgroundThread()
+{
+    static dispatch_once_t once;dispatch_once(&once, ^{
+        NSThread *thread=[[NSThread alloc] initWithBlock:^{@autoreleasepool{
+            CFStringRef name=CFStringCreateWithCString(kCFAllocatorDefault,TLinkVPNIPCPortName,kCFStringEncodingUTF8);
+            CFMessagePortRef port=NULL;CFRunLoopSourceRef source=NULL;
+            const bool installed=name&&zx_installVPNIPCSource(name,&port,&source);if(name)CFRelease(name);
+            if(!installed){NSLog(@"### com.tlinkauto.springboard: VPN IPC source unavailable.");return;}
+            CFRunLoopRun();CFRunLoopRemoveSource(CFRunLoopGetCurrent(),source,kCFRunLoopCommonModes);
+            CFRelease(source);CFMessagePortInvalidate(port);CFRelease(port);
+        }}];thread.name=@"com.tlinkauto.springboard.vpn-ipc";[thread start];
+    });
+}
+// END isolated VPN IPC receiver.
+
 void startIPCServerOnBackgroundThread()
 {
     startC01IPCServerOnBackgroundThread();
+    startVPNIPCServerOnBackgroundThread();
     if (ipcThreadStarted) {
         NSLog(@"### com.tlinkauto.springboard: IPC server thread already started.");
         return;

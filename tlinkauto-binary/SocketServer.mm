@@ -1,6 +1,7 @@
 #include "../shared/TLinkCaptureCleanup.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkVPNIPC.h"
 #include "../shared/TLinkNativeDispatch.h"
 // TODO: multiple client write back support
 
@@ -298,6 +299,44 @@ static void TCPServerAcceptCallBack(CFSocketRef socket, CFSocketCallBackType typ
 
 // Reference: https://www.jianshu.com/p/9353105a9129
 
+// BEGIN isolated VPN IPC sender.
+static dispatch_queue_t zx_vpnIPCQueue()
+{
+    static dispatch_queue_t queue;static dispatch_once_t once;
+    dispatch_once(&once, ^{queue=dispatch_queue_create("com.tlinkauto.tlinkautod.ipc.vpn",DISPATCH_QUEUE_SERIAL);});
+    return queue;
+}
+static CFDataRef zx_sendVPNIPC(const char *payload)
+{
+    auto failure=[](const char *line)->CFDataRef{return CFDataCreate(kCFAllocatorDefault,(const UInt8 *)line,strlen(line));};
+    auto budget=TLinkVPNIPCBudget(TLinkCurrentNativeBudget());
+    if(budget->stopped())return failure("1;;vpn_ipc_expired\r\n");
+    const auto envelope=TLinkVPNIPCEncode((const uint8_t *)payload,strlen(payload),budget->deadline());
+    if(envelope.empty())return failure("1;;vpn_ipc_invalid\r\n");
+    // Only the dedicated serial sender queue owns this cache; no legacy fallback.
+    static CFMessagePortRef remote=NULL;
+    if(remote&&!CFMessagePortIsValid(remote)){CFRelease(remote);remote=NULL;}
+    if(!remote){
+        CFStringRef name=CFStringCreateWithCString(kCFAllocatorDefault,TLinkVPNIPCPortName,kCFStringEncodingUTF8);
+        if(name){remote=CFMessagePortCreateRemote(kCFAllocatorDefault,name);CFRelease(name);}
+    }
+    if(!remote)return failure("1;;vpn_ipc_unavailable\r\n");
+    CFDataRef request=CFDataCreate(kCFAllocatorDefault,envelope.data(),CFIndex(envelope.size()));
+    if(!request)return failure("1;;vpn_ipc_unavailable\r\n");
+    const auto waits=TLinkVPNIPCTimeouts(budget);
+    if(waits.send<=0||waits.receive<=0){CFRelease(request);return failure("1;;vpn_ipc_expired\r\n");}
+    CFDataRef response=NULL;
+    const SInt32 result=CFMessagePortSendRequest(remote,TLinkVPNIPCMessage,request,waits.send,waits.receive,kCFRunLoopDefaultMode,&response);
+    CFRelease(request);
+    if(budget->stopped()){if(response)CFRelease(response);return failure("1;;vpn_ipc_expired\r\n");}
+    if(result!=kCFMessagePortSuccess||!response){
+        if(response)CFRelease(response);CFRelease(remote);remote=NULL;
+        return failure("1;;vpn_ipc_unavailable\r\n");
+    }
+    return response;
+}
+// END isolated VPN IPC sender.
+
 // BEGIN C01 IPC owner queues.
 static dispatch_queue_t ipcQueue()
 {
@@ -318,6 +357,7 @@ static dispatch_queue_t zx_c01IPCQueue()
 }
 static dispatch_queue_t zx_ipcRequestQueue(const char *payload,bool reply)
 {
+    if(reply&&payload&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_vpnIPCQueue();
     const bool isolated=payload&&TLinkC01PrivateIPC((const uint8_t *)payload,strlen(payload),reply,TLinkCurrentNativeBudget());
     return isolated?zx_c01IPCQueue():ipcQueue();
 }
@@ -460,6 +500,7 @@ static bool shouldWaitForResponse(int taskType)
 static CFDataRef sendIPCMessage(const char *payload, bool waitForResponse)
 {
     if(!payload)return NULL;
+    if(waitForResponse&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_sendVPNIPC(payload);
     auto budget=TLinkCurrentNativeBudget();
     const size_t payloadLength=strlen(payload);
     const bool bounded=TLinkC01PrivateIPC((const uint8_t *)payload,payloadLength,waitForResponse,budget);

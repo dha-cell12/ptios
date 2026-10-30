@@ -5,6 +5,7 @@
 #import "../pccontrol/SocketServer.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkC01Ingress.h"
+#include "../shared/TLinkVPNIPC.h"
 #include "../shared/TLinkIPCPolicy.h"
 #include "../shared/TLinkNativeDispatch.h"
 #include "../shared/TLinkTemplatePolicy.h"
@@ -46,6 +47,7 @@ static void processTaskWithContext(UInt8 *bytes,size_t length,CFWriteStreamRef s
 }
 static void sendHardwareKeyEventFromRawData(UInt8 *,NSError **) {assert(false);}
 #include "OwnedIPCHandler.inc"
+#include "VPNIPCQueue.inc"
 #include "OwnedIPCQueues.inc"
 static dispatch_queue_t springboardQueue(){static dispatch_queue_t queue=dispatch_queue_create("test.owned.capture.springboard",DISPATCH_QUEUE_SERIAL);return queue;}
 static bool lateReply=false,foreignReply=false;

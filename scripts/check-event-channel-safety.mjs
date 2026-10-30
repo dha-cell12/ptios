@@ -28,7 +28,12 @@ const rootSyncEncoder = between(socket,'static NSData *zx_eventChannelResponse('
 const trollWireEncoder = between(troll,'static NSData *POCEventBatchResponse(', 'static TLinkEventPollRequest *POCBeginEventPoll(');
 const trollSyncEncoder = between(troll,'    if (taskType == 95) {','    if (taskType == 96) {');
 for(const encoder of [rootWireEncoder,rootSyncEncoder,trollWireEncoder,trollSyncEncoder]) assert.match(encoder,/TLinkEventLegacyBatchResponse\(batch\)/);
-const beforeWireSocket = socket.replace('#include "../shared/TLinkEventWire.h"\n','').replace(rootWireEncoder,rootLegacyEncoder).replace(rootSyncEncoder,oldRootSyncEncoder);
+const vpnSender = between(socket,'// BEGIN isolated VPN IPC sender.','// BEGIN C01 IPC owner queues.');
+const beforeVPN = socket.replace('#include "../shared/TLinkVPNIPC.h"\n','').replace(vpnSender,'')
+    .replace('    if(reply&&payload&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_vpnIPCQueue();\n','')
+    .replace('    if(waitForResponse&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_sendVPNIPC(payload);\n','');
+assert.equal(createHash('sha256').update(beforeVPN).digest('hex'),'98a399ae2ebed67cf25b0aa6cf36c0769b55730bd0c00b0e5e80f627678c64b3','reverse independently guarded C04h VPN routing before historical event source comparisons');
+const beforeWireSocket = beforeVPN.replace('#include "../shared/TLinkEventWire.h"\n','').replace(rootWireEncoder,rootLegacyEncoder).replace(rootSyncEncoder,oldRootSyncEncoder);
 const trollBeforeByteCount = troll.replace('NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];');
 assert.notEqual(trollBeforeByteCount,troll,'reverse the independently guarded C03z storage byte count before the event baseline comparison');
 const beforeWireTroll = trollBeforeByteCount.replace('#import "../../shared/TLinkEventWire.h"\n','').replace(trollWireEncoder,trollLegacyEncoder).replace(trollSyncEncoder,oldTrollSyncEncoder);

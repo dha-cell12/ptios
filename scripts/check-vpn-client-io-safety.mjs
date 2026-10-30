@@ -12,15 +12,25 @@ const [source,before,legacy,header]=await Promise.all(['pccontrol/Connectivity.x
 assert.equal(createHash('sha256').update(before).digest('hex'),'43bd81226ed03494388cef5d302fe8fe3255aa19676516cebd972b29bcf36219');
 const start='static NSString *zx_vpnBrokerRequest',end='NSString* wifiTaskFromRawData';
 const actual=between(source,start,end),old=between(before,start,end);
+const beforeCaller=await read('test/fixtures/vpn-connectivity-before-c04g.inc');
+assert.equal(createHash('sha256').update(beforeCaller).digest('hex'),'ab932187d09fb6528f82239ad07a7e26553e8761a7a428a0b271fcfade161506');
+const callerCapture='    const TLinkNativeBudgetPtr callerBudget = TLinkCurrentNativeBudget();\n    if (callerBudget && callerBudget->stopped()) {\n        if (error) *error = @"vpn_broker_unavailable";\n        return nil;\n    }\n';
+const callerAdapter='    TLinkVPNBrokerClientIO::BoundedOps bounded(baseIO, window, &callerBudget, [](const void *opaque) {\n        const auto &budget = *static_cast<const TLinkNativeBudgetPtr *>(opaque);\n        return budget && budget->stopped();\n    });\n';
+assert.ok(actual.includes(callerCapture)&&actual.includes(callerAdapter));
+const transportSource=source.replace('#include "../shared/TLinkNativeBudget.h"\n','').replace(callerCapture,'').replace(callerAdapter,'    TLinkVPNBrokerClientIO::BoundedOps bounded(baseIO, window);\n');
+assert.equal(transportSource,beforeCaller,'complete C04f Connectivity: only captured caller-budget preflight/adapter/header changes');
 assert.equal(old.trim(),legacy.slice(legacy.indexOf('\n')+1).trim());
-assert.equal(source.replace('#include "../shared/TLinkVPNBrokerClientIO.h"\n','').replace(actual,old),before,'only VPN client transport/header changes complete previous Connectivity source');
+assert.equal(transportSource.replace('#include "../shared/TLinkVPNBrokerClientIO.h"\n','').replace(between(transportSource,start,end),old),before,'only VPN client transport/header changes complete previous Connectivity source');
 assert.equal(actual.slice(actual.indexOf('    if ([clean hasPrefix:@"0;;"])')),old.slice(old.indexOf('    if ([clean hasPrefix:@"0;;"])')),'complete legacy success/error decoding stays frozen');
 assert.match(actual,/Window window\(baseIO.now[\s\S]*socket\(AF_INET[\s\S]*Socket descriptor\(client\)/);
 assert.match(actual,/descriptor.prepare\(\)[\s\S]*ClientIO::connect\([\s\S]*writeBytes\([\s\S]*readChunk\(/);
 assert.doesNotMatch(actual,/SO_RCVTIMEO|SO_SNDTIMEO|\brecv\(|\bsend\(|\bclose\(client\)/);
 assert.match(header,/std::min\(left,250\)/);
+assert.match(header,/!self.stopped\(\)&&self.window_.remaining/);
+assert.match(header,/if\(self.stopped\(\)\|\|!self.window_.remaining/);
+assert.equal((header.match(/if\(self.stopped\(\)\)\{error=ECANCELED;return -1;\}/g)||[]).length,2);
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.match(await read(path),/node scripts\/check-vpn-client-io-safety\.mjs/);
-console.log('VPN client source passed: shared 30s connect/write/read deadline, scoped descriptor and complete previous parser/radio/VPN authority/error policy.');
+console.log('VPN client source passed: captured caller stop/parent deadline, shared 30s IO window, scoped descriptor and complete prior transport/parser/authority/error source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-vpn-client-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

@@ -10,6 +10,7 @@
 #import "Connectivity.h"
 #import "../shared/TLinkVPNDiagnostics.h"
 #include "../shared/TLinkVPNBrokerClientIO.h"
+#include "../shared/TLinkNativeBudget.h"
 
 static BOOL zx_parseActionValue(UInt8 *eventData, int *outAction, int *outValue, NSError **error)
 {
@@ -74,9 +75,17 @@ static NSString *zx_boolString(BOOL v) { return v ? @"1" : @"0"; }
 
 static NSString *zx_vpnBrokerRequest(NSString *command, NSString **error)
 {
+    const TLinkNativeBudgetPtr callerBudget = TLinkCurrentNativeBudget();
+    if (callerBudget && callerBudget->stopped()) {
+        if (error) *error = @"vpn_broker_unavailable";
+        return nil;
+    }
     const auto baseIO = TLinkHelperIO::posixOps();
     const TLinkVPNBrokerIngress::Window window(baseIO.now(baseIO.context));
-    TLinkVPNBrokerClientIO::BoundedOps bounded(baseIO, window);
+    TLinkVPNBrokerClientIO::BoundedOps bounded(baseIO, window, &callerBudget, [](const void *opaque) {
+        const auto &budget = *static_cast<const TLinkNativeBudgetPtr *>(opaque);
+        return budget && budget->stopped();
+    });
     const auto io = bounded.ops();
     int client = socket(AF_INET, SOCK_STREAM, 0);
     TLinkHelperIO::Socket descriptor(client);

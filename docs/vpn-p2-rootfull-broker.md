@@ -261,6 +261,27 @@ The client and broker windows are independent, and the outer IPC path remains
 synchronous; client timeout does not cancel manager effects. See
 [IMPLEMENTATION-C04F.md](performance-audit/IMPLEMENTATION-C04F.md).
 
+C04g captures the client's current native caller budget and observes its stop
+state throughout IO, including cancellation, inherited native deadlines and
+output exhaustion. A stopped caller opens no socket; in-flight waits stop at
+the next checkpoint/poll return and release the scoped descriptor. Native clock
+epochs are not converted, and changing TLS in nested code cannot replace the
+captured caller. The independent 30-second socket ceiling and existing authority,
+cleanup and response policies remain. This stops client waiting without cancelling
+an already submitted broker operation or rolling back effects. See
+[IMPLEMENTATION-C04G.md](performance-audit/IMPLEMENTATION-C04G.md).
+
+C04h routes reply-bearing daemon task 59 through a dedicated serial sender and
+SpringBoard CF port/run-loop, `com.tlinkauto.tlinkautod.springboard.vpn.v1`.
+Its private TVP1 envelope admits only task 59 with a native deadline at most
+30 seconds ahead and 8..4095 non-NUL payload bytes. Missing private support,
+oversize input and transport failure return explicit errors without legacy
+retry. Upgrade daemon and tweak together. Existing task/license/broker policies
+and healthy replies remain; direct legacy callers stay compatible. The daemon
+ordinary task queue still serializes VPN with other ordinary network tasks,
+so this is IPC-owner isolation, with task-lane isolation still pending. See
+[IMPLEMENTATION-C04H.md](performance-audit/IMPLEMENTATION-C04H.md).
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:

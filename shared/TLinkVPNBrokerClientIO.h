@@ -13,9 +13,11 @@ using namespace TLinkHelperIO;
 // No new deadline is created when bytes arrive or a syscall is interrupted.
 class BoundedOps {
     Ops base_;const Window &window_;
+    const void *stopContext_;bool (*stopped_)(const void *);
+    bool stopped()const{return stopped_&&stopped_(stopContext_);}
     static uint64_t now(void *p){
         auto &self=*static_cast<BoundedOps *>(p);const uint64_t time=self.base_.now(self.base_.context);
-        return self.window_.remaining(time)?time:UINT64_MAX;
+        return !self.stopped()&&self.window_.remaining(time)?time:UINT64_MAX;
     }
     static int wait(void *p,int fd,bool writing,int timeout,int &error){
         auto &self=*static_cast<BoundedOps *>(p);const Deadline phase(now(p),timeout);
@@ -23,18 +25,22 @@ class BoundedOps {
             const int left=std::min(phase.remaining(now(p)),self.window_.remaining(self.base_.now(self.base_.context)));
             if(!left)return 0;
             const int ready=self.base_.wait(self.base_.context,fd,writing,std::min(left,250),error);
-            if(!self.window_.remaining(self.base_.now(self.base_.context)))return 0;
+            if(self.stopped()||!self.window_.remaining(self.base_.now(self.base_.context)))return 0;
             if(ready!=0)return ready;
         }
     }
     static ptrdiff_t receive(void *p,int fd,uint8_t *bytes,size_t count,int &error){
-        auto &self=*static_cast<BoundedOps *>(p);return self.base_.receive(self.base_.context,fd,bytes,count,error);
+        auto &self=*static_cast<BoundedOps *>(p);if(self.stopped()){error=ECANCELED;return -1;}
+        return self.base_.receive(self.base_.context,fd,bytes,count,error);
     }
     static ptrdiff_t send(void *p,int fd,const uint8_t *bytes,size_t count,int &error){
-        auto &self=*static_cast<BoundedOps *>(p);return self.base_.send(self.base_.context,fd,bytes,count,error);
+        auto &self=*static_cast<BoundedOps *>(p);if(self.stopped()){error=ECANCELED;return -1;}
+        return self.base_.send(self.base_.context,fd,bytes,count,error);
     }
 public:
-    BoundedOps(Ops base,const Window &window):base_(base),window_(window){}
+    // Both context and window are borrowed for this synchronous invocation only.
+    BoundedOps(Ops base,const Window &window,const void *stopContext=nullptr,bool (*stopped)(const void *)=nullptr)
+        :base_(base),window_(window),stopContext_(stopContext),stopped_(stopped){}
     Ops ops(){return {this,now,wait,receive,send};}
 };
 struct ConnectOps {

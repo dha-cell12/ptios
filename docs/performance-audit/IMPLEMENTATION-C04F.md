@@ -1,7 +1,7 @@
 # C04f — fixed VPN client socket budget
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `038d1f03`, user reported build passed including C04e and the storage-json fixture keyword correction. Complete normalized Connectivity source SHA-256 before this change: `43bd81226ed03494388cef5d302fe8fe3255aa19676516cebd972b29bcf36219`.
-Status: **source/core implemented; new Foundation/POSIX/ARC/ASan/UBSan runtime pending macOS CI; independent device qualification pending**.
+Status: **user reported build passed at `1d4de324` before C04g; independent device qualification pending**.
 Finding: **P0-19/P1-63 client transport portion**. Synchronous outer IPC isolation is still open.
 
 ## Change
