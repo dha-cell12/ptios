@@ -72,6 +72,15 @@ static NSString *SCLicenseRequestDaemonReload(void)
 @property(nonatomic, assign, getter=isRequestInFlight) BOOL requestInFlight;
 @property(nonatomic, copy) NSString *operationKind;
 @property(nonatomic, strong) NSMutableArray *pendingRefreshCompletions;
+// BEGIN refresh decision ownership.
+@property(nonatomic, strong) dispatch_queue_t refreshDecisionQueue;
+@property(nonatomic, strong) NSObject *refreshOperationIdentity;
+@property(nonatomic, assign) BOOL refreshForceRequested;
+@property(nonatomic, assign) BOOL refreshResultClaimed;
+- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event;
+- (void)finishOperation:(NSString *)kind success:(BOOL)success message:(NSString *)message
+             completion:(SCLicenseLifecycleCompletion)completion diagnostics:(NSDictionary *)extra notify:(BOOL)notify;
+// END refresh decision ownership.
 @property(nonatomic, strong) dispatch_queue_t uiSnapshotQueue;
 @property(nonatomic, copy) NSDictionary *uiLicenseSnapshot;
 @property(nonatomic, assign) BOOL uiSnapshotRefreshInFlight;
@@ -100,6 +109,7 @@ static NSString *SCLicenseRequestDaemonReload(void)
     if (self) {
         _manager = [SCLicenseManager sharedManager];
         _pendingRefreshCompletions = [NSMutableArray array];
+        _refreshDecisionQueue = dispatch_queue_create("com.tlinkauto.license-refresh-decision", DISPATCH_QUEUE_SERIAL);
         _uiSnapshotQueue = dispatch_queue_create("com.tlinkauto.license-ui-snapshot",
                                                   DISPATCH_QUEUE_SERIAL);
         _uiLicenseSnapshot = @{
@@ -234,9 +244,9 @@ static NSString *SCLicenseRequestDaemonReload(void)
     });
 }
 
-- (void)updateDiagnostics:(NSDictionary *)values
+- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event
 {
-    if (values.count == 0) return;
+    if (values.count == 0 && event.count == 0) return;
     @synchronized (self) {
         NSString *directory = [kTLinkLicenseLifecycleDiagnosticsPath stringByDeletingLastPathComponent];
         [[NSFileManager defaultManager] createDirectoryAtPath:directory
@@ -245,27 +255,31 @@ static NSString *SCLicenseRequestDaemonReload(void)
                                                         error:nil];
         NSMutableDictionary *state = [[NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath] mutableCopy];
         if (!state) state = [NSMutableDictionary dictionary];
-        [state addEntriesFromDictionary:values];
+        if (event.count > 0) {
+            NSArray *stored = [state[@"refresh_history"] isKindOfClass:[NSArray class]] ? state[@"refresh_history"] : @[];
+            NSMutableArray *history = [stored mutableCopy];
+            [history addObject:event];
+            if (history.count > kTLinkLicenseRefreshHistoryLimit) {
+                NSRange overflow = NSMakeRange(0, history.count - kTLinkLicenseRefreshHistoryLimit);
+                [history removeObjectsInRange:overflow];
+            }
+            state[@"refresh_history"] = history;
+        }
+        if (values.count > 0) [state addEntriesFromDictionary:values];
         state[@"mode"] = @"foreground_bg_single_flight_backoff_v1";
         state[@"updated_at_ms"] = @([self nowMilliseconds]);
         [state writeToFile:kTLinkLicenseLifecycleDiagnosticsPath atomically:YES];
     }
 }
 
+- (void)updateDiagnostics:(NSDictionary *)values
+{
+    [self updateDiagnostics:values refreshHistoryEvent:nil];
+}
+
 - (void)appendRefreshHistoryEvent:(NSDictionary *)event
 {
-    if (event.count == 0) return;
-    NSDictionary *current = [self diagnostics];
-    NSArray *stored = [current[@"refresh_history"] isKindOfClass:[NSArray class]]
-        ? current[@"refresh_history"]
-        : @[];
-    NSMutableArray *history = [stored mutableCopy];
-    [history addObject:event];
-    if (history.count > kTLinkLicenseRefreshHistoryLimit) {
-        NSRange overflow = NSMakeRange(0, history.count - kTLinkLicenseRefreshHistoryLimit);
-        [history removeObjectsInRange:overflow];
-    }
-    [self updateDiagnostics:@{@"refresh_history": history}];
+    [self updateDiagnostics:nil refreshHistoryEvent:event];
 }
 
 - (void)deliverCompletion:(SCLicenseLifecycleCompletion)completion success:(BOOL)success message:(NSString *)message
@@ -293,6 +307,7 @@ static NSString *SCLicenseRequestDaemonReload(void)
             [self.pendingRefreshCompletions addObject:[completion copy]];
         }
     }
+    if ([kind isEqualToString:@"refresh"]) return YES;
     [self updateDiagnostics:@{
         @"request_in_flight": @YES,
         @"operation": kind ?: @"unknown",
@@ -305,19 +320,27 @@ static NSString *SCLicenseRequestDaemonReload(void)
 
 - (void)finishOperation:(NSString *)kind success:(BOOL)success message:(NSString *)message completion:(SCLicenseLifecycleCompletion)completion
 {
+    [self finishOperation:kind success:success message:message completion:completion diagnostics:nil notify:YES];
+}
+
+- (void)finishOperation:(NSString *)kind success:(BOOL)success message:(NSString *)message completion:(SCLicenseLifecycleCompletion)completion diagnostics:(NSDictionary *)extra notify:(BOOL)notify
+{
     NSArray *refreshCompletions = nil;
     @synchronized (self) {
         if ([kind isEqualToString:@"refresh"]) {
             refreshCompletions = [self.pendingRefreshCompletions copy];
             [self.pendingRefreshCompletions removeAllObjects];
+            self.refreshOperationIdentity = nil;
+            self.refreshForceRequested = NO;
+            self.refreshResultClaimed = NO;
         }
         self.requestInFlight = NO;
         self.operationKind = @"none";
     }
-    [self updateDiagnostics:@{
-        @"request_in_flight": @NO,
-        @"operation": @"none",
-    }];
+    NSMutableDictionary *values = extra ? [extra mutableCopy] : [NSMutableDictionary dictionary];
+    values[@"request_in_flight"] = @NO;
+    values[@"operation"] = @"none";
+    [self updateDiagnostics:values];
     if ([kind isEqualToString:@"refresh"]) {
         for (id value in refreshCompletions) {
             SCLicenseLifecycleCompletion callback = (SCLicenseLifecycleCompletion)value;
@@ -326,10 +349,57 @@ static NSString *SCLicenseRequestDaemonReload(void)
     } else {
         [self deliverCompletion:completion success:success message:message];
     }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[NSNotificationCenter defaultCenter] postNotificationName:SCLicenseLifecycleDidChangeNotification object:self];
-    });
+    if (notify) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:SCLicenseLifecycleDidChangeNotification object:self];
+        });
+    }
 }
+
+// BEGIN refresh decision completion gates.
+- (BOOL)finishSkippedRefresh:(NSObject *)identity decision:(NSString *)decision trigger:(NSString *)trigger
+{
+    @synchronized (self) {
+        if (self.refreshOperationIdentity != identity) return YES;
+        if (self.refreshForceRequested) return NO;
+        [self finishOperation:@"refresh" success:YES message:decision completion:nil diagnostics:@{
+            @"last_decision_at_ms": @([self nowMilliseconds]),
+            @"last_decision": decision ?: @"refresh_not_needed",
+            @"last_trigger": trigger ?: @"unknown",
+        } notify:NO];
+        return YES;
+    }
+}
+
+- (BOOL)claimRefreshResult:(NSObject *)identity
+{
+    @synchronized (self) {
+        if (self.refreshOperationIdentity != identity || self.refreshResultClaimed) return NO;
+        self.refreshResultClaimed = YES;
+        return YES;
+    }
+}
+
+- (void)finishRefresh:(NSObject *)identity success:(BOOL)success message:(NSString *)message
+{
+    @synchronized (self) {
+        if (self.refreshOperationIdentity == identity)
+            [self finishOperation:@"refresh" success:success message:message completion:nil];
+    }
+}
+
+- (void)failRefreshException:(NSObject *)identity ownsResult:(BOOL)ownsResult
+{
+    @synchronized (self) {
+        if (self.refreshOperationIdentity != identity || (self.refreshResultClaimed && !ownsResult)) return;
+        self.refreshResultClaimed = YES;
+        [self finishOperation:@"refresh" success:NO message:@"license_refresh_exception" completion:nil diagnostics:@{
+            @"last_result": @"failed",
+            @"last_error": @"license_refresh_exception",
+        } notify:YES];
+    }
+}
+// END refresh decision completion gates.
 
 - (void)publishLicenseChange:(NSString *)reason
 {
@@ -399,103 +469,131 @@ static NSString *SCLicenseRequestDaemonReload(void)
     return YES;
 }
 
-- (void)recordRefreshFailure:(NSString *)message trigger:(NSString *)trigger
+- (void)recordRefreshFailure:(NSString *)message trigger:(NSString *)trigger historyEvent:(NSDictionary *)event
 {
-    NSDictionary *existing = [NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath];
-    NSInteger failures = MIN(16, [existing[@"consecutive_failures"] integerValue] + 1);
-    NSInteger exponent = MIN(8, failures - 1);
-    NSTimeInterval delay = MIN(kTLinkLicenseBackoffMaximum,
-                               kTLinkLicenseBackoffBase * pow(2.0, (double)exponent));
-    uint32_t jitterValue = arc4random_uniform(4001);
-    double jitter = 0.8 + ((double)jitterValue / 10000.0);
-    uint64_t nextAttempt = [self nowMilliseconds] + (uint64_t)(delay * jitter * 1000.0);
-    [self updateDiagnostics:@{
-        @"last_result": @"failed",
-        @"last_error": message ?: @"license_refresh_failed",
-        @"last_trigger": trigger ?: @"unknown",
-        @"consecutive_failures": @(failures),
-        @"next_attempt_at_ms": @(nextAttempt),
-    }];
+    @synchronized (self) {
+        NSDictionary *existing = [NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath];
+        NSInteger failures = MIN(16, [existing[@"consecutive_failures"] integerValue] + 1);
+        NSInteger exponent = MIN(8, failures - 1);
+        NSTimeInterval delay = MIN(kTLinkLicenseBackoffMaximum,
+                                   kTLinkLicenseBackoffBase * pow(2.0, (double)exponent));
+        uint32_t jitterValue = arc4random_uniform(4001);
+        double jitter = 0.8 + ((double)jitterValue / 10000.0);
+        uint64_t nextAttempt = [self nowMilliseconds] + (uint64_t)(delay * jitter * 1000.0);
+        [self updateDiagnostics:@{
+            @"last_result": @"failed",
+            @"last_error": message ?: @"license_refresh_failed",
+            @"last_trigger": trigger ?: @"unknown",
+            @"consecutive_failures": @(failures),
+            @"next_attempt_at_ms": @(nextAttempt),
+        } refreshHistoryEvent:event];
+    }
 }
 
 - (void)refreshForTrigger:(NSString *)trigger force:(BOOL)force completion:(SCLicenseLifecycleCompletion)completion
 {
-    NSDictionary *status = [self.manager localStatus];
-    NSNumber *leaseBefore = status[@"lease_expires_at"];
-    if (!leaseBefore) leaseBefore = status[@"expires_at"];
-    if (!leaseBefore) leaseBefore = @0;
-    NSNumber *licenseExpires = status[@"license_expires_at"];
-    if (!licenseExpires) licenseExpires = @0;
-    NSString *decision = nil;
-    if (!force && ![self automaticRefreshNeededForStatus:status reason:&decision]) {
-        [self updateDiagnostics:@{
-            @"last_decision_at_ms": @([self nowMilliseconds]),
-            @"last_decision": decision ?: @"refresh_not_needed",
-            @"last_trigger": trigger ?: @"unknown",
-        }];
-        [self deliverCompletion:completion success:YES message:decision ?: @"license_refresh_not_needed"];
-        return;
+    NSObject *identity = nil;
+    @synchronized (self) {
+        if (force && self.requestInFlight && [self.operationKind isEqualToString:@"refresh"])
+            self.refreshForceRequested = YES;
+        if (![self beginOperation:@"refresh" completion:completion]) return;
+        identity = [NSObject new];
+        self.refreshOperationIdentity = identity;
+        self.refreshForceRequested = force;
+        self.refreshResultClaimed = NO;
     }
-    if (!force && ![self backoffAllowsAttempt:&decision]) {
-        [self updateDiagnostics:@{
-            @"last_decision_at_ms": @([self nowMilliseconds]),
-            @"last_decision": decision ?: @"refresh_backoff_active",
-            @"last_trigger": trigger ?: @"unknown",
-        }];
-        [self deliverCompletion:completion success:YES message:decision ?: @"license_refresh_backoff_active"];
-        return;
-    }
-    if (![self beginOperation:@"refresh" completion:completion]) return;
-    [self updateDiagnostics:@{
-        @"last_attempt_at_ms": @([self nowMilliseconds]),
-        @"last_trigger": trigger ?: @"unknown",
-        @"last_decision": force ? @"manual_force_refresh" : (decision ?: @"automatic_refresh"),
-    }];
-    [self.manager refreshLeaseWithCompletion:^(BOOL success, NSString *message) {
-        if (success) {
-            NSDictionary *updatedStatus = [self.manager localStatus];
-            NSNumber *leaseAfter = updatedStatus[@"lease_expires_at"];
-            if (!leaseAfter) leaseAfter = updatedStatus[@"expires_at"];
-            if (!leaseAfter) leaseAfter = @0;
-            NSNumber *updatedLicenseExpires = updatedStatus[@"license_expires_at"];
-            if (!updatedLicenseExpires) updatedLicenseExpires = licenseExpires;
-            NSTimeInterval extendedSeconds = [leaseAfter doubleValue] - [leaseBefore doubleValue];
-            [self updateDiagnostics:@{
-                @"last_success_at_ms": @([self nowMilliseconds]),
-                @"last_result": @"success",
-                @"last_error": @"",
-                @"consecutive_failures": @0,
-                @"next_attempt_at_ms": @0,
-                @"last_lease_before_expires_at": leaseBefore,
-                @"last_lease_after_expires_at": leaseAfter,
-                @"last_license_expires_at": updatedLicenseExpires,
-                @"last_refresh_extended_seconds": @(extendedSeconds),
-            }];
-            [self appendRefreshHistoryEvent:@{
-                @"at_ms": @([self nowMilliseconds]),
-                @"trigger": trigger ?: @"unknown",
-                @"result": @"success",
-                @"lease_before_expires_at": leaseBefore,
-                @"lease_after_expires_at": leaseAfter,
-                @"license_expires_at": updatedLicenseExpires,
-                @"extended_seconds": @(extendedSeconds),
-            }];
-            [self publishLicenseChange:@"refresh"];
-        } else {
-            [self recordRefreshFailure:message trigger:trigger];
-            [self appendRefreshHistoryEvent:@{
-                @"at_ms": @([self nowMilliseconds]),
-                @"trigger": trigger ?: @"unknown",
-                @"result": @"failed",
-                @"lease_before_expires_at": leaseBefore,
-                @"lease_after_expires_at": leaseBefore,
-                @"license_expires_at": licenseExpires,
-                @"extended_seconds": @0,
-                @"error": message ?: @"license_refresh_failed",
-            }];
+    dispatch_async(self.refreshDecisionQueue, ^{
+        @try {
+            try {
+                NSDictionary *status = [self.manager localStatus];
+                NSNumber *leaseBefore = status[@"lease_expires_at"];
+                if (!leaseBefore) leaseBefore = status[@"expires_at"];
+                if (!leaseBefore) leaseBefore = @0;
+                NSNumber *licenseExpires = status[@"license_expires_at"];
+                if (!licenseExpires) licenseExpires = @0;
+                NSString *decision = nil;
+                BOOL effectiveForce = NO;
+                @synchronized (self) { effectiveForce = self.refreshForceRequested; }
+                if (!effectiveForce && ![self automaticRefreshNeededForStatus:status reason:&decision]) {
+                    if ([self finishSkippedRefresh:identity decision:decision ?: @"license_refresh_not_needed" trigger:trigger]) return;
+                    effectiveForce = YES;
+                }
+                if (!effectiveForce && ![self backoffAllowsAttempt:&decision]) {
+                    if ([self finishSkippedRefresh:identity decision:decision ?: @"license_refresh_backoff_active" trigger:trigger]) return;
+                    effectiveForce = YES;
+                }
+                @synchronized (self) { effectiveForce = effectiveForce || self.refreshForceRequested; }
+                [self updateDiagnostics:@{
+                    @"request_in_flight": @YES,
+                    @"operation": @"refresh",
+                    @"last_attempt_at_ms": @([self nowMilliseconds]),
+                    @"last_trigger": trigger ?: @"unknown",
+                    @"last_decision": effectiveForce ? @"manual_force_refresh" : (decision ?: @"automatic_refresh"),
+                }];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [[NSNotificationCenter defaultCenter] postNotificationName:SCLicenseLifecycleDidChangeNotification object:self];
+                });
+                [self.manager refreshLeaseWithCompletion:^(BOOL success, NSString *message) {
+                    if (![self claimRefreshResult:identity]) return;
+                    @try {
+                        try {
+                            if (success) {
+                                NSDictionary *updatedStatus = [self.manager localStatus];
+                                NSNumber *leaseAfter = updatedStatus[@"lease_expires_at"];
+                                if (!leaseAfter) leaseAfter = updatedStatus[@"expires_at"];
+                                if (!leaseAfter) leaseAfter = @0;
+                                NSNumber *updatedLicenseExpires = updatedStatus[@"license_expires_at"];
+                                if (!updatedLicenseExpires) updatedLicenseExpires = licenseExpires;
+                                NSTimeInterval extendedSeconds = [leaseAfter doubleValue] - [leaseBefore doubleValue];
+                                [self updateDiagnostics:@{
+                                    @"last_success_at_ms": @([self nowMilliseconds]),
+                                    @"last_result": @"success",
+                                    @"last_error": @"",
+                                    @"consecutive_failures": @0,
+                                    @"next_attempt_at_ms": @0,
+                                    @"last_lease_before_expires_at": leaseBefore,
+                                    @"last_lease_after_expires_at": leaseAfter,
+                                    @"last_license_expires_at": updatedLicenseExpires,
+                                    @"last_refresh_extended_seconds": @(extendedSeconds),
+                                } refreshHistoryEvent:@{
+                                    @"at_ms": @([self nowMilliseconds]),
+                                    @"trigger": trigger ?: @"unknown",
+                                    @"result": @"success",
+                                    @"lease_before_expires_at": leaseBefore,
+                                    @"lease_after_expires_at": leaseAfter,
+                                    @"license_expires_at": updatedLicenseExpires,
+                                    @"extended_seconds": @(extendedSeconds),
+                                }];
+                                [self publishLicenseChange:@"refresh"];
+                            } else {
+                                [self recordRefreshFailure:message trigger:trigger historyEvent:@{
+                                    @"at_ms": @([self nowMilliseconds]),
+                                    @"trigger": trigger ?: @"unknown",
+                                    @"result": @"failed",
+                                    @"lease_before_expires_at": leaseBefore,
+                                    @"lease_after_expires_at": leaseBefore,
+                                    @"license_expires_at": licenseExpires,
+                                    @"extended_seconds": @0,
+                                    @"error": message ?: @"license_refresh_failed",
+                                }];
+                            }
+                            [self finishRefresh:identity success:success message:message];
+                        } catch (...) {
+                            [self failRefreshException:identity ownsResult:YES];
+                        }
+                    } @catch (NSException *exception) {
+                        (void)exception;
+                        [self failRefreshException:identity ownsResult:YES];
+                    }
+                }];
+            } catch (...) {
+                [self failRefreshException:identity ownsResult:NO];
+            }
+        } @catch (NSException *exception) {
+            (void)exception;
+            [self failRefreshException:identity ownsResult:NO];
         }
-        [self finishOperation:@"refresh" success:success message:message completion:nil];
-    }];
+    });
 }
 
 - (void)handleApplicationLaunch
