@@ -1,7 +1,7 @@
 # C04i — bounded VPN daemon task lane
 
 Date: 2026-10-31 (Asia/Bangkok). Baseline: `f418a508`, user reported build passed including C04h and its shared envelope C++11 correction. Complete normalized pre-change daemon SocketServer SHA-256: `bcfa821cf065dd85104fe4bd5eaccd3a59bcccda9dbb3e0847268dbd6c7b30f3`.
-Status: **source/core implemented; new Foundation/GCD/ARC/ASan/UBSan cases pending macOS CI; independent device qualification pending**.
+Status: **user reported build passed at `138f336c` before C04j; independent device qualification pending**.
 Finding: **P0-19/P1-14/P1-63 daemon task admission/owner portion**.
 
 ## Change

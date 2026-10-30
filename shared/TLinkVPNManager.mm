@@ -1,5 +1,6 @@
 #import "TLinkVPNManager.h"
 #import "TLinkVPNPrivateRequest.h"
+#include "TLinkVPNTransition.h"
 
 #import <NetworkExtension/NetworkExtension.h>
 #import <Security/Security.h>
@@ -1450,6 +1451,42 @@ void TLinkVPNSetOnDemandEnabled(
     });
 }
 
+// BEGIN owned VPN transition.
+static void TLinkVPNBeginTransition(NEVPNManager *manager,BOOL connected,NEVPNStatus target,
+    NSTimeInterval boundedTimeout,TLinkVPNResultCompletion completion)
+{
+    auto state=std::make_shared<TLinkVPNTransitionState>(^(NSDictionary *result){TLinkVPNComplete(completion,result);});
+    TLinkVPNTransitionSetupScope setup{state};
+    dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
+    if(!timer){state->finish(TLinkVPNResult(false,@"vpn_transition_timer_failed",nil));return;}
+    dispatch_source_set_timer(timer,DISPATCH_TIME_FOREVER,DISPATCH_TIME_FOREVER,0);
+    dispatch_source_set_event_handler(timer, ^{
+        if(state->finished())return;
+        state->finish(TLinkVPNResult(false,@"vpn_transition_timeout",TLinkVPNStatusFields(manager)));
+    });
+    dispatch_resume(timer); // Every path publishes/cancels a resumed source.
+    state->installTimer(timer);
+    id observer=[[NSNotificationCenter defaultCenter]
+        addObserverForName:NEVPNStatusDidChangeNotification object:manager.connection
+        queue:[NSOperationQueue mainQueue] usingBlock:^(__unused NSNotification *notification){
+        if(state->finished())return;
+        NEVPNStatus status=manager.connection.status;
+        if(status==target)state->finish(TLinkVPNResult(true,connected?@"vpn_connected":@"vpn_disconnected",TLinkVPNStatusFields(manager)));
+        else if(connected&&status==NEVPNStatusInvalid)state->finish(TLinkVPNResult(false,@"vpn_connection_became_invalid",TLinkVPNStatusFields(manager)));
+        else if(connected&&status==NEVPNStatusDisconnected)state->finish(TLinkVPNResult(false,@"vpn_connection_failed",TLinkVPNStatusFields(manager)));
+    }];
+    state->installObserver(observer);
+    if(state->finished())return; // Registration may race a terminal notification.
+    if(connected){
+        NSError *startError=nil;
+        BOOL started=[manager.connection startVPNTunnelAndReturnError:&startError];
+        if(!started||startError){state->finish(TLinkVPNResult(false,@"vpn_start_failed",@{@"native_error":startError.localizedDescription?:@""}));return;}
+    }else [manager.connection stopVPNTunnel];
+    state->arm((int64_t)(boundedTimeout*NSEC_PER_SEC));
+    setup.committed=true;
+}
+// END owned VPN transition.
+
 void TLinkVPNSetConnected(
     BOOL connected,
     NSTimeInterval timeout,
@@ -1548,62 +1585,7 @@ void TLinkVPNSetConnected(
                 return;
             }
 
-            __block id observer = nil;
-            __block BOOL completed = false;
-            void (^finish)(NSDictionary *) = ^(NSDictionary *result) {
-                if (completed) return;
-                completed = true;
-                if (observer) {
-                    [[NSNotificationCenter defaultCenter] removeObserver:observer];
-                    observer = nil;
-                }
-                TLinkVPNComplete(completion, result);
-            };
-
-            observer = [[NSNotificationCenter defaultCenter]
-                addObserverForName:NEVPNStatusDidChangeNotification
-                            object:manager.connection
-                             queue:[NSOperationQueue mainQueue]
-                        usingBlock:^(__unused NSNotification *notification) {
-                NEVPNStatus status = manager.connection.status;
-                if (status == target) {
-                    finish(TLinkVPNResult(true,
-                        connected ? @"vpn_connected" : @"vpn_disconnected",
-                        TLinkVPNStatusFields(manager)));
-                } else if (connected && status == NEVPNStatusInvalid) {
-                    finish(TLinkVPNResult(false,
-                        @"vpn_connection_became_invalid",
-                        TLinkVPNStatusFields(manager)));
-                } else if (connected && status == NEVPNStatusDisconnected) {
-                    finish(TLinkVPNResult(false,
-                        @"vpn_connection_failed",
-                        TLinkVPNStatusFields(manager)));
-                }
-            }];
-
-            if (connected) {
-                NSError *startError = nil;
-                BOOL started =
-                    [manager.connection startVPNTunnelAndReturnError:&startError];
-                if (!started || startError) {
-                    finish(TLinkVPNResult(false,
-                        @"vpn_start_failed",
-                        @{@"native_error":
-                              startError.localizedDescription ?: @""}));
-                    return;
-                }
-            } else {
-                [manager.connection stopVPNTunnel];
-            }
-
-            dispatch_after(
-                dispatch_time(DISPATCH_TIME_NOW,
-                    (int64_t)(boundedTimeout * NSEC_PER_SEC)),
-                dispatch_get_main_queue(), ^{
-                finish(TLinkVPNResult(false,
-                    @"vpn_transition_timeout",
-                    TLinkVPNStatusFields(manager)));
-            });
+            TLinkVPNBeginTransition(manager,connected,target,boundedTimeout,completion);
         }];
     });
 }

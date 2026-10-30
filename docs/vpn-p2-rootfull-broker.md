@@ -293,6 +293,16 @@ Different clients may now interleave differently. An executing CF wait remains
 non-preemptible, and no remote manager cancellation is added. See
 [IMPLEMENTATION-C04I.md](performance-audit/IMPLEMENTATION-C04I.md).
 
+C04j gives pending native NEVPNManager transitions an owned one-shot timer and
+observer with a synchronized first-result gate. Terminal completion cancels the
+timer and removes the observer before callback delivery, replacing the former
+dispatch_after closure retained until its deadline. Setup unwind retires known
+resources; timer allocation failure returns vpn_transition_timer_failed before
+start/stop effects. Timeout anchor/clamp, profile/license checks and healthy
+replies remain. This does not cancel a tunnel transition or coalesce operations.
+The shared native path also applies to TrollStore; its private backend is
+unchanged. See [IMPLEMENTATION-C04J.md](performance-audit/IMPLEMENTATION-C04J.md).
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:

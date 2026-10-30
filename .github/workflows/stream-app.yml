@@ -288,6 +288,10 @@ jobs:
           test -f scripts/check-vpn-broker-admission-safety.mjs
           test -f scripts/check-vpn-client-io-safety.mjs
           test -f scripts/check-vpn-ipc-safety.mjs
+          test -f scripts/check-vpn-transition-safety.mjs
+          test -f shared/TLinkVPNTransition.h
+          test -f test/vpn-transition-runtime-test.mm
+          test -f test/fixtures/vpn-manager-before-c04j.inc
           test -f shared/TLinkVPNIPC.h
           test -f shared/TLinkVPNTaskAdmission.h
           test -f scripts/lib/vpn-task-lane-baseline.mjs
@@ -394,6 +398,7 @@ jobs:
           node scripts/check-vpn-broker-admission-safety.mjs
           node scripts/check-vpn-client-io-safety.mjs
           node scripts/check-vpn-ipc-safety.mjs
+          node scripts/check-vpn-transition-safety.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
           node scripts/check-vpn-p3-trollstore-foreground.mjs
           node scripts/check-vpn-p4-on-demand.mjs
