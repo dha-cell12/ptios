@@ -1,7 +1,7 @@
 # C03aa — retained UTF8 views for readJSON
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `54991dd3`, C03z build passed according to the user.
-Status: **source implemented; new Foundation/CoreFoundation/ARC/ASan/UBSan cases pending macOS CI; device allocation/latency qualification pending**.
+Status: **user reported build `e1f20e22` passed before C03ab; device allocation/latency qualification pending**.
 Finding: **P1-47 storage codec conversions**, partial improvement.
 
 ## Change

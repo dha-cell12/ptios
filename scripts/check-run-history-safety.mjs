@@ -8,7 +8,21 @@ import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [permissionCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const [elapsedCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const elapsedBlock=between(elapsedCurrent,'// Process-local elapsed clocks','NSString *TLinkRunHistoryRootPath(void)');
+const monotonicFunction=between(elapsedCurrent,'static uint64_t TLinkRunHistoryMonotonicMs(void)','static TLinkRunElapsed<50>');
+assert.match(monotonicFunction,/mach_continuous_time\(\)[\s\S]*UINT64_MAX/);
+assert.match(elapsedBlock,/remember\([\s\S]*catch \(\.\.\.\)[\s\S]*@catch/);
+const permissionCurrent=elapsedCurrent.replace('#include "TLinkRunElapsed.h"\n#include <mach/mach_time.h>\n','').replace(elapsedBlock,'')
+    .replace('            uint64_t monotonicStarted = TLinkRunHistoryMonotonicMs();\n','')
+    .replace('            TLinkRunHistoryRememberElapsed(runId, now, monotonicStarted);\n','')
+    .replace('@(TLinkRunHistoryDuration(runId, startedAt, endedAt))','@(endedAt >= startedAt ? endedAt - startedAt : 0)')
+    .replace('            TLinkRunHistoryForgetElapsed(runId);\n','');
+assert.equal(createHash('sha256').update(permissionCurrent.trim()).digest('hex'),'fc3231d21d671e2317b2b544eea5f2a9bfbe1ef18ee827f796cbde7ea9dffeee','reversing only optional local elapsed tracking reproduces complete user-passed C03aa history at e1f20e22');
+const beginElapsed=between(elapsedCurrent,'NSDictionary *TLinkRunHistoryBegin','NSDictionary *TLinkRunHistoryFinish');
+const finishElapsed=between(elapsedCurrent,'NSDictionary *TLinkRunHistoryFinish','// Failed status counts/runs');
+assert.ok(beginElapsed.indexOf('TLinkRunHistoryRememberElapsed(')>beginElapsed.indexOf('if (!TLinkRunHistoryWriteIndex('));
+assert.ok(finishElapsed.indexOf('TLinkRunHistoryForgetElapsed(')>finishElapsed.indexOf('if (!TLinkRunHistoryWriteIndex('));
 const permissionBlock=between(permissionCurrent,'static void TLinkRunHistoryEnsureDirectories','static void TLinkRunHistoryReleaseFileLock');
 assert.match(permissionBlock,/struct stat directoryInfo\[3\][\s\S]*struct stat &info = directoryInfo\[index\+\+\]/);
 assert.match(permissionBlock,/if \(\(info.st_mode & 07777\) != 0750\) chmod/);
@@ -238,6 +252,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
+console.log('History elapsed source passed: bounded optional local continuous clocks, registration/retirement after index ACK, unchanged epoch fields and complete previous source.');
 console.log('History metadata permissions source passed: reuse preflight stats, mode/owner-specific repairs and post-validation descriptor targeting; complete previous source retained.');
 console.log('History console tail source passed: same-descriptor regular-file size, fixed 256-KiB window, bounded pread/EINTR/EOF and finally close; complete previous source retained.');
 console.log('History shared snapshot lock source passed: snapshot-only LOCK_SH, default exclusive writers, unchanged complete admission/IO/recovery/format source.');
@@ -245,11 +260,21 @@ console.log('History directory/lock source passed: real direct directories, regu
 console.log('History bounded index source passed: 32-MiB preallocation/read and encoded index cap, regular descriptor/ENOENT/chunk/EOF/finally policy and complete prior source.');
 console.log('History checked snapshot source passed: no unlocked read/fallback, fixed errors, read-only recovery state, caught read/format faults and complete frozen success/mutation source.');
 console.log('Run history source passed: compact index with unchanged artifact formatting and logical payloads, checked per-ID retirement and retained-reference protection, lock-inode pending marker coordinates warm owners, required-write recovery, fail-closed reads, checked commit/cleanup, diagnostics, finally and frozen record/status fields.');
+const coreRoot=resolve(tmpdir()),coreTemp=await mkdtemp(join(coreRoot,'tlink-history-elapsed-'));
+try{
+    const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
+    const binary=join(coreTemp,windows?'history-elapsed.exe':'history-elapsed'),file=join(root,'test/history-elapsed-safety-test.cpp');
+    const execute=(command,args)=>{const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);};
+    execute(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(coreTemp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',file,'-o',binary]);
+    execute(binary,[]);
+}finally{assert.equal(dirname(coreTemp),coreRoot);assert.ok(basename(coreTemp).startsWith('tlink-history-elapsed-'));await rm(coreTemp,{recursive:true,force:true});}
 if(process.platform!=='darwin'){
     console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
 }else{
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
     const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
+        .replace(monotonicFunction,'static uint64_t TLinkRunHistoryMonotonicMs(void) { return historyMonotonicNow(); }\n\n')
+        .replace('sTLinkRunHistoryElapsed.remember(','historyRememberElapsedHook(sTLinkRunHistoryElapsed,')
         .replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;')
         .replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:')
         .replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];')
@@ -281,7 +306,7 @@ if(process.platform!=='darwin'){
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(permissionCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(elapsedCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
         const binary=join(temp,'run-history-runtime');
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
         run(binary,[temp]);

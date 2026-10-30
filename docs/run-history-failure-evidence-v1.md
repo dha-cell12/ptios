@@ -356,6 +356,25 @@ against metadata changes after observation and does not add a durability or
 permission-repair-success guarantee. Controlled cases require macOS CI; device
 metadata/write/latency qualification remains separate.
 
+## Run duration clocks (C03ab)
+
+started_at_ms and ended_at_ms remain wall-clock epochs. For a matching begin
+committed in this process, duration_ms prefers the elapsed continuous kernel
+clock, so changing wall time during the tracked run does not change that delta.
+Artifact, status and script.run event duration fields use the finished record.
+
+Keep at most 50 FIFO optional starts in memory, keyed by history scope/run ID
+and checked against the authoritative start epoch. Register only after begin's
+index acknowledgment; failed/uncertain finish writes retain tracking for retry.
+Retire on finish index acknowledgment. Tracking failures are best effort and
+do not invalidate a committed history ACK. No timing fields are added on disk.
+
+Untracked, restarted, cross-process or evicted starts, altered start epochs and
+invalid/regressed clocks use the existing max(ended-started, 0) wall fallback.
+That fallback can still be affected by time changes. This is not a persisted
+boot/cross-process elapsed protocol. Real clock/sleep and device qualification
+remain separate from the deterministic core and macOS persistence tests.
+
 ## Capability markers
 
 ```text

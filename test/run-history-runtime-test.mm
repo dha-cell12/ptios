@@ -18,6 +18,11 @@
 #include <set>
 #include <stdexcept>
 #include <vector>
+#include "../shared/TLinkRunElapsed.h"
+#include <mach/mach_time.h>
+namespace RealHistoryClock {
+#include "HistoryClockUnderTest.inc"
+}
 static NSString *historyTestRoot;
 static NSMutableArray *historyEvents;
 static std::mutex historyMutex;
@@ -97,6 +102,15 @@ static int historyLockFchmod(int fd,mode_t mode){assert(historyLocks.count(fd)&&
 static int historyLockFchown(int fd,uid_t uid,gid_t gid){assert(historyLocks.count(fd)&&historyLockFds.count(fd)&&uid==501&&gid==501);++historyLockPermissions;return historyPermissionRepair(historyPermissionTargets?3:NSNotFound,true,true);}
 static std::atomic<unsigned> historyRegexBuilds{0},historyUUIDs{0};
 static std::atomic<uint64_t> historyClockMs{1000000};
+static bool historyMonotonicOverride=false;
+static uint64_t historyMonotonicMs=0;
+static unsigned historyElapsedRememberFault=0;
+static uint64_t historyMonotonicNow(){return historyMonotonicOverride?historyMonotonicMs:historyClockMs.load();}
+static bool historyRememberElapsedHook(TLinkRunElapsed<50> &clock,const char *scope,const char *id,uint64_t wall,uint64_t mono){
+    if(historyElapsedRememberFault==1)[NSException raise:@"HistoryFixture" format:@"elapsed registration failed"];
+    if(historyElapsedRememberFault==2)throw std::runtime_error("elapsed registration failed");
+    return clock.remember(scope,id,wall,mono);
+}
 static unsigned historyReadFault=0;
 static unsigned historyMutationReadFault=0;
 static unsigned historySnapshotReadFault=0;
@@ -273,6 +287,7 @@ static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *
 #define TLinkEventChannelPublish historyPublish
 namespace Current {
 static NSString *fixtureRoot;
+NSString *TLinkRunHistoryRootPath(void);
 #include "HistoryUnderTest.inc"
 }
 namespace Legacy {
@@ -960,7 +975,10 @@ static void historyCompactIndexCases(){
 #include "history-shared-lock-runtime-fixture.inc"
 #include "history-console-tail-runtime-fixture.inc"
 #include "history-permission-runtime-fixture.inc"
+#include "history-elapsed-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
+    uint64_t clockSample=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(clockSample!=UINT64_MAX);
+    for(unsigned n=0;n<32;++n){const uint64_t next=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(next>=clockSample&&next!=UINT64_MAX);clockSample=next;}
     assert(argc==2||argc==3||argc==5||argc==6);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];historyPruneAttempts=[NSMutableArray array];
     if(argc==5){assert([[NSString stringWithUTF8String:argv[2]] isEqualToString:@"--marker-worker"]);return historyMarkerWorker([[NSString stringWithUTF8String:argv[3]] intValue],[NSString stringWithUTF8String:argv[4]]);}
     if(argc==6){
@@ -1078,6 +1096,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historySharedSnapshotLockCases();
     historyConsoleTailCases();
     historyConditionalPermissionCases();
+    historyElapsedCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

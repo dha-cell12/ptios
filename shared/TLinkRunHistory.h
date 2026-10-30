@@ -22,6 +22,8 @@ FOUNDATION_EXPORT NSString *TLinkRunHistoryEvidencePath(void);
 // The index is the commit point; inspect process-local persistence_diagnostics in status.
 // Post-commit retirement only unlinks owned per-ID leaves not referenced by retained runs.
 // Cleanup errors preserve committed success and are reported through those diagnostics.
+// Duration prefers a bounded same-process continuous-clock start after begin's index ACK.
+// Untracked/restarted/mismatched starts retain wall-clock fallback; persisted epochs stay wall based.
 FOUNDATION_EXPORT NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
                                                      NSString *bundlePath,
                                                      NSString *entryPath,

@@ -1,5 +1,7 @@
 #import "TLinkRunHistory.h"
 #import "TLinkEventChannel.h"
+#include "TLinkRunElapsed.h"
+#include <mach/mach_time.h>
 
 #include <fcntl.h>
 #include <errno.h>
@@ -34,6 +36,47 @@ static NSObject *TLinkRunHistoryLock(void)
 static uint64_t TLinkRunHistoryNowMs(void)
 {
     return (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
+}
+
+// Process-local elapsed clocks are optional; persistence remains wall-clock based.
+static uint64_t TLinkRunHistoryMonotonicMs(void)
+{
+    static const mach_timebase_info_data_t scale = [] {
+        mach_timebase_info_data_t value{};
+        if (mach_timebase_info(&value) != KERN_SUCCESS) value = {};
+        return value;
+    }();
+    if (!scale.numer || !scale.denom) return UINT64_MAX;
+    const __uint128_t ms = (__uint128_t)mach_continuous_time() * scale.numer / ((uint64_t)scale.denom * 1000000);
+    return ms >= UINT64_MAX ? UINT64_MAX : (uint64_t)ms;
+}
+
+static TLinkRunElapsed<50> sTLinkRunHistoryElapsed;
+static BOOL TLinkRunHistoryElapsedIDValid(NSString *runId)
+{
+    return runId.length > 0 && runId.length <= 96 && [runId rangeOfString:@"\0"].location == NSNotFound;
+}
+static void TLinkRunHistoryRememberElapsed(NSString *runId, uint64_t wall, uint64_t mono)
+{
+    @try { try {
+        if (TLinkRunHistoryElapsedIDValid(runId))
+            sTLinkRunHistoryElapsed.remember(TLinkRunHistoryRootPath().UTF8String, runId.UTF8String, wall, mono);
+    } catch (...) {} } @catch (__unused NSException *exception) {}
+}
+static uint64_t TLinkRunHistoryDuration(NSString *runId, uint64_t start, uint64_t end)
+{
+    @try { try {
+        if (TLinkRunHistoryElapsedIDValid(runId))
+            return sTLinkRunHistoryElapsed.duration(TLinkRunHistoryRootPath().UTF8String, runId.UTF8String, start, end, TLinkRunHistoryMonotonicMs());
+    } catch (...) {} } @catch (__unused NSException *exception) {}
+    return TLinkRunElapsed<50>::wallDuration(start, end);
+}
+static void TLinkRunHistoryForgetElapsed(NSString *runId)
+{
+    @try { try {
+        if (TLinkRunHistoryElapsedIDValid(runId))
+            sTLinkRunHistoryElapsed.forget(TLinkRunHistoryRootPath().UTF8String, runId.UTF8String);
+    } catch (...) {} } @catch (__unused NSException *exception) {}
 }
 
 NSString *TLinkRunHistoryRootPath(void)
@@ -535,6 +578,7 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
         @try { try {
             runId = [NSUUID UUID].UUIDString.lowercaseString;
             uint64_t now = TLinkRunHistoryNowMs();
+            uint64_t monotonicStarted = TLinkRunHistoryMonotonicMs();
             NSString *recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:
                 [NSString stringWithFormat:@"%@.json", TLinkRunHistorySanitize(runId)]];
             record = @{
@@ -565,6 +609,7 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
             if (!TLinkRunHistoryWriteJSON(record, recordPath)) { TLinkRunHistoryPersistenceFailure(@"begin", stage, @"write_failed"); return @{}; }
             stage = @"index";
             if (!TLinkRunHistoryWriteIndex(runs)) { TLinkRunHistoryPersistenceFailure(@"begin", stage, @"write_failed"); return @{}; }
+            TLinkRunHistoryRememberElapsed(runId, now, monotonicStarted);
             stage = @"commit_marker";
             (void)TLinkRunHistorySetPending(lockFd, NO, @"begin", stage);
             TLinkRunHistoryPrune(retired, runs);
@@ -629,7 +674,7 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
             record[@"run_id"] = runId;
             record[@"state"] = terminalState;
             record[@"ended_at_ms"] = @(endedAt);
-            record[@"duration_ms"] = @(endedAt >= startedAt ? endedAt - startedAt : 0);
+            record[@"duration_ms"] = @(TLinkRunHistoryDuration(runId, startedAt, endedAt));
             record[@"error"] = redactedError;
             if (extra.count > 0) record[@"extra"] = extra;
 
@@ -678,6 +723,7 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
             if (!TLinkRunHistoryWriteJSON(record, recordPath)) { TLinkRunHistoryPersistenceFailure(@"finish", stage, @"write_failed"); return @{}; }
             stage = @"index";
             if (!TLinkRunHistoryWriteIndex(runs)) { TLinkRunHistoryPersistenceFailure(@"finish", stage, @"write_failed"); return @{}; }
+            TLinkRunHistoryForgetElapsed(runId);
             stage = @"commit_marker";
             (void)TLinkRunHistorySetPending(lockFd, NO, @"finish", stage);
             TLinkRunHistoryPrune(retired, runs);
