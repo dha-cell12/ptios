@@ -70,7 +70,7 @@ static NSMutableDictionary<NSValue *,TimerRecord *> *timers;
 static TimerRecord *lastTimer;
 static NSMutableArray *legacyTimers;
 static bool createFailure=false,realTimer=false;
-static unsigned created=0,cancelled=0,statusReads=0;
+static unsigned created=0,cancelled=0,statusReads=0,controlledFires=0;
 static NSValue *key(dispatch_source_t source){return [NSValue valueWithPointer:(__bridge const void *)source];}
 static dispatch_source_t FixtureCreate(dispatch_source_type_t type,uintptr_t handle,uintptr_t mask,dispatch_queue_t queue){
     if(createFailure)return nullptr;dispatch_source_t source=dispatch_source_create(type,handle,mask,queue);assert(source);
@@ -114,17 +114,31 @@ static void FixtureAfter(dispatch_time_t when,dispatch_queue_t queue,dispatch_bl
 #undef NSNotificationCenter
 #undef dispatch_after
 static void pump(){for(unsigned n=0;n<10;++n)CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,false);}
+static void awaitResult(NSMutableArray *results){
+    const CFAbsoluteTime end=CFAbsoluteTimeGetCurrent()+5;
+    while(results.count==0&&CFAbsoluteTimeGetCurrent()<end)pump();
+    assert(results.count==1);
+}
 static void awaitManagers(){const CFAbsoluteTime end=CFAbsoluteTimeGetCurrent()+5;while(managers.load()!=0&&CFAbsoluteTimeGetCurrent()<end)pump();assert(managers.load()==0);}
 static void reset(){
     assert(observers.count==0&&created==cancelled);[timers removeAllObjects];lastTimer=nil;[legacyTimers removeAllObjects];lastObserverBlock=nil;activeConnection=nil;
-    createFailure=realTimer=false;registrationStatus=-1;registrationFault=0;statusReads=0;pump();
+    createFailure=realTimer=false;registrationStatus=-1;registrationFault=0;statusReads=0;controlledFires=0;pump();
 }
 static NEVPNManager *managerFor(BOOL connect){NEVPNManager *manager=[NEVPNManager new];manager.connection.status=connect?NEVPNStatusConnecting:NEVPNStatusDisconnecting;activeConnection=manager.connection;return manager;}
 static void begin(BOOL legacy,NEVPNManager *manager,BOOL connect,double timeout,TLinkVPNResultCompletion completion){
     if(legacy)LegacyTransition(manager,connect,connect?NEVPNStatusConnected:NEVPNStatusDisconnected,timeout,completion);
     else TLinkVPNBeginTransition(manager,connect,connect?NEVPNStatusConnected:NEVPNStatusDisconnected,timeout,completion);
 }
-static void fire(BOOL legacy){if(legacy){dispatch_block_t block=legacyTimers.lastObject;assert(block);block();}else{dispatch_block_t block=lastTimer.handler;assert(block);block();}}
+static void fire(BOOL legacy){
+    ++controlledFires;
+    if(legacy){
+        assert(legacyTimers.count==1);
+        dispatch_block_t block=legacyTimers.lastObject;assert(block);block();
+    }else{
+        assert(lastTimer&&!lastTimer.cancelled&&lastTimer.arms==1);
+        dispatch_block_t block=lastTimer.handler;assert(block);block();
+    }
+}
 static NSDictionary *scenario(BOOL legacy,BOOL connect,unsigned kind){
     reset();NEVPNManager *manager=managerFor(connect);NSMutableArray *results=[NSMutableArray array];
     if(kind==3&&connect){manager.connection.failStart=YES;manager.connection.nativeError=YES;}
@@ -132,7 +146,17 @@ static NSDictionary *scenario(BOOL legacy,BOOL connect,unsigned kind){
     begin(legacy,manager,connect,20,^(NSDictionary *value){[results addObject:value];});
     if(kind<3){manager.connection.status=kind==0?(connect?NEVPNStatusConnected:NEVPNStatusDisconnected):kind==1?NEVPNStatusInvalid:NEVPNStatusDisconnected;
         [[NSNotificationCenter defaultCenter] postNotificationName:NEVPNStatusDidChangeNotification object:manager.connection];pump();}
-    if(results.count==0)fire(legacy);pump();assert(results.count==1&&observers.count==0);
+    // Completion is queued on main even when start/notification finished inline.
+    // Only the nonterminal cases below actually need a controlled timeout.
+    const bool expectsTimeout=kind==4||(kind==3&&!connect)||(kind==1&&!connect);
+    if(expectsTimeout){assert(results.count==0);fire(legacy);}
+    awaitResult(results);
+    assert(observers.count==0&&controlledFires==(expectsTimeout?1U:0U));
+    if(expectsTimeout)assert([results[0][@"code"] isEqualToString:@"vpn_transition_timeout"]);
+    if(kind==3&&connect){
+        assert([results[0][@"code"] isEqualToString:@"vpn_start_failed"]);
+        if(legacy){assert(legacyTimers.count==0);}else{assert(lastTimer.cancelled&&lastTimer.arms==0);}
+    }
     if(!legacy){assert(lastTimer.cancelled);dispatch_block_t late=lastTimer.handler;late();pump();assert(results.count==1);}
     return results[0];
 }
@@ -154,15 +178,15 @@ static void ownershipCases(){
         NEVPNManager *manager=managerFor(YES);releasedManager=manager;NSMutableArray *results=[NSMutableArray array];
         begin(NO,manager,YES,30,^(NSDictionary *value){[results addObject:value];});
         dispatch_block_t lateTimer=lastTimer.handler;void (^lateObserver)(NSNotification *)=[lastObserverBlock copy];
-        manager.connection.status=NEVPNStatusConnected;lateObserver(nil);pump();assert(results.count==1&&lastTimer.cancelled&&observers.count==0);
+        manager.connection.status=NEVPNStatusConnected;lateObserver(nil);awaitResult(results);assert(lastTimer.cancelled&&observers.count==0);
         const unsigned reads=statusReads;lateTimer();lateObserver(nil);pump();assert(statusReads==reads&&results.count==1);
         lateTimer=nil;lateObserver=nil;manager=nil;
     }
     reset();awaitManagers();assert(!releasedManager); // No retention until the former 30-second deadline.
     reset();registrationStatus=NEVPNStatusConnected;
-    @autoreleasepool{NEVPNManager *manager=managerFor(YES);NSMutableArray *results=[NSMutableArray array];begin(NO,manager,YES,30,^(NSDictionary *value){[results addObject:value];});pump();assert(results.count==1&&observers.count==0&&lastTimer.cancelled&&manager.connection.starts==0&&lastTimer.arms==0);}
+    @autoreleasepool{NEVPNManager *manager=managerFor(YES);NSMutableArray *results=[NSMutableArray array];begin(NO,manager,YES,30,^(NSDictionary *value){[results addObject:value];});awaitResult(results);assert(observers.count==0&&lastTimer.cancelled&&manager.connection.starts==0&&lastTimer.arms==0);}
     reset();createFailure=true;
-    @autoreleasepool{NEVPNManager *manager=managerFor(YES);NSMutableArray *results=[NSMutableArray array];begin(NO,manager,YES,30,^(NSDictionary *value){[results addObject:value];});pump();assert(results.count==1&&[results[0][@"code"] isEqualToString:@"vpn_transition_timer_failed"]&&manager.connection.starts==0&&observers.count==0);}
+    @autoreleasepool{NEVPNManager *manager=managerFor(YES);NSMutableArray *results=[NSMutableArray array];begin(NO,manager,YES,30,^(NSDictionary *value){[results addObject:value];});awaitResult(results);assert([results[0][@"code"] isEqualToString:@"vpn_transition_timer_failed"]&&manager.connection.starts==0&&observers.count==0);}
     reset();
     for(unsigned site=0;site<2;++site){
         for(unsigned kind=1;kind<=2;++kind){

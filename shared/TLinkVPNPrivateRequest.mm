@@ -1,4 +1,5 @@
 #import "TLinkVPNPrivateRequest.h"
+#include "TLinkVPNHelperChild.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -77,6 +78,15 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
             NO, @"vpn_private_request_invalid", nil);
     }
 
+    // BEGIN bounded VPN helper admission.
+    TLinkVPNHelperChild::Owner child;
+    if (!child.admitted()) {
+        return TLinkVPNRequestResult(NO, @"vpn_private_helper_busy", nil);
+    }
+    if (!child.ready()) {
+        return TLinkVPNRequestResult(NO, @"vpn_private_helper_monitor_failed", nil);
+    }
+    // END bounded VPN helper admission.
     NSFileManager *fm = [NSFileManager defaultManager];
     NSError *directoryError = nil;
     if (![fm createDirectoryAtPath:kTLinkVPNRequestDirectory
@@ -108,6 +118,7 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
         stringByAppendingPathComponent:[NSString stringWithFormat:
             @"vpnconf-%@.plist", requestID]];
     NSString *resultPath = [requestPath stringByAppendingString:@".result"];
+    child.paths(requestPath.fileSystemRepresentation, resultPath.fileSystemRepresentation);
 
     NSMutableDictionary *request = [@{
         @"version": @2,
@@ -146,6 +157,7 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
                 @"native_errno": @(errno),
             });
     }
+    child.createdRequest();
     BOOL requestWritten = fchmod(requestFd, 0600) == 0 &&
         (callerUID != 0 || fchown(requestFd, 501, 501) == 0) &&
         TLinkVPNRequestWriteAll(requestFd, requestData);
@@ -194,6 +206,7 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
     pid_t pid = -1;
     int spawnResult = posix_spawn(
         &pid, cpath, NULL, attrPointer, argv, environ);
+    if (spawnResult == 0) child.adopted(pid);
     if (attrInitialized) posix_spawnattr_destroy(&attr);
     free(arg0); free(arg1); free(arg2);
     if (spawnResult != 0) {
@@ -208,11 +221,20 @@ NSDictionary *TLinkVPNRunPrivateConfigurationHelper(
             });
     }
 
-    int status = 0;
-    pid_t waited = -1;
-    do {
-        waited = waitpid(pid, &status, 0);
-    } while (waited < 0 && errno == EINTR);
+    // BEGIN bounded VPN helper wait.
+    const TLinkVPNHelperChild::Result childResult = child.wait();
+    const int status = childResult.status;
+    const pid_t waited = childResult.retired && childResult.reason == TLinkVPNHelperChild::Reason::Finished ? pid : -1;
+    if (childResult.reason != TLinkVPNHelperChild::Reason::Finished) {
+        return TLinkVPNRequestResult(NO,
+            childResult.reason == TLinkVPNHelperChild::Reason::Timeout
+                ? @"vpn_private_helper_timeout" : @"vpn_private_helper_wait_failed", @{
+                @"native_errno": @(childResult.error),
+                @"signal_errno": @(childResult.signalError),
+                @"helper_reap_pending": @(!childResult.retired),
+            });
+    }
+    // END bounded VPN helper wait.
     [fm removeItemAtPath:requestPath error:nil];
 
     struct stat resultStat = {};
