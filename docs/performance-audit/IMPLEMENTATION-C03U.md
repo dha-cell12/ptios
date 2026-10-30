@@ -1,7 +1,7 @@
 # C03u — bounded Run History index IO and encoded output
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `232ebbe7`, C03t build passed according to the user. Complete normalized `shared/TLinkRunHistory.mm` SHA-256: `0a26786c6524c793502bf585c3c87583fe34676e446a9579439395500f76312e`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; device qualification pending**.
+Status: **build passed according to the user before C03v; committed at `d4f8fa95`; independent device qualification pending**.
 Finding: **P1-48/P1-51/P1-53 index byte admission**.
 
 ## Change

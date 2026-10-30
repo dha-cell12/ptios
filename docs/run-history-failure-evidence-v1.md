@@ -237,7 +237,8 @@ existing history lock. Require a regular file and nonnegative size, then admit
 at most 32 MiB before buffer allocation or JSON parsing. Direct symlinks,
 dangling links, FIFO, directories and open/stat errors return read_failed;
 only open ENOENT bootstraps empty. The former NSData/NSError bootstrap test is
-removed. This does not harden all ancestor/root path races or the lock protocol.
+removed. C03v below adds direct-directory and lock-inode admission; arbitrary
+ancestor/path races remain outside its guarantee.
 
 Read the admitted size in chunks of at most 64 KiB, retry EINTR and accumulate
 short reads. Early EOF/EIO fail; an extra one-byte probe rejects observed growth
@@ -265,6 +266,39 @@ Files exactly at the limit are readable/writable. This bounds file/read-buffer
 and encoded-index bytes, not JSON graph/RSS, producer encoding, record/evidence
 sizes, elapsed IO/lock time or durability. New Foundation/POSIX cases await CI
 macOS; device qualification remains separate.
+
+## Validated history directory/lock admission (C03v)
+
+Preflight root, runs and evidence in that order with lstat. Create only missing
+directories, recheck their real directory type and apply existing directory
+permissions only after the whole direct set passes. A direct symlink, regular
+file or FIFO is refused before permissions can follow it. Newly created private
+directories can remain if a later path fails. Fixed ancestors are unchanged.
+
+Before lock open, require all three direct directories to be real. Retain
+O_CREAT|O_RDWR|O_NOFOLLOW|O_NONBLOCK and blocking exclusive flock. Require a
+regular single-link descriptor before flock. After flock, the lock pathname
+must remain regular/single-link with matching device/inode, and all direct
+directories must still validate. Missing/replaced/aliased paths fail before
+index reads, pending-marker changes or recovery. Unlock/close rejected handles.
+
+Only after validation apply lock permissions through fchmod/fchown on the
+descriptor. Preserve their existing best-effort syscall policy; do not chmod
+the lock pathname. Refusal uses mutation lock/history_lock_failed and status
+history_snapshot_lock_failed; SDK handling is unchanged. Admission failure
+does not reset the recovery gate, change marker/index/artifact bytes or emit
+events. Directories still receive the existing preparation metadata operations.
+
+Marker length validation remains a separate mutation step; a regular single-link
+lock with an invalid marker size can still support read-only status. Existing
+schema, commit/repair/retirement and status fields remain unchanged. Hardlinks
+and invalid direct directories now fail earlier than the marker/recovery stage.
+
+Every cooperating writer and maintenance operation must retain one stable lock
+inode, never unlink/replace it while actors may be active. These checks validate
+specific admission points; they do not prevent arbitrary races after checks or
+establish ancestor pinning, epochs, fsync or power-loss durability. Additional
+metadata/lock latency and new Foundation/POSIX cases require CI/device validation.
 
 ## Capability markers
 

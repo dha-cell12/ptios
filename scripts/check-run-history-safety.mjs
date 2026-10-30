@@ -8,7 +8,19 @@ import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [boundedCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const [admittedCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const directoryLock=between(admittedCurrent,'// Validate direct directories','static void TLinkRunHistoryReleaseFileLock');
+assert.match(directoryLock,/lstat\(path.fileSystemRepresentation, &info\)[\s\S]*S_ISDIR\(info.st_mode\)/);
+assert.match(directoryLock,/if \(errno != ENOENT\) return/);
+assert.match(directoryLock,/fstat\(fd, &opened\)[\s\S]*S_ISREG\(opened.st_mode\)[\s\S]*opened.st_nlink != 1/);
+assert.match(directoryLock,/current.st_dev != opened.st_dev \|\| current.st_ino != opened.st_ino/);
+assert.match(directoryLock,/flock\(fd, LOCK_UN\);\n        close\(fd\);/);
+assert.match(directoryLock,/fchmod\(fd, 0640\);\n    fchown\(fd, 501, 501\);/);
+assert.ok(directoryLock.indexOf('fchmod(fd')>directoryLock.indexOf('current.st_ino'));
+assert.ok(directoryLock.indexOf('current.st_ino')>directoryLock.indexOf('flock(fd, LOCK_EX)'));
+const oldDirectoryLock="static void TLinkRunHistoryEnsureDirectories(void)\n{\n    NSDictionary *attributes = @{NSFilePosixPermissions: @0750};\n    NSFileManager *fm = [NSFileManager defaultManager];\n    for (NSString *path in @[TLinkRunHistoryRootPath(), TLinkRunHistoryRunsPath(), TLinkRunHistoryEvidencePath()]) {\n        [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:attributes error:nil];\n        chmod(path.fileSystemRepresentation, 0750);\n        lchown(path.fileSystemRepresentation, 501, 501);\n    }\n}\n\nstatic int TLinkRunHistoryAcquireFileLock(void)\n{\n    NSString *path = TLinkRunHistoryFileLockPath();\n    int fd = open(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640);\n    if (fd < 0) return -1;\n    chmod(path.fileSystemRepresentation, 0640);\n    lchown(path.fileSystemRepresentation, 501, 501);\n    if (flock(fd, LOCK_EX) != 0) {\n        close(fd);\n        return -1;\n    }\n    return fd;\n}\n\n";
+const boundedCurrent=admittedCurrent.replace(directoryLock,oldDirectoryLock);
+assert.equal(createHash('sha256').update(boundedCurrent.trim()).digest('hex'),'efd86cd685eb6b9179fc4f5c949e6836bd9cb070917aa3b5b58d183fc9db1f66','reversing only direct directory/lock inode admission reproduces complete user-passed C03u source at d4f8fa95');
 const boundedIndexRead=between(boundedCurrent,'// Bounded index reads:','// All persisted reads distinguish');
 assert.match(boundedCurrent,/kTLinkRunHistoryIndexMaxBytes = 32 \* 1024 \* 1024/);
 assert.match(boundedIndexRead,/O_RDONLY \| O_NOFOLLOW \| O_NONBLOCK/);
@@ -187,6 +199,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
+console.log('History directory/lock source passed: real direct directories, regular single-link descriptor, post-flock identity and descriptor permissions; complete previous source retained.');
 console.log('History bounded index source passed: 32-MiB preallocation/read and encoded index cap, regular descriptor/ENOENT/chunk/EOF/finally policy and complete prior source.');
 console.log('History checked snapshot source passed: no unlocked read/fallback, fixed errors, read-only recovery state, caught read/format faults and complete frozen success/mutation source.');
 console.log('Run history source passed: compact index with unchanged artifact formatting and logical payloads, checked per-ID retirement and retained-reference protection, lock-inode pending marker coordinates warm owners, required-write recovery, fail-closed reads, checked commit/cleanup, diagnostics, finally and frozen record/status fields.');
@@ -208,6 +221,10 @@ if(process.platform!=='darwin'){
         .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)','historyRecoveryOpen(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)')
         .replace('fstat(fd, &info)','historyRecoveryStat(fd, &info)')
         .replace('fstat(lockFd, &marker)','historyMarkerStat(lockFd, &marker)')
+        .replace('open(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)','historyLockOpen(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)')
+        .replace('fstat(fd, &opened)','historyLockStat(fd, &opened)')
+        .replace('fchmod(fd, 0640)','historyLockFchmod(fd, 0640)')
+        .replace('fchown(fd, 501, 501)','historyLockFchown(fd, 501, 501)')
         .replace('ftruncate(lockFd, pending ? 1 : 0)','historyMarkerTruncate(lockFd, pending ? 1 : 0)')
         .replace('read(fd, (uint8_t *)data.mutableBytes + offset, count)','historyRecoveryRead(fd, (uint8_t *)data.mutableBytes + offset, count)')
         .replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0')
@@ -216,7 +233,7 @@ if(process.platform!=='darwin'){
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(boundedCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(admittedCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
         const binary=join(temp,'run-history-runtime');
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
         run(binary,[temp]);

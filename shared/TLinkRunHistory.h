@@ -17,6 +17,8 @@ FOUNDATION_EXPORT NSString *TLinkRunHistoryEvidencePath(void);
 // Required write failures re-enable recovery before a later mutation in this process.
 // A pending marker on the held lock inode also forces recovery in another warm process.
 // All writers must use this marker protocol; the lock file must never be replaced.
+// Admission requires real direct directories and one regular single-link lock inode,
+// with matching pathname identity after flock; lock permissions target its descriptor.
 // The index is the commit point; inspect process-local persistence_diagnostics in status.
 // Post-commit retirement only unlinks owned per-ID leaves not referenced by retained runs.
 // Cleanup errors preserve committed success and are reported through those diagnostics.

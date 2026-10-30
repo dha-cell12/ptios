@@ -74,12 +74,31 @@ static NSString *TLinkRunHistorySanitize(NSString *value)
     return safe.length > 0 ? safe : @"run";
 }
 
+// Validate direct directories and the stable lock inode before index admission.
+static BOOL TLinkRunHistoryDirectoriesValid(void)
+{
+    for (NSString *path in @[TLinkRunHistoryRootPath(), TLinkRunHistoryRunsPath(), TLinkRunHistoryEvidencePath()]) {
+        struct stat info;
+        if (lstat(path.fileSystemRepresentation, &info) != 0 || !S_ISDIR(info.st_mode)) return NO;
+    }
+    return YES;
+}
+
 static void TLinkRunHistoryEnsureDirectories(void)
 {
-    NSDictionary *attributes = @{NSFilePosixPermissions: @0750};
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *path in @[TLinkRunHistoryRootPath(), TLinkRunHistoryRunsPath(), TLinkRunHistoryEvidencePath()]) {
-        [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:attributes error:nil];
+    NSArray *paths = @[TLinkRunHistoryRootPath(), TLinkRunHistoryRunsPath(), TLinkRunHistoryEvidencePath()];
+    for (NSString *path in paths) {
+        struct stat info;
+        if (lstat(path.fileSystemRepresentation, &info) != 0) {
+            if (errno != ENOENT) return;
+            [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES
+                                                     attributes:@{NSFilePosixPermissions: @0750} error:nil];
+            if (lstat(path.fileSystemRepresentation, &info) != 0) return;
+        }
+        if (!S_ISDIR(info.st_mode)) return;
+    }
+    // Do not apply directory permissions until every direct directory passed preflight.
+    for (NSString *path in paths) {
         chmod(path.fileSystemRepresentation, 0750);
         lchown(path.fileSystemRepresentation, 501, 501);
     }
@@ -87,15 +106,28 @@ static void TLinkRunHistoryEnsureDirectories(void)
 
 static int TLinkRunHistoryAcquireFileLock(void)
 {
+    if (!TLinkRunHistoryDirectoriesValid()) return -1;
     NSString *path = TLinkRunHistoryFileLockPath();
     int fd = open(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640);
     if (fd < 0) return -1;
-    chmod(path.fileSystemRepresentation, 0640);
-    lchown(path.fileSystemRepresentation, 501, 501);
+    struct stat opened;
+    if (fstat(fd, &opened) != 0 || !S_ISREG(opened.st_mode) || opened.st_nlink != 1) {
+        close(fd);
+        return -1;
+    }
     if (flock(fd, LOCK_EX) != 0) {
         close(fd);
         return -1;
     }
+    struct stat current;
+    if (lstat(path.fileSystemRepresentation, &current) != 0 || !S_ISREG(current.st_mode) || current.st_nlink != 1 ||
+        current.st_dev != opened.st_dev || current.st_ino != opened.st_ino || !TLinkRunHistoryDirectoriesValid()) {
+        flock(fd, LOCK_UN);
+        close(fd);
+        return -1;
+    }
+    fchmod(fd, 0640);
+    fchown(fd, 501, 501);
     return fd;
 }
 

@@ -22,6 +22,21 @@ static NSString *historyTestRoot;
 static NSMutableArray *historyEvents;
 static std::mutex historyMutex;
 static std::set<int> historyLocks;
+static std::set<int> historyLockFds;
+static size_t historyLockPermissions=0;
+static bool historyLockOpenFault=false,historyLockStatFault=false;
+static std::function<void()> historyAfterLock;
+static NSMutableArray *historyPermissionPaths;
+static int historyLockOpen(const char *path,int flags,mode_t mode){
+    assert(flags==(O_CREAT|O_RDWR|O_NOFOLLOW|O_NONBLOCK)&&mode==0640);
+    if(historyLockOpenFault){errno=EACCES;return -1;}
+    int fd=::open(path,flags,mode);if(fd>=0)assert(historyLockFds.insert(fd).second);return fd;
+}
+static int historyLockStat(int fd,struct stat *info){
+    assert(historyLockFds.count(fd));if(historyLockStatFault){errno=EIO;return -1;}return ::fstat(fd,info);
+}
+static int historyLockFchmod(int fd,mode_t mode){assert(historyLocks.count(fd)&&historyLockFds.count(fd)&&mode==0640);++historyLockPermissions;return 0;}
+static int historyLockFchown(int fd,uid_t uid,gid_t gid){assert(historyLocks.count(fd)&&historyLockFds.count(fd)&&uid==501&&gid==501);++historyLockPermissions;return 0;}
 static std::atomic<unsigned> historyRegexBuilds{0},historyUUIDs{0};
 static std::atomic<uint64_t> historyClockMs{1000000};
 static unsigned historyReadFault=0;
@@ -151,15 +166,18 @@ static NSData *historyReadBoundedData(BOOL *missing,NSString **code,NSString *op
     if([operation isEqualToString:@"snapshot"]?historySnapshotReadFault:historyMutationReadFault){*code=@"read_failed";return nil;}
     return reader(missing,code);
 }
-static int historyChmod(const char *path,mode_t mode){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(mode==0750||mode==0640);return 0;}
-static int historyChown(const char *path,uid_t uid,gid_t gid){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(uid==501&&gid==501);return 0;}
+static int historyChmod(const char *path,mode_t mode){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(mode==0750||mode==0640);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return 0;}
+static int historyChown(const char *path,uid_t uid,gid_t gid){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(uid==501&&gid==501);[historyPermissionPaths addObject:[NSString stringWithUTF8String:path]];return 0;}
 static int historyFlock(int fd,int operation){
     if(historyLockDenied&&operation==LOCK_EX){errno=EACCES;return -1;}
     const int result=::flock(fd,operation);
-    if(!result){std::lock_guard<std::mutex> guard(historyMutex);if(operation==LOCK_EX)assert(historyLocks.insert(fd).second);else if(operation==LOCK_UN)assert(historyLocks.erase(fd)==1);}
+    if(!result){
+        {std::lock_guard<std::mutex> guard(historyMutex);if(operation==LOCK_EX)assert(historyLocks.insert(fd).second);else if(operation==LOCK_UN)assert(historyLocks.erase(fd)==1);}
+        if(operation==LOCK_EX&&historyAfterLock)historyAfterLock();
+    }
     return result;
 }
-static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);historyIndexFds.erase(fd);return ::close(fd);}
+static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);historyIndexFds.erase(fd);historyLockFds.erase(fd);return ::close(fd);}
 static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *type,NSDictionary *payload){
     std::lock_guard<std::mutex> guard(historyMutex);assert(historyLocks.empty());
     NSDictionary *event=@{@"runtime":runtime,@"topic":topic,@"type":type,@"payload":payload};[historyEvents addObject:event];return event;
@@ -512,7 +530,10 @@ static void historyRecoveryCases(const char *executable){
     assert(::symlink(destination.fileSystemRepresentation,linked.fileSystemRepresentation)==0);
     NSData *empty=[@"{\"schema\":\"run_history_v1\",\"runs\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
     assert([empty writeToFile:[Current::fixtureRoot stringByAppendingPathComponent:@"index.json"] atomically:YES]);
-    historyRecoveryReject(true,@"recovery_read_failed");assert(![fm contentsOfDirectoryAtPath:destination error:nil].count);
+    const BOOL readyBefore=Current::sTLinkRunHistoryRecovered;const size_t readsBefore=historyIndexReads;
+    [historyWriteAttempts removeAllObjects];assert(!historyMutation(true).count&&!historyWriteAttempts.count&&historyIndexReads==readsBefore);
+    assert(Current::sTLinkRunHistoryRecovered==readyBefore&&[Current::sTLinkRunHistoryLastPersistenceFailure[@"code"] isEqualToString:@"history_lock_failed"]);
+    assert(![fm contentsOfDirectoryAtPath:destination error:nil].count);
     assert(::unlink(linked.fileSystemRepresentation)==0);assert(historyMutation(true).count);
     Current::fixtureRoot=savedRoot;Current::sTLinkRunHistoryRecovered=YES;
 }
@@ -698,7 +719,7 @@ static void historyMarkerFaultCases(){
     fd=Current::TLinkRunHistoryAcquireFileLock();assert(fd>=0&&::ftruncate(fd,0)==0);Current::TLinkRunHistoryReleaseFileLock(fd);assert(historyMutation(true).count);
     NSString *alias=[historyTestRoot stringByAppendingPathComponent:@"lock-hardlink"];assert(::link(lockPath.fileSystemRepresentation,alias.fileSystemRepresentation)==0);
     [historyWriteAttempts removeAllObjects];assert(!historyMutation(true).count&&!historyWriteAttempts.count&&historyPendingSize()==0);
-    assert([Current::sTLinkRunHistoryLastPersistenceFailure[@"code"] isEqualToString:@"history_marker_invalid"]);
+    assert([Current::sTLinkRunHistoryLastPersistenceFailure[@"code"] isEqualToString:@"history_lock_failed"]);
     assert(::unlink(alias.fileSystemRepresentation)==0);assert(historyMutation(true).count);
     NSString *backup=[lockPath stringByAppendingString:@".saved"],*outside=[historyTestRoot stringByAppendingPathComponent:@"marker-outside.bin"];
     NSData *outsideBytes=[@"do not truncate" dataUsingEncoding:NSUTF8StringEncoding];assert([outsideBytes writeToFile:outside atomically:YES]);
@@ -805,9 +826,12 @@ static void historyRetirementCases(){
     NSString *otherDir=[historyTestRoot stringByAppendingPathComponent:@"outside-evidence"];
     assert([fm createDirectoryAtPath:otherDir withIntermediateDirectories:NO attributes:nil error:nil]);
     for(NSString *path in @[metadata,shot])assert([outsideBytes writeToFile:[otherDir stringByAppendingPathComponent:path.lastPathComponent] atomically:YES]);
+    // Isolate the existing retirement guard: replace the parent only after valid admission.
+    const int parentLock=Current::TLinkRunHistoryAcquireFileLock();assert(parentLock>=0);
     assert(::rename(evidenceDir.fileSystemRepresentation,backup.fileSystemRepresentation)==0&&::symlink(otherDir.fileSystemRepresentation,evidenceDir.fileSystemRepresentation)==0);
     const uint64_t parentFailures=Current::sTLinkRunHistoryPersistenceFailures;[historyPruneAttempts removeAllObjects];
-    historyPruneOwned(@[@{@"run_id":victim[@"run_id"],@"failure_evidence":victim[@"failure_evidence"]}],@[]);
+    @try{Current::TLinkRunHistoryPrune(@[@{@"run_id":victim[@"run_id"],@"failure_evidence":victim[@"failure_evidence"]}],@[]);}
+    @finally{Current::TLinkRunHistoryReleaseFileLock(parentLock);}
     assert(!historyPruneAttempts.count&&Current::sTLinkRunHistoryPersistenceFailures==parentFailures+2);
     for(NSString *path in @[metadata,shot])assert([outsideBytes isEqual:[NSData dataWithContentsOfFile:[otherDir stringByAppendingPathComponent:path.lastPathComponent]]]);
     assert(::unlink(evidenceDir.fileSystemRepresentation)==0&&::rename(backup.fileSystemRepresentation,evidenceDir.fileSystemRepresentation)==0);
@@ -868,6 +892,7 @@ static void historyCompactIndexCases(){
 }
 #include "history-snapshot-runtime-fixture.inc"
 #include "history-index-runtime-fixture.inc"
+#include "history-lock-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2||argc==3||argc==5||argc==6);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];historyPruneAttempts=[NSMutableArray array];
     if(argc==5){assert([[NSString stringWithUTF8String:argv[2]] isEqualToString:@"--marker-worker"]);return historyMarkerWorker([[NSString stringWithUTF8String:argv[3]] intValue],[NSString stringWithUTF8String:argv[4]]);}
@@ -982,7 +1007,8 @@ int main(int argc,char **argv){@autoreleasepool{
     historyCompactIndexCases();
     historyCheckedSnapshotCases();
     historyBoundedIndexCases();
-    assert(historyLocks.empty()&&historyIndexFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
+    historyValidatedLockCases();
+    assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");
     puts("History commit Foundation passed: record/evidence/index false and NS/C++ failures suppress success/events, retain old-index artifacts until commit, release locks, report bounded process diagnostics and recover; read/lock failures, counter saturation and uncertain post-write outcome without rollback/replay. Multi-file crash recovery remains pending.");
