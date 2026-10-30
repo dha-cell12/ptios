@@ -226,7 +226,13 @@ static const NSTimeInterval kTLinkTaskTimeout = 22.0;
             };
             if (!run->beginRefresh()) return;
             if (self.licenseCoordinator) {
-                [self.licenseCoordinator performBackgroundRefreshWithCompletion:ensureService];
+                id<SCLicenseRefreshSubscription> subscription =
+                    [self.licenseCoordinator subscribeToBackgroundRefreshWithCompletion:ensureService];
+                if (!subscription) {
+                    run->finish(NO, @"license_refresh_subscription_unavailable", nil);
+                    return;
+                }
+                run->installCleanup(^{ [subscription cancel]; });
             } else {
                 ensureService(YES, @"license_coordinator_unavailable_skipped");
             }

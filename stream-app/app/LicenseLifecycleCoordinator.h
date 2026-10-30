@@ -4,6 +4,12 @@ FOUNDATION_EXPORT NSString *const SCLicenseLifecycleDidChangeNotification;
 
 typedef void (^SCLicenseLifecycleCompletion)(BOOL success, NSString *message);
 
+// Cancels only this subscriber. A delivery already claimed may finish.
+// Shared refresh/HTTP work and other subscribers remain active.
+@protocol SCLicenseRefreshSubscription <NSObject>
+- (void)cancel;
+@end
+
 @interface SCLicenseLifecycleCoordinator : NSObject
 
 @property(nonatomic, readonly, getter=isRequestInFlight) BOOL requestInFlight;
@@ -17,6 +23,7 @@ typedef void (^SCLicenseLifecycleCompletion)(BOOL success, NSString *message);
 - (void)handleApplicationLaunch;
 - (void)handleApplicationDidBecomeActive;
 - (void)performBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion;
+- (id<SCLicenseRefreshSubscription>)subscribeToBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion;
 - (void)activateLicenseKey:(NSString *)licenseKey completion:(SCLicenseLifecycleCompletion)completion;
 - (void)activateLicenseKey:(NSString *)licenseKey
                     intent:(NSString *)intent

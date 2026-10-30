@@ -10,6 +10,11 @@
 #include <vector>
 
 typedef void (^RefreshReply)(BOOL, NSString *);
+typedef RefreshReply SCLicenseLifecycleCompletion;
+@protocol SCLicenseRefreshSubscription <NSObject>
+- (void)cancel;
+@end
+#include "BackgroundRefreshSubscriber.inc"
 static std::atomic<unsigned> liveTasks{0};
 static BOOL expireOnInstall=NO;
 @interface BGTask : NSObject
@@ -66,13 +71,29 @@ static BOOL expireOnInstall=NO;
 @property(nonatomic,copy) RefreshReply reply;
 @property unsigned calls;
 @property int fault;
+@property unsigned retirements;
+@property BOOL subscriptionUnavailable;
+@property(nonatomic,copy) dispatch_block_t beforeSubscriptionReturn;
 - (void)performBackgroundRefreshWithCompletion:(RefreshReply)completion;
+- (id<SCLicenseRefreshSubscription>)subscribeToBackgroundRefreshWithCompletion:(RefreshReply)completion;
 @end
 @implementation SCLicenseLifecycleCoordinator
 - (void)performBackgroundRefreshWithCompletion:(RefreshReply)completion {
     ++_calls;_reply=[completion copy];
     if(_fault==1)[NSException raise:@"Fixture" format:@"refresh"];
     if(_fault==2)throw std::runtime_error("refresh");
+}
+- (id<SCLicenseRefreshSubscription>)subscribeToBackgroundRefreshWithCompletion:(RefreshReply)completion {
+    if(_subscriptionUnavailable)return nil;
+    __weak SCLicenseLifecycleCoordinator *weakSelf=self;
+    SCBackgroundRefreshSubscription *subscription=[[SCBackgroundRefreshSubscription alloc] initWithCompletion:completion retirement:^{SCLicenseLifecycleCoordinator *owner=weakSelf;owner.retirements=owner.retirements+1;}];
+    @try {
+        try {
+            [self performBackgroundRefreshWithCompletion:^(BOOL success,NSString *detail){[subscription deliverSuccess:success message:detail];}];
+            if(_beforeSubscriptionReturn)_beforeSubscriptionReturn();
+        } catch (...) {[subscription cancel];throw;}
+    } @catch(NSException *exception){[subscription cancel];@throw exception;}
+    return subscription;
 }
 @end
 @interface SCStreamSupervisor : NSObject
@@ -416,11 +437,50 @@ static void realTimerCase(){
     }
     reset();
 }
+static void subscriptionSchedulerCases(){
+    for(unsigned terminal=0;terminal<2;++terminal){
+        @autoreleasepool{
+            SCStreamSupervisor *supervisor=[SCStreamSupervisor new];SCLicenseLifecycleCoordinator *coordinator=[SCLicenseLifecycleCoordinator new];
+            id<TestScheduler> value=scheduler(NO,supervisor,coordinator);BGTask *task=[BGTask new];
+            coordinator.beforeSubscriptionReturn=^{if(terminal)watchdog(NO);else expire(task);};
+            [value handleTask:task kind:@"refresh"];coordinator.beforeSubscriptionReturn=nil;
+            assert(task.completions==1&&!task.success&&coordinator.retirements==1&&supervisor.calls==0&&lastTimer.cancelled);
+            NSDictionary *before=[value snapshot];coordinator.reply(YES,@"late-after-publication");
+            assert([before isEqual:[value snapshot]]&&supervisor.calls==0&&coordinator.retirements==1);coordinator.reply=nil;
+        }
+        reset();
+    }
+    @autoreleasepool{
+        SCStreamSupervisor *supervisor=[SCStreamSupervisor new];SCLicenseLifecycleCoordinator *coordinator=[SCLicenseLifecycleCoordinator new];coordinator.subscriptionUnavailable=YES;
+        id<TestScheduler> value=scheduler(NO,supervisor,coordinator);BGTask *task=[BGTask new];[value handleTask:task kind:@"refresh"];
+        assert(task.completions==1&&!task.success&&coordinator.calls==0&&supervisor.calls==0&&lastTimer.cancelled);
+        assert([[value snapshot][@"last_detail"] isEqualToString:@"license_refresh_subscription_unavailable"]);
+    }
+    reset();
+    @autoreleasepool{
+        SCStreamSupervisor *supervisor=[SCStreamSupervisor new];SCLicenseLifecycleCoordinator *coordinator=[SCLicenseLifecycleCoordinator new];
+        id<TestScheduler> value=scheduler(NO,supervisor,coordinator);BGTask *task=[BGTask new];[value handleTask:task kind:@"processing"];
+        coordinator.reply(YES,@"delivered");assert(coordinator.retirements==1&&supervisor.calls==1);
+        expire(task);supervisor.reply(YES,@"late");coordinator.reply(YES,@"duplicate");
+        assert(task.completions==1&&coordinator.retirements==1);coordinator.reply=nil;supervisor.reply=nil;
+    }
+    reset();
+    for(int fault=0;fault<3;++fault){
+        auto cleanups=std::make_shared<std::atomic<unsigned>>(0),deliveries=std::make_shared<std::atomic<unsigned>>(0);
+        auto weak=std::make_shared<std::weak_ptr<TLinkBackgroundTaskRun>>();
+        auto run=std::make_shared<TLinkBackgroundTaskRun>(^(BOOL success,NSString *detail,NSDictionary *license){(void)success;(void)detail;(void)license;assert(cleanups->load()==1);++*deliveries;});*weak=run;
+        run->installCleanup(^{++*cleanups;auto owner=weak->lock();assert(owner&&owner->finished());if(fault==1)[NSException raise:@"Cleanup" format:@"NS"];if(fault==2)throw std::runtime_error("cleanup");});
+        run->finish(NO,@"expired",nil);run->finish(NO,@"duplicate",nil);assert(deliveries->load()==1&&cleanups->load()==1);
+        auto late=std::make_shared<TLinkBackgroundTaskRun>(^(BOOL success,NSString *detail,NSDictionary *license){(void)success;(void)detail;(void)license;});late->finish(NO,@"before-publication",nil);
+        late->installCleanup(^{++*cleanups;if(fault==1)[NSException raise:@"Cleanup" format:@"late NS"];if(fault==2)throw std::runtime_error("late cleanup");});
+        assert(cleanups->load()==2);
+    }
+}
 int main(){@autoreleasepool{
     timers=[NSMutableDictionary dictionary];legacyTimers=[NSMutableArray array];
     puts("Background task Foundation: complete current/frozen scheduler, controlled BGTask/providers and real resumed GCD sources");
-    parityCases();lateCases();faultCases();lifetimeCases();raceCases();independentRunsCase();queuedSupervisorCases();realTimerCase();
+    parityCases();lateCases();faultCases();lifetimeCases();raceCases();independentRunsCase();queuedSupervisorCases();realTimerCase();subscriptionSchedulerCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{(void)outcome(NO,n%2,NO,YES,YES,0);}reset();}
     assert(created.load()==cancelled.load()&&liveTasks.load()==0);
-    puts("Background task passed: frozen replies/rescheduling, duplicate/late callback refusal, first-result diagnostics, allocation/installation/NS/C++ faults, early task release with retained callbacks, 200 policy/64 actual callback races, independent runs, owner-start permission after queued expiration/timeout, reentry, real timeout delivery and 128 balanced source/task lifecycles. HTTP/active supervisor cancellation and device qualification remain pending.");
+    puts("Background task passed: frozen replies/rescheduling, duplicate/late callback refusal, first-result diagnostics, allocation/installation/NS/C++ faults, early task release with retained callbacks, 200 policy/64 actual callback races, independent runs, owner-start permission after queued expiration/timeout, subscriber cancellation/late publication/nil provider, cleanup reentry/faults, real timeout delivery and 128 balanced source/task lifecycles. HTTP/active supervisor cancellation and device qualification remain pending.");
 }return 0;}

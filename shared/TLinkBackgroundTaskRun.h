@@ -12,10 +12,17 @@ class TLinkBackgroundTaskRun {
     Phase phase_=Phase::Ready;
     dispatch_source_t timer_=nullptr;
     void (^completion_)(BOOL, NSString *, NSDictionary *);
+    dispatch_block_t cleanup_=nil;
     static void cancelTimer(dispatch_source_t timer) {
         if (!timer) return;
         dispatch_source_set_event_handler(timer, ^{});
         dispatch_source_cancel(timer);
+    }
+    // Cleanup is best effort; a provider exception must not suppress task completion.
+    static void invokeCleanup(dispatch_block_t cleanup) {
+        @try {
+            try { if (cleanup) cleanup(); } catch (...) {}
+        } @catch (NSException *exception) { (void)exception; }
     }
 public:
     explicit TLinkBackgroundTaskRun(void (^completion)(BOOL, NSString *, NSDictionary *))
@@ -56,6 +63,16 @@ public:
         }
         if (retired) cancelTimer(timer);
     }
+    // One cleanup is published by the scheduler. Late publication runs immediately.
+    void installCleanup(dispatch_block_t cleanup) {
+        bool retired;
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            retired=phase_==Phase::Finished;
+            if (!retired) cleanup_=[cleanup copy];
+        }
+        if (retired) invokeCleanup(cleanup);
+    }
     void arm(int64_t nanoseconds) {
         std::lock_guard<std::mutex> guard(mutex_);
         if (phase_!=Phase::Finished && timer_)
@@ -64,15 +81,18 @@ public:
     void finish(BOOL success, NSString *detail, NSDictionary *license) {
         dispatch_source_t timer=nullptr;
         void (^completion)(BOOL, NSString *, NSDictionary *)=nil;
+        dispatch_block_t cleanup=nil;
         {
             std::lock_guard<std::mutex> guard(mutex_);
             if (phase_==Phase::Finished) return;
             phase_=Phase::Finished;
             timer=timer_; timer_=nullptr;
             completion=completion_; completion_=nil;
+            cleanup=cleanup_; cleanup_=nil;
         }
         // Break source/callback/task ownership before delivery, outside the mutex for reentry.
         cancelTimer(timer);
+        invokeCleanup(cleanup);
         if (completion) completion(success,detail,license);
     }
 };

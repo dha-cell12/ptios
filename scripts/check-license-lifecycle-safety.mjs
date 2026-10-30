@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {restoreLifecycleSubscription,restoreLifecycleSubscriptionHeader} from './lib/license-subscription-baseline.mjs';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,join,resolve,basename} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -11,8 +12,9 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);};
 const [source,before,header]=await Promise.all(['stream-app/app/LicenseLifecycleCoordinator.mm','test/fixtures/license-lifecycle-before-c06f.inc','stream-app/app/LicenseLifecycleCoordinator.h'].map(read));
 assert.equal(hash(before),'652cac70147534280d3074e9f125a9a4c3caa22e44e6ed7ac65fcff849061290');
-let restored=source;
-const properties=between(source,'// BEGIN refresh decision ownership.','// END refresh decision ownership.')+'// END refresh decision ownership.\n';
+const previousStage=restoreLifecycleSubscription(source),previousHeader=restoreLifecycleSubscriptionHeader(header);
+let restored=previousStage;
+const properties=between(previousStage,'// BEGIN refresh decision ownership.','// END refresh decision ownership.')+'// END refresh decision ownership.\n';
 restored=restored.replace(properties,'').replace('        _refreshDecisionQueue = dispatch_queue_create("com.tlinkauto.license-refresh-decision", DISPATCH_QUEUE_SERIAL);\n','')
     .replace('    if ([kind isEqualToString:@"refresh"]) return YES;\n','');
 for(const [start,end] of [['- (void)updateDiagnostics:(NSDictionary *)values','- (void)deliverCompletion:'],['- (void)finishOperation:','- (void)publishLicenseChange:'],['- (void)recordRefreshFailure:','- (void)handleApplicationLaunch']])
@@ -26,7 +28,7 @@ assert.match(source,/if \(self.refreshForceRequested\) return NO;/);
 assert.match(source,/self.refreshResultClaimed && !ownsResult/);
 assert.doesNotMatch(between(source,'- (void)appendRefreshHistoryEvent:','- (void)deliverCompletion:'),/\[self diagnostics\]/);
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.match(await read(path),/node scripts\/check-license-lifecycle-safety\.mjs/);
-console.log('License lifecycle source passed: admission before verification, background single decision, force promotion, identity/result fences, serialized combined diagnostics/history and complete prior authority/UI source.');
+console.log('License lifecycle source passed: cancellable subscriber ownership, admission before verification, background single decision, force promotion, identity/result fences, serialized combined diagnostics/history and complete prior authority/UI source.');
 if(process.platform!=='darwin')console.log('macOS complete current/frozen lifecycle Foundation/GCD/ARC/parity/race runtime included in CI; not run on this host.');
 else{
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-license-lifecycle-'));
@@ -39,7 +41,7 @@ else{
             return s;
         }
         await Promise.all([writeFile(join(temp,'LifecycleUnderTest.inc'),adapt(source,false)),writeFile(join(temp,'LifecycleLegacy.inc'),adapt(before,true)),
-            writeFile(join(temp,'LegacyLifecycle.h'),header.replaceAll('SCLicenseLifecycleCoordinator','SCLegacyLifecycleCoordinator').replaceAll('SCLicenseLifecycleDidChangeNotification','SCLegacyLifecycleDidChangeNotification'))]);
+            writeFile(join(temp,'LegacyLifecycle.h'),previousHeader.replaceAll('SCLicenseLifecycleCoordinator','SCLegacyLifecycleCoordinator').replaceAll('SCLicenseLifecycleDidChangeNotification','SCLegacyLifecycleDidChangeNotification'))]);
         const binary=join(temp,'runtime');run(process.env.CXX||'clang++',['-std=c++11','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/license-lifecycle-runtime-test.mm'),'-o',binary]);run(binary,[]);
     }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-license-lifecycle-'));await rm(temp,{recursive:true,force:true});}
 }

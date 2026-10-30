@@ -67,11 +67,52 @@ static NSString *SCLicenseRequestDaemonReload(void)
 #endif
 }
 
+// BEGIN background refresh subscriber.
+@interface SCBackgroundRefreshSubscription : NSObject <SCLicenseRefreshSubscription>
+- (instancetype)initWithCompletion:(SCLicenseLifecycleCompletion)completion retirement:(dispatch_block_t)retirement;
+- (void)deliverSuccess:(BOOL)success message:(NSString *)message;
+@end
+
+@implementation SCBackgroundRefreshSubscription {
+    BOOL _settled;
+    SCLicenseLifecycleCompletion _completion;
+    dispatch_block_t _retirement;
+}
+- (instancetype)initWithCompletion:(SCLicenseLifecycleCompletion)completion retirement:(dispatch_block_t)retirement
+{
+    self = [super init];
+    if (self) {
+        _completion = [completion copy];
+        _retirement = [retirement copy];
+    }
+    return self;
+}
+- (void)settle:(BOOL)deliver success:(BOOL)success message:(NSString *)message
+{
+    SCLicenseLifecycleCompletion completion = nil;
+    dispatch_block_t retirement = nil;
+    @synchronized (self) {
+        if (_settled) return;
+        _settled = YES;
+        completion = _completion; _completion = nil;
+        retirement = _retirement; _retirement = nil;
+    }
+    // Detach before coordinator removal or caller/destructor reentry.
+    if (retirement) retirement();
+    if (deliver && completion) completion(success, message);
+}
+- (void)cancel { [self settle:NO success:NO message:nil]; }
+- (void)deliverSuccess:(BOOL)success message:(NSString *)message { [self settle:YES success:success message:message]; }
+@end
+// END background refresh subscriber.
+
 @interface SCLicenseLifecycleCoordinator ()
 @property(nonatomic, strong) SCLicenseManager *manager;
 @property(nonatomic, assign, getter=isRequestInFlight) BOOL requestInFlight;
 @property(nonatomic, copy) NSString *operationKind;
 @property(nonatomic, strong) NSMutableArray *pendingRefreshCompletions;
+@property(nonatomic, strong) NSMutableDictionary *refreshSubscriberCallbacks;
+@property(nonatomic, strong) dispatch_queue_t refreshSubscriberQueue;
 // BEGIN refresh decision ownership.
 @property(nonatomic, strong) dispatch_queue_t refreshDecisionQueue;
 @property(nonatomic, strong) NSObject *refreshOperationIdentity;
@@ -109,6 +150,8 @@ static NSString *SCLicenseRequestDaemonReload(void)
     if (self) {
         _manager = [SCLicenseManager sharedManager];
         _pendingRefreshCompletions = [NSMutableArray array];
+        _refreshSubscriberCallbacks = [NSMutableDictionary dictionary];
+        _refreshSubscriberQueue = dispatch_queue_create("com.tlinkauto.license-subscriber-retirement", DISPATCH_QUEUE_SERIAL);
         _refreshDecisionQueue = dispatch_queue_create("com.tlinkauto.license-refresh-decision", DISPATCH_QUEUE_SERIAL);
         _uiSnapshotQueue = dispatch_queue_create("com.tlinkauto.license-ui-snapshot",
                                                   DISPATCH_QUEUE_SERIAL);
@@ -617,6 +660,48 @@ static NSString *SCLicenseRequestDaemonReload(void)
         [self refreshForTrigger:@"app_foreground" force:NO completion:nil];
     });
 }
+
+// BEGIN background refresh subscription API.
+- (void)retireRefreshSubscriber:(NSUUID *)identifier
+{
+    @synchronized (self) {
+        id callback = self.refreshSubscriberCallbacks[identifier];
+        if (!callback) return;
+        [self.pendingRefreshCompletions removeObjectIdenticalTo:callback];
+        [self.refreshSubscriberCallbacks removeObjectForKey:identifier];
+    }
+}
+
+- (id<SCLicenseRefreshSubscription>)subscribeToBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion
+{
+    NSUUID *identifier = [NSUUID UUID];
+    __weak SCLicenseLifecycleCoordinator *weakSelf = self;
+    SCBackgroundRefreshSubscription *subscription = [[SCBackgroundRefreshSubscription alloc]
+        initWithCompletion:completion retirement:^{
+            SCLicenseLifecycleCoordinator *coordinator = weakSelf;
+            if (!coordinator) return;
+            // Cancellation drops caller captures immediately, without waiting for the diagnostics monitor.
+            dispatch_async(coordinator.refreshSubscriberQueue, ^{ [coordinator retireRefreshSubscriber:identifier]; });
+        }];
+    if (!subscription) return nil;
+    SCLicenseLifecycleCompletion callback = [^(BOOL success, NSString *message) {
+        [subscription deliverSuccess:success message:message];
+    } copy];
+    @synchronized (self) { self.refreshSubscriberCallbacks[identifier] = callback; }
+    @try {
+        try {
+            [self performBackgroundRefreshWithCompletion:callback];
+        } catch (...) {
+            [subscription cancel];
+            throw;
+        }
+    } @catch (NSException *exception) {
+        [subscription cancel];
+        @throw exception;
+    }
+    return subscription;
+}
+// END background refresh subscription API.
 
 - (void)performBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion
 {

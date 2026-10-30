@@ -117,7 +117,11 @@ PRIVATE_LIFECYCLE_METHODS
 @property BOOL holdBackoff;
 @property(nonatomic,strong) dispatch_semaphore_t policyEntered;
 @property(nonatomic,strong) dispatch_semaphore_t releasePolicy;
+@property int subscriptionAdmissionFault;
 - (void)drainRefreshDecisions;
+- (void)drainRefreshSubscribers;
+- (NSUInteger)subscriberCount;
+- (NSUInteger)pendingCallbackCount;
 @end
 @interface LegacyLifecycle:SCLegacyLifecycleCoordinator<FixtureLifecycle>
 @property NSUInteger transactions;
@@ -126,6 +130,16 @@ PRIVATE_LIFECYCLE_METHODS
 @implementation CurrentLifecycle
 - (uint64_t)nowMilliseconds{return 1000000;}
 - (void)drainRefreshDecisions{dispatch_sync(self.refreshDecisionQueue,^{});}
+- (void)drainRefreshSubscribers{dispatch_sync(self.refreshSubscriberQueue,^{});}
+- (NSUInteger)subscriberCount{@synchronized(self){return self.refreshSubscriberCallbacks.count;}}
+- (NSUInteger)pendingCallbackCount{@synchronized(self){return self.pendingRefreshCompletions.count;}}
+- (void)performBackgroundRefreshWithCompletion:(SCLicenseLifecycleCompletion)completion{
+    if(_subscriptionAdmissionFault==1)[NSException raise:@"Subscription" format:@"before admission"];
+    if(_subscriptionAdmissionFault==2)throw std::runtime_error("before admission");
+    [super performBackgroundRefreshWithCompletion:completion];
+    if(_subscriptionAdmissionFault==-1)[NSException raise:@"Subscription" format:@"after admission"];
+    if(_subscriptionAdmissionFault==-2)throw std::runtime_error("after admission");
+}
 - (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event{
     if(values.count||event.count){@synchronized(self){++_transactions;}}
     [super updateDiagnostics:values refreshHistoryEvent:event];
@@ -323,6 +337,113 @@ static void historyCases(){
     NSMutableSet *ids=[NSMutableSet set];for(NSDictionary *event in history)[ids addObject:event[@"id"]];
     assert(history.count==20&&ids.count==20&&[value transactions]==128);
 }
+@interface SubscriptionBox:NSObject
+@property(nonatomic,weak) id<SCLicenseRefreshSubscription> value;
+@end
+@implementation SubscriptionBox
+@end
+static std::atomic<unsigned> captureReleases{0};
+@interface SubscriptionCapture:NSObject
+@property(nonatomic,weak) id<SCLicenseRefreshSubscription> subscription;
+@end
+@implementation SubscriptionCapture
+- (void)dealloc{[self.subscription cancel];++captureReleases;}
+@end
+static void subscriptionOwnerCases(){
+    for(unsigned n=0;n<200;++n){
+        @autoreleasepool{
+            auto callbacks=std::make_shared<std::atomic<unsigned>>(0),retirements=std::make_shared<std::atomic<unsigned>>(0);
+            SCBackgroundRefreshSubscription *token=[[SCBackgroundRefreshSubscription alloc] initWithCompletion:^(BOOL success,NSString *message){(void)success;(void)message;++*callbacks;} retirement:^{++*retirements;}];
+            std::thread first([token]{@autoreleasepool{[token cancel];}}),second([token]{@autoreleasepool{[token deliverSuccess:YES message:@"racing"];}});
+            first.join();second.join();[token cancel];[token deliverSuccess:NO message:@"duplicate"];
+            assert(callbacks->load()<=1&&retirements->load()==1);
+        }
+    }
+    @autoreleasepool{
+        SubscriptionBox *box=[SubscriptionBox new];auto callbacks=std::make_shared<std::atomic<unsigned>>(0),retirements=std::make_shared<std::atomic<unsigned>>(0);
+        SCBackgroundRefreshSubscription *token=[[SCBackgroundRefreshSubscription alloc] initWithCompletion:^(BOOL success,NSString *message){(void)success;(void)message;[box.value cancel];++*callbacks;} retirement:^{[box.value cancel];++*retirements;}];
+        box.value=token;[token deliverSuccess:YES message:@"reentry"];assert(callbacks->load()==1&&retirements->load()==1);
+    }
+    __weak SubscriptionCapture *released;id<SCLicenseRefreshSubscription> retainedToken;const unsigned before=captureReleases;
+    @autoreleasepool{
+        SubscriptionCapture *capture=[SubscriptionCapture new];released=capture;
+        retainedToken=[[SCBackgroundRefreshSubscription alloc] initWithCompletion:^(BOOL success,NSString *message){(void)success;(void)message;assert(capture);} retirement:nil];capture.subscription=retainedToken;
+    }
+    @autoreleasepool{[retainedToken cancel];}
+    assert(!released&&captureReleases.load()==before+1);retainedToken=nil;
+    @autoreleasepool{
+        dispatch_semaphore_t entered=dispatch_semaphore_create(0),release=dispatch_semaphore_create(0);auto callbacks=std::make_shared<std::atomic<unsigned>>(0);
+        SCBackgroundRefreshSubscription *token=[[SCBackgroundRefreshSubscription alloc] initWithCompletion:^(BOOL success,NSString *message){(void)success;(void)message;dispatch_semaphore_signal(entered);waitSemaphore(release);++*callbacks;} retirement:nil];
+        std::thread delivery([token]{@autoreleasepool{[token deliverSuccess:YES message:@"claimed"];}});waitSemaphore(entered);
+        [token cancel];assert(callbacks->load()==0);dispatch_semaphore_signal(release);delivery.join();assert(callbacks->load()==1);
+    }
+}
+static void subscriptionIntegrationCases(){
+    @autoreleasepool{
+        prepare(NO,NO);FixtureManager *manager=managerFor(0);manager.holdRead=1;CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);
+        auto cancelled=std::make_shared<Reply>(),active=std::make_shared<Reply>(),legacy=std::make_shared<Reply>();
+        id<SCLicenseRefreshSubscription> first=[value subscribeToBackgroundRefreshWithCompletion:completionFor(cancelled)];waitSemaphore(manager.entered);
+        id<SCLicenseRefreshSubscription> second=[value subscribeToBackgroundRefreshWithCompletion:completionFor(active)];
+        id<SCLicenseRefreshSubscription> unused=[value subscribeToBackgroundRefreshWithCompletion:nil];
+        [value refreshForTrigger:@"legacy" force:NO completion:completionFor(legacy)];
+        [first cancel];[first cancel];[value drainRefreshSubscribers];assert([value subscriberCount]==2&&[value pendingCallbackCount]==3&&[value isRequestInFlight]);
+        dispatch_semaphore_signal(manager.releaseRead);await([&]{return manager.requests==1;});manager.reply(YES,@"shared");
+        await([&]{return active->calls.load()==1&&legacy->calls.load()==1;});[value drainRefreshSubscribers];
+        assert(cancelled->calls.load()==0&&[value subscriberCount]==0&&[value pendingCallbackCount]==0&&![value isRequestInFlight]&&manager.requests==1&&[value published].count==1);
+        [second cancel];[unused cancel];manager.reply=nil;
+    }
+    @autoreleasepool{
+        prepare(NO,NO);FixtureManager *manager=managerFor(0);CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);auto cancelled=std::make_shared<Reply>(),legacy=std::make_shared<Reply>();
+        id<SCLicenseRefreshSubscription> token=[value subscribeToBackgroundRefreshWithCompletion:completionFor(cancelled)];
+        [value refreshForTrigger:@"legacy" force:NO completion:completionFor(legacy)];await([&]{return manager.requests==1;});manager.reply(YES,@"queued-main");
+        assert(cancelled->calls.load()==0);[token cancel];await([&]{return legacy->calls.load()==1;});[value drainRefreshSubscribers];
+        assert(cancelled->calls.load()==0&&[value subscriberCount]==0);manager.reply=nil;
+    }
+    for(unsigned joinLater=0;joinLater<2;++joinLater){
+        @autoreleasepool{
+            prepare(NO,NO);FixtureManager *manager=managerFor(0);CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);auto cancelled=std::make_shared<Reply>(),later=std::make_shared<Reply>();
+            id<SCLicenseRefreshSubscription> token=[value subscribeToBackgroundRefreshWithCompletion:completionFor(cancelled)];await([&]{return manager.requests==1;});[token cancel];[value drainRefreshSubscribers];
+            assert([value subscriberCount]==0&&[value pendingCallbackCount]==0&&[value isRequestInFlight]);
+            if(joinLater)[value refreshForTrigger:@"later" force:NO completion:completionFor(later)];
+            manager.reply(YES,@"manager-still-active");if(joinLater)await([&]{return later->calls.load()==1;});
+            assert(cancelled->calls.load()==0&&manager.requests==1&&![value isRequestInFlight]&&[value published].count==1);manager.reply=nil;
+        }
+    }
+    @autoreleasepool{
+        prepare(NO,NO);FixtureManager *manager=managerFor(1);CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);auto result=std::make_shared<Reply>();
+        id<SCLicenseRefreshSubscription> token=[value subscribeToBackgroundRefreshWithCompletion:completionFor(result)];await([&]{return result->calls.load()==1;});[value drainRefreshSubscribers];
+        assert(result->success&&manager.requests==0&&[value subscriberCount]==0);[token cancel];
+    }
+    @autoreleasepool{
+        prepare(NO,NO);FixtureManager *manager=managerFor(0);CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);assert([value beginOperation:@"activate" completion:nil]);auto result=std::make_shared<Reply>();
+        id<SCLicenseRefreshSubscription> token=[value subscribeToBackgroundRefreshWithCompletion:completionFor(result)];await([&]{return result->calls.load()==1;});[value drainRefreshSubscribers];
+        assert(!result->success&&[result->message isEqualToString:@"license_request_in_progress"]&&manager.requests==0&&[value subscriberCount]==0);
+        [token cancel];[value finishOperation:@"activate" success:NO message:@"done" completion:nil];
+    }
+}
+static void subscriptionLifetimeAndFaultCases(){
+    @autoreleasepool{
+        prepare(NO,NO);FixtureManager *manager=managerFor(0);CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);__weak NSObject *released;
+        id<SCLicenseRefreshSubscription> token;auto result=std::make_shared<Reply>();
+        @autoreleasepool{NSObject *capture=[NSObject new];released=capture;token=[value subscribeToBackgroundRefreshWithCompletion:^(BOOL success,NSString *message){assert(capture);(void)success;(void)message;++result->calls;}];}
+        await([&]{return manager.requests==1;});dispatch_semaphore_t entered=dispatch_semaphore_create(0),release=dispatch_semaphore_create(0);dispatch_group_t held=dispatch_group_create();
+        dispatch_group_async(held,dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0),^{@synchronized(value){dispatch_semaphore_signal(entered);waitSemaphore(release);}});waitSemaphore(entered);
+        @autoreleasepool{[token cancel];}assert(!released&&result->calls.load()==0); // Does not wait for the coordinator's held diagnostics monitor.
+        dispatch_semaphore_signal(release);assert(dispatch_group_wait(held,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);[value drainRefreshSubscribers];
+        assert([value subscriberCount]==0&&[value pendingCallbackCount]==0);manager.reply(YES,@"late");assert(result->calls.load()==0);manager.reply=nil;
+    }
+    for(int fault=-2;fault<=2;++fault){
+        if(fault==0)continue;
+        @autoreleasepool{
+            prepare(NO,NO);FixtureManager *manager=managerFor(0);if(fault<0)manager.holdRead=1;CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);value.subscriptionAdmissionFault=fault;
+            auto result=std::make_shared<Reply>();bool caught=false;
+            @try{try{(void)[value subscribeToBackgroundRefreshWithCompletion:completionFor(result)];}catch(...){caught=true;}}@catch(NSException *exception){(void)exception;caught=true;}
+            assert(caught);[value drainRefreshSubscribers];assert([value subscriberCount]==0&&[value pendingCallbackCount]==0&&result->calls.load()==0);
+            if(fault<0){waitSemaphore(manager.entered);dispatch_semaphore_signal(manager.releaseRead);await([&]{return manager.requests==1;});manager.reply(YES,@"surviving-shared-flight");}
+            assert(![value isRequestInFlight]);manager.reply=nil;
+        }
+    }
+}
 int main(){@autoreleasepool{
     setvbuf(stdout,nullptr,_IONBF,0);
     NSString *directory=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"tlink-lifecycle-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
@@ -333,7 +454,9 @@ int main(){@autoreleasepool{
     coalescingCases();puts("License lifecycle: stale/duplicate results and busy operation gates");
     staleAndBusyCases();puts("License lifecycle: NS/C++ provider/result faults and ownership recovery");
     faultCases();otherOperationsCases();puts("License lifecycle: serial/concurrent history and repeated lifecycles");historyCases();
+    puts("License lifecycle: per-subscriber cancel/delivery ownership, shared callers and admission unwind");
+    subscriptionOwnerCases();subscriptionIntegrationCases();subscriptionLifetimeAndFaultCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{(void)scenario(NO,0,YES,n%2);}}
     pump();assert([[NSFileManager defaultManager] removeItemAtPath:directory error:nullptr]);
-    puts("License lifecycle passed: 24 frozen decision/result graphs, 5-to-3 attempt and 1-to-1 skip diagnostic transactions, 65-caller single decisions, manual force during policy/backoff, stale results/new-flight protection, busy/NS/C++/inline result recovery, exact 20-entry history, concurrent append and 128 lifecycles. HTTP, signed persistence and device performance remain unqualified.");
+    puts("License lifecycle passed: 24 frozen decision/result graphs, 5-to-3 attempt and 1-to-1 skip diagnostic transactions, 65-caller single decisions, manual force during policy/backoff, stale results/new-flight protection, busy/NS/C++/inline result recovery, exact 20-entry history, concurrent append, 200 subscriber cancel/delivery races, capture release/reentry, held-monitor/queued-main cancellation, shared-flight survival, admission unwind and 128 lifecycles. HTTP cancellation, signed persistence and device performance remain unqualified.");
 }return 0;}
