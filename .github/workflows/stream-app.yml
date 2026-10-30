@@ -287,6 +287,9 @@ jobs:
           test -f scripts/check-vpn-diagnostics-cache-safety.mjs
           test -f scripts/check-vpn-broker-admission-safety.mjs
           test -f test/vpn-broker-admission-runtime-test.mm
+          test -f test/vpn-broker-ingress-safety-test.cpp
+          test -f shared/TLinkVPNBrokerIngress.h
+          test -f test/fixtures/vpn-broker-before-c04c.inc
           test -f test/fixtures/vpn-broker-before-c04b.inc
           test -f test/vpn-diagnostics-cache-runtime-test.mm
           test -f test/fixtures/vpn-diagnostics-before-c04a.mm

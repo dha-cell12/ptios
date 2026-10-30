@@ -1,7 +1,7 @@
 # C04b — bounded root VPN broker clients
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `08ddc0e9`, C04a build passed according to the user. Complete normalized broker source SHA-256 before this change: `7d85c63f3243f25761a98a80db049f04a82da03cb2255affb0b52e1d3717aaf7`.
-Status: **source implemented; new Foundation/POSIX/GCD/ARC/ASan/UBSan runtime pending macOS CI; device qualification pending**.
+Status: **user reported build passed at `127580fb` before C04c; independent device qualification pending**.
 Finding: **P1-63 unbounded accepted VPN broker clients**, client admission portion. P0-19 end-to-end timeout/IPC blocking and underlying manager operation admission remain open.
 
 ## Change

@@ -222,6 +222,13 @@ every underlying asynchronous manager operation. See
 [IMPLEMENTATION-C04B.md](performance-audit/IMPLEMENTATION-C04B.md) for test and
 device qualification status. TrollStore foreground/agent listeners are separate.
 
+C04c gives request ingress one fixed 30-second window from admission entry,
+including queued time. Incoming bytes do not renew it. Expired or fatally failed
+reads close without dispatching the accumulated request; normal LF/EOF input is
+preserved. This window ends at response dispatch; manager waits and response
+writes retain their separate behavior. See
+[IMPLEMENTATION-C04C.md](performance-audit/IMPLEMENTATION-C04C.md).
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:

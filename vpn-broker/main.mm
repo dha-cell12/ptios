@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include "../shared/TLinkHelperClientAdmission.h"
 #include "../shared/TLinkHelperSocketIO.h"
+#include "../shared/TLinkVPNBrokerIngress.h"
 
 static const uint16_t kTLinkVPNBrokerPort = 6014;
 static const NSUInteger kTLinkVPNBrokerMaxRequest = 1024;
@@ -145,8 +146,11 @@ static NSString *TLinkVPNBrokerResponse(NSString *command)
     return @"-1;;vpn_broker_unknown_command\r\n";
 }
 
-static void TLinkVPNBrokerHandleClient(int client)
+static void TLinkVPNBrokerHandleClient(int client, uint64_t acceptedAt)
 {
+    const TLinkVPNBrokerIngress::Window ingress(acceptedAt);
+    const auto readOps = TLinkVPNBrokerIngress::posixReadOps();
+    if (!ingress.remaining(readOps.now(readOps.context))) return;
     struct timeval timeout = {30, 0};
     setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
@@ -161,8 +165,9 @@ static void TLinkVPNBrokerHandleClient(int client)
         NSUInteger capacity = MIN(
             sizeof(buffer),
             kTLinkVPNBrokerMaxRequest - requestData.length);
-        ssize_t received = recv(client, buffer, capacity, 0);
-        if (received <= 0) break;
+        size_t received = 0;
+        if (!TLinkVPNBrokerIngress::readChunk(readOps, client, buffer, capacity, ingress, received).ok()) return;
+        if (received == 0) break;
         [requestData appendBytes:buffer length:(NSUInteger)received];
         if (memchr(buffer, '\n', (size_t)received)) break;
     }
@@ -172,6 +177,7 @@ static void TLinkVPNBrokerHandleClient(int client)
     NSString *command =
         [[NSString alloc] initWithData:requestData
                               encoding:NSUTF8StringEncoding] ?: @"";
+    if (!ingress.remaining(readOps.now(readOps.context))) return;
     NSString *response = TLinkVPNBrokerResponse(command);
     NSData *responseData =
         [response dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
@@ -192,14 +198,14 @@ static void TLinkVPNBrokerEnqueueClient(
     try {
         @try {
             TLinkHelperIO::Socket descriptor(client);
-            auto lease = admission.acquire(client, 0, [](int fd){ (void)::close(fd); });
+            auto lease = admission.acquire(client, TLinkHelperIO::nowMs(), [](int fd){ (void)::close(fd); });
             if (!lease) return; // Refuse without blocking the accept loop on a reply.
             (void)descriptor.release(); // The lease owns the socket throughout handler I/O.
             dispatch_async(queue, ^{
                 try {
                     @try {
                         @autoreleasepool {
-                            if (lease->isOpen()) TLinkVPNBrokerHandleClient(client);
+                            if (lease->isOpen()) TLinkVPNBrokerHandleClient(client, lease->acceptedAt());
                         }
                     } @catch (NSException *exception) {
                         NSLog(@"[TLinkVPNBroker] client exception %@", exception.name);

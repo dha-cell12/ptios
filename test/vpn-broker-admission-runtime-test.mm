@@ -2,6 +2,7 @@
 #include <dispatch/dispatch.h>
 #include "../shared/TLinkHelperClientAdmission.h"
 #include "../shared/TLinkHelperSocketIO.h"
+#include "../shared/TLinkVPNBrokerIngress.h"
 #include <cassert>
 #include <atomic>
 #include <cstdio>
@@ -18,7 +19,19 @@ static int acquireFault=0,enqueueFault=0,responseFault=0;
 static int reuseSource=-1,reusedDescriptor=-1;
 static dispatch_semaphore_t readsEntered;
 static std::atomic<bool> signalReads{false};
+static std::atomic<bool> fakeTime{false};
+static std::atomic<uint64_t> clockMs{0};
+static std::atomic<unsigned> ingressReads{0},ingressWaits{0},advanceReadMs{0};
+static std::atomic<size_t> readLimit{SIZE_MAX};
+static std::atomic<int> readsBeforeFault{-1};
+static bool expireDecode=false;
+static uint64_t fixtureNow(){return fakeTime.load()?clockMs.load():TLinkHelperIO::nowMs();}
 static void fixtureLog(NSString *format,...){(void)format;}
+static NSString *fixtureDecode(NSData *data){
+    NSString *text=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if(expireDecode)clockMs+=30000;
+    return text;
+}
 static NSString *fixtureResponse(NSString *command){
     ++responses;
     if(responseFault==1)[NSException raise:@"FixtureResponse" format:@"response"];
@@ -42,14 +55,27 @@ static void fixtureDispatch(dispatch_queue_t queue,dispatch_block_t block){
     if(enqueueFault==3)return; // Block discarded without invocation.
     dispatch_async(queue,block);
 }
-static ssize_t fixtureRecv(int fd,void *buffer,size_t capacity,int flags){
-    if(signalReads.load())dispatch_semaphore_signal(readsEntered);
-    return ::recv(fd,buffer,capacity,flags);
+static TLinkHelperIO::Ops fixtureReadOps(){
+    auto io=TLinkVPNBrokerIngress::posixReadOps();
+    io.now=[](void *){return fixtureNow();};
+    io.receive=[](void *,int fd,uint8_t *buffer,size_t capacity,int &error)->ptrdiff_t{
+        ++ingressReads;
+        if(signalReads.load())dispatch_semaphore_signal(readsEntered);
+        if(readsBeforeFault.load()==0){error=EIO;return -1;}
+        if(readsBeforeFault.load()>0)--readsBeforeFault;
+        const auto real=TLinkVPNBrokerIngress::posixReadOps();
+        const ptrdiff_t count=real.receive(real.context,fd,buffer,std::min(capacity,readLimit.load()),error);
+        clockMs+=advanceReadMs.load();
+        return count;
+    };
+    io.wait=[](void *,int fd,bool writing,int budget,int &error){
+        ++ingressWaits;const auto real=TLinkVPNBrokerIngress::posixReadOps();
+        return real.wait(real.context,fd,writing,budget,error);
+    };
+    return io;
 }
 namespace Current {
-#define recv fixtureRecv
 #include "VPNBrokerAdmissionUnderTest.inc"
-#undef recv
 }
 namespace Legacy {
 #include "VPNBrokerHandlerLegacy.inc"
@@ -148,9 +174,45 @@ static void concurrentCases(){
     const auto stats=owner.stats();assert(stats.admitted+stats.rejected==8000&&stats.finished==stats.admitted&&stats.peak<=8);
     assert(leaseCloses==beforeCloses+stats.finished&&responses==beforeResponses+stats.admitted);
 }
+static void ingressCases(){
+    TLinkHelperClientAdmission owner(8);dispatch_queue_t queue=clientQueue();fakeTime=true;
+    for(unsigned kind=0;kind<3;++kind){
+        clockMs=kind==2?UINT64_MAX:100;dispatch_suspend(queue);int fd[2];pair(fd);Socket peer(fd[0]);sendCommand(fd[0],@"query\n");
+        const unsigned before=responses.load(),reads=ingressReads.load();
+        Current::TLinkVPNBrokerEnqueueClient(owner,queue,fd[1]);
+        if(kind==0)clockMs=30100;if(kind==1)clockMs=99;
+        dispatch_resume(queue);assert(reply(fd[0]).length==0);drain(queue,owner);closed(fd[1]);
+        assert(responses==before&&ingressReads==reads);
+    }
+    // Real nonblocking recv followed by real poll with only one millisecond left.
+    clockMs=100;dispatch_suspend(queue);int empty[2];pair(empty);Socket emptyPeer(empty[0]);
+    const unsigned before=responses.load(),reads=ingressReads.load(),waits=ingressWaits.load();
+    Current::TLinkVPNBrokerEnqueueClient(owner,queue,empty[1]);clockMs=30099;dispatch_resume(queue);
+    assert(reply(empty[0]).length==0);drain(queue,owner);
+    assert(responses==before&&ingressReads==reads+1&&ingressWaits==waits+1);closed(empty[1]);
+    // Every byte advances the same deadline. Partial bytes cannot become a task.
+    clockMs=100;readLimit=1;advanceReadMs=1000;int drip[2];pair(drip);Socket dripPeer(drip[0]);
+    std::vector<uint8_t> payload(1024,'x');sendText(drip[0],payload.data(),payload.size());
+    const unsigned dripReads=ingressReads.load();Current::TLinkVPNBrokerEnqueueClient(owner,queue,drip[1]);
+    assert(reply(drip[0]).length==0);drain(queue,owner);
+    assert(ingressReads==dripReads+30&&responses==before&&clockMs==30100);closed(drip[1]);
+    readLimit=SIZE_MAX;advanceReadMs=0;
+    // Expiry while preparing the decoded command must also stop dispatch.
+    clockMs=100;expireDecode=true;int decode[2];pair(decode);Socket decodePeer(decode[0]);sendCommand(decode[0],@"query\n");
+    Current::TLinkVPNBrokerEnqueueClient(owner,queue,decode[1]);assert(reply(decode[0]).length==0);drain(queue,owner);
+    assert(responses==before);closed(decode[1]);expireDecode=false;
+    clockMs=100;readLimit=2;readsBeforeFault=1;int fault[2];pair(fault);Socket faultPeer(fault[0]);sendCommand(fault[0],@"query\n");
+    Current::TLinkVPNBrokerEnqueueClient(owner,queue,fault[1]);assert(reply(fault[0]).length==0);drain(queue,owner);
+    assert(responses==before);closed(fault[1]);readLimit=SIZE_MAX;readsBeforeFault=-1;
+    // Capacity recovers and a fresh LF/EOF request still follows the old path.
+    clockMs=50000;int retry[2];pair(retry);Socket retryPeer(retry[0]);sendCommand(retry[0],@"query\n");
+    Current::TLinkVPNBrokerEnqueueClient(owner,queue,retry[1]);assert(reply(retry[0]).length>0);drain(queue,owner);
+    assert(responses==before+1);closed(retry[1]);
+}
 int main(){@autoreleasepool{
     ::signal(SIGPIPE,SIG_IGN);
+    fakeTime=true;clockMs=100; // Admission/parity stress is independent of CI scheduling time.
     puts("VPN broker Foundation: actual lease/handler, held and running GCD queues and real sockets; response provider controlled");
-    heldQueueCases();blockedReaderCases();parserParityCases();faultCases();ownerAndReuseCases();concurrentCases();
-    puts("VPN broker admission passed: eight queued/active sockets, ninth immediate rejection, frozen handler parity, empty/EOF/peer close, acquire/enqueue/handler NS/C++ faults, discarded blocks, owner lifetime, descriptor reuse and 8k concurrent clients with balanced leases. VPN manager/device qualification pending.");
+    heldQueueCases();blockedReaderCases();parserParityCases();faultCases();ownerAndReuseCases();ingressCases();concurrentCases();
+    puts("VPN broker admission/ingress passed: eight slots, ninth rejection, frozen handler parity, exceptions/discard/owner/FD reuse, queued expiry and clock faults, real DONTWAIT/poll, trickled input/decode expiry without dispatch, recovery and 8k concurrent clients. Manager/output/device qualification pending.");
 }return 0;}
