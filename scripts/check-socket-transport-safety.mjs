@@ -30,7 +30,7 @@ const fixtures = {
  'SocketQueueUnderTest.inc': section(socket, 'static dispatch_queue_t socketQueue()\n{', 'static void zx_cleanupClient'),
  'SocketCleanupUnderTest.inc': section(socket, 'static void zx_cleanupClient(CFReadStreamRef readStream)\n{', '#if TLINKAUTO_FILE_LOG'),
  'SocketOutputUnderTest.inc': section(socket, '// BEGIN socket output adapter.', '// END socket output adapter.'),
- 'SocketWorkUnderTest.inc': section(socket, '// BEGIN socket work adapter.', '// END socket work adapter.'),
+ 'SocketWorkUnderTest.inc': section(socket, '// BEGIN socket work adapter.', '// END socket work adapter.').replace('TLinkVPNIPCBudget(parent)','fixtureVPNTaskBudget(parent)'),
  'SocketJSONUnderTest.inc': section(socket, 'static NSDictionary *zx_jsonResponseFromLegacy(NSData *legacy, NSNumber *reqId)\n{', '// BEGIN socket work adapter.'),
  'SocketParserUnderTest.inc': parser,
  'SocketTaskTypeUnderTest.inc': section(socket, 'static int getTaskTypeFromBuffer(', 'static bool shouldRouteToSpringBoard('),

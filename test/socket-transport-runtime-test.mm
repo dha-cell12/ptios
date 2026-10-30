@@ -19,6 +19,7 @@
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "../shared/TLinkVPNIPC.h"
+#include "../shared/TLinkVPNTaskAdmission.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkSocketOutput.h"
 #include "../shared/TLinkIPCPolicy.h"
@@ -40,10 +41,20 @@ static void zx_logf(const char *, ...) {}
 static NSData *zx_dataFromCString(const char *s) { return s ? [NSData dataWithBytes:s length:strlen(s)] : nil; }
 static BOOL TLinkRootfullLicenseTaskAllowed(int, NSString **) { return true; }
 static dispatch_semaphore_t taskStarted, taskFinish, imageStarted, imageFinish;
+static dispatch_semaphore_t vpnStarted, vpnFinish;
+static bool expireVPNAdmission=false;
+static TLinkNativeBudgetPtr fixtureVPNTaskBudget(TLinkNativeBudgetPtr parent){
+    return expireVPNAdmission?std::make_shared<TLinkNativeBudget>(TLinkNativeNowNs()-1,std::move(parent)):TLinkVPNIPCBudget(std::move(parent));
+}
 static NSMutableArray *taskCalls;
 static NSData *zx_handleLegacyRequestBytes(const char *payload) {
     NSString *s = [NSString stringWithUTF8String:payload];
     @synchronized(taskCalls) { [taskCalls addObject:s]; }
+    if([s hasPrefix:@"59"])assert(TLinkCurrentNativeBudget()&&TLinkCurrentNativeBudget()->deadline());
+    if([s isEqualToString:@"59slow"]){dispatch_semaphore_signal(vpnStarted);assert(dispatch_semaphore_wait(vpnFinish,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);}
+    if([s isEqualToString:@"59wait"]){dispatch_semaphore_signal(vpnStarted);assert(!TLinkNativeWaitNs(20000000000ULL));}
+    if([s isEqualToString:@"59objcThrow"])@throw [NSException exceptionWithName:@"VPNFixture" reason:@"controlled" userInfo:nil];
+    if([s isEqualToString:@"59cppThrow"])throw std::runtime_error("controlled VPN failure");
     if ([s isEqualToString:@"99slow"]) { dispatch_semaphore_signal(taskStarted); dispatch_semaphore_wait(taskFinish, DISPATCH_TIME_FOREVER); }
     if ([s isEqualToString:@"21slow"]) { dispatch_semaphore_signal(imageStarted); dispatch_semaphore_wait(imageFinish, DISPATCH_TIME_FOREVER); }
     if ([s isEqualToString:@"69objcThrow"]) @throw [NSException exceptionWithName:@"ImageFixture" reason:@"controlled failure" userInfo:nil];
@@ -154,9 +165,60 @@ static NSData *receive(int fd) {
     return result;
 }
 static void drainTasks(unsigned turns = 4) {
-    for (unsigned n = 0; n < turns; ++n) { dispatch_sync(zx_taskQueue(), ^{}); dispatch_sync(zx_imageTaskQueue(), ^{}); dispatch_sync(socketQueue(), ^{}); }
+    for (unsigned n = 0; n < turns; ++n) { dispatch_sync(zx_taskQueue(), ^{}); dispatch_sync(zx_imageTaskQueue(), ^{}); dispatch_sync(zx_vpnTaskQueue(), ^{}); dispatch_sync(socketQueue(), ^{}); }
 }
 static void dispose(ZXClientContext *ctx, int fd) { dispatch_sync(socketQueue(), ^{ zx_cleanupClient(ctx.readStream); }); close(fd); }
+static void vpnLaneCases(){
+    fputs("Socket VPN lane: held VPN, independent ordinary/image work, bounded admission and completion ACK\n",stderr);
+    vpnStarted=dispatch_semaphore_create(0);vpnFinish=dispatch_semaphore_create(0);
+    int vpnPeer,ordinaryPeer,imagePeer,queuedPeer;
+    ZXClientContext *vpn=client(&vpnPeer),*ordinary=client(&ordinaryPeer),*image=client(&imagePeer),*queued=client(&queuedPeer);
+    feed(vpn,text(@"59slow\n60afterVPN\n"));assert(dispatch_semaphore_wait(vpnStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    feed(queued,text(@"590queuedCancelled\n"));
+    int rejectedPeer;ZXClientContext *rejected=client(&rejectedPeer);feed(rejected,text(@"590rejected\n"));
+    dispatch_sync(socketQueue(), ^{assert(rejected->closed.load()&&gPendingVPNTasks==2);});close(rejectedPeer);
+    feed(ordinary,text(@"60duringVPN\n"));feed(image,text(@"69duringVPN\n"));
+    dispatch_sync(zx_taskQueue(), ^{});dispatch_sync(zx_imageTaskQueue(), ^{});dispatch_sync(socketQueue(), ^{});
+    assert([[[NSString alloc] initWithData:receive(ordinaryPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;60duringVPN\r\n"]);
+    assert([[[NSString alloc] initWithData:receive(imagePeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;69duringVPN\r\n"]);
+    @synchronized(taskCalls){assert(![taskCalls containsObject:@"60afterVPN"]);}
+    auto cancelled=queued->c01Cancellation;assert(cancelled);dispose(queued,queuedPeer);assert(cancelled->cancelled());
+    int replacementPeer;ZXClientContext *replacement=client(&replacementPeer);feed(replacement,text(@"590earlyReplacement\n"));
+    dispatch_sync(socketQueue(), ^{assert(replacement->closed.load()&&gPendingVPNTasks==2);});close(replacementPeer);
+    // Hold the real socket owner while both worker bodies exit: leases remain charged until ACK.
+    auto ackHeld=dispatch_semaphore_create(0),inspect=dispatch_semaphore_create(0),checked=dispatch_semaphore_create(0),ackRelease=dispatch_semaphore_create(0);
+    dispatch_async(socketQueue(), ^{
+        dispatch_semaphore_signal(ackHeld);assert(dispatch_semaphore_wait(inspect,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+        assert(gPendingVPNTasks==2&&gPendingTasks==2);dispatch_semaphore_signal(checked);
+        assert(dispatch_semaphore_wait(ackRelease,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    });
+    assert(dispatch_semaphore_wait(ackHeld,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    dispatch_semaphore_signal(vpnFinish);dispatch_sync(zx_vpnTaskQueue(), ^{});dispatch_semaphore_signal(inspect);
+    assert(dispatch_semaphore_wait(checked,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);dispatch_semaphore_signal(ackRelease);drainTasks();
+    assert([[[NSString alloc] initWithData:receive(vpnPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"0;;59slow\r\n0;;60afterVPN\r\n"]);
+    @synchronized(taskCalls){assert(![taskCalls containsObject:@"590queuedCancelled"]&&![taskCalls containsObject:@"590rejected"]&&![taskCalls containsObject:@"590earlyReplacement"]);}
+    dispatch_sync(socketQueue(), ^{assert(!gPendingVPNTasks&&!gPendingTasks);});
+    int waitingPeer;ZXClientContext *waiting=client(&waitingPeer);feed(waiting,text(@"59wait\n"));
+    assert(dispatch_semaphore_wait(vpnStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);auto token=waiting->c01Cancellation;
+    dispose(waiting,waitingPeer);drainTasks();assert(token->cancelled());
+    feed(vpn,text(@"59objcThrow\n59cppThrow\n590recovered\n"));drainTasks(8);
+    assert([[[NSString alloc] initWithData:receive(vpnPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"1;;request_failed\r\n1;;request_failed\r\n0;;590recovered\r\n"]);
+    // Controlled deadline boundary avoids a real 30-second fixture sleep.
+    feed(vpn,text(@"59slow\n"));assert(dispatch_semaphore_wait(vpnStarted,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+    int expiredPeer;ZXClientContext *expired=client(&expiredPeer);expireVPNAdmission=true;feed(expired,text(@"590expired\n"));expireVPNAdmission=false;
+    dispatch_semaphore_signal(vpnFinish);drainTasks();(void)receive(vpnPeer);
+    assert([[[NSString alloc] initWithData:receive(expiredPeer) encoding:NSUTF8StringEncoding] isEqualToString:@"1;;vpn_request_expired\r\n"]);
+    @synchronized(taskCalls){assert(![taskCalls containsObject:@"590expired"]);}
+    dispose(expired,expiredPeer);
+    int jsonPeer;ZXClientContext *json=client(&jsonPeer);feed(json,zx_frameJSONResponse(@{@"id":@590,@"task":@59,@"args":@[@"0json"]}));drainTasks();
+    NSData *framed=receive(jsonPeer);assert(framed.length>10);
+    NSDictionary *reply=[NSJSONSerialization JSONObjectWithData:[framed subdataWithRange:NSMakeRange(10,framed.length-10)] options:0 error:NULL];
+    assert([reply[@"id"] isEqual:@590]&&[reply[@"ok"] boolValue]);dispose(json,jsonPeer);
+    for(unsigned n=0;n<64;++n){feed(vpn,text(@"590cycle\n"));drainTasks(2);assert(receive(vpnPeer).length==strlen("0;;590cycle\r\n"));}
+    dispose(vpn,vpnPeer);dispose(ordinary,ordinaryPeer);dispose(image,imagePeer);
+    dispatch_sync(socketQueue(), ^{assert(!gPendingTasks&&!gPendingImageTasks&&!gPendingVPNTasks);});
+    fputs("Socket VPN lane passed: actual parser/queues/ACK, independent ordinary/image work, two-slot rejection, queued/disconnected/expired skip, cancellation, NS/C++ recovery, JSON/FIFO and 64 lifecycles\n",stderr);
+}
 int main() {
  @autoreleasepool {
     (void)kTLinkautoC01IPCPortName;
@@ -165,6 +227,8 @@ int main() {
     socketClients = [NSMutableDictionary dictionary]; taskCalls = [NSMutableArray array];
     taskStarted = dispatch_semaphore_create(0); taskFinish = dispatch_semaphore_create(0);
     imageStarted = dispatch_semaphore_create(0); imageFinish = dispatch_semaphore_create(0);
+    vpnLaneCases();
+    [taskCalls removeAllObjects]; // Historical FIFO assertions below start with a fresh oracle.
     fputs("Socket runtime: actual eight deferred polls cancel through production cleanup\n",stderr);
     NSMutableArray *eventClients = [NSMutableArray array]; std::vector<int> eventPeers;
     for (unsigned n = 0; n < 8; ++n) { int peer; ZXClientContext *event = client(&peer); [eventClients addObject:event]; eventPeers.push_back(peer); feed(event,text(@"950;;25000;;8;;*\n")); }
@@ -283,9 +347,9 @@ int main() {
     dispatch_sync(socketQueue(), ^{ readStream(b.readStream, kCFStreamEventEndEncountered, nullptr); readStream(b.readStream, kCFStreamEventEndEncountered, nullptr); });
     dispatch_sync(socketQueue(), ^{}); close(bPeer);
     dispatch_sync(socketQueue(), ^{
-        assert(!socketClients.count && !gOutputBytes && !gPendingTasks && !gPendingImageTasks);
+        assert(!socketClients.count && !gOutputBytes && !gPendingTasks && !gPendingImageTasks && !gPendingVPNTasks);
         if (gOutputTimer) { dispatch_source_cancel(gOutputTimer); gOutputTimer = nil; }
     });
-    puts("Socket runtime passed: actual IPC callback, parser, two bounded serial lanes, mixed per-client FIFO, reserved admission, expiry/errors/disconnect, nonblocking output, JSON errors and stale read cleanup.");
+    puts("Socket runtime passed: actual IPC callback, parser, three bounded serial lanes, mixed per-client FIFO, reserved admission, expiry/errors/disconnect, nonblocking output, JSON errors and stale read cleanup.");
  }
 }

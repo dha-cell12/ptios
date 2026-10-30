@@ -10,8 +10,8 @@ const [socket,task,ipc,runtimeSource]=await Promise.all(['tlinkauto-binary/Socke
 function section(text,a,b){const start=text.indexOf(a),end=text.indexOf(b,start+a.length);assert.ok(start>=0&&end>start,a);return text.slice(start,end);}
 const work=section(socket,'// BEGIN socket work adapter.','// END socket work adapter.');
 assert.ok(work.indexOf('TLinkC01TaskBudget(')<work.indexOf('dispatch_async(workQueue,'));
-assert.ok(work.indexOf('TLinkC01LaneAvailable(')<work.indexOf('TLinkC01TaskBudget('));
-assert.match(work,/workQueue=imageTask\?zx_imageTaskQueue\(\):zx_taskQueue\(\)/);
+assert.ok(work.indexOf('TLinkVPNTaskLaneAvailable(')<work.indexOf('TLinkC01TaskBudget('));
+assert.match(work,/workQueue=vpnTask\?zx_vpnTaskQueue\(\):\(imageTask\?zx_imageTaskQueue\(\):zx_taskQueue\(\)\)/);
 assert.match(work,/if\(imageTask\)--gPendingImageTasks/);
 assert.match(work,/TLinkNativeBudgetScope ingressScope\(requestBudget\)/);
 assert.doesNotMatch(socket,/TLinkNativeDispatchSync\(ipcQueue\(\)/);

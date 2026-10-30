@@ -282,6 +282,17 @@ ordinary task queue still serializes VPN with other ordinary network tasks,
 so this is IPC-owner isolation, with task-lane isolation still pending. See
 [IMPLEMENTATION-C04H.md](performance-audit/IMPLEMENTATION-C04H.md).
 
+C04i adds a serial daemon work lane for task 59, capped at two running/queued/
+completion-pending requests within the existing fourteen ordinary slots. The two
+reserved image slots and sixteen-task total remain. Excess VPN clients use the
+existing overload-close behavior. Its native 30-second deadline and cancellation
+token start before enqueue; queued time is not renewed by IPC. Disconnect marks
+the budget stopped, but capacity retires only after socket-owner completion ACK.
+Ordinary/image clients can progress independently; each client's FIFO is kept.
+Different clients may now interleave differently. An executing CF wait remains
+non-preemptible, and no remote manager cancellation is added. See
+[IMPLEMENTATION-C04I.md](performance-audit/IMPLEMENTATION-C04I.md).
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:

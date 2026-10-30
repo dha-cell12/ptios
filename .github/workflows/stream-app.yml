@@ -289,6 +289,9 @@ jobs:
           test -f scripts/check-vpn-client-io-safety.mjs
           test -f scripts/check-vpn-ipc-safety.mjs
           test -f shared/TLinkVPNIPC.h
+          test -f shared/TLinkVPNTaskAdmission.h
+          test -f scripts/lib/vpn-task-lane-baseline.mjs
+          test -f test/fixtures/vpn-task-lane-before-c04i.inc
           test -f test/vpn-ipc-safety-test.cpp
           test -f test/vpn-ipc-runtime-test.mm
           test -f test/fixtures/vpn-ipc-daemon-before-c04h.inc

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import {beforeVPNTaskLane} from './lib/vpn-task-lane-baseline.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const [event, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
@@ -29,7 +30,8 @@ const trollWireEncoder = between(troll,'static NSData *POCEventBatchResponse(', 
 const trollSyncEncoder = between(troll,'    if (taskType == 95) {','    if (taskType == 96) {');
 for(const encoder of [rootWireEncoder,rootSyncEncoder,trollWireEncoder,trollSyncEncoder]) assert.match(encoder,/TLinkEventLegacyBatchResponse\(batch\)/);
 const vpnSender = between(socket,'// BEGIN isolated VPN IPC sender.','// BEGIN C01 IPC owner queues.');
-const beforeVPN = socket.replace('#include "../shared/TLinkVPNIPC.h"\n','').replace(vpnSender,'')
+const beforeTaskLane = await beforeVPNTaskLane(socket);
+const beforeVPN = beforeTaskLane.replace('#include "../shared/TLinkVPNIPC.h"\n','').replace(vpnSender,'')
     .replace('    if(reply&&payload&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_vpnIPCQueue();\n','')
     .replace('    if(waitForResponse&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_sendVPNIPC(payload);\n','');
 assert.equal(createHash('sha256').update(beforeVPN).digest('hex'),'98a399ae2ebed67cf25b0aa6cf36c0769b55730bd0c00b0e5e80f627678c64b3','reverse independently guarded C04h VPN routing before historical event source comparisons');

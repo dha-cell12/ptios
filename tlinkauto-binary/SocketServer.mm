@@ -2,6 +2,7 @@
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "../shared/TLinkVPNIPC.h"
+#include "../shared/TLinkVPNTaskAdmission.h"
 #include "../shared/TLinkNativeDispatch.h"
 // TODO: multiple client write back support
 
@@ -95,6 +96,7 @@ static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requ
 static size_t gOutputBytes = 0;
 static size_t gPendingTasks = 0;
 static size_t gPendingImageTasks = 0;
+static size_t gPendingVPNTasks = 0;
 static const size_t kZXMaxClients = 64;
 
 static NSData *zx_eventChannelResponse(NSString *body)
@@ -1270,6 +1272,16 @@ static dispatch_queue_t zx_imageTaskQueue(void)
     });
     return queue;
 }
+// BEGIN VPN task owner queue.
+static dispatch_queue_t zx_vpnTaskQueue(void)
+{
+    static dispatch_queue_t queue;static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dispatch_queue_attr_t attr=dispatch_queue_attr_make_with_autorelease_frequency(DISPATCH_QUEUE_SERIAL,DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
+        queue=dispatch_queue_create("com.tlinkauto.tlinkautod.vpn-tasks",attr);
+    });return queue;
+}
+// END VPN task owner queue.
 static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requestId, bool json, bool fireAndForget)
 {
     if (!ctx || ctx->closed.load(std::memory_order_acquire)) return;
@@ -1283,21 +1295,23 @@ static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requ
     const uint8_t *task=(const uint8_t *)payload.UTF8String;
     const size_t taskLength=[payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
     const bool imageTask=TLinkC01DurationNs(task,taskLength)!=0;
-    if (!TLinkC01LaneAvailable(imageTask,gPendingTasks,gPendingImageTasks)) {
-        zx_cleanupClient(ctx.readStream); // Rejected work never enters either owner queue.
+    const bool vpnTask=TLinkVPNTaskPayload(task,taskLength);
+    if (!TLinkVPNTaskLaneAvailable(vpnTask,imageTask,gPendingTasks,gPendingImageTasks,gPendingVPNTasks)) {
+        zx_cleanupClient(ctx.readStream); // Rejected work never enters an owner queue.
         return;
     }
     TLinkNativeBudgetPtr requestBudget;
-    if(imageTask){
+    if(imageTask||vpnTask){
         auto token=std::make_shared<TLinkNativeCancellation>();ctx->c01Cancellation=token;
         auto parent=std::make_shared<TLinkNativeBudget>(token,0,1024*1024);
-        requestBudget=TLinkC01TaskBudget(task,taskLength,parent);
+        requestBudget=vpnTask?TLinkVPNIPCBudget(parent):TLinkC01TaskBudget(task,taskLength,parent);
     }
     ctx.requestPending = true; ++gPendingTasks;
     if(imageTask)++gPendingImageTasks;
+    if(vpnTask)++gPendingVPNTasks;
     // Per-client parsing stays paused until completion. Each lane is serial;
     // independent clients in different lanes need not finish in admission order.
-    dispatch_queue_t workQueue=imageTask?zx_imageTaskQueue():zx_taskQueue();
+    dispatch_queue_t workQueue=vpnTask?zx_vpnTaskQueue():(imageTask?zx_imageTaskQueue():zx_taskQueue());
     dispatch_async(workQueue, ^{
         @autoreleasepool {
             TLinkNativeBudgetScope ingressScope(requestBudget);
@@ -1306,8 +1320,9 @@ static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requ
                 NSData *legacy = nil;
                 try {
                     @try {
-                        legacy=TLinkNativeStopped()?zx_dataFromCString("1;;c01_request_expired\r\n"):zx_handleLegacyRequestBytes([payload UTF8String]);
-                        if(TLinkNativeStopped())legacy=zx_dataFromCString("1;;c01_request_expired\r\n");
+                        const char *expired=vpnTask?"1;;vpn_request_expired\r\n":"1;;c01_request_expired\r\n";
+                        legacy=TLinkNativeStopped()?zx_dataFromCString(expired):zx_handleLegacyRequestBytes([payload UTF8String]);
+                        if(TLinkNativeStopped())legacy=zx_dataFromCString(expired);
                     }
                     @catch (NSException *exception) { (void)exception; legacy = zx_dataFromCString("1;;request_failed\r\n"); }
                 } catch (...) { legacy = zx_dataFromCString("1;;request_failed\r\n"); }
@@ -1318,6 +1333,7 @@ static void zx_deferTask(ZXClientContext *ctx, NSString *payload, NSNumber *requ
             dispatch_async(socketQueue(), ^{
                 --gPendingTasks;
                 if(imageTask)--gPendingImageTasks;
+                if(vpnTask)--gPendingVPNTasks;
                 if (!ctx->closed.load(std::memory_order_acquire)) {
                     ctx->c01Cancellation.reset();
                     ctx.requestPending = false;

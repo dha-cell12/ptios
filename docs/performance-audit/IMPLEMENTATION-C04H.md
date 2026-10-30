@@ -1,7 +1,7 @@
 # C04h — dedicated VPN IPC sender and receiver
 
 Date: 2026-10-30 (Asia/Bangkok). User reported the C04g working-tree build passed; HEAD remains `1d4de324`. Preserve all those working-tree changes. Complete normalized pre-C04h source SHA-256: daemon SocketServer `98a399ae2ebed67cf25b0aa6cf36c0769b55730bd0c00b0e5e80f627678c64b3`; SpringBoard IPC receiver `4bd4de54d4e32065d2cb0b22e19ab574c8a4d0fa35dbfc68c2c36ca2628fae26`.
-Status: **source/core implemented; new Foundation/CF/GCD/ARC/ASan/UBSan runtime pending macOS CI; independent device qualification pending**.
+Status: **user reported build passed at `f418a508`, including the shared envelope C++11 compatibility correction, before C04i; independent device qualification pending**.
 Finding: **P0-19/P1-14/P1-63 private IPC portion**. The daemon task lane remains shared and is not fully isolated by this stage.
 
 ## Change

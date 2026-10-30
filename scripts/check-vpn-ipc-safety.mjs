@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
+import {beforeVPNTaskLane} from './lib/vpn-task-lane-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);};
@@ -15,7 +16,8 @@ const sender=between(socket,'// BEGIN isolated VPN IPC sender.','// BEGIN C01 IP
 const receiver=between(ipc,'// BEGIN isolated VPN IPC receiver.','void startIPCServerOnBackgroundThread()');
 const decode=between(ipc,'        if(msgid==TLinkVPNIPCMessage){','\n        // Task 10');
 const include='#include "../shared/TLinkVPNIPC.h"\n';
-assert.equal(socket.replace(include,'').replace(sender,'').replace('    if(reply&&payload&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_vpnIPCQueue();\n','').replace('    if(waitForResponse&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_sendVPNIPC(payload);\n',''),oldSocket,'only dedicated VPN sender/queue routing changes complete daemon; admission/task/authority unchanged');
+const socketBeforeLane=await beforeVPNTaskLane(socket);
+assert.equal(socketBeforeLane.replace(include,'').replace(sender,'').replace('    if(reply&&payload&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_vpnIPCQueue();\n','').replace('    if(waitForResponse&&TLinkVPNIPCRequest((const uint8_t *)payload,strlen(payload)))return zx_sendVPNIPC(payload);\n',''),oldSocket,'only dedicated VPN sender/queue routing changes complete daemon; prior admission/task/authority unchanged');
 assert.equal(ipc.replace(include,'').replace(receiver,'').replace(decode,'').replace('    startVPNIPCServerOnBackgroundThread();\n',''),oldIPC,'only private VPN envelope, receiver/source/startup changes complete prior receiver');
 assert.doesNotMatch(sender,/sendIPCMessage\(|ipcQueue\(|kTLinkautoIPCReadyMarkerPath|CMD_PING/);
 assert.match(sender,/TLinkVPNIPCBudget\(TLinkCurrentNativeBudget\(\)\)/);
