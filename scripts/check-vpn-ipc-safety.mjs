@@ -27,7 +27,8 @@ function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'ut
 try{
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     const binary=join(temp,windows?'core.exe':'core'),file=join(root,'test/vpn-ipc-safety-test.cpp');
-    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',binary]);run(binary,[]);
+    // Match the oldest consumer: the socket runtime compiles shared headers as C++11.
+    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',binary]);run(binary,[]);
     if(process.platform==='darwin'){
         const constants=(await read('tlinkauto-binary/IPCConstants.h')).replaceAll('com.tlinkauto.tlinkautod.springboard',`test.${basename(temp)}.springboard`).replace('/var/mobile/Library/TLinkauto/ipc_ready',join(temp,'ipc-ready'));
         await Promise.all([

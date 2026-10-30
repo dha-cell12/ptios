@@ -23,13 +23,14 @@ inline std::vector<uint8_t> TLinkVPNIPCEncode(const uint8_t *bytes,size_t length
 enum class TLinkVPNIPCDecodeResult {Valid,Invalid,Expired};
 struct TLinkVPNIPCEnvelope {const uint8_t *payload=nullptr;size_t length=0;uint64_t deadline=0;};
 inline TLinkVPNIPCDecodeResult TLinkVPNIPCDecode(const uint8_t *bytes,size_t length,TLinkVPNIPCEnvelope &out,uint64_t now=TLinkNativeNowNs()){
-    out={};
+    out=TLinkVPNIPCEnvelope();
     if(!bytes||length<TLinkVPNIPCHeaderBytes+8||length>TLinkVPNIPCHeaderBytes+4095||std::memcmp(bytes,"TVP1",4)!=0)return TLinkVPNIPCDecodeResult::Invalid;
     uint64_t deadline=0;for(unsigned i=0;i<8;++i)deadline=(deadline<<8)|bytes[4+i];
     if(!deadline||!TLinkVPNIPCPayload(bytes+TLinkVPNIPCHeaderBytes,length-TLinkVPNIPCHeaderBytes))return TLinkVPNIPCDecodeResult::Invalid;
     if(now>=deadline)return TLinkVPNIPCDecodeResult::Expired;
     if(deadline-now>30000000000ULL)return TLinkVPNIPCDecodeResult::Invalid;
-    out={bytes+TLinkVPNIPCHeaderBytes,length-TLinkVPNIPCHeaderBytes,deadline};return TLinkVPNIPCDecodeResult::Valid;
+    out.payload=bytes+TLinkVPNIPCHeaderBytes;out.length=length-TLinkVPNIPCHeaderBytes;out.deadline=deadline;
+    return TLinkVPNIPCDecodeResult::Valid;
 }
 struct TLinkVPNIPCWaits {double send,receive;};
 inline TLinkVPNIPCWaits TLinkVPNIPCTimeouts(TLinkNativeBudgetPtr budget){
