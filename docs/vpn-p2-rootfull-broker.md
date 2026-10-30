@@ -229,6 +229,15 @@ preserved. This window ends at response dispatch; manager waits and response
 writes retain their separate behavior. See
 [IMPLEMENTATION-C04C.md](performance-audit/IMPLEMENTATION-C04C.md).
 
+C04d extends that accepted-time window through broker waits and response
+writes. The existing 8/24-second wait limits are capped by the remaining outer
+budget and include operation starter time. Callback results are synchronized;
+duplicates and late completions cannot replace the consumed result. Response
+writes use nonblocking sends and the same deadline. This is cooperative:
+synchronous APIs can overrun until they return, and manager timeout does not
+cancel or roll back VPN effects. See
+[IMPLEMENTATION-C04D.md](performance-audit/IMPLEMENTATION-C04D.md).
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:

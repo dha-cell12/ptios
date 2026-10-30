@@ -288,6 +288,10 @@ jobs:
           test -f scripts/check-vpn-broker-admission-safety.mjs
           test -f test/vpn-broker-admission-runtime-test.mm
           test -f test/vpn-broker-ingress-safety-test.cpp
+          test -f test/vpn-broker-budget-safety-test.cpp
+          test -f test/vpn-broker-wait-runtime-test.mm
+          test -f shared/TLinkVPNBrokerBudget.h
+          test -f test/fixtures/vpn-broker-before-c04d.inc
           test -f shared/TLinkVPNBrokerIngress.h
           test -f test/fixtures/vpn-broker-before-c04c.inc
           test -f test/fixtures/vpn-broker-before-c04b.inc

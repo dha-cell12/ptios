@@ -1,7 +1,7 @@
 # C04c — accepted-time VPN broker request ingress
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `127580fb`, C04b build passed according to the user. Complete normalized broker source SHA-256 before this change: `6d29f36a4e5898860201eef7223b6f077f663b24170bfb5bc6465a2fff524930`.
-Status: **source/core implemented; new Foundation/POSIX/GCD/ARC/ASan/UBSan runtime pending macOS CI; device qualification pending**.
+Status: **user reported build passed at `dd0dae9d` before C04d; independent device qualification pending**.
 Finding: **P1-63/P0-19 request ingress portion**, not an end-to-end VPN timeout.
 
 ## Change

@@ -3,6 +3,7 @@
 #include "../shared/TLinkHelperClientAdmission.h"
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkVPNBrokerIngress.h"
+#include "../shared/TLinkVPNBrokerBudget.h"
 #include <cassert>
 #include <atomic>
 #include <cstdio>
@@ -25,6 +26,10 @@ static std::atomic<unsigned> ingressReads{0},ingressWaits{0},advanceReadMs{0};
 static std::atomic<size_t> readLimit{SIZE_MAX};
 static std::atomic<int> readsBeforeFault{-1};
 static bool expireDecode=false;
+static bool expireResponse=false,timeoutOutput=false;
+static NSString *responseOverride=nil;
+static std::atomic<unsigned> outputCalls{0},outputWaits{0};
+static std::atomic<size_t> outputBytes{0};
 static uint64_t fixtureNow(){return fakeTime.load()?clockMs.load():TLinkHelperIO::nowMs();}
 static void fixtureLog(NSString *format,...){(void)format;}
 static NSString *fixtureDecode(NSData *data){
@@ -36,6 +41,8 @@ static NSString *fixtureResponse(NSString *command){
     ++responses;
     if(responseFault==1)[NSException raise:@"FixtureResponse" format:@"response"];
     if(responseFault==2)throw std::runtime_error("response");
+    if(expireResponse)clockMs+=30000;
+    if(responseOverride)return responseOverride;
     NSString *clean=[command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     return [NSString stringWithFormat:@"0;;%@\r\n",clean];
 }
@@ -71,6 +78,21 @@ static TLinkHelperIO::Ops fixtureReadOps(){
     io.wait=[](void *,int fd,bool writing,int budget,int &error){
         ++ingressWaits;const auto real=TLinkVPNBrokerIngress::posixReadOps();
         return real.wait(real.context,fd,writing,budget,error);
+    };
+    return io;
+}
+static TLinkHelperIO::Ops fixtureWriteOps(){
+    auto io=TLinkVPNBrokerBudget::posixWriteOps();io.now=[](void *){return fixtureNow();};
+    io.send=[](void *,int fd,const uint8_t *bytes,size_t count,int &error)->ptrdiff_t{
+        ++outputCalls;const auto real=TLinkVPNBrokerBudget::posixWriteOps();
+        const ptrdiff_t sent=real.send(real.context,fd,bytes,count,error);
+        if(sent>0)outputBytes+=static_cast<size_t>(sent);
+        return sent;
+    };
+    io.wait=[](void *,int fd,bool writing,int budget,int &error){
+        ++outputWaits;assert(writing&&budget>0&&budget<=30000);
+        if(timeoutOutput){clockMs=30100;return 0;}
+        const auto real=TLinkVPNBrokerBudget::posixWriteOps();return real.wait(real.context,fd,writing,budget,error);
     };
     return io;
 }
@@ -209,10 +231,24 @@ static void ingressCases(){
     Current::TLinkVPNBrokerEnqueueClient(owner,queue,retry[1]);assert(reply(retry[0]).length>0);drain(queue,owner);
     assert(responses==before+1);closed(retry[1]);
 }
+static void outputCases(){
+    TLinkHelperClientAdmission owner(8);dispatch_queue_t queue=clientQueue();clockMs=100;
+    int late[2];pair(late);Socket latePeer(late[0]);sendCommand(late[0],@"query\n");
+    const unsigned calls=outputCalls.load(),before=responses.load();expireResponse=true;
+    Current::TLinkVPNBrokerEnqueueClient(owner,queue,late[1]);assert(reply(late[0]).length==0);drain(queue,owner);
+    assert(responses==before+1&&outputCalls==calls);expireResponse=false;closed(late[1]);
+    clockMs=100;responseOverride=[@"x" stringByPaddingToLength:1024*1024 withString:@"x" startingAtIndex:0];timeoutOutput=true;
+    int fd[2];pair(fd);Socket nonreader(fd[0]);sendCommand(fd[0],@"query\n");int small=4096;
+    assert(::setsockopt(fd[1],SOL_SOCKET,SO_SNDBUF,&small,sizeof(small))==0);
+    const unsigned waits=outputWaits.load();const size_t bytes=outputBytes.load();
+    Current::TLinkVPNBrokerEnqueueClient(owner,queue,fd[1]);drain(queue,owner);
+    assert(outputWaits==waits+1&&outputBytes>bytes&&outputBytes<bytes+1024*1024&&clockMs==30100);
+    closed(fd[1]);responseOverride=nil;timeoutOutput=false;clockMs=100;
+}
 int main(){@autoreleasepool{
     ::signal(SIGPIPE,SIG_IGN);
     fakeTime=true;clockMs=100; // Admission/parity stress is independent of CI scheduling time.
     puts("VPN broker Foundation: actual lease/handler, held and running GCD queues and real sockets; response provider controlled");
-    heldQueueCases();blockedReaderCases();parserParityCases();faultCases();ownerAndReuseCases();ingressCases();concurrentCases();
+    heldQueueCases();blockedReaderCases();parserParityCases();faultCases();ownerAndReuseCases();ingressCases();outputCases();concurrentCases();
     puts("VPN broker admission/ingress passed: eight slots, ninth rejection, frozen handler parity, exceptions/discard/owner/FD reuse, queued expiry and clock faults, real DONTWAIT/poll, trickled input/decode expiry without dispatch, recovery and 8k concurrent clients. Manager/output/device qualification pending.");
 }return 0;}
