@@ -15,8 +15,9 @@ static NSMutableSet *providerErrors;
 static bool taskFailure=false;
 static int copyFailure=0;
 static std::atomic<unsigned> taskCalls{0},valueCalls{0},copyCalls{0};
+static std::atomic<unsigned> retainCalls{0};
 static std::atomic<int> ownedCF{0};
-static CFTypeRef fixtureRetain(CFTypeRef value){assert(value);++ownedCF;return CFRetain(value);}
+static CFTypeRef fixtureRetain(CFTypeRef value){assert(value);++retainCalls;++ownedCF;return CFRetain(value);}
 static void fixtureRelease(CFTypeRef value){assert(value&&ownedCF>0);--ownedCF;CFRelease(value);}
 static FixtureSecTaskRef fixtureCreateTask(CFAllocatorRef allocator){(void)allocator;++taskCalls;return taskFailure?NULL:fixtureRetain(CFSTR("fixture-task"));}
 static CFTypeRef fixtureCopyEntitlement(FixtureSecTaskRef task,CFStringRef entitlement,CFErrorRef *error){
@@ -38,6 +39,12 @@ namespace Current {
 namespace Legacy {
 #include "VPNEntitlementsLegacy.inc"
 }
+namespace Previous {
+#include "VPNEntitlementsPrevious.inc"
+}
+namespace Retry {
+#include "VPNEntitlementsUnderTest.inc"
+}
 static NSArray<NSString *> *keys(){return @[
     @"com.apple.developer.networking.vpn.api",@"com.apple.developer.networking.networkextension",
     @"com.apple.private.networkextension.configuration",@"keychain-access-groups",
@@ -46,7 +53,7 @@ static NSArray<NSString *> *keys(){return @[
     @"user-preference-read",@"user-preference-write"];
 }
 static void reset(){
-    assert(ownedCF==0);taskFailure=false;copyFailure=0;taskCalls=0;valueCalls=0;copyCalls=0;
+    assert(ownedCF==0);taskFailure=false;copyFailure=0;taskCalls=0;valueCalls=0;copyCalls=0;retainCalls=0;
     providerErrors=[NSMutableSet set];
     providerValues=[@{keys()[0]:@[@"allow-vpn"],keys()[1]:@[@"packet-tunnel-provider"],
         keys()[2]:@[@"super"],keys()[3]:@[@"com.apple.managed.vpn.shared"],
@@ -108,16 +115,61 @@ static void ownershipCases(){
     assert(![readCache(cache)[@"allow_vpn"] boolValue]);
 }
 static void concurrentPublicCases(){
-    reset();NSDictionary *expected=Legacy::TLinkVPNEntitlementProbe();assert(ownedCF==0);taskCalls=0;valueCalls=0;
+    reset();NSDictionary *expected=Legacy::TLinkVPNEntitlementProbe();assert(ownedCF==0);taskCalls=0;valueCalls=0;retainCalls=0;
     std::vector<std::thread> workers;
     for(unsigned worker=0;worker<8;++worker)workers.emplace_back([expected]{@autoreleasepool{
         for(unsigned n=0;n<1000;++n){@autoreleasepool{assert([Current::TLinkVPNEntitlementProbe() isEqual:expected]);}}
     }});
     for(std::thread &worker:workers)worker.join();
-    assert(taskCalls==1&&valueCalls==10&&ownedCF==0);
+    assert(taskCalls==1&&valueCalls==10&&retainCalls==11&&ownedCF==0);
+    NSDictionary *held;
+    @autoreleasepool{held=Current::TLinkVPNEntitlementProbe();}
+    assert([held isEqual:expected]);
+    for(unsigned n=0;n<10000;++n){@autoreleasepool{assert(Current::TLinkVPNEntitlementProbe()==held);}}
+    assert(retainCalls==11&&ownedCF==0);
+    // Compare the actual preceding wrapper: it still retains ten CF values per warm call.
+    assert([Previous::TLinkVPNEntitlementProbe() isEqual:held]);
+    const unsigned before=retainCalls.load();
+    for(unsigned n=0;n<64;++n)assert([Previous::TLinkVPNEntitlementProbe() isEqual:held]);
+    assert(retainCalls==before+640);
+}
+static void publicRetryAndSnapshotCases(){
+    reset();NSDictionary *resolvedValues=[providerValues copy];[providerValues removeAllObjects];
+    [providerErrors addObjectsFromArray:keys()];
+    assert([Retry::TLinkVPNEntitlementProbe() isEqual:Legacy::TLinkVPNEntitlementProbe()]);
+    for(unsigned key=0;key<10;++key){
+        [providerErrors removeObject:keys()[key]];
+        providerValues[keys()[key]]=resolvedValues[keys()[key]];
+        if(key==4){
+            taskFailure=true;
+            assert([Retry::TLinkVPNEntitlementProbe() isEqual:Legacy::TLinkVPNEntitlementProbe()]);
+            taskFailure=false;
+        }
+        if(key<3){
+            copyFailure=(int)key+1;
+            NSDictionary *expected=Legacy::TLinkVPNEntitlementProbe();
+            assert([Retry::TLinkVPNEntitlementProbe() isEqual:expected]);
+            copyFailure=0;
+        }
+        NSDictionary *expected=Legacy::TLinkVPNEntitlementProbe();
+        assert([Retry::TLinkVPNEntitlementProbe() isEqual:expected]&&ownedCF==0);
+    }
+    NSDictionary *held;
+    @autoreleasepool{held=Retry::TLinkVPNEntitlementProbe();}
+    assert([held[@"allow_vpn"] boolValue]);
+    bool rejected=false;
+    @try{[(NSMutableDictionary *)held setObject:@0 forKey:@"allow_vpn"];}@catch(NSException *exception){(void)exception;rejected=true;}
+    assert(rejected);
+    rejected=false;
+    @try{[(NSMutableArray *)held[@"vpn_api_values"] addObject:@"changed"];}@catch(NSException *exception){(void)exception;rejected=true;}
+    assert(rejected);
+    [providerValues removeAllObjects];taskFailure=true;
+    const unsigned tasks=taskCalls.load(),values=valueCalls.load(),copies=copyCalls.load(),retains=retainCalls.load();
+    for(unsigned n=0;n<1000;++n){@autoreleasepool{assert(Retry::TLinkVPNEntitlementProbe()==held);}}
+    assert(taskCalls==tasks&&valueCalls==values&&copyCalls==copies&&retainCalls==retains&&ownedCF==0);
 }
 int main(){@autoreleasepool{
     puts("VPN diagnostics Foundation: actual/frozen entitlement normalization, success-only immutable memo and CF ownership");
-    parityAndWarmCases();faultAndRetryCases();ownershipCases();concurrentPublicCases();
-    puts("VPN diagnostics cache passed: 1000 frozen shapes, 10k warm reads, absent values, ten independent error retries, task/copy NS/C++ failures, pool/mutable ownership and 8k concurrent public calls. No real entitlement or VPN state changed.");
+    parityAndWarmCases();faultAndRetryCases();ownershipCases();concurrentPublicCases();publicRetryAndSnapshotCases();
+    puts("VPN diagnostics cache passed: 1000 frozen shapes, 10k warm reads, absent values, ten independent error retries, task/copy NS/C++ failures, pool/mutable ownership and 8k concurrent public calls. Completed snapshots reuse immutable results without warm CF retains (640 preceding retains over 64 calls). No real entitlement or VPN state changed.");
 }return 0;}

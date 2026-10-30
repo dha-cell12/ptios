@@ -246,9 +246,15 @@ static NSDictionary *TLinkVPNEntitlementProbe(void)
 {
     static dispatch_once_t onceToken;
     static NSMutableDictionary *cache = nil;
+    static NSDictionary *completedProbe = nil;
     dispatch_once(&onceToken, ^{ cache = [NSMutableDictionary dictionaryWithCapacity:10]; });
     @synchronized (cache) {
-        return TLinkVPNEntitlementProbeUsingCache(cache);
+        if (completedProbe) return completedProbe;
+        NSDictionary *probe = TLinkVPNEntitlementProbeUsingCache(cache);
+        // Only freeze the normalized result after every key resolved successfully.
+        // The probe literal and its normalized arrays/strings are immutable.
+        if (cache.count == 10) completedProbe = probe;
+        return probe;
     }
 }
 

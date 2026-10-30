@@ -1,0 +1,461 @@
+#import "TLinkVPNDiagnostics.h"
+
+#import <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
+#include <dlfcn.h>
+#include <stdint.h>
+#import <objc/message.h>
+
+typedef struct __SecTask *SecTaskRef;
+
+extern "C" {
+SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator);
+CFTypeRef SecTaskCopyValueForEntitlement(
+    SecTaskRef task,
+    CFStringRef entitlement,
+    CFErrorRef *error);
+}
+
+static NSString *const kTLinkVPNDiagnosticsErrorDomain =
+    @"com.tlinkauto.vpn.diagnostics";
+static NSString *const kTLinkVPNProfileIdentifier =
+    @"tlinkauto-managed-v1";
+static NSString *const kTLinkVPNAPIEntitlement =
+    @"com.apple.developer.networking.vpn.api";
+static NSString *const kTLinkNetworkExtensionEntitlement =
+    @"com.apple.developer.networking.networkextension";
+static NSString *const kTLinkPrivateConfigurationEntitlement =
+    @"com.apple.private.networkextension.configuration";
+static NSString *const kTLinkKeychainAccessGroupsEntitlement =
+    @"keychain-access-groups";
+static NSString *const kTLinkSCPreferencesWriteEntitlement =
+    @"com.apple.SystemConfiguration.SCPreferences-write-access";
+static NSString *const kTLinkSCDynamicStoreWriteEntitlement =
+    @"com.apple.SystemConfiguration.SCDynamicStore-write-access";
+static NSString *const kTLinkProfiledAccessEntitlement =
+    @"com.apple.managedconfiguration.profiled-access";
+static NSString *const kTLinkMDMDAccessEntitlement =
+    @"com.apple.managedconfiguration.mdmd-access";
+static NSString *const kTLinkUserPreferenceReadEntitlement =
+    @"user-preference-read";
+static NSString *const kTLinkUserPreferenceWriteEntitlement =
+    @"user-preference-write";
+NSString *TLinkVPNManagedProfileIdentifier(void)
+{
+    return kTLinkVPNProfileIdentifier;
+}
+
+static NSArray<NSString *> *TLinkVPNNormalizedEntitlementValues(CFTypeRef value)
+{
+    if (!value) return @[];
+    id object = (__bridge id)value;
+    NSMutableArray<NSString *> *values = [NSMutableArray array];
+    if ([object isKindOfClass:[NSArray class]]) {
+        for (id item in (NSArray *)object) {
+            if ([item isKindOfClass:[NSString class]]) {
+                [values addObject:[item copy]];
+            }
+        }
+    } else if ([object isKindOfClass:[NSString class]]) {
+        [values addObject:[object copy]];
+    } else if ([object respondsToSelector:@selector(boolValue)] &&
+               [object boolValue]) {
+        [values addObject:@"true"];
+    }
+    return [values copy];
+}
+
+// BEGIN process-local immutable entitlement cache.
+// Caller serializes access. Failed reads/copies are never memoized.
+static CFTypeRef TLinkVPNReadEntitlement(
+    NSMutableDictionary *cache, SecTaskRef task, CFStringRef entitlement,
+    CFErrorRef *error)
+{
+    NSString *key = (__bridge NSString *)entitlement;
+    id cached = cache[key];
+    if (cached) {
+        return cached == [NSNull null] ? NULL : CFRetain((__bridge CFTypeRef)cached);
+    }
+    CFTypeRef value = SecTaskCopyValueForEntitlement(task, entitlement, error);
+    if (*error) return value;
+    CFPropertyListRef immutable = NULL;
+    // Optional memoization must not change the current probe on copy failures.
+    @try {
+        try {
+            if (value) immutable = CFPropertyListCreateDeepCopy(
+                kCFAllocatorDefault, value, kCFPropertyListImmutable);
+            if (!value || immutable) cache[key] = value ? (__bridge id)immutable : [NSNull null];
+        } catch (...) {
+        }
+    } @catch (NSException *exception) {
+        (void)exception;
+    }
+    if (immutable) CFRelease(immutable);
+    return value;
+}
+// END process-local immutable entitlement cache.
+
+static NSDictionary *TLinkVPNEntitlementProbeUsingCache(NSMutableDictionary *cache)
+{
+    SecTaskRef task = cache.count == 10 ? NULL : SecTaskCreateFromSelf(kCFAllocatorDefault);
+    if (!task && cache.count != 10) {
+        return @{
+            @"probe_source": @"sec_task_current_process",
+            @"probe_available": @0,
+            @"vpn_api_present": @0,
+            @"vpn_api_values": @[],
+            @"allow_vpn": @0,
+            @"networkextension_present": @0,
+            @"networkextension_values": @[],
+            @"packet_tunnel_provider": @0,
+            @"private_configuration_present": @0,
+            @"private_configuration_values": @[],
+            @"private_configuration_super": @0,
+            @"managed_vpn_keychain_access": @0,
+            @"scpreferences_write_access": @0,
+            @"scdynamicstore_write_access": @0,
+            @"profiled_access": @0,
+            @"mdmd_access": @0,
+            @"user_preference_read": @0,
+            @"user_preference_write": @0,
+        };
+    }
+
+    CFErrorRef vpnError = NULL;
+    CFTypeRef vpnValue = TLinkVPNReadEntitlement(
+        cache, task,
+        (__bridge CFStringRef)kTLinkVPNAPIEntitlement,
+        &vpnError);
+    NSArray<NSString *> *vpnValues =
+        TLinkVPNNormalizedEntitlementValues(vpnValue);
+
+    CFErrorRef networkExtensionError = NULL;
+    CFTypeRef networkExtensionValue = TLinkVPNReadEntitlement(
+        cache, task,
+        (__bridge CFStringRef)kTLinkNetworkExtensionEntitlement,
+        &networkExtensionError);
+    NSArray<NSString *> *networkExtensionValues =
+        TLinkVPNNormalizedEntitlementValues(networkExtensionValue);
+
+    CFErrorRef privateConfigurationError = NULL;
+    CFTypeRef privateConfigurationValue =
+        TLinkVPNReadEntitlement(
+            cache, task,
+            (__bridge CFStringRef)kTLinkPrivateConfigurationEntitlement,
+            &privateConfigurationError);
+    NSArray<NSString *> *privateConfigurationValues =
+        TLinkVPNNormalizedEntitlementValues(privateConfigurationValue);
+
+    CFErrorRef keychainGroupsError = NULL;
+    CFTypeRef keychainGroupsValue = TLinkVPNReadEntitlement(
+        cache, task,
+        (__bridge CFStringRef)kTLinkKeychainAccessGroupsEntitlement,
+        &keychainGroupsError);
+    NSArray<NSString *> *keychainGroups =
+        TLinkVPNNormalizedEntitlementValues(keychainGroupsValue);
+
+    CFErrorRef scPreferencesError = NULL;
+    CFTypeRef scPreferencesValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkSCPreferencesWriteEntitlement,
+        &scPreferencesError);
+    NSArray<NSString *> *scPreferencesValues =
+        TLinkVPNNormalizedEntitlementValues(scPreferencesValue);
+    CFErrorRef dynamicStoreError = NULL;
+    CFTypeRef dynamicStoreValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkSCDynamicStoreWriteEntitlement,
+        &dynamicStoreError);
+    CFErrorRef profiledError = NULL;
+    CFTypeRef profiledValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkProfiledAccessEntitlement,
+        &profiledError);
+    CFErrorRef mdmdError = NULL;
+    CFTypeRef mdmdValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkMDMDAccessEntitlement,
+        &mdmdError);
+    CFErrorRef preferenceReadError = NULL;
+    CFTypeRef preferenceReadValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkUserPreferenceReadEntitlement,
+        &preferenceReadError);
+    CFErrorRef preferenceWriteError = NULL;
+    CFTypeRef preferenceWriteValue = TLinkVPNReadEntitlement(
+        cache, task, (__bridge CFStringRef)kTLinkUserPreferenceWriteEntitlement,
+        &preferenceWriteError);
+
+    NSDictionary *probe = @{
+        @"probe_source": @"sec_task_current_process",
+        @"probe_available": @1,
+        @"vpn_api_present": @(vpnValue != NULL),
+        @"vpn_api_values": vpnValues ?: @[],
+        @"allow_vpn": @([vpnValues containsObject:@"allow-vpn"]),
+        @"networkextension_present": @(networkExtensionValue != NULL),
+        @"networkextension_values": networkExtensionValues ?: @[],
+        @"packet_tunnel_provider":
+            @([networkExtensionValues containsObject:@"packet-tunnel-provider"]),
+        @"private_configuration_present":
+            @(privateConfigurationValue != NULL),
+        @"private_configuration_values":
+            privateConfigurationValues ?: @[],
+        @"private_configuration_super":
+            @([privateConfigurationValues containsObject:@"super"]),
+        @"managed_vpn_keychain_access":
+            @([keychainGroups containsObject:@"com.apple.managed.vpn.shared"]),
+        @"scpreferences_write_access":
+            @([scPreferencesValues containsObject:@"preferences.plist"]),
+        @"scdynamicstore_write_access":
+            @([TLinkVPNNormalizedEntitlementValues(dynamicStoreValue)
+                containsObject:@"true"]),
+        @"profiled_access":
+            @([TLinkVPNNormalizedEntitlementValues(profiledValue)
+                containsObject:@"true"]),
+        @"mdmd_access":
+            @([TLinkVPNNormalizedEntitlementValues(mdmdValue)
+                containsObject:@"true"]),
+        @"user_preference_read":
+            @([TLinkVPNNormalizedEntitlementValues(preferenceReadValue)
+                containsObject:@"true"]),
+        @"user_preference_write":
+            @([TLinkVPNNormalizedEntitlementValues(preferenceWriteValue)
+                containsObject:@"true"]),
+    };
+
+    if (vpnValue) CFRelease(vpnValue);
+    if (vpnError) CFRelease(vpnError);
+    if (networkExtensionValue) CFRelease(networkExtensionValue);
+    if (networkExtensionError) CFRelease(networkExtensionError);
+    if (privateConfigurationValue) CFRelease(privateConfigurationValue);
+    if (privateConfigurationError) CFRelease(privateConfigurationError);
+    if (keychainGroupsValue) CFRelease(keychainGroupsValue);
+    if (keychainGroupsError) CFRelease(keychainGroupsError);
+    if (scPreferencesValue) CFRelease(scPreferencesValue);
+    if (scPreferencesError) CFRelease(scPreferencesError);
+    if (dynamicStoreValue) CFRelease(dynamicStoreValue);
+    if (dynamicStoreError) CFRelease(dynamicStoreError);
+    if (profiledValue) CFRelease(profiledValue);
+    if (profiledError) CFRelease(profiledError);
+    if (mdmdValue) CFRelease(mdmdValue);
+    if (mdmdError) CFRelease(mdmdError);
+    if (preferenceReadValue) CFRelease(preferenceReadValue);
+    if (preferenceReadError) CFRelease(preferenceReadError);
+    if (preferenceWriteValue) CFRelease(preferenceWriteValue);
+    if (preferenceWriteError) CFRelease(preferenceWriteError);
+    if (task) CFRelease(task);
+    return probe;
+}
+
+static NSDictionary *TLinkVPNEntitlementProbe(void)
+{
+    static dispatch_once_t onceToken;
+    static NSMutableDictionary *cache = nil;
+    dispatch_once(&onceToken, ^{ cache = [NSMutableDictionary dictionaryWithCapacity:10]; });
+    @synchronized (cache) {
+        return TLinkVPNEntitlementProbeUsingCache(cache);
+    }
+}
+
+static NSDictionary *TLinkVPNFrameworkProbe(void)
+{
+    static dispatch_once_t onceToken;
+    static BOOL frameworkLoaded = false;
+    dispatch_once(&onceToken, ^{
+        void *handle = dlopen(
+            "/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension",
+            RTLD_LAZY | RTLD_LOCAL);
+        frameworkLoaded = (handle != NULL);
+    });
+
+    BOOL managerClassAvailable = NSClassFromString(@"NEVPNManager") != Nil;
+    return @{
+        @"framework_loaded": @(frameworkLoaded),
+        @"manager_class_available": @(managerClassAvailable),
+        @"api_exercised": @0,
+    };
+}
+
+static NSDictionary *TLinkVPNPrivateCompatibilityProbe(
+    BOOL allowVPN,
+    BOOL privateConfigurationSuper)
+{
+    NSString *bundlePath =
+        @"/System/Library/PreferenceBundles/VPNPreferences.bundle";
+    if (!allowVPN || !privateConfigurationSuper) {
+        return @{
+            @"source": @"xxtouch_vpnconnectionstore_compatibility_probe",
+            @"bundle_path": bundlePath,
+            @"bundle_present": @([[NSFileManager defaultManager]
+                fileExistsAtPath:bundlePath]),
+            @"bundle_loaded": @0,
+            @"store_class_available": @0,
+            @"shared_store_available": @0,
+            @"create_profile_selector": @0,
+            @"list_profiles_selector": @0,
+            @"delete_profile_selector": @0,
+            @"select_profile_selector": @0,
+            @"connection_selector": @0,
+            @"candidate_ready": @0,
+            @"mutating_api_exercised": @0,
+            @"probe_skipped": !allowVPN
+                ? @"allow_vpn_entitlement_missing"
+                : @"private_configuration_super_entitlement_missing",
+            @"load_error": @"",
+        };
+    }
+
+    static dispatch_once_t onceToken;
+    static NSDictionary *probe = nil;
+    dispatch_once(&onceToken, ^{
+        NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+        NSError *loadError = nil;
+        BOOL bundlePresent = bundle != nil;
+        BOOL bundleLoaded = bundlePresent &&
+            (bundle.loaded || [bundle loadAndReturnError:&loadError]);
+        Class storeClass = NSClassFromString(@"VPNConnectionStore");
+        BOOL sharedStore = storeClass &&
+            [storeClass respondsToSelector:NSSelectorFromString(@"sharedInstance")];
+        id store = nil;
+        if (sharedStore) {
+            store = ((id (*)(id, SEL))objc_msgSend)(
+                (id)storeClass,
+                NSSelectorFromString(@"sharedInstance"));
+        }
+        BOOL createProfile = store &&
+            [store respondsToSelector:
+                NSSelectorFromString(@"createVPNWithOptions:")];
+        BOOL listProfiles = store &&
+            ([store respondsToSelector:
+                NSSelectorFromString(@"configurations")] ||
+             [storeClass respondsToSelector:
+                NSSelectorFromString(
+                    @"createAllVPNByUserDefinedNamesDictionary")]);
+        BOOL deleteProfile = store &&
+            ([store respondsToSelector:
+                NSSelectorFromString(@"deleteVPNWithServiceID:")] ||
+             [store respondsToSelector:
+                NSSelectorFromString(@"deleteVPNWithServiceID:withGrade:")]);
+        BOOL selectProfile = store &&
+            ([store respondsToSelector:NSSelectorFromString(@"setActiveVPNID:")] ||
+             [store respondsToSelector:
+                 NSSelectorFromString(@"setActiveVPNID:withGrade:")]);
+        BOOL connection = store &&
+            ([store respondsToSelector:NSSelectorFromString(@"currentConnection")] ||
+             [store respondsToSelector:
+                 NSSelectorFromString(@"currentConnectionWithGrade:")]);
+
+        probe = @{
+            @"source": @"xxtouch_vpnconnectionstore_compatibility_probe",
+            @"bundle_path": bundlePath,
+            @"bundle_present": @(bundlePresent),
+            @"bundle_loaded": @(bundleLoaded),
+            @"store_class_available": @(storeClass != Nil),
+            @"shared_store_available": @(store != nil),
+            @"create_profile_selector": @(createProfile),
+            @"list_profiles_selector": @(listProfiles),
+            @"delete_profile_selector": @(deleteProfile),
+            @"select_profile_selector": @(selectProfile),
+            @"connection_selector": @(connection),
+            @"candidate_ready":
+                @(bundleLoaded && store && createProfile && listProfiles &&
+                  selectProfile && connection),
+            @"mutating_api_exercised": @0,
+            @"probe_skipped": @"",
+            @"load_error": loadError.localizedDescription ?: @"",
+        };
+    });
+    // Selector availability is stable for the process lifetime, but the
+    // ownership marker is created after the user saves a legacy profile. Do
+    // not freeze that evidence on vpnagent's first diagnostics request.
+    NSMutableDictionary *current = [probe mutableCopy];
+    current[@"mutating_api_exercised"] = @([[NSFileManager defaultManager]
+        fileExistsAtPath:
+            @"/var/mobile/Library/TLinkauto/config/vpn-private-owned.plist"]);
+    return current;
+}
+
+NSDictionary *TLinkVPNDiagnosticsSnapshot(
+    NSString *runtime,
+    NSString *state,
+    NSString *query,
+    NSString *control,
+    NSString *backend,
+    NSString *broker,
+    NSNumber *effectiveConnected)
+{
+    NSDictionary *entitlements = TLinkVPNEntitlementProbe();
+    NSDictionary *framework = TLinkVPNFrameworkProbe();
+    BOOL allowVPN = [entitlements[@"allow_vpn"] boolValue];
+    BOOL privateConfigurationSuper =
+        [entitlements[@"private_configuration_super"] boolValue];
+    NSDictionary *privateCompatibility =
+        TLinkVPNPrivateCompatibilityProbe(
+            allowVPN, privateConfigurationSuper);
+    BOOL managerAvailable = [framework[@"manager_class_available"] boolValue];
+    NSString *preflight =
+        (allowVPN && privateConfigurationSuper && managerAvailable)
+        ? @"candidate_unverified"
+        : @"blocked_missing_entitlement_or_framework";
+    uint64_t generatedAtMs =
+        (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
+
+    return @{
+        @"contract_version": @1,
+        @"vpn_contract_version": @1,
+        @"diagnostics_version": @1,
+        @"phase": @1,
+        @"legacy_task": @59,
+        @"runtime": runtime ?: @"unknown",
+        @"state": state ?: @"unknown",
+        @"query": query ?: @"unsupported",
+        @"control": control ?: @"unsupported",
+        @"backend": backend ?: @"none",
+        @"broker": broker ?: @"not_implemented",
+        @"broker_target": @"foreground_app_or_entitled_agent",
+        @"broker_ready": @0,
+        @"profile_scope": @"tlink_owned_only",
+        @"profile_identifier": TLinkVPNManagedProfileIdentifier(),
+        @"profile_state": @"not_probed",
+        @"configuration_transport": @"local_ui_keychain_only",
+        @"credentials_over_task59": @0,
+        @"effective_connected_known": @(effectiveConnected != nil),
+        @"effective_connected": effectiveConnected ?: [NSNull null],
+        @"entitlement_probe_scope": @"current_process_only",
+        @"entitlements": entitlements,
+        @"network_extension": framework,
+        @"private_compatibility": privateCompatibility,
+        @"control_preflight": preflight,
+        @"generated_at_ms": @(generatedAtMs),
+    };
+}
+
+NSString *TLinkVPNDiagnosticsBase64(
+    NSString *runtime,
+    NSString *state,
+    NSString *query,
+    NSString *control,
+    NSString *backend,
+    NSString *broker,
+    NSNumber *effectiveConnected,
+    NSError **error)
+{
+    NSDictionary *snapshot = TLinkVPNDiagnosticsSnapshot(
+        runtime,
+        state,
+        query,
+        control,
+        backend,
+        broker,
+        effectiveConnected);
+    NSError *jsonError = nil;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:snapshot
+                                                   options:0
+                                                     error:&jsonError];
+    if (!json || jsonError) {
+        if (error) {
+            *error = [NSError errorWithDomain:kTLinkVPNDiagnosticsErrorDomain
+                                         code:1
+                                     userInfo:@{
+                NSLocalizedDescriptionKey: @"vpn_diagnostics_encode_failed"
+            }];
+        }
+        return nil;
+    }
+    return [json base64EncodedStringWithOptions:0];
+}
