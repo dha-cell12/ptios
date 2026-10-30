@@ -142,7 +142,7 @@ static void jsonViewCases(){
     }
     assert(jsonOwnerLive==0);
     NSData *snapshot=nil;
-    @autoreleasepool{NSMutableString *mutable=[@"{\"n\":1}" mutableCopy];snapshot=TLinkUTF8DataFromString(mutable);[mutable setString:@"{\"n\":2}"];}
+    @autoreleasepool{NSMutableString *mutableText=[@"{\"n\":1}" mutableCopy];snapshot=TLinkUTF8DataFromString(mutableText);[mutableText setString:@"{\"n\":2}"];}
     assert([[[NSJSONSerialization JSONObjectWithData:snapshot options:0 error:nil] objectForKey:@"n"] intValue]==1);snapshot=nil;
     assert(TLinkUTF8DataFromString(nil)==nil);
     for(id bad in @[[NSNull null],@42,@[]]){
