@@ -1,7 +1,7 @@
 # C04d — synchronized VPN completions and shared broker budget
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `dd0dae9d`, C04c build passed according to the user. Complete normalized broker source SHA-256 before this change: `dcbe39ad964877613536d525a21ea04bb704d95903a7be9487b31a00192c30f0`.
-Status: **source/core implemented; new Foundation/POSIX/GCD/ARC/ASan/UBSan runtime pending macOS CI; device qualification pending**.
+Status: **user reported build passed at `2c5eaf6c` before C04e; independent device qualification pending**.
 Finding: **P0-19/P1-63 broker wait/output portion**, cooperative budget and completion ownership. Synchronous IPC and underlying operation cancellation/admission remain open.
 
 ## Change

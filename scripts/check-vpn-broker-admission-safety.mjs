@@ -7,14 +7,26 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
-const [actualSource,old,owner,beforeIngress,ingress,beforeBudget,budget]=await Promise.all(['vpn-broker/main.mm','test/fixtures/vpn-broker-before-c04b.inc','shared/TLinkHelperClientAdmission.h','test/fixtures/vpn-broker-before-c04c.inc','shared/TLinkVPNBrokerIngress.h','test/fixtures/vpn-broker-before-c04d.inc','shared/TLinkVPNBrokerBudget.h'].map(read));
+const [actualSource,old,owner,beforeIngress,ingress,beforeBudget,budget,beforeOperations,operations]=await Promise.all(['vpn-broker/main.mm','test/fixtures/vpn-broker-before-c04b.inc','shared/TLinkHelperClientAdmission.h','test/fixtures/vpn-broker-before-c04c.inc','shared/TLinkVPNBrokerIngress.h','test/fixtures/vpn-broker-before-c04d.inc','shared/TLinkVPNBrokerBudget.h','test/fixtures/vpn-broker-before-c04e.inc','shared/TLinkVPNBrokerOperations.h'].map(read));
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);};
+assert.equal(createHash('sha256').update(beforeOperations).digest('hex'),'5ce3789f5c46e1d941b4874269254b382103030bc1dca07b7c89388ed5b75f33');
+const operationOwner=between(actualSource,'// BEGIN pending VPN manager operation admission.','static NSDictionary *TLinkVPNBrokerWait(');
+const operationStart=between(actualSource,'    if (!ticket->start())','    for (;;) {');
+const budgetSource=actualSource.replace('#include "../shared/TLinkVPNBrokerOperations.h"\n','').replace(operationOwner,'')
+    .replace('    auto ticket = TLinkVPNBrokerOperationOwner().acquire();\n    if (!ticket) return @{@"ok": @0, @"code": @"vpn_broker_busy"};\n','')
+    .replace(operationStart,'    operation(^(NSDictionary *value) { completion->complete(value); });\n');
+assert.equal(budgetSource,beforeOperations,'complete broker: only pending-operation admission/start/terminal callback tracking changes');
+assert.match(operationStart,/TLinkVPNBrokerStarterScope starter\{ticket\};[\s\S]*ticket->complete\(\);[\s\S]*completion->complete/);
+assert.match(operations,/~Ticket\(\)\{cancel\(\);\}[\s\S]*if\(!slot\|\|slot->started\)return false/);
+assert.match(operations,/if\(slot->returned\)state_->retire/);
+assert.match(operations,/if\(slot->completed\)state_->retire/);
+assert.match(operations,/make_shared<Ticket>[\s\S]*state_->slots\[i\]\.id=id;\+\+state_->stats.active/);
 assert.equal(createHash('sha256').update(beforeBudget).digest('hex'),'dcbe39ad964877613536d525a21ea04bb704d95903a7be9487b31a00192c30f0');
-const actualWait=between(actualSource,'static NSDictionary *TLinkVPNBrokerWait(','static NSString *TLinkVPNBrokerResponse');
+const actualWait=between(budgetSource,'static NSDictionary *TLinkVPNBrokerWait(','static NSString *TLinkVPNBrokerResponse');
 const oldWait=between(beforeBudget,'static NSDictionary *TLinkVPNBrokerWait(','static NSString *TLinkVPNBrokerResponse');
-const actualOutput=between(actualSource,'    const auto writeOps =','\n}\n\n// BEGIN bounded VPN broker clients.');
+const actualOutput=between(budgetSource,'    const auto writeOps =','\n}\n\n// BEGIN bounded VPN broker clients.');
 const oldOutput=between(beforeBudget,'    const uint8_t *bytes = (const uint8_t *)responseData.bytes;','\n}\n\n// BEGIN bounded VPN broker clients.');
-const ingressSource=actualSource.replace('#include "../shared/TLinkVPNBrokerBudget.h"\n','').replace(actualWait,oldWait)
+const ingressSource=budgetSource.replace('#include "../shared/TLinkVPNBrokerBudget.h"\n','').replace(actualWait,oldWait)
     .replace('static NSString *TLinkVPNBrokerResponse(NSString *command, const TLinkVPNBrokerIngress::Window &request)','static NSString *TLinkVPNBrokerResponse(NSString *command)')
     .replaceAll('    if (!request.remaining(TLinkHelperIO::nowMs())) return @"-1;;vpn_broker_operation_timeout\\r\\n";\n','')
     .replaceAll('8.0, request);','8.0);').replace('24.0, request);','24.0);')
@@ -58,7 +70,7 @@ assert.match(ingress,/::recv\(fd,bytes,count,MSG_DONTWAIT\)/);
 assert.equal((ingress.match(/window.remaining\(ops.now\(ops.context\)\)/g)||[]).length,2);
 assert.match(ingress,/waitReady\(ops,fd,false,window.deadline\)/);
 assert.ok(actualSource.includes('[[NSString alloc] initWithData:requestData\n                              encoding:NSUTF8StringEncoding]'),'actual decoder hook exists without changing ordinary decoding');
-console.log('VPN broker source passed: eight leases, shared ingress/wait/output window, synchronized completion/abandonment, nonblocking socket IO and complete prior command/authority/encoding/listener source.');
+console.log('VPN broker source passed: eight client leases and eight pending manager tickets, shared budget, completion/return fencing, nonblocking IO and complete prior command/authority/encoding/listener source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-vpn-admission-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
@@ -69,6 +81,9 @@ try{
     const budgetCore=join(temp,windows?'vpn-budget.exe':'vpn-budget'),budgetFile=join(root,'test/vpn-broker-budget-safety-test.cpp');
     run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',budgetFile,`/Fe${budgetCore}`,`/Fo${join(temp,'budget.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',budgetFile,'-o',budgetCore]);
     run(budgetCore,[]);
+    const operationCore=join(temp,windows?'vpn-operations.exe':'vpn-operations'),operationFile=join(root,'test/vpn-broker-operations-safety-test.cpp');
+    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',operationFile,`/Fe${operationCore}`,`/Fo${join(temp,'operations.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',operationFile,'-o',operationCore]);
+    run(operationCore,[]);
     if(process.platform!=='darwin'){
         console.log('macOS actual broker handler/admission with real sockets/GCD/ARC and controlled response provider included in CI; not run on this host.');
     }else{
@@ -82,7 +97,7 @@ try{
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-broker-admission-runtime-test.mm'),'-o',binary]);
         run(binary,[]);
         await Promise.all([
-            writeFile(join(temp,'VPNBrokerWaitUnderTest.inc'),between(actualSource,'static NSDictionary *TLinkVPNBrokerWait(','static void TLinkVPNBrokerHandleClient').replaceAll('TLinkHelperIO::nowMs()','fixtureNow()').replace('completion->wait(std::min(remaining, 250))','fixtureWait(*completion, std::min(remaining, 250))')),
+            writeFile(join(temp,'VPNBrokerWaitUnderTest.inc'),between(actualSource,'static NSDictionary *TLinkVPNBrokerWait(','static void TLinkVPNBrokerHandleClient').replaceAll('TLinkHelperIO::nowMs()','fixtureNow()').replace('completion->wait(std::min(remaining, 250))','fixtureWait(*completion, std::min(remaining, 250))').replaceAll('TLinkVPNBrokerOperationOwner()','fixtureOperationOwner()')),
             writeFile(join(temp,'VPNBrokerWaitLegacy.inc'),between(beforeBudget,'static NSDictionary *TLinkVPNBrokerWait(','static void TLinkVPNBrokerHandleClient'))
         ]);
         const waitBinary=join(temp,'vpn-broker-wait-runtime');

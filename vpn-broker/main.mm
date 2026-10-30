@@ -18,10 +18,19 @@
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkVPNBrokerIngress.h"
 #include "../shared/TLinkVPNBrokerBudget.h"
+#include "../shared/TLinkVPNBrokerOperations.h"
 
 static const uint16_t kTLinkVPNBrokerPort = 6014;
 static const NSUInteger kTLinkVPNBrokerMaxRequest = 1024;
 static const size_t kTLinkVPNBrokerMaxClients = 8;
+
+// BEGIN pending VPN manager operation admission.
+static TLinkVPNBrokerOperations &TLinkVPNBrokerOperationOwner(void)
+{
+    static TLinkVPNBrokerOperations operations;
+    return operations;
+}
+// END pending VPN manager operation admission.
 
 static NSDictionary *TLinkVPNBrokerWait(
     void (^operation)(TLinkVPNResultCompletion),
@@ -33,10 +42,19 @@ static NSDictionary *TLinkVPNBrokerWait(
     const TLinkVPNBrokerBudget::WaitWindow budget(
         request, TLinkHelperIO::nowMs(), static_cast<int>(timeout * 1000.0));
     if (!budget.remaining(TLinkHelperIO::nowMs())) return expired;
+    auto ticket = TLinkVPNBrokerOperationOwner().acquire();
+    if (!ticket) return @{@"ok": @0, @"code": @"vpn_broker_busy"};
     auto completion = std::make_shared<TLinkVPNBrokerCompletion>();
     TLinkVPNBrokerCompletionScope scope{completion};
     if (!completion->valid() || !budget.remaining(TLinkHelperIO::nowMs())) return expired;
-    operation(^(NSDictionary *value) { completion->complete(value); });
+    if (!ticket->start()) return @{@"ok": @0, @"code": @"vpn_broker_busy"};
+    {
+        TLinkVPNBrokerStarterScope starter{ticket};
+        operation(^(NSDictionary *value) {
+            (void)ticket->complete();
+            completion->complete(value);
+        });
+    }
     for (;;) {
         const int remaining = budget.remaining(TLinkHelperIO::nowMs());
         if (!remaining) return expired;

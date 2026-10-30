@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "../shared/TLinkVPNBrokerBudget.h"
+#include "../shared/TLinkVPNBrokerOperations.h"
 #include <cassert>
 #include <atomic>
 #include <thread>
@@ -12,6 +13,9 @@ static unsigned waitCalls=0,waitMs=0,managerCalls=0,licenseCalls=0;
 static int waitMode=0;static bool licensed=true;static uint64_t licenseCost=0;
 static TLinkVPNResultCompletion pending=nil;
 static NSDictionary *managerResult;
+static std::unique_ptr<TLinkVPNBrokerOperations> operationOwner;
+static uint64_t operationAcquireCost=0;
+static TLinkVPNBrokerOperations &fixtureOperationOwner(){assert(operationOwner);clockMs+=operationAcquireCost;return *operationOwner;}
 static uint64_t fixtureNow(){return clockMs.load();}
 static bool fixtureWait(TLinkVPNBrokerCompletion &state,int milliseconds){
     assert(milliseconds>0&&milliseconds<=250);++waitCalls;waitMs+=static_cast<unsigned>(milliseconds);
@@ -34,7 +38,7 @@ namespace Legacy {
 #include "VPNBrokerWaitLegacy.inc"
 }
 using TLinkVPNBrokerIngress::Window;
-static void reset(){clockMs=100;waitCalls=waitMs=managerCalls=licenseCalls=0;waitMode=0;licensed=true;licenseCost=0;pending=nil;managerResult=@{@"ok":@1,@"connected":@1,@"configured":@1,@"enabled":@1,@"connection_status":@"connected"};}
+static void reset(){clockMs=100;waitCalls=waitMs=managerCalls=licenseCalls=0;waitMode=0;licensed=true;licenseCost=operationAcquireCost=0;pending=nil;operationOwner=std::make_unique<TLinkVPNBrokerOperations>();managerResult=@{@"ok":@1,@"connected":@1,@"configured":@1,@"enabled":@1,@"connection_status":@"connected"};}
 static void expired(NSDictionary *value){assert(![value[@"ok"] boolValue]&&[value[@"code"] isEqualToString:@"vpn_broker_operation_timeout"]);}
 static NSDictionary *uniqueValue(){return @{@"token":[[NSUUID UUID] UUIDString]};}
 static void synchronousCases(){
@@ -75,8 +79,9 @@ static void unwindCases(){
         try{@try{
             (void)Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){pending=[completion copy];if(kind==0)[NSException raise:@"FixtureStart" format:@"start"];throw std::runtime_error("start");},8.0,Window(100));
         }@catch(NSException *exception){(void)exception;caught=true;}}catch(...){caught=true;}
-        assert(caught&&pending);__weak NSDictionary *released;
+        assert(caught&&pending&&operationOwner->stats().active==1);__weak NSDictionary *released;
         @autoreleasepool{NSDictionary *value=uniqueValue();released=value;pending(value);}assert(!released);pending=nil;
+        assert(operationOwner->stats().active==0);
     }
 }
 static void latchCases(){
@@ -109,8 +114,43 @@ static void responseCases(){
     reset();licenseCost=30000;assert([Current::TLinkVPNBrokerResponse(@"connect",Window(100)) hasPrefix:@"-1;;vpn_broker_operation_timeout"]&&licenseCalls==1&&managerCalls==0);
     reset();(void)Current::TLinkVPNBrokerResponse(@"diagnostics",Window(100));assert(licenseCalls==0&&managerCalls==1);
 }
+static void operationCases(){
+    reset();waitMode=1;NSMutableArray *callbacks=[NSMutableArray array];
+    for(unsigned n=0;n<8;++n){clockMs=100;
+        expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){[callbacks addObject:[completion copy]];},8.0,Window(100)));
+        assert(operationOwner->stats().active==n+1);
+    }
+    clockMs=100;__block bool started=false;
+    NSDictionary *busy=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){(void)completion;started=true;},8.0,Window(100));
+    assert(!started&&[busy[@"code"] isEqualToString:@"vpn_broker_busy"]&&operationOwner->stats().active==8);
+    // Ordinary authorization still precedes operation overload; diagnostics stays exempt.
+    licensed=false;assert([Current::TLinkVPNBrokerResponse(@"connect",Window(100)) hasPrefix:@"-1;;vpn_license_denied"]);
+    const unsigned gates=licenseCalls;NSDictionary *diag=diagnostics(Current::TLinkVPNBrokerResponse(@"diagnostics",Window(100)));
+    assert(licenseCalls==gates&&[diag[@"manager_status"][@"last_error"] isEqualToString:@"vpn_broker_busy"]);
+    licensed=true;
+    TLinkVPNResultCompletion first=(TLinkVPNResultCompletion)callbacks[0];first(uniqueValue());assert(operationOwner->stats().active==7);
+    clockMs=100;waitMode=1;__block TLinkVPNResultCompletion replacement=nil;
+    expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){replacement=[completion copy];},8.0,Window(100)));
+    assert(operationOwner->stats().active==8);first(nil);assert(operationOwner->stats().active==8); // Retired token cannot free its replacement.
+    replacement(nil);replacement=nil;
+    for(NSUInteger n=1;n<callbacks.count;++n){TLinkVPNResultCompletion callback=(TLinkVPNResultCompletion)callbacks[n];callback(nil);}
+    assert(operationOwner->stats().active==0&&operationOwner->stats().completed==9);
+    reset();operationAcquireCost=30000;started=false;
+    expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){(void)completion;started=true;},8.0,Window(100)));
+    assert(!started&&operationOwner->stats().active==0&&operationOwner->stats().cancelled==1);
+    reset();NSDictionary *value=uniqueValue();
+    NSDictionary *result=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){
+        completion(value);assert(operationOwner->stats().active==1); // Starter still owns execution.
+    },8.0,Window(100));
+    assert(result==value&&operationOwner->stats().active==0);
+    // A starter that discards its callback does not prove that submitted work ended.
+    reset();waitMode=1;
+    for(unsigned n=0;n<8;++n){clockMs=100;expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){(void)completion;},8.0,Window(100)));}
+    clockMs=100;busy=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){(void)completion;assert(false);},8.0,Window(100));
+    assert([busy[@"code"] isEqualToString:@"vpn_broker_busy"]&&operationOwner->stats().active==8);
+}
 int main(){@autoreleasepool{
     puts("VPN broker wait Foundation: actual mutex completion/wait/response with controlled manager/authority and clock");
-    synchronousCases();timeoutCases();unwindCases();latchCases();responseCases();
-    puts("VPN broker wait passed: first/nil/duplicate/late callbacks, phase/start/outer expiry, exception abandonment, ARC pool ownership, 1000 callback/abandon races, eight competing publishers and frozen response/authority parity. Underlying operation/device qualification pending.");
+    synchronousCases();timeoutCases();unwindCases();latchCases();responseCases();operationCases();
+    puts("VPN broker wait/operation admission passed: completion/phase/pool/frozen authority parity, eight pending across timeout, immediate busy, late recovery, stale token fencing, prestart cancellation and conservative dropped/throwing starters. Underlying cancellation/device qualification pending.");
 }return 0;}

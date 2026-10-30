@@ -238,6 +238,19 @@ synchronous APIs can overrun until they return, and manager timeout does not
 cancel or roll back VPN effects. See
 [IMPLEMENTATION-C04D.md](performance-audit/IMPLEMENTATION-C04D.md).
 
+C04e separately limits pending manager submissions to eight per broker process,
+shared by query, connect, disconnect and diagnostics status. Client timeout does
+not release this admission: both starter exit and a terminal callback are needed.
+When full, admitted query/control requests return `-1;;vpn_broker_busy`; diagnostics
+still returns static fields with manager status unavailable and last_error set
+to `vpn_broker_busy`. Ordinary license checks retain precedence. Late callbacks
+restore capacity; stale callbacks cannot retire a replacement slot. A missing
+callback or uncertain throwing starter keeps its slot until completion or process
+restart, so eight permanently lost callbacks can keep the broker busy. There is
+no automatic expiry, operation cancellation or rollback. This counts broker
+submissions, not backend subtasks or work from other callers. See
+[IMPLEMENTATION-C04E.md](performance-audit/IMPLEMENTATION-C04E.md).
+
 Static gates prove packaging, ownership checks, license gates, secret
 handling, bounded transitions, and wire compatibility. Only a rootfull device
 with a real IKEv2 server can prove that:
