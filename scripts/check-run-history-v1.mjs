@@ -130,7 +130,7 @@ const invokeHistory = async history => {
   } };
   return sdk.getRunHistory();
 };
-for (const code of ['history_snapshot_lock_failed', 'history_snapshot_read_failed', 'history_snapshot_invalid_index', 'history_snapshot_exception']) {
+for (const code of ['history_snapshot_lock_failed', 'history_snapshot_read_failed', 'history_snapshot_invalid_index', 'history_snapshot_too_large', 'history_snapshot_exception']) {
   await assert.rejects(invokeHistory({ schema: 'run_history_v1', state: 'error', error: code, runs: [] }), { message: code });
 }
 for (const error of [undefined, '', 42, { secret: 'do not expose' }]) {
@@ -139,7 +139,7 @@ for (const error of [undefined, '', 42, { secret: 'do not expose' }]) {
 await assert.rejects(invokeHistory({ schema: 'run_history_v1', state: 'error', error: 'failure', runs: null }), { message: 'run_history_v1 is unavailable' });
 const healthyHistory = { schema: 'run_history_v1', state: 'implemented', runs: [{ run_id: 'retained' }], extension: true };
 assert.equal(JSON.stringify(await invokeHistory(healthyHistory)), JSON.stringify(healthyHistory));
-assert.equal(opened, 10); assert.equal(requests, 10);
+assert.equal(opened, 11); assert.equal(requests, 11);
 assert.match(webSdk, /export type FailureEvidence/);
 assert.match(webSdk, /export type RunHistoryRecord/);
 assert.match(webSdk, /export type RunHistorySnapshot/);

@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <mutex>
 #include <set>
@@ -28,11 +29,45 @@ static unsigned historyMutationReadFault=0;
 static unsigned historySnapshotReadFault=0;
 static bool historyLockDenied=false;
 static size_t historyIndexReads=0;
+static std::set<int> historyIndexFds;
+static size_t historyIndexOpens=0,historyIndexReadCalls=0,historyIndexAllocations=0;
+static uint64_t historyIndexBytes=0;
+static unsigned historyIndexOpenFault=0,historyIndexStatFault=0,historyIndexReadFault=0;
+static int historyIndexOpen(const char *path,int flags){
+    assert(historyLocks.size()==1&&flags==(O_RDONLY|O_NOFOLLOW|O_NONBLOCK));++historyIndexOpens;
+    if(historyIndexOpenFault){errno=historyIndexOpenFault==1?EACCES:EMFILE;return -1;}
+    int fd=::open(path,flags);if(fd>=0)assert(historyIndexFds.insert(fd).second);return fd;
+}
+static int historyIndexStat(int fd,struct stat *info){
+    assert(historyIndexFds.count(fd));if(historyIndexStatFault==1){errno=EIO;return -1;}
+    int result=::fstat(fd,info);
+    if(!result&&historyIndexStatFault==2)info->st_size=32*1024*1024+1;
+    if(!result&&historyIndexStatFault==3)info->st_size=-1;return result;
+}
+static NSMutableData *historyIndexBuffer(NSUInteger length,NSUInteger limit){
+    assert(length<=limit);++historyIndexAllocations;return [NSMutableData dataWithLength:length];
+}
+static ssize_t historyIndexRead(int fd,void *bytes,size_t count){
+    assert(historyIndexFds.count(fd)&&count>0&&count<=65536);++historyIndexReadCalls;
+    if(historyIndexReadFault==1){historyIndexReadFault=6;errno=EINTR;return -1;}
+    if(historyIndexReadFault==2){errno=EIO;return -1;}
+    if(historyIndexReadFault==3)return 0;
+    if(historyIndexReadFault==4)[NSException raise:@"HistoryFixture" format:@"index read failed"];
+    if(historyIndexReadFault==5)throw std::runtime_error("index read failed");
+    if(historyIndexReadFault==7&&count==1){*(uint8_t *)bytes=0;++historyIndexBytes;return 1;}
+    ssize_t got=::read(fd,bytes,historyIndexReadFault==6?MIN(count,(size_t)17):count);
+    if(got>0)historyIndexBytes+=(uint64_t)got;return got;
+}
 static std::function<void()> historyStatusHook;
 static NSString *historyWriteStage;
 static unsigned historyWriteFault=0;
 static unsigned historyCrashIndex=0;
 static NSMutableArray *historyWriteAttempts;
+static NSData *historyEncodedIndexOverride;
+static NSData *historyEncodeJSON(id object,NSString *path,NSJSONWritingOptions options){
+    if([path.lastPathComponent isEqualToString:@"index.json"]&&historyEncodedIndexOverride)return historyEncodedIndexOverride;
+    return [NSJSONSerialization dataWithJSONObject:object options:options error:nil];
+}
 static unsigned historyPruneFault=0;
 static NSString *historyPruneTarget;
 static NSMutableArray *historyPruneAttempts;
@@ -110,25 +145,11 @@ static void historyIndexReadProbe(){
     if(historyReadFault==1)[NSException raise:@"HistoryFixture" format:@"index read fault"];
     if(historyReadFault==2)throw std::runtime_error("index read fault");
 }
-static NSData *historyReadMutationData(NSString *path,NSError **error){
-    historyIndexReadProbe();
-    if(historyMutationReadFault){
-        if(error)*error=historyMutationReadFault==1?[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoPermissionError userInfo:nil]:
-            (historyMutationReadFault==2?[NSError errorWithDomain:NSPOSIXErrorDomain code:ENOENT userInfo:nil]:nil);
-        return nil;
-    }
-    return [NSData dataWithContentsOfFile:path options:0 error:error];
-}
 static void historyStatusPreparationProbe(){if(historyStatusHook)historyStatusHook();}
-static NSData *historyReadCheckedData(NSString *path,NSError **error,NSString *operation){
-    if(![operation isEqualToString:@"snapshot"])return historyReadMutationData(path,error);
+static NSData *historyReadBoundedData(BOOL *missing,NSString **code,NSString *operation,NSData *(*reader)(BOOL *,NSString **)){
     assert(historyLocks.size()==1);historyIndexReadProbe();
-    if(historySnapshotReadFault){
-        if(error)*error=historySnapshotReadFault==1?[NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoPermissionError userInfo:nil]:
-            (historySnapshotReadFault==2?[NSError errorWithDomain:NSPOSIXErrorDomain code:ENOENT userInfo:nil]:nil);
-        return nil;
-    }
-    return [NSData dataWithContentsOfFile:path options:0 error:error];
+    if([operation isEqualToString:@"snapshot"]?historySnapshotReadFault:historyMutationReadFault){*code=@"read_failed";return nil;}
+    return reader(missing,code);
 }
 static int historyChmod(const char *path,mode_t mode){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(mode==0750||mode==0640);return 0;}
 static int historyChown(const char *path,uid_t uid,gid_t gid){assert([[NSString stringWithUTF8String:path] hasPrefix:historyTestRoot]);assert(uid==501&&gid==501);return 0;}
@@ -138,7 +159,7 @@ static int historyFlock(int fd,int operation){
     if(!result){std::lock_guard<std::mutex> guard(historyMutex);if(operation==LOCK_EX)assert(historyLocks.insert(fd).second);else if(operation==LOCK_UN)assert(historyLocks.erase(fd)==1);}
     return result;
 }
-static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);return ::close(fd);}
+static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);historyIndexFds.erase(fd);return ::close(fd);}
 static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *type,NSDictionary *payload){
     std::lock_guard<std::mutex> guard(historyMutex);assert(historyLocks.empty());
     NSDictionary *event=@{@"runtime":runtime,@"topic":topic,@"type":type,@"payload":payload};[historyEvents addObject:event];return event;
@@ -846,6 +867,7 @@ static void historyCompactIndexCases(){
     Current::fixtureRoot=savedRoot;Legacy::fixtureRoot=savedLegacy;Current::sTLinkRunHistoryRecovered=savedReady;
 }
 #include "history-snapshot-runtime-fixture.inc"
+#include "history-index-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2||argc==3||argc==5||argc==6);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];historyPruneAttempts=[NSMutableArray array];
     if(argc==5){assert([[NSString stringWithUTF8String:argv[2]] isEqualToString:@"--marker-worker"]);return historyMarkerWorker([[NSString stringWithUTF8String:argv[3]] intValue],[NSString stringWithUTF8String:argv[4]]);}
@@ -959,7 +981,8 @@ int main(int argc,char **argv){@autoreleasepool{
     historyRetirementCases();
     historyCompactIndexCases();
     historyCheckedSnapshotCases();
-    assert(historyLocks.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
+    historyBoundedIndexCases();
+    assert(historyLocks.empty()&&historyIndexFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");
     puts("History commit Foundation passed: record/evidence/index false and NS/C++ failures suppress success/events, retain old-index artifacts until commit, release locks, report bounded process diagnostics and recover; read/lock failures, counter saturation and uncertain post-write outcome without rollback/replay. Multi-file crash recovery remains pending.");

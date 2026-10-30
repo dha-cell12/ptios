@@ -8,7 +8,23 @@ import {createHash} from 'node:crypto';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [current,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const [boundedCurrent,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const boundedIndexRead=between(boundedCurrent,'// Bounded index reads:','// All persisted reads distinguish');
+assert.match(boundedCurrent,/kTLinkRunHistoryIndexMaxBytes = 32 \* 1024 \* 1024/);
+assert.match(boundedIndexRead,/O_RDONLY \| O_NOFOLLOW \| O_NONBLOCK/);
+assert.match(boundedIndexRead,/fstat\(fd, &indexInfo\)[\s\S]*S_ISREG\(indexInfo.st_mode\)/);
+assert.ok(boundedIndexRead.indexOf('indexInfo.st_size > kTLinkRunHistoryIndexMaxBytes')<boundedIndexRead.indexOf('dataWithLength:'));
+assert.match(boundedIndexRead,/MIN\(indexData.length - offset, \(NSUInteger\)65536\)/);
+assert.match(boundedIndexRead,/read\(fd, &extra, 1\)[\s\S]*@finally \{ close\(fd\); \}/);
+assert.match(boundedIndexRead,/errno == ENOENT[\s\S]*errno == EINTR/);
+assert.ok(boundedCurrent.includes('([path isEqualToString:TLinkRunHistoryIndexPath()] && data.length > kTLinkRunHistoryIndexMaxBytes) ||\n        ![data writeToFile:path atomically:YES]'));
+const readPrefix=between(boundedCurrent,'    BOOL missing = NO;','    id object =');
+const oldReadPrefix="    NSError *readError = nil;\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError];\n    if (!data) {\n        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&\n            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {\n            return [NSMutableArray array];\n        }\n        TLinkRunHistoryPersistenceFailure(operation, @\"read\", @\"read_failed\");\n        return nil;\n    }\n";
+const current=boundedCurrent.replace('static const NSUInteger kTLinkRunHistoryIndexMaxBytes = 32 * 1024 * 1024;\n','')
+    .replace(boundedIndexRead,'').replace(readPrefix,oldReadPrefix)
+    .replace('if (!data || ([path isEqualToString:TLinkRunHistoryIndexPath()] && data.length > kTLinkRunHistoryIndexMaxBytes) ||\n        ![data writeToFile:path atomically:YES])','if (!data || ![data writeToFile:path atomically:YES])')
+    .replace('? @"history_snapshot_invalid_index" :\n                ([sTLinkRunHistoryLastPersistenceFailure[@"code"] isEqualToString:@"index_too_large"]\n                    ? @"history_snapshot_too_large" : @"history_snapshot_read_failed"))','? @"history_snapshot_invalid_index" : @"history_snapshot_read_failed")');
+assert.equal(createHash('sha256').update(current.trim()).digest('hex'),'0a26786c6524c793502bf585c3c87583fe34676e446a9579439395500f76312e','reversing only bounded index IO/write cap/too-large status reproduces complete user-passed history at 232ebbe7');
 const snapshotFrozenText=await read('test/fixtures/run-history-snapshot-legacy-v1.inc');
 const snapshotFrozen=snapshotFrozenText.slice(snapshotFrozenText.indexOf('\n')+1);
 const snapshotCurrent=current.slice(current.indexOf('NSDictionary *TLinkRunHistorySnapshot('));
@@ -171,6 +187,7 @@ restored=restored.replace(snapshotRead,'        NSMutableArray<NSDictionary *> *
 restored=restored.replace('        return snapshot;','        TLinkRunHistoryReleaseFileLock(lockFd);\n        return snapshot;');
 assert.equal(restored.trim(),old.trim(),'only cache regex construction and move evidence/status preparation outside flock; all read/write/screenshot/prune/event/status field logic stays frozen');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-run-history-safety.mjs'));
+console.log('History bounded index source passed: 32-MiB preallocation/read and encoded index cap, regular descriptor/ENOENT/chunk/EOF/finally policy and complete prior source.');
 console.log('History checked snapshot source passed: no unlocked read/fallback, fixed errors, read-only recovery state, caught read/format faults and complete frozen success/mutation source.');
 console.log('Run history source passed: compact index with unchanged artifact formatting and logical payloads, checked per-ID retirement and retained-reference protection, lock-inode pending marker coordinates warm owners, required-write recovery, fail-closed reads, checked commit/cleanup, diagnostics, finally and frozen record/status fields.');
 if(process.platform!=='darwin'){
@@ -181,7 +198,13 @@ if(process.platform!=='darwin'){
         .replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;')
         .replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:')
         .replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];')
-        .replace('[NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError]','historyReadCheckedData(TLinkRunHistoryIndexPath(), &readError, operation)')
+        .replace('TLinkRunHistoryReadIndexData(&missing, &code)','historyReadBoundedData(&missing, &code, operation, TLinkRunHistoryReadIndexData)')
+        .replace('open(TLinkRunHistoryIndexPath().fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)','historyIndexOpen(TLinkRunHistoryIndexPath().fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)')
+        .replace('fstat(fd, &indexInfo)','historyIndexStat(fd, &indexInfo)')
+        .replace('[NSMutableData dataWithLength:(NSUInteger)indexInfo.st_size]','historyIndexBuffer((NSUInteger)indexInfo.st_size,kTLinkRunHistoryIndexMaxBytes)')
+        .replace('read(fd, (uint8_t *)indexData.mutableBytes + offset, count)','historyIndexRead(fd, (uint8_t *)indexData.mutableBytes + offset, count)')
+        .replace('read(fd, &extra, 1)','historyIndexRead(fd, &extra, 1)')
+        .replace('[NSJSONSerialization dataWithJSONObject:object options:options error:nil]','historyEncodeJSON(object,path,options)')
         .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)','historyRecoveryOpen(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)')
         .replace('fstat(fd, &info)','historyRecoveryStat(fd, &info)')
         .replace('fstat(lockFd, &marker)','historyMarkerStat(lockFd, &marker)')
@@ -193,7 +216,7 @@ if(process.platform!=='darwin'){
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(current)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(boundedCurrent)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old))]);
         const binary=join(temp,'run-history-runtime');
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
         run(binary,[temp]);

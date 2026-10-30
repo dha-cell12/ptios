@@ -35,6 +35,8 @@ FOUNDATION_EXPORT NSDictionary *TLinkRunHistoryFinish(NSString *runId,
 // Formats one decoded index after releasing the file lock, under the local monitor.
 // Read/lock/format failures return state=error with a fixed error code; counts/runs
 // are unknown placeholders. Status never repairs or rewrites the persisted index.
+// Index reads admit regular non-symlink files up to 32 MiB before buffer/JSON work;
+// encoded index writes share that cap. Record/evidence encoding is unchanged.
 FOUNDATION_EXPORT NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit);
 
 #endif

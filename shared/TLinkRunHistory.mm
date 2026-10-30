@@ -12,6 +12,7 @@ NSString * const TLinkRunHistorySchemaV1 = @"run_history_v1";
 NSString * const TLinkFailureEvidenceSchemaV1 = @"failure_evidence_v1";
 
 static const NSUInteger kTLinkRunHistoryMaxRecords = 50;
+static const NSUInteger kTLinkRunHistoryIndexMaxBytes = 32 * 1024 * 1024;
 static const NSUInteger kTLinkRunHistorySnapshotDefault = 20;
 static const NSUInteger kTLinkRunHistorySnapshotMax = 50;
 static const NSUInteger kTLinkFailureLogTailMaxLines = 50;
@@ -109,7 +110,8 @@ static BOOL TLinkRunHistoryWriteJSON(id object, NSString *path, NSJSONWritingOpt
 {
     if (![NSJSONSerialization isValidJSONObject:object] || path.length == 0) return NO;
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:options error:nil];
-    if (!data || ![data writeToFile:path atomically:YES]) return NO;
+    if (!data || ([path isEqualToString:TLinkRunHistoryIndexPath()] && data.length > kTLinkRunHistoryIndexMaxBytes) ||
+        ![data writeToFile:path atomically:YES]) return NO;
     chmod(path.fileSystemRepresentation, 0640);
     lchown(path.fileSystemRepresentation, 501, 501);
     return YES;
@@ -219,18 +221,55 @@ static void TLinkRunHistoryPersistenceFailure(NSString *operation, NSString *sta
     };
 }
 
+// Bounded index reads: caller holds the history monitor and file lock.
+static NSData *TLinkRunHistoryReadIndexData(BOOL *missing, NSString **code)
+{
+    int fd = open(TLinkRunHistoryIndexPath().fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) {
+        if (errno == ENOENT) *missing = YES;
+        else *code = @"read_failed";
+        return nil;
+    }
+    @try {
+        struct stat indexInfo;
+        if (fstat(fd, &indexInfo) != 0 || !S_ISREG(indexInfo.st_mode) || indexInfo.st_size < 0) {
+            *code = @"read_failed"; return nil;
+        }
+        if ((uint64_t)indexInfo.st_size > kTLinkRunHistoryIndexMaxBytes) {
+            *code = @"index_too_large"; return nil;
+        }
+        NSMutableData *indexData = [NSMutableData dataWithLength:(NSUInteger)indexInfo.st_size];
+        if (!indexData) { *code = @"read_failed"; return nil; }
+        NSUInteger offset = 0;
+        while (offset < indexData.length) {
+            size_t count = MIN(indexData.length - offset, (NSUInteger)65536);
+            ssize_t got = read(fd, (uint8_t *)indexData.mutableBytes + offset, count);
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) { *code = @"read_failed"; return nil; }
+            offset += (NSUInteger)got;
+        }
+        // Cooperating atomic replacements leave this opened inode stable.
+        uint8_t extra;
+        ssize_t got;
+        do { got = read(fd, &extra, 1); } while (got < 0 && errno == EINTR);
+        if (got != 0) {
+            *code = got > 0 && indexData.length == kTLinkRunHistoryIndexMaxBytes ? @"index_too_large" : @"read_failed";
+            return nil;
+        }
+        return indexData;
+    } @finally { close(fd); }
+}
+
 // All persisted reads distinguish a first run from unreadable or damaged history.
 // Read-only status never repairs metadata or rebuilds an index from artifacts.
 static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadCheckedIndex(NSString *operation)
 {
-    NSError *readError = nil;
-    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath() options:0 error:&readError];
+    BOOL missing = NO;
+    NSString *code = nil;
+    NSData *data = TLinkRunHistoryReadIndexData(&missing, &code);
     if (!data) {
-        if ([readError.domain isEqualToString:NSCocoaErrorDomain] &&
-            (readError.code == NSFileReadNoSuchFileError || readError.code == NSFileNoSuchFileError)) {
-            return [NSMutableArray array];
-        }
-        TLinkRunHistoryPersistenceFailure(operation, @"read", @"read_failed");
+        if (missing) return [NSMutableArray array];
+        TLinkRunHistoryPersistenceFailure(operation, @"read", code ?: @"read_failed");
         return nil;
     }
     id object = data.length > 0
@@ -656,7 +695,9 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
             }
             if (!runs) return TLinkRunHistorySnapshotFailure(
                 [sTLinkRunHistoryLastPersistenceFailure[@"code"] isEqualToString:@"invalid_index"]
-                    ? @"history_snapshot_invalid_index" : @"history_snapshot_read_failed");
+                    ? @"history_snapshot_invalid_index" :
+                ([sTLinkRunHistoryLastPersistenceFailure[@"code"] isEqualToString:@"index_too_large"]
+                    ? @"history_snapshot_too_large" : @"history_snapshot_read_failed"));
             stage = @"format";
             // The decoded graph belongs to this call; formatting needs no file lock.
             NSUInteger bounded = limit == 0 ? kTLinkRunHistorySnapshotDefault : MIN(limit, kTLinkRunHistorySnapshotMax);

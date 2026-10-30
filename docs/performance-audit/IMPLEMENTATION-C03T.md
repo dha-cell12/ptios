@@ -1,7 +1,7 @@
 # C03t — checked Run History status and SDK error handling
 
 Date: 2026-10-29 (Asia/Bangkok). Baseline: `c20c70d9`, C03s build passed according to the user. Complete normalized `shared/TLinkRunHistory.mm` SHA-256 before this stage: `34b6f42b08b699ff32aa49b6dd9120db2f546e6ea4c00907589b3d6769701e58`.
-Status: **source implemented; new Foundation/POSIX/ARC/ASan/UBSan cases pending macOS CI; independent device qualification pending**.
+Status: **build passed according to the user before C03u; committed at `232ebbe7`; independent device qualification pending**.
 Finding: **P1-51/P1-53 status persistence authority**, before a separate caching/read-cadence optimization.
 
 ## Change

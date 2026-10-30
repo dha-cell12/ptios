@@ -203,8 +203,8 @@ latency qualification remains pending.
 ## Checked history status (C03t)
 
 Snapshot uses the same checked index reader as begin/finish under the existing
-history file lock. Only the established Cocoa missing-file result means a valid
-empty first history. Read failures, empty/invalid JSON, wrong schema/runs shape,
+history file lock. Since C03u, only POSIX open ENOENT means a valid empty first
+history. Read failures, empty/invalid JSON, wrong schema/runs shape,
 invalid/empty/duplicate run IDs produce an error snapshot. Lock failure performs
 no index read. NS/C++ read and formatting faults are contained, and an acquired
 lock is released before formatting as before.
@@ -227,8 +227,44 @@ WebTango `getRunHistory()` rejects an error snapshot using its nonempty string
 code (or a fixed fallback for malformed error fields), preserving the existing
 task-60 request/envelope. Raw clients must inspect nested `run_history.state`
 before using its counts. Types include optional `error` and diagnostic operation
-`snapshot`. Index byte/graph limits, caching, lock wait latency, durability and
-device qualification remain separate work.
+`snapshot`. Index file/buffer bytes are bounded by C03u below; JSON graph/RSS,
+caching, lock wait latency, durability and device qualification remain separate.
+
+## Bounded history index IO (C03u)
+
+The common reader opens index.json with O_RDONLY|O_NOFOLLOW|O_NONBLOCK under the
+existing history lock. Require a regular file and nonnegative size, then admit
+at most 32 MiB before buffer allocation or JSON parsing. Direct symlinks,
+dangling links, FIFO, directories and open/stat errors return read_failed;
+only open ENOENT bootstraps empty. The former NSData/NSError bootstrap test is
+removed. This does not harden all ancestor/root path races or the lock protocol.
+
+Read the admitted size in chunks of at most 64 KiB, retry EINTR and accumulate
+short reads. Early EOF/EIO fail; an extra one-byte probe rejects observed growth
+(index_too_large at the cap, read_failed below it). Close the private descriptor
+in finally, including NS/C++ faults. Cooperating atomic writers keep the opened
+inode stable; no arbitrary in-place writer consistency guarantee is added.
+
+Oversize input reports mutation diagnostic read/index_too_large and snapshot
+error history_snapshot_too_large. SDK getRunHistory rejects that fixed code.
+Refusal does not modify index/artifact bytes, pending marker or recovery gate,
+or emit events. Empty regular files retain invalid-index behavior; no automatic
+deletion, truncation or reconstruction occurs.
+
+Encoded index writes share the 32-MiB cap before atomic write; record/evidence
+writes retain their previous policy. An oversized output uses existing index
+stage/write_failed semantics. Earlier record/evidence writes may already have
+committed: preserve the old index and pending marker, invalidate local recovery,
+return no mutation success/event, then repair from the authoritative index on
+the next mutation. No rollback or operation replay is added.
+
+32 MiB leaves space above the fixture's roughly 17.4-MB worst escaped bounded
+error/log-tail fields for fifty runs. Unbounded extensions/play settings can
+still exceed it; externally oversized indexes require explicit maintenance.
+Files exactly at the limit are readable/writable. This bounds file/read-buffer
+and encoded-index bytes, not JSON graph/RSS, producer encoding, record/evidence
+sizes, elapsed IO/lock time or durability. New Foundation/POSIX cases await CI
+macOS; device qualification remains separate.
 
 ## Capability markers
 
