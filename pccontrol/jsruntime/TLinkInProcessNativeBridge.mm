@@ -8,6 +8,7 @@
 #include "../../shared/TLinkNativeOCRInput.h"
 #include "../../shared/TLinkNativeImageOpen.h"
 #include "../../shared/TLinkNativeImageCapture.h"
+#include "../../shared/TLinkUTF8Data.h"
 
 #ifndef TASK_IMAGE_OBJECT
 #define TASK_IMAGE_OBJECT 48
@@ -626,7 +627,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!subRes.ok) return subRes;
         NSDictionary *textResult = subRes.value;
         if (![textResult[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:textResult];
-        NSData *data = [textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
+        NSData *data = TLinkUTF8DataFromString(textResult[@"text"]);
         NSError *err = nil;
         id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&err] : nil;
         if (!value) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" }];

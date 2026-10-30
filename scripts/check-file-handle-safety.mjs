@@ -24,8 +24,25 @@ const storageSpecs=[
     ['stream-app/streamd/POCSocketServer.mm','    device[@"writeText"] =','    device[@"openFile"] =','storage-trollstore-write-text-legacy-v1.inc','StorageTrollWriteTextUnderTest.inc','e024f141e29eaa6cd08d28804595a86e537e8e15cd3c964409309d641b66f1d4'],
 ];
 const storageChunks=[];
-for(const [path,start,end,legacyName,output,hash] of storageSpecs){
+const readJSONSpecs=[
+    ['pccontrol/jsruntime/TLinkInProcessNativeBridge.mm','    else if ([method isEqualToString:TLinkJSNativeMethodReadJSON])','    else if ([method isEqualToString:TLinkJSNativeMethodWriteJSON])','storage-read-json-legacy-v1.inc','StorageReadJSONUnderTest.inc','#include "../../shared/TLinkUTF8Data.h"\n','0cbea81bce778d20f580f34730c41a81d6e111ccb752ff6dbf561e1d66a4397e'],
+    ['tlinkauto-jsd/TLinkJSHelperServer.mm','- (NSDictionary *)readJSONAtRelativePath:','- (NSDictionary *)writeJSONValue:','storage-helper-read-json-legacy-v1.inc','StorageHelperReadJSONUnderTest.inc','#include "../shared/TLinkUTF8Data.h"\n','6432c8f1b7d0e1b032c13b6f864d5a37e5d1ea6339a8c8a9a1cdc6c513035af3'],
+];
+const storageBeforeJSON=new Map();
+for(const [path,start,end,legacyName,output,include,hash] of readJSONSpecs){
     const text=await read(path),chunk=between(text,start,end),legacy=(await read('test/fixtures/'+legacyName)).split('\n').slice(1).join('\n');
+    assert.equal(chunk.replace('TLinkUTF8DataFromString(textResult[@"text"])','[textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding]').trim(),legacy.trim());
+    const previous=text.replace(include,'').replace(chunk,legacy);
+    assert.equal(createHash('sha256').update(previous.trim()).digest('hex'),hash,'only readJSON data view/header changes complete user-passed C03z source at 54991dd3: '+path);
+    storageBeforeJSON.set(path,previous);storageChunks.push([output,chunk]);
+}
+const utf8View=await read('shared/TLinkUTF8Data.h');
+assert.match(utf8View,/snapshot = \[text copy\][\s\S]*CFStringGetCStringPtr[\s\S]*if \(!bytes\) return \[snapshot dataUsingEncoding:NSUTF8StringEncoding\]/);
+assert.match(utf8View,/initWithBytesNoCopy:[\s\S]*deallocator:[\s\S]*\[snapshot length\]/);
+assert.doesNotMatch(utf8View,/\[snapshot UTF8String\]|strlen|free\(/);
+console.log('Storage readJSON source passed: direct immutable CF UTF8 storage with retained owner, original encoder fallback and complete previous reader/policy source.');
+for(const [path,start,end,legacyName,output,hash] of storageSpecs){
+    const text=storageBeforeJSON.get(path)||await read(path),chunk=between(text,start,end),legacy=(await read('test/fixtures/'+legacyName)).split('\n').slice(1).join('\n');
     const restoredChunk=chunk.replace('NSUInteger bytes = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSData *data = [safeText dataUsingEncoding:NSUTF8StringEncoding];')
         .replace('if (bytes >','if ([data length] >').replace('@(bytes)','@([data length])')
         .replace('NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSUInteger byteCount = [[safeText dataUsingEncoding:NSUTF8StringEncoding] length];');
@@ -57,5 +74,8 @@ try{
         const storageRuntime=join(temp,'storage-codec-runtime');
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/storage-codec-runtime-test.mm'),'-o',storageRuntime]);
         run(storageRuntime,[temp]);
+        const jsonRuntime=join(temp,'storage-json-runtime');
+        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/storage-json-runtime-test.mm'),'-o',jsonRuntime]);
+        run(jsonRuntime,[temp]);
     }else console.log('macOS actual/frozen FileHandle Foundation/POSIX/JSCore integration is included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-file-handle-'));await rm(temp,{recursive:true,force:true});}

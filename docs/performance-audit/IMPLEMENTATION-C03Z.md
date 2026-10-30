@@ -1,7 +1,7 @@
 # C03z — writeText byte counting without a temporary NSData
 
 Date: 2026-10-30 (Asia/Bangkok). Baseline: `adaf252c`, C03y build passed according to the user.
-Status: **source implemented; new Foundation/ARC/ASan/UBSan cases pending macOS CI; device allocation/latency qualification pending**.
+Status: **user reported build `54991dd3` passed before C03aa; device allocation/latency qualification pending**.
 Finding: **P1-47 storage codec conversions**, partial improvement.
 
 ## Change

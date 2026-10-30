@@ -1,6 +1,7 @@
 #import "TLinkJSHelperServer.h"
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #import "../shared/TLinkJSFileHandle.h"
+#include "../shared/TLinkUTF8Data.h"
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkHelperRequestDeadline.h"
@@ -678,7 +679,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     self.storageOpsCount++;
     NSDictionary *textResult = [self readTextAtRelativePath:relativePath bundlePath:bundlePath];
     if (![textResult[@"ok"] boolValue]) return textResult;
-    NSData *data = [textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *data = TLinkUTF8DataFromString(textResult[@"text"]);
     NSError *err = nil;
     id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&err] : nil;
     if (!value) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" };
