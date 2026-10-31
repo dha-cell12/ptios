@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {restoreBrokerControlPreflight,vpnControlPreflight} from './lib/vpn-control-preflight-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);};
@@ -24,8 +25,9 @@ const cases=[
 ];
 for(const item of cases){
     const {prefix,constant,response,timeout}=item;
-    const [source,before]=await Promise.all([read(item.path),read('test/fixtures/'+item.fixture)]);
-    item.source=source;item.before=before;assert.equal(hash(before),item.hash);
+    const [actual,before]=await Promise.all([read(item.path),read('test/fixtures/'+item.fixture)]);
+    const source=restoreBrokerControlPreflight(actual,item.agent);
+    item.source=actual;item.before=before;assert.equal(hash(before),item.hash);
     const wait=between(source,'// BEGIN pending VPN manager operation admission.',`static NSDictionary *${prefix}Preflight`);
     const enqueue=between(source,'// BEGIN bounded VPN broker clients.',`static void ${prefix}RunServer`);
     const mutations=between(source,'// BEGIN serialized broker mutations.',`static NSString *${prefix}DiagnosticsResponse`);
@@ -56,7 +58,7 @@ for(const item of cases){
     assert.equal(restored,before,'complete prior parser/replies/license/foreground/preflight/manager/listener/identity source');
 }
 for(const workflow of await Promise.all(['.github/workflows/build.yml','.github/workflows/stream-app.yml'].map(read)))assert.match(workflow,/node scripts\/check-trollstore-vpn-broker-safety\.mjs/);
-console.log('TrollStore VPN broker source passed: 6015/6016 bounded clients, accepted-time ingress/output/wait, pending manager tickets, one pending mutation and complete frozen authority/parser/diagnostics/identity source.');
+console.log('TrollStore VPN broker source passed: narrow admission preflight, 6015/6016 bounded clients, accepted-time ingress/output/wait, pending manager tickets, one pending mutation and complete frozen authority/parser/diagnostics/identity source.');
 function fixtureSources(item){
     const {prefix,constant,source,before,response,wait}=item;
     const normalize=s=>s.replaceAll(constant+'MaxRequest','kTLinkVPNBrokerMaxRequest').replaceAll(prefix+'HandleClient','TLinkVPNBrokerHandleClient').replaceAll(prefix+'EnqueueClient','TLinkVPNBrokerEnqueueClient');
@@ -81,7 +83,9 @@ function fixtureSources(item){
     assert.match(currentWait,/fixtureOperationOwner\(\)/);assert.match(currentWait,/fixtureMutationOwner\(\)/);assert.match(currentWait,/fixtureWait\(/);
     return {'VPNBrokerAdmissionUnderTest.inc':actual,'VPNBrokerHandlerLegacy.inc':legacy,'VPNBrokerWaitUnderTest.inc':currentWait,'VPNBrokerWaitLegacy.inc':legacyWait};
 }
-for(const item of cases)item.fixtures=fixtureSources(item);
+const control=vpnControlPreflight(await read('shared/TLinkVPNDiagnostics.mm'))
+    .replaceAll('TLinkVPNEntitlementProbe()','fixtureEntitlements()').replaceAll('TLinkVPNFrameworkProbe()','fixtureFramework()');
+for(const item of cases)item.fixtures={...fixtureSources(item),'VPNControlPreflightUnderTest.inc':control};
 if(process.platform!=='darwin')console.log('macOS actual/frozen TrollStore broker socket/queue/manager Foundation/GCD/ARC/sanitizer cases included in CI; not run on this host.');
 else{
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ts-vpn-'));

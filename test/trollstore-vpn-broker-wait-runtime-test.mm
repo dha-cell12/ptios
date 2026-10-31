@@ -10,7 +10,8 @@
 typedef void (^TLinkVPNResultCompletion)(NSDictionary *result);
 static std::atomic<uint64_t> clockMs{100};
 static unsigned waitCalls=0,waitMs=0,managerCalls=0,licenseCalls=0;
-static bool appActive=true,entitled=true;
+static bool appActive=true,entitled=true,frameworkAvailable=true;
+static unsigned diagnosticSnapshots=0,entitlementProbes=0,frameworkProbes=0;
 static uint64_t preflightCost=0;
 #if TLINK_FIXTURE_AGENT
 static NSString *const timeoutCode=@"vpnagent_operation_timeout";
@@ -45,11 +46,20 @@ static void TLinkVPNSetConnected(BOOL connected,NSTimeInterval timeout,TLinkVPNR
     if(mutationFault==2)throw std::runtime_error("mutation");
     if(!holdMutation)completion(managerResult);
 }
-static NSDictionary *TLinkVPNDiagnosticsSnapshot(NSString *runtime,NSString *state,NSString *query,NSString *control,NSString *backend,NSString *broker,NSNumber *connected){
+static NSDictionary *fixtureEntitlements(){
+    ++entitlementProbes;
     clockMs+=preflightCost;
+    return @{@"allow_vpn":@(entitled),@"private_configuration_super":@(entitled),@"managed_vpn_keychain_access":@(entitled)};
+}
+static NSDictionary *fixtureFramework(){
+    ++frameworkProbes;
+    return @{@"manager_class_available":@(frameworkAvailable)};
+}
+#include "VPNControlPreflightUnderTest.inc"
+static NSDictionary *TLinkVPNDiagnosticsSnapshot(NSString *runtime,NSString *state,NSString *query,NSString *control,NSString *backend,NSString *broker,NSNumber *connected){
+    ++diagnosticSnapshots;
     return @{@"runtime":runtime,@"state":state,@"query":query,@"control":control,@"backend":backend,@"broker":broker,@"connected":connected?:[NSNull null],
-        @"entitlements":@{@"allow_vpn":@(entitled),@"private_configuration_super":@(entitled),@"managed_vpn_keychain_access":@(entitled)},
-        @"network_extension":@{@"manager_class_available":@YES}};
+        @"entitlements":fixtureEntitlements(),@"network_extension":fixtureFramework()};
 }
 #if !TLINK_FIXTURE_AGENT
 enum {UIApplicationStateActive=0,UIApplicationStateInactive=1};
@@ -69,7 +79,7 @@ namespace Legacy {
 #include "VPNBrokerWaitLegacy.inc"
 }
 using TLinkVPNBrokerIngress::Window;
-static void reset(){clockMs=100;waitCalls=waitMs=managerCalls=licenseCalls=0;waitMode=0;licensed=true;licenseCost=operationAcquireCost=0;pending=nil;pendingMutation=nil;holdMutation=false;mutationFault=0;mutationOwner=std::make_unique<TLinkVPNBrokerOperations>(0,1);appActive=entitled=true;preflightCost=0;operationOwner=std::make_unique<TLinkVPNBrokerOperations>();managerResult=@{@"ok":@1,@"connected":@1,@"configured":@1,@"enabled":@1,@"connection_status":@"connected"};}
+static void reset(){clockMs=100;waitCalls=waitMs=managerCalls=licenseCalls=0;waitMode=0;licensed=true;licenseCost=operationAcquireCost=0;pending=nil;pendingMutation=nil;holdMutation=false;mutationFault=0;mutationOwner=std::make_unique<TLinkVPNBrokerOperations>(0,1);appActive=entitled=frameworkAvailable=true;diagnosticSnapshots=entitlementProbes=frameworkProbes=0;preflightCost=0;operationOwner=std::make_unique<TLinkVPNBrokerOperations>();managerResult=@{@"ok":@1,@"connected":@1,@"configured":@1,@"enabled":@1,@"connection_status":@"connected"};}
 static void expired(NSDictionary *value){assert(![value[@"ok"] boolValue]&&[value[@"code"] isEqualToString:timeoutCode]);}
 static NSDictionary *uniqueValue(){return @{@"token":[[NSUUID UUID] UUIDString]};}
 static void synchronousCases(){
@@ -136,8 +146,8 @@ static void latchCases(){
 static id diagnostics(NSString *wire){assert([wire hasPrefix:@"0;;"]);NSString *encoded=[[wire substringFromIndex:3] stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];NSData *data=[[NSData alloc] initWithBase64EncodedString:encoded options:0];return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];}
 static void responseCases(){
     for(NSString *command in @[@"query",@"connect",@"disconnect",@"diagnostics",@"unknown",@" query\r\n",@"ping"]){
-        for(unsigned failure=0;failure<4;++failure){
-            reset();if(failure==1)licensed=false;if(failure==2)managerResult=@{@"ok":@0,@"code":@"fixture_manager_error"};if(failure==3)entitled=false;
+        for(unsigned failure=0;failure<5;++failure){
+            reset();if(failure==1)licensed=false;if(failure==2)managerResult=@{@"ok":@0,@"code":@"fixture_manager_error"};if(failure==3)entitled=false;if(failure==4)frameworkAvailable=false;
             NSString *old=Legacy::TLinkVPNBrokerResponse(command),*current=Current::TLinkVPNBrokerResponse(command,Window(100));
             if([command isEqualToString:@"diagnostics"])assert([diagnostics(old) isEqual:diagnostics(current)]);else assert([old isEqual:current]);
         }
@@ -190,6 +200,30 @@ static void operationCases(){
     clockMs=100;busy=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){(void)completion;assert(false);},8.0,Window(100));
     assert([busy[@"code"] isEqualToString:@"vpn_broker_busy"]&&operationOwner->stats().active==8);
 }
+static void narrowPreflightCases(){
+    for(NSString *command in @[@"query",@"connect",@"disconnect",@"unknown"]){
+        reset();NSString *expected=Legacy::TLinkVPNBrokerResponse(command);
+        assert(diagnosticSnapshots==1&&entitlementProbes==1&&frameworkProbes==1);
+        reset();NSString *actual=Current::TLinkVPNBrokerResponse(command,Window(100));
+        assert([actual isEqual:expected]&&diagnosticSnapshots==0&&entitlementProbes==1&&frameworkProbes==1&&licenseCalls==1);
+    }
+    reset();(void)Current::TLinkVPNBrokerResponse(@"diagnostics",Window(100));
+    assert(diagnosticSnapshots==1&&entitlementProbes==1&&frameworkProbes==1&&licenseCalls==0);
+    reset();frameworkAvailable=false;
+    assert([Current::TLinkVPNBrokerResponse(@"query",Window(100)) hasPrefix:@"-1;;"]&&managerCalls==0);
+    frameworkAvailable=true;
+    assert([Current::TLinkVPNBrokerResponse(@"query",Window(100)) isEqualToString:@"0;;1\r\n"]&&managerCalls==1&&frameworkProbes==2&&diagnosticSnapshots==0);
+    reset();managerResult=@{@"ok":@1,@"connected":@0};
+    assert([Current::TLinkVPNBrokerResponse(@"query",Window(100)) isEqualToString:@"0;;0\r\n"]);
+    managerResult=@{@"ok":@1,@"connected":@1};
+    assert([Current::TLinkVPNBrokerResponse(@"query",Window(100)) isEqualToString:@"0;;1\r\n"]&&managerCalls==2&&diagnosticSnapshots==0);
+    reset();licensed=false;(void)Current::TLinkVPNBrokerResponse(@"query",Window(100));
+    assert(licenseCalls==1&&entitlementProbes==0&&frameworkProbes==0&&managerCalls==0);
+#if !TLINK_FIXTURE_AGENT
+    reset();appActive=false;(void)Current::TLinkVPNBrokerResponse(@"query",Window(100));
+    assert(licenseCalls==0&&entitlementProbes==0&&frameworkProbes==0&&managerCalls==0);
+#endif
+}
 static void mutationCases(){
     reset();waitMode=1;holdMutation=true;
     assert([Current::TLinkVPNBrokerResponse(@"connect",Window(100)) hasPrefix:[@"-1;;" stringByAppendingString:timeoutCode]]);
@@ -213,6 +247,6 @@ static void mutationCases(){
 }
 int main(){@autoreleasepool{
     puts("TrollStore VPN wait Foundation: actual/frozen broker, foreground/entitlements/manager/authority controlled");
-    synchronousCases();timeoutCases();unwindCases();latchCases();responseCases();operationCases();mutationCases();
-    puts("TrollStore VPN wait/operation admission passed: completion/phase/pool/frozen authority parity, eight pending across timeout, one pending mutation with independent reads, immediate busy, late recovery, stale token fencing, prestart cancellation and conservative dropped/throwing starters. Underlying cancellation/device qualification pending.");
+    synchronousCases();timeoutCases();unwindCases();latchCases();responseCases();operationCases();mutationCases();narrowPreflightCases();
+    puts("TrollStore VPN wait/operation admission passed: completion/phase/pool/frozen authority parity, eight pending across timeout, one pending mutation with independent reads, immediate busy, late recovery, stale token fencing, prestart cancellation, conservative dropped/throwing starters, narrow admission without full diagnostics, fresh framework/status and unchanged full diagnostic replies. Underlying cancellation/device qualification pending.");
 }return 0;}

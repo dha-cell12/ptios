@@ -376,6 +376,18 @@ static NSDictionary *TLinkVPNPrivateCompatibilityProbe(
     return current;
 }
 
+// BEGIN narrow VPN control preflight.
+NSDictionary *TLinkVPNControlPreflight(void)
+{
+    NSDictionary *entitlements = TLinkVPNEntitlementProbe();
+    NSDictionary *framework = TLinkVPNFrameworkProbe();
+    return @{
+        @"entitlements": entitlements,
+        @"network_extension": framework,
+    };
+}
+// END narrow VPN control preflight.
+
 NSDictionary *TLinkVPNDiagnosticsSnapshot(
     NSString *runtime,
     NSString *state,

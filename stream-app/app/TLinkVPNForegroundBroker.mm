@@ -199,7 +199,7 @@ static NSString *TLinkVPNForegroundBrokerResponse(NSString *command, const TLink
         return [NSString stringWithFormat:@"-1;;vpn_license_denied %@\r\n",
             licenseError ?: @"automation_not_allowed"];
     }
-    NSDictionary *preflight = TLinkVPNForegroundPreflight();
+    NSDictionary *preflight = TLinkVPNControlPreflight();
     if (!TLinkVPNForegroundEntitlementReady(preflight)) {
         return @"-1;;vpn_trollstore_entitlement_unavailable\r\n";
     }

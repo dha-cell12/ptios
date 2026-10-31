@@ -208,7 +208,7 @@ static NSString *TLinkVPNAgentResponse(NSString *command, const TLinkVPNBrokerIn
         return [NSString stringWithFormat:@"-1;;vpn_license_denied %@\r\n",
             licenseError ?: @"automation_not_allowed"];
     }
-    if (!TLinkVPNAgentEntitlementReady(TLinkVPNAgentPreflight())) {
+    if (!TLinkVPNAgentEntitlementReady(TLinkVPNControlPreflight())) {
         return @"-1;;vpnagent_entitlement_unavailable\r\n";
     }
 

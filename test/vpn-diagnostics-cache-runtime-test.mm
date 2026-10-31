@@ -33,6 +33,15 @@ static CFPropertyListRef fixtureDeepCopy(CFAllocatorRef allocator,CFPropertyList
     if(copyFailure==3)throw std::runtime_error("copy");
     CFPropertyListRef result=CFPropertyListCreateDeepCopy(allocator,value,options);if(result)++ownedCF;return result;
 }
+static std::atomic<bool> frameworkAvailable{true};
+static std::atomic<unsigned> frameworkCalls{0};
+static int frameworkFault=0;
+static NSDictionary *fixtureFrameworkProbe(){
+    ++frameworkCalls;
+    if(frameworkFault==1)[NSException raise:@"Framework" format:@"NS"];
+    if(frameworkFault==2)throw std::runtime_error("framework");
+    return @{@"framework_loaded":@YES,@"manager_class_available":@(frameworkAvailable.load()),@"api_exercised":@0};
+}
 namespace Current {
 #include "VPNEntitlementsUnderTest.inc"
 }
@@ -44,6 +53,14 @@ namespace Previous {
 }
 namespace Retry {
 #include "VPNEntitlementsUnderTest.inc"
+}
+namespace Narrow {
+#include "VPNEntitlementsUnderTest.inc"
+#include "VPNControlPreflightUnderTest.inc"
+}
+namespace NarrowRetry {
+#include "VPNEntitlementsUnderTest.inc"
+#include "VPNControlPreflightUnderTest.inc"
 }
 static NSArray<NSString *> *keys(){return @[
     @"com.apple.developer.networking.vpn.api",@"com.apple.developer.networking.networkextension",
@@ -168,8 +185,47 @@ static void publicRetryAndSnapshotCases(){
     for(unsigned n=0;n<1000;++n){@autoreleasepool{assert(Retry::TLinkVPNEntitlementProbe()==held);}}
     assert(taskCalls==tasks&&valueCalls==values&&copyCalls==copies&&retainCalls==retains&&ownedCF==0);
 }
+static void narrowControlCases(){
+    reset();frameworkAvailable=false;frameworkCalls=0;frameworkFault=0;NSDictionary *held;
+    @autoreleasepool{held=Narrow::TLinkVPNControlPreflight();}
+    assert(held.count==2&&[held[@"entitlements"][@"allow_vpn"] boolValue]&&![held[@"network_extension"][@"manager_class_available"] boolValue]);
+    assert(![held isKindOfClass:[NSMutableDictionary class]]&&taskCalls==1&&valueCalls==10&&retainCalls==11&&ownedCF==0);
+    frameworkAvailable=true;NSDictionary *fresh=Narrow::TLinkVPNControlPreflight();
+    assert(fresh[@"entitlements"]==held[@"entitlements"]&&[fresh[@"network_extension"][@"manager_class_available"] boolValue]);
+    assert(![held[@"network_extension"][@"manager_class_available"] boolValue]);
+    for(unsigned n=0;n<10000;++n){@autoreleasepool{
+        NSDictionary *value=Narrow::TLinkVPNControlPreflight();
+        assert(value.count==2&&value[@"entitlements"]==held[@"entitlements"]&&[value[@"network_extension"][@"manager_class_available"] boolValue]);
+    }}
+    assert(frameworkCalls==10002&&taskCalls==1&&valueCalls==10&&retainCalls==11&&ownedCF==0);
+    std::vector<std::thread> workers;
+    for(unsigned worker=0;worker<8;++worker)workers.emplace_back([held]{@autoreleasepool{
+        for(unsigned n=0;n<1000;++n){@autoreleasepool{
+            NSDictionary *value=Narrow::TLinkVPNControlPreflight();
+            assert(value[@"entitlements"]==held[@"entitlements"]&&[value[@"network_extension"][@"manager_class_available"] boolValue]);
+        }}
+    }});
+    for(std::thread &worker:workers)worker.join();
+    assert(frameworkCalls==18002&&taskCalls==1&&valueCalls==10&&retainCalls==11&&ownedCF==0);
+    reset();frameworkCalls=0;taskFailure=true;
+    assert(![NarrowRetry::TLinkVPNControlPreflight()[@"entitlements"][@"probe_available"] boolValue]);
+    taskFailure=false;NSDictionary *resolved=[providerValues copy];[providerValues removeAllObjects];[providerErrors addObjectsFromArray:keys()];
+    assert(![NarrowRetry::TLinkVPNControlPreflight()[@"entitlements"][@"allow_vpn"] boolValue]);
+    [providerErrors removeAllObjects];providerValues=[resolved mutableCopy];
+    NSDictionary *recovered=NarrowRetry::TLinkVPNControlPreflight();
+    assert([recovered[@"entitlements"] isEqual:Legacy::TLinkVPNEntitlementProbe()]&&ownedCF==0);
+    const unsigned tasks=taskCalls.load(),values=valueCalls.load(),retains=retainCalls.load();
+    for(int fault=1;fault<=2;++fault){
+        frameworkFault=fault;bool caught=false;
+        @try{try{(void)NarrowRetry::TLinkVPNControlPreflight();}catch(...){caught=true;}}@catch(NSException *exception){(void)exception;caught=true;}
+        assert(caught);frameworkFault=0;
+        assert([NarrowRetry::TLinkVPNControlPreflight()[@"network_extension"][@"manager_class_available"] boolValue]);
+    }
+    assert(taskCalls==tasks&&valueCalls==values&&retainCalls==retains&&ownedCF==0);
+}
 int main(){@autoreleasepool{
     puts("VPN diagnostics Foundation: actual/frozen entitlement normalization, success-only immutable memo and CF ownership");
-    parityAndWarmCases();faultAndRetryCases();ownershipCases();concurrentPublicCases();publicRetryAndSnapshotCases();
+    parityAndWarmCases();faultAndRetryCases();ownershipCases();concurrentPublicCases();publicRetryAndSnapshotCases();narrowControlCases();
+    puts("VPN control preflight passed: actual two-field admission view, immutable entitlement reuse, 10k warm and 8k concurrent reads with fresh framework probes, readiness recovery, task/entitlement retry and NS/C++ framework unwind. Full diagnostic/private marker source remains unchanged.");
     puts("VPN diagnostics cache passed: 1000 frozen shapes, 10k warm reads, absent values, ten independent error retries, task/copy NS/C++ failures, pool/mutable ownership and 8k concurrent public calls. Completed snapshots reuse immutable results without warm CF retains (640 preceding retains over 64 calls). No real entitlement or VPN state changed.");
 }return 0;}
