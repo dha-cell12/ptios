@@ -39,10 +39,51 @@ const scriptStart=caller.indexOf('static BOOL TLinkScriptStopRequested(TLinkScri
 const scriptEnd=caller.indexOf('static void TLinkScriptCloseOpenFiles',scriptStart);
 assert.ok(scriptStart>=0&&scriptEnd>scriptStart);
 const scriptStop=caller.slice(scriptStart,scriptEnd);
-const script=scriptStop+'\nstatic NSDictionary *CallScript(TLinkScriptSession *strongSession,NSString *helperPath,NSDictionary *request)\n{\n    return '+vpnPrivateScriptCall+';\n}\n';
-const nativeSources=[adapt(source),adapt(before)];
+// Public declarations remain global in the fixture. Qualify namespace-bound calls
+// so ADL through NSString/NSDictionary cannot add those global declarations.
+const script=scriptStop+'\nstatic NSDictionary *CallScript(TLinkScriptSession *strongSession,NSString *helperPath,NSDictionary *request)\n{\n    return '+vpnPrivateScriptCall.replace('TLinkVPNRunPrivateConfigurationHelperWithStop(', 'Current::TLinkVPNRunPrivateConfigurationHelperWithStop(')+';\n}\n';
+const forwardingCall='return TLinkVPNRunPrivateConfigurationHelperWithStop(helperPath, configuration, nil);';
+const currentSource=adapt(source);
+assert.equal(currentSource.split(forwardingCall).length,2);
+const nativeSources=[currentSource.replace(forwardingCall,'return Current::TLinkVPNRunPrivateConfigurationHelperWithStop(helperPath, configuration, nil);'),adapt(before)];
 assert.ok(nativeSources.every(s=>!s.includes('kTLinkVPNRequestDirectory')));
 assert.match(nativeSources[0],/child.wait\(fixtureTimeout,20,cancellation\)/);
+const publicHeader=await read('shared/TLinkVPNPrivateRequest.h');
+const blockTypedef='typedef BOOL (^TLinkVPNPrivateRequestShouldStop)(void);';
+assert.ok(publicHeader.includes(blockTypedef));
+const probeHeader=publicHeader.replace(/^#import[^\n]*\n/gm,'').replace(blockTypedef,'using TLinkVPNPrivateRequestShouldStop=std::function<BOOL()>;');
+const forwardingWrapper=nativeSources[0].slice(nativeSources[0].lastIndexOf('NSDictionary *TLinkVPNRunPrivateConfigurationHelper('));
+assert.match(forwardingWrapper,/return Current::TLinkVPNRunPrivateConfigurationHelperWithStop/);
+const scriptWrapper=script.slice(script.indexOf('static NSDictionary *CallScript(')).replace('^BOOL {','[=]() -> BOOL {');
+assert.match(scriptWrapper,/return Current::TLinkVPNRunPrivateConfigurationHelperWithStop/);
+const lookupProbe=`#include <cassert>
+#include <functional>
+#define FOUNDATION_EXPORT extern
+#define nil nullptr
+using BOOL=bool;
+struct NSString {};
+struct NSDictionary {};
+struct TLinkScriptSession {BOOL stopRequested=false;};
+${probeHeader}
+static unsigned calls=0;
+static BOOL stopped=false;
+static BOOL TLinkScriptStopRequested(TLinkScriptSession *session){return session&&session->stopRequested;}
+namespace Current {
+NSDictionary *TLinkVPNRunPrivateConfigurationHelperWithStop(NSString *path,NSDictionary *configuration,TLinkVPNPrivateRequestShouldStop stop){
+    assert(path&&configuration);++calls;stopped=stop&&stop();return configuration;
+}
+${forwardingWrapper}
+}
+namespace Script {
+${scriptWrapper}
+}
+int main(){NSString path;NSDictionary configuration;TLinkScriptSession session;
+    assert(Current::TLinkVPNRunPrivateConfigurationHelper(&path,&configuration)==&configuration&&!stopped);
+    assert(Script::CallScript(&session,&path,&configuration)==&configuration&&!stopped);
+    session.stopRequested=true;
+    assert(Script::CallScript(&session,&path,&configuration)==&configuration&&stopped&&calls==3);
+}
+`;
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.match(await read(path),/node scripts\/check-vpn-helper-child-safety\.mjs/);
 console.log('VPN helper child source passed: caller stop/preflight and live script binding, bounded wait/admission, exact retirement across predicate unwind and complete previous request/server source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-vpn-child-'));
@@ -51,6 +92,10 @@ try{
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     const binary=join(temp,windows?'core.exe':'core'),file=join(root,'test/vpn-helper-child-safety-test.cpp');
     run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',file,'-o',binary]);run(binary,[]);
+    const lookupFile=join(temp,'namespace-lookup.cpp'),lookupBinary=join(temp,windows?'namespace-lookup.exe':'namespace-lookup');
+    await writeFile(lookupFile,lookupProbe);
+    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',lookupFile,`/Fe${lookupBinary}`,`/Fo${join(temp,'namespace-lookup.obj')}`]:['-std=c++11','-Wall','-Wextra','-Werror',lookupFile,'-o',lookupBinary]);run(lookupBinary,[]);
+    console.log('VPN helper fixture namespace lookup passed: actual forwarding/script wrappers with global public declarations and live stop binding.');
     if(process.platform==='darwin'){
         await Promise.all([writeFile(join(temp,'VPNPrivateRequestUnderTest.inc'),nativeSources[0]),writeFile(join(temp,'VPNPrivateRequestLegacy.inc'),nativeSources[1]),writeFile(join(temp,'VPNScriptStopUnderTest.inc'),script)]);
         const runtime=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-helper-child-runtime-test.mm'),'-o',runtime]);run(runtime,[]);

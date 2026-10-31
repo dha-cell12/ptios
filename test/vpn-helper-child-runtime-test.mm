@@ -77,7 +77,6 @@ namespace Legacy {
 @implementation TLinkScriptSession
 @end
 namespace Script {
-using Current::TLinkVPNRunPrivateConfigurationHelperWithStop;
 #include "VPNScriptStopUnderTest.inc"
 }
 static void drain(){
