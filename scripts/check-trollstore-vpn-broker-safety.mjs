@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {restoreBrokerControlPreflight,vpnControlPreflight} from './lib/vpn-control-preflight-baseline.mjs';
+import {restoreBrokerStatus} from './lib/vpn-status-coalescing-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);};
@@ -26,7 +27,7 @@ const cases=[
 for(const item of cases){
     const {prefix,constant,response,timeout}=item;
     const [actual,before]=await Promise.all([read(item.path),read('test/fixtures/'+item.fixture)]);
-    const source=restoreBrokerControlPreflight(actual,item.agent);
+    const source=restoreBrokerControlPreflight(restoreBrokerStatus(actual,item.agent),item.agent);
     item.source=actual;item.before=before;assert.equal(hash(before),item.hash);
     const wait=between(source,'// BEGIN pending VPN manager operation admission.',`static NSDictionary *${prefix}Preflight`);
     const enqueue=between(source,'// BEGIN bounded VPN broker clients.',`static void ${prefix}RunServer`);
@@ -58,7 +59,7 @@ for(const item of cases){
     assert.equal(restored,before,'complete prior parser/replies/license/foreground/preflight/manager/listener/identity source');
 }
 for(const workflow of await Promise.all(['.github/workflows/build.yml','.github/workflows/stream-app.yml'].map(read)))assert.match(workflow,/node scripts\/check-trollstore-vpn-broker-safety\.mjs/);
-console.log('TrollStore VPN broker source passed: narrow admission preflight, 6015/6016 bounded clients, accepted-time ingress/output/wait, pending manager tickets, one pending mutation and complete frozen authority/parser/diagnostics/identity source.');
+console.log('TrollStore VPN broker source passed: coalesced pending status, mutation invalidation, narrow admission preflight, 6015/6016 bounded clients, accepted-time ingress/output/wait, pending manager tickets and complete frozen authority/parser/diagnostics/identity source.');
 function fixtureSources(item){
     const {prefix,constant,source,before,response,wait}=item;
     const normalize=s=>s.replaceAll(constant+'MaxRequest','kTLinkVPNBrokerMaxRequest').replaceAll(prefix+'HandleClient','TLinkVPNBrokerHandleClient').replaceAll(prefix+'EnqueueClient','TLinkVPNBrokerEnqueueClient');
@@ -73,7 +74,9 @@ function fixtureSources(item){
         let value=s.replaceAll(wait,'TLinkVPNBrokerWait').replaceAll(response,'TLinkVPNBrokerResponse');
         if(current){
             value=value.replace(between(value,'static TLinkVPNBrokerOperations &'+prefix+'MutationOwner',`static void ${prefix}SetConnected`),'');
+            value=value.replace(between(value,'static TLinkVPNBrokerStatusOwner &'+prefix+'StatusOwner',`static void ${prefix}ReadStatus`),'');
             value=value.replaceAll('TLinkHelperIO::nowMs()','fixtureNow()').replace('completion->wait(std::min(remaining, 250))','fixtureWait(*completion, std::min(remaining, 250))').replaceAll(prefix+'OperationOwner()','fixtureOperationOwner()').replaceAll(prefix+'MutationOwner()','fixtureMutationOwner()');
+            value=value.replaceAll(prefix+'StatusOwner()','fixtureStatusOwner()');
         }
         return value;
     };
@@ -81,23 +84,28 @@ function fixtureSources(item){
     const currentWait=active+adaptWait(between(source,'static NSDictionary *'+wait,`static void ${prefix}HandleClient`),true);
     const legacyWait=adaptWait(between(before,item.agent?'static NSDictionary *'+wait:'static BOOL TLinkVPNForegroundAppActive',`static void ${prefix}HandleClient`),false);
     assert.match(currentWait,/fixtureOperationOwner\(\)/);assert.match(currentWait,/fixtureMutationOwner\(\)/);assert.match(currentWait,/fixtureWait\(/);
+    assert.match(currentWait,/fixtureStatusOwner\(\)/);
     return {'VPNBrokerAdmissionUnderTest.inc':actual,'VPNBrokerHandlerLegacy.inc':legacy,'VPNBrokerWaitUnderTest.inc':currentWait,'VPNBrokerWaitLegacy.inc':legacyWait};
 }
 const control=vpnControlPreflight(await read('shared/TLinkVPNDiagnostics.mm'))
     .replaceAll('TLinkVPNEntitlementProbe()','fixtureEntitlements()').replaceAll('TLinkVPNFrameworkProbe()','fixtureFramework()');
 for(const item of cases)item.fixtures={...fixtureSources(item),'VPNControlPreflightUnderTest.inc':control};
-if(process.platform!=='darwin')console.log('macOS actual/frozen TrollStore broker socket/queue/manager Foundation/GCD/ARC/sanitizer cases included in CI; not run on this host.');
-else{
+{
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ts-vpn-'));
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
-    const compiler=process.env.CXX||'clang++';
+    const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     function compile(file,binary,agent){run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-DTLINK_FIXTURE_AGENT='+(agent?1:0),'-I',temp,join(root,file),'-o',binary]);run(binary,[]);}
     try{
+        const core=join(temp,windows?'status.exe':'status'),file=join(root,'test/vpn-broker-status-safety-test.cpp');
+        run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${core}`,`/Fo${join(temp,'status.obj')}`]:['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',core]);run(core,[]);
+        if(process.platform!=='darwin'){console.log('macOS actual/frozen TrollStore broker socket/queue/status Foundation/GCD/ARC/sanitizer cases included in CI; not run on this host.');}
+        else{
         for(const item of cases){
             await Promise.all(Object.entries(item.fixtures).map(([name,value])=>writeFile(join(temp,name),value)));
             console.log(`TrollStore VPN ${item.agent?'agent 6016':'foreground 6015'}: actual socket/lease/queue and frozen handler parity`);
             compile('test/vpn-broker-admission-runtime-test.mm',join(temp,item.agent?'agent-clients':'app-clients'),item.agent);
             compile('test/trollstore-vpn-broker-wait-runtime-test.mm',join(temp,item.agent?'agent-wait':'app-wait'),item.agent);
         }
-    }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-ts-vpn-'));await rm(temp,{recursive:true,force:true});}
+        }
+    }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-ts-vpn-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 }

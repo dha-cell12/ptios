@@ -1,15 +1,18 @@
 #import <Foundation/Foundation.h>
 #include "../shared/TLinkVPNBrokerBudget.h"
 #include "../shared/TLinkVPNBrokerOperations.h"
+#include "../shared/TLinkVPNBrokerStatus.h"
 #include <cassert>
 #include <atomic>
 #include <thread>
 #include <vector>
 #include <stdexcept>
 #include <cstdio>
+#include <chrono>
 typedef void (^TLinkVPNResultCompletion)(NSDictionary *result);
 static std::atomic<uint64_t> clockMs{100};
-static unsigned waitCalls=0,waitMs=0,managerCalls=0,licenseCalls=0;
+static std::atomic<unsigned> waitCalls{0},waitMs{0},managerCalls{0};
+static unsigned licenseCalls=0;
 static bool appActive=true,entitled=true,frameworkAvailable=true;
 static unsigned diagnosticSnapshots=0,entitlementProbes=0,frameworkProbes=0;
 static uint64_t preflightCost=0;
@@ -22,9 +25,15 @@ static int waitMode=0;static bool licensed=true;static uint64_t licenseCost=0;
 static TLinkVPNResultCompletion pending=nil;
 static NSDictionary *managerResult;
 static std::unique_ptr<TLinkVPNBrokerOperations> operationOwner,mutationOwner;
+static std::unique_ptr<TLinkVPNBrokerStatusOwner> statusOwner;
+static TLinkVPNBrokerStatusOwner &fixtureStatusOwner(){assert(statusOwner);return *statusOwner;}
 static bool holdMutation=false;
 static int mutationFault=0;
 static TLinkVPNResultCompletion pendingMutation=nil;
+static bool holdStatus=false;
+static int statusFault=0;
+static NSMutableArray *statusReplies;
+static dispatch_block_t mutationStartedHook;
 static TLinkVPNBrokerOperations &fixtureMutationOwner(){assert(mutationOwner);return *mutationOwner;}
 static uint64_t operationAcquireCost=0;
 static TLinkVPNBrokerOperations &fixtureOperationOwner(){assert(operationOwner);clockMs+=operationAcquireCost;return *operationOwner;}
@@ -38,9 +47,17 @@ static BOOL TLinkLicenseFeatureAllowed(NSString *feature,NSString **error){
     assert([feature isEqualToString:@"automation"]);++licenseCalls;clockMs+=licenseCost;
     if(!licensed&&error)*error=@"fixture_denied";return licensed;
 }
-static void TLinkVPNReadManagerStatus(TLinkVPNResultCompletion completion){++managerCalls;completion(managerResult);}
+static void TLinkVPNReadManagerStatus(TLinkVPNResultCompletion completion){
+    ++managerCalls;
+    if(holdStatus||statusFault){@synchronized(statusReplies){[statusReplies addObject:[completion copy]];}}
+    if(statusFault==3||statusFault==4)completion(managerResult);
+    if(statusFault==1||statusFault==3)[NSException raise:@"Status" format:@"NS"];
+    if(statusFault==2||statusFault==4)throw std::runtime_error("status");
+    if(!holdStatus)completion(managerResult);
+}
 static void TLinkVPNSetConnected(BOOL connected,NSTimeInterval timeout,TLinkVPNResultCompletion completion){
     (void)connected;assert(timeout==20.0);++managerCalls;
+    if(mutationStartedHook)mutationStartedHook();
     if(holdMutation||mutationFault)pendingMutation=[completion copy];
     if(mutationFault==1)[NSException raise:@"Mutation" format:@"NS"];
     if(mutationFault==2)throw std::runtime_error("mutation");
@@ -79,9 +96,23 @@ namespace Legacy {
 #include "VPNBrokerWaitLegacy.inc"
 }
 using TLinkVPNBrokerIngress::Window;
-static void reset(){clockMs=100;waitCalls=waitMs=managerCalls=licenseCalls=0;waitMode=0;licensed=true;licenseCost=operationAcquireCost=0;pending=nil;pendingMutation=nil;holdMutation=false;mutationFault=0;mutationOwner=std::make_unique<TLinkVPNBrokerOperations>(0,1);appActive=entitled=frameworkAvailable=true;diagnosticSnapshots=entitlementProbes=frameworkProbes=0;preflightCost=0;operationOwner=std::make_unique<TLinkVPNBrokerOperations>();managerResult=@{@"ok":@1,@"connected":@1,@"configured":@1,@"enabled":@1,@"connection_status":@"connected"};}
+static void reset(){statusOwner=std::make_unique<TLinkVPNBrokerStatusOwner>();holdStatus=false;statusFault=0;statusReplies=[NSMutableArray array];mutationStartedHook=nil;clockMs=100;waitCalls=0;waitMs=0;managerCalls=0;licenseCalls=0;waitMode=0;licensed=true;licenseCost=operationAcquireCost=0;pending=nil;pendingMutation=nil;holdMutation=false;mutationFault=0;mutationOwner=std::make_unique<TLinkVPNBrokerOperations>(0,1);appActive=entitled=frameworkAvailable=true;diagnosticSnapshots=entitlementProbes=frameworkProbes=0;preflightCost=0;operationOwner=std::make_unique<TLinkVPNBrokerOperations>();managerResult=@{@"ok":@1,@"connected":@1,@"configured":@1,@"enabled":@1,@"connection_status":@"connected"};}
 static void expired(NSDictionary *value){assert(![value[@"ok"] boolValue]&&[value[@"code"] isEqualToString:timeoutCode]);}
 static NSDictionary *uniqueValue(){return @{@"token":[[NSUUID UUID] UUIDString]};}
+static void readStatus(TLinkVPNResultCompletion completion){
+#if TLINK_FIXTURE_AGENT
+    Current::TLinkVPNAgentReadStatus(completion);
+#else
+    Current::TLinkVPNForegroundReadStatus(completion);
+#endif
+}
+static TLinkVPNResultCompletion statusReply(NSUInteger index){@synchronized(statusReplies){return (TLinkVPNResultCompletion)statusReplies[index];}}
+template<class Predicate>static void awaitStatus(Predicate predicate){
+    const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!predicate()&&std::chrono::steady_clock::now()<end)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    assert(predicate());
+}
+struct StatusResult {NSDictionary *value=nil;};
 static void synchronousCases(){
     reset();NSDictionary *first=uniqueValue(),*second=uniqueValue();
     NSDictionary *result=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){pending=[completion copy];completion(first);completion(second);},8.0,Window(100));
@@ -245,8 +276,83 @@ static void mutationCases(){
         pendingMutation(managerResult);pendingMutation=nil;assert(operationOwner->stats().active==0&&mutationOwner->stats().active==0);
     }
 }
+static void coalescedStatusCases(){
+    reset();holdStatus=true;std::vector<StatusResult> results(8);std::vector<std::thread> readers;
+    for(unsigned n=0;n<8;++n)readers.emplace_back([&results,n]{@autoreleasepool{
+        results[n].value=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100));
+    }});
+    awaitStatus([]{return statusOwner->waiting()==8;});assert(managerCalls==1&&operationOwner->stats().active==8);
+    auto refused=std::make_shared<StatusResult>();readStatus(^(NSDictionary *value){refused->value=value;});
+    assert([refused->value[@"code"] isEqualToString:@"vpn_broker_busy"]&&statusOwner->waiting()==8&&managerCalls==1);
+    auto refused=std::make_shared<StatusResult>();readStatus(^(NSDictionary *value){refused->value=value;});
+    assert([refused->value[@"code"] isEqualToString:@"vpn_broker_busy"]&&statusOwner->waiting()==8&&managerCalls==1);
+    NSDictionary *busy=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100));
+    assert([busy[@"code"] isEqualToString:@"vpn_broker_busy"]&&managerCalls==1);
+    statusReply(0)(managerResult);
+    for(auto &reader:readers){reader.join();}
+    for(auto &result:results){assert(result.value==managerResult);}
+    assert(operationOwner->stats().active==0&&statusOwner->waiting()==0);
+    holdStatus=false;NSDictionary *fresh=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100));
+    assert(fresh==managerResult&&managerCalls==2);statusReply(0)(nil);assert(operationOwner->stats().active==0);
+
+    // An old caller expires at its accepted-time boundary; a fresh caller joins
+    // the same pending backend read with its own still-live window.
+    reset();holdStatus=true;waitMode=1;clockMs=30099;
+    expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100)));
+    assert(clockMs==30100&&managerCalls==1&&operationOwner->stats().active==1);waitMode=0;
+    auto active=std::make_shared<StatusResult>();std::thread survivor([active]{@autoreleasepool{
+        active->value=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(30100));
+    }});
+    awaitStatus([]{return statusOwner->waiting()==2;});__weak NSDictionary *released;
+    @autoreleasepool{NSDictionary *value=uniqueValue();released=value;statusReply(0)(value);survivor.join();assert(active->value==value);}
+    assert(released&&managerCalls==1&&operationOwner->stats().active==0);active->value=nil;assert(!released);
+
+    reset();holdStatus=true;waitMode=1;
+    expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100)));
+    assert(clockMs==8100); // The eight-second join window is also exhausted.
+    expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(8100)));
+    assert(managerCalls==2&&operationOwner->stats().active==2&&statusOwner->waiting()==1);
+    statusReply(0)(managerResult);assert(operationOwner->stats().active==1&&statusOwner->waiting()==1);
+    statusReply(1)(managerResult);assert(operationOwner->stats().active==0&&statusOwner->waiting()==0);
+    for(int fault=1;fault<=2;++fault){
+        reset();holdStatus=true;statusFault=fault;bool caught=false;
+        @try{try{(void)Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100));}catch(...){caught=true;}}@catch(NSException *exception){(void)exception;caught=true;}
+        assert(caught&&operationOwner->stats().active==1&&statusOwner->waiting()==0);
+        statusFault=0;waitMode=1;
+        expired(Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100)));
+        assert(managerCalls==2&&operationOwner->stats().active==2&&statusOwner->waiting()==1);
+        statusReply(0)(managerResult);assert(operationOwner->stats().active==1&&statusOwner->waiting()==1);
+        statusReply(1)(managerResult);assert(operationOwner->stats().active==0&&statusOwner->waiting()==0);
+    }
+    for(int fault=3;fault<=4;++fault){
+        reset();statusFault=fault;bool caught=false;
+        @try{try{(void)Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100));}catch(...){caught=true;}}@catch(NSException *exception){(void)exception;caught=true;}
+        assert(caught&&operationOwner->stats().active==0&&statusOwner->waiting()==0);
+    }
+    for(int fault=1;fault<=2;++fault){
+        reset();holdStatus=true;auto delivered=std::make_shared<unsigned>(0);
+        readStatus(^(NSDictionary *value){(void)value;if(fault==1)[NSException raise:@"Waiter" format:@"NS"];throw std::runtime_error("waiter");});
+        readStatus(^(NSDictionary *value){assert(value==managerResult);++*delivered;});
+        statusReply(0)(managerResult);assert(*delivered==1&&statusOwner->waiting()==0&&managerCalls==1);
+    }
+    reset();readStatus(nil);assert(managerCalls==0&&statusOwner->waiting()==0);
+}
+static void statusMutationBoundaryCases(){
+    reset();holdStatus=holdMutation=true;waitMode=1;auto old=std::make_shared<unsigned>(0),during=std::make_shared<unsigned>(0),after=std::make_shared<unsigned>(0);
+    readStatus(^(NSDictionary *value){(void)value;++*old;});assert(managerCalls==1&&statusOwner->waiting()==1);
+    mutationStartedHook=^{assert(statusOwner->waiting()==0);readStatus(^(NSDictionary *value){(void)value;++*during;});};
+    (void)Current::TLinkVPNBrokerResponse(@"connect",Window(100));mutationStartedHook=nil;
+    assert(managerCalls==3&&statusOwner->waiting()==1&&pendingMutation&&operationOwner->stats().active==1);
+    pendingMutation(managerResult);assert(statusOwner->waiting()==0&&operationOwner->stats().active==0);
+    readStatus(^(NSDictionary *value){(void)value;++*after;});assert(managerCalls==4&&statusOwner->waiting()==1);
+    pendingMutation(managerResult);assert(statusOwner->waiting()==1); // Duplicate mutation cannot clear the new generation.
+    statusReply(0)(managerResult);statusReply(1)(managerResult);assert(*old==1&&*during==1&&*after==0&&statusOwner->waiting()==1);
+    readStatus(^(NSDictionary *value){(void)value;++*after;});assert(managerCalls==4);
+    statusReply(2)(managerResult);assert(*after==2&&statusOwner->waiting()==0);pendingMutation=nil;
+}
 int main(){@autoreleasepool{
     puts("TrollStore VPN wait Foundation: actual/frozen broker, foreground/entitlements/manager/authority controlled");
-    synchronousCases();timeoutCases();unwindCases();latchCases();responseCases();operationCases();mutationCases();narrowPreflightCases();
+    synchronousCases();timeoutCases();unwindCases();latchCases();responseCases();operationCases();mutationCases();narrowPreflightCases();coalescedStatusCases();statusMutationBoundaryCases();
+    puts("TrollStore coalesced status passed: eight real waiters/one backend read, independent parent expiry, late value release, non-renewing join windows, stale/duplicate callbacks, NS/C++ starter/fanout faults and actual mutation start/terminal invalidation. Completed results are not cached.");
     puts("TrollStore VPN wait/operation admission passed: completion/phase/pool/frozen authority parity, eight pending across timeout, one pending mutation with independent reads, immediate busy, late recovery, stale token fencing, prestart cancellation, conservative dropped/throwing starters, narrow admission without full diagnostics, fresh framework/status and unchanged full diagnostic replies. Underlying cancellation/device qualification pending.");
 }return 0;}

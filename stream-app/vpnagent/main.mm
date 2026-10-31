@@ -20,6 +20,7 @@
 #include "../../shared/TLinkVPNBrokerIngress.h"
 #include "../../shared/TLinkVPNBrokerBudget.h"
 #include "../../shared/TLinkVPNBrokerOperations.h"
+#include "../../shared/TLinkVPNBrokerStatus.h"
 
 static const uint16_t kTLinkVPNAgentPort = 6016;
 static const NSUInteger kTLinkVPNAgentMaxRequest = 1024;
@@ -74,6 +75,20 @@ static NSDictionary *TLinkVPNAgentWait(
     return result ?: expired;
 }
 
+// BEGIN coalesced broker status.
+static TLinkVPNBrokerStatusOwner &TLinkVPNAgentStatusOwner(void)
+{
+    static TLinkVPNBrokerStatusOwner status;
+    return status;
+}
+
+static void TLinkVPNAgentReadStatus(TLinkVPNResultCompletion completion)
+{
+    TLinkVPNBrokerReadStatus(TLinkVPNAgentStatusOwner(), TLinkHelperIO::nowMs(),
+        ^(TLinkVPNBrokerStatusReply callback){ TLinkVPNReadManagerStatus(callback); }, completion);
+}
+// END coalesced broker status.
+
 static NSDictionary *TLinkVPNAgentPreflight(void)
 {
     return TLinkVPNDiagnosticsSnapshot(
@@ -109,8 +124,9 @@ static void TLinkVPNAgentSetConnected(BOOL connected, TLinkVPNResultCompletion c
         return;
     }
     TLinkVPNBrokerStarterScope starter{ticket};
+    TLinkVPNAgentStatusOwner().invalidate();
     TLinkVPNSetConnected(connected, 20.0, ^(NSDictionary *value) {
-        (void)ticket->complete();
+        if (ticket->complete()) TLinkVPNAgentStatusOwner().invalidate();
         completion(value);
     });
 }
@@ -122,7 +138,7 @@ static NSString *TLinkVPNAgentDiagnosticsResponse(const TLinkVPNBrokerIngress::W
     BOOL entitlementReady = TLinkVPNAgentEntitlementReady(diagnostics);
     NSDictionary *status = TLinkVPNAgentWait(
         ^(TLinkVPNResultCompletion completion) {
-            TLinkVPNReadManagerStatus(completion);
+            TLinkVPNAgentReadStatus(completion);
         },
         8.0, request);
     BOOL managerAvailable = [status[@"ok"] boolValue];
@@ -217,7 +233,7 @@ static NSString *TLinkVPNAgentResponse(NSString *command, const TLinkVPNBrokerIn
     if ([clean isEqualToString:@"query"]) {
         NSDictionary *status = TLinkVPNAgentWait(
             ^(TLinkVPNResultCompletion completion) {
-                TLinkVPNReadManagerStatus(completion);
+                TLinkVPNAgentReadStatus(completion);
             },
             8.0, request);
         if (![status[@"ok"] boolValue]) {

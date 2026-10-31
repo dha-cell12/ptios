@@ -18,6 +18,7 @@
 #include "../../shared/TLinkVPNBrokerIngress.h"
 #include "../../shared/TLinkVPNBrokerBudget.h"
 #include "../../shared/TLinkVPNBrokerOperations.h"
+#include "../../shared/TLinkVPNBrokerStatus.h"
 
 static const uint16_t kTLinkVPNForegroundBrokerPort = 6015;
 static const NSUInteger kTLinkVPNForegroundBrokerMaxRequest = 1024;
@@ -81,6 +82,20 @@ static NSDictionary *TLinkVPNForegroundBrokerWait(
     return result ?: expired;
 }
 
+// BEGIN coalesced broker status.
+static TLinkVPNBrokerStatusOwner &TLinkVPNForegroundStatusOwner(void)
+{
+    static TLinkVPNBrokerStatusOwner status;
+    return status;
+}
+
+static void TLinkVPNForegroundReadStatus(TLinkVPNResultCompletion completion)
+{
+    TLinkVPNBrokerReadStatus(TLinkVPNForegroundStatusOwner(), TLinkHelperIO::nowMs(),
+        ^(TLinkVPNBrokerStatusReply callback){ TLinkVPNReadManagerStatus(callback); }, completion);
+}
+// END coalesced broker status.
+
 static NSDictionary *TLinkVPNForegroundPreflight(void)
 {
     return TLinkVPNDiagnosticsSnapshot(
@@ -114,8 +129,9 @@ static void TLinkVPNForegroundSetConnected(BOOL connected, TLinkVPNResultComplet
         return;
     }
     TLinkVPNBrokerStarterScope starter{ticket};
+    TLinkVPNForegroundStatusOwner().invalidate();
     TLinkVPNSetConnected(connected, 20.0, ^(NSDictionary *value) {
-        (void)ticket->complete();
+        if (ticket->complete()) TLinkVPNForegroundStatusOwner().invalidate();
         completion(value);
     });
 }
@@ -128,7 +144,7 @@ static NSString *TLinkVPNForegroundDiagnosticsResponse(const TLinkVPNBrokerIngre
     BOOL entitlementReady = TLinkVPNForegroundEntitlementReady(diagnostics);
     NSDictionary *status = TLinkVPNForegroundBrokerWait(
         ^(TLinkVPNResultCompletion completion) {
-            TLinkVPNReadManagerStatus(completion);
+            TLinkVPNForegroundReadStatus(completion);
         },
         8.0, request);
     BOOL managerAvailable = [status[@"ok"] boolValue];
@@ -209,7 +225,7 @@ static NSString *TLinkVPNForegroundBrokerResponse(NSString *command, const TLink
     if ([clean isEqualToString:@"query"]) {
         NSDictionary *status = TLinkVPNForegroundBrokerWait(
             ^(TLinkVPNResultCompletion completion) {
-                TLinkVPNReadManagerStatus(completion);
+                TLinkVPNForegroundReadStatus(completion);
             },
             8.0, request);
         if (![status[@"ok"] boolValue]) {
