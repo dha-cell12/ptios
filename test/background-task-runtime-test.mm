@@ -222,7 +222,7 @@ static void reset(){
 }
 static void expire(BGTask *task){dispatch_block_t handler=task.expirationHandler;assert(handler);handler();}
 static void watchdog(BOOL legacy){
-    dispatch_block_t handler=legacy?legacyTimers.lastObject:lastTimer.handler;assert(handler);
+    dispatch_block_t handler=legacy?(dispatch_block_t)legacyTimers.lastObject:lastTimer.handler;assert(handler);
     if(!legacy)assert(lastTimer.arms==1&&!lastTimer.cancelled);handler();
 }
 static NSDictionary *outcome(BOOL legacy,BOOL processing,BOOL missing,BOOL licenseOK,BOOL running,unsigned terminal){
