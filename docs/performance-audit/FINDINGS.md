@@ -2601,6 +2601,8 @@ Prefer private/system state-change notification where available. Otherwise:
 
 See `BENCHMARK-S010.md` Probe F.
 
+Implementation follow-up (2026-10-31, C06l): private connect/disconnect now uses a continuous-clock 5–30 s window starting before the action, counts probe/sleep work, refuses success observed after expiry and scopes probe temporaries. EINTR/early sleeps preserve the 100 ms interval. The previous transition used wall time, began its deadline after the action and checked target success before expiry. Cleanup, profile-verification enumeration, the polling cadence and synchronous queue remain open. Portable/source validation passes; actual private backend and device performance remain unqualified. See `IMPLEMENTATION-C06L.md`.
+
 ---
 
 ### [P1-68] TrollStore VPN brokers have opposite concurrency failures: foreground broker is single-client HOL, vpnagent has unbounded per-client global workers

@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
+import {restoreVPNPrivatePolling} from './lib/vpn-private-polling-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);};
@@ -12,7 +13,7 @@ const [source,before,header]=await Promise.all(['shared/TLinkVPNManager.mm','tes
 assert.equal(createHash('sha256').update(before).digest('hex'),'04f18dd37285f9824187e42a6a6dbedc38cd374401d3b2e119d5da3a054367cb');
 const helper=between(source,'// BEGIN owned VPN transition.','void TLinkVPNSetConnected(');
 const old=between(before,'            __block id observer = nil;','\n        }];\n    });\n}');
-assert.equal(source.replace('#include "TLinkVPNTransition.h"\n','').replace(helper,'').replace('            TLinkVPNBeginTransition(manager,connected,target,boundedTimeout,completion);',old),before,'only pending public transition timer/observer ownership changes complete manager/root/TrollStore source');
+assert.equal(restoreVPNPrivatePolling(source).replace('#include "TLinkVPNTransition.h"\n','').replace(helper,'').replace('            TLinkVPNBeginTransition(manager,connected,target,boundedTimeout,completion);',old),before,'only pending public transition timer/observer ownership changes complete manager/root/TrollStore source');
 assert.doesNotMatch(helper,/dispatch_after|__block/);
 assert.match(helper,/dispatch_resume\(timer\);[\s\S]*state->installTimer\(timer\)/);
 assert.match(helper,/vpn_transition_timer_failed[\s\S]*addObserverForName[\s\S]*startVPNTunnelAndReturnError/);

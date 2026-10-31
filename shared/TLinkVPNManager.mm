@@ -18,6 +18,8 @@
 #include <unistd.h>
 
 #if TLINK_VPN_TROLLSTORE_RUNTIME
+#include "TLinkVPNPrivatePolling.h"
+#include "TLinkHelperSocketIO.h"
 extern char **environ;
 #ifndef POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE
 #define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
@@ -902,6 +904,17 @@ static NSDictionary *TLinkVPNRunLegacyRootHelperSync(
     });
 }
 
+// BEGIN continuous private VPN transition polling.
+static bool TLinkVPNPrivateWaitForProbe(TLinkVPNPrivatePolling::Window &window)
+{
+    return TLinkVPNPrivatePolling::waitNext(window,
+        [] { return TLinkHelperIO::nowMs(); },
+        [](unsigned milliseconds) {
+            return usleep(milliseconds * 1000U) == 0 || errno == EINTR;
+        });
+}
+// END continuous private VPN transition polling.
+
 static NSDictionary *TLinkVPNPrivateSetConnectedSync(
     BOOL connected,
     NSTimeInterval timeout)
@@ -938,20 +951,23 @@ static NSDictionary *TLinkVPNPrivateSetConnectedSync(
         return TLinkVPNResult(false,
             @"vpn_private_connection_action_missing", nil);
     }
-    ((void (*)(id, SEL))objc_msgSend)(connection, action);
+    TLinkVPNPrivatePolling::Window window(TLinkHelperIO::nowMs(), timeout);
+    if (window.remaining(TLinkHelperIO::nowMs())) {
+        ((void (*)(id, SEL))objc_msgSend)(connection, action);
+    }
 
-    NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] +
-        MIN(MAX(timeout, 5.0), 30.0);
-    do {
-        usleep(100000);
-        connection = TLinkVPNPrivateCurrentConnection(store);
-        status = TLinkVPNPrivateConnectionStatus(connection);
+    while (TLinkVPNPrivateWaitForProbe(window)) {
+        @autoreleasepool {
+            connection = TLinkVPNPrivateCurrentConnection(store);
+            status = TLinkVPNPrivateConnectionStatus(connection);
+        }
+        if (!window.remaining(TLinkHelperIO::nowMs())) break;
         if ([status isEqualToString:target]) {
             return TLinkVPNResult(true,
                 connected ? @"vpn_connected" : @"vpn_disconnected",
                 TLinkVPNPrivateStatusFields(marker, status));
         }
-    } while ([NSDate timeIntervalSinceReferenceDate] < deadline);
+    }
 
     return TLinkVPNResult(false, @"vpn_private_transition_timeout",
         TLinkVPNPrivateStatusFields(marker, status));
