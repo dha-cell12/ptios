@@ -70,7 +70,7 @@
 	}
 
 	- (void)dealloc {
-        [[NSDistributedNotificationCenter defaultCenter] removeObserver:self name:@"com.tlinkauto.tlinkauto.textinput" object:nil];
+        [[NSDistributedNotificationCenter defaultCenter] removeObserver:self name:@"com.tlinkauto.tlinkauto.keyboardcontrol" object:nil];
 		//NSLog(@"com.tlinkauto.appdelegate: UIKeyboardImpl instance deallocated");
 		return %orig;
 	}
