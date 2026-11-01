@@ -40,11 +40,11 @@ function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'ut
 try{
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     const binary=join(temp,windows?'core.exe':'core'),file=join(root,'test/vpn-private-polling-safety-test.cpp');
-    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',file,'-o',binary]);run(binary,[]);
+    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',file,'-o',binary]);run(binary,[]);
     await Promise.all(Object.entries(fixtures).map(([name,value])=>writeFile(join(temp,name),value)));
     if(process.platform!=='darwin')console.log('macOS actual/frozen private transition Foundation/ARC/sanitizer runtime included in CI; not run on this host.');
     else{
-        const native=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-private-polling-runtime-test.mm'),'-o',native]);run(native,[]);
-        const verify=join(temp,'verification');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-private-verification-runtime-test.mm'),'-o',verify]);run(verify,[]);
+        const native=join(temp,'runtime');run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-private-polling-runtime-test.mm'),'-o',native]);run(native,[]);
+        const verify=join(temp,'verification');run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-private-verification-runtime-test.mm'),'-o',verify]);run(verify,[]);
     }
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-vpn-private-poll-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}

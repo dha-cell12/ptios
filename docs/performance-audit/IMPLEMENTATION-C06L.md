@@ -27,3 +27,11 @@ Portable policy cases cover 100k windows; five/thirty-second and fractional/nonf
 Windows validation passes all **76 workflow runners** (36 source, 40 safety), **521 existing workflow source checks**, staged complete-file hashes, JavaScript syntax, fixture extraction, expanded assert preprocessing and `git diff --check`. Sixteen artifact-only checks are skipped. The portable count and controlled timing cases are test evidence, not device measurements.
 
 The new macOS fixture extracts the actual current transition and adapter plus the frozen previous transition. It controls the private store, clock and sleep while invoking real Objective-C action selectors. Cases compare healthy/preflight/timeout replies in both directions, multiple target times and already-target paths; verify wall jumps, action/probe overruns, late target refusal, EINTR/fatal/oversleep/clock failures, NS/C++ unwind/recovery and cross-pool result lifetime. It also compiles/samples the real shared Darwin clock. No VPN/profile/radio or installed state is changed. Foundation/ARC/ASan/UBSan execution and the iOS build require macOS CI; there is no measured device CPU, memory, wakeup or latency improvement claim.
+
+## Runner language-standard correction — 2026-11-02
+
+User supplied a macOS log failing while compiling vpn-private-polling-runtime-test.mm (baseline `68921397`). The runner selected C++11, but its shared TLinkHelperSocketIO.h dependency uses C++14 aggregate initialization of Result with a default member initializer. This caused the repeated no-matching-constructor diagnostics, before any private transition assertions ran.
+
+Use C++14 for the portable core and both Objective-C++ fixtures, matching the existing StreamControl/streamd/vpnagent/privhelper targets and helper transport/client runners. Include the same socket helper header in the portable core so the dependency is parsed on every host. Keep production headers, behavior, strict warnings and sanitizers unchanged.
+
+Focused private-polling source/reversal guards, extraction and 100k portable window cases pass on Windows, as do public-transition guards, JavaScript syntax and git diff --check. Corrected macOS/Foundation/ARC/sanitizer compilation and execution still require CI; no device or C06m acceptance is claimed.

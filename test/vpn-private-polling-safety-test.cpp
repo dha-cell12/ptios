@@ -1,4 +1,5 @@
 #include "../shared/TLinkVPNPrivatePolling.h"
+#include "../shared/TLinkHelperSocketIO.h"
 #include <cassert>
 #include <cstdio>
 #include <limits>
