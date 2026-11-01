@@ -37,6 +37,7 @@ else{
         function adapt(s,legacy){
             s=s.slice(s.indexOf('NSString *const SCLicenseLifecycleDidChangeNotification'));
             s=s.replace('static NSString *const kTLinkLicenseLifecycleDiagnosticsPath = @"/var/mobile/Library/TLinkauto/runtime/license_lifecycle.plist";',`#define kTLinkLicenseLifecycleDiagnosticsPath ${legacy?'legacyPath':'currentPath'}`);
+            s=s.replaceAll('[NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath]','fixtureReadDiagnostics(kTLinkLicenseLifecycleDiagnosticsPath)');
             if(legacy)s=s.replaceAll('SCLicenseLifecycleCoordinator','SCLegacyLifecycleCoordinator').replaceAll('SCLicenseLifecycleDidChangeNotification','SCLegacyLifecycleDidChangeNotification').replaceAll('kTLink','kLegacy').replaceAll('SCLicenseRequestDaemonReload','SCLegacyRequestDaemonReload');
             return s;
         }

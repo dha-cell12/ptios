@@ -14,6 +14,11 @@
 #import "LegacyLifecycle.h"
 #import "../stream-app/app/LicenseManager.h"
 static NSString *currentPath,*legacyPath;
+static std::atomic<unsigned> currentDiagnosticReads{0},legacyDiagnosticReads{0};
+static NSDictionary *fixtureReadDiagnostics(NSString *path){
+    if([path isEqualToString:currentPath])++currentDiagnosticReads;else{assert([path isEqualToString:legacyPath]);++legacyDiagnosticReads;}
+    return [NSDictionary dictionaryWithContentsOfFile:path];
+}
 static std::atomic<unsigned> performanceReads{0};
 static NSDictionary *TLinkLicensePerformanceDictionary(){++performanceReads;return @{};}
 static NSDictionary *TLinkLicenseStatusDictionary(){return @{@"state":@"valid",@"licensed":@YES};}
@@ -105,9 +110,11 @@ static void waitSemaphore(dispatch_semaphore_t value){assert(dispatch_semaphore_
 - (void)appendRefreshHistoryEvent:(NSDictionary *)event;
 @interface SCLicenseLifecycleCoordinator(FixturePrivate)
 PRIVATE_LIFECYCLE_METHODS
+- (void)recordRefreshFailure:(NSString *)message trigger:(NSString *)trigger historyEvent:(NSDictionary *)event;
 @end
 @interface SCLegacyLifecycleCoordinator(FixturePrivate)
 PRIVATE_LIFECYCLE_METHODS
+- (void)recordRefreshFailure:(NSString *)message trigger:(NSString *)trigger;
 @end
 #undef PRIVATE_LIFECYCLE_METHODS
 @interface CurrentLifecycle:SCLicenseLifecycleCoordinator<FixtureLifecycle>
@@ -140,9 +147,9 @@ PRIVATE_LIFECYCLE_METHODS
     if(_subscriptionAdmissionFault==-1)[NSException raise:@"Subscription" format:@"after admission"];
     if(_subscriptionAdmissionFault==-2)throw std::runtime_error("after admission");
 }
-- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event{
-    if(values.count||event.count){@synchronized(self){++_transactions;}}
-    [super updateDiagnostics:values refreshHistoryEvent:event];
+- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event stateMutation:(void (^)(NSMutableDictionary *))mutation{
+    if(values.count||event.count||mutation){@synchronized(self){++_transactions;}}
+    [super updateDiagnostics:values refreshHistoryEvent:event stateMutation:mutation];
 }
 - (void)publishLicenseChange:(NSString *)reason{if(!_published)_published=[NSMutableArray array];[_published addObject:reason];}
 - (BOOL)automaticRefreshNeededForStatus:(NSDictionary *)status reason:(NSString **)reason{
@@ -337,6 +344,32 @@ static void historyCases(){
     NSMutableSet *ids=[NSMutableSet set];for(NSDictionary *event in history)[ids addObject:event[@"id"]];
     assert(history.count==20&&ids.count==20&&[value transactions]==128);
 }
+static void failureDiagnosticsCases(){
+    for(NSInteger prior:{-1,0,1,15,16,99}){
+        NSDictionary *expected=nil;
+        for(bool legacy:{true,false}){
+            assert(([@{@"untouched":@7,@"consecutive_failures":@(prior)} writeToFile:pathFor(legacy) atomically:YES]));
+            if(legacy){
+                LegacyLifecycle *value=[LegacyLifecycle new];const unsigned reads=legacyDiagnosticReads.load();
+                [value recordRefreshFailure:nil trigger:nil];assert(legacyDiagnosticReads.load()==reads+2);expected=fileState(YES);
+            }else{
+                CurrentLifecycle *value=[CurrentLifecycle new];const unsigned reads=currentDiagnosticReads.load();
+                [value recordRefreshFailure:nil trigger:nil historyEvent:nil];assert(currentDiagnosticReads.load()==reads+1&&value.transactions==1);
+                assert([fileState(NO) isEqual:expected]);
+            }
+        }
+    }
+    prepare(NO,NO);CurrentLifecycle *value=[CurrentLifecycle new];const unsigned reads=currentDiagnosticReads.load();
+    std::vector<std::thread> writers;
+    for(unsigned t=0;t<4;++t)writers.emplace_back([value,t]{@autoreleasepool{
+        for(unsigned n=0;n<8;++n)[value recordRefreshFailure:@"failure" trigger:@"fixture" historyEvent:@{@"id":@(t*8+n)}];
+    }});
+    for(auto &writer:writers){writer.join();}
+    NSDictionary *state=fileState(NO);NSMutableSet *ids=[NSMutableSet set];for(NSDictionary *event in state[@"refresh_history"])[ids addObject:event[@"id"]];
+    assert(currentDiagnosticReads.load()==reads+32&&value.transactions==32&&[state[@"consecutive_failures"] integerValue]==16&&ids.count==20);
+    assert([state[@"untouched"] isEqual:@7]&&[state[@"last_error"] isEqualToString:@"failure"]);
+    puts("Failure diagnostics passed: frozen backoff/default/cap parity, one plist read per failure versus two, combined history and 32 serialized concurrent failures.");
+}
 @interface SubscriptionBox:NSObject
 @property(nonatomic,weak) id<SCLicenseRefreshSubscription> value;
 @end
@@ -450,7 +483,7 @@ int main(){@autoreleasepool{
     assert([[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nullptr]);
     currentPath=[directory stringByAppendingPathComponent:@"current.plist"];legacyPath=[directory stringByAppendingPathComponent:@"legacy.plist"];
     puts("License lifecycle Foundation: complete current/frozen coordinator, real plist IO and controlled manager/authority publication");
-    parityCases();puts("License lifecycle: coalesced decisions and late manual force");
+    failureDiagnosticsCases();parityCases();puts("License lifecycle: coalesced decisions and late manual force");
     coalescingCases();puts("License lifecycle: stale/duplicate results and busy operation gates");
     staleAndBusyCases();puts("License lifecycle: NS/C++ provider/result faults and ownership recovery");
     faultCases();otherOperationsCases();puts("License lifecycle: serial/concurrent history and repeated lifecycles");historyCases();

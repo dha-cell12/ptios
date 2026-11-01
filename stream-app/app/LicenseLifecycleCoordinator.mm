@@ -119,6 +119,7 @@ static NSString *SCLicenseRequestDaemonReload(void)
 @property(nonatomic, assign) BOOL refreshForceRequested;
 @property(nonatomic, assign) BOOL refreshResultClaimed;
 - (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event;
+- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event stateMutation:(void (^)(NSMutableDictionary *))mutation;
 - (void)finishOperation:(NSString *)kind success:(BOOL)success message:(NSString *)message
              completion:(SCLicenseLifecycleCompletion)completion diagnostics:(NSDictionary *)extra notify:(BOOL)notify;
 // END refresh decision ownership.
@@ -289,7 +290,12 @@ static NSString *SCLicenseRequestDaemonReload(void)
 
 - (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event
 {
-    if (values.count == 0 && event.count == 0) return;
+    [self updateDiagnostics:values refreshHistoryEvent:event stateMutation:nil];
+}
+
+- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event stateMutation:(void (^)(NSMutableDictionary *))mutation
+{
+    if (values.count == 0 && event.count == 0 && !mutation) return;
     @synchronized (self) {
         NSString *directory = [kTLinkLicenseLifecycleDiagnosticsPath stringByDeletingLastPathComponent];
         [[NSFileManager defaultManager] createDirectoryAtPath:directory
@@ -298,6 +304,7 @@ static NSString *SCLicenseRequestDaemonReload(void)
                                                         error:nil];
         NSMutableDictionary *state = [[NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath] mutableCopy];
         if (!state) state = [NSMutableDictionary dictionary];
+        if (mutation) mutation(state);
         if (event.count > 0) {
             NSArray *stored = [state[@"refresh_history"] isKindOfClass:[NSArray class]] ? state[@"refresh_history"] : @[];
             NSMutableArray *history = [stored mutableCopy];
@@ -514,8 +521,7 @@ static NSString *SCLicenseRequestDaemonReload(void)
 
 - (void)recordRefreshFailure:(NSString *)message trigger:(NSString *)trigger historyEvent:(NSDictionary *)event
 {
-    @synchronized (self) {
-        NSDictionary *existing = [NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath];
+    [self updateDiagnostics:nil refreshHistoryEvent:event stateMutation:^(NSMutableDictionary *existing) {
         NSInteger failures = MIN(16, [existing[@"consecutive_failures"] integerValue] + 1);
         NSInteger exponent = MIN(8, failures - 1);
         NSTimeInterval delay = MIN(kTLinkLicenseBackoffMaximum,
@@ -523,14 +529,14 @@ static NSString *SCLicenseRequestDaemonReload(void)
         uint32_t jitterValue = arc4random_uniform(4001);
         double jitter = 0.8 + ((double)jitterValue / 10000.0);
         uint64_t nextAttempt = [self nowMilliseconds] + (uint64_t)(delay * jitter * 1000.0);
-        [self updateDiagnostics:@{
+        [existing addEntriesFromDictionary:@{
             @"last_result": @"failed",
             @"last_error": message ?: @"license_refresh_failed",
             @"last_trigger": trigger ?: @"unknown",
             @"consecutive_failures": @(failures),
             @"next_attempt_at_ms": @(nextAttempt),
-        } refreshHistoryEvent:event];
-    }
+        }];
+    }];
 }
 
 - (void)refreshForTrigger:(NSString *)trigger force:(BOOL)force completion:(SCLicenseLifecycleCompletion)completion

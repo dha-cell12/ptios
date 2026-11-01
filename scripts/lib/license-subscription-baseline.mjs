@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {restoreLifecycleDiagnosticsMutation} from './license-diagnostics-mutation-baseline.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 function section(source,start,end){const a=source.indexOf(start),b=source.indexOf(end,a+start.length);assert.ok(a>=0&&b>a,start);return source.slice(a,b+end.length);}
 export function backgroundRefreshSubscriber(source){return section(source,'// BEGIN background refresh subscriber.','// END background refresh subscriber.\n\n');}
 export function restoreLifecycleSubscription(source){
+    source=restoreLifecycleDiagnosticsMutation(source);
     const api=section(source,'// BEGIN background refresh subscription API.','// END background refresh subscription API.\n\n');
     assert.match(api,/removeObjectIdenticalTo:callback/);assert.match(api,/\[callback copy\]|\} copy\]/);
     assert.match(api,/__weak SCLicenseLifecycleCoordinator \*weakSelf/);
