@@ -49,6 +49,14 @@ NSDictionary *TLinkLicenseStatusDictionary(void) {
 static void TLinkLicenseInvalidateArtifacts(void) {}
 static NSDictionary *TLinkLicenseArtifactPerformance(void) { return @{}; }
 #include "LicenseHotUnderTest.inc"
+static void freezeClock() {
+    // Publications sample FixtureNow under this lock. Do not freeze behind a
+    // concurrently published probe, which would simulate clock rollback.
+    std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock);
+    const uint64_t now = FixtureNow();
+    frozenNow.store(now);
+    assert(now >= sTLinkLicenseAutomationProbe.load());
+}
 static std::atomic<uint64_t> sTLinkRootfullLicenseTask10DropCount{0};
 static NSData *zx_dataFromCString(const char *value) { return [[NSString stringWithUTF8String:value] dataUsingEncoding:NSUTF8StringEncoding]; }
 static NSData *TLinkSuccess(NSString *value) { return [[NSString stringWithFormat:@"0;;%@\r\n", value] dataUsingEncoding:NSUTF8StringEncoding]; }
@@ -78,11 +86,11 @@ static void awaitBlock() { assert(dispatch_semaphore_wait(entered, dispatch_time
 int main() {
     @autoreleasepool {
         fixtureMainThread = std::this_thread::get_id();
+        freezeClock();
         setStatus(lease(@[@"all"]));
         assert(TLinkLicenseFeatureAllowed(@"script", NULL)); assert(statusCalls.load() == 1);
         auto automation = TLinkLicenseAutomationAuthorizationForOwner(@"raw-1");
         assert(automation(@"raw-1") && !automation(@"raw-2"));
-        frozenNow.store(FixtureNow());
         for (unsigned n = 0; n < 20000; ++n) assert(automation(@"raw-1"));
         frozenNow.store(0);
         unsigned freshDiagnostics = statusCalls.load();
@@ -93,7 +101,7 @@ int main() {
         startBlock(); clockOffset.fetch_add(4000000000ULL);
         (void)TLinkLicenseCachedStatusDictionary(); awaitBlock();
         waitFor([] { std::lock_guard<std::mutex> lock(sTLinkLicenseSnapshotLock); return sTLinkLicenseHotState.usable(FixtureNow()); });
-        unsigned calls = statusCalls.load(); frozenNow.store(FixtureNow());
+        freezeClock(); unsigned calls = statusCalls.load();
         for (unsigned n = 0; n < 20000; ++n) assert(TLinkLicenseFeatureAllowed(@"script", NULL));
         assert(statusCalls.load() == calls && statusMaximum.load() == 1); frozenNow.store(0);
         clockOffset.fetch_add(1100000000ULL);

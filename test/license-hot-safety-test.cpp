@@ -39,6 +39,7 @@ int main() {
     assert(TLinkLicenseAutomationViewAllows(view, 7, 100, 100, 1000));
     assert(!TLinkLicenseAutomationViewAllows(view, 8, 100, 100, 1000));
     assert(!TLinkLicenseAutomationViewAllows(view, 7, 0, 100, 1000));
+    assert(!TLinkLicenseAutomationViewAllows(view, 7, 101, 100, 1000)); // Future probe: fail closed on clock rollback.
     assert(!TLinkLicenseAutomationViewAllows(view, 7, 100, 500000101, 1000));
     assert(!TLinkLicenseAutomationViewAllows(view, 7, 5000000100ULL, 5000000100ULL, 1000));
     assert(!TLinkLicenseAutomationViewAllows(view, 7, 100, 100, 2001));
