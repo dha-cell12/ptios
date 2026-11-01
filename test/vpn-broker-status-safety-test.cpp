@@ -47,7 +47,13 @@ static void ownershipCases(){
     first=owner.join([marker]{},100);marker.reset();auto callbacks=first.take();callbacks.clear();assert(released);
     for(unsigned n=0;n<8;++n)assert(owner.join([]{},100));
     marker=std::make_shared<Reenter>();marker->action=[&]{released=true;owner.invalidate();};released=false;
-    Callback rejected=[marker]{};marker.reset();assert(!owner.join(std::move(rejected),100)&&released);
+    {
+        Callback rejected=[marker]{};marker.reset();
+        auto denied=owner.join(std::move(rejected),100);assert(!denied);
+    }
+    // Check after the call expression and moved-from callback have both ended.
+    // Parameter destruction timing and moved-from function state vary by implementation.
+    assert(released);
 }
 static void concurrentCases(){
     for(unsigned cycle=0;cycle<256;++cycle){

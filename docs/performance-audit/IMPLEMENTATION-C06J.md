@@ -39,3 +39,11 @@ Windows validation: all **75 workflow runners** (36 source, 39 safety), **521 ex
 ## Remaining work
 
 P1-68/C06 remain partial. Workers still wait in bounded semaphore/poll slices, and provider starter/backend work cannot be preempted. This adds pending-read sharing, not a completed status cache, global mutation ordering, external-state invalidation, backend cancellation or fully asynchronous broker state machine. Uncontended reads add a small flight/callback allocation; the device tradeoff needs measurement. Private polling, cross-process fallback/deduplication, HTTP/active supervisor cancellation and device CPU/IO/RSS/power/latency qualification remain open.
+
+## CI correction — 2026-11-01
+
+User reported the portable status core aborting on macOS at the rejected-callback lifetime assertion (baseline `4c946416`). The test checked rejection and `released` in the same call expression, assuming the by-value parameter had already been destroyed and the moved-from std::function no longer held its capture. Those lifetime assumptions are not portable.
+
+Check admission failure separately, then check `released` after both the call expression and the moved-from callback's scope have ended. Keep the destructor's reentrant `owner.invalidate()` call, the full eight-slot setup and the release assertion, so retained rejected captures or destruction under the owner mutex still fail the test. Production owner/bridge/brokers are unchanged.
+
+The focused TrollStore broker runner passes source/frozen guards, 100k portable flights and 256 concurrent eight-reader/duplicate/invalidation races on Windows; `git diff --check` passes. A search found no other matching combined rejection/release assertion. Corrected libc++/macOS/sanitizer and Foundation execution still require macOS CI. This correction does not qualify C06m or device performance.
