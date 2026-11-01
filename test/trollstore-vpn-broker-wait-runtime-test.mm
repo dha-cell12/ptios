@@ -284,8 +284,6 @@ static void coalescedStatusCases(){
     awaitStatus([]{return statusOwner->waiting()==8;});assert(managerCalls==1&&operationOwner->stats().active==8);
     auto refused=std::make_shared<StatusResult>();readStatus(^(NSDictionary *value){refused->value=value;});
     assert([refused->value[@"code"] isEqualToString:@"vpn_broker_busy"]&&statusOwner->waiting()==8&&managerCalls==1);
-    auto refused=std::make_shared<StatusResult>();readStatus(^(NSDictionary *value){refused->value=value;});
-    assert([refused->value[@"code"] isEqualToString:@"vpn_broker_busy"]&&statusOwner->waiting()==8&&managerCalls==1);
     NSDictionary *busy=Current::TLinkVPNBrokerWait(^(TLinkVPNResultCompletion completion){readStatus(completion);},8.0,Window(100));
     assert([busy[@"code"] isEqualToString:@"vpn_broker_busy"]&&managerCalls==1);
     statusReply(0)(managerResult);

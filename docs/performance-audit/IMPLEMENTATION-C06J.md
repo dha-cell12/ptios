@@ -47,3 +47,9 @@ User reported the portable status core aborting on macOS at the rejected-callbac
 Check admission failure separately, then check `released` after both the call expression and the moved-from callback's scope have ended. Keep the destructor's reentrant `owner.invalidate()` call, the full eight-slot setup and the release assertion, so retained rejected captures or destruction under the owner mutex still fail the test. Production owner/bridge/brokers are unchanged.
 
 The focused TrollStore broker runner passes source/frozen guards, 100k portable flights and 256 concurrent eight-reader/duplicate/invalidation races on Windows; `git diff --check` passes. A search found no other matching combined rejection/release assertion. Corrected libc++/macOS/sanitizer and Foundation execution still require macOS CI. This correction does not qualify C06m or device performance.
+
+## Duplicate fixture declaration correction — 2026-11-02
+
+User reported macOS compilation failing at the second `auto refused` declaration in coalescedStatusCases (baseline `fbb87a07`). The direct ninth-waiter refusal call and its assertion were duplicated verbatim in the same scope. Remove only the repeated pair. Retain the first direct refusal assertion and the separate outer pending-operation refusal check; no production source or warning policy changes.
+
+The focused TrollStore broker runner passes source/frozen guards, 100k portable flights and 256 concurrent races on Windows; diff checks pass and the fixture now has one refused declaration. Corrected Objective-C++ compilation and execution for both broker variants still require macOS CI.
