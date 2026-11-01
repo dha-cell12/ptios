@@ -15,10 +15,16 @@ static Pattern pattern=Pattern::Exact;
 static NSDictionary *createOptions,*selectedRecord,*markerRecord;
 static __weak NSDictionary *candidate;
 static double requestedPause=0;
+static NSString *const kTLinkVPNPrivateMarkerPath=@"fixture-marker-only";
+static uint64_t cleanupActionCost=0,cleanupProbeCost=0,cleanupDelay=200,cleanupActionAt=0;
+static unsigned cleanupActions=0,cleanupReads=0,markerRemoves=0;
+static bool cleanupActive=false,cleanupRecordPresent=true,cleanupConnectionPresent=true,cleanupActionPresent=true,cleanupDeleteOK=true,markerExists=true,markerRemoveOK=true;
+static NSString *cleanupInitialStatus=@"connected";
+static double wallShift=0,wallJump=0;
 static NSString *fixtureUUID(){return @"fixture-uuid";}
 static uint64_t fixtureNow(){return tick;}
 static NSDictionary *oldRecord(){return @{@"name":[kTLinkVPNPrivateNamePrefix stringByAppendingString:@"old"],@"identifier":@"old-id"};}
-static void advance(unsigned milliseconds){if(regress)tick=1;else tick+=milliseconds;}
+static void advance(unsigned milliseconds){if(regress)tick=1;else tick+=milliseconds;wallShift+=wallJump;}
 static int fixtureSleep(unsigned microseconds){
     assert(microseconds>0&&microseconds<=100000);++sleeps;
     if(sleepFails){errno=EINVAL;return -1;}
@@ -33,9 +39,11 @@ static int fixtureSleep(unsigned microseconds){
 @end
 @interface VerificationDate:NSObject
 + (NSDate *)dateWithTimeIntervalSinceNow:(NSTimeInterval)seconds;
++ (NSTimeInterval)timeIntervalSinceReferenceDate;
 @end
 @implementation VerificationDate
 + (NSDate *)dateWithTimeIntervalSinceNow:(NSTimeInterval)seconds {requestedPause=seconds;return [NSDate dateWithTimeIntervalSinceReferenceDate:seconds];}
++ (NSTimeInterval)timeIntervalSinceReferenceDate{return double(tick)/1000.0+wallShift;}
 @end
 @interface VerificationRunLoop:NSObject
 + (instancetype)currentRunLoop;
@@ -103,14 +111,53 @@ static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store){
 }
 static BOOL TLinkVPNPrivateSelectConfiguration(id store,NSDictionary *record){assert(store&&record);++selects;selectedRecord=record;return selectedOK;}
 static BOOL TLinkVPNPrivateWriteMarker(NSDictionary *record,NSString *type,NSString **failure){assert(record&&type);++markers;markerRecord=record;if(!markerOK&&failure)*failure=@"fixture_marker_failed";return markerOK;}
-static NSDictionary *TLinkVPNPrivateFindConfiguration(id store,NSString *name,NSString *identifier){assert(store&&name&&identifier);return [identifier isEqualToString:@"old-id"]?oldRecord():nil;}
-static BOOL TLinkVPNPrivateDeleteConfiguration(id store,NSDictionary *record){assert(store&&record);++deletes;return YES;}
+static NSDictionary *TLinkVPNPrivateFindConfiguration(id store,NSString *name,NSString *identifier){assert(store&&name&&identifier);return cleanupRecordPresent&&[identifier isEqualToString:@"old-id"]?oldRecord():nil;}
+static BOOL TLinkVPNPrivateDeleteConfiguration(id store,NSDictionary *record){assert(store&&record);++deletes;return cleanupDeleteOK;}
+@interface CleanupConnection:NSObject
+- (void)disconnect;
+@end
+@implementation CleanupConnection
+- (BOOL)respondsToSelector:(SEL)selector{if(selector==@selector(disconnect)&&!cleanupActionPresent)return NO;return [super respondsToSelector:selector];}
+- (void)disconnect{
+    ++cleanupActions;cleanupActive=true;cleanupActionAt=tick;tick+=cleanupActionCost;
+    if(fault==1)[NSException raise:@"CleanupFixture" format:@"disconnect"];
+    if(fault==2)throw std::runtime_error("disconnect");
+}
+@end
+static CleanupConnection *cleanupConnection;
+static id TLinkVPNPrivateCurrentConnection(id store){
+    assert(store);++cleanupReads;
+    if(cleanupActive){tick+=cleanupProbeCost;if(fault==3)[NSException raise:@"CleanupFixture" format:@"probe"];if(fault==4)throw std::runtime_error("probe");}
+    return cleanupConnectionPresent?cleanupConnection:nil;
+}
+static NSString *TLinkVPNPrivateConnectionStatus(id connection){
+    if(!connection)return @"invalid";
+    return [(cleanupActive&&tick>=cleanupActionAt&&tick-cleanupActionAt>=cleanupDelay?@"disconnected":cleanupInitialStatus) mutableCopy];
+}
+@interface CleanupFiles:NSObject
++ (instancetype)defaultManager;
+- (BOOL)fileExistsAtPath:(NSString *)path;
+- (BOOL)removeItemAtPath:(NSString *)path error:(NSError **)error;
+@end
+@implementation CleanupFiles
++ (instancetype)defaultManager{static CleanupFiles *files;static dispatch_once_t once;dispatch_once(&once, ^{files=[CleanupFiles new];});return files;}
+- (BOOL)fileExistsAtPath:(NSString *)path{assert([path isEqualToString:kTLinkVPNPrivateMarkerPath]);return markerExists;}
+- (BOOL)removeItemAtPath:(NSString *)path error:(NSError **)error{
+    assert([path isEqualToString:kTLinkVPNPrivateMarkerPath]);++markerRemoves;
+    if(!markerRemoveOK){if(error)*error=[NSError errorWithDomain:@"CleanupFixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"marker removal failed"}];return NO;}
+    markerExists=false;return YES;
+}
+@end
 #include "PrivateVPNStatusFields.inc"
 #define NSThread VerificationThread
 #define NSDate VerificationDate
 #define NSRunLoop VerificationRunLoop
 #include "PrivateVPNVerificationUnderTest.inc"
 #include "PrivateVPNVerificationLegacy.inc"
+#define NSFileManager CleanupFiles
+#include "PrivateVPNCleanupUnderTest.inc"
+#include "PrivateVPNCleanupLegacy.inc"
+#undef NSFileManager
 #undef NSRunLoop
 #undef NSDate
 #undef NSThread
@@ -118,6 +165,9 @@ static void reset(bool modern){
     tick=100;readCost=createCost=0;visibleAt=100;postReads=mainPauses=sleeps=creates=selects=markers=deletes=fault=0;mainSlice=interruptSlice=100;
     onMain=storeOK=canCreate=canList=createOK=selectedOK=markerOK=true;oldMarker=created=regress=sleepFails=false;
     createOptions=selectedRecord=markerRecord=nil;candidate=nil;pattern=Pattern::Exact;
+    cleanupActionCost=cleanupProbeCost=cleanupActionAt=0;cleanupDelay=200;cleanupActions=cleanupReads=markerRemoves=0;
+    cleanupActive=false;cleanupRecordPresent=cleanupConnectionPresent=cleanupActionPresent=cleanupDeleteOK=markerExists=markerRemoveOK=true;
+    cleanupInitialStatus=@"connected";wallShift=wallJump=0;cleanupConnection=[CleanupConnection new];
     fixtureStore=modern?[ModernVerificationStore new]:[VerificationStore new];
 }
 static NSDictionary *invoke(bool current,NSString *type=@"L2TP",NSString *name=@"profile"){
@@ -186,5 +236,46 @@ static void faultsAndLifetime(){
     @autoreleasepool{reset(true);pattern=Pattern::Single;held=invoke(true);assert(candidate&&[markerRecord[@"identifier"] isEqualToString:@"new-id"]);fixtureStore=nil;createOptions=nil;selectedRecord=nil;markerRecord=nil;}
     assert([held[@"profile_name"] isEqualToString:@"normalized name"]);held=nil;
 }
-int main(){@autoreleasepool{parityCases();budgetCases();faultsAndLifetime();fixtureStore=nil;createOptions=selectedRecord=markerRecord=nil;
+static void cleanupCases(){
+    for(bool main:{false,true}){
+        for(unsigned scenario=0;scenario<11;++scenario){
+            NSDictionary *expected=nil;unsigned expectedDeletes=0,expectedRemoves=0,expectedActions=0;
+            for(bool current:{false,true}){
+                reset(true);onMain=main;oldMarker=true;
+                switch(scenario){case 0:break;case 1:oldMarker=false;break;case 2:storeOK=false;break;case 3:cleanupRecordPresent=false;break;
+                    case 4:cleanupInitialStatus=@"disconnected";break;case 5:cleanupConnectionPresent=false;break;case 6:cleanupActionPresent=false;break;
+                    case 7:cleanupDeleteOK=false;break;case 8:markerRemoveOK=false;break;case 9:cleanupDelay=UINT64_MAX;break;case 10:markerExists=false;break;}
+                NSDictionary *result=current?TLinkVPNPrivateRemoveOwnedProfileSync():LegacyPrivateRemoveOwnedProfileSync();
+                if(!current){expected=result;expectedDeletes=deletes;expectedRemoves=markerRemoves;expectedActions=cleanupActions;}
+                else{assert([result isEqual:expected]&&deletes==expectedDeletes&&markerRemoves==expectedRemoves&&cleanupActions==expectedActions);}
+            }
+        }
+        for(unsigned scenario=0;scenario<8;++scenario){
+            reset(true);onMain=main;oldMarker=true;
+            switch(scenario){case 0:cleanupActionCost=5000;cleanupDelay=0;break;case 1:cleanupProbeCost=5000;cleanupDelay=0;break;
+                case 2:cleanupDelay=5000;break;case 3:regress=true;break;case 4:tick=UINT64_MAX;break;
+                case 5:wallJump=-100000;cleanupDelay=UINT64_MAX;break;case 6:wallJump=100000;cleanupDelay=UINT64_MAX;break;
+                case 7:cleanupDelay=UINT64_MAX;cleanupProbeCost=300;break;}
+            NSDictionary *result=TLinkVPNPrivateRemoveOwnedProfileSync();expect(result,@"vpn_private_cleanup_disconnect_timeout",NO);
+            assert(deletes==0&&markerRemoves==0&&markerExists);
+            if(scenario==0||scenario==4)assert(cleanupReads==1);
+            if(scenario==1)assert([result[@"connection_status"] isEqualToString:@"disconnected"]); // Late observed target must not authorize deletion.
+        }
+        reset(true);onMain=main;oldMarker=true;mainSlice=interruptSlice=1;cleanupDelay=100;
+        expect(TLinkVPNPrivateRemoveOwnedProfileSync(),@"vpn_private_profile_removed",YES);
+        assert(cleanupReads==2&&deletes==1&&markerRemoves==1&&mainPauses+sleeps==101); // Includes unchanged post-delete publication pause.
+    }
+    reset(true);onMain=false;oldMarker=true;sleepFails=true;
+    expect(TLinkVPNPrivateRemoveOwnedProfileSync(),@"vpn_private_cleanup_disconnect_timeout",NO);assert(deletes==0&&markerRemoves==0);
+    for(unsigned kind=1;kind<=6;++kind){
+        reset(true);oldMarker=true;fault=kind;bool caught=false;
+        @try{try{(void)TLinkVPNPrivateRemoveOwnedProfileSync();}catch(const std::runtime_error &){caught=kind%2==0;}}
+        @catch(NSException *exception){(void)exception;caught=kind%2==1;}
+        assert(caught&&deletes==0&&markerRemoves==0);
+    }
+    NSDictionary *held=nil;@autoreleasepool{reset(true);oldMarker=true;cleanupProbeCost=5000;cleanupDelay=0;held=TLinkVPNPrivateRemoveOwnedProfileSync();cleanupConnection=nil;}
+    assert([held[@"connection_status"] isEqualToString:@"disconnected"]);held=nil;
+    puts("Private VPN cleanup passed: frozen preflight/delete/marker/reply parity, continuous disconnect window, main/EINTR waits, late-target refusal, clock/wall/fault gates and pool lifetime; no real profile or marker removed.");
+}
+int main(){@autoreleasepool{parityCases();budgetCases();faultsAndLifetime();cleanupCases();fixtureStore=nil;cleanupConnection=nil;createOptions=selectedRecord=markerRecord=nil;
     puts("Private VPN verification Foundation passed: actual/frozen exact-name/single-delta/ambiguity/options/replies, 50-attempt/continuous budget, main publication/EINTR/faults, late refusal and pool lifetime. Private store/device qualification pending.");}}

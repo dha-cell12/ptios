@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {privateTransition,privatePollingAdapter,legacyPrivateTransition,restoreVPNPrivatePolling} from './lib/vpn-private-polling-baseline.mjs';
 import {privateConfigure,privateVerificationAdapter,privateVerificationLoop,legacyPrivateConfigure} from './lib/vpn-private-verification-baseline.mjs';
+import {privateCleanup,privateCleanupAdapter,legacyPrivateCleanup} from './lib/vpn-private-cleanup-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkVPNManager.mm');restoreVPNPrivatePolling(source);
@@ -22,6 +23,10 @@ assert.match(loop,/@autoreleasepool/);assert.doesNotMatch(loop,/NSMutableArray|d
 assert.match(loop,/if \(deltaCount == 1\)/);
 assert.match(loop,/if \(!verificationWindow.remaining\(TLinkHelperIO::nowMs\(\)\)\) \{\s*newRecord = nil;/);
 assert.match(verification,/milliseconds \/ 1000.0/);
+const cleanup=privateCleanupAdapter(source)+privateCleanup(source);
+assert.doesNotMatch(cleanup,/timeIntervalSinceReferenceDate/);
+assert.match(cleanup,/if \(!window.remaining\(TLinkHelperIO::nowMs\(\)\)\) break;[\s\S]*disconnectedInTime = true;/);
+assert.match(cleanup,/if \(!disconnectedInTime\) \{[\s\S]*vpn_private_cleanup_disconnect_timeout/);
 const adaptVerification=s=>s.replaceAll('TLinkHelperIO::nowMs()','fixtureNow()').replaceAll('usleep(','fixtureSleep(')
     .replaceAll('[[NSUUID UUID] UUIDString]','fixtureUUID()');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.match(await read(path),/node scripts\/check-vpn-private-polling-safety\.mjs/);
@@ -32,6 +37,8 @@ const fixtures={
     'PrivateVPNVerificationUnderTest.inc':adaptVerification(verification),
     'PrivateVPNVerificationLegacy.inc':adaptVerification(legacyPrivateConfigure.replaceAll('TLinkVPNPrivateConfigureLegacySync','LegacyPrivateConfigureSync')),
     'PrivateVPNStatusFields.inc':source.slice(source.indexOf('static NSDictionary *TLinkVPNPrivateStatusFields('),source.indexOf('static NSDictionary *TLinkVPNPrivateReadStatusSync(')),
+    'PrivateVPNCleanupUnderTest.inc':adaptVerification(cleanup),
+    'PrivateVPNCleanupLegacy.inc':adaptVerification(legacyPrivateCleanup.replaceAll('TLinkVPNPrivateRemoveOwnedProfileSync','LegacyPrivateRemoveOwnedProfileSync')),
 };
 assert.ok(!fixtures['PrivateVPNTransitionUnderTest.inc'].includes('TLinkHelperIO::nowMs()'));
 console.log('Private VPN polling source passed: continuous transition/creation-verification windows, unique candidate parity without delta array, main-run-loop wait, scoped probe pools and complete previous manager source.');

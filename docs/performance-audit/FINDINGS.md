@@ -2605,6 +2605,8 @@ Implementation follow-up (2026-10-31, C06l): private connect/disconnect now uses
 
 Implementation follow-up (2026-10-31, C06m): private creation verification now limits total snapshot/comparison/wait work to a five-second continuous window after create, retaining the fifty-attempt cap. Reject late candidates before selection/marker persistence; replace the delta array with a sole-candidate/count check and scope snapshot/wait temporaries. Exact-name priority and ambiguous/duplicate rejection remain. Main waits still pump the run loop; early returns/EINTR finish the existing interval. Full enumerations, cleanup, cadence optimization, opaque-call preemption and device qualification remain open. See `IMPLEMENTATION-C06M.md`.
 
+Implementation follow-up (2026-11-02, C06n): the cleanup disconnect phase now uses a continuous five-second window before the action and requires timely disconnected confirmation before profile/marker deletion. Late probe success, clock/wait failures and expiry preserve owned data. Main publication support and the separate post-delete pause remain; preflight and deletion/persistence tail are unchanged. Poll cadence, full enumeration, async/cancellation and device qualification remain open. See `IMPLEMENTATION-C06N.md`.
+
 ---
 
 ### [P1-68] TrollStore VPN brokers have opposite concurrency failures: foreground broker is single-client HOL, vpnagent has unbounded per-client global workers

@@ -536,6 +536,24 @@ static BOOL TLinkVPNPrivateDeleteConfiguration(
     return NO;
 }
 
+// BEGIN continuous private VPN cleanup wait.
+static bool TLinkVPNPrivateWaitForCleanup(TLinkVPNPrivatePolling::Window &window)
+{
+    return TLinkVPNPrivatePolling::waitNext(window,
+        [] { return TLinkHelperIO::nowMs(); },
+        [](unsigned milliseconds) {
+            if ([NSThread isMainThread]) {
+                @autoreleasepool {
+                    [[NSRunLoop currentRunLoop] runUntilDate:
+                        [NSDate dateWithTimeIntervalSinceNow:milliseconds / 1000.0]];
+                }
+                return true;
+            }
+            return usleep(milliseconds * 1000U) == 0 || errno == EINTR;
+        });
+}
+// END continuous private VPN cleanup wait.
+
 static NSDictionary *TLinkVPNPrivateRemoveOwnedProfileSync(void)
 {
     NSDictionary *marker = TLinkVPNPrivateLoadMarker();
@@ -562,22 +580,23 @@ static NSDictionary *TLinkVPNPrivateRemoveOwnedProfileSync(void)
                 return TLinkVPNResult(false,
                     @"vpn_private_cleanup_requires_disconnect", nil);
             }
-            ((void (*)(id, SEL))objc_msgSend)(
-                connection, disconnectSelector);
-            NSTimeInterval deadline =
-                [NSDate timeIntervalSinceReferenceDate] + 5.0;
-            do {
-                if ([NSThread isMainThread]) {
-                    [[NSRunLoop currentRunLoop] runUntilDate:
-                        [NSDate dateWithTimeIntervalSinceNow:0.1]];
-                } else {
-                    usleep(100000);
+            TLinkVPNPrivatePolling::Window window(TLinkHelperIO::nowMs(), 5.0);
+            bool disconnectedInTime = false;
+            if (window.remaining(TLinkHelperIO::nowMs())) {
+                ((void (*)(id, SEL))objc_msgSend)(connection, disconnectSelector);
+            }
+            while (TLinkVPNPrivateWaitForCleanup(window)) {
+                @autoreleasepool {
+                    connection = TLinkVPNPrivateCurrentConnection(store);
+                    status = TLinkVPNPrivateConnectionStatus(connection);
                 }
-                connection = TLinkVPNPrivateCurrentConnection(store);
-                status = TLinkVPNPrivateConnectionStatus(connection);
-            } while (![status isEqualToString:@"disconnected"] &&
-                     [NSDate timeIntervalSinceReferenceDate] < deadline);
-            if (![status isEqualToString:@"disconnected"]) {
+                if (!window.remaining(TLinkHelperIO::nowMs())) break;
+                if ([status isEqualToString:@"disconnected"]) {
+                    disconnectedInTime = true;
+                    break;
+                }
+            }
+            if (!disconnectedInTime) {
                 return TLinkVPNResult(false,
                     @"vpn_private_cleanup_disconnect_timeout",
                     TLinkVPNPrivateStatusFields(marker, status));
