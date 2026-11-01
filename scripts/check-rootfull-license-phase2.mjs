@@ -7,6 +7,7 @@ const read = async (path) => readFile(new URL(path, root), "utf8");
 const integration = JSON.parse(await read("license-rootfull-integration.json"));
 const manager = await read("stream-app/app/LicenseManager.mm");
 const lifecycle = await read("stream-app/app/LicenseLifecycleCoordinator.mm");
+const reloadIO = await read("shared/TLinkLicenseReloadIO.h");
 const licenseView = await read("stream-app/app/LicenseViewController.mm");
 const appDelegate = await read("TLinkauto/TLinkauto/AppDelegate.m");
 const settings = await read("TLinkauto/TLinkauto/Settings/SettingsPageViewController.m");
@@ -57,7 +58,7 @@ for (const evidence of [
 
 for (const evidence of [
   "TLINK_LICENSE_ROOTFULL_RUNTIME",
-  "76reload",
+  "TLinkLicenseReloadIO::request",
   "requestInFlight",
   "pendingRefreshCompletions",
   "kTLinkLicenseRefreshWindow",
@@ -69,6 +70,8 @@ for (const evidence of [
   assert.ok(lifecycle.includes(evidence), `LicenseLifecycleCoordinator lacks ${evidence}`);
 }
 assert.doesNotMatch(lifecycle, /TLinkLicenseFeatureAllowed\s*\(/);
+assert.ok(lifecycle.includes('#include "../../shared/TLinkLicenseReloadIO.h"'));
+assert.ok(reloadIO.includes('static const uint8_t command[]="76reload\\r\\n";'), "root reload retains exact task-76 wire command");
 
 for (const evidence of [
   "Activate",

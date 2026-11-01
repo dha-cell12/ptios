@@ -3023,6 +3023,8 @@ See `BENCHMARK-S011.md` Probe I.
 
 Implementation follow-up (2026-11-02, C06o): failure counter/backoff calculation now runs inline under the existing diagnostics writer monitor after its sole plist read. This removes the separate explicit failure read while retaining the same failure math/jitter/fields, combined history and one atomic-write transaction. Other trigger/UI/reload IO and cross-process/durability/device qualification remain open. Native fixtures compare frozen output and one-versus-two reads; new Foundation assertions await macOS CI. See `IMPLEMENTATION-C06O.md`.
 
+Related lifecycle follow-up (2026-11-02, C06p): root reload transport now uses a shared two-second continuous IO window, exact writes and bounded LF/EOF reads instead of blocking connect/single send/single recv. Timeout or unframed capped prefixes cannot become success replies. Endpoint/command, retry and diagnostics transaction counts remain; this does not reduce persistence amplification. TrollStore route and other IO/cancellation/device qualification remain open. See `IMPLEMENTATION-C06P.md`.
+
 ---
 
 ### [P1-78] Rootfull tasks 75/76/97 bypass the feature cache and force a fresh signed authority status proof on every diagnostic request

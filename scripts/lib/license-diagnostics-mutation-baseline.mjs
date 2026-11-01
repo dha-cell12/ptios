@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreLicenseReload} from './license-reload-baseline.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const before=readFileSync(new URL('../../test/fixtures/license-diagnostics-before-c06o.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 const update='- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event\n';
@@ -8,6 +9,7 @@ const failure='- (void)recordRefreshFailure:';
 const declaration='- (void)updateDiagnostics:(NSDictionary *)values refreshHistoryEvent:(NSDictionary *)event stateMutation:(void (^)(NSMutableDictionary *))mutation;\n';
 function between(s,a,b){const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y);}
 export function restoreLifecycleDiagnosticsMutation(source){
+    source=restoreLicenseReload(source);
     const oldUpdate=before.slice(0,before.indexOf(failure)),oldFailure=before.slice(before.indexOf(failure));
     const expectedFailure=oldFailure.replace('    @synchronized (self) {\n        NSDictionary *existing = [NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath];',
         '    [self updateDiagnostics:nil refreshHistoryEvent:event stateMutation:^(NSMutableDictionary *existing) {')

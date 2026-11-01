@@ -24,7 +24,7 @@ Legend: DONE = first-pass audited; PARTIAL = opened/scanned but more work requir
 | appdelegate subproject | `appdelegate/*` | DONE (S010 first pass) | UIKit-wide keyboard observer lifecycle + global dyld compatibility hook audited |
 | TrollStore PoC | `poc-trollstore/*` + `TunnelExtension/*` | DONE (S010 first pass) | Separate CI artifact; silent-audio residency, 1 Hz file heartbeat, 5 ms TCP idle polling/HOL and diagnostic timers audited |
 | TrollStore production service lifecycle | `stream-app/app/StreamSupervisor.mm`, `TLinkVPNForegroundBroker.mm`, `vpnagent/*`, `privhelper/*`, shared private VPN helper edge | DONE (S010 first pass) | Unbounded helper waits, private VPN polling, broker concurrency and static preflight amplification audited |
-| StreamControl license lifecycle | `stream-app/app/LicenseManager.mm`, `LicenseLifecycleCoordinator.mm`, `BackgroundServiceScheduler.mm` license edge | DONE (S011 first pass) | Repeated lease/status verification, late single-flight, BGTask abandoned work and diagnostics RMW amplification audited. C06o merges failure backoff into one diagnostics read; other IO/durability/device qualification remain open. |
+| StreamControl license lifecycle | `stream-app/app/LicenseManager.mm`, `LicenseLifecycleCoordinator.mm`, `BackgroundServiceScheduler.mm` license edge | DONE (S011 first pass) | Repeated lease/status verification, late single-flight, BGTask abandoned work and diagnostics RMW amplification audited. C06o merges failure diagnostics reads; C06p bounds root reload IO. Other IO/durability/cancellation/device qualification remain open. |
 | Vendor/decompiled/reference trees | frameworks, third_party, xxtouch decompile | EXCLUDED initially | only inspect when a call path requires it |
 
 
