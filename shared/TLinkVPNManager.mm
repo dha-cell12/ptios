@@ -615,6 +615,25 @@ static NSDictionary *TLinkVPNPrivateRemoveOwnedProfileSync(void)
     });
 }
 
+// BEGIN bounded private VPN creation verification wait.
+static bool TLinkVPNPrivateWaitForVerification(TLinkVPNPrivatePolling::Window &window)
+{
+    return TLinkVPNPrivatePolling::waitNext(window,
+        [] { return TLinkHelperIO::nowMs(); },
+        [](unsigned milliseconds) {
+            if ([NSThread isMainThread]) {
+                // VPNPreferences publishes new services on this run loop.
+                @autoreleasepool {
+                    [[NSRunLoop currentRunLoop] runUntilDate:
+                        [NSDate dateWithTimeIntervalSinceNow:milliseconds / 1000.0]];
+                }
+                return true;
+            }
+            return usleep(milliseconds * 1000U) == 0 || errno == EINTR;
+        });
+}
+// END bounded private VPN creation verification wait.
+
 static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
     NSString *protocolType,
     NSString *server,
@@ -714,49 +733,51 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
     NSUInteger verificationAttempts = 0;
     NSUInteger observedRecordCount = beforeRecords.count;
     const NSUInteger maximumVerificationAttempts = 50;
+    TLinkVPNPrivatePolling::Window verificationWindow(TLinkHelperIO::nowMs(), 5.0);
     for (NSUInteger attempt = 0;
-         attempt < maximumVerificationAttempts && !newRecord;
+         attempt < maximumVerificationAttempts && !newRecord &&
+             verificationWindow.remaining(TLinkHelperIO::nowMs());
          attempt++) {
         verificationAttempts = attempt + 1;
-        NSArray<NSDictionary *> *afterRecords =
-            TLinkVPNPrivateConfigurationRecords(store);
-        observedRecordCount = afterRecords.count;
+        @autoreleasepool {
+            NSArray<NSDictionary *> *afterRecords =
+                TLinkVPNPrivateConfigurationRecords(store);
+            observedRecordCount = afterRecords.count;
 
-        for (NSDictionary *record in afterRecords) {
-            if ([record[@"name"] isEqualToString:profileName]) {
-                newRecord = record;
-                verificationMode = @"exact_name";
-                break;
-            }
-        }
-        if (!newRecord) {
-            NSMutableArray<NSDictionary *> *delta = [NSMutableArray array];
             for (NSDictionary *record in afterRecords) {
-                NSString *identifier = record[@"identifier"];
-                if (identifier.length > 0 &&
-                    ![beforeIdentifiers containsObject:identifier]) {
-                    [delta addObject:record];
+                if ([record[@"name"] isEqualToString:profileName]) {
+                    newRecord = record;
+                    verificationMode = @"exact_name";
+                    break;
                 }
             }
-            // The create call is serialized and uniquely named. Accept one
-            // newly appearing service ID even if iOS normalizes its display
-            // name; never claim ownership when the delta is ambiguous.
-            if (delta.count == 1) {
-                newRecord = delta.firstObject;
-                verificationMode = @"single_identifier_delta";
+            if (!newRecord) {
+                NSDictionary *deltaRecord = nil;
+                NSUInteger deltaCount = 0;
+                for (NSDictionary *record in afterRecords) {
+                    NSString *identifier = record[@"identifier"];
+                    if (identifier.length > 0 &&
+                        ![beforeIdentifiers containsObject:identifier]) {
+                        if (deltaCount == 0) deltaRecord = record;
+                        ++deltaCount;
+                    }
+                }
+                // Retain the sole candidate without materializing a delta array.
+                // Ambiguous/new duplicate entries still cannot establish ownership.
+                if (deltaCount == 1) {
+                    newRecord = deltaRecord;
+                    verificationMode = @"single_identifier_delta";
+                }
             }
         }
-        if (!newRecord && attempt + 1 < maximumVerificationAttempts) {
-            if ([NSThread isMainThread]) {
-                // createVPNWithOptions: publishes its new SCNetworkService via
-                // work delivered to the main run loop. Sleeping here prevents
-                // that work from running and makes a successful create look
-                // invisible forever.
-                [[NSRunLoop currentRunLoop] runUntilDate:
-                    [NSDate dateWithTimeIntervalSinceNow:0.1]];
-            } else {
-                usleep(100000);
-            }
+        if (!verificationWindow.remaining(TLinkHelperIO::nowMs())) {
+            newRecord = nil;
+            verificationMode = @"none";
+            break;
+        }
+        if (!newRecord && attempt + 1 < maximumVerificationAttempts &&
+            !TLinkVPNPrivateWaitForVerification(verificationWindow)) {
+            break;
         }
     }
     if (!newRecord) {

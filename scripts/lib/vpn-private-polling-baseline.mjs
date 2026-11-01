@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreVPNPrivateVerification} from './vpn-private-verification-baseline.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const before=readFileSync(new URL('../../test/fixtures/vpn-manager-before-c04j.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 assert.equal(hash(before),'04f18dd37285f9824187e42a6a6dbedc38cd374401d3b2e119d5da3a054367cb');
@@ -9,6 +10,7 @@ export function privateTransition(source){return between(source,'static NSDictio
 export const legacyPrivateTransition=privateTransition(before);
 export function privatePollingAdapter(source){return between(source,'// BEGIN continuous private VPN transition polling.','static NSDictionary *TLinkVPNPrivateSetConnectedSync(');}
 export function restoreVPNPrivatePolling(source){
+    source=restoreVPNPrivateVerification(source);
     const current=between(privateTransition(source),'    TLinkVPNPrivatePolling::Window window(', '    return TLinkVPNResult(false, @"vpn_private_transition_timeout",');
     const old=between(legacyPrivateTransition,'    ((void (*)(id, SEL))objc_msgSend)(connection, action);', '    return TLinkVPNResult(false, @"vpn_private_transition_timeout",');
     const restored=source.replace('#include "TLinkVPNPrivatePolling.h"\n#include "TLinkHelperSocketIO.h"\n','')

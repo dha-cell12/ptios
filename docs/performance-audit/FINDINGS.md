@@ -2603,6 +2603,8 @@ See `BENCHMARK-S010.md` Probe F.
 
 Implementation follow-up (2026-10-31, C06l): private connect/disconnect now uses a continuous-clock 5–30 s window starting before the action, counts probe/sleep work, refuses success observed after expiry and scopes probe temporaries. EINTR/early sleeps preserve the 100 ms interval. The previous transition used wall time, began its deadline after the action and checked target success before expiry. Cleanup, profile-verification enumeration, the polling cadence and synchronous queue remain open. Portable/source validation passes; actual private backend and device performance remain unqualified. See `IMPLEMENTATION-C06L.md`.
 
+Implementation follow-up (2026-10-31, C06m): private creation verification now limits total snapshot/comparison/wait work to a five-second continuous window after create, retaining the fifty-attempt cap. Reject late candidates before selection/marker persistence; replace the delta array with a sole-candidate/count check and scope snapshot/wait temporaries. Exact-name priority and ambiguous/duplicate rejection remain. Main waits still pump the run loop; early returns/EINTR finish the existing interval. Full enumerations, cleanup, cadence optimization, opaque-call preemption and device qualification remain open. See `IMPLEMENTATION-C06M.md`.
+
 ---
 
 ### [P1-68] TrollStore VPN brokers have opposite concurrency failures: foreground broker is single-client HOL, vpnagent has unbounded per-client global workers

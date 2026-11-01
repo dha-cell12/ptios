@@ -5,7 +5,7 @@
 #include <cstdint>
 
 namespace TLinkVPNPrivatePolling {
-// A transition owns one continuous-clock window, including action/probe time.
+// One private operation owns a continuous-clock window for its bounded phase.
 class Window {
     uint64_t last_,end_;
     bool valid_;
