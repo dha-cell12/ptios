@@ -48,6 +48,6 @@ try{
             .replaceAll('kSCRequiredStreamdServiceMarker','kLegacyRequiredStreamdServiceMarker').replaceAll('kSCRequiredVPNServiceMarker','kLegacyRequiredVPNServiceMarker');
         await Promise.all([writeFile(join(temp,'SupervisorUnderTest.inc'),adapt(source)),writeFile(join(temp,'SupervisorLegacy.inc'),legacy),
             writeFile(join(temp,'LegacySupervisor.h'),previousHeader.replaceAll('SCStreamSupervisor','SCLegacySupervisor'))]);
-        const runtime=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/supervisor-helper-runtime-test.mm'),'-o',runtime]);run(runtime,[]);
+        const runtime=join(temp,'runtime');run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/supervisor-helper-runtime-test.mm'),'-o',runtime]);run(runtime,[]);
     }else console.log('macOS complete current/frozen supervisor/helper lifecycle runtime included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-supervisor-helper-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}

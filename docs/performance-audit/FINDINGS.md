@@ -2523,6 +2523,8 @@ Related helper follow-up (2026-11-02, C06q): the direct short-lived streamd priv
 
 Related caller follow-up (2026-11-02, C06r): synchronous script task calls now bind the exact session's stop predicate for direct helper preflight/wait/result checks, returning private code -109 on cancellation. Non-helper fast paths, unbound external callers and intentional respring behavior remain; reapers retain child ownership without retaining the script session. Effects cannot be rolled back and task response formatting is unchanged. Queue/network propagation and end-to-end/device qualification remain open. See `IMPLEMENTATION-C06R.md`.
 
+Related supervisor transport follow-up (2026-11-02, C06t): status/hello/shutdown socket transactions now share one continuous timeout across nonblocking connect, exact writes, reads and decode. Trickle input cannot renew the per-call deadline, and error/timeout/capped prefixes cannot become responses. Existing one/two-second call budgets, ordinary wire/UTF8 behavior and lifecycle policy remain; FD cleanup follows scope unwind. Queue residence, multiple sequential probes, active cancellation/coalescing and device qualification remain open. See `IMPLEMENTATION-C06T.md`.
+
 ---
 
 ## P1 — S010 High Priority

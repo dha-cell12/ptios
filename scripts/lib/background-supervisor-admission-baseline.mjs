@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {restoreSupervisorTask} from './supervisor-task-baseline.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const once=(source,text)=>assert.equal(source.split(text).length,2,'one C06e addition: '+text.slice(0,80));
 export function restoreSupervisorStartPermission(source){
+    source=restoreSupervisorTask(source);
     const wrapper='    [self ensureServiceWithStartPermission:nil completion:completion];\n}\n\n- (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission\n                            completion:(void (^)(BOOL running, NSString *detail))completion\n{\n';
     const start=source.indexOf('        // BEGIN supervisor ensure start permission.'),end=source.indexOf('        // END supervisor ensure start permission.\n',start);
     assert.ok(start>=0&&end>start);once(source,wrapper);

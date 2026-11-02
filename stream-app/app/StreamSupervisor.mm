@@ -1,6 +1,7 @@
 #import "StreamSupervisor.h"
 #include "../../shared/TLinkVPNHelperChild.h"
 #include "../../shared/TLinkSupervisorHelper.h"
+#include "../../shared/TLinkSupervisorTaskIO.h"
 #import <spawn.h>
 #import <signal.h>
 #import <sys/wait.h>
@@ -207,43 +208,30 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 
 - (NSString *)sendLocalTaskLineLocked:(NSString *)line timeout:(int)timeoutSec
 {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) return nil;
-
-    struct timeval tv;
-    tv.tv_sec = timeoutSec > 0 ? timeoutSec : 1;
-    tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(6000);
-    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(sock);
-        return nil;
-    }
-
+    const auto baseIO = TLinkHelperIO::posixOps();
+    const auto budget = TLinkSupervisorTaskIO::window(baseIO.now(baseIO.context), timeoutSec);
+    TLinkVPNBrokerClientIO::BoundedOps bounded(baseIO, budget);
+    const auto io = bounded.ops();
+    TLinkHelperIO::Socket descriptor(socket(AF_INET, SOCK_STREAM, 0));
+    if (descriptor.fd() < 0 || !descriptor.prepare().ok()) return nil;
     NSString *payload = [line hasSuffix:@"\n"] ? line : [line stringByAppendingString:@"\n"];
     const char *bytes = [payload UTF8String];
-    send(sock, bytes, strlen(bytes), 0);
-
-    NSMutableData *data = [NSMutableData data];
-    char buf[2048];
-    while (true) {
-        ssize_t n = recv(sock, buf, sizeof(buf), 0);
-        if (n <= 0) break;
-        [data appendBytes:buf length:(NSUInteger)n];
-        if (memchr(buf, '\n', (size_t)n)) break;
-        if (data.length > 64 * 1024) break;
-    }
-    close(sock);
-
-    if (data.length == 0) return nil;
-    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!bytes) return nil;
+    auto connectOps = TLinkVPNBrokerClientIO::posixConnectOps();
+    connectOps.begin = [](void *, int fd, int &error) {
+        sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(6000);
+        inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+        const int result = ::connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof(address));
+        if (result < 0) error = errno;
+        return result;
+    };
+    auto reply = TLinkSupervisorTaskIO::request(io, connectOps, descriptor.fd(),
+        reinterpret_cast<const uint8_t *>(bytes), strlen(bytes), budget);
+    descriptor.close();
+    if (!reply.ok || !budget.remaining(io.now(io.context))) return nil;
+    NSString *result = [[NSString alloc] initWithBytes:reply.bytes.data()
+        length:reply.bytes.size() encoding:NSUTF8StringEncoding];
+    return budget.remaining(io.now(io.context)) ? result : nil;
 }
 
 - (pid_t)streamdPidFromHelloStatusLocked
