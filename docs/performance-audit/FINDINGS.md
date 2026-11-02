@@ -3035,6 +3035,8 @@ Implementation follow-up (2026-11-02, C06o): failure counter/backoff calculation
 
 Related lifecycle follow-up (2026-11-02, C06p): root reload transport now uses a shared two-second continuous IO window, exact writes and bounded LF/EOF reads instead of blocking connect/single send/single recv. Timeout or unframed capped prefixes cannot become success replies. Endpoint/command, retry and diagnostics transaction counts remain; this does not reduce persistence amplification. TrollStore route and other IO/cancellation/device qualification remain open. See `IMPLEMENTATION-C06P.md`.
 
+Related lifecycle follow-up (2026-11-03, C06v): admit one daemon reload flight before enqueue, serialize attempts and retain only one pending-change bit. Pre-start bursts share an attempt; in-flight changes get one fresh follow-up; a publication during retry delay promotes that wake to a fresh attempt. Preserve every publication's invalidation/UI/generation/notification and isolated primary/retry diagnostics. Provider exceptions follow the bounded retry policy; attempt-diagnostics exceptions cannot strand admission or replay a successful reload. No cross-process coordination, whole-flight deadline, HTTP cancellation or persistence durability change is claimed. Native burst/race/parity and real-GCD fixtures await macOS CI. See `IMPLEMENTATION-C06V.md`.
+
 ---
 
 ### [P1-78] Rootfull tasks 75/76/97 bypass the feature cache and force a fresh signed authority status proof on every diagnostic request

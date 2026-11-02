@@ -107,6 +107,14 @@ static NSString *SCLicenseRequestDaemonReload(void)
 @property(nonatomic, strong) NSMutableArray *pendingRefreshCompletions;
 @property(nonatomic, strong) NSMutableDictionary *refreshSubscriberCallbacks;
 @property(nonatomic, strong) dispatch_queue_t refreshSubscriberQueue;
+// BEGIN daemon reload ownership.
+@property(nonatomic, strong) dispatch_queue_t daemonReloadQueue;
+@property(nonatomic, strong) NSObject *daemonReloadIdentity;
+@property(nonatomic, assign) BOOL daemonReloadPending;
+- (void)requestDaemonReload;
+- (void)performDaemonReload:(NSObject *)identity retry:(BOOL)retry;
+- (void)recordDaemonReload:(NSString *)response retry:(BOOL)retry;
+// END daemon reload ownership.
 // BEGIN refresh decision ownership.
 @property(nonatomic, strong) dispatch_queue_t refreshDecisionQueue;
 @property(nonatomic, strong) NSObject *refreshOperationIdentity;
@@ -148,6 +156,7 @@ static NSString *SCLicenseRequestDaemonReload(void)
         _refreshSubscriberCallbacks = [NSMutableDictionary dictionary];
         _refreshSubscriberQueue = dispatch_queue_create("com.tlinkauto.license-subscriber-retirement", DISPATCH_QUEUE_SERIAL);
         _refreshDecisionQueue = dispatch_queue_create("com.tlinkauto.license-refresh-decision", DISPATCH_QUEUE_SERIAL);
+        _daemonReloadQueue = dispatch_queue_create("com.tlinkauto.license-daemon-reload", DISPATCH_QUEUE_SERIAL);
         _uiSnapshotQueue = dispatch_queue_create("com.tlinkauto.license-ui-snapshot",
                                                   DISPATCH_QUEUE_SERIAL);
         _uiLicenseSnapshot = @{
@@ -460,24 +469,79 @@ static NSString *SCLicenseRequestDaemonReload(void)
                                                             object:self
                                                           userInfo:@{@"reason": reason ?: @"unknown"}];
     });
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSString *response = SCLicenseRequestDaemonReload();
-        [self updateDiagnostics:@{
-            @"streamd_invalidate_at_ms": @([self nowMilliseconds]),
-            @"streamd_invalidate_response": response ?: @"no_response",
-        }];
-        if (![response hasPrefix:@"0;;"]) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
-                           dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                NSString *retry = SCLicenseRequestDaemonReload();
-                [self updateDiagnostics:@{
-                    @"streamd_invalidate_retry_at_ms": @([self nowMilliseconds]),
-                    @"streamd_invalidate_retry_response": retry ?: @"no_response",
-                }];
-            });
-        }
-    });
+    [self requestDaemonReload];
 }
+
+// BEGIN coalesced daemon reload.
+- (void)requestDaemonReload
+{
+    NSObject *identity;
+    @synchronized (self) {
+        if (self.daemonReloadIdentity) {
+            self.daemonReloadPending = YES;
+            return;
+        }
+        identity = [NSObject new];
+        self.daemonReloadIdentity = identity;
+        self.daemonReloadPending = NO;
+    }
+    dispatch_async(self.daemonReloadQueue, ^{ [self performDaemonReload:identity retry:NO]; });
+}
+
+- (void)recordDaemonReload:(NSString *)response retry:(BOOL)retry
+{
+    // Diagnostics failure must neither strand admission nor replay a successful reload.
+    @try {
+        try {
+            [self updateDiagnostics:retry ? @{
+                @"streamd_invalidate_retry_at_ms": @([self nowMilliseconds]),
+                @"streamd_invalidate_retry_response": response ?: @"no_response",
+            } : @{
+                @"streamd_invalidate_at_ms": @([self nowMilliseconds]),
+                @"streamd_invalidate_response": response ?: @"no_response",
+            }];
+        } catch (...) {}
+    } @catch (NSException *exception) { (void)exception; }
+}
+
+- (void)performDaemonReload:(NSObject *)identity retry:(BOOL)retry
+{
+    @synchronized (self) {
+        if (self.daemonReloadIdentity != identity) return;
+        // A publication during the retry delay turns that wake into a fresh attempt.
+        if (self.daemonReloadPending) retry = NO;
+        self.daemonReloadPending = NO;
+    }
+    NSString *response = nil;
+    BOOL success = NO;
+    @try {
+        try {
+            response = SCLicenseRequestDaemonReload();
+            success = [response hasPrefix:@"0;;"];
+        } catch (...) { response = @"daemon_reload_exception"; }
+    } @catch (NSException *exception) {
+        (void)exception;
+        response = @"daemon_reload_exception";
+    }
+    [self recordDaemonReload:response retry:retry];
+    BOOL pending;
+    @synchronized (self) {
+        if (self.daemonReloadIdentity != identity) return;
+        pending = self.daemonReloadPending;
+        self.daemonReloadPending = NO;
+        if (!pending && (success || retry)) {
+            self.daemonReloadIdentity = nil;
+            return;
+        }
+    }
+    if (pending) {
+        dispatch_async(self.daemonReloadQueue, ^{ [self performDaemonReload:identity retry:NO]; });
+    } else {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                       self.daemonReloadQueue, ^{ [self performDaemonReload:identity retry:YES]; });
+    }
+}
+// END coalesced daemon reload.
 
 - (BOOL)automaticRefreshNeededForStatus:(NSDictionary *)status reason:(NSString **)reason
 {
