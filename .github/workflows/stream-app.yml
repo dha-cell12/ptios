@@ -405,6 +405,7 @@ jobs:
           node scripts/check-vpn-ikev2-helper-safety.mjs
           node scripts/check-supervisor-helper-safety.mjs
           node scripts/check-supervisor-task-safety.mjs
+          node scripts/check-supervisor-probe-safety.mjs
             node scripts/check-background-task-safety.mjs
             node scripts/check-license-lifecycle-safety.mjs
           node scripts/check-license-reload-safety.mjs

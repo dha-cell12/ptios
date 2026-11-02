@@ -234,28 +234,27 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     return budget.remaining(io.now(io.context)) ? result : nil;
 }
 
-- (pid_t)streamdPidFromHelloStatusLocked
+- (NSDictionary *)streamdHelloStatusLocked
 {
     NSString *response = [self sendLocalTaskLineLocked:@"60\n" timeout:2];
-    if (![response hasPrefix:@"0;;"]) return 0;
+    if (![response hasPrefix:@"0;;"]) return nil;
     NSString *payload = [[response substringFromIndex:3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:payload options:0];
-    if (jsonData.length == 0) return 0;
+    if (jsonData.length == 0) return nil;
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
-    if (![json isKindOfClass:[NSDictionary class]]) return 0;
+    return [json isKindOfClass:[NSDictionary class]] ? json : nil;
+}
+
+- (pid_t)streamdPidFromHelloStatusLocked
+{
+    NSDictionary *json = [self streamdHelloStatusLocked];
     return (pid_t)[json[@"pid"] intValue];
 }
 
 - (NSString *)streamdLaunchPathFromHelloStatusLocked
 {
-    NSString *response = [self sendLocalTaskLineLocked:@"60\n" timeout:2];
-    if (![response hasPrefix:@"0;;"]) return @"";
-    NSString *payload = [[response substringFromIndex:3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSData *jsonData = [[NSData alloc] initWithBase64EncodedString:payload options:0];
-    if (jsonData.length == 0) return @"";
-    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
-    NSString *path = nil;
-    if ([json isKindOfClass:[NSDictionary class]]) path = json[@"launch_executable_path"];
+    NSDictionary *json = [self streamdHelloStatusLocked];
+    NSString *path = json[@"launch_executable_path"];
     return [path isKindOfClass:[NSString class]] ? path : @"";
 }
 
@@ -271,7 +270,9 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return NO;
     }
 
-    pid_t pid = [self streamdPidFromHelloStatusLocked];
+    // One probe-local hello keeps PID and fallback path in the same response.
+    NSDictionary *hello = [self streamdHelloStatusLocked];
+    pid_t pid = (pid_t)[hello[@"pid"] intValue];
     BOOL versionMatches =
         [status containsString:kSCRequiredStreamdServiceMarker] &&
         [status containsString:kSCRequiredVPNServiceMarker];
@@ -289,7 +290,8 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
             // proc_pidpath can fail across the app/root process boundary. The
             // daemon records argv[0] at startup so we can still distinguish a
             // live binary from one in a removed TrollStore container.
-            runningPath = [self streamdLaunchPathFromHelloStatusLocked];
+            NSString *reportedPath = hello[@"launch_executable_path"];
+            runningPath = [reportedPath isKindOfClass:[NSString class]] ? reportedPath : @"";
             NSString *expectedPath = [[[self streamdPath] stringByStandardizingPath] stringByResolvingSymlinksInPath];
             NSString *actualPath = [[runningPath stringByStandardizingPath] stringByResolvingSymlinksInPath];
             pathMatches = expectedPath.length > 0 && actualPath.length > 0 && [actualPath isEqualToString:expectedPath];

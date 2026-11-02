@@ -2525,6 +2525,8 @@ Related caller follow-up (2026-11-02, C06r): synchronous script task calls now b
 
 Related supervisor transport follow-up (2026-11-02, C06t): status/hello/shutdown socket transactions now share one continuous timeout across nonblocking connect, exact writes, reads and decode. Trickle input cannot renew the per-call deadline, and error/timeout/capped prefixes cannot become responses. Existing one/two-second call budgets, ordinary wire/UTF8 behavior and lifecycle policy remain; FD cleanup follows scope unwind. Queue residence, multiple sequential probes, active cancellation/coalescing and device qualification remain open. See `IMPLEMENTATION-C06T.md`.
 
+Related supervisor read follow-up (2026-11-02, C06u): each probe now reads one hello snapshot for PID and fallback launch path. Failed process-path lookup no longer sends/decodes a second hello or mixes PID/path across two replies; ordinary version/path/state/log/event source remains. Independent selectors and subsequent probes still read fresh responses. Task 97 remains separate, with no atomic identity guarantee or cross-probe cache. Full operation deadlines/cancellation/device qualification remain open. See `IMPLEMENTATION-C06U.md`.
+
 ---
 
 ## P1 — S010 High Priority
