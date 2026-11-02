@@ -1,6 +1,7 @@
 #import "TLinkVPNManager.h"
 #import "TLinkVPNPrivateRequest.h"
 #include "TLinkVPNTransition.h"
+#include "TLinkVPNBrokerBudget.h"
 
 #import <NetworkExtension/NetworkExtension.h>
 #import <Security/Security.h>
@@ -1383,21 +1384,31 @@ NSDictionary *TLinkVPNConfigureIKEv2SynchronouslyForHelper(
         });
     }
 
-    __block NSDictionary *completedResult = nil;
-    TLinkVPNConfigureIKEv2(
-        serverAddress, remoteIdentifier, username, password,
-        ^(NSDictionary *result) {
-            completedResult = result;
-        });
-
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:30.0];
-    while (!completedResult && [deadline timeIntervalSinceNow] > 0.0) {
-        @autoreleasepool {
-            [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode
-                                   beforeDate:[NSDate
-                                       dateWithTimeIntervalSinceNow:0.1]];
+    const TLinkVPNBrokerIngress::Window window(TLinkHelperIO::nowMs());
+    auto state = std::make_shared<TLinkVPNBrokerCompletion>();
+    TLinkVPNBrokerCompletionScope scope{state};
+    if (state->valid() && window.remaining(TLinkHelperIO::nowMs())) {
+        TLinkVPNConfigureIKEv2(
+            serverAddress, remoteIdentifier, username, password,
+            ^(NSDictionary *result) { state->complete(result); });
+        while (!state->ready() && window.remaining(TLinkHelperIO::nowMs())) {
+            @autoreleasepool {
+                const int slice = std::min(100, window.remaining(TLinkHelperIO::nowMs()));
+                BOOL ran = NO;
+                if ([NSThread isMainThread] && slice > 0) {
+                    ran = [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode
+                        beforeDate:[NSDate dateWithTimeIntervalSinceNow:slice / 1000.0]];
+                }
+                // Empty modes must not become a busy poll. Off main, wait only
+                // on the completion signal; never drive the main run loop there.
+                const int remaining = std::min(100, window.remaining(TLinkHelperIO::nowMs()));
+                if (!ran && !state->ready() && remaining > 0) state->wait(remaining);
+            }
         }
     }
+    NSDictionary *completedResult = state->finishChecked([&window] {
+        return window.remaining(TLinkHelperIO::nowMs()) > 0;
+    });
     if (!completedResult) {
         return TLinkVPNResult(false,
             @"vpn_ikev2_helper_timeout", @{

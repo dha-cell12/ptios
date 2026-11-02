@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreIKEv2Sync} from './vpn-ikev2-sync-baseline.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const before=readFileSync(new URL('../../test/fixtures/vpn-manager-before-c04j.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 assert.equal(hash(before),'04f18dd37285f9824187e42a6a6dbedc38cd374401d3b2e119d5da3a054367cb');
@@ -9,6 +10,7 @@ export function privateCleanup(source){return section(source,'static NSDictionar
 export const legacyPrivateCleanup=privateCleanup(before);
 export function privateCleanupAdapter(source){return section(source,'// BEGIN continuous private VPN cleanup wait.','// END continuous private VPN cleanup wait.\n\n');}
 export function restoreVPNPrivateCleanup(source){
+    source=restoreIKEv2Sync(source);
     const restored=source.replace(privateCleanupAdapter(source),'').replace(privateCleanup(source),legacyPrivateCleanup);
     assert.equal(hash(restored),'cd5b8d751dc0fb831606e0fa3950fabe734cd176db1f38edde44f2ad81e07ecd',
         'complete prior manager, verification/options/persistence, private/public transitions, cleanup preflight/delete/marker/publication source');

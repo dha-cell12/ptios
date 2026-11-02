@@ -53,6 +53,7 @@ class TLinkVPNBrokerCompletion {
     dispatch_semaphore_t signal_=dispatch_semaphore_create(0);
 public:
     bool valid()const{return signal_!=nullptr;}
+    bool ready(){std::lock_guard<std::mutex> guard(mutex_);return ready_&&!closed_;}
     void complete(NSDictionary *value){
         std::lock_guard<std::mutex> guard(mutex_);
         if(closed_||ready_)return;

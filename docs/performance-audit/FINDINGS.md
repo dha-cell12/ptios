@@ -2485,6 +2485,8 @@ See `BENCHMARK-S010.md` Probe D.
 
 ---
 
+Related inner-helper follow-up (2026-11-02, C06s): the synchronous IKEv2 configuration wrapper now uses the shared mutex/first-result completion and a continuous 30-second window starting before provider invocation. It discards late/duplicate results, closes state on unwind and uses a bounded semaphore fallback for an empty main run-loop mode; off-main callers no longer drive the main run loop. Root authority and result decoration remain. This wrapper is separate from private-state polling and parent child-reaping/cancellation. Opaque calls cannot be preempted and committed configuration is not rolled back; native/device qualification remains pending. See `IMPLEMENTATION-C06S.md`.
+
 ### [P0-23] StreamControl service supervisor performs unbounded helper `waitpid` while holding its only lifecycle serial queue
 
 **Status:** CONFIRMED live StreamControl app path  
