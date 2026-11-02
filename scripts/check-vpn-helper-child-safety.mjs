@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {restoreVPNPrivateStop,restoreVPNPrivateCaller,vpnPrivateScriptCall} from './lib/vpn-private-stop-baseline.mjs';
 import {streamdHelper,legacyStreamdHelper} from './lib/streamd-privhelper-baseline.mjs';
+import {scriptHelperScope} from './lib/streamd-helper-stop-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y+b.length);};
@@ -16,7 +17,30 @@ const stopBaseline=await read('test/fixtures/vpn-private-request-before-c06b.inc
 assert.equal(beforeStop,stopBaseline);
 const caller=await read('stream-app/streamd/POCSocketServer.mm');restoreVPNPrivateCaller(caller);
 const directHelper=streamdHelper(caller);
+const helperScope=scriptHelperScope(caller).replaceAll('(__bridge void *)session','static_cast<void *>(session)').replaceAll('(__bridge TLinkScriptSession *)context','static_cast<TLinkScriptSession *>(context)');
+const scopeProbe=`#include "${join(root,'shared/TLinkVPNHelperChild.h').replaceAll('\\','/')}"
+#include <cassert>
+#include <stdexcept>
+struct NSString {};
+struct TLinkScriptSession {bool stopRequested=false;};
+static bool TLinkScriptStopRequested(TLinkScriptSession *session){return !session||session->stopRequested;}
+static NSString *TLinkScriptRunTask(int taskType,NSString *body);
+${helperScope}
+static bool fail=false;
+static NSString *TLinkScriptRunTask(int taskType,NSString *body){if(taskType==17){assert(!sTLinkScriptHelperStop);return body;}assert(sTLinkScriptHelperStop);if(taskType==74)assert(!sTLinkScriptHelperStop->stopped());if(fail)throw std::runtime_error("task");return body;}
+int main(){TLinkScriptSession old,fresh;old.stopRequested=true;NSString body;
+assert(!sTLinkScriptHelperStop);
+assert(TLinkScriptRunTaskForSession(&old,17,&body)==&body&&!sTLinkScriptHelperStop);
+{TLinkScriptHelperStopScope outer(&old,true);const auto previous=sTLinkScriptHelperStop;assert(previous->stopped());
+assert(TLinkScriptRunTaskForSession(&fresh,11,&body)==&body&&sTLinkScriptHelperStop==previous);
+assert(TLinkScriptRunTaskForSession(&old,74,&body)==&body&&sTLinkScriptHelperStop==previous);
+fail=true;bool caught=false;try{(void)TLinkScriptRunTaskForSession(&fresh,11,&body);}catch(const std::runtime_error &){caught=true;}assert(caught&&sTLinkScriptHelperStop==previous);}
+assert(!sTLinkScriptHelperStop);}
+`;
 assert.doesNotMatch(directHelper,/waitpid\(|\bkill\(|usleep\(/);
+assert.match(directHelper,/sTLinkScriptHelperStop[\s\S]*if \(stop.stopped\(\)\) return -109;/);
+assert.match(directHelper,/@finally[\s\S]*free\(argv\)/);
+assert.match(directHelper,/Reason::Stopped \|\| stop.stopped\(\)/);
 assert.ok(directHelper.indexOf('Owner child')<directHelper.indexOf('calloc('));
 assert.ok(directHelper.indexOf('child.adopted(pid)')<directHelper.indexOf('free(argv);',directHelper.indexOf('posix_spawn(')));
 const timeoutLine=directHelper.slice(directHelper.indexOf('    const unsigned requested ='),directHelper.indexOf('    const auto result ='));
@@ -106,10 +130,14 @@ try{
     const timeoutFile=join(temp,'streamd-timeout.cpp'),timeoutBinary=join(temp,windows?'streamd-timeout.exe':'streamd-timeout');await writeFile(timeoutFile,timeoutProbe);
     run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',timeoutFile,`/Fe${timeoutBinary}`,`/Fo${join(temp,'streamd-timeout.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',timeoutFile,'-o',timeoutBinary]);run(timeoutBinary,[]);
     console.log('Streamd helper timeout normalization passed: actual production bounds/default/floor and INT_MIN/INT_MAX.');
+    const scopeFile=join(temp,'streamd-scope.cpp'),scopeBinary=join(temp,windows?'streamd-scope.exe':'streamd-scope');await writeFile(scopeFile,scopeProbe);
+    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',scopeFile,`/Fe${scopeBinary}`,`/Fo${join(temp,'streamd-scope.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror',scopeFile,'-o',scopeBinary]);run(scopeBinary,[]);
+    console.log('Streamd helper scope passed: actual wrapper/C++ scope syntax, nested restoration/unwind and respring exemption (ARC lifetime requires macOS).');
     if(process.platform==='darwin'){
         await Promise.all([writeFile(join(temp,'VPNPrivateRequestUnderTest.inc'),nativeSources[0]),writeFile(join(temp,'VPNPrivateRequestLegacy.inc'),nativeSources[1]),writeFile(join(temp,'VPNScriptStopUnderTest.inc'),script)]);
         const runtime=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-helper-child-runtime-test.mm'),'-o',runtime]);run(runtime,[]);
-        await Promise.all([writeFile(join(temp,'StreamdHelperUnderTest.inc'),directHelper.replace('TLinkVPNHelperChild::Owner child;','TLinkVPNHelperChild::Owner child{fixtureOps()};').replace('child.wait(std::min(requested, 30000U))','child.wait(std::min(requested, fixtureWaitLimit),20)')),
+        await Promise.all([writeFile(join(temp,'StreamdHelperUnderTest.inc'),directHelper.replace('TLinkVPNHelperChild::Owner child;','TLinkVPNHelperChild::Owner child{fixtureOps()};').replace('child.wait(std::min(requested, 30000U), TLinkVPNHelperChild::GraceMs, stop)','child.wait(std::min(requested, fixtureWaitLimit),20,stop)')),
+            writeFile(join(temp,'StreamdScriptHelperScope.inc'),scriptStop+scriptHelperScope(caller)),
             writeFile(join(temp,'StreamdHelperLegacy.inc'),legacyStreamdHelper.replaceAll('TLinkRunPrivhelper(','LegacyRunPrivhelper('))]);
         const streamdRuntime=join(temp,'streamd-helper');run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/streamd-privhelper-runtime-test.mm'),'-o',streamdRuntime]);run(streamdRuntime,[]);
     }else console.log('macOS actual child/reaper/credential transport runtime included in CI; not run on this host.');

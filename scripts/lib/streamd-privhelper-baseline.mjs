@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreStreamdHelperStop} from './streamd-helper-stop-baseline.mjs';
 export const legacyStreamdHelper=readFileSync(new URL('../../test/fixtures/streamd-privhelper-before-c06q.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function streamdHelper(source){const a=source.indexOf('static int TLinkRunPrivhelper(NSArray<NSString *> *arguments, int timeoutMs)'),b=source.indexOf('static int TLinkRunPrivhelperOpenBundle(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreStreamdPrivhelper(source){
+    source=restoreStreamdHelperStop(source);
     const actual=streamdHelper(source);
     const admission=actual.slice(actual.indexOf('    // BEGIN bounded streamd helper owner.'),actual.indexOf('    // END bounded streamd helper owner.\n')+'    // END bounded streamd helper owner.\n'.length);
     const wait=actual.slice(actual.indexOf('    // BEGIN bounded streamd helper wait.'),actual.indexOf('    // END bounded streamd helper wait.\n')+'    // END bounded streamd helper wait.\n'.length);

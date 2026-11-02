@@ -689,6 +689,7 @@ static NSDictionary *TLinkTaskResultFromResponseString(NSString *raw)
 }
 
 static NSString *TLinkScriptRunTask(int taskType, NSString *body);
+static NSString *TLinkScriptRunTaskForSession(TLinkScriptSession *session, int taskType, NSString *body);
 static BOOL TLinkScriptStopRequested(TLinkScriptSession *session);
 
 static NSDictionary *TLinkScriptStoppedResult(void)
@@ -716,7 +717,7 @@ static NSDictionary *TLinkScriptResultByAdding(NSDictionary *result, NSDictionar
 static NSDictionary *TLinkScriptTaskResult(TLinkScriptSession *session, int task, NSString *body)
 {
     if (TLinkScriptStopRequested(session)) return TLinkScriptStoppedResult();
-    NSDictionary *result = TLinkTaskResultFromResponseString(TLinkScriptRunTask(task, body ?: @""));
+    NSDictionary *result = TLinkTaskResultFromResponseString(TLinkScriptRunTaskForSession(session, task, body ?: @""));
     if (![result[@"ok"] boolValue]) {
         return TLinkScriptResultByAdding(result, @{@"error": result[@"payload"] ?: @"unknown_error"});
     }
@@ -1169,6 +1170,34 @@ static NSString *TLinkScriptRunTask(int taskType, NSString *body)
     return TLinkResponseStringFromData(response);
 }
 
+// BEGIN script-bound direct helper stop scope.
+static thread_local const TLinkVPNHelperChild::Stop *sTLinkScriptHelperStop = nullptr;
+struct TLinkScriptHelperStopScope {
+    TLinkScriptSession *session;
+    TLinkVPNHelperChild::Stop stop;
+    const TLinkVPNHelperChild::Stop *previous;
+    TLinkScriptHelperStopScope(TLinkScriptSession *value, bool enabled)
+        :session(value),stop(enabled ? (__bridge void *)session : nullptr, enabled ? requested : nullptr),previous(sTLinkScriptHelperStop) {
+        sTLinkScriptHelperStop = &stop;
+    }
+    static bool requested(void *context) { return TLinkScriptStopRequested((__bridge TLinkScriptSession *)context); }
+    ~TLinkScriptHelperStopScope() { sTLinkScriptHelperStop = previous; }
+    TLinkScriptHelperStopScope(const TLinkScriptHelperStopScope &) = delete;
+    TLinkScriptHelperStopScope &operator=(const TLinkScriptHelperStopScope &) = delete;
+};
+static NSString *TLinkScriptRunTaskForSession(TLinkScriptSession *session, int taskType, NSString *body)
+{
+    // Keep per-touch and other non-helper tasks on their existing fast path.
+    switch (taskType) {
+        case 11: case 24: case 31: case 54: case 59: case 72: case 74: break;
+        default: return TLinkScriptRunTask(taskType, body);
+    }
+    // Respring intentionally stops the script before invoking its helper.
+    TLinkScriptHelperStopScope scope(session, taskType != 74);
+    return TLinkScriptRunTask(taskType, body);
+}
+// END script-bound direct helper stop scope.
+
 static int TLinkScriptHardwareKeyType(NSString *key)
 {
     NSString *normalized = [[key ?: @"" lowercaseString] stringByReplacingOccurrencesOfString:@"_" withString:@"-"];
@@ -1298,7 +1327,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         TLinkScriptSession *strongSession = weakSession;
         if (TLinkScriptStopRequested(strongSession)) return @"-1;;script_stop_requested";
         NSString *body = bodyValue && ![bodyValue isUndefined] && ![bodyValue isNull] ? [bodyValue toString] : @"";
-        return TLinkScriptRunTask((int)task, body);
+        return TLinkScriptRunTaskForSession(weakSession, (int)task, body);
     };
     device[@"taskResult"] = ^NSDictionary *(double task, JSValue *bodyValue) {
         TLinkScriptSession *strongSession = weakSession;
@@ -1322,7 +1351,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         if (keyType <= 0 || keyAction < 0) {
             return @{@"ok": @NO, @"code": @-1, @"payload": @"hardwareKey supports key home/volume-up/volume-down/lock and action down/up"};
         }
-        NSString *raw = TLinkScriptRunTask(30, [NSString stringWithFormat:@"%d;;%d", keyAction, keyType]);
+        NSString *raw = TLinkScriptRunTaskForSession(weakSession, 30, [NSString stringWithFormat:@"%d;;%d", keyAction, keyType]);
         return TLinkTaskResultFromResponseString(raw);
     };
     device[@"pressHardwareKey"] = ^NSDictionary *(NSString *key) {
@@ -1334,11 +1363,11 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         if (keyType <= 0) {
             return @{@"ok": @NO, @"code": @-1, @"payload": @"pressHardwareKey supports key home/volume-up/volume-down/lock"};
         }
-        NSString *down = TLinkScriptRunTask(30, [NSString stringWithFormat:@"%d;;%d", HID_KEY_ACTION_DOWN, keyType]);
+        NSString *down = TLinkScriptRunTaskForSession(weakSession, 30, [NSString stringWithFormat:@"%d;;%d", HID_KEY_ACTION_DOWN, keyType]);
         NSDictionary *downResult = TLinkTaskResultFromResponseString(down);
         if (![downResult[@"ok"] boolValue]) return downResult;
         usleep(80000);
-        NSString *up = TLinkScriptRunTask(30, [NSString stringWithFormat:@"%d;;%d", HID_KEY_ACTION_UP, keyType]);
+        NSString *up = TLinkScriptRunTaskForSession(weakSession, 30, [NSString stringWithFormat:@"%d;;%d", HID_KEY_ACTION_UP, keyType]);
         NSMutableDictionary *result = [TLinkTaskResultFromResponseString(up) mutableCopy];
         result[@"down"] = downResult;
         return result;
@@ -1365,10 +1394,10 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
                           intervalMs,
                           durationMs,
                           finger];
-        return TLinkTaskResultFromResponseString(TLinkScriptRunTask(task, body));
+        return TLinkTaskResultFromResponseString(TLinkScriptRunTaskForSession(weakSession, task, body));
     };
     device[@"stopTapMacro"] = ^NSDictionary *{
-        return TLinkTaskResultFromResponseString(TLinkScriptRunTask(17, @"stop"));
+        return TLinkTaskResultFromResponseString(TLinkScriptRunTaskForSession(weakSession, 17, @"stop"));
     };
     device[@"pickColor"] = ^NSDictionary *(double x, double y) {
         NSDictionary *result = TLinkScriptTaskResult(weakSession, 23, [NSString stringWithFormat:@"%d;;%d", (int)x, (int)y]);
@@ -6349,8 +6378,11 @@ static NSString *TLinkPrivhelperPath(void)
 static int TLinkRunPrivhelper(NSArray<NSString *> *arguments, int timeoutMs)
 {
     if (arguments.count == 0) return -100;
+    const TLinkVPNHelperChild::Stop stop = sTLinkScriptHelperStop ? *sTLinkScriptHelperStop : TLinkVPNHelperChild::Stop();
+    if (stop.stopped()) return -109;
     NSString *path = TLinkPrivhelperPath();
     if (path.length == 0) return -101;
+    if (stop.stopped()) return -109;
     // BEGIN bounded streamd helper owner.
     TLinkVPNHelperChild::Owner child;
     if (!child.admitted()) return -107;
@@ -6378,17 +6410,23 @@ static int TLinkRunPrivhelper(NSArray<NSString *> *arguments, int timeoutMs)
     }
 
     pid_t pid = -1;
-    int rc = posix_spawn(&pid, cpath, NULL, NULL, argv, environ);
-    if (rc == 0 && pid > 0) child.adopted(pid);
-    for (NSUInteger i = 0; i < argc; i++) {
-        if (argv[i]) free(argv[i]);
+    int rc = -103;
+    @try {
+        if (stop.stopped()) return -109;
+        rc = posix_spawn(&pid, cpath, NULL, NULL, argv, environ);
+        if (rc == 0 && pid > 0) child.adopted(pid);
+    } @finally {
+        for (NSUInteger i = 0; i < argc; i++) {
+            if (argv[i]) free(argv[i]);
+        }
+        free(argv);
     }
-    free(argv);
     if (rc != 0 || pid <= 0) return rc != 0 ? rc : -103;
 
     // BEGIN bounded streamd helper wait.
     const unsigned requested = timeoutMs > 0 ? static_cast<unsigned>(std::max(1, timeoutMs / 100)) * 100U : 3000U;
-    const auto result = child.wait(std::min(requested, 30000U));
+    const auto result = child.wait(std::min(requested, 30000U), TLinkVPNHelperChild::GraceMs, stop);
+    if (result.reason == TLinkVPNHelperChild::Reason::Stopped || stop.stopped()) return -109;
     if (result.reason == TLinkVPNHelperChild::Reason::Timeout) return -106;
     if (result.reason != TLinkVPNHelperChild::Reason::Finished || !result.retired) return -105;
     if (WIFEXITED(result.status)) return WEXITSTATUS(result.status);

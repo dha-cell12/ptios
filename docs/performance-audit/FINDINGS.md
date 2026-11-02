@@ -2519,6 +2519,8 @@ See `BENCHMARK-S010.md` Probe E.
 
 Related helper follow-up (2026-11-02, C06q): the direct short-lived streamd privhelper caller now uses the existing bounded exact-PID owner/reaper instead of a blocking reap after SIGKILL. It retains the shared four-child process quota through unknown completion, preserves ordinary result/argv/spawn source and adds explicit admission/setup refusal. This is separate from the supervisor's legitimate long-lived daemon watcher, which remains unchanged. Caller cancellation, other process waiters, cross-process effects and device qualification remain open. See `IMPLEMENTATION-C06Q.md`.
 
+Related caller follow-up (2026-11-02, C06r): synchronous script task calls now bind the exact session's stop predicate for direct helper preflight/wait/result checks, returning private code -109 on cancellation. Non-helper fast paths, unbound external callers and intentional respring behavior remain; reapers retain child ownership without retaining the script session. Effects cannot be rolled back and task response formatting is unchanged. Queue/network propagation and end-to-end/device qualification remain open. See `IMPLEMENTATION-C06R.md`.
+
 ---
 
 ## P1 — S010 High Priority
