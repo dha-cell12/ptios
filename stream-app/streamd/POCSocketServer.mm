@@ -50,6 +50,7 @@
 #include <leptonica/allheaders.h>
 
 #include "POCSocketServer.h"
+#include "../../shared/TLinkVPNHelperChild.h"
 #include "TouchInjector.h"
 #include "HIDInjectCore.h"
 #include "headers/IOHIDEvent.h"
@@ -6350,6 +6351,11 @@ static int TLinkRunPrivhelper(NSArray<NSString *> *arguments, int timeoutMs)
     if (arguments.count == 0) return -100;
     NSString *path = TLinkPrivhelperPath();
     if (path.length == 0) return -101;
+    // BEGIN bounded streamd helper owner.
+    TLinkVPNHelperChild::Owner child;
+    if (!child.admitted()) return -107;
+    if (!child.ready()) return -108;
+    // END bounded streamd helper owner.
     const char *cpath = [path fileSystemRepresentation];
 
     NSUInteger argc = arguments.count + 2;
@@ -6373,28 +6379,22 @@ static int TLinkRunPrivhelper(NSArray<NSString *> *arguments, int timeoutMs)
 
     pid_t pid = -1;
     int rc = posix_spawn(&pid, cpath, NULL, NULL, argv, environ);
+    if (rc == 0 && pid > 0) child.adopted(pid);
     for (NSUInteger i = 0; i < argc; i++) {
         if (argv[i]) free(argv[i]);
     }
     free(argv);
     if (rc != 0 || pid <= 0) return rc != 0 ? rc : -103;
 
-    int status = 0;
-    int loops = timeoutMs > 0 ? timeoutMs / 100 : 30;
-    if (loops < 1) loops = 1;
-    for (int i = 0; i < loops; i++) {
-        pid_t w = waitpid(pid, &status, WNOHANG);
-        if (w == pid) {
-            if (WIFEXITED(status)) return WEXITSTATUS(status);
-            if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
-            return -104;
-        }
-        if (w < 0) return -105;
-        usleep(100 * 1000);
-    }
-    kill(pid, SIGKILL);
-    waitpid(pid, &status, 0);
-    return -106;
+    // BEGIN bounded streamd helper wait.
+    const unsigned requested = timeoutMs > 0 ? static_cast<unsigned>(std::max(1, timeoutMs / 100)) * 100U : 3000U;
+    const auto result = child.wait(std::min(requested, 30000U));
+    if (result.reason == TLinkVPNHelperChild::Reason::Timeout) return -106;
+    if (result.reason != TLinkVPNHelperChild::Reason::Finished || !result.retired) return -105;
+    if (WIFEXITED(result.status)) return WEXITSTATUS(result.status);
+    if (WIFSIGNALED(result.status)) return 128 + WTERMSIG(result.status);
+    return -104;
+    // END bounded streamd helper wait.
 }
 
 static int TLinkRunPrivhelperOpenBundle(NSString *bundleId)

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {restoreStreamdPrivhelper} from './streamd-privhelper-baseline.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export const oldVPNPrivateScriptCall='TLinkVPNRunPrivateConfigurationHelper(helperPath, request)';
 export const vpnPrivateScriptCall='TLinkVPNRunPrivateConfigurationHelperWithStop(helperPath, request, ^BOOL {\n                    return TLinkScriptStopRequested(strongSession);\n                })';
 export function restoreVPNPrivateCaller(source){
+    source=restoreStreamdPrivhelper(source);
     assert.equal(source.split(vpnPrivateScriptCall).length,2,'one script VPN stop adapter');
     const restored=source.replace(vpnPrivateScriptCall,oldVPNPrivateScriptCall);
     assert.equal(hash(restored),'1f77d0902cccfcb4d9d768ee3e4e58a0cbea01f4fb6771417a1cef3484ec82f3','complete pre-C06b TrollStore script/server source');

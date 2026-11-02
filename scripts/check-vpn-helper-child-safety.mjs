@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {restoreVPNPrivateStop,restoreVPNPrivateCaller,vpnPrivateScriptCall} from './lib/vpn-private-stop-baseline.mjs';
+import {streamdHelper,legacyStreamdHelper} from './lib/streamd-privhelper-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const between=(s,a,b)=>{const x=s.indexOf(a),y=s.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return s.slice(x,y+b.length);};
@@ -14,6 +15,12 @@ const beforeStop=restoreVPNPrivateStop(source);
 const stopBaseline=await read('test/fixtures/vpn-private-request-before-c06b.inc');
 assert.equal(beforeStop,stopBaseline);
 const caller=await read('stream-app/streamd/POCSocketServer.mm');restoreVPNPrivateCaller(caller);
+const directHelper=streamdHelper(caller);
+assert.doesNotMatch(directHelper,/waitpid\(|\bkill\(|usleep\(/);
+assert.ok(directHelper.indexOf('Owner child')<directHelper.indexOf('calloc('));
+assert.ok(directHelper.indexOf('child.adopted(pid)')<directHelper.indexOf('free(argv);',directHelper.indexOf('posix_spawn(')));
+const timeoutLine=directHelper.slice(directHelper.indexOf('    const unsigned requested ='),directHelper.indexOf('    const auto result ='));
+const timeoutProbe='#include <algorithm>\n#include <cassert>\n#include <climits>\nunsigned timeoutFor(int timeoutMs){\n'+timeoutLine+'return std::min(requested,30000U);}\nint main(){for(int n=-10000;n<100000;++n){const auto v=timeoutFor(n);assert(v>=100&&v<=30000);if(n<=0)assert(v==3000);}\nassert(timeoutFor(1500)==1500&&timeoutFor(1510)==1500&&timeoutFor(7000)==7000&&timeoutFor(INT_MAX)==30000&&timeoutFor(INT_MIN)==3000);}\n';
 assert.equal(createHash('sha256').update(before).digest('hex'),'5e00471542cf0f5e31851c3474081dfda7281c76afe85da8eb22417ab8ed192b');
 const admission=between(beforeStop,'    // BEGIN bounded VPN helper admission.','    // END bounded VPN helper admission.');
 const wait=between(beforeStop,'    // BEGIN bounded VPN helper wait.','    // END bounded VPN helper wait.');
@@ -96,8 +103,14 @@ try{
     await writeFile(lookupFile,lookupProbe);
     run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',lookupFile,`/Fe${lookupBinary}`,`/Fo${join(temp,'namespace-lookup.obj')}`]:['-std=c++11','-Wall','-Wextra','-Werror',lookupFile,'-o',lookupBinary]);run(lookupBinary,[]);
     console.log('VPN helper fixture namespace lookup passed: actual forwarding/script wrappers with global public declarations and live stop binding.');
+    const timeoutFile=join(temp,'streamd-timeout.cpp'),timeoutBinary=join(temp,windows?'streamd-timeout.exe':'streamd-timeout');await writeFile(timeoutFile,timeoutProbe);
+    run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',timeoutFile,`/Fe${timeoutBinary}`,`/Fo${join(temp,'streamd-timeout.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',timeoutFile,'-o',timeoutBinary]);run(timeoutBinary,[]);
+    console.log('Streamd helper timeout normalization passed: actual production bounds/default/floor and INT_MIN/INT_MAX.');
     if(process.platform==='darwin'){
         await Promise.all([writeFile(join(temp,'VPNPrivateRequestUnderTest.inc'),nativeSources[0]),writeFile(join(temp,'VPNPrivateRequestLegacy.inc'),nativeSources[1]),writeFile(join(temp,'VPNScriptStopUnderTest.inc'),script)]);
         const runtime=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/vpn-helper-child-runtime-test.mm'),'-o',runtime]);run(runtime,[]);
+        await Promise.all([writeFile(join(temp,'StreamdHelperUnderTest.inc'),directHelper.replace('TLinkVPNHelperChild::Owner child;','TLinkVPNHelperChild::Owner child{fixtureOps()};').replace('child.wait(std::min(requested, 30000U))','child.wait(std::min(requested, fixtureWaitLimit),20)')),
+            writeFile(join(temp,'StreamdHelperLegacy.inc'),legacyStreamdHelper.replaceAll('TLinkRunPrivhelper(','LegacyRunPrivhelper('))]);
+        const streamdRuntime=join(temp,'streamd-helper');run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/streamd-privhelper-runtime-test.mm'),'-o',streamdRuntime]);run(streamdRuntime,[]);
     }else console.log('macOS actual child/reaper/credential transport runtime included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-vpn-child-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
