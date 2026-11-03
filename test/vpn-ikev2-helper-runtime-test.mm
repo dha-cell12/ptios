@@ -10,7 +10,7 @@
 
 // Compile the complete current/frozen wrappers. Only identity, clock, run-loop
 // driving and the asynchronous configuration provider are controlled.
-enum class Mode {Inline,Nil,Never,OnLoop,Duplicate,Slow,ThrowNS,ThrowCPP,Race,Async};
+enum class Mode {Inline,NilResult,Never,OnLoop,Duplicate,Slow,ThrowNS,ThrowCPP,Race,Async};
 static Mode mode=Mode::Inline;
 static uint64_t tick=100,completeAt=300;
 static double wallShift=0,wallJump=0;
@@ -77,7 +77,7 @@ static void TLinkVPNConfigureIKEv2(NSString *server,NSString *remote,NSString *u
     ++starts;heldReply=[completion copy];
     switch(mode){
         case Mode::Inline:completion(providerResult);break;
-        case Mode::Nil:completion(nil);break;
+        case Mode::NilResult:completion(nil);break;
         case Mode::Duplicate:completion(providerResult);completion(@{@"ok":@0,@"code":@"second"});break;
         case Mode::Slow:tick+=30000;completion(providerResult);break;
         case Mode::ThrowNS:completion(providerResult);[NSException raise:@"IKEv2Fixture" format:@"starter"];break;
@@ -162,7 +162,7 @@ static void deadlineCases(){
     }}
     reset();setupOK=false;timeout(call());assert(starts==0);
     reset();tick=UINT64_MAX;timeout(call());assert(starts==0);
-    reset();mode=Mode::Nil;timeout(call());assert(tick==100&&loops==0&&waits==0);lateResultReleased();
+    reset();mode=Mode::NilResult;timeout(call());assert(tick==100&&loops==0&&waits==0);lateResultReleased();
 }
 static void ownershipCases(){
     reset();mode=Mode::Duplicate;NSDictionary *first=call();
