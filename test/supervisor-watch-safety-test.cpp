@@ -1,6 +1,7 @@
 #include "../shared/TLinkSupervisorWatch.h"
 #include "supervisor-watch-wait-fixture.h"
 #include <cstdio>
+#include <initializer_list>
 static unsigned interrupts=0,calls=0;
 static int terminalError=0;
 int main(){

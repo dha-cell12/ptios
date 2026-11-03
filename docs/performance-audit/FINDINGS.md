@@ -2527,6 +2527,8 @@ Related supervisor transport follow-up (2026-11-02, C06t): status/hello/shutdown
 
 Related supervisor read follow-up (2026-11-02, C06u): each probe now reads one hello snapshot for PID and fallback launch path. Failed process-path lookup no longer sends/decodes a second hello or mixes PID/path across two replies; ordinary version/path/state/log/event source remains. Independent selectors and subsequent probes still read fresh responses. Task 97 remains separate, with no atomic identity guarantee or cross-probe cache. Full operation deadlines/cancellation/device qualification remain open. See `IMPLEMENTATION-C06U.md`.
 
+Related watcher follow-up (2026-11-04, C06x): the legitimate long-lived background watcher retries exact-PID waitpid only on EINTR before publishing a terminal result. Its three-second respawn throttle now uses continuous elapsed milliseconds and bounds invalid/regressed clocks to one full throttle. Existing owner queue/state/log/delivery gates remain. No helper timeout, lifecycle generation fencing or active cancellation/coalescing is added; native/device qualification remains pending. See `IMPLEMENTATION-C06X.md`.
+
 ---
 
 ## P1 — S010 High Priority
