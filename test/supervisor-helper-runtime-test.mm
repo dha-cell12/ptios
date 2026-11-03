@@ -3,6 +3,7 @@
 #include "../shared/TLinkVPNHelperChild.h"
 #include "../shared/TLinkSupervisorHelper.h"
 #include "../shared/TLinkSupervisorTaskIO.h"
+#include "../shared/TLinkSupervisorWatch.h"
 #import "../stream-app/app/StreamSupervisor.h"
 #import "LegacySupervisor.h"
 #include <arpa/inet.h>

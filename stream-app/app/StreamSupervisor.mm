@@ -2,6 +2,7 @@
 #include "../../shared/TLinkVPNHelperChild.h"
 #include "../../shared/TLinkSupervisorHelper.h"
 #include "../../shared/TLinkSupervisorTaskIO.h"
+#include "../../shared/TLinkSupervisorWatch.h"
 #import <spawn.h>
 #import <signal.h>
 #import <sys/wait.h>
@@ -49,7 +50,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     dispatch_queue_t _queue;
     pid_t _pid;
     BOOL _running;
-    NSDate *_lastSpawn;
+    uint64_t _lastSpawnContinuous;
     BOOL _requiresReplacement;
 }
 
@@ -618,7 +619,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return;
     }
 
-    self->_lastSpawn = [NSDate date];
+    self->_lastSpawnContinuous = TLinkHelperIO::nowMs();
 
     const char *cpath = [path fileSystemRepresentation];
     char *const argv[] = { (char *)cpath, (char *)"--daemon", NULL };
@@ -638,7 +639,10 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     // Wait for the child on a concurrent queue so the serial _queue stays free.
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         int status = 0;
-        pid_t w = waitpid(pid, &status, 0);
+        pid_t w;
+        do {
+            w = waitpid(pid, &status, 0);
+        } while (w < 0 && errno == EINTR);
         dispatch_async(self->_queue, ^{
             [self handleChildExit:w status:status expectedPid:pid];
         });
@@ -670,8 +674,9 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     }
 
     // Throttle respawn so a crash-loop doesn't spin.
-    NSTimeInterval since = [[NSDate date] timeIntervalSinceDate:self->_lastSpawn];
-    NSTimeInterval delay = (since >= kSCRespawnThrottle) ? 0.0 : (kSCRespawnThrottle - since);
+    const uint64_t delayMs = TLinkSupervisorWatch::remainingMs(self->_lastSpawnContinuous,
+        TLinkHelperIO::nowMs(), static_cast<uint64_t>(kSCRespawnThrottle * 1000.0));
+    NSTimeInterval delay = delayMs / 1000.0;
     [self emitLog:[NSString stringWithFormat:@"supervisor: respawning in %.1fs", delay]];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), self->_queue, ^{
         if (self->_autoRespawn && !self->_running) {

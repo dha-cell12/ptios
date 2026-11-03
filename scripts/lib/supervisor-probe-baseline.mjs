@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreSupervisorWatch} from './supervisor-watch-baseline.mjs';
 export const legacySupervisorProbe=readFileSync(new URL('../../test/fixtures/supervisor-probe-before-c06u.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function supervisorProbe(source){const a=source.indexOf('- (NSDictionary *)streamdHelloStatusLocked'),b=source.indexOf('- (BOOL)ensureServiceLockedWithReplace:',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreSupervisorProbe(source){
+    source=restoreSupervisorWatch(source);
     const restored=source.replace(supervisorProbe(source),legacySupervisorProbe);
     assert.equal(createHash('sha256').update(restored).digest('hex'),'23a92e4a2ccf938cf0d758f3014b92eade78a2f59ebe2c0192cc7cab9f288588',
         'complete prior supervisor: transport/helper/lifecycle/watchdog/fallback/authority source');
