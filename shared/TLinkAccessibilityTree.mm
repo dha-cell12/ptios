@@ -1,4 +1,5 @@
 #include "TLinkNativeDispatch.h"
+#include "TLinkAXSymbolCache.h"
 #import "TLinkAccessibilityTree.h"
 
 #import <UIKit/UIKit.h>
@@ -58,11 +59,18 @@ static NSDictionary *TLinkAXLockState(void)
     __block BOOL locked = TLinkNotifyFlag("com.apple.springboard.lockstate");
     BOOL screenOff = TLinkNotifyFlag("com.apple.springboard.hasBlankedScreen");
     __block BOOL passcodeEnabled = NO;
-    void *sbs = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY | RTLD_LOCAL);
+    static TLinkAXSymbols::Cache symbols(
+        "/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
+        "SBSSpringBoardServerPort", "SBGetScreenLockStatus");
+    const auto resolved = symbols.load(
+        [](const char *path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); },
+        [](void *handle, const char *name) { return dlsym(handle, name); },
+        [](void *handle) { dlclose(handle); });
+    void *sbs = resolved.handle;
     if (sbs) {
-        mach_port_t (*serverPort)(void) = (mach_port_t (*)(void))dlsym(sbs, "SBSSpringBoardServerPort");
+        mach_port_t (*serverPort)(void) = (mach_port_t (*)(void))resolved.first;
         void (*lockStatus)(mach_port_t, BOOL *, BOOL *) =
-            (void (*)(mach_port_t, BOOL *, BOOL *))dlsym(sbs, "SBGetScreenLockStatus");
+            (void (*)(mach_port_t, BOOL *, BOOL *))resolved.second;
         if (serverPort && lockStatus) {
             @try {
                 BOOL sbsLocked = NO;
@@ -81,12 +89,19 @@ static NSDictionary *TLinkAXLockState(void)
 
 static id TLinkAXEntitlementValue(NSString *name)
 {
-    void *security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY | RTLD_LOCAL);
+    static TLinkAXSymbols::Cache symbols(
+        "/System/Library/Frameworks/Security.framework/Security",
+        "SecTaskCreateFromSelf", "SecTaskCopyValueForEntitlement");
+    const auto resolved = symbols.load(
+        [](const char *path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); },
+        [](void *handle, const char *name) { return dlsym(handle, name); },
+        [](void *handle) { dlclose(handle); });
+    void *security = resolved.handle;
     if (!security) return nil;
     typedef CFTypeRef (*CreateTaskFn)(CFAllocatorRef);
     typedef CFTypeRef (*CopyEntitlementFn)(CFTypeRef, CFStringRef, CFErrorRef *);
-    CreateTaskFn createTask = (CreateTaskFn)dlsym(security, "SecTaskCreateFromSelf");
-    CopyEntitlementFn copyValue = (CopyEntitlementFn)dlsym(security, "SecTaskCopyValueForEntitlement");
+    CreateTaskFn createTask = (CreateTaskFn)resolved.first;
+    CopyEntitlementFn copyValue = (CopyEntitlementFn)resolved.second;
     if (!createTask || !copyValue) return nil;
     CFTypeRef task = createTask(kCFAllocatorDefault);
     if (!task) return nil;
