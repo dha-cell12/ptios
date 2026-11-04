@@ -42,6 +42,8 @@ static uint64_t fixtureNow(){return tick;}
 - (void)emitLog:(NSString *)message;
 - (void)emitRunning:(BOOL)running pid:(pid_t)pid;
 - (void)spawnLocked;
+- (void)cancelPendingRespawnLocked;
+- (void)scheduleRespawnLockedWithDelay:(NSTimeInterval)delay;
 - (void)fire;
 - (void)disable;
 - (void)markRunning;
@@ -60,6 +62,10 @@ static void fixtureAfter(WatchHarness *owner,int64_t delay,dispatch_queue_t queu
 - (void)emitLog:(NSString *)message{[_logs addObject:message];}
 - (void)emitRunning:(BOOL)running pid:(pid_t)pid{[_events addObject:@{@"running":@(running),@"pid":@(pid)}];}
 - (void)spawnLocked{++_spawns;}
+- (void)cancelPendingRespawnLocked{_pending=nil;}
+- (void)scheduleRespawnLockedWithDelay:(NSTimeInterval)delay {
+    fixtureAfter(self,static_cast<int64_t>(delay*NSEC_PER_SEC),_queue,^{if(self->_autoRespawn&&!self->_running)[self spawnLocked];});
+}
 - (void)fire{dispatch_block_t block=_pending;_pending=nil;if(block)block();}
 - (void)disable{_autoRespawn=NO;}
 - (void)markRunning{_running=YES;}

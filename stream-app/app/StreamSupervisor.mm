@@ -52,6 +52,8 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     BOOL _running;
     uint64_t _lastSpawnContinuous;
     BOOL _requiresReplacement;
+    dispatch_source_t _respawnTimer;
+    NSObject *_respawnIdentity;
 }
 
 - (instancetype)init
@@ -105,6 +107,56 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     [self ensureService];
 }
 
+// BEGIN owned supervisor respawn.
+- (void)cancelPendingRespawnLocked
+{
+    dispatch_source_t timer = self->_respawnTimer;
+    self->_respawnTimer = nullptr;
+    self->_respawnIdentity = nil;
+    if (timer) {
+        dispatch_source_set_event_handler(timer, ^{});
+        dispatch_source_cancel(timer);
+    }
+}
+
+- (void)scheduleRespawnLockedWithDelay:(NSTimeInterval)delay
+{
+    [self cancelPendingRespawnLocked];
+    NSObject *identity = [NSObject new];
+    if (!identity) {
+        [self emitLog:@"supervisor: respawn token unavailable; explicit ensure required"];
+        return;
+    }
+    dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self->_queue);
+    if (!timer) {
+        [self emitLog:@"supervisor: respawn timer unavailable; explicit ensure required"];
+        return;
+    }
+    dispatch_resume(timer); // Resumed but unarmed until ownership and handler are installed.
+    self->_respawnTimer = timer;
+    self->_respawnIdentity = identity;
+    @try {
+        try {
+            dispatch_source_set_event_handler(timer, ^{
+                if (self->_respawnIdentity != identity) return;
+                [self cancelPendingRespawnLocked];
+                if (self->_autoRespawn && !self->_running) {
+                    [self spawnLocked];
+                }
+            });
+            dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), DISPATCH_TIME_FOREVER, 0);
+        } catch (...) {
+            [self cancelPendingRespawnLocked];
+            throw;
+        }
+    } @catch (NSException *exception) {
+        (void)exception;
+        [self cancelPendingRespawnLocked];
+        @throw;
+    }
+}
+// END owned supervisor respawn.
+
 - (void)ensureService
 {
     [self ensureServiceWithCompletion:nil];
@@ -143,6 +195,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, @"supervisor_helper_pending"); });
             return;
         }
+        [self cancelPendingRespawnLocked];
         self->_autoRespawn = YES;
         BOOL running = [self ensureServiceLockedWithReplace:NO reason:@"ensure"];
         if (!running) {
@@ -169,6 +222,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 - (void)stop
 {
     dispatch_async(_queue, ^{
+        [self cancelPendingRespawnLocked];
         self->_autoRespawn = NO;
         if ([self helperBusyLocked:@"stop"]) return;
         [self requestTaskServerShutdownLocked:@"stop"];
@@ -193,6 +247,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 {
     dispatch_async(_queue, ^{
         if ([self helperBusyLocked:@"restart"]) return;
+        [self cancelPendingRespawnLocked];
         [self emitLog:@"supervisor: restart requested; replacing service streamd"];
         self->_autoRespawn = NO;
         self->_running = NO;
@@ -605,6 +660,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 - (void)spawnLocked
 {
     if ([self helperBusyLocked:@"spawn"]) return;
+    [self cancelPendingRespawnLocked];
     NSString *path = [self streamdPath];
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
         [self emitLog:[NSString stringWithFormat:@"supervisor: streamd not found at %@", path]];
@@ -656,6 +712,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return;
     }
 
+    [self cancelPendingRespawnLocked];
     self->_running = NO;
     self->_pid = -1;
     [self emitRunning:NO pid:-1];
@@ -678,11 +735,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         TLinkHelperIO::nowMs(), static_cast<uint64_t>(kSCRespawnThrottle * 1000.0));
     NSTimeInterval delay = delayMs / 1000.0;
     [self emitLog:[NSString stringWithFormat:@"supervisor: respawning in %.1fs", delay]];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), self->_queue, ^{
-        if (self->_autoRespawn && !self->_running) {
-            [self spawnLocked];
-        }
-    });
+    [self scheduleRespawnLockedWithDelay:delay];
 }
 
 @end

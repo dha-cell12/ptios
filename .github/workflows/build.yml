@@ -97,6 +97,7 @@ jobs:
           node scripts/check-supervisor-task-safety.mjs
           node scripts/check-supervisor-probe-safety.mjs
           node scripts/check-supervisor-watch-safety.mjs
+          node scripts/check-supervisor-respawn-safety.mjs
             node scripts/check-background-task-safety.mjs
             node scripts/check-license-lifecycle-safety.mjs
           node scripts/check-license-reload-safety.mjs

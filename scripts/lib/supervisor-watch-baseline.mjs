@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreSupervisorRespawn} from './supervisor-respawn-baseline.mjs';
 export const legacySupervisorWatch=readFileSync(new URL('../../test/fixtures/supervisor-watch-before-c06x.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function watchWait(source){const a=source.indexOf('        int status = 0;',source.indexOf('- (void)spawnLocked\n')),b=source.indexOf('        dispatch_async(self->_queue,',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function watchExit(source){const a=source.indexOf('- (void)handleChildExit:'),b=source.indexOf('\n@end',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreSupervisorWatch(source){
+    source=restoreSupervisorRespawn(source);
     const restored=source.replace('#include "../../shared/TLinkSupervisorWatch.h"\n','').replace('    uint64_t _lastSpawnContinuous;','    NSDate *_lastSpawn;')
         .replace('    self->_lastSpawnContinuous = TLinkHelperIO::nowMs();','    self->_lastSpawn = [NSDate date];')
         .replace(watchWait(source),watchWait(legacySupervisorWatch)).replace(watchExit(source),watchExit(legacySupervisorWatch));

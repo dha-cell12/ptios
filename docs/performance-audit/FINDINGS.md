@@ -2529,6 +2529,8 @@ Related supervisor read follow-up (2026-11-02, C06u): each probe now reads one h
 
 Related watcher follow-up (2026-11-04, C06x): the legitimate long-lived background watcher retries exact-PID waitpid only on EINTR before publishing a terminal result. Its three-second respawn throttle now uses continuous elapsed milliseconds and bounds invalid/regressed clocks to one full throttle. Existing owner queue/state/log/delivery gates remain. No helper timeout, lifecycle generation fencing or active cancellation/coalescing is added; native/device qualification remains pending. See `IMPLEMENTATION-C06X.md`.
 
+Related scheduled-respawn follow-up (2026-11-04, C06y): one owned/resumed dispatch source replaces dispatch-after. Lifecycle cancellation clears its handler/owner; an object identity rejects stale or duplicate delivery and cannot clear a newer timer. Delivery retires ownership before the existing spawn gate/effect, including reentry. Admission/busy placement is guarded; allocation/setup faults leave no active owner. This fences scheduled work only, with direct-child process identity, running-work cancellation and device qualification still open. See `IMPLEMENTATION-C06Y.md`.
+
 ---
 
 ## P1 — S010 High Priority
