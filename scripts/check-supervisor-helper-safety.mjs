@@ -43,6 +43,7 @@ try{
     run(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',file,'-o',binary]);run(binary,[]);
     if(process.platform==='darwin'){
         const adapt=s=>s.slice(s.indexOf('static const NSTimeInterval kSCRespawnThrottle'))
+            .replaceAll('dispatch_async(_queue, ^{','fixtureOwnerEnqueue(self, _queue, ^{')
             .replaceAll('TLinkVPNHelperChild::posixOps(), helperLease','fixtureOps(), helperLease').replaceAll('child.wait()','child.wait(fixtureTimeout,20)');
         const legacy=adapt(before).replaceAll('SCStreamSupervisor','SCLegacySupervisor').replaceAll('kSCRespawnThrottle','kLegacyRespawnThrottle')
             .replaceAll('kSCRequiredStreamdServiceMarker','kLegacyRequiredStreamdServiceMarker').replaceAll('kSCRequiredVPNServiceMarker','kLegacyRequiredVPNServiceMarker');

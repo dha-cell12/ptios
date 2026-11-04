@@ -2533,6 +2533,8 @@ Related scheduled-respawn follow-up (2026-11-04, C06y): one owned/resumed dispat
 
 Related direct-child follow-up (2026-11-04, C06z): a token allocated before spawn is adopted only on success and captured by its watcher. Owner delivery retires only the matching token before invoking the unchanged PID/exit/respawn policy, preventing old or duplicate callbacks from mutating a newer direct run with the same PID. Accepted stop/restart/replacement revoke ownership while background reaping continues; busy refusal preserves it. This is an app-managed lifecycle identity, not kernel process attestation or proof for externally adopted daemons. Active cancellation and native/device qualification remain open. See `IMPLEMENTATION-C06Z.md`.
 
+Related admission follow-up (2026-11-04, C06aa): ensure acquires one of eight per-instance leases before owner enqueue. A saturated request is refused on main without running/queue-retaining its permission; accepted work releases before completion and via scope on nil return/unwind. This bounds ensure count, preserving admitted lifecycle effects and helper/reaper busy policy. It adds no coalescing, time bound, active cancellation or cap for other owner commands/main callback delivery. Extended complete-supervisor native cases await macOS CI. See `IMPLEMENTATION-C06AA.md`.
+
 ---
 
 ## P1 — S010 High Priority

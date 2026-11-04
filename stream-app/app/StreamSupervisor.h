@@ -42,6 +42,8 @@
 // Optional admission runs once on the supervisor queue before any ensure effects.
 // NO or an exception refuses this request; completion remains asynchronous on main.
 // This does not cancel work after admission. The permission must be short/nonblocking.
+// Up to eight ensures may be active/queued per instance. Excess requests receive
+// supervisor_ensure_queue_full on main without invoking startPermission.
 - (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission
                             completion:(void (^)(BOOL running, NSString *detail))completion;
 

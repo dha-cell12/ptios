@@ -3,6 +3,7 @@
 #include "../../shared/TLinkSupervisorHelper.h"
 #include "../../shared/TLinkSupervisorTaskIO.h"
 #include "../../shared/TLinkSupervisorWatch.h"
+#include "../../shared/TLinkSupervisorEnsureAdmission.h"
 #import <spawn.h>
 #import <signal.h>
 #import <sys/wait.h>
@@ -55,6 +56,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     dispatch_source_t _respawnTimer;
     NSObject *_respawnIdentity;
     NSObject *_directChildIdentity;
+    std::shared_ptr<TLinkSupervisorEnsureAdmission::State> _ensureAdmission;
 }
 
 - (instancetype)init
@@ -62,6 +64,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     self = [super init];
     if (self) {
         _queue = dispatch_queue_create("com.tlinkauto.streamcontrol.supervisor", DISPATCH_QUEUE_SERIAL);
+        _ensureAdmission = std::make_shared<TLinkSupervisorEnsureAdmission::State>();
         _pid = -1;
         _running = NO;
         _requiresReplacement = NO;
@@ -171,7 +174,16 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 - (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission
                             completion:(void (^)(BOOL running, NSString *detail))completion
 {
+    // BEGIN bounded supervisor ensure admission.
+    auto ensureLease = std::make_shared<TLinkSupervisorEnsureAdmission::Lease>(_ensureAdmission);
+    if (!ensureLease->held()) {
+        if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, @"supervisor_ensure_queue_full"); });
+        else [self emitLog:@"supervisor: ensure queue full; explicit retry required"];
+        return;
+    }
+    // END bounded supervisor ensure admission.
     dispatch_async(_queue, ^{
+        TLinkSupervisorEnsureAdmission::Scope admissionScope{ensureLease};
         // BEGIN supervisor ensure start permission.
         if (startPermission) {
             BOOL admitted = NO;
@@ -187,12 +199,14 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
                 refusal = @"supervisor_ensure_admission_exception";
             }
             if (!admitted) {
+                ensureLease->release();
                 if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, refusal); });
                 return;
             }
         }
         // END supervisor ensure start permission.
         if ([self helperBusyLocked:@"ensure"]) {
+            ensureLease->release();
             if (completion) dispatch_async(dispatch_get_main_queue(), ^{ completion(NO, @"supervisor_helper_pending"); });
             return;
         }
@@ -213,6 +227,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
                                 self->_pid,
                                 kSCRequiredStreamdServiceMarker,
                                 kSCRequiredVPNServiceMarker];
+            ensureLease->release();
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(running, detail);
             });

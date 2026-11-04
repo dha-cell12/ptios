@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C06aa (04/11/2026): người dùng báo C06z build pass (`bdb05d57`). Supervisor giới hạn 8 ensure active/queued mỗi instance, admission trước enqueue; vượt giới hạn trả queue_full trên main, không chạy/giữ permission ở owner queue. Slot được trả trước completion và theo scope khi unwind/nil completion. 86 runner/521 source check pass Windows. Không gộp request hay thêm retry; native fixture mở rộng chờ CI. Chi tiết: IMPLEMENTATION-C06AA.md.
+
 Cập nhật triển khai C06z (04/11/2026): người dùng báo C06y build pass (`5f61cb4f`). Direct spawn cấp token trước syscall và chỉ nhận ownership sau thành công; callback cần đúng token rồi retire trước cập nhật state/respawn, kể cả khi PID trùng. Stop/restart/replacement đã qua busy gate vô hiệu hóa callback cũ; background vẫn reap child. 85 runner/521 source check pass Windows. Không phải kernel process attestation; native mới chờ CI. Chi tiết: IMPLEMENTATION-C06Z.md.
 
 Cập nhật triển khai C06y (04/11/2026): người dùng báo C06x build pass (`7b50bf56`). Respawn dùng dispatch source do supervisor sở hữu, hủy tại các điểm lifecycle sau admission; token chặn callback cũ/trùng và timer được dọn trước spawn. Giữ throttle continuous 3s cùng gate/busy policy hiện có. 84 runner/521 source check pass Windows; native fixture mới chờ CI. Direct-child identity và active cancellation còn mở. Chi tiết: IMPLEMENTATION-C06Y.md.
@@ -293,7 +295,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 | C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58, P2-16 | **C03a–C03ab đã build pass theo người dùng; device qualification còn mở.** Còn elapsed liên tiến trình, codec JSON, power-loss/index/orphan/event recovery, phần khóa/retention/status còn lại. Giữ text/base64 và chốt durability trước thay journal format. |
 | C04 | P0-19, P1-62, P1-63 | **C04a–C04k build pass theo người dùng; device qualification còn mở: IMPLEMENTATION-C04K.md.** Còn CF wait không preempt, legacy/direct callers, manager cancel/coalescing và private backend; capability khác. Chưa đóng qualification toàn đường gọi. |
 | C05 | P0-20, P1-59, P1-60, P1-61, P1-64 | AX scanned-work budget, cancellation, string/output ceiling; selector scan hợp đồng rõ; cache symbol/capability; giữ foreground safety guard. |
-| C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | **C06a–y build pass theo người dùng; C06z direct-child callback identity đã triển khai source, chờ CI/device: IMPLEMENTATION-C06Z.md.** Còn caller khác/end-to-end deadline, supervisor active cancellation/coalescing; BGTask per-subscriber cancel xuống HTTP và ensure đã thắng start permission; diagnostics IO còn lại; broker/async/private polling và full enumeration; duplicate keyboard delivery cần đo. Transaction lease/checkpoint cần crash recovery riêng. |
+| C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | **C06a–z build pass theo người dùng; C06aa bounded supervisor ensure admission đã triển khai source, chờ CI/device: IMPLEMENTATION-C06AA.md.** Còn caller khác/end-to-end deadline, supervisor active cancellation/coalescing; BGTask per-subscriber cancel xuống HTTP và ensure đã thắng start permission; diagnostics IO còn lại; broker/async/private polling và full enumeration; duplicate keyboard delivery cần đo. Transaction lease/checkpoint cần crash recovery riêng. |
 
 ### Đợt 4: đo trước hoặc theo phạm vi
 
@@ -333,7 +335,7 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P0-20 | Tối ưu có ràng buộc | shared/TLinkAccessibilityTree.mm:656,740 cap theo rows, find dựa snapshot và matches; giữ completeness/foreground contract. C05. |
 | P0-21 | Loại khỏi kế hoạch | poc-trollstore/TunnelExtension/ProviderTCPServer.mm:93,109 client loop cùng accept queue, EAGAIN ngủ 5ms. Không triển khai TouchPOC. |
 | P0-22 | Sửa từng phần | C06a/b build pass: cửa sổ 30s, TERM/KILL grace, owner/reaper/cap và stop script vào preflight/wait/result. C06s source sửa race/first-result/deadline trong wrapper IKEv2 chạy bên trong helper; không đổi parent transport hay rollback. Caller khác, end-to-end deadline, transaction và device còn mở. IMPLEMENTATION-C06S.md. |
-| P0-23 | Sửa từng phần | C06c/q/r/t/u/x/y build pass: owner/reaper/cap, script stop, task IO/hello, watcher EINTR/throttle và owned respawn. C06z source gắn identity cho direct spawn thành công, retire callback đúng lượt trước state/respawn và revoke khi stop/restart/replacement được chấp nhận. Kernel identity/external adoption, active cancellation, toàn thao tác/coalescing/device còn mở. Busy stop/restart cần retry. IMPLEMENTATION-C06Z.md. |
+| P0-23 | Sửa từng phần | C06c/q/r/t/u/x/y/z build pass: owner/reaper, script stop, task IO/hello, watcher/throttle/respawn và direct-child callback identity. C06aa source chặn quá 8 ensure active/queued mỗi instance trước enqueue, trả slot trước completion/unwind. Kernel identity/external adoption, active cancellation, toàn thao tác/coalescing/device còn mở. Busy stop/restart/ensure cần retry rõ ràng. IMPLEMENTATION-C06AA.md. |
 | P0-24 | Tối ưu quan trọng | shared/TLinkLicenseVerifier.mm:1333–1353 refresh TTL 5s trong dispatch_sync; pccontrol/Makefile bật authority client. B05. |
 
 ### P1

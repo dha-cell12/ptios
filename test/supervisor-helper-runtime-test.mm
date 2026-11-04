@@ -4,6 +4,7 @@
 #include "../shared/TLinkSupervisorHelper.h"
 #include "../shared/TLinkSupervisorTaskIO.h"
 #include "../shared/TLinkSupervisorWatch.h"
+#include "../shared/TLinkSupervisorEnsureAdmission.h"
 #import "../stream-app/app/StreamSupervisor.h"
 #import "LegacySupervisor.h"
 #include <arpa/inet.h>
@@ -18,6 +19,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 #include "../shared/TLinkBackgroundTaskRun.h"
 extern char **environ;
 #ifndef POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE
@@ -68,6 +70,13 @@ static int fixtureSpawn(pid_t *pid,const char *path,const posix_spawn_file_actio
     char shell[]="/bin/sh",flag[]="-c",success[]="exit 0",failure[]="exit 7";char *childArgs[]={shell,flag,mode==Exit7?failure:success,nullptr};
     const int result=::posix_spawn(pid,shell,nullptr,nullptr,childArgs,environ);if(!result)lastChild=*pid;return result;
 }
+static bool holdOwnerEnqueue=false;
+static dispatch_block_t heldOwnerWork;
+static void fixtureOwnerEnqueue(id owner,dispatch_queue_t queue,dispatch_block_t block){
+    (void)owner;
+    if(holdOwnerEnqueue){assert(!heldOwnerWork);heldOwnerWork=[block copy];return;}
+    dispatch_async(queue,block);
+}
 #define strdup fixtureStrdup
 #define free fixtureFree
 #define posix_spawn fixtureSpawn
@@ -92,9 +101,11 @@ static int fixtureSpawn(pid_t *pid,const char *path,const posix_spawn_file_actio
 #undef kill
 @interface SCStreamSupervisor (FixtureQueue)
 - (dispatch_queue_t)fixtureQueue;
+- (unsigned)fixturePendingEnsures;
 @end
 @implementation SCStreamSupervisor (FixtureQueue)
 - (dispatch_queue_t)fixtureQueue {return _queue;}
+- (unsigned)fixturePendingEnsures {return _ensureAdmission->pending();}
 @end
 @protocol PrivateMethods
 - (int)runPrivhelperKillStreamdLocked;
@@ -151,7 +162,7 @@ FIXTURE_METHODS
 #define ADMISSION_METHODS \
 - (BOOL)ensureServiceLockedWithReplace:(BOOL)replace reason:(NSString *)reason { \
     assert(!replace&&[reason isEqualToString:@"ensure"]);++_ensures; \
-    if(_started){dispatch_semaphore_signal(_started);assert(dispatch_semaphore_wait(_releaseProvider,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);} \
+    if(_started&&_ensures==1){dispatch_semaphore_signal(_started);assert(dispatch_semaphore_wait(_releaseProvider,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);} \
     return _providerRunning; \
 } \
 - (void)spawnLocked {++_fallbacks;} \
@@ -163,6 +174,17 @@ ADMISSION_METHODS
 ADMISSION_METHODS
 @end
 #undef ADMISSION_METHODS
+@interface EnsureFaultFixture:AdmissionFixture
+@property int ensureFault;
+@end
+@implementation EnsureFaultFixture
+- (BOOL)ensureServiceLockedWithReplace:(BOOL)replace reason:(NSString *)reason {
+    (void)replace;(void)reason;
+    if(_ensureFault==1)[NSException raise:@"EnsureFixture" format:@"owner fault"];
+    if(_ensureFault==2)throw std::runtime_error("owner fault");
+    return YES;
+}
+@end
 struct EnsureReply {
     std::atomic<unsigned> calls{0};
     BOOL running=NO;
@@ -323,6 +345,62 @@ static void admissionCases(){
         }
     }
 }
+static void queuedEnsureAdmissionCases(){
+    @autoreleasepool{
+        AdmissionFixture *supervisor=[AdmissionFixture new];supervisor.providerRunning=YES;
+        dispatch_semaphore_t entered=dispatch_semaphore_create(0),release=dispatch_semaphore_create(0);
+        dispatch_async([supervisor fixtureQueue],^{dispatch_semaphore_signal(entered);waitSemaphore(release);});waitSemaphore(entered);
+        auto permissions=std::make_shared<std::atomic<unsigned>>(0);auto reentry=std::make_shared<EnsureReply>();
+        std::vector<std::shared_ptr<EnsureReply>> replies;
+        for(unsigned n=0;n<8;++n){
+            auto result=std::make_shared<EnsureReply>();replies.push_back(result);EnsureCompletion reply=completionFor(result);
+            EnsureCompletion completion=reply;
+            if(!n)completion=^(BOOL running,NSString *detail){
+                assert([supervisor fixturePendingEnsures]<8);
+                [supervisor ensureServiceWithCompletion:completionFor(reentry)];reply(running,detail);
+            };
+            [supervisor ensureServiceWithStartPermission:^BOOL{++*permissions;return YES;} completion:completion];
+        }
+        assert([supervisor fixturePendingEnsures]==8&&permissions->load()==0);
+        auto rejected=std::make_shared<EnsureReply>();__weak NSObject *weakCapture;
+        @autoreleasepool{
+            NSObject *capture=[NSObject new];weakCapture=capture;
+            [supervisor ensureServiceWithStartPermission:^BOOL{(void)[capture description];++*permissions;return YES;} completion:completionFor(rejected)];
+        }
+        assert(!weakCapture&&rejected->calls.load()==0);awaitReply(rejected);
+        assert(!rejected->running&&[rejected->detail isEqualToString:@"supervisor_ensure_queue_full"]&&permissions->load()==0&&[supervisor fixturePendingEnsures]==8);
+        [supervisor ensureServiceWithCompletion:nil];awaitLog(@"ensure queue full");assert([supervisor fixturePendingEnsures]==8);
+        dispatch_semaphore_signal(release);
+        for(const auto &reply:replies){awaitReply(reply);assert(reply->running);}
+        awaitReply(reentry);drainQueue(supervisor);
+        assert(reentry->running&&supervisor.ensures==9&&permissions->load()==8&&[supervisor fixturePendingEnsures]==0);
+    }
+    @autoreleasepool{
+        AdmissionFixture *supervisor=[AdmissionFixture new];supervisor.providerRunning=YES;
+        supervisor.started=dispatch_semaphore_create(0);supervisor.releaseProvider=dispatch_semaphore_create(0);
+        std::vector<std::shared_ptr<EnsureReply>> replies;
+        auto first=std::make_shared<EnsureReply>();replies.push_back(first);[supervisor ensureServiceWithCompletion:completionFor(first)];waitSemaphore(supervisor.started);
+        for(unsigned n=0;n<7;++n){auto reply=std::make_shared<EnsureReply>();replies.push_back(reply);[supervisor ensureServiceWithCompletion:completionFor(reply)];}
+        assert([supervisor fixturePendingEnsures]==8);
+        auto rejected=std::make_shared<EnsureReply>();[supervisor ensureServiceWithCompletion:completionFor(rejected)];awaitReply(rejected);
+        assert(!rejected->running&&[rejected->detail isEqualToString:@"supervisor_ensure_queue_full"]);
+        dispatch_semaphore_signal(supervisor.releaseProvider);
+        for(const auto &reply:replies){awaitReply(reply);assert(reply->running);}
+        drainQueue(supervisor);assert([supervisor fixturePendingEnsures]==0);
+    }
+    for(int kind=1;kind<=2;++kind){@autoreleasepool{
+        EnsureFaultFixture *supervisor=[EnsureFaultFixture new];supervisor.ensureFault=kind;
+        holdOwnerEnqueue=true;[supervisor ensureServiceWithCompletion:nil];holdOwnerEnqueue=false;
+        assert(heldOwnerWork&&[supervisor fixturePendingEnsures]==1);
+        dispatch_block_t work=heldOwnerWork;heldOwnerWork=nil;bool caught=false;
+        @try{try{work();}catch(const std::runtime_error &){caught=true;}}
+        @catch(NSException *exception){(void)exception;caught=true;}
+        // The job block is still retained here; stack scope must retire its lease.
+        assert(caught&&[supervisor fixturePendingEnsures]==0);
+        supervisor.ensureFault=0;auto recovered=std::make_shared<EnsureReply>();[supervisor ensureServiceWithCompletion:completionFor(recovered)];awaitReply(recovered);drainQueue(supervisor);
+        assert(recovered->running&&[supervisor fixturePendingEnsures]==0);
+    }}
+}
 int main(){@autoreleasepool{
     logs=[NSMutableArray array];arguments=[NSMutableArray array];
     NSString *root=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"tlink-supervisor-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
@@ -330,8 +408,8 @@ int main(){@autoreleasepool{
     helperPath=[root stringByAppendingPathComponent:@"privhelper"];daemonPath=[root stringByAppendingPathComponent:@"streamd"];
     for(NSString *path in @[helperPath,daemonPath]){assert([@"#!/bin/sh\nexit 0\n" writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nullptr]);assert(chmod(path.fileSystemRepresentation,0700)==0);}
     puts("Supervisor helper Foundation: complete current/frozen supervisor, real disposable children and controlled daemon/persona effects");
-    normalCases();pendingCases();admissionCases();
+    normalCases();pendingCases();admissionCases();queuedEnsureAdmissionCases();
     for(unsigned n=0;n<64;++n){dupCalls=0;assert(invoke([CurrentFixture new],n%3)==0);drain();reaped();}
     assert([[NSFileManager defaultManager] removeItemAtPath:root error:nullptr]);
-    puts("Supervisor helper Foundation passed: frozen argv/persona/exit/fault parity, spawn attributes, bounded unreaped wait, retained process lane, busy lifecycle/fallback fences, legacy/nil/allowed owner-start parity, NS/C++ permission refusal, 64 expired real-queue requests, admitted-work boundary, 200 start/finish races, nil completion, late retirement and 64 balanced helper cycles. No real service or privileged helper controlled; active cancellation/device qualification pending.");
+    puts("Supervisor helper Foundation passed: frozen helper/lifecycle parity, bounded child ownership, permission/expiry gates, eight queued/active ensure slots, ninth main refusal without permission capture, completion reentry, NS/C++ scope retirement/recovery and balanced helper lifecycles. No real service or privileged helper controlled; active cancellation/device qualification pending.");
 }return 0;}

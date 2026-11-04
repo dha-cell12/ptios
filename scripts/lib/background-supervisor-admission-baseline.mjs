@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {restoreSupervisorTask} from './supervisor-task-baseline.mjs';
+import {restoreSupervisorEnsureHeader} from './supervisor-ensure-admission-baseline.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const once=(source,text)=>assert.equal(source.split(text).length,2,'one C06e addition: '+text.slice(0,80));
 export function restoreSupervisorStartPermission(source){
@@ -19,6 +20,7 @@ export function restoreSupervisorStartPermission(source){
     return restored;
 }
 export function restoreSupervisorStartHeader(source){
+    source=restoreSupervisorEnsureHeader(source);
     const addition='// Optional admission runs once on the supervisor queue before any ensure effects.\n// NO or an exception refuses this request; completion remains asynchronous on main.\n// This does not cancel work after admission. The permission must be short/nonblocking.\n- (void)ensureServiceWithStartPermission:(BOOL (^)(void))startPermission\n                            completion:(void (^)(BOOL running, NSString *detail))completion;\n\n';
     once(source,addition);const restored=source.replace(addition,'');
     assert.equal(hash(restored),'4bba2d1f6c0ddab9117f82c1cbe260b2ac4d68d5971ef65b15d38282449a8db3','complete pre-C06e public supervisor API');
