@@ -2289,6 +2289,8 @@ Cache framework handles/symbol pointers and stable entitlement capability values
 
 Implementation follow-up (2026-11-04, C05a): the lock-state SpringBoardServices and entitlement Security helpers now pin one loader reference/cache each successful symbol pair. Retry missing libraries/symbols, preserve live notify/private lock/SecTask/value calls and all result/CF ownership rules. Atomic publication balances concurrent extra opens without holding a cache lock through loader calls. Entitlement-value/notification/foreground work and device qualification remain open. Portable races/reentry/retry tests pass; new actual/frozen Foundation/CF cases await macOS CI. See `IMPLEMENTATION-C05A.md`.
 
+Implementation follow-up (2026-11-05, C05g): foreground SBS fallback now pins one handle, caches both copy functions and resolves server/legacy symbols against the same handle on fallback. Successful symbols stay cached; missing opens/lookups retry, and concurrent surplus opens close. Provider order, fresh bundle values, CF ownership/parser/fault handling and complete PID/action guard source are preserved; the copy cache probes both symbol slots eagerly. Native complete current/frozen tests await macOS CI. No bundle/PID cache or device-gain claim; missing-secondary lookup, process enumeration, notify/SecTask/value work remain. See `IMPLEMENTATION-C05G.md`.
+
 ---
 
 ### [P1-62] Frequent Task-60 status snapshots redo ten VPN entitlement queries plus mutable compatibility filesystem probing

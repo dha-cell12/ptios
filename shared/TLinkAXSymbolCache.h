@@ -5,6 +5,31 @@
 namespace TLinkAXSymbols {
 struct Snapshot {void *handle;void *first;void *second;};
 
+// A fixed symbol borrowed from one caller-pinned library. Never opens/closes
+// the handle. Successful pointers stay published; missing lookups retry.
+class Symbol {
+    const char *name_;
+    std::atomic<void *> value_{nullptr};
+public:
+    explicit Symbol(const char *name):name_(name){}
+    Symbol(const Symbol &)=delete;
+    Symbol &operator=(const Symbol &)=delete;
+    template<class Lookup>
+    void *load(void *handle,Lookup lookup){
+        if(!handle)return nullptr;
+        void *value=value_.load(std::memory_order_acquire);
+        if(!value){
+            void *found=lookup(handle,name_);
+            if(found){
+                void *empty=nullptr;
+                value_.compare_exchange_strong(empty,found,std::memory_order_acq_rel,std::memory_order_acquire);
+            }
+            value=value_.load(std::memory_order_acquire);
+        }
+        return value;
+    }
+};
+
 // Fixed library/symbol names per instance. One successful dlopen reference is
 // pinned for process lifetime; concurrent extra references are balanced. No
 // cache lock is held across loader calls (which can re-enter application code).

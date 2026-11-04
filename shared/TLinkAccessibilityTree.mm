@@ -225,7 +225,14 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
 
 static NSString *TLinkAXFrontmostBundleID(void)
 {
-    void *sbs = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY | RTLD_LOCAL);
+    static TLinkAXSymbols::Cache copySymbols(
+        "/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
+        "SBSCopyFrontmostApplicationDisplayIdentifier", "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay");
+    const auto resolved = copySymbols.load(
+        [](const char *path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); },
+        [](void *handle, const char *name) { return dlsym(handle, name); },
+        [](void *handle) { dlclose(handle); });
+    void *sbs = resolved.handle;
     if (!sbs) return nil;
     const char *symbols[] = {
         "SBSCopyFrontmostApplicationDisplayIdentifier",
@@ -233,7 +240,7 @@ static NSString *TLinkAXFrontmostBundleID(void)
         NULL,
     };
     for (NSUInteger index = 0; symbols[index]; index++) {
-        CFStringRef (*copyFrontmost)(void) = (CFStringRef (*)(void))dlsym(sbs, symbols[index]);
+        CFStringRef (*copyFrontmost)(void) = (CFStringRef (*)(void))(index == 0 ? resolved.first : resolved.second);
         if (!copyFrontmost) continue;
         CFStringRef value = copyFrontmost();
         if (!value) continue;
@@ -242,10 +249,12 @@ static NSString *TLinkAXFrontmostBundleID(void)
         if (bundleID.length > 0) return bundleID;
     }
 
-    mach_port_t (*serverPort)(void) =
-        (mach_port_t (*)(void))dlsym(sbs, "SBSSpringBoardServerPort");
-    void (*legacyFrontmost)(mach_port_t, char *) =
-        (void (*)(mach_port_t, char *))dlsym(sbs, "SBFrontmostApplicationDisplayIdentifier");
+    static TLinkAXSymbols::Symbol serverPortSymbol("SBSSpringBoardServerPort");
+    static TLinkAXSymbols::Symbol legacyFrontmostSymbol("SBFrontmostApplicationDisplayIdentifier");
+    mach_port_t (*serverPort)(void) = (mach_port_t (*)(void))serverPortSymbol.load(sbs,
+        [](void *handle, const char *name) { return dlsym(handle, name); });
+    void (*legacyFrontmost)(mach_port_t, char *) = (void (*)(mach_port_t, char *))legacyFrontmostSymbol.load(sbs,
+        [](void *handle, const char *name) { return dlsym(handle, name); });
     if (serverPort && legacyFrontmost) {
         char displayIdentifier[512] = {0};
         @try {

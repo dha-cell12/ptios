@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXFrontmostSymbols} from './ax-frontmost-symbols-baseline.mjs';
 export const legacyAXNodePool=readFileSync(new URL('../../test/fixtures/ax-snapshot-before-c05f.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axNodePoolSnapshot(source){const a=source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('),b=source.indexOf('NSDictionary *TLinkAXCopySnapshot(pid_t',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXNodePool(source){
+    source=restoreAXFrontmostSymbols(source);
     const a=legacyAXNodePool.indexOf('        scanned++;'),b=legacyAXNodePool.indexOf('    }\n    if (TLinkNativeStopped()) return TLinkAXError',a);
     assert.ok(a>=0&&b>a);
     const body=legacyAXNodePool.slice(a,b).split('\n').map(line=>line?'    '+line:line).join('\n');
