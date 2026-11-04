@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreVerificationSnapshot} from './vpn-verification-snapshot-baseline.mjs';
 export const legacyVPNRecords=readFileSync(new URL('../../test/fixtures/vpn-records-before-c06ac.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function vpnRecords(source){const a=source.indexOf('static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords('),b=source.indexOf('static NSDictionary *TLinkVPNPrivateFindConfiguration(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreVPNRecords(source){
+    source=restoreVerificationSnapshot(source);
     const oldScan=`            for (NSDictionary *existing in records) {
                 if ([existing[@"identifier"] isEqualToString:identifier]) {
                     return;

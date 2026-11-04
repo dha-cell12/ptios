@@ -2627,6 +2627,8 @@ Implementation follow-up (2026-11-02, C06n): the cleanup disconnect phase now us
 
 Implementation follow-up (2026-11-04, C06ac): a per-call set replaces quadratic fallback identifier membership scans for ordinary immutable strings. Preserve primary duplicates, fallback first-wins/order, provider selectors and raw identifier ownership; any retained mutable ID or incoming mutable query uses the preceding live comparison loop. Full enumeration, 100ms cadence, profile/authority/budget source and synchronous calls remain. New actual/frozen Foundation cases and private-store/device qualification await macOS CI. See `IMPLEMENTATION-C06AC.md`.
 
+Implementation follow-up (2026-11-04, C06ad): drain the initial record snapshot before create, retaining only the existing identifier set and scalar initial count for verification/replies. This removes surplus initial array/record/raw-owner retention across the verification phase, without changing polling, provider calls or profile/authority effects. New actual/preceding lifetime and result-parity cases await macOS CI; private-store memory/device qualification remains open. See `IMPLEMENTATION-C06AD.md`.
+
 ---
 
 ### [P1-68] TrollStore VPN brokers have opposite concurrency failures: foreground broker is single-client HOL, vpnagent has unbounded per-client global workers

@@ -7,6 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {privateTransition,privatePollingAdapter,legacyPrivateTransition,restoreVPNPrivatePolling} from './lib/vpn-private-polling-baseline.mjs';
 import {privateConfigure,privateVerificationAdapter,privateVerificationLoop,legacyPrivateConfigure} from './lib/vpn-private-verification-baseline.mjs';
 import {privateCleanup,privateCleanupAdapter,legacyPrivateCleanup} from './lib/vpn-private-cleanup-baseline.mjs';
+import {legacyVerificationSnapshot} from './lib/vpn-verification-snapshot-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkVPNManager.mm');restoreVPNPrivatePolling(source);
@@ -36,12 +37,13 @@ const fixtures={
         .replaceAll('[NSDate timeIntervalSinceReferenceDate]','fixtureWallNow()').replaceAll('usleep(','fixtureSleep('),
     'PrivateVPNVerificationUnderTest.inc':adaptVerification(verification),
     'PrivateVPNVerificationLegacy.inc':adaptVerification(legacyPrivateConfigure.replaceAll('TLinkVPNPrivateConfigureLegacySync','LegacyPrivateConfigureSync')),
+    'PrivateVPNVerificationSnapshotLegacy.inc':adaptVerification(legacyVerificationSnapshot.replaceAll('TLinkVPNPrivateConfigureLegacySync','LegacySnapshotConfigureSync')),
     'PrivateVPNStatusFields.inc':source.slice(source.indexOf('static NSDictionary *TLinkVPNPrivateStatusFields('),source.indexOf('static NSDictionary *TLinkVPNPrivateReadStatusSync(')),
     'PrivateVPNCleanupUnderTest.inc':adaptVerification(cleanup),
     'PrivateVPNCleanupLegacy.inc':adaptVerification(legacyPrivateCleanup.replaceAll('TLinkVPNPrivateRemoveOwnedProfileSync','LegacyPrivateRemoveOwnedProfileSync')),
 };
 assert.ok(!fixtures['PrivateVPNTransitionUnderTest.inc'].includes('TLinkHelperIO::nowMs()'));
-console.log('Private VPN polling source passed: continuous transition/creation-verification windows, unique candidate parity without delta array, main-run-loop wait, scoped probe pools and complete previous manager source.');
+console.log('Private VPN polling source passed: continuous transition/creation-verification windows, scoped initial snapshot/count, unique candidate parity without delta array, main-run-loop wait, scoped probe pools and complete previous manager source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-vpn-private-poll-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

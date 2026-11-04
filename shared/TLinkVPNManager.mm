@@ -696,12 +696,17 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
     }
 
     NSDictionary *oldMarker = TLinkVPNPrivateLoadMarker();
-    NSArray<NSDictionary *> *beforeRecords =
-        TLinkVPNPrivateConfigurationRecords(store);
-    NSMutableSet<NSString *> *beforeIdentifiers = [NSMutableSet set];
-    for (NSDictionary *record in beforeRecords) {
-        NSString *identifier = record[@"identifier"];
-        if (identifier.length > 0) [beforeIdentifiers addObject:identifier];
+    NSUInteger beforeRecordCount = 0;
+    NSMutableSet<NSString *> *beforeIdentifiers = nil;
+    @autoreleasepool {
+        NSArray<NSDictionary *> *beforeRecords =
+            TLinkVPNPrivateConfigurationRecords(store);
+        beforeIdentifiers = [NSMutableSet set];
+        for (NSDictionary *record in beforeRecords) {
+            NSString *identifier = record[@"identifier"];
+            if (identifier.length > 0) [beforeIdentifiers addObject:identifier];
+        }
+        beforeRecordCount = beforeRecords.count;
     }
     NSString *requestedName = [displayName
         stringByTrimmingCharactersInSet:
@@ -762,7 +767,7 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
     NSDictionary *newRecord = nil;
     NSString *verificationMode = @"none";
     NSUInteger verificationAttempts = 0;
-    NSUInteger observedRecordCount = beforeRecords.count;
+    NSUInteger observedRecordCount = beforeRecordCount;
     const NSUInteger maximumVerificationAttempts = 50;
     TLinkVPNPrivatePolling::Window verificationWindow(TLinkHelperIO::nowMs(), 5.0);
     for (NSUInteger attempt = 0;
@@ -817,7 +822,7 @@ static NSDictionary *TLinkVPNPrivateConfigureLegacySync(
             @{
                 @"private_backend_available": @1,
                 @"verification_attempts": @(verificationAttempts),
-                @"profiles_before": @(beforeRecords.count),
+                @"profiles_before": @(beforeRecordCount),
                 @"profiles_observed": @(observedRecordCount),
                 @"native_error": @"create returned success but no unique new VPN service became visible",
             });

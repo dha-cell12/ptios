@@ -14,6 +14,16 @@ enum class Pattern {Exact,Single,Ambiguous,Duplicate,Existing,Empty,ExactAmbiguo
 static Pattern pattern=Pattern::Exact;
 static NSDictionary *createOptions,*selectedRecord,*markerRecord;
 static __weak NSDictionary *candidate;
+static bool trackInitialSnapshot=false,initialIdentifierLost=false;
+static __weak NSArray *initialRecords;
+static __weak NSObject *initialOwner;
+static __weak NSString *initialIdentifier;
+static unsigned initialOwnerDrops=0,arrayAtCreate=0,ownerAtCreate=0,identifierAtCreate=0,ownerAtPoll=0;
+@interface InitialSnapshotOwner:NSObject
+@end
+@implementation InitialSnapshotOwner
+- (void)dealloc{++initialOwnerDrops;}
+@end
 static double requestedPause=0;
 static NSString *const kTLinkVPNPrivateMarkerPath=@"fixture-marker-only";
 static uint64_t cleanupActionCost=0,cleanupProbeCost=0,cleanupDelay=200,cleanupActionAt=0;
@@ -70,6 +80,7 @@ static int fixtureSleep(unsigned microseconds){
 }
 - (id)configurations{return @[];}
 - (uintptr_t)createVPNWithOptions:(NSDictionary *)options {
+    if(trackInitialSnapshot){arrayAtCreate=initialRecords?1:0;ownerAtCreate=initialOwner?1:0;identifierAtCreate=initialIdentifier?1:0;}
     ++creates;createOptions=[options copy];tick+=createCost;
     if(fault==1)[NSException raise:@"VerificationFixture" format:@"create"];
     if(fault==2)throw std::runtime_error("create");
@@ -89,7 +100,21 @@ static NSDictionary *TLinkVPNResult(BOOL ok,NSString *code,NSDictionary *extra){
 static id TLinkVPNPrivateStore(NSString **failure){if(!storeOK){if(failure)*failure=@"fixture_store_failed";return nil;}return fixtureStore;}
 static NSDictionary *TLinkVPNPrivateLoadMarker(){return oldMarker?oldRecord():nil;}
 static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store){
-    assert(store);if(!created)return @[oldRecord()];++postReads;tick+=readCost;
+    assert(store);
+    if(!created){
+        if(!trackInitialSnapshot)return @[oldRecord()];
+        @autoreleasepool{
+            InitialSnapshotOwner *owner=[InitialSnapshotOwner new];
+            NSMutableString *identifier=[@"old-id" mutableCopy];
+            NSArray *records=@[@{@"name":oldRecord()[@"name"],@"identifier":identifier,@"raw_identifier":owner}];
+            initialRecords=records;initialOwner=owner;initialIdentifier=identifier;
+            if(fault==7)[NSException raise:@"VerificationFixture" format:@"initial snapshot"];
+            if(fault==8)throw std::runtime_error("initial snapshot");
+            return records;
+        }
+    }
+    ++postReads;tick+=readCost;
+    if(trackInitialSnapshot){if(initialOwner)++ownerAtPoll;if(!initialIdentifier)initialIdentifierLost=true;}
     if(fault==3)[NSException raise:@"VerificationFixture" format:@"records"];
     if(fault==4)throw std::runtime_error("records");
     if(tick<visibleAt)return @[oldRecord()];
@@ -154,6 +179,7 @@ static NSString *TLinkVPNPrivateConnectionStatus(id connection){
 #define NSRunLoop VerificationRunLoop
 #include "PrivateVPNVerificationUnderTest.inc"
 #include "PrivateVPNVerificationLegacy.inc"
+#include "PrivateVPNVerificationSnapshotLegacy.inc"
 #define NSFileManager CleanupFiles
 #include "PrivateVPNCleanupUnderTest.inc"
 #include "PrivateVPNCleanupLegacy.inc"
@@ -162,6 +188,8 @@ static NSString *TLinkVPNPrivateConnectionStatus(id connection){
 #undef NSDate
 #undef NSThread
 static void reset(bool modern){
+    trackInitialSnapshot=initialIdentifierLost=false;initialRecords=nil;initialOwner=nil;initialIdentifier=nil;
+    initialOwnerDrops=arrayAtCreate=ownerAtCreate=identifierAtCreate=ownerAtPoll=0;
     tick=100;readCost=createCost=0;visibleAt=100;postReads=mainPauses=sleeps=creates=selects=markers=deletes=fault=0;mainSlice=interruptSlice=100;
     onMain=storeOK=canCreate=canList=createOK=selectedOK=markerOK=true;oldMarker=created=regress=sleepFails=false;
     createOptions=selectedRecord=markerRecord=nil;candidate=nil;pattern=Pattern::Exact;
@@ -236,6 +264,59 @@ static void faultsAndLifetime(){
     @autoreleasepool{reset(true);pattern=Pattern::Single;held=invoke(true);assert(candidate&&[markerRecord[@"identifier"] isEqualToString:@"new-id"]);fixtureStore=nil;createOptions=nil;selectedRecord=nil;markerRecord=nil;}
     assert([held[@"profile_name"] isEqualToString:@"normalized name"]);held=nil;
 }
+static void initialSnapshotCases(){
+    for(bool modern:{false,true}){
+        for(unsigned scenario=0;scenario<8;++scenario){
+            NSDictionary *expected=nil,*expectedOptions=nil;unsigned expectedReads=0,expectedSelects=0,expectedMarkers=0,expectedDeletes=0;
+            for(bool current:{false,true}){
+                @autoreleasepool{
+                    reset(modern);trackInitialSnapshot=true;
+                    switch(scenario){
+                        case 0:pattern=Pattern::Exact;break;
+                        case 1:pattern=Pattern::Single;break;
+                        case 2:pattern=Pattern::Existing;break;
+                        case 3:pattern=Pattern::Ambiguous;readCost=300;break;
+                        case 4:pattern=Pattern::Duplicate;break;
+                        case 5:createOK=false;break;
+                        case 6:selectedOK=false;break;
+                        case 7:markerOK=false;break;
+                    }
+                    NSDictionary *result=current?invoke(true):LegacySnapshotConfigureSync(@"L2TP",@"server",@"user",@"password",@"secret",@"group",@"profile",4,YES);
+                    assert(identifierAtCreate==1&&!initialIdentifierLost);
+                    if(current){
+                        assert([result isEqual:expected]&&[createOptions isEqual:expectedOptions]);
+                        assert(postReads==expectedReads&&selects==expectedSelects&&markers==expectedMarkers&&deletes==expectedDeletes);
+                        assert(arrayAtCreate==0&&ownerAtCreate==0&&ownerAtPoll==0&&initialOwnerDrops==1);
+                    }else{
+                        expected=result;expectedOptions=createOptions;expectedReads=postReads;expectedSelects=selects;expectedMarkers=markers;expectedDeletes=deletes;
+                        assert(arrayAtCreate==1&&ownerAtCreate==1);
+                        if(scenario==2||scenario==3||scenario==4)assert(ownerAtPoll==postReads);
+                    }
+                }
+                assert(!initialRecords&&!initialOwner&&initialOwnerDrops==1);
+            }
+        }
+    }
+    for(unsigned kind:{1U,2U,7U,8U}){
+        @autoreleasepool{
+            reset(true);trackInitialSnapshot=true;fault=kind;bool caught=false;
+            @try{try{invoke(true);}catch(const std::runtime_error &){caught=kind%2==0;}}
+            @catch(NSException *exception){(void)exception;caught=kind%2==1;}
+            assert(caught&&postReads==0&&selects==0&&markers==0);
+            assert(!initialRecords&&!initialOwner&&initialOwnerDrops==1);
+        }
+    }
+    for(unsigned n=0;n<128;++n){
+        @autoreleasepool{
+            reset(true);trackInitialSnapshot=true;pattern=Pattern::Existing;
+            NSDictionary *result=invoke(true);expect(result,@"vpn_private_create_verification_failed",NO);
+            assert([result[@"profiles_before"] unsignedIntValue]==1&&[result[@"profiles_observed"] unsignedIntValue]==1);
+            assert(ownerAtCreate==0&&ownerAtPoll==0&&initialOwnerDrops==1&&!initialIdentifierLost);
+        }
+    }
+    reset(true);
+    puts("Private VPN initial snapshot passed: exact previous replies/options/effects/attempts, initial array/raw-owner release before create/poll, retained identifier alias, NS/C++ snapshot/create unwind and 128 timed-out lifecycles. Private-store/device memory qualification pending.");
+}
 static void cleanupCases(){
     for(bool main:{false,true}){
         for(unsigned scenario=0;scenario<11;++scenario){
@@ -277,5 +358,5 @@ static void cleanupCases(){
     assert([held[@"connection_status"] isEqualToString:@"disconnected"]);held=nil;
     puts("Private VPN cleanup passed: frozen preflight/delete/marker/reply parity, continuous disconnect window, main/EINTR waits, late-target refusal, clock/wall/fault gates and pool lifetime; no real profile or marker removed.");
 }
-int main(){@autoreleasepool{parityCases();budgetCases();faultsAndLifetime();cleanupCases();fixtureStore=nil;cleanupConnection=nil;createOptions=selectedRecord=markerRecord=nil;
+int main(){@autoreleasepool{parityCases();budgetCases();faultsAndLifetime();initialSnapshotCases();cleanupCases();fixtureStore=nil;cleanupConnection=nil;createOptions=selectedRecord=markerRecord=nil;
     puts("Private VPN verification Foundation passed: actual/frozen exact-name/single-delta/ambiguity/options/replies, 50-attempt/continuous budget, main publication/EINTR/faults, late refusal and pool lifetime. Private store/device qualification pending.");}}
