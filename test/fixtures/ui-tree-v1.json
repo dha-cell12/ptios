@@ -14,6 +14,8 @@
   "limits": {
     "defaultMaxElements": 250,
     "hardMaxElements": 1000,
+    "defaultMaxScannedElements": 4096,
+    "hardMaxScannedElements": 16384,
     "defaultTimeoutMs": 1500,
     "hardTimeoutMs": 3000
   },

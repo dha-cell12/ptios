@@ -122,6 +122,7 @@ static BOOL TLinkAXPrepare(){return YES;}
 @end
 #include "AXErrorUnderTest.inc"
 #include "AXBoundedIntegerUnderTest.inc"
+#include "AXScanLimitsUnderTest.inc"
 #include "AXSnapshotUnderTest.inc"
 #define TLinkAXSerializeElement Legacy::TLinkAXSerializeElement
 #include "AXSnapshotBeforeAttributes.inc"

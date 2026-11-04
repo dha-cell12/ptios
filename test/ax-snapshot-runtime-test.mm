@@ -16,6 +16,7 @@ static unsigned sourceCount=4,serialized=0,creates=0,queries=0,rootRetains=0,roo
 static unsigned failEvery=0,cancelAt=0;
 static bool locked=false,screenOff=false,prepared=true,rootMissing=false,queryError=false,wrongArray=false,throwQuery=false,throwNode=false,cancelled=false;
 static bool regressCreate=false,regressNode=false,failClockNode=false;
+static bool forceHidden=false,forceNotClickable=false;
 static size_t outputCap=1024*1024;
 static NSDictionary *rootObject;
 static __weak NSArray *returnedArray;
@@ -62,7 +63,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
     if(throwNode)[NSException raise:@"AXSnapshotFixture" format:@"node"];
     if(failEvery&&serialized%failEvery==0)return nil;
     return @{@"index":@(index),@"label":@"Ứng dụng 测试",@"value":@"value",@"identifier":@"id",@"role":@"element",
-        @"intersects_screen":@(index%2==0),@"clickable":@(index%3!=0)};
+        @"intersects_screen":@(!forceHidden&&index%2==0),@"clickable":@(!forceNotClickable&&index%3!=0)};
 }
 @interface FixtureScreen:NSObject
 +(instancetype)mainScreen;
@@ -76,13 +77,19 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 @end
 #include "AXErrorUnderTest.inc"
 #include "AXBoundedIntegerUnderTest.inc"
+#include "AXScanLimitsUnderTest.inc"
 #include "AXSnapshotUnderTest.inc"
 #include "AXSnapshotLegacy.inc"
+#include "AXSnapshotBeforeScan.inc"
+static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
+static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){assert(queue==dispatch_get_main_queue());work();}
+#include "AXFindUnderTest.inc"
 #include "AXCompletenessUnderTest.inc"
 static void reset(){
     tick=1000000000ULL;createCost=queryCost=nodeCost=0;wallShift=nodeWallJump=lastQueryTimeout=0;parentSeconds=1;
     sourceCount=4;serialized=creates=queries=rootRetains=rootDrops=arrayDrops=prepareCalls=lockCalls=failEvery=cancelAt=0;
     locked=screenOff=rootMissing=queryError=wrongArray=throwQuery=throwNode=cancelled=regressCreate=regressNode=failClockNode=false;prepared=true;
+    forceHidden=forceNotClickable=false;
     outputCap=1024*1024;parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
 }
 static NSDictionary *call(bool current,NSDictionary *options=@{},pid_t pid=123){
@@ -169,8 +176,78 @@ static void cancellationAndLifetimeCases(){
     }
     held=nil;rootObject=nil;
 }
+static void scanBudgetCases(){
+    NSArray *plans=@[
+        @[@{},@4096],@[@{@"max_scanned_elements":@3},@3],@[@{@"maxScannedElements":@4},@4],
+        @[@{@"max_scanned_elements":@2,@"maxScannedElements":@7},@2],
+        @[@{@"max_scanned_elements":@0},@1],@[@{@"max_scanned_elements":@(-5)},@1],
+        @[@{@"max_scanned_elements":@20000},@16384],@[@{@"max_scanned_elements":[NSNull null]},@4096],
+        @[@{@"maxScannedElements":@"5"},@5],@[@{@"max_scanned_elements":@2.9},@2]
+    ];
+    for(NSArray *plan in plans){
+        @autoreleasepool{
+            reset();sourceCount=20000;forceHidden=true;
+            NSDictionary *value=call(true,plan[0]);unsigned limit=[plan[1] unsignedIntValue];
+            assert([value[@"ok"] boolValue]&&[value[@"partial"] boolValue]&&[value[@"truncated"] boolValue]);
+            assert(serialized==limit&&[value[@"scanned_count"] unsignedIntValue]==limit&&[value[@"source_count"] unsignedIntValue]==20000);
+            assert([value[@"count"] unsignedIntValue]==0&&!TLinkAXResultCompleteForAction(value)&&rootRetains==rootDrops);
+        }
+        assert(!returnedArray);
+    }
+    for(unsigned kind=0;kind<3;++kind){
+        @autoreleasepool{
+            reset();sourceCount=8;
+            NSDictionary *options=@{@"max_scanned_elements":@3,@"clickable_only":@YES};
+            if(kind==0)forceHidden=true;
+            if(kind==1)forceNotClickable=true;
+            if(kind==2)failEvery=1;
+            NSDictionary *value=call(true,options);
+            assert(serialized==3&&[value[@"count"] unsignedIntValue]==0&&[value[@"partial"] boolValue]);
+            assert([value[@"serialization_failure_count"] unsignedIntValue]==(kind==2?3U:0U));
+        }
+        assert(!returnedArray);
+    }
+    @autoreleasepool{
+        reset();sourceCount=3;NSDictionary *value=call(true,@{@"max_scanned_elements":@3,@"visible_only":@NO});
+        assert(serialized==3&&[value[@"count"] unsignedIntValue]==3&&TLinkAXResultCompleteForAction(value));
+    }
+    NSDictionary *expected=nil;
+    for(bool current:{false,true}){
+        @autoreleasepool{
+            reset();sourceCount=8;NSDictionary *options=@{@"max_elements":@1,@"max_scanned_elements":@3,@"visible_only":@NO};
+            NSDictionary *value=current?call(true,options):PreScanAXCopySnapshotUnlocked(123,@"fixture.bundle",options);
+            if(current)assert([value isEqual:expected]);else expected=value;
+            assert(serialized==1&&rootRetains==rootDrops);
+        }
+    }
+    for(bool current:{false,true}){
+        @autoreleasepool{
+            reset();sourceCount=20000;forceHidden=true;
+            NSDictionary *value=current?call(true):PreScanAXCopySnapshotUnlocked(123,@"fixture.bundle",@{});
+            assert(serialized==(current?4096U:20000U));assert([value[@"partial"] boolValue]==current);
+            assert(TLinkAXResultCompleteForAction(value)==!current&&rootRetains==rootDrops);
+        }
+        assert(!returnedArray);
+    }
+    @autoreleasepool{
+        reset();sourceCount=8;
+        NSDictionary *value=TLinkAXFindElement(123,@"fixture.bundle",@{@"identifier":@"id",@"maxScannedElements":@3});
+        assert(serialized==3&&[value[@"found"] boolValue]&&[value[@"match_count"] unsignedIntValue]==2&&!TLinkAXResultCompleteForAction(value));
+        reset();sourceCount=8;
+        value=TLinkAXFindElement(123,@"fixture.bundle",@{@"identifier":@"id",@"max_scanned_elements":@8,@"maxScannedElements":@1});
+        assert(serialized==8&&[value[@"match_count"] unsignedIntValue]==4&&TLinkAXResultCompleteForAction(value));
+        reset();sourceCount=8;
+        value=TLinkAXFindElement(123,@"fixture.bundle",@{@"identifier":@"id",@"index":@7,@"max_scanned_elements":@3});
+        assert(![value[@"found"] boolValue]&&[value[@"partial"] boolValue]&&!TLinkAXResultCompleteForAction(value));
+    }
+    @autoreleasepool{
+        reset();sourceCount=8;forceHidden=true;cancelAt=3;
+        expectError(call(true,@{@"max_scanned_elements":@3}),@"ui_cancelled_or_timed_out");assert(serialized==3&&rootRetains==rootDrops);
+    }
+    std::puts("AX scan budget passed: 4096 default/16384 hard cap, aliases/clamps, filtered/invalid nodes, exact exhaustion/row independence, 20k frozen versus 4096 scans, actual selector forwarding/partial absence and cancellation. Root materialization/device qualification pending.");
+}
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}

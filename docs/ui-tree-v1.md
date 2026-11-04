@@ -35,6 +35,8 @@ AX frames and activation points use UIKit points. Task 81 converts the selected 
 ## Limits and safety
 
 - Default 250 elements; hard maximum 1,000.
+- `max_scanned_elements` / `maxScannedElements` independently bounds serialized source nodes, including filtered and invalid nodes. Default 4,096; values clamp to 1–16,384. Set it in snapshot options or a find/tap/Smart Wait selector. Task 77 advertises `default_max_scanned_elements` and `hard_max_scanned_elements`.
+- Reaching the scan limit with unvisited source nodes returns a partial/truncated snapshot; read-only lookup cannot establish exhaustive absence and Task 81 refuses the incomplete result. Fully consuming a source exactly equal to the limit can still be complete. `maxElements` continues to limit returned rows. The initial AX root-array query still materializes the source list before traversal.
 - Default query deadline 1,500 ms; hard maximum 3,000 ms.
 - Screen-off and locked-device requests fail closed.
 - Logs contain status and counters only; element labels and values are not logged by the UI-tree core or the rootfull/roothide SpringBoard IPC bridge.
@@ -43,7 +45,7 @@ AX frames and activation points use UIKit points. Task 81 converts the selected 
 ## JavaScript
 
 ```javascript
-const tree = device.uiTree({ visibleOnly: true, maxElements: 250 });
+const tree = device.uiTree({ visibleOnly: true, maxElements: 250, maxScannedElements: 4096 });
 const login = device.uiFind({ identifier: "login.button", match: "exact" });
 const ready = device.waitForElement(
   { text: "Login", role: "button", clickableOnly: true },

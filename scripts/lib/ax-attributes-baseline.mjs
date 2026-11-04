@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXScan} from './ax-scan-baseline.mjs';
 export const legacyAXAttributes=readFileSync(new URL('../../test/fixtures/ax-attributes-before-c05c.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axAttributes(source){const a=source.indexOf('static id TLinkAXAttribute('),b=source.indexOf('static NSInteger TLinkAXBoundedInteger(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXAttributes(source){
+    source=restoreAXScan(source);
     const attribute=`static id TLinkAXAttribute(TLinkAXElementRef element, uint32_t key, int *errorOut,
                          TLinkAXSnapshotWindow *window = nullptr)
 {

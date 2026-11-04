@@ -54,6 +54,13 @@ assert.equal(fixture.selectorRequiresCriterion, true);
 assert.equal(fixture.incompletePolicy.readOnly, "report_partial_or_truncated");
 assert.equal(fixture.incompletePolicy.tap, "reject_ui_snapshot_incomplete");
 assert.equal(fixture.incompletePolicy.waitGone, "retry_or_timeout");
+assert.equal(fixture.limits.defaultMaxScannedElements, 4096);
+assert.equal(fixture.limits.hardMaxScannedElements, 16384);
+assert.match(core, /kTLinkAXDefaultMaxScannedElements = 4096/);
+assert.match(core, /kTLinkAXHardMaxScannedElements = 16384/);
+assert.match(core, /"default_max_scanned_elements": @\(kTLinkAXDefaultMaxScannedElements\)/);
+assert.match(core, /"hard_max_scanned_elements": @\(kTLinkAXHardMaxScannedElements\)/);
+assert.match(core, /scanned >= \(NSUInteger\)maxScannedElements/);
 
 for (const symbol of [
   "_AXUIElementCreateAppElementWithPid",

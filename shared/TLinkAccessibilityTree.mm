@@ -16,6 +16,10 @@
 NSString *const TLinkAXSnapshotSchema = @"ui_snapshot_v1";
 NSString *const TLinkAXBackendName = @"axruntime_numeric_v1";
 
+// Scanned nodes are bounded independently of rows surviving the filters.
+static const NSInteger kTLinkAXDefaultMaxScannedElements = 4096;
+static const NSInteger kTLinkAXHardMaxScannedElements = 16384;
+
 typedef CFTypeRef TLinkAXElementRef;
 typedef TLinkAXElementRef (*TLinkAXCreateAppFn)(pid_t);
 typedef int (*TLinkAXCopyAttributeFn)(TLinkAXElementRef, CFStringRef, CFTypeRef *);
@@ -213,6 +217,8 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"lock_state": lockState,
         @"default_max_elements": @250,
         @"hard_max_elements": @1000,
+        @"default_max_scanned_elements": @(kTLinkAXDefaultMaxScannedElements),
+        @"hard_max_scanned_elements": @(kTLinkAXHardMaxScannedElements),
         @"default_timeout_ms": @1500,
     };
 }
@@ -653,10 +659,13 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     if (!TLinkAXPrepare()) return TLinkAXError(@"ui_axruntime_unavailable", @{@"pid": @(pid)});
 
     id maxElementsValue = options[@"max_elements"] ?: options[@"maxElements"];
+    id maxScannedValue = options[@"max_scanned_elements"] ?: options[@"maxScannedElements"];
     id timeoutValue = options[@"timeout_ms"] ?: options[@"timeoutMs"];
     id visibleValue = options[@"visible_only"] ?: options[@"visibleOnly"];
     id clickableValue = options[@"clickable_only"] ?: options[@"clickableOnly"];
     NSInteger maxElements = TLinkAXBoundedInteger(maxElementsValue, 250, 1, 1000);
+    NSInteger maxScannedElements = TLinkAXBoundedInteger(maxScannedValue,
+        kTLinkAXDefaultMaxScannedElements, 1, kTLinkAXHardMaxScannedElements);
     NSInteger timeoutMs = TLinkAXBoundedInteger(timeoutValue, 1500, 100, 3000);
     BOOL visibleOnly = visibleValue ? [visibleValue boolValue] : YES;
     BOOL clickableOnly = [clickableValue boolValue];
@@ -699,7 +708,8 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     size_t estimatedJSONBytes = 0;
     for (id object in elements) {
         if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
-        if (rows.count >= (NSUInteger)maxElements || window.remainingSeconds(TLinkNativeNowNs(), 1.0) <= 0) {
+        if (rows.count >= (NSUInteger)maxElements || scanned >= (NSUInteger)maxScannedElements ||
+            window.remainingSeconds(TLinkNativeNowNs(), 1.0) <= 0) {
             truncated = YES;
             break;
         }
@@ -842,6 +852,7 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
     }
     NSMutableDictionary *options = [NSMutableDictionary dictionary];
     options[@"max_elements"] = selector[@"max_elements"] ?: selector[@"maxElements"] ?: @250;
+    options[@"max_scanned_elements"] = selector[@"max_scanned_elements"] ?: selector[@"maxScannedElements"] ?: @(kTLinkAXDefaultMaxScannedElements);
     options[@"timeout_ms"] = selector[@"timeout_ms"] ?: selector[@"timeoutMs"] ?: @1500;
     options[@"allow_locked"] = selector[@"allow_locked"] ?: selector[@"allowLocked"] ?: @NO;
     __block NSDictionary *result = nil;
