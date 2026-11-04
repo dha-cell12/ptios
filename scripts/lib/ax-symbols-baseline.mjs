@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXSnapshot} from './ax-snapshot-baseline.mjs';
 export const legacyAXSymbols=readFileSync(new URL('../../test/fixtures/ax-symbols-before-c05a.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axSymbols(source){const a=source.indexOf('static NSDictionary *TLinkAXLockState(void)'),b=source.indexOf('static BOOL TLinkAXPrepare(void)',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXSymbols(source){
+    source=restoreAXSnapshot(source);
     let expected=legacyAXSymbols;
     for(const [variable,path,first,second] of [
         ['sbs','/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices','SBSSpringBoardServerPort','SBGetScreenLockStatus'],

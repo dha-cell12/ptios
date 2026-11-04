@@ -2279,6 +2279,8 @@ These are stable process capabilities mixed into potentially repeated runtime pr
 
 Cache framework handles/symbol pointers and stable entitlement capability values once per process. Keep only the mutable lock/screen state live. Prefer persistent notify tokens or a cached notification-backed state if measurements show registration churn is material.
 
+Implementation follow-up (2026-11-04, C05a): the lock-state SpringBoardServices and entitlement Security helpers now pin one loader reference/cache each successful symbol pair. Retry missing libraries/symbols, preserve live notify/private lock/SecTask/value calls and all result/CF ownership rules. Atomic publication balances concurrent extra opens without holding a cache lock through loader calls. Entitlement-value/notification/foreground work and device qualification remain open. Portable races/reentry/retry tests pass; new actual/frozen Foundation/CF cases await macOS CI. See `IMPLEMENTATION-C05A.md`.
+
 ---
 
 ### [P1-62] Frequent Task-60 status snapshots redo ten VPN entitlement queries plus mutable compatibility filesystem probing
@@ -2358,6 +2360,8 @@ Do not remove the post-operation context-change safety check without an equivale
 The snapshot deadline is computed from `CFAbsoluteTimeGetCurrent` and checked before each element. A wall-clock adjustment can distort the deadline, and a single AX RPC group may run beyond the deadline before the loop regains control.
 
 Use a monotonic/continuous clock for duration budgeting. Treat the per-element AX messaging timeout as an explicit maximum-overshoot component and check cancellation/deadline between attribute groups where practical.
+
+Implementation follow-up (2026-11-04, C05b): snapshot deadline/duration now use the existing monotonic native clock; root creation consumes its window and root messaging receives only the local/caller remainder. Post-node/final checks discard a late node and mark late empty/final results partial/truncated, preserving the existing action-completeness refusal. A final caller stop is checked even after filtered nodes. Per-attribute RPC checks/opaque overshoot, queue/preflight scope and device timing remain open. New complete current/frozen snapshot Foundation/CF cases await macOS CI. See `IMPLEMENTATION-C05B.md`.
 
 ---
 

@@ -68,6 +68,7 @@ jobs:
           node scripts/check-smart-wait-v1.mjs
           node scripts/check-ui-tree-v1.mjs
           node scripts/check-ax-symbol-cache-safety.mjs
+          node scripts/check-ax-snapshot-safety.mjs
           node scripts/check-run-history-v1.mjs
           node scripts/check-event-channel-v1.mjs
           node scripts/check-event-channel-safety.mjs

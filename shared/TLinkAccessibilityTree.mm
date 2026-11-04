@@ -1,5 +1,6 @@
 #include "TLinkNativeDispatch.h"
 #include "TLinkAXSymbolCache.h"
+#include "TLinkAXSnapshotWindow.h"
 #import "TLinkAccessibilityTree.h"
 
 #import <UIKit/UIKit.h>
@@ -643,8 +644,7 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     NSInteger timeoutMs = TLinkAXBoundedInteger(timeoutValue, 1500, 100, 3000);
     BOOL visibleOnly = visibleValue ? [visibleValue boolValue] : YES;
     BOOL clickableOnly = [clickableValue boolValue];
-    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
-    CFAbsoluteTime deadline = started + ((double)timeoutMs / 1000.0);
+    TLinkAXSnapshotWindow window(TLinkNativeNowNs(), (unsigned)timeoutMs);
 
     TLinkAXElementRef root = NULL;
     CFTypeRef rawElements = NULL;
@@ -654,7 +654,8 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
         auto nativeBudget = TLinkCurrentNativeBudget();
         double queryTimeout = MIN(0.5f, (float)timeoutMs / 1000.0f);
         if (nativeBudget) queryTimeout = nativeBudget->remainingSeconds(queryTimeout);
-        if (TLinkNativeStopped()) { CFRelease(root); root = NULL; return TLinkAXError(@"ui_cancelled_or_timed_out", nil); }
+        queryTimeout = window.remainingSeconds(TLinkNativeNowNs(), queryTimeout);
+        if (TLinkNativeStopped() || queryTimeout <= 0) { CFRelease(root); root = NULL; return TLinkAXError(@"ui_cancelled_or_timed_out", nil); }
         if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(root, (float)queryTimeout);
         int error = sTLinkAXCopyAttribute(root, (CFStringRef)(uintptr_t)3015, &rawElements);
         CFRelease(root);
@@ -678,12 +679,16 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     size_t estimatedJSONBytes = 0;
     for (id object in elements) {
         if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
-        if (rows.count >= (NSUInteger)maxElements || CFAbsoluteTimeGetCurrent() >= deadline) {
+        if (rows.count >= (NSUInteger)maxElements || window.remainingSeconds(TLinkNativeNowNs(), 1.0) <= 0) {
             truncated = YES;
             break;
         }
         scanned++;
         NSDictionary *node = TLinkAXSerializeElement((__bridge TLinkAXElementRef)object, screen, scanned - 1);
+        if (window.remainingSeconds(TLinkNativeNowNs(), 1.0) <= 0) {
+            truncated = YES;
+            break;
+        }
         if (!node) {
             serializationFailures++;
             continue;
@@ -704,7 +709,10 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
             return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
         [rows addObject:node];
     }
-    NSTimeInterval durationMs = (CFAbsoluteTimeGetCurrent() - started) * 1000.0;
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
+    const uint64_t finished = TLinkNativeNowNs();
+    if (window.remainingSeconds(finished, 1.0) <= 0) truncated = YES;
+    NSTimeInterval durationMs = window.elapsedMilliseconds(finished);
     return @{
         @"ok": @YES,
         @"schema": TLinkAXSnapshotSchema,
