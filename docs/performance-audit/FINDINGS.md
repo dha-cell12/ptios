@@ -2209,6 +2209,8 @@ Implementation follow-up (2026-11-05, C05d): snapshot traversal now has an indep
 
 Implementation follow-up (2026-11-05, C05e): replace the formatter's intermediate matches array with a full match count and the requested-row pointer. Preserve complete predicate traversal/order/index/metadata/partial behavior and later-row cancellation/faults. This removes match-array growth/extra row references, while full AX/root snapshot work and matching fusion remain open. New full frozen dictionary/sorted-JSON/index/ownership cases await macOS CI and device qualification. See `IMPLEMENTATION-C05E.md`.
 
+Implementation follow-up (2026-11-05, C05f): drain an autorelease pool around each admitted node's unchanged serializer/filter/output/append body. Normal filtered/invalid exits retire temporary objects between iterations, while accepted rows remain retained by the snapshot. Cleanup time consumes the current deadline; exception pools keep Clang's outer-normal-drain semantics. Full root/accepted snapshot memory, selector fusion and opaque-call preemption remain open. New explicit MRC-owner/ARC/frozen graph tests await macOS CI; no measured device gain. See `IMPLEMENTATION-C05F.md`.
+
 ---
 
 ## P1 — S009 High Priority
@@ -2260,6 +2262,8 @@ Add:
 - predictable partial/truncated response semantics.
 
 For structured local/in-process callers, avoid base64/legacy text when a typed result can be returned directly.
+
+Implementation follow-up (2026-11-05, C05f): per-node autorelease pools reduce ordinary traversal temporary retention, including rejected nodes; they do not cap a node's arbitrary strings, accepted rows, the full root array or JSON/base64/wire copies. Existing output accounting remains unchanged. P1-60 remains partial; Foundation/ARC pool tests and device memory measurements are pending. See `IMPLEMENTATION-C05F.md`.
 
 ---
 

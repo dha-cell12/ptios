@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXNodePool} from './ax-node-pool-baseline.mjs';
 export const legacyAXFind=readFileSync(new URL('../../test/fixtures/ax-find-before-c05e.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axFind(source){const a=source.indexOf('static NSDictionary *TLinkAXFindInSnapshot('),b=source.indexOf('NSDictionary *TLinkAXFindElement(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXFind(source){
+    source=restoreAXNodePool(source);
     const expected=legacyAXFind
         .replace('    NSMutableArray *matches = [NSMutableArray array];','    NSUInteger matchCount = 0;\n    NSDictionary *selectedElement = nil;')
         .replace('        [matches addObject:element];','        if (matchCount == (NSUInteger)requestedIndex) selectedElement = element;\n        ++matchCount;')

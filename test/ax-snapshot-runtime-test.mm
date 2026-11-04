@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include "../shared/TLinkAXSnapshotWindow.h"
+#include "ax-node-pool-owner.h"
 using TLinkAXElementRef=CFTypeRef;
 static NSString *const TLinkAXSnapshotSchema=@"ui_snapshot_v1";
 static NSString *const TLinkAXBackendName=@"axruntime_numeric_v1";
@@ -18,6 +19,9 @@ static unsigned failEvery=0,cancelAt=0;
 static bool locked=false,screenOff=false,prepared=true,rootMissing=false,queryError=false,wrongArray=false,throwQuery=false,throwNode=false,cancelled=false;
 static bool regressCreate=false,regressNode=false,failClockNode=false;
 static bool forceHidden=false,forceNotClickable=false;
+static bool trackNodeOwners=false,throwNodeCPP=false;
+static uint64_t ownerDropCost=0;
+extern "C" void TLinkAXFixtureOwnerDidDrain(void){tick+=ownerDropCost;}
 static size_t outputCap=1024*1024;
 static NSDictionary *rootObject;
 static __weak NSArray *returnedArray;
@@ -61,10 +65,19 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
     if(regressNode)tick=1;
     if(failClockNode)tick=UINT64_MAX;
     if(cancelAt==serialized)cancelled=true;
+    NSMutableDictionary *trackingRow=nil;
+    if(trackNodeOwners){trackingRow=[NSMutableDictionary dictionary];TLinkAXFixtureAttachOwner(trackingRow);}
     if(throwNode)[NSException raise:@"AXSnapshotFixture" format:@"node"];
+    if(throwNodeCPP)throw std::runtime_error("node");
     if(failEvery&&serialized%failEvery==0)return nil;
-    return @{@"index":@(index),@"label":@"Ứng dụng 测试",@"value":@"value",@"identifier":@"id",@"role":@"element",
+    NSDictionary *row=@{@"index":@(index),@"label":@"Ứng dụng 测试",@"value":@"value",@"identifier":@"id",@"role":@"element",
         @"intersects_screen":@(!forceHidden&&index%2==0),@"clickable":@(!forceNotClickable&&index%3!=0)};
+    if(trackingRow){
+        [trackingRow addEntriesFromDictionary:row];
+        trackingRow[@"label"]=[NSMutableString stringWithFormat:@"node-%lu",(unsigned long)index];
+        return trackingRow;
+    }
+    return row;
 }
 @interface FixtureScreen:NSObject
 +(instancetype)mainScreen;
@@ -82,6 +95,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 #include "AXSnapshotUnderTest.inc"
 #include "AXSnapshotLegacy.inc"
 #include "AXSnapshotBeforeScan.inc"
+#include "AXSnapshotBeforeNodePool.inc"
 static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
 static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){assert(queue==dispatch_get_main_queue());work();}
 static NSUInteger matchedArrayAppends=0;
@@ -94,6 +108,7 @@ static void reset(){
     sourceCount=4;serialized=creates=queries=rootRetains=rootDrops=arrayDrops=prepareCalls=lockCalls=failEvery=cancelAt=0;
     locked=screenOff=rootMissing=queryError=wrongArray=throwQuery=throwNode=cancelled=regressCreate=regressNode=failClockNode=false;prepared=true;
     forceHidden=forceNotClickable=false;
+    trackNodeOwners=throwNodeCPP=false;ownerDropCost=0;
     outputCap=1024*1024;parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
 }
 static NSDictionary *call(bool current,NSDictionary *options=@{},pid_t pid=123){
@@ -251,8 +266,9 @@ static void scanBudgetCases(){
     std::puts("AX scan budget passed: 4096 default/16384 hard cap, aliases/clamps, filtered/invalid nodes, exact exhaustion/row independence, 20k frozen versus 4096 scans, actual selector forwarding/partial absence and cancellation. Root materialization/device qualification pending.");
 }
 #include "ax-find-runtime-fixture.inc"
+#include "ax-node-pool-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}

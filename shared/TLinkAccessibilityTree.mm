@@ -713,31 +713,33 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
             truncated = YES;
             break;
         }
-        scanned++;
-        NSDictionary *node = TLinkAXSerializeElement((__bridge TLinkAXElementRef)object, screen, scanned - 1, &window);
-        if (window.remainingSeconds(TLinkNativeNowNs(), 1.0) <= 0) {
-            truncated = YES;
-            break;
+        @autoreleasepool {
+            scanned++;
+            NSDictionary *node = TLinkAXSerializeElement((__bridge TLinkAXElementRef)object, screen, scanned - 1, &window);
+            if (window.remainingSeconds(TLinkNativeNowNs(), 1.0) <= 0) {
+                truncated = YES;
+                break;
+            }
+            if (!node) {
+                serializationFailures++;
+                continue;
+            }
+            if (visibleOnly && ![node[@"intersects_screen"] boolValue]) continue;
+            if (clickableOnly && ![node[@"clickable"] boolValue]) continue;
+            if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
+            // Conservative escaped-JSON and base64 accounting before retaining another row.
+            size_t rowBytes = 768;
+            for (NSString *key in @[@"label", @"value", @"identifier", @"role"]) {
+                NSString *text = node[key];
+                size_t bytes = [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+                if (!TLinkNativeOutputAllowed(bytes)) return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
+                rowBytes += 6 * bytes;
+            }
+            estimatedJSONBytes += rowBytes;
+            if (!TLinkNativeOutputAllowed(32 * 1024 + 4 * ((estimatedJSONBytes + 2) / 3)))
+                return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
+            [rows addObject:node];
         }
-        if (!node) {
-            serializationFailures++;
-            continue;
-        }
-        if (visibleOnly && ![node[@"intersects_screen"] boolValue]) continue;
-        if (clickableOnly && ![node[@"clickable"] boolValue]) continue;
-        if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
-        // Conservative escaped-JSON and base64 accounting before retaining another row.
-        size_t rowBytes = 768;
-        for (NSString *key in @[@"label", @"value", @"identifier", @"role"]) {
-            NSString *text = node[key];
-            size_t bytes = [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-            if (!TLinkNativeOutputAllowed(bytes)) return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
-            rowBytes += 6 * bytes;
-        }
-        estimatedJSONBytes += rowBytes;
-        if (!TLinkNativeOutputAllowed(32 * 1024 + 4 * ((estimatedJSONBytes + 2) / 3)))
-            return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
-        [rows addObject:node];
     }
     if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     const uint64_t finished = TLinkNativeNowNs();
