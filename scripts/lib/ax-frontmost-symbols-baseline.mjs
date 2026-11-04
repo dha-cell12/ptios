@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {restoreAXEntitlementTask} from './ax-entitlement-task-baseline.mjs';
+import {restoreAXLazyHeader} from './ax-lazy-frontmost-baseline.mjs';
 export const legacyAXFrontmost=readFileSync(new URL('../../test/fixtures/ax-frontmost-before-c05g.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export const legacyAXSymbolHeader=readFileSync(new URL('../../test/fixtures/ax-symbol-cache-before-c05g.h',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axFrontmost(source){const a=source.indexOf('static NSString *TLinkAXFrontmostBundleID(void)'),b=source.indexOf('static NSString *TLinkAXBundleIDForExecutablePath(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
@@ -33,6 +34,7 @@ export function restoreAXFrontmostSymbols(source){
     return restored;
 }
 export function checkAXSymbolHeader(source){
+    source=restoreAXLazyHeader(source);
     const a=source.indexOf('// A fixed symbol borrowed'),b=source.indexOf('// Fixed library/symbol names per instance.',a);
     assert.ok(a>=0&&b>a);
     assert.equal(source.slice(0,a)+source.slice(b),legacyAXSymbolHeader,'complete preceding two-symbol cache source unchanged');

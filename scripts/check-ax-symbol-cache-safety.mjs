@@ -8,6 +8,7 @@ import {axSymbols,legacyAXSymbols,restoreAXSymbols} from './lib/ax-symbols-basel
 import {axFrontmost,legacyAXFrontmost,checkAXSymbolHeader} from './lib/ax-frontmost-symbols-baseline.mjs';
 import {axEntitlement,axCapability,legacyAXEntitlement,legacyAXCapability} from './lib/ax-entitlement-task-baseline.mjs';
 import {axScanLimits} from './lib/ax-scan-baseline.mjs';
+import {legacyAXLazyFrontmost} from './lib/ax-lazy-frontmost-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSymbols(source);
@@ -22,11 +23,12 @@ const frontmostAdapt=s=>s.replace(/    static TLinkAXSymbols::Cache copySymbols\
 const fixtures={'AXSymbolsUnderTest.inc':adapt(axSymbols(source)),'AXSymbolsLegacy.inc':adapt(legacyAXSymbols),
     'AXFrontmostUnderTest.inc':frontmostAdapt(axFrontmost(source)),
     'AXFrontmostLegacy.inc':frontmostAdapt(legacyAXFrontmost),
+    'AXFrontmostBeforeLazy.inc':frontmostAdapt(legacyAXLazyFrontmost),
     'AXEntitlementTaskUnderTest.inc':adapt(axEntitlement(source)).replaceAll('CFRelease(','fixtureRelease('),
     'AXEntitlementTaskLegacy.inc':adapt(legacyAXEntitlement).replaceAll('CFRelease(','fixtureRelease('),
     'AXCapabilityUnderTest.inc':axCapability(source).replaceAll('CFRelease(','fixtureRelease('),
     'AXCapabilityLegacy.inc':legacyAXCapability,'AXCapabilityConstants.inc':axScanLimits};
-console.log('AX symbols source passed: per-capability task reuse with retry/finally, fresh entitlement reads/BOOL fields, foreground handle/symbol reuse and complete preceding AX/cache source.');
+console.log('AX symbols source passed: deferred foreground second-symbol lookup, unchanged default cache/task/CF/guards and complete preceding AX/cache source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-symbols-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

@@ -20,7 +20,8 @@ struct Fixture {
     bool libraryReady=true,available[4]={true,true,true,true},recordCalls=true;
     int throwCopy=-1,copyFault=0,legacyFault=0,throwLookup=-1,lookupFault=0;
     std::atomic<unsigned> opens{0},closes{0},references{0},lookups{0},copyCalls[2],servers{0},legacyCalls{0},createdCF{0},releasedCF{0};
-    Fixture(){copyCalls[0]=0;copyCalls[1]=0;}
+    std::atomic<unsigned> slotLookups[4];
+    Fixture(){copyCalls[0]=0;copyCalls[1]=0;for(unsigned n=0;n<4;++n)slotLookups[n]=0;}
 };
 static std::unique_ptr<Fixture> fixture;
 static std::unique_ptr<TLinkAXSymbols::Cache> copyCache;
@@ -66,6 +67,7 @@ static void *fixtureLookup(void *handle,const char *name){
     assert(handle==&fixture->handle);++fixture->lookups;
     for(unsigned index=0;index<4;++index){
         if(std::strcmp(name,symbolNames[index]))continue;
+        ++fixture->slotLookups[index];
         if(fixture->throwLookup==(int)index)fault(fixture->lookupFault);
         if(!fixture->available[index])return nullptr;
         switch(index){case 0:return reinterpret_cast<void *>(&fixtureFirst);case 1:return reinterpret_cast<void *>(&fixtureSecond);
@@ -82,6 +84,9 @@ namespace Current {
 }
 namespace Legacy {
 #include "AXFrontmostLegacy.inc"
+}
+namespace Preceding {
+#include "AXFrontmostBeforeLazy.inc"
 }
 static NSString *read(bool current){return current?Current::TLinkAXFrontmostBundleID():Legacy::TLinkAXFrontmostBundleID();}
 static void checkCF(){assert(fixture->createdCF==fixture->releasedCF);}
@@ -118,7 +123,7 @@ static void warmAndLiveCases(){
                 assert([read(current) isEqualToString:fresh]);checkCF();
             }}
             assert(fixture->opens==(current?1U:10000U)&&fixture->references==(current?1U:10000U)&&fixture->closes==0);
-            assert(fixture->lookups==(current?(route==2?4U:2U):(route==0?10000U:(route==1?20000U:40000U))));
+            assert(fixture->lookups==(current?(route==0?1U:(route==1?2U:4U)):(route==0?10000U:(route==1?20000U:40000U))));
             assert(fixture->copyCalls[0]==10000&&fixture->copyCalls[1]==(route?10000U:0U));
             assert(fixture->servers==(route==2?10000U:0U)&&fixture->legacyCalls==(route==2?10000U:0U));
         }
@@ -192,8 +197,45 @@ static void concurrentCases(){
         checkCF();
     }
 }
+static void deferredLookupCases(){
+    for(bool current:{false,true}){
+        reset();fixture->available[1]=false;fixture->recordCalls=false;
+        for(unsigned n=0;n<10000;++n){@autoreleasepool{
+            NSString *fresh=[NSString stringWithFormat:@"com.lazy.%u",n];copyValues=@[fresh,[NSNull null]];
+            NSString *value=current?read(true):Preceding::TLinkAXFrontmostBundleID();
+            assert([value isEqualToString:fresh]);
+        }}
+        assert(fixture->slotLookups[0]==1&&fixture->slotLookups[1]==(current?0U:10000U));
+        assert(fixture->slotLookups[2]==0&&fixture->slotLookups[3]==0&&fixture->copyCalls[0]==10000&&fixture->copyCalls[1]==0);
+        assert(fixture->opens==1&&fixture->references==1);checkCF();
+    }
+    for(id first in @[[NSNull null],@""]){
+        @autoreleasepool{
+            reset();fixture->available[1]=false;copyValues=@[first,@"second.live"];
+            assert([read(true) isEqualToString:@"fixture.legacy"]&&fixture->slotLookups[1]==1);
+            assert([read(true) isEqualToString:@"fixture.legacy"]&&fixture->slotLookups[1]==2);
+            fixture->available[1]=true;assert([read(true) isEqualToString:@"second.live"]&&fixture->slotLookups[1]==3);
+            copyValues=@[@"first.live",@"second.changed"];assert([read(true) isEqualToString:@"first.live"]&&fixture->slotLookups[1]==3);
+            copyValues=@[first,@"second.changed"];assert([read(true) isEqualToString:@"second.changed"]&&fixture->slotLookups[1]==3);
+            assert(fixture->opens==1&&fixture->references==1);checkCF();
+        }
+    }
+    for(int kind=1;kind<=2;++kind){
+        @autoreleasepool{
+            reset();fixture->throwLookup=1;fixture->lookupFault=kind;
+            assert([read(true) isEqualToString:@"fixture.first"]&&fixture->slotLookups[1]==0);
+            copyValues=@[[NSNull null],@"after.lookup"];
+            bool caught=false;
+            @try{try{read(true);}catch(const std::runtime_error &){caught=kind==2;}}
+            @catch(NSException *exception){caught=kind==1&&[exception.name isEqualToString:@"AXFrontmostFixture"];}
+            assert(caught&&fixture->slotLookups[1]==1&&fixture->references==1);checkCF();
+            fixture->throwLookup=-1;assert([read(true) isEqualToString:@"after.lookup"]);checkCF();
+        }
+    }
+}
 int main(){@autoreleasepool{
     std::puts("AX foreground symbols Foundation: actual/frozen helper, controlled loader/private providers, real CF strings and Foundation copies");
-    parityCases();warmAndLiveCases();retryAndLifetimeCases();exceptionCases();concurrentCases();copyValues=nil;legacyBytes=nil;providerCalls=nil;
+    parityCases();warmAndLiveCases();retryAndLifetimeCases();exceptionCases();concurrentCases();deferredLookupCases();copyValues=nil;legacyBytes=nil;providerCalls=nil;
+    std::puts("AX foreground lazy lookup passed: 10k first-provider successes with zero versus10k unused-secondary lookups, nil/empty fallback retry/recovery, fresh second values and secondary NS/C++ faults deferred until the branch is reached.");
     std::puts("AX foreground symbols passed: 256 frozen values/provider-order/CF cases, 10k fresh reads per route with one pinned handle, copy/legacy fallback, missing lookup recovery, mutable-input snapshots, NS/C++ unwind and 16k cold/warm concurrent reads. Foreground guards/PID policy unchanged; private framework/device qualification pending.");
 }return 0;}

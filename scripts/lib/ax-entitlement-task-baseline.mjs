@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXLazyFrontmost} from './ax-lazy-frontmost-baseline.mjs';
 const frozen=name=>readFileSync(new URL('../../test/fixtures/'+name,import.meta.url),'utf8').replaceAll('\r\n','\n');
 export const legacyAXEntitlement=frozen('ax-entitlement-before-c05h.inc');
 export const legacyAXCapability=frozen('ax-capability-before-c05h.inc');
 export function axEntitlement(source){const a=source.indexOf('static id TLinkAXEntitlementValue('),b=source.indexOf('static BOOL TLinkAXPrepare(void)',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function axCapability(source){const a=source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)'),b=source.indexOf('static NSString *TLinkAXFrontmostBundleID(void)',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXEntitlementTask(source){
+    source=restoreAXLazyFrontmost(source);
     const entitlement=legacyAXEntitlement
         .replace('static id TLinkAXEntitlementValue(NSString *name)','static id TLinkAXEntitlementValue(NSString *name, CFTypeRef *sharedTask = nullptr)')
         .replace('    CFTypeRef task = createTask(kCFAllocatorDefault);',`    CFTypeRef task = sharedTask ? *sharedTask : NULL;

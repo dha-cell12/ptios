@@ -54,7 +54,7 @@ public:
     Cache(const Cache &)=delete;
     Cache &operator=(const Cache &)=delete;
     template<class Open,class Lookup,class Close>
-    Snapshot load(Open open,Lookup lookup,Close close){
+    Snapshot load(Open open,Lookup lookup,Close close,bool includeSecond=true){
         void *handle=handle_.load(std::memory_order_acquire);
         if(!handle){
             void *candidate=open(path_);
@@ -65,7 +65,14 @@ public:
             handle=handle_.load(std::memory_order_acquire);
         }
         if(!handle)return {nullptr,nullptr,nullptr};
-        return {handle,resolve(first_,handle,firstName_,lookup),resolve(second_,handle,secondName_,lookup)};
+        return {handle,resolve(first_,handle,firstName_,lookup),includeSecond?resolve(second_,handle,secondName_,lookup):nullptr};
+    }
+    // Resolve only when the caller actually reaches its fallback. Never opens
+    // another handle; before successful load(), there is nothing to resolve.
+    template<class Lookup>
+    void *loadSecond(Lookup lookup){
+        void *handle=handle_.load(std::memory_order_acquire);
+        return handle?resolve(second_,handle,secondName_,lookup):nullptr;
     }
 };
 }

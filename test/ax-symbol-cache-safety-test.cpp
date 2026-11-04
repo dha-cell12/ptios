@@ -119,5 +119,48 @@ static void borrowedSymbolCases(){
     catch(const std::runtime_error &){caught=true;}
     assert(caught&&failed.load(&io.handle,lookup)==&io.first);
 }
-int main(){warmAndRetryCases();concurrentCases();lateFailureCases();reentryAndUnwindCases();borrowedSymbolCases();
+static void deferredSecondCases(){
+    Loader io;Cache cache("fixture","first","second");io.secondReady=false;
+    const auto lookup=[&](void *h,const char *n){return io.lookup(h,n);};
+    const auto firstOnly=[&]{return cache.load([&](const char *p){return io.open(p);},lookup,[&](void *h){io.close(h);},false);};
+    assert(!cache.loadSecond(lookup)&&io.opens==0&&io.secondLookups==0);
+    for(unsigned n=0;n<100000;++n){Snapshot value=firstOnly();assert(value.handle==&io.handle&&value.first==&io.first&&!value.second);}
+    assert(io.opens==1&&io.firstLookups==1&&io.secondLookups==0&&io.references==1);
+    for(unsigned n=0;n<3;++n)assert(!cache.loadSecond(lookup));
+    io.secondReady=true;assert(cache.loadSecond(lookup)==&io.second);io.secondReady=false;
+    for(unsigned n=0;n<100000;++n)assert(cache.loadSecond(lookup)==&io.second);
+    assert(io.secondLookups==4&&io.opens==1&&io.references==1&&io.closes==0);io.check(io.load(cache));
+    Loader missing;Cache partial("fixture","first","second");missing.firstReady=false;
+    Snapshot value=partial.load([&](const char *p){return missing.open(p);},[&](void *h,const char *n){return missing.lookup(h,n);},[&](void *h){missing.close(h);},false);
+    assert(!value.first&&!value.second&&partial.loadSecond([&](void *h,const char *n){return missing.lookup(h,n);})==&missing.second);
+    for(unsigned cycle=0;cycle<32;++cycle){
+        Loader race;Cache shared("fixture","first","second");
+        shared.load([&](const char *p){return race.open(p);},[&](void *h,const char *n){return race.lookup(h,n);},[&](void *h){race.close(h);},false);
+        std::atomic<unsigned> entered{0};std::vector<std::thread> threads;
+        for(unsigned worker=0;worker<8;++worker)threads.emplace_back([&]{
+            void *symbol=shared.loadSecond([&](void *h,const char *n){
+                ++entered;while(entered.load()<8)std::this_thread::yield();return race.lookup(h,n);
+            });
+            assert(symbol==&race.second);
+        });
+        for(auto &thread:threads)thread.join();
+        assert(race.opens==1&&race.firstLookups==1&&race.secondLookups==8&&race.closes==0&&race.references==1);
+    }
+    Loader lateIO;Cache late("fixture","first","second");
+    late.load([&](const char *p){return lateIO.open(p);},[&](void *h,const char *n){return lateIO.lookup(h,n);},[&](void *h){lateIO.close(h);},false);
+    std::atomic<bool> waiting{false},release{false};void *lateResult=nullptr;
+    std::thread pending([&]{lateResult=late.loadSecond([&](void *,const char *)->void *{
+        waiting=true;while(!release.load())std::this_thread::yield();return nullptr;
+    });});
+    while(!waiting.load())std::this_thread::yield();
+    assert(late.loadSecond([&](void *h,const char *n){return lateIO.lookup(h,n);})==&lateIO.second);
+    release=true;pending.join();assert(lateResult==&lateIO.second);
+    Loader unwind;Cache recover("fixture","first","second");
+    recover.load([&](const char *p){return unwind.open(p);},[&](void *h,const char *n){return unwind.lookup(h,n);},[&](void *h){unwind.close(h);},false);
+    bool caught=false;
+    try{recover.loadSecond([](void *,const char *)->void *{throw std::runtime_error("second");});}catch(const std::runtime_error &){caught=true;}
+    assert(caught&&recover.loadSecond([&](void *h,const char *n){return unwind.lookup(h,n);})==&unwind.second&&unwind.opens==1);
+}
+int main(){warmAndRetryCases();concurrentCases();lateFailureCases();reentryAndUnwindCases();borrowedSymbolCases();deferredSecondCases();
+    std::puts("AX deferred lookup passed: 100k first-only reads without secondary lookup, 100k cached secondary reads, pre-load refusal, missing/recovery, 32 x 8 deferred races, late failed publication and exception recovery with one pinned handle.");
     std::puts("AX symbol cache passed: 100k warm calls, retry/partial discovery, 64 x 8 cold races and 640k warm concurrent calls, one pinned reference/loser closes, stale failure, isolation, reentry and lookup unwind; borrowed symbols add 100k warm reads, 32 x 8 cold races/320k warm concurrent reads, no opens/closes, null/missing/retry, late failure and unwind.");}

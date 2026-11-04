@@ -247,7 +247,7 @@ static NSString *TLinkAXFrontmostBundleID(void)
     const auto resolved = copySymbols.load(
         [](const char *path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); },
         [](void *handle, const char *name) { return dlsym(handle, name); },
-        [](void *handle) { dlclose(handle); });
+        [](void *handle) { dlclose(handle); }, false);
     void *sbs = resolved.handle;
     if (!sbs) return nil;
     const char *symbols[] = {
@@ -256,7 +256,9 @@ static NSString *TLinkAXFrontmostBundleID(void)
         NULL,
     };
     for (NSUInteger index = 0; symbols[index]; index++) {
-        CFStringRef (*copyFrontmost)(void) = (CFStringRef (*)(void))(index == 0 ? resolved.first : resolved.second);
+        void *copySymbol = index == 0 ? resolved.first : copySymbols.loadSecond(
+            [](void *handle, const char *name) { return dlsym(handle, name); });
+        CFStringRef (*copyFrontmost)(void) = (CFStringRef (*)(void))copySymbol;
         if (!copyFrontmost) continue;
         CFStringRef value = copyFrontmost();
         if (!value) continue;

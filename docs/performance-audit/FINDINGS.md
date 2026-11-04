@@ -2293,6 +2293,8 @@ Implementation follow-up (2026-11-05, C05g): foreground SBS fallback now pins on
 
 Implementation follow-up (2026-11-05, C05h): capability now shares one successful SecTask across its three entitlement reads, releases it before result construction and retries creation at the next key after failure. Values remain fresh per probe; existing false/error/BOOL conversion and all metadata/live guards are retained. Finally blocks release one-off/shared tasks and CF errors across NS/C++ provider/normalization faults. Full frozen capability/task-identity/ownership tests await macOS CI; normally one versus three task creations is a design/fixture expectation, not a device measurement. Value memoization, notify/process scan and device qualification remain open. See `IMPLEMENTATION-C05H.md`.
 
+Implementation follow-up (2026-11-05, C05i): foreground resolves its secondary copy symbol only after the first provider is missing/nil/empty. Successful first-provider reads skip repeated missing-secondary lookup and unused lookup faults; reached fallback still retries and reads fresh values. Default cache behavior, CF/provider/parser and complete PID/action guard source remain under restoration checks. Portable deferred-publication/race/retry cases pass; extended current/C05h/original foreground Foundation cases await macOS CI. Notify/value cache/process scan and device qualification remain open. See `IMPLEMENTATION-C05I.md`.
+
 ---
 
 ### [P1-62] Frequent Task-60 status snapshots redo ten VPN entitlement queries plus mutable compatibility filesystem probing
