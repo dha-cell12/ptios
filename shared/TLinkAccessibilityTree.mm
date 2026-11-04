@@ -812,7 +812,8 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
     BOOL visibleOnly = visibleValue ? [visibleValue boolValue] : YES;
     BOOL clickableOnly = [clickableValue boolValue];
     NSInteger requestedIndex = TLinkAXBoundedInteger(selector[@"index"], 0, 0, 999);
-    NSMutableArray *matches = [NSMutableArray array];
+    NSUInteger matchCount = 0;
+    NSDictionary *selectedElement = nil;
     for (NSDictionary *element in snapshot[@"elements"]) {
         if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
         if (visibleOnly && ![element[@"intersects_screen"] boolValue]) continue;
@@ -826,15 +827,16 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
             BOOL valueMatch = TLinkAXTextMatches(element[@"value"], text, mode, caseSensitive);
             if (!labelMatch && !valueMatch) continue;
         }
-        [matches addObject:element];
+        if (matchCount == (NSUInteger)requestedIndex) selectedElement = element;
+        ++matchCount;
     }
-    NSDictionary *element = requestedIndex < (NSInteger)matches.count ? matches[(NSUInteger)requestedIndex] : nil;
+    NSDictionary *element = selectedElement;
     NSMutableDictionary *result = [snapshot mutableCopy];
     [result removeObjectForKey:@"elements"];
     result[@"schema"] = @"ui_find_v1";
     result[@"selector"] = selector ?: @{};
     result[@"found"] = @(element != nil);
-    result[@"match_count"] = @(matches.count);
+    result[@"match_count"] = @(matchCount);
     result[@"element"] = element ?: @{};
     return result;
 }

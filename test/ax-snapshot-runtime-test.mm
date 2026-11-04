@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <stdexcept>
 #include "../shared/TLinkAXSnapshotWindow.h"
 using TLinkAXElementRef=CFTypeRef;
 static NSString *const TLinkAXSnapshotSchema=@"ui_snapshot_v1";
@@ -83,7 +84,10 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 #include "AXSnapshotBeforeScan.inc"
 static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
 static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){assert(queue==dispatch_get_main_queue());work();}
+static NSUInteger matchedArrayAppends=0;
+static void fixtureAppendMatch(NSMutableArray *matches,NSDictionary *element){++matchedArrayAppends;[matches addObject:element];}
 #include "AXFindUnderTest.inc"
+#include "AXFindLegacy.inc"
 #include "AXCompletenessUnderTest.inc"
 static void reset(){
     tick=1000000000ULL;createCost=queryCost=nodeCost=0;wallShift=nodeWallJump=lastQueryTimeout=0;parentSeconds=1;
@@ -246,8 +250,9 @@ static void scanBudgetCases(){
     }
     std::puts("AX scan budget passed: 4096 default/16384 hard cap, aliases/clamps, filtered/invalid nodes, exact exhaustion/row independence, 20k frozen versus 4096 scans, actual selector forwarding/partial absence and cancellation. Root materialization/device qualification pending.");
 }
+#include "ax-find-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}

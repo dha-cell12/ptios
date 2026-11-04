@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXFind} from './ax-find-baseline.mjs';
 export const legacyAXScan=readFileSync(new URL('../../test/fixtures/ax-snapshot-before-c05d.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export const axScanLimits=`// Scanned nodes are bounded independently of rows surviving the filters.
 static const NSInteger kTLinkAXDefaultMaxScannedElements = 4096;
@@ -8,6 +9,7 @@ static const NSInteger kTLinkAXHardMaxScannedElements = 16384;
 `;
 function snapshot(source){const a=source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('),b=source.indexOf('NSDictionary *TLinkAXCopySnapshot(pid_t',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXScan(source){
+    source=restoreAXFind(source);
     const expected=legacyAXScan
         .replace('    id maxElementsValue = options[@"max_elements"] ?: options[@"maxElements"];',`    id maxElementsValue = options[@"max_elements"] ?: options[@"maxElements"];
     id maxScannedValue = options[@"max_scanned_elements"] ?: options[@"maxScannedElements"];`)

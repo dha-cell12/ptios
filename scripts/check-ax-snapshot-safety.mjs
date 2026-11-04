@@ -7,11 +7,13 @@ import {spawnSync} from 'node:child_process';
 import {axSnapshot,legacyAXSnapshot,restoreAXSnapshot} from './lib/ax-snapshot-baseline.mjs';
 import {axAttributes,legacyAXAttributes,restoreAXAttributes} from './lib/ax-attributes-baseline.mjs';
 import {axScanLimits,legacyAXScan} from './lib/ax-scan-baseline.mjs';
+import {axFind,legacyAXFind} from './lib/ax-find-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
 const preceding=restoreAXAttributes(source);
 const actual=axSnapshot(source);assert.doesNotMatch(actual,/CFAbsoluteTimeGetCurrent|NSDate \*deadline/);
+assert.doesNotMatch(axFind(source),/NSMutableArray|matches\b/);
 for(const p of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.match(await read(p),/node scripts\/check-ax-snapshot-safety\.mjs/);
 const adapt=s=>s.replaceAll('TLinkNativeNowNs()','fixtureNow()').replaceAll('CFAbsoluteTimeGetCurrent()','fixtureWall()')
     .replaceAll('[[NSDate date] timeIntervalSince1970]','fixtureEpoch()').replaceAll('[UIScreen mainScreen]','[FixtureScreen mainScreen]')
@@ -21,13 +23,14 @@ const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':a
     'AXScanLimitsUnderTest.inc':axScanLimits,
     'AXSnapshotBeforeScan.inc':adapt(legacyAXScan).replaceAll('TLinkAXCopySnapshotUnlocked','PreScanAXCopySnapshotUnlocked'),
     'AXFindUnderTest.inc':source.slice(source.indexOf('static BOOL TLinkAXTextMatches('),source.indexOf('BOOL TLinkAXResultCompleteForAction(')),
+    'AXFindLegacy.inc':legacyAXFind.replaceAll('TLinkAXFindInSnapshot','LegacyAXFindInSnapshot').replaceAll('[matches addObject:element]','fixtureAppendMatch(matches,element)'),
     'AXAttributesUnderTest.inc':adapt(axAttributes(source)),
     'AXAttributesLegacy.inc':adapt(legacyAXAttributes),
     'AXSnapshotBeforeAttributes.inc':adapt(axSnapshot(preceding)).replaceAll('TLinkAXCopySnapshotUnlocked','PrecedingAXCopySnapshotUnlocked'),
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: independent scanned-node cap/selector forwarding, monotonic attribute gates/CF cleanup, late completeness refusal and complete preceding AX geometry/foreground contract.');
+console.log('AX snapshot source passed: selected-row/count without match array, independent scanned cap, attribute/CF gates and complete preceding matcher/geometry/foreground contract.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

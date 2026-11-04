@@ -2207,6 +2207,8 @@ See `BENCHMARK-S009.md` Probes D and E.
 
 Implementation follow-up (2026-11-05, C05d): snapshot traversal now has an independent max_scanned_elements/maxScannedElements limit (default 4,096, clamp 1–16,384) counting filtered and invalid-node attempts. Forward it through find/tap selectors and advertise limits in capability output. A remaining unvisited source makes the result partial/truncated, preserving action/wait-gone refusal; exact source exhaustion can remain complete. Full root materialization and snapshot/matches-array selector work remain. Source/portable checks pass; new actual/frozen scan/selector Foundation cases await macOS CI and device qualification. See `IMPLEMENTATION-C05D.md`.
 
+Implementation follow-up (2026-11-05, C05e): replace the formatter's intermediate matches array with a full match count and the requested-row pointer. Preserve complete predicate traversal/order/index/metadata/partial behavior and later-row cancellation/faults. This removes match-array growth/extra row references, while full AX/root snapshot work and matching fusion remain open. New full frozen dictionary/sorted-JSON/index/ownership cases await macOS CI and device qualification. See `IMPLEMENTATION-C05E.md`.
+
 ---
 
 ## P1 — S009 High Priority
