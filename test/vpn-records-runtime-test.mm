@@ -7,6 +7,35 @@
 struct Counts {size_t selectors=0,services=0,equalities=0,lookups=0;};
 static Counts counts;
 static id fallbackNames;
+// A concrete immutable NSString, independent of Foundation class-cluster
+// choices for UUIDString/stringWithFormat. Only count cases use this provider.
+@interface TLinkFixtureImmutableIdentifier : NSString {
+    NSString *_storage;
+}
+-(instancetype)initWithFixtureString:(NSString *)text;
+@end
+@implementation TLinkFixtureImmutableIdentifier
+-(instancetype)initWithFixtureString:(NSString *)text {
+    self=[super init];if(self)_storage=[text copy];return self;
+}
+-(NSUInteger)length {return _storage.length;}
+-(unichar)characterAtIndex:(NSUInteger)index {return [_storage characterAtIndex:index];}
+-(void)getCharacters:(unichar *)buffer range:(NSRange)range {[_storage getCharacters:buffer range:range];}
+-(NSUInteger)hash {return _storage.hash;}
+-(BOOL)isEqualToString:(NSString *)other {return [_storage isEqualToString:other];}
+-(BOOL)isEqual:(id)other {return [other isKindOfClass:[NSString class]]&&[_storage isEqualToString:other];}
+-(id)copyWithZone:(NSZone *)zone {(void)zone;return self;}
+@end
+static NSString *immutableID(NSString *text) {
+    NSString *value=[[TLinkFixtureImmutableIdentifier alloc] initWithFixtureString:text];
+    assert([value isKindOfClass:[NSString class]]&&![value isKindOfClass:[NSMutableString class]]);
+    return value;
+}
+static void expectIndexed(size_t lookups,const char *phase) {
+    if(counts.equalities!=0||counts.lookups!=lookups)
+        std::fprintf(stderr,"VPN records %s: comparisons=%zu lookups=%zu expected=0/%zu\n",phase,counts.equalities,counts.lookups,lookups);
+    assert(counts.equalities==0&&counts.lookups==lookups);
+}
 @interface RecordConfig : NSObject
 @property(nonatomic,strong) id name;
 @property(nonatomic,strong) id identifier;
@@ -93,8 +122,18 @@ static void basicCases() {
     assert([records[1][@"name"] isEqualToString:@"second"]);
     assert(records[2][@"raw_identifier"]==uuid);
     assert([records[3][@"name"] isEqualToString:@"third"]);
-    assert(counts.equalities==0&&counts.lookups==3);
+    // UUIDString's concrete Foundation class can select the conservative scan.
+    // These real-provider cases check replies/identity, not index admission.
+    std::printf("VPN records Foundation providers: comparisons=%zu lookups=%zu (runtime class dependent).\n",counts.equalities,counts.lookups);
     compare([NSSet setWithArray:primary],@{@"real-dictionary":service(@"new")});
+    NSMutableString *source=[@"same" mutableCopy];NSString *same=immutableID(source),*other=immutableID(@"other");
+    [source setString:@"changed"];
+    assert([same isEqualToString:@"same"]&&same.hash==[@"same" hash]&&[same copy]==same);
+    assert([[NSSet setWithObject:same] containsObject:@"same"]);
+    NSArray *indexed=compare(@[config(@"first",same),config(@"second",same)],
+        ordered(@[@[@"skip",service(same)],@[@"third",service(other)],@[@"duplicate",service(other)]]));
+    assert(indexed.count==3&&indexed[0][@"identifier"]==same&&[indexed[2][@"name"] isEqualToString:@"third"]);
+    expectIndexed(3,"immutable basic");
     // No retained cache: fresh provider contents are read on every call.
     RecordStore *store=[RecordStore new];store.configurations=@[config(@"old",@"old")];fallbackNames=nil;
     assert(TLinkVPNPrivateConfigurationRecords(store).count==1);
@@ -103,21 +142,24 @@ static void basicCases() {
 }
 static uint32_t seed=0x42a06acU;
 static uint32_t nextValue() {seed=seed*1664525U+1013904223U;return seed;}
-static void goldenCases() {
+static void goldenCases(bool indexed) {
+    seed=0x42a06acU;
     for(unsigned iteration=0;iteration<3000;++iteration){@autoreleasepool{
         NSMutableArray *primary=[NSMutableArray array],*pairs=[NSMutableArray array];
         unsigned primaryCount=nextValue()%17,fallbackCount=nextValue()%21;
         for(unsigned n=0;n<primaryCount;++n){
             NSString *name=nextValue()%5?[NSString stringWithFormat:@"primary-%u",n]:@"";
             NSString *identifier=[NSString stringWithFormat:@"id-%u",nextValue()%13];
+            if(indexed)identifier=immutableID(identifier);
             [primary addObject:config(name,identifier)];
         }
         for(unsigned n=0;n<fallbackCount;++n){
             NSString *name=nextValue()%7?[NSString stringWithFormat:@"fallback-%u",n]:@"";
             NSString *identifier=nextValue()%7?[NSString stringWithFormat:@"id-%u",nextValue()%23]:@"";
+            if(indexed)identifier=immutableID(identifier);
             [pairs addObject:@[name,service(identifier)]];
         }
-        compare(primary,ordered(pairs));assert(counts.equalities==0);
+        compare(primary,ordered(pairs));if(indexed)assert(counts.equalities==0);
     }}
 }
 static NSArray *snapshot(NSArray *records) {
@@ -137,8 +179,8 @@ static NSArray *mutableCase(bool legacy,unsigned kind) {
         fallbackNames=ordered(@[@[@"mutable-fallback",service(identifier)],@[@"same-after-mutation",trigger],@[@"new",service(@"new")]]);
     }else{
         // Rejected mutable query is not retained; subsequent immutable query uses the index.
-        [identifier setString:@"same"];store.configurations=@[config(@"primary",@"same")];
-        fallbackNames=ordered(@[@[@"duplicate",service(identifier)],@[@"new",service(@"new")]]);
+        [identifier setString:@"same"];store.configurations=@[config(@"primary",immutableID(@"same"))];
+        fallbackNames=ordered(@[@[@"duplicate",service(identifier)],@[@"new",service(immutableID(@"new"))]]);
     }
     counts={};NSArray *records=legacy?LegacyPrivateConfigurationRecords(store):TLinkVPNPrivateConfigurationRecords(store);
     assert(records.count==2);
@@ -155,16 +197,16 @@ static void mutableCases() {
 static void operationCounts() {
     NSMutableArray *primary=[NSMutableArray array],*pairs=[NSMutableArray array];
     for(unsigned n=0;n<1000;++n){
-        [primary addObject:config(@"primary",[NSString stringWithFormat:@"primary-%u",n])];
-        [pairs addObject:@[[NSString stringWithFormat:@"fallback-%u",n],service([NSString stringWithFormat:@"fallback-%u",n])]];
+        [primary addObject:config(@"primary",immutableID([NSString stringWithFormat:@"primary-%u",n]))];
+        [pairs addObject:@[[NSString stringWithFormat:@"fallback-%u",n],service(immutableID([NSString stringWithFormat:@"fallback-%u",n]))]];
     }
     RecordStore *store=[RecordStore new];store.configurations=primary;fallbackNames=ordered(pairs);
     counts={};NSArray *expected=LegacyPrivateConfigurationRecords(store);Counts old=counts;
     counts={};NSArray *actual=TLinkVPNPrivateConfigurationRecords(store);
     assert([actual isEqualToArray:expected]);assert(actual.count==2000);
-    assert(old.equalities==1499500&&counts.equalities==0&&counts.lookups==1000);
+    assert(old.equalities==1499500);expectIndexed(1000,"immutable 1000+1000");
     assert(old.selectors==counts.selectors&&old.services==counts.services);
-    std::puts("VPN records fixture: 1,499,500 legacy duplicate comparisons versus 1000 real set lookups; provider calls unchanged.");
+    std::puts("VPN records controlled immutable IDs: 1,499,500 legacy duplicate comparisons versus 1000 real set lookups; provider calls unchanged.");
 }
 static void lifetimeAndFaultCases() {
     NSArray *held;
@@ -189,6 +231,6 @@ static void lifetimeAndFaultCases() {
 }
 int main(){@autoreleasepool{
     std::puts("VPN records Foundation: actual/frozen collector with real arrays/dictionaries/sets and controlled private providers");
-    basicCases();goldenCases();mutableCases();operationCounts();lifetimeAndFaultCases();
-    std::puts("VPN records passed: 3000 ordered golden cases, primary duplicates, fallback first-wins, UUID/raw identity, mutable alias/mutation fallback, fresh calls, pool lifetime, NS/C++ faults and 1000 cycles. Private VPN/device qualification pending.");
+    basicCases();goldenCases(false);goldenCases(true);mutableCases();operationCounts();lifetimeAndFaultCases();
+    std::puts("VPN records passed: 3000 native + 3000 controlled immutable golden cases, primary duplicates, fallback first-wins, UUID/raw identity, mutable alias/mutation fallback, fresh calls, pool lifetime, NS/C++ faults and 1000 cycles. Private VPN/device qualification pending.");
 }return 0;}
