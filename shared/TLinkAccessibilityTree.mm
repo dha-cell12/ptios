@@ -92,7 +92,7 @@ static NSDictionary *TLinkAXLockState(void)
     };
 }
 
-static id TLinkAXEntitlementValue(NSString *name)
+static id TLinkAXEntitlementValue(NSString *name, CFTypeRef *sharedTask = nullptr)
 {
     static TLinkAXSymbols::Cache symbols(
         "/System/Library/Frameworks/Security.framework/Security",
@@ -108,13 +108,24 @@ static id TLinkAXEntitlementValue(NSString *name)
     CreateTaskFn createTask = (CreateTaskFn)resolved.first;
     CopyEntitlementFn copyValue = (CopyEntitlementFn)resolved.second;
     if (!createTask || !copyValue) return nil;
-    CFTypeRef task = createTask(kCFAllocatorDefault);
+    CFTypeRef task = sharedTask ? *sharedTask : NULL;
+    if (!task) {
+        task = createTask(kCFAllocatorDefault);
+        if (sharedTask) *sharedTask = task;
+    }
     if (!task) return nil;
     CFErrorRef error = NULL;
-    CFTypeRef value = copyValue(task, (__bridge CFStringRef)name, &error);
-    CFRelease(task);
-    if (error) CFRelease(error);
-    return value ? CFBridgingRelease(value) : nil;
+    CFTypeRef value = NULL;
+    @try {
+        value = copyValue(task, (__bridge CFStringRef)name, &error);
+        id result = value ? CFBridgingRelease(value) : nil;
+        value = NULL;
+        return result;
+    } @finally {
+        if (!sharedTask) CFRelease(task);
+        if (error) CFRelease(error);
+        if (value) CFRelease(value);
+    }
 }
 
 static BOOL TLinkAXPrepare(void)
@@ -182,9 +193,14 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"com.apple.private.accessibility.look-me-up-setup",
     ];
     NSMutableDictionary *entitlements = [NSMutableDictionary dictionary];
-    for (NSString *name in names) {
-        id value = TLinkAXEntitlementValue(name);
-        entitlements[name] = @([value respondsToSelector:@selector(boolValue)] && [value boolValue]);
+    CFTypeRef entitlementTask = NULL;
+    @try {
+        for (NSString *name in names) {
+            id value = TLinkAXEntitlementValue(name, &entitlementTask);
+            entitlements[name] = @([value respondsToSelector:@selector(boolValue)] && [value boolValue]);
+        }
+    } @finally {
+        if (entitlementTask) CFRelease(entitlementTask);
     }
     return @{
         @"ok": @(prepared),

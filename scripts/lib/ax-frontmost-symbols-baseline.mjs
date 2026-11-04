@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXEntitlementTask} from './ax-entitlement-task-baseline.mjs';
 export const legacyAXFrontmost=readFileSync(new URL('../../test/fixtures/ax-frontmost-before-c05g.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export const legacyAXSymbolHeader=readFileSync(new URL('../../test/fixtures/ax-symbol-cache-before-c05g.h',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axFrontmost(source){const a=source.indexOf('static NSString *TLinkAXFrontmostBundleID(void)'),b=source.indexOf('static NSString *TLinkAXBundleIDForExecutablePath(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXFrontmostSymbols(source){
+    source=restoreAXEntitlementTask(source);
     const expected=legacyAXFrontmost
         .replace('    void *sbs = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY | RTLD_LOCAL);',`    static TLinkAXSymbols::Cache copySymbols(
         "/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",

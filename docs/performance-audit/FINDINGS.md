@@ -2291,6 +2291,8 @@ Implementation follow-up (2026-11-04, C05a): the lock-state SpringBoardServices 
 
 Implementation follow-up (2026-11-05, C05g): foreground SBS fallback now pins one handle, caches both copy functions and resolves server/legacy symbols against the same handle on fallback. Successful symbols stay cached; missing opens/lookups retry, and concurrent surplus opens close. Provider order, fresh bundle values, CF ownership/parser/fault handling and complete PID/action guard source are preserved; the copy cache probes both symbol slots eagerly. Native complete current/frozen tests await macOS CI. No bundle/PID cache or device-gain claim; missing-secondary lookup, process enumeration, notify/SecTask/value work remain. See `IMPLEMENTATION-C05G.md`.
 
+Implementation follow-up (2026-11-05, C05h): capability now shares one successful SecTask across its three entitlement reads, releases it before result construction and retries creation at the next key after failure. Values remain fresh per probe; existing false/error/BOOL conversion and all metadata/live guards are retained. Finally blocks release one-off/shared tasks and CF errors across NS/C++ provider/normalization faults. Full frozen capability/task-identity/ownership tests await macOS CI; normally one versus three task creations is a design/fixture expectation, not a device measurement. Value memoization, notify/process scan and device qualification remain open. See `IMPLEMENTATION-C05H.md`.
+
 ---
 
 ### [P1-62] Frequent Task-60 status snapshots redo ten VPN entitlement queries plus mutable compatibility filesystem probing
