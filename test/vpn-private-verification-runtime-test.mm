@@ -303,8 +303,14 @@ static void initialSnapshotCases(){
             @try{try{invoke(true);}catch(const std::runtime_error &){caught=kind%2==0;}}
             @catch(NSException *exception){(void)exception;caught=kind%2==1;}
             assert(caught&&postReads==0&&selects==0&&markers==0);
-            assert(!initialRecords&&!initialOwner&&initialOwnerDrops==1);
+            if(kind<=2)assert(arrayAtCreate==0&&ownerAtCreate==0&&initialOwnerDrops==1);
         }
+        // Exception unwinding does not drain @autoreleasepool. The normally
+        // exited outer pool also drains pools abandoned by snapshot faults.
+        if(initialRecords||initialOwner||initialOwnerDrops!=1)
+            std::fprintf(stderr,"initial snapshot fault=%u after outer drain: records=%d owner=%d drops=%u\n",
+                kind,initialRecords?1:0,initialOwner?1:0,initialOwnerDrops);
+        assert(!initialRecords&&!initialOwner&&initialOwnerDrops==1);
     }
     for(unsigned n=0;n<128;++n){
         @autoreleasepool{

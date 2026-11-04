@@ -19,3 +19,11 @@ Extend its Foundation/ARC/ASan/UBSan fixture with the complete preceding functio
 Other cases cover NS/C++ failures during initial snapshot construction and create, returned result ownership and 128 repeated timed-out verification lifecycles. Clocks/private store/profile effects are controlled; no real VPN configuration is created or removed. Native ownership assertions are CI expectations, not measured device gains.
 
 Windows validation: all **88 workflow runners** (36 source, 52 safety), **521 existing source checks**, complete staged manager hashes, fixture extraction, JavaScript syntax, expanded assert preprocessing and `git diff --check` pass. Existing portable 100k polling-window cases pass. Sixteen artifact-only checks skipped. New Foundation/ARC/sanitizer compilation/execution and iOS builds require macOS CI.
+
+## CI fixture correction — 2026-11-05
+
+CI stopped at initialSnapshotCases line 306: the fault loop checked final object destruction inside the outer autorelease pool. Snapshot faults can unwind through nested pools which, under the [Clang ARC pool rules](https://clang.llvm.org/docs/AutomaticReferenceCounting.html#autoreleasepool), do not drain on exception exit. Normal exit from the enclosing pool drains those abandoned inner pools as well. The previous assertion demanded destruction before that boundary.
+
+Move the final weak-array/raw-owner/exactly-one-destruction assertion after normal outer-pool exit for each fault. Keep caught-exception/zero-effect checks inside. For create faults (1/2), additionally retain the stronger assertion that initial records/raw owners were already gone before create. Ordinary pre-create/poll ownership assertions and all four NS/C++ fault cases remain enabled. Add fault ID and live-owner diagnostics if the post-drain assertion fails again.
+
+This corrects the fixture's lifetime assumption; production manager, pool placement, deadlines and frozen sources are unchanged. Focused source/hash extraction, portable 100k polling cases, expanded assert preprocessing and diff checks pass on Windows. Corrected Foundation/ARC/sanitizer execution still requires macOS CI.
