@@ -414,6 +414,7 @@ jobs:
             node scripts/check-license-lifecycle-safety.mjs
           node scripts/check-license-reload-safety.mjs
           node scripts/check-license-daemon-reload-safety.mjs
+          node scripts/check-license-ui-snapshot-safety.mjs
           node scripts/check-app-socket-safety.mjs
           node scripts/check-vpn-p2-rootfull-broker.mjs
           node scripts/check-vpn-p3-trollstore-foreground.mjs

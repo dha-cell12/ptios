@@ -3047,6 +3047,8 @@ Related lifecycle follow-up (2026-11-03, C06v): admit one daemon reload flight b
 
 Related transport follow-up (2026-11-03, C06w): the shared production app client now uses one continuous transaction window for nonblocking connect/exact write/read/decode, so trickled input cannot renew the C06v TrollStore reload attempt. Public APIs/task codec and ordinary UTF8/NUL/LF/EOF replies remain; timeout/error/capped prefixes are refused and buffers stay within one MiB. Fire-and-forget uses exact writes without waiting for a reply. Current 2–8 second callers retain their budgets. New native parity/socketpair tests await macOS CI; caller cancellation, whole-flight/cross-process semantics and device qualification remain open. See `IMPLEMENTATION-C06W.md`.
 
+Related UI follow-up (2026-11-04, C06ab): one worker/gate now spans snapshot publication and diagnostics, consumes the latest pending reason and returns admission after NS/C++ failures. Pre-start bursts share verification; a pending/diagnostics handoff no longer replays an older reason or adds a redundant pass. Keep last-good UI state after verifier failure and notify a published snapshot despite auxiliary diagnostics failure. Writer IO/lock policy, metrics clock, authority and runtime gates remain; native/device qualification is pending. See `IMPLEMENTATION-C06AB.md`.
+
 ---
 
 ### [P1-78] Rootfull tasks 75/76/97 bypass the feature cache and force a fresh signed authority status proof on every diagnostic request
