@@ -505,18 +505,31 @@ NSDictionary *TLinkAXCopyFrontmostContext(void)
     };
 }
 
-static id TLinkAXAttribute(TLinkAXElementRef element, uint32_t key, int *errorOut)
+static id TLinkAXAttribute(TLinkAXElementRef element, uint32_t key, int *errorOut,
+                         TLinkAXSnapshotWindow *window = nullptr)
 {
     if (TLinkNativeStopped()) return nil;
     if (!element || !sTLinkAXCopyAttribute) return nil;
-    CFTypeRef value = NULL;
-    int error = sTLinkAXCopyAttribute(element, (CFStringRef)(uintptr_t)key, &value);
-    if (errorOut) *errorOut = error;
-    if (error != 0) {
-        if (value) CFRelease(value);
-        return nil;
+    if (window) {
+        auto budget = TLinkCurrentNativeBudget();
+        double timeout = budget ? budget->remainingSeconds(0.10) : 0.10;
+        timeout = window->remainingSeconds(TLinkNativeNowNs(), timeout);
+        if (timeout <= 0) return nil;
+        if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, (float)timeout);
+        if (TLinkNativeStopped() || window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0) return nil;
     }
-    return value ? CFBridgingRelease(value) : nil;
+    CFTypeRef value = NULL;
+    @try {
+        int error = sTLinkAXCopyAttribute(element, (CFStringRef)(uintptr_t)key, &value);
+        if (errorOut) *errorOut = error;
+        if (error != 0 || (window && (TLinkNativeStopped() ||
+            window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0))) return nil;
+        id result = value ? CFBridgingRelease(value) : nil;
+        value = NULL;
+        return result;
+    } @finally {
+        if (value) CFRelease(value);
+    }
 }
 
 static NSString *TLinkAXStringValue(id value)
@@ -541,14 +554,15 @@ static NSString *TLinkAXRoleForTraits(uint64_t traits)
 
 static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef element,
                                              CGRect screen,
-                                             NSUInteger index)
+                                             NSUInteger index,
+                                             TLinkAXSnapshotWindow *window = nullptr)
 {
     if (!element) return nil;
     @try {
         if (TLinkNativeStopped()) return nil;
         auto nativeBudget = TLinkCurrentNativeBudget();
-        if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, nativeBudget ? (float)nativeBudget->remainingSeconds(0.10) : 0.10f);
-        id frameValue = TLinkAXAttribute(element, 2003, NULL);
+        if (!window && sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, nativeBudget ? (float)nativeBudget->remainingSeconds(0.10) : 0.10f);
+        id frameValue = TLinkAXAttribute(element, 2003, NULL, window);
         CGRect frame = CGRectZero;
         if (!frameValue ||
             !sTLinkAXValueGetValue((__bridge CFTypeRef)frameValue, 3, &frame) ||
@@ -557,10 +571,10 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef element,
             return nil;
         }
 
-        id label = TLinkAXAttribute(element, 2001, NULL);
-        id value = TLinkAXAttribute(element, 2006, NULL);
-        id identifier = TLinkAXAttribute(element, 5019, NULL);
-        id traitsValue = TLinkAXAttribute(element, 2004, NULL);
+        id label = TLinkAXAttribute(element, 2001, NULL, window);
+        id value = TLinkAXAttribute(element, 2006, NULL, window);
+        id identifier = TLinkAXAttribute(element, 5019, NULL, window);
+        id traitsValue = TLinkAXAttribute(element, 2004, NULL, window);
         uint64_t traits = [traitsValue respondsToSelector:@selector(unsignedLongLongValue)]
             ? (uint64_t)[traitsValue unsignedLongLongValue] : 0;
         BOOL enabled = (traits & UIAccessibilityTraitNotEnabled) == 0;
@@ -575,7 +589,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef element,
         BOOL intersectsScreen = !CGRectIsNull(intersection) && !CGRectIsEmpty(intersection);
 
         CGPoint point = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
-        id pointValue = TLinkAXAttribute(element, 2007, NULL);
+        id pointValue = TLinkAXAttribute(element, 2007, NULL, window);
         CGPoint candidate = point;
         if (pointValue &&
             sTLinkAXValueGetValue((__bridge CFTypeRef)pointValue, 1, &candidate) &&
@@ -588,6 +602,8 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef element,
             activationValid = YES;
         }
 
+        if (window && (TLinkNativeStopped() ||
+            window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0)) return nil;
         return @{
             @"index": @(index),
             @"label": TLinkAXStringValue(label),
@@ -657,6 +673,10 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
         queryTimeout = window.remainingSeconds(TLinkNativeNowNs(), queryTimeout);
         if (TLinkNativeStopped() || queryTimeout <= 0) { CFRelease(root); root = NULL; return TLinkAXError(@"ui_cancelled_or_timed_out", nil); }
         if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(root, (float)queryTimeout);
+        if (TLinkNativeStopped() || window.remainingSeconds(TLinkNativeNowNs(), queryTimeout) <= 0) {
+            CFRelease(root); root = NULL;
+            return TLinkAXError(@"ui_cancelled_or_timed_out", nil);
+        }
         int error = sTLinkAXCopyAttribute(root, (CFStringRef)(uintptr_t)3015, &rawElements);
         CFRelease(root);
         root = NULL;
@@ -684,7 +704,7 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
             break;
         }
         scanned++;
-        NSDictionary *node = TLinkAXSerializeElement((__bridge TLinkAXElementRef)object, screen, scanned - 1);
+        NSDictionary *node = TLinkAXSerializeElement((__bridge TLinkAXElementRef)object, screen, scanned - 1, &window);
         if (window.remainingSeconds(TLinkNativeNowNs(), 1.0) <= 0) {
             truncated = YES;
             break;

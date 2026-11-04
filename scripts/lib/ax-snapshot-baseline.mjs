@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXAttributes} from './ax-attributes-baseline.mjs';
 export const legacyAXSnapshot=readFileSync(new URL('../../test/fixtures/ax-snapshot-before-c05b.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axSnapshot(source){const a=source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('),b=source.indexOf('NSDictionary *TLinkAXCopySnapshot(pid_t',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXSnapshot(source){
+    source=restoreAXAttributes(source);
     const expected=legacyAXSnapshot
         .replace('    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();\n    CFAbsoluteTime deadline = started + ((double)timeoutMs / 1000.0);','    TLinkAXSnapshotWindow window(TLinkNativeNowNs(), (unsigned)timeoutMs);')
         .replace('        if (TLinkNativeStopped()) { CFRelease(root);','        queryTimeout = window.remainingSeconds(TLinkNativeNowNs(), queryTimeout);\n        if (TLinkNativeStopped() || queryTimeout <= 0) { CFRelease(root);')

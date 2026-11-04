@@ -53,7 +53,8 @@ static auto sTLinkAXSetTimeout=&fixtureSetTimeout;
 static auto sTLinkAXCopyAttribute=&fixtureCopyAttribute;
 static NSDictionary *TLinkAXLockState(){++lockCalls;return @{@"locked":@(locked),@"screen_off":@(screenOff)};}
 static BOOL TLinkAXPrepare(){++prepareCalls;return prepared;}
-static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect screen,NSUInteger index){
+static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect screen,NSUInteger index,TLinkAXSnapshotWindow *window=nullptr){
+    (void)window;
     assert(object&&screen.size.width==320);++serialized;tick+=nodeCost;wallShift+=nodeWallJump;
     if(regressNode)tick=1;
     if(failClockNode)tick=UINT64_MAX;

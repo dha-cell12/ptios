@@ -2363,6 +2363,8 @@ Use a monotonic/continuous clock for duration budgeting. Treat the per-element A
 
 Implementation follow-up (2026-11-04, C05b): snapshot deadline/duration now use the existing monotonic native clock; root creation consumes its window and root messaging receives only the local/caller remainder. Post-node/final checks discard a late node and mark late empty/final results partial/truncated, preserving the existing action-completeness refusal. A final caller stop is checked even after filtered nodes. Per-attribute RPC checks/opaque overshoot, queue/preflight scope and device timing remain open. New complete current/frozen snapshot Foundation/CF cases await macOS CI. See `IMPLEMENTATION-C05B.md`.
 
+Implementation follow-up (2026-11-05, C05c): pass the same local window into each snapshot attribute, cap its timeout by 100ms/local/caller remainder and recheck after setup/query. Release late/error/NS-C++ out-values in finally; close the root setup-to-query gap. Preserve ordinary serializer fields/default hit-test timing and incomplete-action guards. Opaque RPC/preemption, scanned/output work and device qualification remain open; new complete helper/snapshot Foundation cases await macOS CI. See `IMPLEMENTATION-C05C.md`.
+
 ---
 
 ### [P2-23] Foreground PID fallback can scan every process and read app Info.plist files on failure paths
