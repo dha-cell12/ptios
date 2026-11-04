@@ -2531,6 +2531,8 @@ Related watcher follow-up (2026-11-04, C06x): the legitimate long-lived backgrou
 
 Related scheduled-respawn follow-up (2026-11-04, C06y): one owned/resumed dispatch source replaces dispatch-after. Lifecycle cancellation clears its handler/owner; an object identity rejects stale or duplicate delivery and cannot clear a newer timer. Delivery retires ownership before the existing spawn gate/effect, including reentry. Admission/busy placement is guarded; allocation/setup faults leave no active owner. This fences scheduled work only, with direct-child process identity, running-work cancellation and device qualification still open. See `IMPLEMENTATION-C06Y.md`.
 
+Related direct-child follow-up (2026-11-04, C06z): a token allocated before spawn is adopted only on success and captured by its watcher. Owner delivery retires only the matching token before invoking the unchanged PID/exit/respawn policy, preventing old or duplicate callbacks from mutating a newer direct run with the same PID. Accepted stop/restart/replacement revoke ownership while background reaping continues; busy refusal preserves it. This is an app-managed lifecycle identity, not kernel process attestation or proof for externally adopted daemons. Active cancellation and native/device qualification remain open. See `IMPLEMENTATION-C06Z.md`.
+
 ---
 
 ## P1 — S010 High Priority

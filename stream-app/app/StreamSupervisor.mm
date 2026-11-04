@@ -54,6 +54,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     BOOL _requiresReplacement;
     dispatch_source_t _respawnTimer;
     NSObject *_respawnIdentity;
+    NSObject *_directChildIdentity;
 }
 
 - (instancetype)init
@@ -225,6 +226,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         [self cancelPendingRespawnLocked];
         self->_autoRespawn = NO;
         if ([self helperBusyLocked:@"stop"]) return;
+        self->_directChildIdentity = nil;
         [self requestTaskServerShutdownLocked:@"stop"];
         if (self->_pid > 0) {
             [self emitLog:[NSString stringWithFormat:@"supervisor: terminating pid=%d", self->_pid]];
@@ -247,6 +249,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
 {
     dispatch_async(_queue, ^{
         if ([self helperBusyLocked:@"restart"]) return;
+        self->_directChildIdentity = nil;
         [self cancelPendingRespawnLocked];
         [self emitLog:@"supervisor: restart requested; replacing service streamd"];
         self->_autoRespawn = NO;
@@ -387,6 +390,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
     }
 
     BOOL shouldReplace = replaceExisting || self->_requiresReplacement;
+    if (shouldReplace) self->_directChildIdentity = nil;
     int exitCode = [self runPrivhelperEnsureStreamdLocked:shouldReplace];
     [self emitLog:[NSString stringWithFormat:@"supervisor: privhelper ensure exit=%d replace=%d", exitCode, shouldReplace ? 1 : 0]];
 
@@ -675,6 +679,11 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return;
     }
 
+    NSObject *childIdentity = [NSObject new];
+    if (!childIdentity) {
+        [self emitLog:@"supervisor: child identity unavailable; explicit ensure required"];
+        return;
+    }
     self->_lastSpawnContinuous = TLinkHelperIO::nowMs();
 
     const char *cpath = [path fileSystemRepresentation];
@@ -687,6 +696,7 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
         return;
     }
 
+    self->_directChildIdentity = childIdentity;
     self->_pid = pid;
     self->_running = YES;
     [self emitLog:[NSString stringWithFormat:@"supervisor: spawned streamd pid=%d", pid]];
@@ -700,10 +710,19 @@ static NSString *const kSCRequiredVPNServiceMarker = @"vpnPhase=5";
             w = waitpid(pid, &status, 0);
         } while (w < 0 && errno == EINTR);
         dispatch_async(self->_queue, ^{
-            [self handleChildExit:w status:status expectedPid:pid];
+            [self retireDirectChildLocked:childIdentity waitResult:w status:status expectedPid:pid];
         });
     });
 }
+
+// BEGIN direct child retirement identity.
+- (void)retireDirectChildLocked:(NSObject *)identity waitResult:(pid_t)w status:(int)status expectedPid:(pid_t)expectedPid
+{
+    if (!identity || self->_directChildIdentity != identity) return;
+    self->_directChildIdentity = nil;
+    [self handleChildExit:w status:status expectedPid:expectedPid];
+}
+// END direct child retirement identity.
 
 - (void)handleChildExit:(pid_t)w status:(int)status expectedPid:(pid_t)expectedPid
 {
