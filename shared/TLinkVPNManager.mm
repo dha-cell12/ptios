@@ -237,6 +237,8 @@ static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store)
     id rawConfigurations = TLinkVPNPrivateSendId(
         store, NSSelectorFromString(@"configurations"));
     NSMutableArray<NSDictionary *> *records = [NSMutableArray array];
+    NSMutableSet<NSString *> *knownIdentifiers = [NSMutableSet set];
+    __block BOOL mutableIdentifiers = NO;
     if ([rawConfigurations conformsToProtocol:@protocol(NSFastEnumeration)]) {
         for (id configuration in rawConfigurations) {
             id rawName = TLinkVPNPrivateSendId(configuration, @selector(name));
@@ -252,6 +254,8 @@ static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store)
                 @"identifier": identifier,
                 @"raw_identifier": rawIdentifier,
             }];
+            if ([identifier isKindOfClass:[NSMutableString class]]) mutableIdentifiers = YES;
+            if (!mutableIdentifiers) [knownIdentifiers addObject:identifier];
         }
     }
     Class storeClass = [store class];
@@ -267,16 +271,23 @@ static NSArray<NSDictionary *> *TLinkVPNPrivateConfigurationRecords(id store)
             NSString *identifier =
                 TLinkVPNPrivateServiceIdentifier(service);
             if (name.length == 0 || identifier.length == 0) return;
-            for (NSDictionary *existing in records) {
-                if ([existing[@"identifier"] isEqualToString:identifier]) {
-                    return;
+            if (mutableIdentifiers || [identifier isKindOfClass:[NSMutableString class]]) {
+                // Preserve live identifier comparisons for aliased mutable inputs.
+                for (NSDictionary *existing in records) {
+                    if ([existing[@"identifier"] isEqualToString:identifier]) {
+                        return;
+                    }
                 }
+            } else if ([knownIdentifiers containsObject:identifier]) {
+                return;
             }
             [records addObject:@{
                 @"name": name,
                 @"identifier": identifier,
                 @"raw_identifier": identifier,
             }];
+            if ([identifier isKindOfClass:[NSMutableString class]]) mutableIdentifiers = YES;
+            if (!mutableIdentifiers) [knownIdentifiers addObject:identifier];
         }];
     }
     return records;

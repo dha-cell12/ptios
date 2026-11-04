@@ -2625,6 +2625,8 @@ Implementation follow-up (2026-10-31, C06m): private creation verification now l
 
 Implementation follow-up (2026-11-02, C06n): the cleanup disconnect phase now uses a continuous five-second window before the action and requires timely disconnected confirmation before profile/marker deletion. Late probe success, clock/wait failures and expiry preserve owned data. Main publication support and the separate post-delete pause remain; preflight and deletion/persistence tail are unchanged. Poll cadence, full enumeration, async/cancellation and device qualification remain open. See `IMPLEMENTATION-C06N.md`.
 
+Implementation follow-up (2026-11-04, C06ac): a per-call set replaces quadratic fallback identifier membership scans for ordinary immutable strings. Preserve primary duplicates, fallback first-wins/order, provider selectors and raw identifier ownership; any retained mutable ID or incoming mutable query uses the preceding live comparison loop. Full enumeration, 100ms cadence, profile/authority/budget source and synchronous calls remain. New actual/frozen Foundation cases and private-store/device qualification await macOS CI. See `IMPLEMENTATION-C06AC.md`.
+
 ---
 
 ### [P1-68] TrollStore VPN brokers have opposite concurrency failures: foreground broker is single-client HOL, vpnagent has unbounded per-client global workers
