@@ -18,6 +18,8 @@ static unsigned sourceCount=4,serialized=0,creates=0,queries=0,rootRetains=0,roo
 static unsigned failEvery=0,cancelAt=0;
 static unsigned ownerFaultSite=0,ownerFaultKind=0,rawOutRetains=0;
 static bool queryMissing=false;
+static unsigned boundaryDispatches=0;
+static bool boundaryQueueStop=false,boundaryReturnStop=false;
 static bool locked=false,screenOff=false,prepared=true,rootMissing=false,queryError=false,wrongArray=false,throwQuery=false,throwNode=false,cancelled=false;
 static bool regressCreate=false,regressNode=false,failClockNode=false;
 static bool forceHidden=false,forceNotClickable=false;
@@ -107,11 +109,19 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 #include "AXSnapshotBeforeNodePool.inc"
 #include "AXSnapshotBeforeOwner.inc"
 static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
-static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){assert(queue==dispatch_get_main_queue());work();}
+static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){
+    assert(queue==dispatch_get_main_queue());++boundaryDispatches;
+    if(boundaryQueueStop)cancelled=true;
+    if(!TLinkNativeStopped())work();
+    if(boundaryReturnStop)cancelled=true;
+}
+#include "AXSnapshotWrapperUnderTest.inc"
+#include "AXSnapshotWrapperBeforeStop.inc"
 static NSUInteger matchedArrayAppends=0;
 static void fixtureAppendMatch(NSMutableArray *matches,NSDictionary *element){++matchedArrayAppends;[matches addObject:element];}
 #include "AXFindUnderTest.inc"
 #include "AXFindLegacy.inc"
+#include "AXFindBeforeStop.inc"
 #include "AXCompletenessUnderTest.inc"
 static void reset(){
     tick=1000000000ULL;createCost=queryCost=nodeCost=0;wallShift=nodeWallJump=lastQueryTimeout=0;parentSeconds=1;
@@ -119,6 +129,7 @@ static void reset(){
     locked=screenOff=rootMissing=queryError=wrongArray=throwQuery=throwNode=cancelled=regressCreate=regressNode=failClockNode=false;prepared=true;
     forceHidden=forceNotClickable=false;
     ownerFaultSite=ownerFaultKind=rawOutRetains=0;queryMissing=false;
+    boundaryDispatches=0;boundaryQueueStop=boundaryReturnStop=false;
     trackNodeOwners=throwNodeCPP=false;ownerDropCost=0;
     outputCap=1024*1024;parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
 }
@@ -279,8 +290,9 @@ static void scanBudgetCases(){
 #include "ax-find-runtime-fixture.inc"
 #include "ax-node-pool-runtime-fixture.inc"
 #include "ax-snapshot-owner-runtime-fixture.inc"
+#include "ax-query-stop-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}

@@ -1,5 +1,6 @@
 static NSUInteger findFlagReads=0,findCancelAt=0,findThrowAt=0;
 static unsigned findThrowKind=0;
+static bool findFlagReturns=true;
 @interface TLinkFixtureFindFlag:NSObject
 -(BOOL)boolValue;
 @end
@@ -11,10 +12,10 @@ static unsigned findThrowKind=0;
         if(findThrowKind==1)[NSException raise:@"AXFindFixture" format:@"later row"];
         if(findThrowKind==2)throw std::runtime_error("later row");
     }
-    return YES;
+    return findFlagReturns;
 }
 @end
-static void resetFind(){cancelled=false;matchedArrayAppends=findFlagReads=findCancelAt=findThrowAt=0;findThrowKind=0;}
+static void resetFind(){cancelled=false;matchedArrayAppends=findFlagReads=findCancelAt=findThrowAt=0;findThrowKind=0;findFlagReturns=true;}
 static NSDictionary *findInput(NSArray *rows,BOOL incomplete=NO){
     return @{@"ok":@YES,@"schema":TLinkAXSnapshotSchema,@"source":TLinkAXBackendName,@"elements":rows,
         @"count":@(rows.count),@"scanned_count":@(rows.count),@"source_count":@(rows.count+(incomplete?1:0)),

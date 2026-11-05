@@ -12,6 +12,7 @@ import {legacyAXNodePool} from './lib/ax-node-pool-baseline.mjs';
 import {axHitTest,legacyAXHitTest} from './lib/ax-hit-test-baseline.mjs';
 import {legacyAXParentAttributes} from './lib/ax-parent-attributes-baseline.mjs';
 import {legacyAXSnapshotOwner} from './lib/ax-snapshot-owner-baseline.mjs';
+import {axQueryRegion,legacyAXQueryStop} from './lib/ax-query-stop-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
@@ -23,7 +24,13 @@ const adapt=s=>s.replaceAll('TLinkNativeNowNs()','fixtureNow()').replaceAll('CFA
     .replaceAll('[[NSDate date] timeIntervalSince1970]','fixtureEpoch()').replaceAll('[UIScreen mainScreen]','[FixtureScreen mainScreen]')
     .replaceAll('CFRelease(','fixtureRelease(');
 const complete=source.slice(source.indexOf('BOOL TLinkAXResultCompleteForAction('),source.indexOf('NSDictionary *TLinkAXElementAtPoint('));
+const query=axQueryRegion(source),snapshotWrapper=query.slice(0,query.indexOf('static BOOL TLinkAXTextMatches('));
+const oldSnapshotWrapper=legacyAXQueryStop.slice(0,legacyAXQueryStop.indexOf('static BOOL TLinkAXTextMatches('));
+const oldFind=legacyAXQueryStop.slice(legacyAXQueryStop.indexOf('static BOOL TLinkAXTextMatches('));
 const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':adapt(legacyAXSnapshot).replaceAll('TLinkAXCopySnapshotUnlocked','LegacyAXCopySnapshotUnlocked'),
+    'AXSnapshotWrapperUnderTest.inc':snapshotWrapper,
+    'AXSnapshotWrapperBeforeStop.inc':oldSnapshotWrapper.replace('NSDictionary *TLinkAXCopySnapshot(','NSDictionary *BeforeStopAXCopySnapshot('),
+    'AXFindBeforeStop.inc':oldFind.replaceAll('TLinkAXTextMatches','BeforeStopAXTextMatches').replaceAll('TLinkAXFindInSnapshot','BeforeStopAXFindInSnapshot').replaceAll('TLinkAXFindElement','BeforeStopAXFindElement'),
     'AXHitTestUnderTest.inc':adapt(axHitTest(source)),
     'AXHitTestLegacy.inc':adapt(legacyAXHitTest).replaceAll('TLinkAXElementAtPoint','PrecedingAXElementAtPoint'),
     'AXSnapshotBeforeNodePool.inc':adapt(legacyAXNodePool).replaceAll('TLinkAXCopySnapshotUnlocked','PrePoolAXCopySnapshotUnlocked'),
@@ -39,7 +46,7 @@ const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':a
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: acquisition root/payload finally ownership, parent-aware attributes, unchanged snapshot/local-window/geometry/foreground contract.');
+console.log('AX snapshot source passed: snapshot/find caller-stop entry/return and final-row gates, unchanged matcher/count/fields/owners/window/foreground contract.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

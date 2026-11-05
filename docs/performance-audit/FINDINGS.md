@@ -2236,6 +2236,8 @@ Carry cancellation/deadline state into AX traversal and check it:
 
 Use bounded admission/queue metrics rather than spawning parallel AX traversals blindly; AX ordering/remote-service behavior should remain serialized unless device testing proves safe concurrency.
 
+Implementation follow-up (2026-11-05, C05m): public snapshot/find now refuse observed caller stop before enqueue and after dispatch; skipped queued work reports cancellation/partial rather than a generic failure. Find also checks before/after matching so empty input and a cancelled final match/filter cannot return complete success/absence. Existing public selector validation and private failed-input passthrough remain. Extended current/C05l public/matcher Foundation cases await macOS CI. Queue preemption/admission, opaque calls and device qualification remain open. See `IMPLEMENTATION-C05M.md`.
+
 ---
 
 ### [P1-60] UI-tree responses have element-count limits but no explicit byte/string limit and are fully copied through JSON + base64 + legacy text

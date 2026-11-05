@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXQueryStop} from './ax-query-stop-baseline.mjs';
 export const legacyAXSnapshotOwner=readFileSync(new URL('../../test/fixtures/ax-snapshot-owner-before-c05l.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function restoreAXSnapshotOwner(source){
+    source=restoreAXQueryStop(source);
     const a=source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('),b=source.indexOf('NSDictionary *TLinkAXCopySnapshot(pid_t',a);assert.ok(a>=0&&b>a);
     const expected=legacyAXSnapshotOwner
         .replace('    CFTypeRef rawElements = NULL;\n','    CFTypeRef rawElements = NULL;\n    NSArray *elements = nil;\n')

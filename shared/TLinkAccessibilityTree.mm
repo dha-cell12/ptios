@@ -801,10 +801,12 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
 
 NSDictionary *TLinkAXCopySnapshot(pid_t pid, NSString *bundleID, NSDictionary *options)
 {
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     __block NSDictionary *result = nil;
     TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         result = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options ?: @{});
     });
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     return result ?: TLinkAXError(@"ui_snapshot_failed", @{@"pid": @(pid)});
 }
 
@@ -828,6 +830,7 @@ static BOOL TLinkAXTextMatches(NSString *candidate,
 static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary *selector)
 {
     if (!TLinkAXResultSucceeded(snapshot)) return snapshot;
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     NSString *text = [selector[@"text"] isKindOfClass:[NSString class]] ? selector[@"text"] : @"";
     NSString *identifier = [selector[@"identifier"] isKindOfClass:[NSString class]] ? selector[@"identifier"] : @"";
     NSString *role = [selector[@"role"] isKindOfClass:[NSString class]] ? selector[@"role"] : @"";
@@ -861,6 +864,7 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
         if (matchCount == (NSUInteger)requestedIndex) selectedElement = element;
         ++matchCount;
     }
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     NSDictionary *element = selectedElement;
     NSMutableDictionary *result = [snapshot mutableCopy];
     [result removeObjectForKey:@"elements"];
@@ -883,6 +887,7 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
     if (text.length == 0 && identifier.length == 0 && role.length == 0) {
         return TLinkAXError(@"ui_selector_requires_text_identifier_or_role", @{@"pid": @(pid)});
     }
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     NSMutableDictionary *options = [NSMutableDictionary dictionary];
     options[@"max_elements"] = selector[@"max_elements"] ?: selector[@"maxElements"] ?: @250;
     options[@"max_scanned_elements"] = selector[@"max_scanned_elements"] ?: selector[@"maxScannedElements"] ?: @(kTLinkAXDefaultMaxScannedElements);
@@ -893,6 +898,7 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
         NSDictionary *snapshot = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options);
         result = TLinkAXFindInSnapshot(snapshot, selector);
     });
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     return result ?: TLinkAXError(@"ui_find_failed", @{@"pid": @(pid)});
 }
 
