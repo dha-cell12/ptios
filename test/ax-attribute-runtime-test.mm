@@ -9,7 +9,11 @@
 #include <memory>
 #include <stdexcept>
 #include <vector>
+#include <atomic>
+#include <thread>
 #include "../shared/TLinkAXSnapshotWindow.h"
+#include "../shared/TLinkAXAdmission.h"
+#include "AXAdmissionUnderTest.inc"
 using TLinkAXElementRef=CFTypeRef;
 // Distinct fixture trait bits. UIKit/private AX providers are controlled.
 static const uint64_t UIAccessibilityTraitButton=1ULL<<0,UIAccessibilityTraitLink=1ULL<<1,UIAccessibilityTraitImage=1ULL<<2,
@@ -36,6 +40,10 @@ struct ParentBudget {
     double remainingSeconds(double maximum){return tick>=end?0:std::min(maximum,static_cast<double>(end-tick)/1e9);}
 };
 static std::shared_ptr<ParentBudget> parent;
+static dispatch_queue_t admissionQueue;
+static dispatch_semaphore_t admissionEnqueued,admissionRootEntered,admissionRootRelease;
+static std::atomic<unsigned> admissionDispatches{0};
+static bool admissionHoldRoot=false;
 @interface AXValueBox:NSObject
 @property(nonatomic) CGRect frame;
 @property(nonatomic) CGPoint point;
@@ -77,6 +85,11 @@ static int fixtureSetTimeout(TLinkAXElementRef element,float timeout){
     assert(timeout>0);
     if(element==(__bridge CFTypeRef)rootObject){
         ++hitSetters;hitRootTimeout=timeout;tick+=rootSetupCost;if(hitCancelPhase==4)cancelled=true;fixtureHitFault(4);
+        if(admissionHoldRoot){
+            dispatch_semaphore_signal(admissionRootEntered);
+            assert(dispatch_semaphore_wait(admissionRootRelease,dispatch_time(DISPATCH_TIME_NOW,30LL*NSEC_PER_SEC))==0);
+            admissionHoldRoot=false;
+        }
     }
     else{assert(element==(__bridge CFTypeRef)node);timeouts.push_back(timeout);lastAttributeTimeout=timeout;tick+=setupCost;if(cancelSetup)cancelled=true;}
     return 0;
@@ -142,7 +155,7 @@ namespace BeforeParent {
 static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef value,CGRect screen,NSUInteger index,TLinkAXSnapshotWindow *window=nullptr){
     return Current::TLinkAXSerializeElement(value,screen,index,window);
 }
-static NSDictionary *TLinkAXLockState(){tick+=hitLockCost;if(hitCancelPhase==1)cancelled=true;return @{@"locked":@(hitLocked),@"screen_off":@(hitScreenOff)};}
+static NSDictionary *TLinkAXLockState(){tick+=hitLockCost;if(hitCancelPhase==1)cancelled=true;fixtureHitFault(1);return @{@"locked":@(hitLocked),@"screen_off":@(hitScreenOff)};}
 static BOOL TLinkAXPrepare(){tick+=hitPrepareCost;if(hitCancelPhase==2)cancelled=true;return hitPrepared;}
 @interface FixtureScreen:NSObject
 +(instancetype)mainScreen;
@@ -164,13 +177,22 @@ static BOOL TLinkAXPrepare(){tick+=hitPrepareCost;if(hitCancelPhase==2)cancelled
 #include "AXCompletenessUnderTest.inc"
 static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
 static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){
+    if(admissionQueue){
+        assert(queue==dispatch_get_main_queue());++admissionDispatches;
+        if(admissionEnqueued)dispatch_semaphore_signal(admissionEnqueued);
+        dispatch_sync(admissionQueue,^{@autoreleasepool{if(!TLinkNativeStopped())work();}});
+        return;
+    }
     assert(queue==dispatch_get_main_queue());++hitDispatches;tick+=hitQueueCost;
     if(!hitSkipDispatch&&!TLinkNativeStopped())work();
     tick+=hitPostQueueCost;
 }
+#include "AXSnapshotWrapperUnderTest.inc"
+#include "AXFindUnderTest.inc"
 #include "AXHitTestUnderTest.inc"
 #include "AXHitTestLegacy.inc"
 static void reset(){
+    assert(TLinkAXAdmissionState().pending()==0&&!admissionQueue);
     assert(boxes==0);tick=1000000000ULL;attributeCost=setupCost=rootSetupCost=decodeCost=0;
     rootRetains=rootDrops=rootQueries=valueDrops=boxCreates=cancelAt=errorKey=nilKey=throwKey=throwKind=0;
     hitCreateCost=hitCallCost=hitQueueCost=hitPostQueueCost=hitLockCost=hitPrepareCost=hitScreenCost=hitRootDropCost=hitDropCost=0;
@@ -284,8 +306,9 @@ static void cleanupCases(){
 }
 #include "ax-hit-test-runtime-fixture.inc"
 #include "ax-parent-attribute-runtime-fixture.inc"
+#include "ax-admission-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX attributes Foundation: actual/frozen attribute/serializer plus complete snapshot/action gate, real CF ownership/CG geometry and controlled AX providers");
-    parityCases();deadlineCases();cleanupCases();hitTestCases();parentAttributeCases();
+    parityCases();deadlineCases();cleanupCases();hitTestCases();parentAttributeCases();admissionCases();
     std::puts("AX attributes passed: 240 frozen/default/local row and key-order cases, per-RPC local/parent timeout, setup/decode/late/cancel gates, missing setter, NS/C++ after-write CF cleanup and 128 pool lifecycles. Private AX/device qualification pending.");
 }return 0;}

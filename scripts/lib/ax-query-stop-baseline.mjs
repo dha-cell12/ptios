@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXAdmission} from './ax-admission-baseline.mjs';
 export const legacyAXQueryStop=readFileSync(new URL('../../test/fixtures/ax-query-stop-before-c05m.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axQueryRegion(source){const a=source.indexOf('NSDictionary *TLinkAXCopySnapshot(pid_t'),b=source.indexOf('BOOL TLinkAXResultCompleteForAction(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXQueryStop(source){
+    source=restoreAXAdmission(source);
     const gate='    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});\n';
     const expected=legacyAXQueryStop
         .replace('NSDictionary *TLinkAXCopySnapshot(pid_t pid, NSString *bundleID, NSDictionary *options)\n{\n',

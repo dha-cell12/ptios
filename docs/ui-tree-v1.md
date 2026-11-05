@@ -35,6 +35,7 @@ AX frames and activation points use UIKit points. Task 81 converts the selected 
 ## Limits and safety
 
 - Default 250 elements; hard maximum 1,000.
+- Snapshot/find/hit-test share at most eight running or queued calls per process. Overflow returns `ui_ax_busy` with `partial=true` and `retryable=true` before owner enqueue; callers choose whether to retry. Task 77 advertises `max_pending_queries=8`. Capability/foreground probes and separate processes do not share this count. Admitted calls stay serialized and retain their existing deadlines.
 - `max_scanned_elements` / `maxScannedElements` independently bounds serialized source nodes, including filtered and invalid nodes. Default 4,096; values clamp to 1–16,384. Set it in snapshot options or a find/tap/Smart Wait selector. Task 77 advertises `default_max_scanned_elements` and `hard_max_scanned_elements`.
 - Reaching the scan limit with unvisited source nodes returns a partial/truncated snapshot; read-only lookup cannot establish exhaustive absence and Task 81 refuses the incomplete result. Fully consuming a source exactly equal to the limit can still be complete. `maxElements` continues to limit returned rows. The initial AX root-array query still materializes the source list before traversal.
 - Default query deadline 1,500 ms; hard maximum 3,000 ms.

@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 #include "../shared/TLinkAXSymbolCache.h"
+#include "../shared/TLinkAXAdmission.h"
 #include "AXCapabilityConstants.inc"
 
 static NSString *const TLinkAXBackendName=@"axruntime_numeric_v1";
@@ -130,6 +131,8 @@ static void goldenCases(){
                 providerValues=@[variants[n%8],variants[(n/3)%8],variants[(n/7)%8]];
                 NSDictionary *value=read(current);
                 if(current){
+                    NSMutableDictionary *withLimit=[expected mutableCopy];withLimit[@"max_pending_queries"]=@8;expected=withLimit;
+                    assert([value[@"max_pending_queries"] unsignedIntValue]==TLinkAXAdmission::MaxPending);
                     if(![value isEqual:expected])NSLog(@"AX capability parity failure seed=%u expected=%@ actual=%@",n,expected,value);
                     assert([value isEqual:expected]);
                     NSData *oldJSON=[NSJSONSerialization dataWithJSONObject:expected options:NSJSONWritingSortedKeys error:NULL];

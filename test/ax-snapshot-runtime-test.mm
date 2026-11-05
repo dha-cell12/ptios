@@ -8,6 +8,8 @@
 #include <memory>
 #include <stdexcept>
 #include "../shared/TLinkAXSnapshotWindow.h"
+#include "../shared/TLinkAXAdmission.h"
+#include "AXAdmissionUnderTest.inc"
 #include "ax-node-pool-owner.h"
 using TLinkAXElementRef=CFTypeRef;
 static NSString *const TLinkAXSnapshotSchema=@"ui_snapshot_v1";
@@ -124,6 +126,7 @@ static void fixtureAppendMatch(NSMutableArray *matches,NSDictionary *element){++
 #include "AXFindBeforeStop.inc"
 #include "AXCompletenessUnderTest.inc"
 static void reset(){
+    assert(TLinkAXAdmissionState().pending()==0);
     tick=1000000000ULL;createCost=queryCost=nodeCost=0;wallShift=nodeWallJump=lastQueryTimeout=0;parentSeconds=1;
     sourceCount=4;serialized=creates=queries=rootRetains=rootDrops=arrayDrops=prepareCalls=lockCalls=failEvery=cancelAt=0;
     locked=screenOff=rootMissing=queryError=wrongArray=throwQuery=throwNode=cancelled=regressCreate=regressNode=failClockNode=false;prepared=true;

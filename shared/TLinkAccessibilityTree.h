@@ -15,6 +15,8 @@ FOUNDATION_EXPORT NSDictionary *TLinkAXCopyFrontmostContext(void);
 
 // Flat foreground accessibility snapshot. The numeric AXRuntime attribute used
 // on supported iOS builds does not expose stable parent/child relationships.
+// Snapshot/find/at share eight process-local running/queued call slots. Overflow
+// returns ui_ax_busy with partial/retryable; admitted operations stay serialized.
 FOUNDATION_EXPORT NSDictionary *TLinkAXCopySnapshot(pid_t pid,
                                                     NSString *bundleID,
                                                     NSDictionary * _Nullable options);

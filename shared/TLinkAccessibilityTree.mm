@@ -1,6 +1,7 @@
 #include "TLinkNativeDispatch.h"
 #include "TLinkAXSymbolCache.h"
 #include "TLinkAXSnapshotWindow.h"
+#include "TLinkAXAdmission.h"
 #import "TLinkAccessibilityTree.h"
 
 #import <UIKit/UIKit.h>
@@ -47,6 +48,12 @@ static dispatch_queue_t TLinkAXQueue(void)
         queue = dispatch_queue_create("com.tlinkauto.accessibility-tree", DISPATCH_QUEUE_SERIAL);
     });
     return queue;
+}
+
+static TLinkAXAdmission::State &TLinkAXAdmissionState(void)
+{
+    static TLinkAXAdmission::State state;
+    return state;
 }
 
 static BOOL TLinkNotifyFlag(const char *name)
@@ -235,6 +242,7 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"hard_max_elements": @1000,
         @"default_max_scanned_elements": @(kTLinkAXDefaultMaxScannedElements),
         @"hard_max_scanned_elements": @(kTLinkAXHardMaxScannedElements),
+        @"max_pending_queries": @(TLinkAXAdmission::MaxPending),
         @"default_timeout_ms": @1500,
     };
 }
@@ -802,6 +810,8 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
 NSDictionary *TLinkAXCopySnapshot(pid_t pid, NSString *bundleID, NSDictionary *options)
 {
     if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
+    TLinkAXAdmission::Lease admission(TLinkAXAdmissionState());
+    if (!admission.held()) return TLinkAXError(@"ui_ax_busy", @{@"partial": @YES, @"retryable": @YES});
     __block NSDictionary *result = nil;
     TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         result = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options ?: @{});
@@ -888,6 +898,8 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
         return TLinkAXError(@"ui_selector_requires_text_identifier_or_role", @{@"pid": @(pid)});
     }
     if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
+    TLinkAXAdmission::Lease admission(TLinkAXAdmissionState());
+    if (!admission.held()) return TLinkAXError(@"ui_ax_busy", @{@"partial": @YES, @"retryable": @YES});
     NSMutableDictionary *options = [NSMutableDictionary dictionary];
     options[@"max_elements"] = selector[@"max_elements"] ?: selector[@"maxElements"] ?: @250;
     options[@"max_scanned_elements"] = selector[@"max_scanned_elements"] ?: selector[@"maxScannedElements"] ?: @(kTLinkAXDefaultMaxScannedElements);
@@ -918,6 +930,8 @@ NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point
         return TLinkAXError(@"ui_hit_test_invalid_request", @{@"pid": @(pid)});
     }
     if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+    TLinkAXAdmission::Lease admission(TLinkAXAdmissionState());
+    if (!admission.held()) return TLinkAXError(@"ui_ax_busy", @{@"partial": @YES, @"retryable": @YES});
     __block NSDictionary *result = nil;
     TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         NSDictionary *lockState = TLinkAXLockState();

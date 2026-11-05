@@ -2238,6 +2238,8 @@ Use bounded admission/queue metrics rather than spawning parallel AX traversals 
 
 Implementation follow-up (2026-11-05, C05m): public snapshot/find now refuse observed caller stop before enqueue and after dispatch; skipped queued work reports cancellation/partial rather than a generic failure. Find also checks before/after matching so empty input and a cancelled final match/filter cannot return complete success/absence. Existing public selector validation and private failed-input passthrough remain. Extended current/C05l public/matcher Foundation cases await macOS CI. Queue preemption/admission, opaque calls and device qualification remain open. See `IMPLEMENTATION-C05M.md`.
 
+Implementation follow-up (2026-11-05, C05n): snapshot/find/hit-test now share eight process-local synchronous call slots acquired before enqueue. Overflow returns ui_ax_busy with partial/retryable; leases remain charged through queue/work/return and retire once on exit/unwind. Task77 advertises max_pending_queries=8. Portable saturation/race/retirement cases pass; actual mixed-entry/held real-GCD/CF tests await macOS CI. This bounds admitted query count, not opaque preemption, transport/outside-quota work, retained results or device throughput. See `IMPLEMENTATION-C05N.md`.
+
 ---
 
 ### [P1-60] UI-tree responses have element-count limits but no explicit byte/string limit and are fully copied through JSON + base64 + legacy text
