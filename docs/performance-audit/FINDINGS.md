@@ -2379,6 +2379,8 @@ Implementation follow-up (2026-11-04, C05b): snapshot deadline/duration now use 
 
 Implementation follow-up (2026-11-05, C05c): pass the same local window into each snapshot attribute, cap its timeout by 100ms/local/caller remainder and recheck after setup/query. Release late/error/NS-C++ out-values in finally; close the root setup-to-query gap. Preserve ordinary serializer fields/default hit-test timing and incomplete-action guards. Opaque RPC/preemption, scanned/output work and device qualification remain open; new complete helper/snapshot Foundation cases await macOS CI. See `IMPLEMENTATION-C05C.md`.
 
+Implementation follow-up (2026-11-05, C05j): hit-test now caps root messaging by min(500ms, caller remainder), refuses stopped/late work around setup/query/serialization/dispatch and retires raw root/hit in finally across NS/C++ unwind. Standalone per-RPC timing, ordinary fields/errors and foreground/action guards remain; no new local500ms total window. Extended actual/frozen hit-test plus actual serializer Foundation cases await macOS CI. Opaque preemption, queue/admission/whole-operation bounds and device timing remain open. See `IMPLEMENTATION-C05J.md`.
+
 ---
 
 ### [P2-23] Foreground PID fallback can scan every process and read app Info.plist files on failure paths

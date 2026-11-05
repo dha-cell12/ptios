@@ -9,6 +9,7 @@ import {axAttributes,legacyAXAttributes,restoreAXAttributes} from './lib/ax-attr
 import {axScanLimits,legacyAXScan} from './lib/ax-scan-baseline.mjs';
 import {axFind,legacyAXFind} from './lib/ax-find-baseline.mjs';
 import {legacyAXNodePool} from './lib/ax-node-pool-baseline.mjs';
+import {axHitTest,legacyAXHitTest} from './lib/ax-hit-test-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
@@ -21,6 +22,8 @@ const adapt=s=>s.replaceAll('TLinkNativeNowNs()','fixtureNow()').replaceAll('CFA
     .replaceAll('CFRelease(','fixtureRelease(');
 const complete=source.slice(source.indexOf('BOOL TLinkAXResultCompleteForAction('),source.indexOf('NSDictionary *TLinkAXElementAtPoint('));
 const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':adapt(legacyAXSnapshot).replaceAll('TLinkAXCopySnapshotUnlocked','LegacyAXCopySnapshotUnlocked'),
+    'AXHitTestUnderTest.inc':adapt(axHitTest(source)),
+    'AXHitTestLegacy.inc':adapt(legacyAXHitTest).replaceAll('TLinkAXElementAtPoint','PrecedingAXElementAtPoint'),
     'AXSnapshotBeforeNodePool.inc':adapt(legacyAXNodePool).replaceAll('TLinkAXCopySnapshotUnlocked','PrePoolAXCopySnapshotUnlocked'),
     'AXScanLimitsUnderTest.inc':axScanLimits,
     'AXSnapshotBeforeScan.inc':adapt(legacyAXScan).replaceAll('TLinkAXCopySnapshotUnlocked','PreScanAXCopySnapshotUnlocked'),
@@ -32,7 +35,7 @@ const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':a
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: per-node autorelease pool, selected-row/count without match array, independent scanned cap, attribute/CF gates and complete preceding matcher/geometry/foreground contract.');
+console.log('AX snapshot source passed: caller-bounded hit-test/root ownership, per-node pools/scan/attribute gates and complete preceding matcher/geometry/foreground contract.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

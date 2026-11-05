@@ -18,6 +18,10 @@ static const uint64_t UIAccessibilityTraitButton=1ULL<<0,UIAccessibilityTraitLin
 static NSString *const TLinkAXSnapshotSchema=@"ui_snapshot_v1",*const TLinkAXBackendName=@"axruntime_numeric_v1";
 static uint64_t tick=1000000000ULL,attributeCost=0,setupCost=0,rootSetupCost=0,decodeCost=0;
 static unsigned rootRetains=0,rootDrops=0,rootQueries=0,valueDrops=0,boxes=0,boxCreates=0,cancelAt=0,errorKey=0,nilKey=0,throwKey=0,throwKind=0;
+static uint64_t hitCreateCost=0,hitCallCost=0,hitQueueCost=0,hitPostQueueCost=0,hitLockCost=0,hitPrepareCost=0,hitScreenCost=0,hitRootDropCost=0,hitDropCost=0;
+static unsigned hitRetains=0,hitDrops=0,hitCalls=0,hitCreates=0,hitDispatches=0,hitSetters=0,hitCancelPhase=0,hitFaultPhase=0,hitFaultKind=0;
+static double hitRootTimeout=0;
+static bool hitRootMissing=false,hitMissing=false,hitError=false,hitLocked=false,hitScreenOff=false,hitPrepared=true,hitSkipDispatch=false;
 static bool cancelled=false,cancelSetup=false,badFrame=false,badPoint=false;
 static std::vector<uint32_t> keys;
 static std::vector<double> timeouts;
@@ -55,14 +59,37 @@ static double fixtureEpoch(){return 1700000000.0;}
 static bool TLinkNativeStopped(){return cancelled||(parent&&tick>=parent->end);}
 static bool TLinkNativeOutputAllowed(size_t bytes){return bytes<=1024*1024;}
 static std::shared_ptr<ParentBudget> TLinkCurrentNativeBudget(){return parent;}
-static void fixtureRelease(CFTypeRef value){assert(value);if(value==(__bridge CFTypeRef)rootObject)++rootDrops;else ++valueDrops;CFRelease(value);}
+static void fixtureHitFault(unsigned phase){
+    if(hitFaultPhase!=phase)return;
+    if(hitFaultKind==1)[NSException raise:@"AXHitFixture" format:@"provider"];
+    if(hitFaultKind==2)throw std::runtime_error("hit provider");
+}
+static void fixtureRelease(CFTypeRef value){
+    assert(value);
+    if(value==(__bridge CFTypeRef)rootObject){++rootDrops;tick+=hitRootDropCost;}
+    else if(value==(__bridge CFTypeRef)node){++hitDrops;tick+=hitDropCost;}
+    else ++valueDrops;
+    CFRelease(value);
+}
 static int fixtureSetTimeout(TLinkAXElementRef element,float timeout){
     assert(timeout>0);
-    if(element==(__bridge CFTypeRef)rootObject)tick+=rootSetupCost;
+    if(element==(__bridge CFTypeRef)rootObject){
+        ++hitSetters;hitRootTimeout=timeout;tick+=rootSetupCost;if(hitCancelPhase==4)cancelled=true;fixtureHitFault(4);
+    }
     else{assert(element==(__bridge CFTypeRef)node);timeouts.push_back(timeout);tick+=setupCost;if(cancelSetup)cancelled=true;}
     return 0;
 }
-static TLinkAXElementRef fixtureCreateApp(pid_t pid){assert(pid==123);++rootRetains;return CFRetain((__bridge CFTypeRef)rootObject);}
+static TLinkAXElementRef fixtureCreateApp(pid_t pid){
+    assert(pid==123);++hitCreates;tick+=hitCreateCost;if(hitCancelPhase==3)cancelled=true;fixtureHitFault(3);
+    if(hitRootMissing)return NULL;
+    ++rootRetains;return CFRetain((__bridge CFTypeRef)rootObject);
+}
+static int fixtureHitTest(TLinkAXElementRef root,TLinkAXElementRef *out,float x,float y){
+    assert(root==(__bridge CFTypeRef)rootObject&&out&&std::isfinite(x)&&std::isfinite(y));++hitCalls;tick+=hitCallCost;
+    if(hitCancelPhase==5)cancelled=true;
+    if(!hitMissing){++hitRetains;*out=CFRetain((__bridge CFTypeRef)node);}
+    fixtureHitFault(5);return hitError?9:0;
+}
 static int fixtureCopyAttribute(TLinkAXElementRef element,CFStringRef rawKey,CFTypeRef *out){
     assert(out);const uint32_t key=static_cast<uint32_t>((uintptr_t)rawKey);
     if(element==(__bridge CFTypeRef)rootObject){
@@ -99,17 +126,18 @@ static TLinkAXElementRef (*sTLinkAXCreateApp)(pid_t)=fixtureCreateApp;
 static int (*sTLinkAXSetTimeout)(TLinkAXElementRef,float)=fixtureSetTimeout;
 static int (*sTLinkAXCopyAttribute)(TLinkAXElementRef,CFStringRef,CFTypeRef *)=fixtureCopyAttribute;
 static Boolean (*sTLinkAXValueGetValue)(CFTypeRef,int,void *)=fixtureValueGet;
+static int (*sTLinkAXHitTest)(TLinkAXElementRef,TLinkAXElementRef *,float,float)=fixtureHitTest;
 namespace Current {
 #include "AXAttributesUnderTest.inc"
 }
 namespace Legacy {
 #include "AXAttributesLegacy.inc"
 }
-static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef value,CGRect screen,NSUInteger index,TLinkAXSnapshotWindow *window){
+static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef value,CGRect screen,NSUInteger index,TLinkAXSnapshotWindow *window=nullptr){
     return Current::TLinkAXSerializeElement(value,screen,index,window);
 }
-static NSDictionary *TLinkAXLockState(){return @{@"locked":@NO,@"screen_off":@NO};}
-static BOOL TLinkAXPrepare(){return YES;}
+static NSDictionary *TLinkAXLockState(){tick+=hitLockCost;if(hitCancelPhase==1)cancelled=true;return @{@"locked":@(hitLocked),@"screen_off":@(hitScreenOff)};}
+static BOOL TLinkAXPrepare(){tick+=hitPrepareCost;if(hitCancelPhase==2)cancelled=true;return hitPrepared;}
 @interface FixtureScreen:NSObject
 +(instancetype)mainScreen;
 @property(nonatomic,readonly) CGRect bounds;
@@ -117,7 +145,7 @@ static BOOL TLinkAXPrepare(){return YES;}
 @end
 @implementation FixtureScreen
 +(instancetype)mainScreen{static FixtureScreen *value;static dispatch_once_t once;dispatch_once(&once,^{value=[FixtureScreen new];});return value;}
--(CGRect)bounds{return CGRectMake(0,0,320,640);}
+-(CGRect)bounds{tick+=hitScreenCost;if(hitCancelPhase==8)cancelled=true;return CGRectMake(0,0,320,640);}
 -(CGFloat)scale{return 2;}
 @end
 #include "AXErrorUnderTest.inc"
@@ -128,13 +156,25 @@ static BOOL TLinkAXPrepare(){return YES;}
 #include "AXSnapshotBeforeAttributes.inc"
 #undef TLinkAXSerializeElement
 #include "AXCompletenessUnderTest.inc"
+static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
+static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){
+    assert(queue==dispatch_get_main_queue());++hitDispatches;tick+=hitQueueCost;
+    if(!hitSkipDispatch&&!TLinkNativeStopped())work();
+    tick+=hitPostQueueCost;
+}
+#include "AXHitTestUnderTest.inc"
+#include "AXHitTestLegacy.inc"
 static void reset(){
     assert(boxes==0);tick=1000000000ULL;attributeCost=setupCost=rootSetupCost=decodeCost=0;
     rootRetains=rootDrops=rootQueries=valueDrops=boxCreates=cancelAt=errorKey=nilKey=throwKey=throwKind=0;
+    hitCreateCost=hitCallCost=hitQueueCost=hitPostQueueCost=hitLockCost=hitPrepareCost=hitScreenCost=hitRootDropCost=hitDropCost=0;
+    hitRetains=hitDrops=hitCalls=hitCreates=hitDispatches=hitSetters=hitCancelPhase=hitFaultPhase=hitFaultKind=0;hitRootTimeout=0;
+    hitRootMissing=hitMissing=hitError=hitLocked=hitScreenOff=hitSkipDispatch=false;hitPrepared=true;
     cancelled=cancelSetup=badFrame=badPoint=false;keys.clear();timeouts.clear();queryStarts.clear();parent.reset();queryArray=nil;lastBox=nil;
     rootObject=@{@"fixture-root":@YES};node=[AXNode new];node.frame=CGRectMake(10,20,40,20);node.point=CGPointMake(30,30);
     node.label=@"Ứng dụng 测试";node.value=@42;node.identifier=@"identifier";node.traits=@(UIAccessibilityTraitButton);
     sTLinkAXSetTimeout=fixtureSetTimeout;sTLinkAXCopyAttribute=fixtureCopyAttribute;sTLinkAXValueGetValue=fixtureValueGet;
+    sTLinkAXHitTest=fixtureHitTest;
 }
 static bool equal(id left,id right){return left==right||[left isEqual:right];}
 static NSDictionary *serialize(unsigned mode){
@@ -235,8 +275,9 @@ static void cleanupCases(){
     }
     parent.reset();node=nil;rootObject=nil;
 }
+#include "ax-hit-test-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX attributes Foundation: actual/frozen attribute/serializer plus complete snapshot/action gate, real CF ownership/CG geometry and controlled AX providers");
-    parityCases();deadlineCases();cleanupCases();
+    parityCases();deadlineCases();cleanupCases();hitTestCases();
     std::puts("AX attributes passed: 240 frozen/default/local row and key-order cases, per-RPC local/parent timeout, setup/decode/late/cancel gates, missing setter, NS/C++ after-write CF cleanup and 128 pool lifecycles. Private AX/device qualification pending.");
 }return 0;}

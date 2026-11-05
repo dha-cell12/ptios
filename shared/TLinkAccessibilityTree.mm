@@ -909,9 +909,14 @@ NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point
     if (pid <= 0 || !isfinite(point.x) || !isfinite(point.y)) {
         return TLinkAXError(@"ui_hit_test_invalid_request", @{@"pid": @(pid)});
     }
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
     __block NSDictionary *result = nil;
     TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         NSDictionary *lockState = TLinkAXLockState();
+        if (TLinkNativeStopped()) {
+            result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+            return;
+        }
         if ([lockState[@"screen_off"] boolValue]) {
             result = TLinkAXError(@"ui_screen_off", @{@"pid": @(pid), @"lock_state": lockState});
             return;
@@ -920,7 +925,12 @@ NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point
             result = TLinkAXError(@"ui_screen_locked", @{@"pid": @(pid), @"lock_state": lockState});
             return;
         }
-        if (!TLinkAXPrepare() || !sTLinkAXHitTest) {
+        BOOL prepared = TLinkAXPrepare();
+        if (TLinkNativeStopped()) {
+            result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+            return;
+        }
+        if (!prepared || !sTLinkAXHitTest) {
             result = TLinkAXError(@"ui_hit_test_unavailable", @{@"pid": @(pid)});
             return;
         }
@@ -932,23 +942,48 @@ NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point
         TLinkAXElementRef root = NULL;
         TLinkAXElementRef hit = NULL;
         @try {
+            if (TLinkNativeStopped()) {
+                result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+                return;
+            }
             root = sTLinkAXCreateApp(pid);
+            if (TLinkNativeStopped()) {
+                result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+                return;
+            }
             if (!root) {
                 result = TLinkAXError(@"ui_ax_application_unavailable", @{@"pid": @(pid)});
                 return;
             }
-            if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(root, 0.5f);
+            auto budget = TLinkCurrentNativeBudget();
+            double timeout = budget ? budget->remainingSeconds(0.5) : 0.5;
+            if (timeout <= 0 || TLinkNativeStopped()) {
+                result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+                return;
+            }
+            if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(root, (float)timeout);
+            if (TLinkNativeStopped()) {
+                result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+                return;
+            }
             int error = sTLinkAXHitTest(root, &hit, (float)point.x, (float)point.y);
             CFRelease(root);
             root = NULL;
+            if (TLinkNativeStopped()) {
+                result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+                return;
+            }
             if (error != 0 || !hit) {
-                if (hit) CFRelease(hit);
                 result = TLinkAXError(@"ui_hit_test_failed", @{@"pid": @(pid), @"ax_error": @(error)});
                 return;
             }
             NSDictionary *element = TLinkAXSerializeElement(hit, screen, 0);
             CFRelease(hit);
             hit = NULL;
+            if (TLinkNativeStopped()) {
+                result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+                return;
+            }
             result = @{
                 @"ok": @YES,
                 @"schema": @"ui_hit_test_v1",
@@ -962,10 +997,12 @@ NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point
                 @"context_changed": @NO,
             };
         } @catch (__unused NSException *exception) {
+            result = TLinkAXError(@"ui_ax_exception", @{@"pid": @(pid)});
+        } @finally {
             if (root) CFRelease(root);
             if (hit) CFRelease(hit);
-            result = TLinkAXError(@"ui_ax_exception", @{@"pid": @(pid)});
         }
     });
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
     return result ?: TLinkAXError(@"ui_hit_test_failed", @{@"pid": @(pid)});
 }

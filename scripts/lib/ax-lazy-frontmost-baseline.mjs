@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXHitTest} from './ax-hit-test-baseline.mjs';
 const frozen=name=>readFileSync(new URL('../../test/fixtures/'+name,import.meta.url),'utf8').replaceAll('\r\n','\n');
 export const legacyAXLazyFrontmost=frozen('ax-frontmost-before-c05i.inc');
 const legacyHeader=frozen('ax-symbol-cache-before-c05i.h');
 export function restoreAXLazyFrontmost(source){
+    source=restoreAXHitTest(source);
     const a=source.indexOf('static NSString *TLinkAXFrontmostBundleID(void)'),b=source.indexOf('static NSString *TLinkAXBundleIDForExecutablePath(',a);assert.ok(a>=0&&b>a);
     const expected=legacyAXLazyFrontmost
         .replace('        [](void *handle) { dlclose(handle); });','        [](void *handle) { dlclose(handle); }, false);')
