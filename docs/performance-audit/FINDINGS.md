@@ -2383,6 +2383,8 @@ Implementation follow-up (2026-11-05, C05j): hit-test now caps root messaging by
 
 Implementation follow-up (2026-11-05, C05k): non-snapshot attributes with a caller budget now use per-query min(100ms, caller remainder), recheck after setup/query and release late values. Serializer rejects a late final row; standalone/no-parent setup remains once per node and snapshot local gates remain. Normal parent hit-test adds setter calls (one to six), requiring device measurement. Extended current/C05j ownership/cooperative-timeout/field fixtures await macOS CI; opaque overshoot, queue/admission and whole-operation bounds remain open. See `IMPLEMENTATION-C05K.md`.
 
+Implementation follow-up (2026-11-05, C05l): snapshot acquisition now retires remaining raw root/out-array owners through finally and transfers a validated array to ARC inside that region. Query/timing/traversal/metadata remain unchanged; NS mapping is preserved and C++ faults propagate after cleanup. This closes the injected acquisition-unwind ownership gap, rather than asserting an ordinary-path leak. Full frozen reply/release and after-out fault/lifetime cases await macOS CI; root materialization, queue/output and device qualification remain open. See `IMPLEMENTATION-C05L.md`.
+
 ---
 
 ### [P2-23] Foreground PID fallback can scan every process and read app Info.plist files on failure paths

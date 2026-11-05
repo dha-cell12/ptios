@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXSnapshotOwner} from './ax-snapshot-owner-baseline.mjs';
 export const legacyAXParentAttributes=readFileSync(new URL('../../test/fixtures/ax-parent-attributes-before-c05k.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 function attributes(source){const a=source.indexOf('static id TLinkAXAttribute('),b=source.indexOf('static NSInteger TLinkAXBoundedInteger(',a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXParentAttributes(source){
+    source=restoreAXSnapshotOwner(source);
     const expected=legacyAXParentAttributes
         .replace('    if (window) {\n        auto budget = TLinkCurrentNativeBudget();','    auto budget = TLinkCurrentNativeBudget();\n    if (window || budget) {')
         .replace('        timeout = window->remainingSeconds(TLinkNativeNowNs(), timeout);','        if (window) timeout = window->remainingSeconds(TLinkNativeNowNs(), timeout);')

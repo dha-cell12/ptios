@@ -700,6 +700,7 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
 
     TLinkAXElementRef root = NULL;
     CFTypeRef rawElements = NULL;
+    NSArray *elements = nil;
     @try {
         root = sTLinkAXCreateApp(pid);
         if (!root) return TLinkAXError(@"ui_ax_application_unavailable", @{@"pid": @(pid)});
@@ -717,16 +718,17 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
         CFRelease(root);
         root = NULL;
         if (error != 0 || !rawElements || CFGetTypeID(rawElements) != CFArrayGetTypeID()) {
-            if (rawElements) CFRelease(rawElements);
             return TLinkAXError(@"ui_element_query_failed", @{@"pid": @(pid), @"ax_error": @(error)});
         }
+        elements = CFBridgingRelease(rawElements);
+        rawElements = NULL;
     } @catch (__unused NSException *exception) {
+        return TLinkAXError(@"ui_ax_exception", @{@"pid": @(pid)});
+    } @finally {
         if (root) CFRelease(root);
         if (rawElements) CFRelease(rawElements);
-        return TLinkAXError(@"ui_ax_exception", @{@"pid": @(pid)});
     }
 
-    NSArray *elements = CFBridgingRelease(rawElements);
     CGRect screen = [UIScreen mainScreen].bounds;
     NSMutableArray *rows = [NSMutableArray arrayWithCapacity:MIN((NSUInteger)maxElements, elements.count)];
     NSUInteger scanned = 0;

@@ -16,6 +16,8 @@ static uint64_t tick=1000000000ULL,createCost=0,queryCost=0,nodeCost=0;
 static double wallShift=0,nodeWallJump=0,lastQueryTimeout=0,parentSeconds=1;
 static unsigned sourceCount=4,serialized=0,creates=0,queries=0,rootRetains=0,rootDrops=0,arrayDrops=0,prepareCalls=0,lockCalls=0;
 static unsigned failEvery=0,cancelAt=0;
+static unsigned ownerFaultSite=0,ownerFaultKind=0,rawOutRetains=0;
+static bool queryMissing=false;
 static bool locked=false,screenOff=false,prepared=true,rootMissing=false,queryError=false,wrongArray=false,throwQuery=false,throwNode=false,cancelled=false;
 static bool regressCreate=false,regressNode=false,failClockNode=false;
 static bool forceHidden=false,forceNotClickable=false;
@@ -33,23 +35,30 @@ static double fixtureEpoch(){return 1700000000.0+wallShift;}
 static bool TLinkNativeStopped(){return cancelled;}
 static bool TLinkNativeOutputAllowed(size_t bytes){return bytes<=outputCap;}
 static std::shared_ptr<ParentBudget> TLinkCurrentNativeBudget(){return parent;}
+static void fixtureOwnerFault(unsigned site){
+    if(ownerFaultSite!=site)return;
+    if(ownerFaultKind==1)[NSException raise:@"AXSnapshotOwnerFixture" format:@"acquisition"];
+    if(ownerFaultKind==2)throw std::runtime_error("acquisition");
+}
 static void fixtureRelease(CFTypeRef value){
     assert(value);if(value==(__bridge CFTypeRef)rootObject)++rootDrops;else ++arrayDrops;CFRelease(value);
 }
 static TLinkAXElementRef fixtureCreate(pid_t pid){
     assert(pid==123);++creates;tick=regressCreate?1:tick+createCost;
+    fixtureOwnerFault(1);
     if(rootMissing)return NULL;
     ++rootRetains;return CFRetain((__bridge CFTypeRef)rootObject);
 }
 static int fixtureSetTimeout(TLinkAXElementRef root,float timeout){
-    assert(root==(__bridge CFTypeRef)rootObject&&timeout>0);lastQueryTimeout=timeout;return 0;
+    assert(root==(__bridge CFTypeRef)rootObject&&timeout>0);lastQueryTimeout=timeout;fixtureOwnerFault(2);return 0;
 }
 static int fixtureCopyAttribute(TLinkAXElementRef root,CFStringRef key,CFTypeRef *out){
-    assert(root==(__bridge CFTypeRef)rootObject&&(uintptr_t)key==3015&&out);++queries;tick+=queryCost;
+    assert(root==(__bridge CFTypeRef)rootObject&&(uintptr_t)key==3015&&out);++queries;tick+=queryCost;fixtureOwnerFault(3);
     @autoreleasepool{
         NSMutableArray *values=[NSMutableArray array];for(unsigned n=0;n<sourceCount;++n)[values addObject:@(n)];
         returnedArray=values;
-        *out=CFRetain((__bridge CFTypeRef)(wrongArray?(id)@42:values));
+        if(!queryMissing){++rawOutRetains;*out=CFRetain((__bridge CFTypeRef)(wrongArray?(id)@42:values));}
+        fixtureOwnerFault(4);
         if(throwQuery)[NSException raise:@"AXSnapshotFixture" format:@"query"];
         return queryError?9:0;
     }
@@ -96,6 +105,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 #include "AXSnapshotLegacy.inc"
 #include "AXSnapshotBeforeScan.inc"
 #include "AXSnapshotBeforeNodePool.inc"
+#include "AXSnapshotBeforeOwner.inc"
 static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
 static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){assert(queue==dispatch_get_main_queue());work();}
 static NSUInteger matchedArrayAppends=0;
@@ -108,6 +118,7 @@ static void reset(){
     sourceCount=4;serialized=creates=queries=rootRetains=rootDrops=arrayDrops=prepareCalls=lockCalls=failEvery=cancelAt=0;
     locked=screenOff=rootMissing=queryError=wrongArray=throwQuery=throwNode=cancelled=regressCreate=regressNode=failClockNode=false;prepared=true;
     forceHidden=forceNotClickable=false;
+    ownerFaultSite=ownerFaultKind=rawOutRetains=0;queryMissing=false;
     trackNodeOwners=throwNodeCPP=false;ownerDropCost=0;
     outputCap=1024*1024;parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
 }
@@ -267,8 +278,9 @@ static void scanBudgetCases(){
 }
 #include "ax-find-runtime-fixture.inc"
 #include "ax-node-pool-runtime-fixture.inc"
+#include "ax-snapshot-owner-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}
