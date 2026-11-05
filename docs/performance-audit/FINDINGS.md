@@ -2211,6 +2211,8 @@ Implementation follow-up (2026-11-05, C05e): replace the formatter's intermediat
 
 Implementation follow-up (2026-11-05, C05f): drain an autorelease pool around each admitted node's unchanged serializer/filter/output/append body. Normal filtered/invalid exits retire temporary objects between iterations, while accepted rows remain retained by the snapshot. Cleanup time consumes the current deadline; exception pools keep Clang's outer-normal-drain semantics. Full root/accepted snapshot memory, selector fusion and opaque-call preemption remain open. New explicit MRC-owner/ARC/frozen graph tests await macOS CI; no measured device gain. See `IMPLEMENTATION-C05F.md`.
 
+Implementation follow-up (2026-11-05, C05o): formatter predicates/count/selection now run inside a per-row autorelease pool, preserving full traversal, selected-row ownership and cancellation. Normal continues drain temporary objects; exceptions retain the existing outer-normal-drain semantics. Sentinel owner tests are explicit MRC normalization seams, not claims about actual Foundation string allocations. Root materialization/fusion/string-output/device measurements remain open; extended native cases await macOS CI. See `IMPLEMENTATION-C05O.md`.
+
 ---
 
 ## P1 — S009 High Priority

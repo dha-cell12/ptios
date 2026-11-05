@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {restoreAXFindPool} from './ax-find-pool-baseline.mjs';
 export const axAdmissionState=`static TLinkAXAdmission::State &TLinkAXAdmissionState(void)
 {
     static TLinkAXAdmission::State state;
@@ -11,6 +12,7 @@ export const axAdmissionGate=`    TLinkAXAdmission::Lease admission(TLinkAXAdmis
     if (!admission.held()) return TLinkAXError(@"ui_ax_busy", @{@"partial": @YES, @"retryable": @YES});
 `;
 export function restoreAXAdmission(source){
+    source=restoreAXFindPool(source);
     const original=source;
     assert.equal(source.split(axAdmissionGate).length-1,3,'exactly three shared public query admissions');
     for(const [signature,marker] of [

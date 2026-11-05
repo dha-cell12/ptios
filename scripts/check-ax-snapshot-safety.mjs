@@ -14,6 +14,7 @@ import {legacyAXParentAttributes} from './lib/ax-parent-attributes-baseline.mjs'
 import {legacyAXSnapshotOwner} from './lib/ax-snapshot-owner-baseline.mjs';
 import {axQueryRegion,legacyAXQueryStop} from './lib/ax-query-stop-baseline.mjs';
 import {axAdmissionState} from './lib/ax-admission-baseline.mjs';
+import {legacyAXFindPool} from './lib/ax-find-pool-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
@@ -41,6 +42,7 @@ const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':a
     'AXSnapshotBeforeScan.inc':adapt(legacyAXScan).replaceAll('TLinkAXCopySnapshotUnlocked','PreScanAXCopySnapshotUnlocked'),
     'AXFindUnderTest.inc':source.slice(source.indexOf('static BOOL TLinkAXTextMatches('),source.indexOf('BOOL TLinkAXResultCompleteForAction(')),
     'AXFindLegacy.inc':legacyAXFind.replaceAll('TLinkAXFindInSnapshot','LegacyAXFindInSnapshot').replaceAll('[matches addObject:element]','fixtureAppendMatch(matches,element)'),
+    'AXFindBeforePool.inc':legacyAXFindPool.replaceAll('TLinkAXFindInSnapshot','BeforePoolAXFindInSnapshot'),
     'AXAttributesUnderTest.inc':adapt(axAttributes(source)),
     'AXAttributesLegacy.inc':adapt(legacyAXAttributes),
     'AXAttributesBeforeParent.inc':adapt(legacyAXParentAttributes),
@@ -48,7 +50,7 @@ const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':a
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: shared eight-slot pre-enqueue query admission, unchanged validation/caller-stop/CF/window/foreground/authority contract.');
+console.log('AX snapshot source passed: per-row find pool, shared admission and unchanged matcher/count/index/cancel/CF/window/foreground contract.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

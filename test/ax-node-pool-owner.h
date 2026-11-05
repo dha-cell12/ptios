@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 void TLinkAXFixtureAttachOwner(NSMutableDictionary *row);
+void TLinkAXFixtureAutoreleaseOwner(void);
 void TLinkAXFixtureResetOwners(void);
 uint64_t TLinkAXFixtureLiveOwners(void);
 uint64_t TLinkAXFixturePeakOwners(void);
