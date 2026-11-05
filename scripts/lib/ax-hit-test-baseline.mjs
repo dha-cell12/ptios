@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXParentAttributes} from './ax-parent-attributes-baseline.mjs';
 export const legacyAXHitTest=readFileSync(new URL('../../test/fixtures/ax-hit-test-before-c05j.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function axHitTest(source){const a=source.indexOf('NSDictionary *TLinkAXElementAtPoint(');assert.ok(a>=0);return source.slice(a);}
 export function restoreAXHitTest(source){
+    source=restoreAXParentAttributes(source);
     const cancel='if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});\n';
     const stop=indent=>`${indent}if (TLinkNativeStopped()) {
 ${indent}    result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});

@@ -23,6 +23,8 @@ static unsigned hitRetains=0,hitDrops=0,hitCalls=0,hitCreates=0,hitDispatches=0,
 static double hitRootTimeout=0;
 static bool hitRootMissing=false,hitMissing=false,hitError=false,hitLocked=false,hitScreenOff=false,hitPrepared=true,hitSkipDispatch=false;
 static bool cancelled=false,cancelSetup=false,badFrame=false,badPoint=false;
+static bool honorAttributeTimeout=false;
+static double lastAttributeTimeout=0;
 static std::vector<uint32_t> keys;
 static std::vector<double> timeouts;
 static std::vector<uint64_t> queryStarts;
@@ -76,7 +78,7 @@ static int fixtureSetTimeout(TLinkAXElementRef element,float timeout){
     if(element==(__bridge CFTypeRef)rootObject){
         ++hitSetters;hitRootTimeout=timeout;tick+=rootSetupCost;if(hitCancelPhase==4)cancelled=true;fixtureHitFault(4);
     }
-    else{assert(element==(__bridge CFTypeRef)node);timeouts.push_back(timeout);tick+=setupCost;if(cancelSetup)cancelled=true;}
+    else{assert(element==(__bridge CFTypeRef)node);timeouts.push_back(timeout);lastAttributeTimeout=timeout;tick+=setupCost;if(cancelSetup)cancelled=true;}
     return 0;
 }
 static TLinkAXElementRef fixtureCreateApp(pid_t pid){
@@ -96,7 +98,8 @@ static int fixtureCopyAttribute(TLinkAXElementRef element,CFStringRef rawKey,CFT
         assert(key==3015);++rootQueries;
         @autoreleasepool{NSArray *values=@[node];queryArray=values;*out=CFRetain((__bridge CFTypeRef)values);return 0;}
     }
-    assert(element==(__bridge CFTypeRef)node);keys.push_back(key);queryStarts.push_back(tick);tick+=attributeCost;
+    assert(element==(__bridge CFTypeRef)node);keys.push_back(key);queryStarts.push_back(tick);
+    tick+=honorAttributeTimeout&&lastAttributeTimeout>0?std::min(attributeCost,(uint64_t)std::ceil(lastAttributeTimeout*1e9)):attributeCost;
     if(cancelAt==keys.size())cancelled=true;
     @autoreleasepool{
         id value=nil;
@@ -132,6 +135,9 @@ namespace Current {
 }
 namespace Legacy {
 #include "AXAttributesLegacy.inc"
+}
+namespace BeforeParent {
+#include "AXAttributesBeforeParent.inc"
 }
 static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef value,CGRect screen,NSUInteger index,TLinkAXSnapshotWindow *window=nullptr){
     return Current::TLinkAXSerializeElement(value,screen,index,window);
@@ -171,6 +177,7 @@ static void reset(){
     hitRetains=hitDrops=hitCalls=hitCreates=hitDispatches=hitSetters=hitCancelPhase=hitFaultPhase=hitFaultKind=0;hitRootTimeout=0;
     hitRootMissing=hitMissing=hitError=hitLocked=hitScreenOff=hitSkipDispatch=false;hitPrepared=true;
     cancelled=cancelSetup=badFrame=badPoint=false;keys.clear();timeouts.clear();queryStarts.clear();parent.reset();queryArray=nil;lastBox=nil;
+    honorAttributeTimeout=false;lastAttributeTimeout=0;
     rootObject=@{@"fixture-root":@YES};node=[AXNode new];node.frame=CGRectMake(10,20,40,20);node.point=CGPointMake(30,30);
     node.label=@"Ứng dụng 测试";node.value=@42;node.identifier=@"identifier";node.traits=@(UIAccessibilityTraitButton);
     sTLinkAXSetTimeout=fixtureSetTimeout;sTLinkAXCopyAttribute=fixtureCopyAttribute;sTLinkAXValueGetValue=fixtureValueGet;
@@ -276,8 +283,9 @@ static void cleanupCases(){
     parent.reset();node=nil;rootObject=nil;
 }
 #include "ax-hit-test-runtime-fixture.inc"
+#include "ax-parent-attribute-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX attributes Foundation: actual/frozen attribute/serializer plus complete snapshot/action gate, real CF ownership/CG geometry and controlled AX providers");
-    parityCases();deadlineCases();cleanupCases();hitTestCases();
+    parityCases();deadlineCases();cleanupCases();hitTestCases();parentAttributeCases();
     std::puts("AX attributes passed: 240 frozen/default/local row and key-order cases, per-RPC local/parent timeout, setup/decode/late/cancel gates, missing setter, NS/C++ after-write CF cleanup and 128 pool lifecycles. Private AX/device qualification pending.");
 }return 0;}

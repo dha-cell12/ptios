@@ -10,6 +10,7 @@ import {axScanLimits,legacyAXScan} from './lib/ax-scan-baseline.mjs';
 import {axFind,legacyAXFind} from './lib/ax-find-baseline.mjs';
 import {legacyAXNodePool} from './lib/ax-node-pool-baseline.mjs';
 import {axHitTest,legacyAXHitTest} from './lib/ax-hit-test-baseline.mjs';
+import {legacyAXParentAttributes} from './lib/ax-parent-attributes-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
@@ -31,11 +32,12 @@ const fixtures={'AXSnapshotUnderTest.inc':adapt(actual),'AXSnapshotLegacy.inc':a
     'AXFindLegacy.inc':legacyAXFind.replaceAll('TLinkAXFindInSnapshot','LegacyAXFindInSnapshot').replaceAll('[matches addObject:element]','fixtureAppendMatch(matches,element)'),
     'AXAttributesUnderTest.inc':adapt(axAttributes(source)),
     'AXAttributesLegacy.inc':adapt(legacyAXAttributes),
+    'AXAttributesBeforeParent.inc':adapt(legacyAXParentAttributes),
     'AXSnapshotBeforeAttributes.inc':adapt(axSnapshot(preceding)).replaceAll('TLinkAXCopySnapshotUnlocked','PrecedingAXCopySnapshotUnlocked'),
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: caller-bounded hit-test/root ownership, per-node pools/scan/attribute gates and complete preceding matcher/geometry/foreground contract.');
+console.log('AX snapshot source passed: parent-aware per-attribute hit-test gates, root ownership, unchanged snapshot/local-window/standalone/geometry/foreground contract.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

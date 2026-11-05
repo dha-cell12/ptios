@@ -2381,6 +2381,8 @@ Implementation follow-up (2026-11-05, C05c): pass the same local window into eac
 
 Implementation follow-up (2026-11-05, C05j): hit-test now caps root messaging by min(500ms, caller remainder), refuses stopped/late work around setup/query/serialization/dispatch and retires raw root/hit in finally across NS/C++ unwind. Standalone per-RPC timing, ordinary fields/errors and foreground/action guards remain; no new local500ms total window. Extended actual/frozen hit-test plus actual serializer Foundation cases await macOS CI. Opaque preemption, queue/admission/whole-operation bounds and device timing remain open. See `IMPLEMENTATION-C05J.md`.
 
+Implementation follow-up (2026-11-05, C05k): non-snapshot attributes with a caller budget now use per-query min(100ms, caller remainder), recheck after setup/query and release late values. Serializer rejects a late final row; standalone/no-parent setup remains once per node and snapshot local gates remain. Normal parent hit-test adds setter calls (one to six), requiring device measurement. Extended current/C05j ownership/cooperative-timeout/field fixtures await macOS CI; opaque overshoot, queue/admission and whole-operation bounds remain open. See `IMPLEMENTATION-C05K.md`.
+
 ---
 
 ### [P2-23] Foreground PID fallback can scan every process and read app Info.plist files on failure paths

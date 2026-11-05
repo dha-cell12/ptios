@@ -543,20 +543,20 @@ static id TLinkAXAttribute(TLinkAXElementRef element, uint32_t key, int *errorOu
 {
     if (TLinkNativeStopped()) return nil;
     if (!element || !sTLinkAXCopyAttribute) return nil;
-    if (window) {
-        auto budget = TLinkCurrentNativeBudget();
+    auto budget = TLinkCurrentNativeBudget();
+    if (window || budget) {
         double timeout = budget ? budget->remainingSeconds(0.10) : 0.10;
-        timeout = window->remainingSeconds(TLinkNativeNowNs(), timeout);
-        if (timeout <= 0) return nil;
+        if (window) timeout = window->remainingSeconds(TLinkNativeNowNs(), timeout);
+        if (timeout <= 0 || TLinkNativeStopped()) return nil;
         if (sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, (float)timeout);
-        if (TLinkNativeStopped() || window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0) return nil;
+        if (TLinkNativeStopped() || (window && window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0)) return nil;
     }
     CFTypeRef value = NULL;
     @try {
         int error = sTLinkAXCopyAttribute(element, (CFStringRef)(uintptr_t)key, &value);
         if (errorOut) *errorOut = error;
-        if (error != 0 || (window && (TLinkNativeStopped() ||
-            window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0))) return nil;
+        if (error != 0 || ((window || budget) && (TLinkNativeStopped() ||
+            (window && window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0)))) return nil;
         id result = value ? CFBridgingRelease(value) : nil;
         value = NULL;
         return result;
@@ -594,7 +594,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef element,
     @try {
         if (TLinkNativeStopped()) return nil;
         auto nativeBudget = TLinkCurrentNativeBudget();
-        if (!window && sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, nativeBudget ? (float)nativeBudget->remainingSeconds(0.10) : 0.10f);
+        if (!window && !nativeBudget && sTLinkAXSetTimeout) sTLinkAXSetTimeout(element, 0.10f);
         id frameValue = TLinkAXAttribute(element, 2003, NULL, window);
         CGRect frame = CGRectZero;
         if (!frameValue ||
@@ -635,8 +635,8 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef element,
             activationValid = YES;
         }
 
-        if (window && (TLinkNativeStopped() ||
-            window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0)) return nil;
+        if ((window || nativeBudget) && (TLinkNativeStopped() ||
+            (window && window->remainingSeconds(TLinkNativeNowNs(), 0.10) <= 0))) return nil;
         return @{
             @"index": @(index),
             @"label": TLinkAXStringValue(label),
