@@ -2289,6 +2289,8 @@ Implementation follow-up (2026-11-06, C05w): the JSON stream now owns a raw move
 
 Implementation follow-up (2026-11-06, C05x; also P1-59): four result/capability codecs capture the native caller before JSON and recheck stop/remaining output after base64 and after final UTF-8/NSData construction, before notify/return. Observed cancellation/deadline refuses late success; parent output consumed meanwhile retains sticky size refusal. Encoder-time rejection skips final formatting. Root keeps precise NSString lifetime through borrowed-pointer use. Portable100k real-budget cases pass; actual/frozen four-codec effects, weak owners and recovery tests await macOS CI. Ordinary wire/error/authority behavior remains; absent bindings, opaque Foundation work, atomic reservation/publication and transport/device qualification remain open. No measured performance gain claimed. See `IMPLEMENTATION-C05X.md`.
 
+Implementation follow-up (2026-11-06, C05y): four success codecs now use separate autorelease pools for base64 and final response construction, with strong results outside and existing stop/output gates after normal drain. Root gets UTF-8 after the formatting pool and retains the response through synchronous notify. Source/portable checks pass; new actual/C05x wire/graph/explicit-MRC-witness/drain-stop/fault tests await macOS CI. Phase sentinel peaks of1 versus256 pending owners are test expectations, not Foundation/RSS measurements. Full JSON/base64/wire owners, UTF-8 cache/transport/provider/root/metadata bounds and device benefit remain open; P1-60 partial. See `IMPLEMENTATION-C05Y.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery

@@ -2289,13 +2289,19 @@ static void zx_uiTreeNotifyResult(NSDictionary *result, CFWriteStreamRef stream)
         notifyClient((UInt8 *)"-1;;ui_response_too_large\r\n", stream);
         return;
     }
-    NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+    NSString *base64 = nil;
+    @autoreleasepool {
+        base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+    }
     auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
     if (admission != TLinkAXWireBudget::Admission::Ready) {
         notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
         return;
     }
-    __attribute__((objc_precise_lifetime)) NSString *response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
+    __attribute__((objc_precise_lifetime)) NSString *response = nil;
+    @autoreleasepool {
+        response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
+    }
     const char *responseBytes = response.UTF8String;
     admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
     if (admission != TLinkAXWireBudget::Admission::Ready) {
@@ -2339,13 +2345,19 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
                 notifyClient((UInt8 *)"-1;;ui_response_too_large\r\n", stream);
                 return;
             }
-            NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+            NSString *base64 = nil;
+            @autoreleasepool {
+                base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+            }
             auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
             if (admission != TLinkAXWireBudget::Admission::Ready) {
                 notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
                 return;
             }
-            __attribute__((objc_precise_lifetime)) NSString *response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
+            __attribute__((objc_precise_lifetime)) NSString *response = nil;
+            @autoreleasepool {
+                response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
+            }
             const char *responseBytes = response.UTF8String;
             admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
             if (admission != TLinkAXWireBudget::Admission::Ready) {

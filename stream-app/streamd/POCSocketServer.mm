@@ -7667,13 +7667,19 @@ static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
     if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
         return TLinkError(@"ui_response_too_large");
     }
-    NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+    NSString *base64 = nil;
+    @autoreleasepool {
+        base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+    }
     auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
     if (admission != TLinkAXWireBudget::Admission::Ready) {
         return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped
             ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
     }
-    NSData *response = TLinkSuccess(base64);
+    NSData *response = nil;
+    @autoreleasepool {
+        response = TLinkSuccess(base64);
+    }
     admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
     if (admission != TLinkAXWireBudget::Admission::Ready) {
         return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped
@@ -7743,13 +7749,19 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
             return TLinkError(@"ui_response_too_large");
         }
-        NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+        NSString *base64 = nil;
+        @autoreleasepool {
+            base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+        }
         auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
         if (admission != TLinkAXWireBudget::Admission::Ready) {
             return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped
                 ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
         }
-        NSData *response = TLinkSuccess(base64);
+        NSData *response = nil;
+        @autoreleasepool {
+            response = TLinkSuccess(base64);
+        }
         admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
         if (admission != TLinkAXWireBudget::Admission::Ready) {
             return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped

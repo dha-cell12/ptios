@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXWirePoolRoute} from './ax-wire-pool-baseline.mjs';
 const specs={
   "root": {
     "file": "pccontrol/Task.xm",
@@ -60,6 +61,7 @@ const specs={
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export function wireBudgetLegacy(name,kind){return readFileSync(new URL('../../test/fixtures/ax-wire-budget-'+name+'-'+kind+'-before-c05x.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function restoreAXWireBudgetRoute(source,name){
+    source=restoreAXWirePoolRoute(source,name);
     const p=specs[name];assert.equal(source.split(p.include).length-1,1);
     let restored=source.replace(p.include,'');
     for(const [before,after] of p.edits){assert.equal(restored.split(after).length-1,1,'complete current codec/handler region');restored=restored.replace(after,before);}

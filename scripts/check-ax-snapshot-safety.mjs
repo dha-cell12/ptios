@@ -16,6 +16,7 @@ import {axQueryRegion,legacyAXQueryStop} from './lib/ax-query-stop-baseline.mjs'
 import {axAdmissionState} from './lib/ax-admission-baseline.mjs';
 import {legacyAXJSONBufferWriter} from './lib/ax-json-buffer-baseline.mjs';
 import {wireBudgetLegacy} from './lib/ax-wire-budget-baseline.mjs';
+import {wirePoolLegacy} from './lib/ax-wire-pool-baseline.mjs';
 import {legacyAXJSONBudgetWriter} from './lib/ax-json-budget-baseline.mjs';
 import {legacyAXJSONStopWriter,restoreAXJSONStopWriter,stopJSONLegacy} from './lib/ax-json-stop-baseline.mjs';
 import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
@@ -34,8 +35,14 @@ const wireAdapt=s=>s.replaceAll('TLinkAXBoundedJSONDataWithStop(','fixtureBounde
     .replaceAll('[json base64EncodedStringWithOptions:0]','fixtureBase64(json)').replaceAll('CFAbsoluteTimeGetCurrent()','fixtureWireWall()')
     .replaceAll('    NSError *error = nil;\n','').replaceAll('        NSError *jsonError = nil;\n','')
     .replaceAll('[[NSString stringWithFormat:@"0;;%@\\r\\n", base64] UTF8String]','fixtureWireUTF8([NSString stringWithFormat:@"0;;%@\\r\\n", base64])')
-    .replaceAll('response.UTF8String','fixtureWireUTF8(response)').replaceAll('TLinkSuccess(','fixtureWireSuccess(');
+    .replaceAll('response.UTF8String','fixtureWireUTF8(response)').replaceAll('TLinkSuccess(','fixtureWireSuccess(')
+    .replaceAll('[NSString stringWithFormat:@"0;;%@\\r\\n", base64]','fixtureWireFormat(base64)');
 const wireFixtures={};
+for(const name of ['root','troll']){
+    const label='BeforeWirePool'+(name==='root'?'Root':'Troll');
+    wireFixtures[label+'Response.inc']=wireAdapt(wirePoolLegacy(name,'response')).replaceAll(name==='root'?'zx_uiTreeNotifyResult':'TLinkUITreeJSONResponse',label+'Response');
+    wireFixtures[label+'Capability.inc']=wireAdapt(wireCapability(wirePoolLegacy(name,'handler')));
+}
 for(const [name,task] of [['root',rootTask],['troll',trollTask]]){
     for(const current of [false,true]){
         const label=(current?'Current':'Legacy')+(name==='root'?'Root':'Troll');
@@ -107,7 +114,7 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: captured post-base64/final-wire stop/output admission, complete C05w codec/task/server restoration and unchanged writer/AX source.');
+console.log('AX snapshot source passed: base64/final-wire phase pools, strong result transfer with UTF8 outside pool, complete C05x codec/task/server restoration and unchanged gates/writer/AX source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
@@ -120,7 +127,7 @@ try{
     if(process.platform==='darwin'){
         const owner=join(temp,'node-owner.o');run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
         const native=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-I',temp,join(root,'test/ax-snapshot-runtime-test.mm'),owner,'-o',native]);run(native,[]);
-        const wire=join(temp,'wire');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/ax-wire-runtime-test.mm'),'-o',wire]);run(wire,[]);
+        const wire=join(temp,'wire');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/ax-wire-runtime-test.mm'),owner,'-o',wire]);run(wire,[]);
         const attributes=join(temp,'attributes');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-I',temp,join(root,'test/ax-attribute-runtime-test.mm'),'-o',attributes]);run(attributes,[]);
     }else console.log('macOS actual/frozen AX snapshot Foundation/CF/ARC/sanitizer fixture included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-ax-snapshot-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
