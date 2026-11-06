@@ -14,6 +14,7 @@ import {legacyAXParentAttributes} from './lib/ax-parent-attributes-baseline.mjs'
 import {legacyAXSnapshotOwner} from './lib/ax-snapshot-owner-baseline.mjs';
 import {axQueryRegion,legacyAXQueryStop} from './lib/ax-query-stop-baseline.mjs';
 import {axAdmissionState} from './lib/ax-admission-baseline.mjs';
+import {legacyAXJSONBudgetWriter} from './lib/ax-json-budget-baseline.mjs';
 import {legacyAXJSONStopWriter,restoreAXJSONStopWriter,stopJSONLegacy} from './lib/ax-json-stop-baseline.mjs';
 import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
 import {restoreAXWireRoute,wireRegion,wireLegacy,wireResponse,wireHandler,wireCapability} from './lib/ax-wire-baseline.mjs';
@@ -49,6 +50,9 @@ restoreAXJSONStopWriter(await read('shared/TLinkAXJSONOutput.mm'));
 let oldWriter=legacyAXJSONStopWriter.replaceAll(/^#(?:import|include).*\n/gm,'');
 for(const identifier of ['TLinkAXJSONStream','TLinkAXJSONWriter','TLinkAXJSONDataWithWriter','TLinkAXWriteJSON','TLinkAXBoundedJSONData'])oldWriter=oldWriter.replaceAll(identifier,'BeforeStop'+identifier);
 wireFixtures['BeforeStopJSONWriter.inc']=oldWriter;
+let beforeOutput=legacyAXJSONBudgetWriter.replaceAll(/^#(?:import|include).*\n/gm,'');
+for(const identifier of ['TLinkAXJSONStream','TLinkAXJSONWriter','TLinkAXWriteJSON','TLinkAXJSONReportStop','TLinkAXJSONDataWithWriter','TLinkAXBoundedJSONDataWithStop','TLinkAXBoundedJSONData'])beforeOutput=beforeOutput.replaceAll(new RegExp('\\b'+identifier+'\\b','g'),'BeforeOutput'+identifier);
+wireFixtures['BeforeOutputJSONWriter.inc']=beforeOutput;
 for(const name of ['root','troll']){
     const label='BeforeJSONStop'+(name==='root'?'Root':'Troll');
     const adaptStop=s=>wireAdapt(s).replaceAll('fixtureBoundedJSON(','fixtureBeforeStopJSON(');
@@ -91,7 +95,7 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: captured caller-stop JSON gates and four explicit cancelled-result routes, preserving C05t quota/close and full task/server/AX source.');
+console.log('AX snapshot source passed: captured remaining-output admission before JSON appends/copy/return, with complete C05u writer and unchanged codec/task/server/AX source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

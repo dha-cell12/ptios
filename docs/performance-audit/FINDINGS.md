@@ -2283,6 +2283,8 @@ Implementation follow-up (2026-11-06, C05s): both root/TrollStore result and cap
 
 Implementation follow-up (2026-11-06, C05t): four UI codecs now use the actual JSON stream writer with a 786426-byte application quota before each append, coherent success/count/error checks, immutable result copy, normal inner-pool retirement and finally close on NS/C++ unwind. Reject prefixes instead of returning truncated JSON, keep final wire/caller output gates and advertise hard_max_json_bytes. Portable 100k quota cases pass; real stream/codec/owner tests await macOS CI. Foundation temporary/capacity allocation and input graphs are not bounded by this logical sink limit; immutable copy/stream overhead is an explicit tradeoff. Early size failure can precede later invalid-graph diagnostics. See `IMPLEMENTATION-C05T.md`.
 
+Implementation follow-up (2026-11-06, C05v): the JSON sink now projects each prefix through exact success-wire sizing and checks captured native remaining output before append, before immutable copy and after pool drain. Parent response bytes count, rejected chunks are not appended, and native OutputLimit stays sticky. This reserves no response bytes and retains final wire/sink checks. Portable 100k real-budget cases pass; actual/frozen buffer/copy/codec tests await macOS CI. Earlier output refusal may precede later validation errors; Foundation internal work/allocations, missing bindings and device qualification remain open. See `IMPLEMENTATION-C05V.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery

@@ -3,6 +3,7 @@
 #include "../shared/TLinkAXWireOutput.h"
 #include "../shared/TLinkAXJSONQuota.h"
 #include "../shared/TLinkAXJSONStop.h"
+#include "../shared/TLinkAXJSONBudget.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -13,8 +14,9 @@ static bool near(double left,double right){return std::fabs(left-right)<1e-8;}
 #include "ax-wire-safety-fixture.inc"
 #include "ax-json-quota-safety-fixture.inc"
 #include "ax-json-stop-safety-fixture.inc"
+#include "ax-json-budget-safety-fixture.inc"
 int main(){
-    outputBudgetCases();wireSizeCases();jsonQuotaCases();jsonStopPolicyCases();
+    outputBudgetCases();wireSizeCases();jsonQuotaCases();jsonStopPolicyCases();jsonOutputAdmissionCases();
     for(unsigned n=0;n<100000;++n){
         const unsigned milliseconds=100+n%2901;
         const uint64_t start=1000000ULL+static_cast<uint64_t>(n)*10000000ULL;
