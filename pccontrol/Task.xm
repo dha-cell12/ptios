@@ -1,3 +1,4 @@
+#include "../shared/TLinkAXWireBudget.h"
 #import "../shared/TLinkAXJSONOutput.h"
 #include "../shared/TLinkAXWireOutput.h"
 #include "../shared/TLinkNativeBudget.h"
@@ -2268,6 +2269,7 @@ static void zx_uiTreeNotifyResult(NSDictionary *result, CFWriteStreamRef stream)
         notifyClient((UInt8 *)[[NSString stringWithFormat:@"-1;;%@\r\n", code] UTF8String], stream);
         return;
     }
+    const auto wireBudget = TLinkCurrentNativeBudget();
     BOOL jsonTooLarge = false, jsonStopped = false;
     NSData *json = TLinkAXBoundedJSONDataWithStop(result, &jsonTooLarge, &jsonStopped);
     if (jsonStopped) {
@@ -2288,7 +2290,19 @@ static void zx_uiTreeNotifyResult(NSDictionary *result, CFWriteStreamRef stream)
         return;
     }
     NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
-    notifyClient((UInt8 *)[[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String], stream);
+    auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+    if (admission != TLinkAXWireBudget::Admission::Ready) {
+        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
+        return;
+    }
+    __attribute__((objc_precise_lifetime)) NSString *response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
+    const char *responseBytes = response.UTF8String;
+    admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+    if (admission != TLinkAXWireBudget::Admission::Ready) {
+        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
+        return;
+    }
+    notifyClient((UInt8 *)responseBytes, stream);
 }
 
 static BOOL zx_uiTreeContextChanged(NSDictionary *before)
@@ -2306,6 +2320,7 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
         capability[@"runtime"] = @"rootfull";
         capability[@"service"] = @"springboard_script_bridge";
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
+        const auto wireBudget = TLinkCurrentNativeBudget();
         BOOL jsonTooLarge = false, jsonStopped = false;
         NSData *json = TLinkAXBoundedJSONDataWithStop(capability, &jsonTooLarge, &jsonStopped);
         if (jsonStopped) {
@@ -2325,7 +2340,19 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
                 return;
             }
             NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
-            notifyClient((UInt8 *)[[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String], stream);
+            auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+            if (admission != TLinkAXWireBudget::Admission::Ready) {
+                notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
+                return;
+            }
+            __attribute__((objc_precise_lifetime)) NSString *response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
+            const char *responseBytes = response.UTF8String;
+            admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+            if (admission != TLinkAXWireBudget::Admission::Ready) {
+                notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
+                return;
+            }
+            notifyClient((UInt8 *)responseBytes, stream);
         }
         return;
     }

@@ -15,6 +15,7 @@ import {legacyAXSnapshotOwner} from './lib/ax-snapshot-owner-baseline.mjs';
 import {axQueryRegion,legacyAXQueryStop} from './lib/ax-query-stop-baseline.mjs';
 import {axAdmissionState} from './lib/ax-admission-baseline.mjs';
 import {legacyAXJSONBufferWriter} from './lib/ax-json-buffer-baseline.mjs';
+import {wireBudgetLegacy} from './lib/ax-wire-budget-baseline.mjs';
 import {legacyAXJSONBudgetWriter} from './lib/ax-json-budget-baseline.mjs';
 import {legacyAXJSONStopWriter,restoreAXJSONStopWriter,stopJSONLegacy} from './lib/ax-json-stop-baseline.mjs';
 import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
@@ -31,7 +32,9 @@ const [rootTask,trollTask]=await Promise.all(['pccontrol/Task.xm','stream-app/st
 restoreAXWireRoute(rootTask,'root');restoreAXWireRoute(trollTask,'troll');
 const wireAdapt=s=>s.replaceAll('TLinkAXBoundedJSONDataWithStop(','fixtureBoundedJSONWithStop(').replaceAll('TLinkAXBoundedJSONData(','fixtureBoundedJSON(').replaceAll(/\[NSJSONSerialization dataWithJSONObject:([^\n]+?) options:0 error:(?:nil|&error|&jsonError)\]/g,'fixtureJSON($1)')
     .replaceAll('[json base64EncodedStringWithOptions:0]','fixtureBase64(json)').replaceAll('CFAbsoluteTimeGetCurrent()','fixtureWireWall()')
-    .replaceAll('    NSError *error = nil;\n','').replaceAll('        NSError *jsonError = nil;\n','');
+    .replaceAll('    NSError *error = nil;\n','').replaceAll('        NSError *jsonError = nil;\n','')
+    .replaceAll('[[NSString stringWithFormat:@"0;;%@\\r\\n", base64] UTF8String]','fixtureWireUTF8([NSString stringWithFormat:@"0;;%@\\r\\n", base64])')
+    .replaceAll('response.UTF8String','fixtureWireUTF8(response)').replaceAll('TLinkSuccess(','fixtureWireSuccess(');
 const wireFixtures={};
 for(const [name,task] of [['root',rootTask],['troll',trollTask]]){
     for(const current of [false,true]){
@@ -41,6 +44,11 @@ for(const [name,task] of [['root',rootTask],['troll',trollTask]]){
         wireFixtures[label+'Response.inc']=wireAdapt(response).replaceAll(name==='root'?'zx_uiTreeNotifyResult':'TLinkUITreeJSONResponse',label+'Response');
         wireFixtures[label+'Capability.inc']=wireAdapt(wireCapability(handler));
     }
+}
+for(const name of ['root','troll']){
+    const label='BeforeWireBudget'+(name==='root'?'Root':'Troll');
+    wireFixtures[label+'Response.inc']=wireAdapt(wireBudgetLegacy(name,'response')).replaceAll(name==='root'?'zx_uiTreeNotifyResult':'TLinkUITreeJSONResponse',label+'Response');
+    wireFixtures[label+'Capability.inc']=wireAdapt(wireCapability(wireBudgetLegacy(name,'handler')));
 }
 for(const name of ['root','troll']){
     const label='BeforeBounded'+(name==='root'?'Root':'Troll');
@@ -99,7 +107,7 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: bounded owned JSON bytes and immutable NSData transfer, with complete C05v writer and unchanged quota/stop/output/codec/task/server/AX source.');
+console.log('AX snapshot source passed: captured post-base64/final-wire stop/output admission, complete C05w codec/task/server restoration and unchanged writer/AX source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

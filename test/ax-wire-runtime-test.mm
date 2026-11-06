@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkAXWireOutput.h"
+#include "../shared/TLinkAXWireBudget.h"
 #include "../shared/TLinkAXJSONOutput.mm"
 #include "BeforeStopJSONWriter.inc"
 #include "BeforeOutputJSONWriter.inc"
@@ -17,6 +18,35 @@ static WireFault jsonFault=WireFault::Normal,base64Fault=WireFault::Normal;
 static unsigned jsonCalls=0,base64Calls=0;
 static bool useBeforeOutputJSON=false,useBeforeStorageJSON=false;
 static NSData *captured,*lastJSON;
+static unsigned wireEffectStage=0,wireEffectKind=0,wireEffectCalls=0,wireFinalCalls=0;
+static std::weak_ptr<TLinkNativeBudget> wireEffectBudget;
+static std::shared_ptr<TLinkNativeCancellation> wireEffectCancellation;
+static std::unique_ptr<TLinkNativeBudgetScope> wireLateScope;
+static void applyWireEffect(unsigned stage){
+    if(stage!=wireEffectStage)return;
+    ++wireEffectCalls;auto budget=wireEffectBudget.lock();assert(budget&&wireEffectCancellation);
+    if(wireEffectKind==0||wireEffectKind==4)wireEffectCancellation->cancel();
+    if(wireEffectKind==1){
+        assert(budget->deadline());
+        std::this_thread::sleep_until(TLinkNativeClock::time_point(std::chrono::nanoseconds(budget->deadline())));
+        assert(budget->reason()==TLinkNativeStop::Deadline);
+    }
+    if(wireEffectKind==2||wireEffectKind==3){
+        size_t wire=0;assert(lastJSON&&TLinkAXWireOutput::SuccessSize(lastJSON.length,wire));
+        const size_t count=budget->outputLimit()-wire+1;
+        std::vector<uint8_t> bytes(count+1,'x');bytes.back()=0;
+        assert(budget->appendCString(bytes.data())==(int)count);
+        if(wireEffectKind==3){assert(!budget->outputAllowed(wire));wireEffectCancellation->cancel();}
+    }
+    if(wireEffectKind==4||wireEffectKind==5){
+        auto alternateCancel=std::make_shared<TLinkNativeCancellation>();
+        if(wireEffectKind==5)alternateCancel->cancel();
+        auto alternate=std::make_shared<TLinkNativeBudget>(alternateCancel,0,1024*1024);
+        wireLateScope.reset(new TLinkNativeBudgetScope(alternate));
+    }
+    if(wireEffectKind==6)[NSException raise:@"WireEffectFixture" format:@"effect"];
+    if(wireEffectKind==7)throw std::runtime_error("wire effect");
+}
 static NSDictionary *fixtureCapability,*fixtureForeground;
 static uint64_t sTLinkUITreeContextGeneration=7;
 static BOOL sTLinkUITreeLegacyForegroundUnavailable=NO;
@@ -54,7 +84,10 @@ static NSString *fixtureBase64(NSData *data){
     if(base64Fault==WireFault::ThrowNS)[NSException raise:@"WireFixture" format:@"base64"];
     if(base64Fault==WireFault::ThrowCPP)throw std::runtime_error("base64");
     if(base64Fault==WireFault::Empty)return nil;
-    return [data base64EncodedStringWithOptions:0];
+    NSString *value=[data base64EncodedStringWithOptions:0];applyWireEffect(1);return value;
+}
+static const char *fixtureWireUTF8(NSString *value){
+    const char *bytes=value.UTF8String;++wireFinalCalls;applyWireEffect(2);return bytes;
 }
 static BOOL TLinkAXResultSucceeded(NSDictionary *value){return [value isKindOfClass:[NSDictionary class]]&&[value[@"ok"] boolValue];}
 static NSDictionary *TLinkAXCapabilitySnapshot(){return fixtureCapability;}
@@ -64,6 +97,9 @@ static void notifyClient(UInt8 *bytes,CFWriteStreamRef stream){
     assert(bytes&&!stream);captured=[NSData dataWithBytes:bytes length:std::strlen((const char *)bytes)];
 }
 #include "WireTrollFormatter.inc"
+static NSData *fixtureWireSuccess(NSString *value){
+    NSData *data=TLinkSuccess(value);++wireFinalCalls;applyWireEffect(2);return data;
+}
 #include "CurrentRootResponse.inc"
 #include "LegacyRootResponse.inc"
 #include "CurrentTrollResponse.inc"
@@ -72,6 +108,8 @@ static void notifyClient(UInt8 *bytes,CFWriteStreamRef stream){
 #include "BeforeBoundedTrollResponse.inc"
 #include "BeforeJSONStopRootResponse.inc"
 #include "BeforeJSONStopTrollResponse.inc"
+#include "BeforeWireBudgetRootResponse.inc"
+#include "BeforeWireBudgetTrollResponse.inc"
 static void CurrentRootCapability(CFWriteStreamRef stream){int taskType=77;
 #include "CurrentRootCapability.inc"
 }
@@ -100,7 +138,15 @@ static NSData *BeforeJSONStopTrollCapability(){int taskType=77;
 #include "BeforeJSONStopTrollCapability.inc"
     return nil;
 }
+static void BeforeWireBudgetRootCapability(CFWriteStreamRef stream){int taskType=77;
+#include "BeforeWireBudgetRootCapability.inc"
+}
+static NSData *BeforeWireBudgetTrollCapability(){int taskType=77;
+#include "BeforeWireBudgetTrollCapability.inc"
+    return nil;
+}
 static void reset(){
+    assert(!wireLateScope);wireEffectStage=wireEffectKind=wireEffectCalls=wireFinalCalls=0;wireEffectBudget.reset();wireEffectCancellation.reset();
     assert(!TLinkCurrentNativeBudget());useBeforeOutputJSON=useBeforeStorageJSON=false;jsonCalls=base64Calls=0;jsonFault=base64Fault=WireFault::Normal;captured=lastJSON=nil;
     fixtureCapability=@{@"ok":@YES,@"payload":@""};fixtureForeground=@{@"ok":@YES,@"bundle_id":@"fixture.bundle",@"pid":@123};
 }
@@ -211,9 +257,10 @@ static void failureCases(){
 #include "ax-json-stop-runtime-fixture.inc"
 #include "ax-json-budget-runtime-fixture.inc"
 #include "ax-json-buffer-runtime-fixture.inc"
+#include "ax-wire-budget-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX wire Foundation: actual/frozen root/TrollStore result/capability codecs, real JSON/base64/formatter and native budget; AX/frontmost/notify controlled");
-    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();
+    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();wireLateAdmissionCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{
         reset();jsonFault=WireFault::Probe;
         errorReply(call(n%2!=0,n%3!=0,true,@{@"ok":@YES}),@"ui_response_too_large");assert(base64Calls==0);

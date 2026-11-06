@@ -1,3 +1,4 @@
+#include "../../shared/TLinkAXWireBudget.h"
 #import "../../shared/TLinkAXJSONOutput.h"
 #include "../../shared/TLinkAXWireOutput.h"
 #include "../../shared/TLinkNativeBudget.h"
@@ -7652,6 +7653,7 @@ static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
             ? result[@"error"] : @"ui_operation_failed";
         return TLinkError(code);
     }
+    const auto wireBudget = TLinkCurrentNativeBudget();
     BOOL jsonTooLarge = false, jsonStopped = false;
     NSData *json = TLinkAXBoundedJSONDataWithStop(result, &jsonTooLarge, &jsonStopped);
     if (jsonStopped) {
@@ -7665,7 +7667,19 @@ static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
     if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
         return TLinkError(@"ui_response_too_large");
     }
-    return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
+    NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+    auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+    if (admission != TLinkAXWireBudget::Admission::Ready) {
+        return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped
+            ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+    }
+    NSData *response = TLinkSuccess(base64);
+    admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+    if (admission != TLinkAXWireBudget::Admission::Ready) {
+        return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped
+            ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+    }
+    return response;
 }
 
 static BOOL TLinkUITreeContextChanged(NSDictionary *before)
@@ -7715,6 +7729,7 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"direct_foreground_focused_pid": @(sTLinkAXSpringBoardLastFocusedPid),
             @"direct_foreground_top_event_pid": @(sTLinkAXSpringBoardLastTopEventPid),
         };
+        const auto wireBudget = TLinkCurrentNativeBudget();
         BOOL jsonTooLarge = false, jsonStopped = false;
         NSData *json = TLinkAXBoundedJSONDataWithStop(capability, &jsonTooLarge, &jsonStopped);
         if (jsonStopped) {
@@ -7728,7 +7743,19 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
             return TLinkError(@"ui_response_too_large");
         }
-        return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
+        NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
+        auto admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+        if (admission != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
+        NSData *response = TLinkSuccess(base64);
+        admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+        if (admission != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(admission == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
+        return response;
     }
 
     NSString *decodeError = nil;
