@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 #include "../shared/TLinkAXSymbolCache.h"
+#include "../shared/TLinkNativeBudget.h"
 
 static const char *const sbsPath="/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices";
 static const char *const securityPath="/System/Library/Frameworks/Security.framework/Security";

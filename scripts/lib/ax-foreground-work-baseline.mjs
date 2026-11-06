@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXProbes} from './ax-probes-baseline.mjs';
 const spec={
   "hash": "f516ac75fd2e885365fe6fdd3e4a6d04335d1752ea0b81a69c2f0d009a8c50dc",
   "include": "#include \"TLinkAXProcessPolicy.h\"\n",
@@ -28,6 +29,7 @@ const spec={
 export function foregroundWorkLegacy(kind){return readFileSync(new URL('../../test/fixtures/ax-foreground-work-'+kind+'-before-c05ac.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function foregroundWorkRegion(source,kind){const p=spec.regions.find(p=>p.kind===kind);const a=source.indexOf(p.start),b=source.indexOf(p.end,a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXForegroundWork(source){
+ source=restoreAXProbes(source);
  assert.equal(source.split(spec.include).length-1,1);let restored=source.replace(spec.include,'');
  for(const p of spec.regions){const actual=foregroundWorkRegion(restored,p.kind);assert.equal(actual,p.current,'only bounded/fresh process fallback, per-row pools and cooperative foreground/main budget');restored=restored.replace(actual,foregroundWorkLegacy(p.kind));}
  assert.equal(createHash('sha256').update(restored).digest('hex'),spec.hash,'complete preceding C05ab shared AX source');return restored;

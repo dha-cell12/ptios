@@ -21,6 +21,7 @@ static size_t reportedOverride,returnedOverride;
 static bool overrideProbe,overrideRead,failProbe,failRead,failAllocation,shortAllocation,missingSymbol,trackOwners,readFiles;
 static unsigned pathMode;
 static bool outputStop=false;
+static bool escapeCallerTLS=false;
 static std::vector<struct kinfo_proc> rows;
 static NSDictionary *pathMap,*infoMap;
 static __weak NSMutableData *tableOwner;
@@ -28,7 +29,8 @@ static std::shared_ptr<TLinkNativeCancellation> cancellation;
 static std::weak_ptr<TLinkNativeBudget> caller;
 extern "C" void TLinkAXFixtureOwnerDidDrain(void){}
 static void effect(unsigned stage){
-    if(stage==stopAt){assert(cancellation);if(outputStop){auto budget=caller.lock();assert(budget&&!budget->outputAllowed(budget->outputLimit()+1));}else cancellation->cancel();}
+    if(stage==stopAt){assert(cancellation);if(outputStop){auto budget=caller.lock();assert(budget&&!budget->outputAllowed(budget->outputLimit()+1));}else cancellation->cancel();
+        if(escapeCallerTLS)TLinkNativeBudgetSlot()=std::make_shared<TLinkNativeBudget>(std::make_shared<TLinkNativeCancellation>(),0,1024);}
     if(stage==faultAt){if(faultKind==1)[NSException raise:@"ForegroundFixture" format:@"fault"];if(faultKind==2)throw std::runtime_error("foreground");}
 }
 static pid_t fixtureSelfPID(){return 999999;}
@@ -72,7 +74,7 @@ static void reset(unsigned count=4){
     rows.assign(count,{});NSMutableDictionary *paths=[NSMutableDictionary dictionary];
     for(unsigned n=0;n<count;++n){rows[n].kp_proc.p_pid=100+(int)n;paths[@(100+n)]=@"/fixture/Ứng.app/Run";}
     pathMap=paths;infoMap=@{@"/fixture/Ứng.app/Info.plist":@{@"CFBundleIdentifier":@"target",@"CFBundleExecutable":@"Run",@"CFBundlePackageType":@"APPL"}};
-    tableOwner=nil;cancellation.reset();caller.reset();outputStop=false;
+    tableOwner=nil;cancellation.reset();caller.reset();outputStop=escapeCallerTLS=false;
 }
 static pid_t scan(bool current,NSString *bundle=@"target"){return current?CurrentTLinkAXPIDForBundleID(bundle):BeforeTLinkAXPIDForBundleID(bundle);}
 static NSDictionary *context(bool current,pid_t pid=100){return current?CurrentTLinkAXContextForPID(pid):BeforeTLinkAXContextForPID(pid);}
@@ -257,7 +259,14 @@ static void publicCases(){
 }
 int main(){@autoreleasepool{
     std::puts("AX foreground work: actual/frozen process/metadata/main/public helpers, real Foundation/CF/plist and controlled sysctl/path/private/queue providers");
-    processCases();metadataCases();bridgeCases();publicCases();reset();
+    processCases();metadataCases();bridgeCases();publicCases();
+    for(bool overflow:{false,true})for(unsigned stage:{8U,9U,10U,11U,12U,13U,14U}){@autoreleasepool{
+        if(stage<=10)bridgeReset();else publicReset();stopAt=stage;escapeCallerTLS=true;outputStop=overflow;
+        cancellation=std::make_shared<TLinkNativeCancellation>();auto budget=std::make_shared<TLinkNativeBudget>(cancellation,0,1024);caller=budget;
+        {TLinkNativeBudgetScope scope(budget);NSDictionary *value=stage<=10?bridge(true):CurrentTLinkAXCopyFrontmostContext();
+            assert([value[@"error"] isEqual:(overflow?@"ui_response_too_large":@"ui_cancelled_or_timed_out")]);assert(TLinkCurrentNativeBudget()!=budget);}
+        assert(!TLinkCurrentNativeBudget());
+    }}reset();
     assert(!TLinkCurrentNativeBudget()&&TLinkAXFixtureLiveOwners()==0);
     std::puts("AX foreground work passed: 128 process/public frozen comparisons, bounded allocation/path faults, scan cancellation, peak one vs256 temporary owners, real plist guards, actual native budget bridge under controlled main scheduling and fallback stop isolation. Real process/main-thread/device performance pending.");
 }return 0;}

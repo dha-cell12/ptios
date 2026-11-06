@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 #include "../shared/TLinkAXSymbolCache.h"
+#include "../shared/TLinkNativeBudget.h"
 
 static const char *const libraryPath="/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices";
 static const char *const symbolNames[]={"SBSCopyFrontmostApplicationDisplayIdentifier","SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay",

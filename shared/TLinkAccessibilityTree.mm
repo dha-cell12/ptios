@@ -62,18 +62,28 @@ static TLinkAXAdmission::State &TLinkAXAdmissionState(void)
 
 static BOOL TLinkNotifyFlag(const char *name)
 {
+    auto budget = TLinkCurrentNativeBudget();
+    if (budget && budget->stopped()) return NO;
     int token = 0;
     if (notify_register_check(name, &token) != NOTIFY_STATUS_OK) return NO;
     uint64_t state = 0;
-    notify_get_state(token, &state);
-    notify_cancel(token);
-    return state != 0;
+    @try {
+        if (budget && budget->stopped()) return NO;
+        notify_get_state(token, &state);
+        return !(budget && budget->stopped()) && state != 0;
+    } @finally {
+        notify_cancel(token);
+    }
 }
 
 static NSDictionary *TLinkAXLockState(void)
 {
+    auto budget = TLinkCurrentNativeBudget();
+    if (budget && budget->stopped()) return nil;
     __block BOOL locked = TLinkNotifyFlag("com.apple.springboard.lockstate");
+    if (budget && budget->stopped()) return nil;
     BOOL screenOff = TLinkNotifyFlag("com.apple.springboard.hasBlankedScreen");
+    if (budget && budget->stopped()) return nil;
     __block BOOL passcodeEnabled = NO;
     static TLinkAXSymbols::Cache symbols(
         "/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
@@ -82,6 +92,7 @@ static NSDictionary *TLinkAXLockState(void)
         [](const char *path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); },
         [](void *handle, const char *name) { return dlsym(handle, name); },
         [](void *handle) { dlclose(handle); });
+    if (budget && budget->stopped()) return nil;
     void *sbs = resolved.handle;
     if (sbs) {
         mach_port_t (*serverPort)(void) = (mach_port_t (*)(void))resolved.first;
@@ -90,12 +101,15 @@ static NSDictionary *TLinkAXLockState(void)
         if (serverPort && lockStatus) {
             @try {
                 BOOL sbsLocked = NO;
-                lockStatus(serverPort(), &sbsLocked, &passcodeEnabled);
+                mach_port_t port = serverPort();
+                if (budget && budget->stopped()) return nil;
+                lockStatus(port, &sbsLocked, &passcodeEnabled);
                 locked = locked || sbsLocked;
             } @catch (__unused NSException *exception) {
             }
         }
     }
+    if (budget && budget->stopped()) return nil;
     return @{
         @"locked": @(locked),
         @"screen_off": @(screenOff),
@@ -105,6 +119,8 @@ static NSDictionary *TLinkAXLockState(void)
 
 static id TLinkAXEntitlementValue(NSString *name, CFTypeRef *sharedTask = nullptr)
 {
+    auto budget = TLinkCurrentNativeBudget();
+    if (budget && budget->stopped()) return nil;
     static TLinkAXSymbols::Cache symbols(
         "/System/Library/Frameworks/Security.framework/Security",
         "SecTaskCreateFromSelf", "SecTaskCopyValueForEntitlement");
@@ -112,6 +128,7 @@ static id TLinkAXEntitlementValue(NSString *name, CFTypeRef *sharedTask = nullpt
         [](const char *path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); },
         [](void *handle, const char *name) { return dlsym(handle, name); },
         [](void *handle) { dlclose(handle); });
+    if (budget && budget->stopped()) return nil;
     void *security = resolved.handle;
     if (!security) return nil;
     typedef CFTypeRef (*CreateTaskFn)(CFAllocatorRef);
@@ -128,7 +145,9 @@ static id TLinkAXEntitlementValue(NSString *name, CFTypeRef *sharedTask = nullpt
     CFErrorRef error = NULL;
     CFTypeRef value = NULL;
     @try {
+        if (budget && budget->stopped()) return nil;
         value = copyValue(task, (__bridge CFStringRef)name, &error);
+        if (budget && budget->stopped()) return nil;
         id result = value ? CFBridgingRelease(value) : nil;
         value = NULL;
         return result;
@@ -195,9 +214,18 @@ BOOL TLinkAXResultSucceeded(NSDictionary *result)
 
 NSDictionary *TLinkAXCapabilitySnapshot(void)
 {
+    auto budget = TLinkCurrentNativeBudget();
+    auto stoppedResult = [&]() -> NSDictionary * {
+        return TLinkAXError(budget->reason() == TLinkNativeStop::OutputLimit
+            ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    };
+    if (budget && budget->stopped()) return stoppedResult();
     BOOL prepared = TLinkAXPrepare();
+    if (budget && budget->stopped()) return stoppedResult();
     NSDictionary *lockState = TLinkAXLockState();
+    if (budget && budget->stopped()) return stoppedResult();
     NSDictionary *foreground = TLinkAXCopyFrontmostContext();
+    if (budget && budget->stopped()) return stoppedResult();
     NSArray<NSString *> *names = @[
         @"com.apple.private.accessibility.inspection",
         @"com.apple.accessibility.api",
@@ -207,12 +235,18 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
     CFTypeRef entitlementTask = NULL;
     @try {
         for (NSString *name in names) {
-            id value = TLinkAXEntitlementValue(name, &entitlementTask);
-            entitlements[name] = @([value respondsToSelector:@selector(boolValue)] && [value boolValue]);
+            if (budget && budget->stopped()) return stoppedResult();
+            @autoreleasepool {
+                id value = TLinkAXEntitlementValue(name, &entitlementTask);
+                if (budget && budget->stopped()) return stoppedResult();
+                entitlements[name] = @([value respondsToSelector:@selector(boolValue)] && [value boolValue]);
+            }
+            if (budget && budget->stopped()) return stoppedResult();
         }
     } @finally {
         if (entitlementTask) CFRelease(entitlementTask);
     }
+    if (budget && budget->stopped()) return stoppedResult();
     return @{
         @"ok": @(prepared),
         @"schema": @"ui_tree_capability_v1",
@@ -257,6 +291,8 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
 
 static NSString *TLinkAXFrontmostBundleID(void)
 {
+    auto budget = TLinkCurrentNativeBudget();
+    if (budget && budget->stopped()) return nil;
     static TLinkAXSymbols::Cache copySymbols(
         "/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices",
         "SBSCopyFrontmostApplicationDisplayIdentifier", "SBSCopyFrontmostApplicationDisplayIdentifierForMainDisplay");
@@ -264,6 +300,7 @@ static NSString *TLinkAXFrontmostBundleID(void)
         [](const char *path) { return dlopen(path, RTLD_LAZY | RTLD_LOCAL); },
         [](void *handle, const char *name) { return dlsym(handle, name); },
         [](void *handle) { dlclose(handle); }, false);
+    if (budget && budget->stopped()) return nil;
     void *sbs = resolved.handle;
     if (!sbs) return nil;
     const char *symbols[] = {
@@ -272,30 +309,44 @@ static NSString *TLinkAXFrontmostBundleID(void)
         NULL,
     };
     for (NSUInteger index = 0; symbols[index]; index++) {
+        if (budget && budget->stopped()) return nil;
         void *copySymbol = index == 0 ? resolved.first : copySymbols.loadSecond(
             [](void *handle, const char *name) { return dlsym(handle, name); });
         CFStringRef (*copyFrontmost)(void) = (CFStringRef (*)(void))copySymbol;
+        if (budget && budget->stopped()) return nil;
         if (!copyFrontmost) continue;
         CFStringRef value = copyFrontmost();
         if (!value) continue;
-        NSString *bundleID = [(__bridge NSString *)value copy];
-        if (strncmp(symbols[index], "SBSCopy", 7) == 0) CFRelease(value);
-        if (bundleID.length > 0) return bundleID;
+        @try {
+            if (budget && budget->stopped()) return nil;
+            NSString *bundleID = [(__bridge NSString *)value copy];
+            if (budget && budget->stopped()) return nil;
+            if (bundleID.length > 0) return bundleID;
+        } @finally {
+            if (strncmp(symbols[index], "SBSCopy", 7) == 0) CFRelease(value);
+        }
     }
 
+    if (budget && budget->stopped()) return nil;
     static TLinkAXSymbols::Symbol serverPortSymbol("SBSSpringBoardServerPort");
     static TLinkAXSymbols::Symbol legacyFrontmostSymbol("SBFrontmostApplicationDisplayIdentifier");
     mach_port_t (*serverPort)(void) = (mach_port_t (*)(void))serverPortSymbol.load(sbs,
         [](void *handle, const char *name) { return dlsym(handle, name); });
+    if (budget && budget->stopped()) return nil;
     void (*legacyFrontmost)(mach_port_t, char *) = (void (*)(mach_port_t, char *))legacyFrontmostSymbol.load(sbs,
         [](void *handle, const char *name) { return dlsym(handle, name); });
+    if (budget && budget->stopped()) return nil;
     if (serverPort && legacyFrontmost) {
         char displayIdentifier[512] = {0};
         @try {
-            legacyFrontmost(serverPort(), displayIdentifier);
+            mach_port_t port = serverPort();
+            if (budget && budget->stopped()) return nil;
+            legacyFrontmost(port, displayIdentifier);
         } @catch (__unused NSException *exception) {
             displayIdentifier[0] = '\0';
         }
+        if (budget && budget->stopped()) return nil;
+        if (!memchr(displayIdentifier, 0, sizeof(displayIdentifier))) return nil;
         NSString *bundleID = displayIdentifier[0] != '\0'
             ? [NSString stringWithUTF8String:displayIdentifier]
             : nil;
@@ -414,12 +465,20 @@ static NSDictionary *TLinkAXContextForPID(pid_t pid)
 
 static NSDictionary *TLinkAXDirectFrontmostContext(void)
 {
+    auto budget = TLinkCurrentNativeBudget();
+    auto stoppedResult = [&]() -> NSDictionary * {
+        return TLinkAXError(budget->reason() == TLinkNativeStop::OutputLimit
+            ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    };
+    if (budget && budget->stopped()) return stoppedResult();
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         dlopen("/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities",
                RTLD_NOW | RTLD_GLOBAL);
     });
+    if (budget && budget->stopped()) return stoppedResult();
     Class serverClass = NSClassFromString(@"AXSpringBoardServer");
+    if (budget && budget->stopped()) return stoppedResult();
     SEL serverSelector = NSSelectorFromString(@"server");
     if (!serverClass || ![serverClass respondsToSelector:serverSelector]) {
         return TLinkAXError(@"ui_ax_springboard_server_unavailable", nil);
@@ -429,9 +488,12 @@ static NSDictionary *TLinkAXDirectFrontmostContext(void)
     BOOL systemAppFrontmost = NO;
     @try {
         id server = ((id (*)(Class, SEL))objc_msgSend)(serverClass, serverSelector);
+        if (budget && budget->stopped()) return stoppedResult();
         if (!server) return TLinkAXError(@"ui_ax_springboard_server_unavailable", nil);
         focusedPID = TLinkAXPIDFromSelector(server, NSSelectorFromString(@"focusedAppPID"));
+        if (budget && budget->stopped()) return stoppedResult();
         topEventPID = TLinkAXPIDFromSelector(server, NSSelectorFromString(@"topEventPidOverride"));
+        if (budget && budget->stopped()) return stoppedResult();
         SEL systemSelector = NSSelectorFromString(@"isSystemAppFrontmost");
         if ([server respondsToSelector:systemSelector]) {
             systemAppFrontmost = ((BOOL (*)(id, SEL))objc_msgSend)(server, systemSelector);
@@ -440,16 +502,22 @@ static NSDictionary *TLinkAXDirectFrontmostContext(void)
         return TLinkAXError(@"ui_ax_springboard_query_failed", nil);
     }
 
+    if (budget && budget->stopped()) return stoppedResult();
     NSDictionary *context = TLinkAXContextForPID(focusedPID);
+    if (budget && budget->stopped()) return stoppedResult();
     NSString *source = @"ax_springboard_focused_pid_v1";
     if (!context && topEventPID > 0 && topEventPID != focusedPID) {
         context = TLinkAXContextForPID(topEventPID);
         source = @"ax_springboard_top_event_pid_v1";
     }
+    if (budget && budget->stopped()) return stoppedResult();
     if (!context && systemAppFrontmost) {
-        context = TLinkAXContextForPID(TLinkAXPIDForBundleID(@"com.apple.springboard"));
+        pid_t systemPID = TLinkAXPIDForBundleID(@"com.apple.springboard");
+        if (budget && budget->stopped()) return stoppedResult();
+        context = TLinkAXContextForPID(systemPID);
         source = @"ax_springboard_system_app_v1";
     }
+    if (budget && budget->stopped()) return stoppedResult();
     NSString *diagnostic = [NSString stringWithFormat:
         @"focused_pid=%d top_event_pid=%d system_frontmost=%d",
         focusedPID, topEventPID, systemAppFrontmost];
@@ -473,8 +541,12 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
     // rootfull and roothide, where the daemon's remote AX PID query may be 0.
     if (![[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return nil;
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    auto budget = TLinkCurrentNativeBudget();
+    auto stoppedResult = [&]() -> NSDictionary * {
+        return TLinkAXError(budget->reason() == TLinkNativeStop::OutputLimit
+            ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    };
+    if (budget && budget->stopped()) return stoppedResult();
     Class springBoardClass = NSClassFromString(@"SpringBoard");
     SEL sharedSelector = NSSelectorFromString(@"sharedApplication");
     SEL foregroundSelector = NSSelectorFromString(@"_accessibilityFrontMostApplication");
@@ -484,7 +556,7 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
     __block id foregroundApp = nil;
     __block BOOL queryFailed = NO;
     void (^query)(void) = ^{
-        if (TLinkNativeStopped()) return;
+        if (budget && budget->stopped()) return;
         @try {
             id springBoard = ((id (*)(Class, SEL))objc_msgSend)(springBoardClass, sharedSelector);
             if (![springBoard respondsToSelector:foregroundSelector]) {
@@ -496,12 +568,10 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
             queryFailed = YES;
         }
     };
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if ([NSThread isMainThread]) query();
     else TLinkNativeDispatchSync(dispatch_get_main_queue(), query);
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (queryFailed) return TLinkAXError(@"ui_springboard_frontmost_query_failed", nil);
 
     // A nil result can also occur during an app transition. Do not mistake
@@ -512,22 +582,19 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
         ? ((id (*)(id, SEL))objc_msgSend)(foregroundApp, bundleSelector) : nil;
     if (![bundleID isKindOfClass:[NSString class]] || bundleID.length == 0)
         return TLinkAXError(@"ui_springboard_frontmost_bundle_unavailable", nil);
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     pid_t pid = TLinkAXPIDFromSelector(foregroundApp, NSSelectorFromString(@"pid"));
-    if (pid <= 0 && !TLinkNativeStopped()) pid = TLinkAXPIDFromSelector(foregroundApp, NSSelectorFromString(@"processIdentifier"));
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (pid <= 0 && !(budget && budget->stopped())) pid = TLinkAXPIDFromSelector(foregroundApp, NSSelectorFromString(@"processIdentifier"));
+    if (budget && budget->stopped()) return stoppedResult();
     if (pid <= 0) {
         SEL processSelector = NSSelectorFromString(@"process");
         if ([foregroundApp respondsToSelector:processSelector]) {
             id process = ((id (*)(id, SEL))objc_msgSend)(foregroundApp, processSelector);
             pid = TLinkAXPIDFromSelector(process, NSSelectorFromString(@"processIdentifier"));
-            if (pid <= 0 && !TLinkNativeStopped()) pid = TLinkAXPIDFromSelector(process, NSSelectorFromString(@"pid"));
+            if (pid <= 0 && !(budget && budget->stopped())) pid = TLinkAXPIDFromSelector(process, NSSelectorFromString(@"pid"));
         }
     }
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (pid <= 0) {
         Class controllerClass = NSClassFromString(@"SBApplicationController");
         SEL sharedController = NSSelectorFromString(@"sharedInstance");
@@ -538,16 +605,14 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
                 id application = ((id (*)(id, SEL, id))objc_msgSend)(controller,
                                                                    applicationSelector, bundleID);
                 pid = TLinkAXPIDFromSelector(application, NSSelectorFromString(@"pid"));
-                if (pid <= 0 && !TLinkNativeStopped()) pid = TLinkAXPIDFromSelector(application,
+                if (pid <= 0 && !(budget && budget->stopped())) pid = TLinkAXPIDFromSelector(application,
                                                            NSSelectorFromString(@"processIdentifier"));
             }
         }
     }
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (pid <= 0) pid = TLinkAXPIDForBundleID(bundleID);
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (pid <= 0) return TLinkAXError(@"ui_springboard_frontmost_pid_unavailable",
                                        @{ @"bundle_id": bundleID });
     return @{
@@ -560,19 +625,20 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
 
 NSDictionary *TLinkAXCopyFrontmostContext(void)
 {
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    auto budget = TLinkCurrentNativeBudget();
+    auto stoppedResult = [&]() -> NSDictionary * {
+        return TLinkAXError(budget->reason() == TLinkNativeStop::OutputLimit
+            ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    };
+    if (budget && budget->stopped()) return stoppedResult();
     NSDictionary *inProcess = TLinkAXSpringBoardProcessContext();
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (inProcess) return inProcess;
     NSDictionary *direct = TLinkAXDirectFrontmostContext();
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (TLinkAXResultSucceeded(direct)) return direct;
     NSString *bundleID = TLinkAXFrontmostBundleID();
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (bundleID.length == 0) {
         return TLinkAXError(@"ui_frontmost_bundle_unavailable", @{
             @"direct_error": direct[@"error"] ?: @"unknown",
@@ -580,8 +646,7 @@ NSDictionary *TLinkAXCopyFrontmostContext(void)
         });
     }
     pid_t pid = TLinkAXPIDForBundleID(bundleID);
-    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
-        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
+    if (budget && budget->stopped()) return stoppedResult();
     if (pid <= 0) {
         return TLinkAXError(@"ui_frontmost_pid_unavailable", @{
             @"bundle_id": bundleID,

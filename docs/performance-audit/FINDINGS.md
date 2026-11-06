@@ -2303,6 +2303,8 @@ Implementation follow-up (2026-11-07, C05z): root result/capability codecs now s
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery
 
+Implementation follow-up (2026-11-07, C05ad; also P1-59/P1-60/P2-23): batch captured caller stop across notify, lock, Security values, capability, SBS/direct providers and public/SpringBoard foreground wrappers. Successful notify registrations and Copy foreground values now have finally cleanup; stopped task/value reads retire their owners, per-key pools retire normal temporaries, and the legacy foreground consumer requires a NUL within512 bytes. Live schema/provider order, fresh values, symbol policy and target/action guards remain. Existing portable/source checks pass; new actual/frozen Foundation/CF/ARC/sanitizer probe/fault/TLS/cleanup tests require macOS CI. Cache resolution remains an opaque admitted group; no token/value cache, preemption, absent binding, whole-operation/device bound or measured speedup. See `IMPLEMENTATION-C05AD.md`.
+
 **Status:** CONFIRMED  
 **Locations:** `shared/TLinkAccessibilityTree.mm:45-100,153-194,604-617,799-816`
 

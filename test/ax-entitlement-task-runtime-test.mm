@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 #include "../shared/TLinkAXSymbolCache.h"
+#include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkAXAdmission.h"
 #include "../shared/TLinkAXSnapshotOutput.h"
 #include "../shared/TLinkAXWireOutput.h"
@@ -19,6 +20,8 @@
 #include "AXCapabilityConstants.inc"
 
 static NSString *const TLinkAXBackendName=@"axruntime_numeric_v1";
+static NSString *const TLinkAXSnapshotSchema=@"ui_snapshot_v1";
+#include "AXProbeError.inc"
 static const char *const securityPath="/System/Library/Frameworks/Security.framework/Security";
 static const char *const createName="SecTaskCreateFromSelf",*const copyName="SecTaskCopyValueForEntitlement";
 static NSArray<NSString *> *names(){return @[@"com.apple.private.accessibility.inspection",@"com.apple.accessibility.api",@"com.apple.private.accessibility.look-me-up-setup"];}
