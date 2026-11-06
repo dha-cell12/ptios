@@ -132,8 +132,9 @@ static void goldenCases(){
                 providerValues=@[variants[n%8],variants[(n/3)%8],variants[(n/7)%8]];
                 NSDictionary *value=read(current);
                 if(current){
-                    NSMutableDictionary *withLimit=[expected mutableCopy];withLimit[@"max_pending_queries"]=@8;withLimit[@"max_snapshot_string_utf8_bytes"]=@65536;expected=withLimit;
+                    NSMutableDictionary *withLimit=[expected mutableCopy];withLimit[@"max_pending_queries"]=@8;withLimit[@"max_snapshot_string_utf8_bytes"]=@65536;withLimit[@"max_hit_test_string_utf8_bytes"]=@65536;expected=withLimit;
                     assert([value[@"max_pending_queries"] unsignedIntValue]==TLinkAXAdmission::MaxPending);
+                    assert([value[@"max_hit_test_string_utf8_bytes"] unsignedIntegerValue]==TLinkAXSnapshotOutput::MaxStringUTF8Bytes);
                     assert([value[@"max_snapshot_string_utf8_bytes"] unsignedIntegerValue]==TLinkAXSnapshotOutput::MaxStringUTF8Bytes);
                     if(![value isEqual:expected])NSLog(@"AX capability parity failure seed=%u expected=%@ actual=%@",n,expected,value);
                     assert([value isEqual:expected]);

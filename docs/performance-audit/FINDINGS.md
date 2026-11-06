@@ -2275,6 +2275,8 @@ Implementation follow-up (2026-11-05, C05f): per-node autorelease pools reduce o
 
 Implementation follow-up (2026-11-06, C05q): accepted snapshot row label/value/identifier/role now have a 65,536-byte UTF-8 cap, with a UTF-16 length preflight before encoding-size work. Use checked arithmetic for the existing row/aggregate/JSON-base64 estimate; reject oversize/unrepresentable results with ui_response_too_large/partial, preserving action refusal and filtered-row priority. Task 77 advertises max_snapshot_string_utf8_bytes. Portable boundary/overflow tests pass; real Unicode/JSON/CF cases await macOS CI. Provider/root/standalone hit-test/metadata/selector/final representation bounds and device memory/performance remain open. See `IMPLEMENTATION-C05Q.md`.
 
+Implementation follow-up (2026-11-06, C05r): hit-test also admits its serialized label/value/identifier/role through the same 64-KiB UTF-8 cap and checked one-row output estimate before success, after root/hit release. The output block refuses oversize/insufficient output with ui_response_too_large/partial; a latched native OutputLimit retains the existing public cancellation translation. Provider/serializer/deadline/stop/authority behavior and NS/C++ unwind remain. Task 77 adds max_hit_test_string_utf8_bytes. Ordinary full graph/JSON, Unicode/budget/CF/lease/late-stop native cases await macOS CI. The estimate is conservative, including nil-element replies; provider/root/metadata/selector/final representation/device bounds remain open. See `IMPLEMENTATION-C05R.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery

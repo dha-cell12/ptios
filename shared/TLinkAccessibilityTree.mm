@@ -245,6 +245,7 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"hard_max_scanned_elements": @(kTLinkAXHardMaxScannedElements),
         @"max_pending_queries": @(TLinkAXAdmission::MaxPending),
         @"max_snapshot_string_utf8_bytes": @(TLinkAXSnapshotOutput::MaxStringUTF8Bytes),
+        @"max_hit_test_string_utf8_bytes": @(TLinkAXSnapshotOutput::MaxStringUTF8Bytes),
         @"default_timeout_ms": @1500,
     };
 }
@@ -1019,6 +1020,25 @@ NSDictionary *TLinkAXElementAtPoint(pid_t pid, NSString *bundleID, CGPoint point
             hit = NULL;
             if (TLinkNativeStopped()) {
                 result = TLinkAXError(@"ui_cancelled_or_timed_out", @{@"pid": @(pid)});
+                return;
+            }
+            size_t rowBytes = 768;
+            for (NSString *key in @[@"label", @"value", @"identifier", @"role"]) {
+                NSString *text = element[key];
+                if (text.length > TLinkAXSnapshotOutput::MaxStringUTF8Bytes) {
+                    result = TLinkAXError(@"ui_response_too_large", @{@"pid": @(pid), @"partial": @YES});
+                    return;
+                }
+                size_t bytes = [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+                if (!TLinkNativeOutputAllowed(bytes) || !TLinkAXSnapshotOutput::AddString(bytes, rowBytes)) {
+                    result = TLinkAXError(@"ui_response_too_large", @{@"pid": @(pid), @"partial": @YES});
+                    return;
+                }
+            }
+            size_t jsonBytes = 0, wireBytes = 0;
+            if (!TLinkAXSnapshotOutput::AppendRow(rowBytes, 0, jsonBytes, wireBytes) ||
+                !TLinkNativeOutputAllowed(wireBytes)) {
+                result = TLinkAXError(@"ui_response_too_large", @{@"pid": @(pid), @"partial": @YES});
                 return;
             }
             result = @{

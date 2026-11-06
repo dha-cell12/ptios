@@ -28,6 +28,10 @@ static unsigned hitRetains=0,hitDrops=0,hitCalls=0,hitCreates=0,hitDispatches=0,
 static double hitRootTimeout=0;
 static bool hitRootMissing=false,hitMissing=false,hitError=false,hitLocked=false,hitScreenOff=false,hitPrepared=true,hitSkipDispatch=false;
 static bool cancelled=false,cancelSetup=false,badFrame=false,badPoint=false;
+static size_t hitOutputCap=1024*1024;
+static bool observeHitOutput=false,stopDuringHitOutput=false,latchHitOutputOverflow=false,hitOutputOverflowed=false;
+static unsigned hitOutputCalls=0,hitOutputFaultKind=0;
+static uint64_t hitOutputCost=0;
 static bool honorAttributeTimeout=false;
 static double lastAttributeTimeout=0;
 static std::vector<uint32_t> keys;
@@ -67,8 +71,18 @@ static bool admissionHoldRoot=false;
 static AXNode *node;
 static uint64_t fixtureNow(){return tick;}
 static double fixtureEpoch(){return 1700000000.0;}
-static bool TLinkNativeStopped(){return cancelled||(parent&&tick>=parent->end);}
-static bool TLinkNativeOutputAllowed(size_t bytes){return bytes<=1024*1024;}
+static bool TLinkNativeStopped(){return cancelled||hitOutputOverflowed||(parent&&tick>=parent->end);}
+static bool TLinkNativeOutputAllowed(size_t bytes){
+    if(observeHitOutput){
+        assert(rootRetains==rootDrops&&hitRetains==hitDrops);++hitOutputCalls;tick+=hitOutputCost;
+        if(stopDuringHitOutput)cancelled=true;
+        if(hitOutputFaultKind==1)[NSException raise:@"AXHitOutputFixture" format:@"output"];
+        if(hitOutputFaultKind==2)throw std::runtime_error("hit output");
+    }
+    const bool allowed=!hitOutputOverflowed&&(!hitOutputCap||bytes<=hitOutputCap);
+    if(!allowed&&latchHitOutputOverflow)hitOutputOverflowed=true;
+    return allowed;
+}
 static std::shared_ptr<ParentBudget> TLinkCurrentNativeBudget(){return parent;}
 static void fixtureHitFault(unsigned phase){
     if(hitFaultPhase!=phase)return;
@@ -192,6 +206,7 @@ static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work
 #include "AXFindUnderTest.inc"
 #include "AXHitTestUnderTest.inc"
 #include "AXHitTestLegacy.inc"
+#include "AXHitTestBeforeOutput.inc"
 static void reset(){
     assert(TLinkAXAdmissionState().pending()==0&&!admissionQueue);
     assert(boxes==0);tick=1000000000ULL;attributeCost=setupCost=rootSetupCost=decodeCost=0;
@@ -200,6 +215,7 @@ static void reset(){
     hitRetains=hitDrops=hitCalls=hitCreates=hitDispatches=hitSetters=hitCancelPhase=hitFaultPhase=hitFaultKind=0;hitRootTimeout=0;
     hitRootMissing=hitMissing=hitError=hitLocked=hitScreenOff=hitSkipDispatch=false;hitPrepared=true;
     cancelled=cancelSetup=badFrame=badPoint=false;keys.clear();timeouts.clear();queryStarts.clear();parent.reset();queryArray=nil;lastBox=nil;
+    hitOutputCap=1024*1024;observeHitOutput=stopDuringHitOutput=latchHitOutputOverflow=hitOutputOverflowed=false;hitOutputCalls=hitOutputFaultKind=0;hitOutputCost=0;
     honorAttributeTimeout=false;lastAttributeTimeout=0;
     rootObject=@{@"fixture-root":@YES};node=[AXNode new];node.frame=CGRectMake(10,20,40,20);node.point=CGPointMake(30,30);
     node.label=@"Ứng dụng 测试";node.value=@42;node.identifier=@"identifier";node.traits=@(UIAccessibilityTraitButton);
@@ -308,8 +324,9 @@ static void cleanupCases(){
 #include "ax-hit-test-runtime-fixture.inc"
 #include "ax-parent-attribute-runtime-fixture.inc"
 #include "ax-admission-runtime-fixture.inc"
+#include "ax-hit-output-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX attributes Foundation: actual/frozen attribute/serializer plus complete snapshot/action gate, real CF ownership/CG geometry and controlled AX providers");
-    parityCases();deadlineCases();cleanupCases();hitTestCases();parentAttributeCases();admissionCases();
+    parityCases();deadlineCases();cleanupCases();hitTestCases();parentAttributeCases();admissionCases();hitOutputCases();
     std::puts("AX attributes passed: 240 frozen/default/local row and key-order cases, per-RPC local/parent timeout, setup/decode/late/cancel gates, missing setter, NS/C++ after-write CF cleanup and 128 pool lifecycles. Private AX/device qualification pending.");
 }return 0;}

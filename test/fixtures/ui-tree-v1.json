@@ -18,6 +18,7 @@
     "hardMaxScannedElements": 16384,
     "maxPendingQueries": 8,
     "maxSnapshotStringUTF8Bytes": 65536,
+    "maxHitTestStringUTF8Bytes": 65536,
     "defaultTimeoutMs": 1500,
     "hardTimeoutMs": 3000
   },
