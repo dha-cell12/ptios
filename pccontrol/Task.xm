@@ -2268,8 +2268,12 @@ static void zx_uiTreeNotifyResult(NSDictionary *result, CFWriteStreamRef stream)
         notifyClient((UInt8 *)[[NSString stringWithFormat:@"-1;;%@\r\n", code] UTF8String], stream);
         return;
     }
-    BOOL jsonTooLarge = false;
-    NSData *json = TLinkAXBoundedJSONData(result, &jsonTooLarge);
+    BOOL jsonTooLarge = false, jsonStopped = false;
+    NSData *json = TLinkAXBoundedJSONDataWithStop(result, &jsonTooLarge, &jsonStopped);
+    if (jsonStopped) {
+        notifyClient((UInt8 *)"-1;;ui_cancelled_or_timed_out\r\n", stream);
+        return;
+    }
     if (jsonTooLarge) {
         notifyClient((UInt8 *)"-1;;ui_response_too_large\r\n", stream);
         return;
@@ -2302,8 +2306,12 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
         capability[@"runtime"] = @"rootfull";
         capability[@"service"] = @"springboard_script_bridge";
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
-        BOOL jsonTooLarge = false;
-        NSData *json = TLinkAXBoundedJSONData(capability, &jsonTooLarge);
+        BOOL jsonTooLarge = false, jsonStopped = false;
+        NSData *json = TLinkAXBoundedJSONDataWithStop(capability, &jsonTooLarge, &jsonStopped);
+        if (jsonStopped) {
+            notifyClient((UInt8 *)"-1;;ui_cancelled_or_timed_out\r\n", stream);
+            return;
+        }
         if (jsonTooLarge) {
             notifyClient((UInt8 *)"-1;;ui_response_too_large\r\n", stream);
             return;

@@ -7652,8 +7652,11 @@ static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
             ? result[@"error"] : @"ui_operation_failed";
         return TLinkError(code);
     }
-    BOOL jsonTooLarge = false;
-    NSData *json = TLinkAXBoundedJSONData(result, &jsonTooLarge);
+    BOOL jsonTooLarge = false, jsonStopped = false;
+    NSData *json = TLinkAXBoundedJSONDataWithStop(result, &jsonTooLarge, &jsonStopped);
+    if (jsonStopped) {
+        return TLinkError(@"ui_cancelled_or_timed_out");
+    }
     if (jsonTooLarge) {
         return TLinkError(@"ui_response_too_large");
     }
@@ -7712,8 +7715,11 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"direct_foreground_focused_pid": @(sTLinkAXSpringBoardLastFocusedPid),
             @"direct_foreground_top_event_pid": @(sTLinkAXSpringBoardLastTopEventPid),
         };
-        BOOL jsonTooLarge = false;
-        NSData *json = TLinkAXBoundedJSONData(capability, &jsonTooLarge);
+        BOOL jsonTooLarge = false, jsonStopped = false;
+        NSData *json = TLinkAXBoundedJSONDataWithStop(capability, &jsonTooLarge, &jsonStopped);
+        if (jsonStopped) {
+            return TLinkError(@"ui_cancelled_or_timed_out");
+        }
         if (jsonTooLarge) {
             return TLinkError(@"ui_response_too_large");
         }

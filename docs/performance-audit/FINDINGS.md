@@ -2244,6 +2244,8 @@ Implementation follow-up (2026-11-05, C05n): snapshot/find/hit-test now share ei
 
 Implementation follow-up (2026-11-05, C05p): snapshot now checks caller stop before/after lock state, after preparation, before root creation, after valid query and after screen bounds. A stopped valid out-array retires in finally before ARC transfer/screen work. Internal invalid-PID and query-error priority, local-window start, ordinary outputs and action refusal remain unchanged. Controlled preflight/deadline/CF cases await macOS CI; opaque preemption, whole-operation/root/output/device bounds remain open. See `IMPLEMENTATION-C05P.md`.
 
+Implementation follow-up (2026-11-06, C05u): JSON encoding now checks a captured native caller budget before writer entry, through stream admission/writes and after writer/copy/pool. Reentrant TLS cannot substitute another caller; observed cancellation/deadline rejects data and four codecs select ui_cancelled_or_timed_out without base64. Read existing native OutputLimit/parent/cleanup semantics and preserve finally/exception behavior. Portable 100k real-budget classifications pass; actual/frozen writer/codec/lifetime tests await macOS CI. This does not create absent socket/session bindings, interrupt opaque Foundation work or provide atomic stop/publication. See `IMPLEMENTATION-C05U.md`.
+
 ---
 
 ### [P1-60] UI-tree responses have element-count limits but no explicit byte/string limit and are fully copied through JSON + base64 + legacy text
