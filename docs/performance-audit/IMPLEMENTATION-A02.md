@@ -3,6 +3,8 @@
 Date: 2026-10-16. Base: `a34b9ac` (A01 build reported passed by the user).
 Status: source implemented; native host and source-contract checks passed. User reported the A02 build passed before A03; device validation remains pending.
 
+Follow-up (2026-11-07): A02b now implements P1-08 presentation coalescing and label caching as a complete source package, with stale/weak/reentrant/fault-safe display ownership. The remaining P1-08 notes below describe the original A02 checkpoint; new native/device qualification is tracked in `IMPLEMENTATION-A02B.md`.
+
 ## Scope and changes
 
 This group concerns the global indicator in `pccontrol/TouchIndicator/TouchIndicatorWindow.xm`, built into the rootfull/roothide tweak. TrollStore production uses its own foreground visual-feedback implementation and does not instantiate this class. The excluded prototype `poc-trollstore` tree remains untouched.

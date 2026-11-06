@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <initializer_list>
 #include "../shared/TLinkTouchPayload.h"
+#include "indicator-presentation-safety-fixture.inc"
 
 struct Client;
 using IOHIDEventSystemClientRef = Client *;
@@ -147,6 +148,7 @@ static void testRepeatedStarts() {
     assert(creates == releases + 1); // Exactly one deliberately failed creation.
 }
 int main() {
+    presentationCases();
     testSlots();
     testLifecycle();
     testFailure();

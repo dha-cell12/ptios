@@ -2,6 +2,8 @@
 #include "../Screen.h"
 #include "../Common.h"
 #include "../../shared/TLinkTouchPayload.h"
+#include "../../shared/TLinkIndicatorPresentation.h"
+#import <QuartzCore/QuartzCore.h>
 #import "TouchIndicatorView.h"
 #import "TouchIndicatorCoordinateView.h"
 #include "../headers/IOHIDEventSystemClient.h"
@@ -223,12 +225,37 @@ static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHI
     }
 }
 
+// BEGIN indicator presentation.
+@interface TouchIndicatorWindow (Presentation)
+- (void)flushIndicatorMoves:(CADisplayLink *)link;
+- (void)flushPendingIndicatorMoves;
+- (void)scheduleIndicatorMoves;
+- (BOOL)applyIndicator:(int)index point:(const TLinkIndicatorPresentation::Point &)point;
+@end
+
+@interface TLinkIndicatorDisplayTarget : NSObject
+@property(nonatomic,weak) TouchIndicatorWindow *window;
+- (void)tick:(CADisplayLink *)link;
+@end
+@implementation TLinkIndicatorDisplayTarget
+- (void)tick:(CADisplayLink *)link
+{
+    TouchIndicatorWindow *window=self.window;
+    if(window)[window flushIndicatorMoves:link];
+    else [link invalidate];
+}
+@end
+
 @implementation TouchIndicatorWindow {
     UIWindow *_window;
     TouchIndicatorView *touchIndicatorViewList[kTLinkTouchMaxFingerCount];
     TouchIndicatorCoordinateView *coordinateView[kTLinkTouchMaxFingerCount];
     UIColor *indicatorColor;
     UIFont *_coordinateFont;
+    NSDictionary *_coordinateAttributes;
+    CADisplayLink *_displayLink;
+    TLinkIndicatorPresentation::Slots<kTLinkTouchMaxFingerCount> _moves;
+    struct {bool valid=false;int x=0,y=0;CGFloat width=0;} _labels[kTLinkTouchMaxFingerCount];
     BOOL _visible;
 }
 
@@ -246,6 +273,7 @@ static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHI
         _window.hidden = YES;
         indicatorColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:0.7];
         _coordinateFont = [UIFont fontWithName:@"Trebuchet MS" size:11.0] ?: [UIFont systemFontOfSize:11.0];
+        _coordinateAttributes = @{NSFontAttributeName:_coordinateFont};
     }
     return self;
 }
@@ -254,6 +282,9 @@ static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHI
 {
     NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
     if (!zx_indicatorValidFingerIndex(index)) return;
+    _moves.hide(index);
+    _labels[index].valid=false;
+    if(!_moves.pending())_displayLink.paused=YES;
     [touchIndicatorViewList[index] removeFromSuperview];
     touchIndicatorViewList[index] = nil;
     [coordinateView[index] removeFromSuperview];
@@ -264,14 +295,16 @@ static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHI
 {
     NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
     if (!zx_indicatorValidFingerIndex(index) || !_visible) return;
+    TLinkIndicatorPresentation::Point point(x,y,radius);int labelX=0,labelY=0;
+    if(!TLinkIndicatorPresentation::Layout(point,scale,SIZE_INDIACTOR_TOUCH_RADIUS_RATIO,labelX,labelY))return;
     [self hideIndicator:index];
     CGFloat size = radius * SIZE_INDIACTOR_TOUCH_RADIUS_RATIO;
     CGFloat half = size / 2;
     TouchIndicatorView *indicator = [[TouchIndicatorView alloc] initWithFrame:CGRectMake(x - half, y - half, size, size)];
     indicator.layer.cornerRadius = half;
     indicator.backgroundColor = indicatorColor;
-    NSString *text = [NSString stringWithFormat:@"(%d, %d)", (int)(x * scale), (int)(y * scale)];
-    CGFloat width = [text sizeWithAttributes:@{NSFontAttributeName:_coordinateFont}].width + 5;
+    NSString *text = [NSString stringWithFormat:@"(%d, %d)", labelX, labelY];
+    CGFloat width = [text sizeWithAttributes:_coordinateAttributes].width + 5;
     TouchIndicatorCoordinateView *coordinate = [[TouchIndicatorCoordinateView alloc] initWithFrame:CGRectMake(x + half + 5, y, width, COORDINATE_VIEW_HEIGHT)];
     coordinate.backgroundColor = indicatorColor;
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, width, COORDINATE_VIEW_HEIGHT)];
@@ -285,6 +318,8 @@ static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHI
     coordinateView[index] = coordinate;
     [_window addSubview:indicator];
     [_window addSubview:coordinate];
+    _labels[index].valid=true;_labels[index].x=labelX;_labels[index].y=labelY;_labels[index].width=width;
+    _moves.show(index,point);
 }
 
 - (void)show
@@ -297,6 +332,8 @@ static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHI
 - (void)hide
 {
     NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
+    [_displayLink invalidate];_displayLink=nil;
+    _moves.clear();
     _visible = NO;
     _window.hidden = YES;
     for (int i = 0; i < kTLinkTouchMaxFingerCount; i++) [self hideIndicator:i];
@@ -316,15 +353,82 @@ static void IOHIDEventCallbackForTouchIndicator(void *target, void *refcon, IOHI
 {
     NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
     if (!zx_indicatorValidFingerIndex(index) || !_visible || !touchIndicatorViewList[index]) return;
-    CGFloat size = radius * SIZE_INDIACTOR_TOUCH_RADIUS_RATIO;
+    TLinkIndicatorPresentation::Point point(x,y,radius);int labelX=0,labelY=0;
+    if(!TLinkIndicatorPresentation::Layout(point,scale,SIZE_INDIACTOR_TOUCH_RADIUS_RATIO,labelX,labelY))return;
+    if(_moves.move(index,point))[self scheduleIndicatorMoves];
+    else if(!_moves.pending())_displayLink.paused=YES;
+}
+
+- (BOOL)applyIndicator:(int)index point:(const TLinkIndicatorPresentation::Point &)point
+{
+    if (!zx_indicatorValidFingerIndex(index) || !_visible || !touchIndicatorViewList[index]) return NO;
+    int labelX=0,labelY=0;
+    if(!TLinkIndicatorPresentation::Layout(point,scale,SIZE_INDIACTOR_TOUCH_RADIUS_RATIO,labelX,labelY))return NO;
+    TouchIndicatorView *indicator=touchIndicatorViewList[index];
+    TouchIndicatorCoordinateView *coordinate=coordinateView[index];
+    UILabel *label=coordinate.coordinateLabel;
+    CGFloat x=point.x,y=point.y;
+    CGFloat size = point.radius * SIZE_INDIACTOR_TOUCH_RADIUS_RATIO;
     CGFloat half = size / 2;
-    touchIndicatorViewList[index].frame = CGRectMake(x - half, y - half, size, size);
-    touchIndicatorViewList[index].layer.cornerRadius = half;
-    NSString *text = [NSString stringWithFormat:@"(%d, %d)", (int)(x * scale), (int)(y * scale)];
-    CGFloat width = [text sizeWithAttributes:@{NSFontAttributeName:_coordinateFont}].width + 5;
-    coordinateView[index].coordinateLabel.text = text;
-    coordinateView[index].coordinateLabel.frame = CGRectMake(0, 0, width, COORDINATE_VIEW_HEIGHT);
-    coordinateView[index].frame = CGRectMake(x + half + 5, y, width, COORDINATE_VIEW_HEIGHT);
+    CGFloat width=_labels[index].width;
+    BOOL updateLabel=!_labels[index].valid||_labels[index].x!=labelX||_labels[index].y!=labelY;
+    NSString *text=nil;
+    if(updateLabel){
+        text=[NSString stringWithFormat:@"(%d, %d)",labelX,labelY];
+        width=[text sizeWithAttributes:_coordinateAttributes].width+5;
+        if(touchIndicatorViewList[index]==indicator&&coordinateView[index]==coordinate)_labels[index].valid=false;
+    }
+    // Keep the reached views alive; a reentrant UP/DOWN must not redirect old writes to its replacement.
+    indicator.frame=CGRectMake(x-half,y-half,size,size);
+    indicator.layer.cornerRadius=half;
+    if(updateLabel){
+        label.text=text;label.frame=CGRectMake(0,0,width,COORDINATE_VIEW_HEIGHT);
+        if(touchIndicatorViewList[index]==indicator&&coordinateView[index]==coordinate){
+            _labels[index].valid=true;_labels[index].x=labelX;_labels[index].y=labelY;_labels[index].width=width;
+        }
+    }
+    coordinate.frame=CGRectMake(x+half+5,y,width,COORDINATE_VIEW_HEIGHT);
+    return YES;
+}
+
+- (void)scheduleIndicatorMoves
+{
+    if(_displayLink){_displayLink.paused=NO;return;}
+    // Display scheduling is optional: allocation/setup refusal keeps immediate feedback.
+    BOOL scheduled=NO;
+    @try{try{
+        TLinkIndicatorDisplayTarget *target=[TLinkIndicatorDisplayTarget new];target.window=self;
+        CADisplayLink *link=target?[CADisplayLink displayLinkWithTarget:target selector:@selector(tick:)]:nil;
+        if(link){_displayLink=link;[link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];scheduled=YES;}
+    }catch(...){scheduled=NO;}}
+    @catch(NSException *exception){(void)exception;scheduled=NO;}
+    if(!scheduled){[_displayLink invalidate];_displayLink=nil;[self flushPendingIndicatorMoves];}
+}
+
+- (void)flushPendingIndicatorMoves
+{
+    @autoreleasepool{
+        for(int index=0;index<kTLinkTouchMaxFingerCount;++index){
+            TLinkIndicatorPresentation::Slots<kTLinkTouchMaxFingerCount>::Ticket ticket;
+            if(!_moves.peek(index,ticket)||!_moves.begin(index,ticket))continue;
+            if([self applyIndicator:index point:ticket.point])_moves.complete(index,ticket);
+            else _moves.hide(index);
+        }
+        if(!_moves.pending())_displayLink.paused=YES;
+    }
+}
+
+- (void)flushIndicatorMoves:(CADisplayLink *)link
+{
+    NSAssert([NSThread isMainThread], @"Touch indicator UI must be owned by main.");
+    if(link!=_displayLink||!_visible)return;
+    [self flushPendingIndicatorMoves];
+}
+
+- (void)dealloc
+{
+    [_displayLink invalidate];
 }
 
 @end
+// END indicator presentation.

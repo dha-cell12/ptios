@@ -347,6 +347,8 @@ Choose one canonical indexing convention. The least disruptive option is to stor
 
 ### [P1-08] Touch indicator queues one main-thread block and does text/layout work for every move
 
+Implementation follow-up (2026-11-07, A02b): rootfull/roothide now coalesces MOVE into 20 numeric slots and one lazy, idle-paused main/common-mode display link. DOWN/UP remain immediate. Cache font attributes/integer labels/widths, skip duplicate geometry, fence stale ticks with a weak target, retry optional scheduler failure immediately and retain uncommitted/identity-safe state through partial render/reentry. Portable 100k bursts/200k oracle actions/100k numeric plans and prior HID lifecycles pass; actual/frozen complete-class Foundation/ARC tests with controlled UIKit/display await macOS CI. Device timing/visual acceptance is pending. See `IMPLEMENTATION-A02B.md`.
+
 **Status:** CONFIRMED  
 **Location:** `pccontrol/TouchIndicator/TouchIndicatorWindow.xm:383-407`
 

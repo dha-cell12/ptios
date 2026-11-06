@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai A02b / P1-08 (07/11/2026): người dùng báo D01b build pass (`e6354650`). Gom toàn luồng presentation indicator root/roothide: mailbox 20 slot theo nhịp display, DOWN/UP tức thời, weak target/stale tick fence, cache nhãn/attributes và bỏ move trùng, kiểm tra numeric, fallback khi scheduler lỗi, retry render dở và chống reentrant thay view. 90 runner/521 source check pass Windows; native UIKit/display/device còn chờ CI. Chi tiết: IMPLEMENTATION-A02B.md.
+
 Cập nhật triển khai D01b (07/11/2026): người dùng báo D01a build pass (`d5f08d35`). Gom bảy phần root/TrollStore/streaming: memo DeviceRGB; scoped renderer/context; frame screenshot/charge unwind; Vision provider/reader cleanup; shared RGBA owner qua NSData nil/copy/exception; CVPixelBuffer lock/geometry; capture CPU lock và source/retry image cleanup. Giữ fresh surface và pixel backend. 90 runner/521 source check pass Windows; native Apple/ARC/pixel mới chờ macOS CI. Chi tiết: IMPLEMENTATION-D01B.md.
 
 Cập nhật triển khai D01a (07/11/2026): người dùng báo C05ae build pass (`c9a54d5f`). Gom capture root/TrollStore: memo hardware-class có retry khi probe lỗi; bounded uname; cache bốn immutable property dictionary theo geometry/global/type; global→private fallback không sửa entry cũ; checked live dimensions/stride/allocation; chung ownership surface/image/context qua lỗi/unwind; pool preparation root. Vẫn tạo surface mới mỗi capture, không cache mù orientation/pixels. 90 runner/521 source check pass Windows; Foundation/ARC mới chờ macOS CI. Chi tiết: IMPLEMENTATION-D01A.md.
@@ -424,7 +426,7 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P1-04, P1-05 | Tối ưu | Task.xm:126 typed touch→string→parser; dòng 191,327,383 relative sleeps cộng work/oversleep. C02. |
 | P1-06 | Sửa | Touch.xm:230 pointer-only, đọc fixed offset theo count. A01. |
 | P1-07 | Sửa | TouchIndicator/TouchIndicatorWindow.xm:304 check>=20 nhưng truy cập index-1 với finger 0. A02. |
-| P1-08 | Tối ưu | Indicator dòng 388 async main mỗi move, format/font/layout mỗi lần. Coalesce sau khi sửa lifecycle A02. |
+| P1-08 | Đã tối ưu source, chờ device | A02b gom mailbox 20 slot/display cadence, synchronous DOWN/UP, label/attributes/duplicate cache, weak target/stale tick, numeric/factory/render/reentry cleanup. Giữ task/HID/lifecycle guard. 90 runner/521 source check pass Windows; native UIKit/display và CPU/latency cần xác nhận. IMPLEMENTATION-A02B.md. |
 | P1-09, P1-10 | Sửa | Indicator dòng 136 capture NSError** async, isShowing set muộn; dòng 120 cleanup rồi NULL không CFRelease. A02. |
 | P1-11 | Đo / chỉnh thread | Tweak.xm:308 đọc UIScreen trên global queue; đưa UIKit-derived state về main. Chưa có bằng chứng crash cụ thể. |
 | P1-12 | Sửa | H264Stream.xm:195,268 blocking send không no-progress deadline, giữ active slot. B04. |
