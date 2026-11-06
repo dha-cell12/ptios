@@ -2291,6 +2291,8 @@ Implementation follow-up (2026-11-06, C05x; also P1-59): four result/capability 
 
 Implementation follow-up (2026-11-06, C05y): four success codecs now use separate autorelease pools for base64 and final response construction, with strong results outside and existing stop/output gates after normal drain. Root gets UTF-8 after the formatting pool and retains the response through synchronous notify. Source/portable checks pass; new actual/C05x wire/graph/explicit-MRC-witness/drain-stop/fault tests await macOS CI. Phase sentinel peaks of1 versus256 pending owners are test expectations, not Foundation/RSS measurements. Full JSON/base64/wire owners, UTF-8 cache/transport/provider/root/metadata bounds and device benefit remain open; P1-60 partial. See `IMPLEMENTATION-C05Y.md`.
 
+Implementation follow-up (2026-11-07, C05z): root result/capability codecs now scope UTF-8 conversion, the unchanged final gate and synchronous notify in one pool; the borrowed pointer never escapes that pool and the precise response owner remains live. Normal return/refusal retires pending conversion/notify temporaries before caller drain. Complete TrollStore and notify implementations remain unchanged. Source/portable checks pass; actual/C05y graph/byte/witness/churn/fault and accepted-copy/no-replay tests await macOS CI. Sentinel peaks2 versus256 pending witnesses are test expectations, not measured allocations/RSS. Blocking transport, full owned representations, error paths and device gains remain open; P1-60 partial. See `IMPLEMENTATION-C05Z.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery

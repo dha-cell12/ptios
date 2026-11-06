@@ -2302,13 +2302,15 @@ static void zx_uiTreeNotifyResult(NSDictionary *result, CFWriteStreamRef stream)
     @autoreleasepool {
         response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
     }
-    const char *responseBytes = response.UTF8String;
-    admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
-    if (admission != TLinkAXWireBudget::Admission::Ready) {
-        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
-        return;
+    @autoreleasepool {
+        const char *responseBytes = response.UTF8String;
+        admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+        if (admission != TLinkAXWireBudget::Admission::Ready) {
+            notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
+            return;
+        }
+        notifyClient((UInt8 *)responseBytes, stream);
     }
-    notifyClient((UInt8 *)responseBytes, stream);
 }
 
 static BOOL zx_uiTreeContextChanged(NSDictionary *before)
@@ -2358,13 +2360,15 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
             @autoreleasepool {
                 response = [NSString stringWithFormat:@"0;;%@\r\n", base64];
             }
-            const char *responseBytes = response.UTF8String;
-            admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
-            if (admission != TLinkAXWireBudget::Admission::Ready) {
-                notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
-                return;
+            @autoreleasepool {
+                const char *responseBytes = response.UTF8String;
+                admission = TLinkAXWireBudget::Check(wireBudget, wireBytes);
+                if (admission != TLinkAXWireBudget::Admission::Ready) {
+                    notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(admission), stream);
+                    return;
+                }
+                notifyClient((UInt8 *)responseBytes, stream);
             }
-            notifyClient((UInt8 *)responseBytes, stream);
         }
         return;
     }

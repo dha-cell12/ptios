@@ -19,6 +19,8 @@ static WireFault jsonFault=WireFault::Normal,base64Fault=WireFault::Normal;
 static unsigned jsonCalls=0,base64Calls=0;
 static bool useBeforeOutputJSON=false,useBeforeStorageJSON=false;
 static NSData *captured,*lastJSON;
+static unsigned wireNotifyCalls=0;
+static bool wirePublishChurn=false;
 static unsigned wirePoolStages=0,wirePoolDrainAction=0,wirePoolActionCalls=0,wirePoolThrowKind=0;
 static std::weak_ptr<TLinkNativeBudget> wirePoolBudget;
 static std::shared_ptr<TLinkNativeCancellation> wirePoolCancellation;
@@ -110,6 +112,7 @@ static NSString *fixtureBase64(NSData *data){
     NSString *value=[data base64EncodedStringWithOptions:0];applyWireEffect(1);return value;
 }
 static const char *fixtureWireUTF8(NSString *value){
+    observeWireTemporary(4);
     const char *bytes=value.UTF8String;++wireFinalCalls;applyWireEffect(2);return bytes;
 }
 static NSString *fixtureWireFormat(NSString *base64){
@@ -120,7 +123,17 @@ static NSDictionary *TLinkAXCapabilitySnapshot(){return fixtureCapability;}
 static NSDictionary *TLinkUITreeFrontmostContext(){return fixtureForeground;}
 static CFAbsoluteTime fixtureWireWall(){return 1000;}
 static void notifyClient(UInt8 *bytes,CFWriteStreamRef stream){
+    ++wireNotifyCalls;observeWireTemporary(8);
     assert(bytes&&!stream);captured=[NSData dataWithBytes:bytes length:std::strlen((const char *)bytes)];
+    if(wirePublishChurn){
+        @autoreleasepool{
+            NSMutableArray *scratch=[NSMutableArray array];
+            for(unsigned n=0;n<16;++n)[scratch addObject:[NSMutableData dataWithLength:4096+n]];
+            assert(scratch.count==16);
+        }
+        assert(captured.length==std::strlen((const char *)bytes));
+        assert(std::memcmp(captured.bytes,bytes,captured.length)==0);
+    }
 }
 #include "WireTrollFormatter.inc"
 static NSData *fixtureWireSuccess(NSString *value){
@@ -139,6 +152,7 @@ static NSData *fixtureWireSuccess(NSString *value){
 #include "BeforeWireBudgetTrollResponse.inc"
 #include "BeforeWirePoolRootResponse.inc"
 #include "BeforeWirePoolTrollResponse.inc"
+#include "BeforeWirePublishRootResponse.inc"
 static void CurrentRootCapability(CFWriteStreamRef stream){int taskType=77;
 #include "CurrentRootCapability.inc"
 }
@@ -181,7 +195,11 @@ static NSData *BeforeWirePoolTrollCapability(){int taskType=77;
 #include "BeforeWirePoolTrollCapability.inc"
     return nil;
 }
+static void BeforeWirePublishRootCapability(CFWriteStreamRef stream){int taskType=77;
+#include "BeforeWirePublishRootCapability.inc"
+}
 static void reset(){
+    wireNotifyCalls=0;wirePublishChurn=false;
     wirePoolStages=wirePoolDrainAction=wirePoolActionCalls=wirePoolThrowKind=0;wirePoolBudget.reset();wirePoolCancellation.reset();
     assert(!wireLateScope);wireEffectStage=wireEffectKind=wireEffectCalls=wireFinalCalls=0;wireEffectBudget.reset();wireEffectCancellation.reset();
     assert(!TLinkCurrentNativeBudget());useBeforeOutputJSON=useBeforeStorageJSON=false;jsonCalls=base64Calls=0;jsonFault=base64Fault=WireFault::Normal;captured=lastJSON=nil;
@@ -296,9 +314,10 @@ static void failureCases(){
 #include "ax-json-buffer-runtime-fixture.inc"
 #include "ax-wire-budget-runtime-fixture.inc"
 #include "ax-wire-pool-runtime-fixture.inc"
+#include "ax-wire-publish-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX wire Foundation: actual/frozen root/TrollStore result/capability codecs, real JSON/base64/formatter and native budget; AX/frontmost/notify controlled");
-    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();wireLateAdmissionCases();wirePhasePoolCases();
+    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();wireLateAdmissionCases();wirePhasePoolCases();wirePublishPoolCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{
         reset();jsonFault=WireFault::Probe;
         errorReply(call(n%2!=0,n%3!=0,true,@{@"ok":@YES}),@"ui_response_too_large");assert(base64Calls==0);

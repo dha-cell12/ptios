@@ -17,6 +17,7 @@ import {axAdmissionState} from './lib/ax-admission-baseline.mjs';
 import {legacyAXJSONBufferWriter} from './lib/ax-json-buffer-baseline.mjs';
 import {wireBudgetLegacy} from './lib/ax-wire-budget-baseline.mjs';
 import {wirePoolLegacy} from './lib/ax-wire-pool-baseline.mjs';
+import {wirePublishLegacy} from './lib/ax-wire-publish-baseline.mjs';
 import {legacyAXJSONBudgetWriter} from './lib/ax-json-budget-baseline.mjs';
 import {legacyAXJSONStopWriter,restoreAXJSONStopWriter,stopJSONLegacy} from './lib/ax-json-stop-baseline.mjs';
 import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
@@ -38,6 +39,8 @@ const wireAdapt=s=>s.replaceAll('TLinkAXBoundedJSONDataWithStop(','fixtureBounde
     .replaceAll('response.UTF8String','fixtureWireUTF8(response)').replaceAll('TLinkSuccess(','fixtureWireSuccess(')
     .replaceAll('[NSString stringWithFormat:@"0;;%@\\r\\n", base64]','fixtureWireFormat(base64)');
 const wireFixtures={};
+wireFixtures['BeforeWirePublishRootResponse.inc']=wireAdapt(wirePublishLegacy('response')).replaceAll('zx_uiTreeNotifyResult','BeforeWirePublishRootResponse');
+wireFixtures['BeforeWirePublishRootCapability.inc']=wireAdapt(wireCapability(wirePublishLegacy('handler')));
 for(const name of ['root','troll']){
     const label='BeforeWirePool'+(name==='root'?'Root':'Troll');
     wireFixtures[label+'Response.inc']=wireAdapt(wirePoolLegacy(name,'response')).replaceAll(name==='root'?'zx_uiTreeNotifyResult':'TLinkUITreeJSONResponse',label+'Response');
@@ -114,7 +117,7 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: base64/final-wire phase pools, strong result transfer with UTF8 outside pool, complete C05x codec/task/server restoration and unchanged gates/writer/AX source.');
+console.log('AX snapshot source passed: root UTF8/check/synchronous notify pool, complete C05y task restoration and unchanged TrollStore/writer/gates/AX source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

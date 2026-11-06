@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXWirePublishRoute} from './ax-wire-publish-baseline.mjs';
 const specs={
   "root": {
     "start": "static void zx_uiTreeNotifyResult(",
@@ -56,6 +57,7 @@ const specs={
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export function wirePoolLegacy(name,kind){return readFileSync(new URL('../../test/fixtures/ax-wire-pool-'+name+'-'+kind+'-before-c05y.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function restoreAXWirePoolRoute(source,name){
+    source=restoreAXWirePublishRoute(source,name);
     const p=specs[name];let restored=source;
     for(const [before,after] of p.edits){assert.equal(restored.split(after).length-1,1,'only base64/final construction pool and strong result transfer');restored=restored.replace(after,before);}
     for(const [kind,a,b] of [['response',p.start,p.end],['handler',p.handlerStart,p.handlerEnd]]){
