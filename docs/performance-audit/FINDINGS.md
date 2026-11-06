@@ -2164,6 +2164,8 @@ See `BENCHMARK-S009.md` Probe A.
 
 ### [P0-20] UI find/tap materializes a full AX snapshot before matching, and `max_elements` bounds returned rows rather than scanned AX work
 
+Implementation follow-up (2026-11-07, C05ae; also P1-59/P1-60): complete find pipeline now uses lazy per-field immutable selector normalization/mode plans, shares text preparation across label/value, rejects observed selector fields above64 KiB before admission/enqueue and drains snapshot/find temporaries in one normal owner-block pool. Unknown/custom/mutable strings use the preceding matcher; every candidate/count/index/metadata/completeness/action guard remains. Native fixture expects3 versus4000 expected folds over1000 rows, exact graphs and held selected rows; Foundation execution/device gains remain pending. Full root/snapshot materialization and whole-operation bounds are not removed. See `IMPLEMENTATION-C05AE.md`.
+
 **Status:** CONFIRMED  
 **Locations:** `shared/TLinkAccessibilityTree.mm:524-593,604-702,722-786`, `pccontrol/Task.xm:731-817`
 

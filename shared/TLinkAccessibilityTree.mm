@@ -1,3 +1,4 @@
+#include "TLinkAXSelectorPlan.h"
 #include "TLinkAXProcessPolicy.h"
 #include "TLinkAXJSONQuota.h"
 #include "TLinkAXWireOutput.h"
@@ -983,6 +984,9 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
     BOOL visibleOnly = visibleValue ? [visibleValue boolValue] : YES;
     BOOL clickableOnly = [clickableValue boolValue];
     NSInteger requestedIndex = TLinkAXBoundedInteger(selector[@"index"], 0, 0, 999);
+    TLinkAXSelectorPlan::Text identifierPlan(identifier, mode, caseSensitive);
+    TLinkAXSelectorPlan::Text rolePlan(role, @"exact", caseSensitive);
+    TLinkAXSelectorPlan::Text textPlan(text, mode, caseSensitive);
     NSUInteger matchCount = 0;
     NSDictionary *selectedElement = nil;
     for (NSDictionary *element in snapshot[@"elements"]) {
@@ -991,15 +995,15 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
             if (visibleOnly && ![element[@"intersects_screen"] boolValue]) continue;
             if (clickableOnly && ![element[@"clickable"] boolValue]) continue;
             if (identifier.length > 0 &&
-                !TLinkAXTextMatches(element[@"identifier"], identifier, mode, caseSensitive)) continue;
+                !identifierPlan.accepts(element[@"identifier"], TLinkAXTextMatches)) continue;
             if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
             if (role.length > 0 &&
-                !TLinkAXTextMatches(element[@"role"], role, @"exact", caseSensitive)) continue;
+                !rolePlan.accepts(element[@"role"], TLinkAXTextMatches)) continue;
             if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
             if (text.length > 0) {
-                BOOL labelMatch = TLinkAXTextMatches(element[@"label"], text, mode, caseSensitive);
+                BOOL labelMatch = textPlan.accepts(element[@"label"], TLinkAXTextMatches);
                 if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
-                BOOL valueMatch = TLinkAXTextMatches(element[@"value"], text, mode, caseSensitive);
+                BOOL valueMatch = textPlan.accepts(element[@"value"], TLinkAXTextMatches);
                 if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
                 if (!labelMatch && !valueMatch) continue;
             }
@@ -1033,6 +1037,12 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
         return TLinkAXError(@"ui_selector_requires_text_identifier_or_role", @{@"pid": @(pid)});
     }
     if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
+    id modeValue = selector[@"match"] ?: selector[@"matchMode"];
+    NSString *mode = [modeValue isKindOfClass:[NSString class]] ? modeValue : @"";
+    if (!TLinkAXSelectorPlan::Admit(text) || !TLinkAXSelectorPlan::Admit(identifier) ||
+        !TLinkAXSelectorPlan::Admit(role) || !TLinkAXSelectorPlan::Admit(mode))
+        return TLinkAXError(@"ui_response_too_large", @{@"pid": @(pid), @"partial": @YES});
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     TLinkAXAdmission::Lease admission(TLinkAXAdmissionState());
     if (!admission.held()) return TLinkAXError(@"ui_ax_busy", @{@"partial": @YES, @"retryable": @YES});
     NSMutableDictionary *options = [NSMutableDictionary dictionary];
@@ -1043,8 +1053,10 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
     if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     __block NSDictionary *result = nil;
     TLinkNativeDispatchSync(TLinkAXQueue(), ^{
-        NSDictionary *snapshot = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options);
-        result = TLinkAXFindInSnapshot(snapshot, selector);
+        @autoreleasepool {
+            NSDictionary *snapshot = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options);
+            result = TLinkAXFindInSnapshot(snapshot, selector);
+        }
     });
     if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     return result ?: TLinkAXError(@"ui_find_failed", @{@"pid": @(pid)});

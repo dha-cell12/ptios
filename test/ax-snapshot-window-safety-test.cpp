@@ -7,6 +7,7 @@
 #include "../shared/TLinkAXJSONBudget.h"
 #include "../shared/TLinkAXJSONBuffer.h"
 #include "../shared/TLinkAXProcessPolicy.h"
+#include "../shared/TLinkAXSelectorPolicy.h"
 #include <stdexcept>
 #include <vector>
 #include <cassert>
@@ -23,8 +24,9 @@ static bool near(double left,double right){return std::fabs(left-right)<1e-8;}
 #include "ax-json-buffer-safety-fixture.inc"
 #include "ax-wire-budget-safety-fixture.inc"
 #include "ax-process-policy-safety-fixture.inc"
+#include "ax-selector-policy-safety-fixture.inc"
 int main(){
-    outputBudgetCases();wireSizeCases();jsonQuotaCases();jsonStopPolicyCases();jsonOutputAdmissionCases();jsonBufferCases();wireBudgetAdmissionCases();processPolicyCases();
+    outputBudgetCases();wireSizeCases();jsonQuotaCases();jsonStopPolicyCases();jsonOutputAdmissionCases();jsonBufferCases();wireBudgetAdmissionCases();processPolicyCases();selectorPolicyCases();
     for(unsigned n=0;n<100000;++n){
         const unsigned milliseconds=100+n%2901;
         const uint64_t start=1000000ULL+static_cast<uint64_t>(n)*10000000ULL;

@@ -14,6 +14,7 @@
 #include "../shared/TLinkAXSnapshotWindow.h"
 #include "../shared/TLinkAXAdmission.h"
 #include "../shared/TLinkAXSnapshotOutput.h"
+#include "../shared/TLinkAXSelectorPlan.h"
 #include "AXAdmissionUnderTest.inc"
 using TLinkAXElementRef=CFTypeRef;
 // Distinct fixture trait bits. UIKit/private AX providers are controlled.

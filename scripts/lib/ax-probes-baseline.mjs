@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXSelector} from './ax-selector-baseline.mjs';
 const spec={
   "hash": "b72568e13d7ecc09c2062a47a9fe34cbf0f574cb9572a5d5671e3130caef06b0",
   "regions": [
@@ -57,6 +58,7 @@ const spec={
 export function probesLegacy(kind){return readFileSync(new URL('../../test/fixtures/ax-probes-'+kind+'-before-c05ad.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function probesRegion(source,kind){const p=spec.regions.find(p=>p.kind===kind);const a=source.indexOf(p.start),b=source.indexOf(p.end,a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXProbes(source){
+ source=restoreAXSelector(source);
  for(const p of spec.regions){const actual=probesRegion(source,p.kind);assert.equal(actual,p.current,'only cooperative captured probe stop, token/CF cleanup and bounded legacy string');source=source.replace(actual,probesLegacy(p.kind));}
  assert.equal(createHash('sha256').update(source).digest('hex'),spec.hash,'complete preceding C05ac shared AX source');return source;
 }

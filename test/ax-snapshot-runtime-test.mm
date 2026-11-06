@@ -11,6 +11,7 @@
 #include "../shared/TLinkAXSnapshotWindow.h"
 #include "../shared/TLinkAXAdmission.h"
 #include "../shared/TLinkAXSnapshotOutput.h"
+#include "../shared/TLinkAXSelectorPlan.h"
 #include "AXAdmissionUnderTest.inc"
 #include "ax-node-pool-owner.h"
 using TLinkAXElementRef=CFTypeRef;
@@ -31,7 +32,8 @@ static bool regressCreate=false,regressNode=false,failClockNode=false;
 static bool forceHidden=false,forceNotClickable=false;
 static bool trackNodeOwners=false,throwNodeCPP=false;
 static uint64_t ownerDropCost=0;
-extern "C" void TLinkAXFixtureOwnerDidDrain(void){tick+=ownerDropCost;}
+static bool trackSelectorOwner=false,selectorStopOnOwnerDrop=false;
+extern "C" void TLinkAXFixtureOwnerDidDrain(void){tick+=ownerDropCost;if(selectorStopOnOwnerDrop)cancelled=true;}
 static size_t outputCap=1024*1024;
 static id outputTextValue=nil;
 static NSString *outputTextField=@"label";
@@ -66,7 +68,7 @@ static TLinkAXElementRef fixtureCreate(pid_t pid){
     ++rootRetains;return CFRetain((__bridge CFTypeRef)rootObject);
 }
 static int fixtureSetTimeout(TLinkAXElementRef root,float timeout){
-    assert(root==(__bridge CFTypeRef)rootObject&&timeout>0);lastQueryTimeout=timeout;fixtureOwnerFault(2);return 0;
+    assert(root==(__bridge CFTypeRef)rootObject&&timeout>0);lastQueryTimeout=timeout;if(trackSelectorOwner)TLinkAXFixtureAutoreleaseOwner();fixtureOwnerFault(2);return 0;
 }
 static int fixtureCopyAttribute(TLinkAXElementRef root,CFStringRef key,CFTypeRef *out){
     assert(root==(__bridge CFTypeRef)rootObject&&(uintptr_t)key==3015&&out);++queries;tick+=queryCost;fixtureOwnerFault(3);
@@ -152,7 +154,7 @@ static void reset(){
     ownerFaultSite=ownerFaultKind=rawOutRetains=0;queryMissing=false;
     preflightLockCost=preflightPrepareCost=preflightScreenCost=0;preflightStopStage=preflightScreenReads=preflightOptionReads=0;
     boundaryDispatches=0;boundaryQueueStop=boundaryReturnStop=false;
-    trackNodeOwners=throwNodeCPP=false;ownerDropCost=0;
+    trackNodeOwners=throwNodeCPP=trackSelectorOwner=selectorStopOnOwnerDrop=false;ownerDropCost=0;
     outputCap=1024*1024;outputTextValue=nil;outputTextField=@"label";parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
 }
 static NSDictionary *call(bool current,NSDictionary *options=@{},pid_t pid=123){
@@ -317,8 +319,9 @@ static void scanBudgetCases(){
 #include "ax-preflight-runtime-fixture.inc"
 #include "ax-output-runtime-fixture.inc"
 #include "ax-ui-find-stages-runtime-fixture.inc"
+#include "ax-selector-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();preflightCases();snapshotOutputCases();findStageCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();preflightCases();snapshotOutputCases();findStageCases();selectorPlanCases();selectorAdmissionCases();selectorOwnerCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}

@@ -21,6 +21,7 @@ import {wirePublishLegacy} from './lib/ax-wire-publish-baseline.mjs';
 import {capabilityPreflightLegacy} from './lib/ax-capability-preflight-baseline.mjs';
 import {uiStagesLegacy,legacyUIStagesFind} from './lib/ax-ui-stages-baseline.mjs';
 import {foregroundWorkLegacy,foregroundWorkRegion} from './lib/ax-foreground-work-baseline.mjs';
+import {legacySelector,selectorRegion,checkSelectorHeaders} from './lib/ax-selector-baseline.mjs';
 import {legacyAXJSONBudgetWriter} from './lib/ax-json-budget-baseline.mjs';
 import {legacyAXJSONStopWriter,restoreAXJSONStopWriter,stopJSONLegacy} from './lib/ax-json-stop-baseline.mjs';
 import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
@@ -32,6 +33,8 @@ import {legacyAXFindPool} from './lib/ax-find-pool-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
+const selectorPlan=await read('shared/TLinkAXSelectorPlan.h');
+checkSelectorHeaders(selectorPlan,await read('shared/TLinkAXSelectorPolicy.h'));
 const preceding=restoreAXAttributes(source);
 const [rootTask,trollTask]=await Promise.all(['pccontrol/Task.xm','stream-app/streamd/POCSocketServer.mm'].map(read));
 restoreAXWireRoute(rootTask,'root');restoreAXWireRoute(trollTask,'troll');
@@ -133,6 +136,11 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
+const selectorNames=s=>s.replaceAll('TLinkAXTextMatches','MeasuredAXTextMatches').replaceAll('TLinkAXFindInSnapshot','MeasuredAXFindInSnapshot').replaceAll('TLinkAXFindElement','MeasuredAXFindElement');
+const selectorFold=s=>s.replaceAll('[left lowercaseString]','fixtureSelectorFold(left)').replaceAll('[right lowercaseString]','fixtureSelectorFold(right)');
+fixtures['AXSelectorBeforePlan.inc']=selectorFold(legacySelector).replaceAll('TLinkAXTextMatches','BeforePlanAXTextMatches').replaceAll('TLinkAXFindInSnapshot','BeforePlanAXFindInSnapshot').replaceAll('TLinkAXFindElement','BeforePlanAXFindElement');
+fixtures['AXSelectorMeasured.inc']=selectorNames(selectorFold(selectorRegion(source))).replaceAll('TLinkAXSelectorPlan::','MeasuredAXSelectorPlan::');
+fixtures['AXSelectorPlanMeasured.inc']=selectorPlan.replace('namespace TLinkAXSelectorPlan {','namespace MeasuredAXSelectorPlan {').replace('return [text lowercaseString];','return fixtureSelectorFold(text);').replace('#include "TLinkAXSelectorPolicy.h"','');
 const processAdapt=s=>s.replaceAll('sysctl(','fixtureSysctl(').replaceAll('dlsym(','fixtureLookup(').replaceAll('getpid()','fixtureSelfPID()')
     .replaceAll(/\[NSMutableData dataWithLength:(capacity|length)\]/g,'fixtureTableData($1)')
     .replaceAll('[NSDictionary dictionaryWithContentsOfFile:','fixtureInfo(').replaceAll('[bundlePath stringByAppendingPathComponent:@"Info.plist"]];','[bundlePath stringByAppendingPathComponent:@"Info.plist"]);');
