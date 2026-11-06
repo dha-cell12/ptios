@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {restoreBitmap} from './lib/bitmap-resources-baseline.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFile(resolve(root, path), "utf8");
@@ -24,7 +25,9 @@ const productionCapture = capture.slice(
   capture.indexOf("+ (CaptureOutcome *)runCaptureProbe"),
 );
 assert.match(productionCapture, /SCCreateScreenShotCGImage/);
-assert.match(productionCapture, /dataWithBytesNoCopy/);
+restoreBitmap(capture.replaceAll('\r\n','\n'),'capture');
+assert.match(productionCapture, /TLinkBitmapResources::Data\(storage\)/);
+assert.match(await read('shared/TLinkBitmapResources.h'),/initWithBytesNoCopy/);
 assert.match(productionCapture, /production_capture_ready/);
 assert.doesNotMatch(productionCapture, /appendCaptureEntitlementSnapshot|UIImagePNGRepresentation|writeToFile/);
 assert.match(server, /TLinkRunCaptureOnMain[\s\S]{0,1000}runProductionCapture/);

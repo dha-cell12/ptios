@@ -1020,6 +1020,8 @@ Do not evict an object currently held by a ref-counted operation snapshot.
 
 ### [P1-22] Every capture repeats invariant device detection plus short-lived Foundation/IOSurface construction
 
+Implementation follow-up (2026-11-07, D01b): shared successful DeviceRGB memo removes warm color-factory calls across root/TrollStore bitmap consumers; scoped contexts, frame screenshots, Vision providers, shared RGBA/NSData ownership, CVPixelBuffer base locks and streaming CPU/source-image cleanup cover reached refusal/unwind. Full source reversals and portable memo/byte ownership tests pass; real CG/CV parity, Foundation/ARC faults and one-versus1000 factory counts are pending native expectations. Fresh source surfaces/rendering algorithms remain; device performance is unmeasured. See `IMPLEMENTATION-D01B.md`.
+
 Implementation follow-up (2026-11-07, D01a): one package memoizes successful root model classification, bounds uname consumption, caches four immutable geometry/global/type property tuples per factory, checks TrollStore numeric/stride/allocation preparation, scopes root temporaries and shares checked fresh surface/image/context ownership. Global-first/private retry and per-frame fresh surface allocation remain. Portable actual-core fault/lifecycle,100k plans and concurrent memo tests pass; native property/regex/held-reader/error/ARC counters await macOS CI. Target-size, gray-only, UIKit/private/pixel/orientation and measured device bandwidth/latency remain open. Do not reinstate the visually rejected source-surface reuse. See `IMPLEMENTATION-D01A.md`.
 
 **Status:** CONFIRMED hot-path overhead  

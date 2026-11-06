@@ -3,6 +3,7 @@
 static unsigned liveCaptureImages=0,captureScreenCalls=0;
 static bool failCaptureScreen=false,failCaptureRender=false,failCaptureGray=false,capturePixelOverflow=false;
 static unsigned captureTicks=0;
+static unsigned captureRenderThrow=0,captureGrayThrow=0;
 static double captureFixtureSeconds(){return double(captureTicks++)*.000125;}
 static double captureFixtureWall(){return 123.456;}
 static size_t captureFixtureWidth(CGImageRef image){return capturePixelOverflow?kMaxImagePixels+1:CGImageGetWidth(image);}
@@ -23,11 +24,12 @@ static void captureFixtureProviderRelease(void *info,const void *,size_t){delete
 }
 @end
 static bool zx_renderBGRAFromCGImage(CGImageRef image,std::vector<uint8_t> &out,int *w,int *h,int *stride){
+    if(captureRenderThrow==1)[NSException raise:@"FrameCaptureFixture" format:@"render"];if(captureRenderThrow==2)throw std::runtime_error("render");
     if(failCaptureRender)return false;*w=int(CGImageGetWidth(image));*h=int(CGImageGetHeight(image));*stride=*w*4;out.assign(size_t(*h)*size_t(*stride),23);return true;
 }
 #define CV_8UC4 4
 static const int COLOR_BGRA2GRAY=1;
-namespace cv {static void cvtColor(const Mat &source,Mat &out,int mode){assert(mode==COLOR_BGRA2GRAY);out=failCaptureGray?Mat():Mat(source.rows,source.cols);}}
+namespace cv {static void cvtColor(const Mat &source,Mat &out,int mode){assert(mode==COLOR_BGRA2GRAY);if(captureGrayThrow==1)[NSException raise:@"FrameCaptureFixture" format:@"gray"];if(captureGrayThrow==2)throw std::runtime_error("gray");out=failCaptureGray?Mat():Mat(source.rows,source.cols);}}
 #include "FrameCaptureParserUnderTest.inc"
 #include "FrameCaptureOwnerUnderTest.inc"
 #define TLinkImageNowSeconds captureFixtureSeconds
@@ -61,6 +63,13 @@ static void frameCaptureRuntimeCases(){
     failCaptureGray=true;assert(!captureStoredFrame(request,id,value,&error)&&[error.localizedDescription containsString:@"gray_convert_failed"]);failCaptureGray=false;
     __block uint32_t saved=0;dispatch_sync(zx_imageQueue(),^{saved=gNextFrameId;gNextFrameId=0;});
     assert(!captureStoredFrame(request,id,value,&error)&&[error.localizedDescription containsString:@"frame_publish_failed"]&&!id);dispatch_sync(zx_imageQueue(),^{gNextFrameId=saved;});
-    clearCaptureFixtureFrames();captureClockOverride=0;
+    clearCaptureFixtureFrames();
+    for(unsigned stage:{0U,1U})for(unsigned kind:{1U,2U}){captureRenderThrow=stage==0?kind:0;captureGrayThrow=stage==1?kind:0;bool caught=false;
+        @try{try{captureStoredFrame(request,id,value,&error);}catch(const std::runtime_error &){caught=kind==2;}}
+        @catch(NSException *exception){caught=kind==1&&[exception.name isEqual:@"FrameCaptureFixture"];}
+        assert(caught&&liveCaptureImages==0&&gImageMemory.stats().frames==0);
+        captureRenderThrow=captureGrayThrow=0;error=nil;assert(captureStoredFrame(request,id,value,&error));clearCaptureFixtureFrames();
+    }
+    captureClockOverride=0;
     puts("Frame capture Foundation passed: 48 frozen RAW/numeric channel/TTL/owner/metadata cases, real CG ownership and controlled clock, busy/pixel/memory/render/gray/publish faults and zero final charges.");
 }

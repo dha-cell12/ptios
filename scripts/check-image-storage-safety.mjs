@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import {restoreBitmap} from './lib/bitmap-resources-baseline.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = (await readFile(join(root, 'pccontrol/Image.xm'), 'utf8')).replaceAll('\r\n', '\n');
+restoreBitmap(source,'image');
 const section = (begin, end) => {
   const a = source.indexOf(begin), b = source.indexOf(end, a);
   assert.ok(a >= 0 && b > a, `Missing fixture section: ${begin}`); return source.slice(a, b);

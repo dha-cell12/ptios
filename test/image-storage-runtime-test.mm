@@ -5,6 +5,7 @@
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
+#include "../shared/TLinkBitmapResources.h"
 #include "image-storage-fixture.h"
 // Production serial queue, timer and snapshot/reservation adapter; real steady clock.
 #include "ImageQueueUnderTest.inc"
@@ -34,10 +35,13 @@ static const int IMREAD_GRAYSCALE = 0;
 #include "frame-capture-runtime-fixture.inc"
 #include "../shared/TLinkFrameVisionPolicy.h"
 static bool failFrameProvider=false,failFrameImage=false;
+static unsigned frameImageThrow=0;
 static CGDataProviderRef FixtureFrameProvider(void *info,const void *data,size_t bytes,CGDataProviderReleaseDataCallback release){
     if(failFrameProvider){failFrameProvider=false;return NULL;}return CGDataProviderCreateWithData(info,data,bytes,release);
 }
 static CGImageRef FixtureFrameImage(size_t width,size_t height,size_t bits,size_t pixelBits,size_t stride,CGColorSpaceRef color,CGBitmapInfo flags,CGDataProviderRef provider,const CGFloat *decode,bool interpolate,CGColorRenderingIntent intent){
+    if(frameImageThrow==1)[NSException raise:@"FrameVisionFixture" format:@"image"];
+    if(frameImageThrow==2)throw std::runtime_error("image");
     if(failFrameImage){failFrameImage=false;return NULL;}return CGImageCreate(width,height,bits,pixelBits,stride,color,flags,provider,decode,interpolate,intent);
 }
 #include "FrameVisionUnderTest.inc"
@@ -169,6 +173,12 @@ static void frameVisionFixtures(){
     failFrameProvider=true;error=nil;assert(!TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error)&&[error.localizedDescription containsString:@"vision_frame_provider_failed"]);
     failFrameImage=true;error=nil;assert(!TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error)&&[error.localizedDescription containsString:@"vision_frame_image_failed"]);
     releaseFrame(id);assert(gImageMemory.stats().total==0);
+    for(unsigned kind:{1U,2U}){
+        id=publishFrame(frameFixture(zx_nowMs(),5000));frameImageThrow=kind;bool caught=false;
+        @try{try{TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error);}catch(const std::runtime_error &){caught=kind==2;}}
+        @catch(NSException *exception){caught=kind==1&&[exception.name isEqual:@"FrameVisionFixture"];}
+        frameImageThrow=0;assert(caught);releaseFrame(id);assert(gImageMemory.stats().total==0);
+    }
     id=publishFrame(frameFixture(zx_nowMs()-2000,5000));error=nil;
     assert(!TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",1000,NULL,NULL,&error)&&[error.localizedDescription containsString:@"vision_frame_expired"]);
     error=nil;image=TLinkCreateVisionImageFromFrame(id,CGRectZero,@"pixel",5000,NULL,NULL,&error);assert(image&&!error);CGImageRelease(image);releaseFrame(id);

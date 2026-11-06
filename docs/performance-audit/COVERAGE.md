@@ -62,3 +62,5 @@ Legend: DONE = first-pass audited; PARTIAL = opened/scanned but more work requir
 All intentionally in-scope first-pass rows are now DONE. Vendor/decompiled/reference trees remain explicitly excluded unless a live call path requires them.
 
 D01a implementation follow-up (2026-11-07): pccontrol Screen/Common and production StreamCaptureSource now share bounded capture preparation/ownership helpers. Cache hardware decision/immutable property tuples only; geometry remains live and fresh surfaces remain per capture. Source/portable checks pass; new Foundation/native/device qualification pending. See IMPLEMENTATION-D01A.md.
+
+D01b implementation follow-up (2026-11-07): root Image and production CaptureCore/StreamCaptureSource share successful immutable RGB preparation and scoped bitmap/frame/provider/byte/CV/CPU-lock ownership. Seven connected changes, frozen full-source reversals and portable memo/byte regressions pass. Fresh source surfaces and rendering algorithms remain; Apple/native/device qualification pending. See IMPLEMENTATION-D01B.md.

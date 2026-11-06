@@ -5,12 +5,17 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {restoreCapturePreparation,capturePart,captureBefore,checkCaptureHeader} from './lib/capture-preparation-baseline.mjs';
+import {bitmapPart,bitmapBefore,restoreBitmap,checkBitmapHeader} from './lib/bitmap-resources-baseline.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (await readFile(join(root, "pccontrol/Screen.xm"), "utf8")).replaceAll("\r\n", "\n");
 const troll=(await readFile(join(root,'stream-app/streamd/StreamCaptureSource.mm'),'utf8')).replaceAll('\r\n','\n');
 const common=(await readFile(join(root,'pccontrol/Common.xm'),'utf8')).replaceAll('\r\n','\n');
 const preceding=restoreCapturePreparation(source,'root');restoreCapturePreparation(troll,'troll');restoreCapturePreparation(common,'common');
+const bitmapImage=(await readFile(join(root,'pccontrol/Image.xm'),'utf8')).replaceAll('\r\n','\n');
+const bitmapCapture=(await readFile(join(root,'stream-app/streamd/CaptureCore.mm'),'utf8')).replaceAll('\r\n','\n');
+restoreBitmap(bitmapImage,'image');restoreBitmap(bitmapCapture,'capture');
+await Promise.all(['TLinkBitmapResourceCore.h','TLinkBitmapResources.h'].map(async name=>checkBitmapHeader(name,(await readFile(join(root,'shared',name),'utf8')).replaceAll('\r\n','\n'))));
 await Promise.all(['TLinkCapturePlan.h','TLinkCapturePreparation.h','TLinkCaptureOwnership.h'].map(async name=>checkCaptureHeader(name,(await readFile(join(root,'shared',name),'utf8')).replaceAll('\r\n','\n'))));
 assert.doesNotMatch(source, /CGColorSpaceRelease|IOSurfaceUnLock/);
 assert.match(source, /return CGImageRetain\(gKeepImage\)/);
@@ -51,6 +56,29 @@ try {
       .replace('static TLinkCapturePreparation::Properties propertyMemo;','auto &propertyMemo=*trollProperties;').replaceAll('TLinkCapturePreparation::','MeasuredCapturePreparation::');
   }
   await Promise.all(Object.entries(fixtures).map(([name,value])=>writeFile(join(temp,name),value)));
+  const bitmapHeader=(await readFile(join(root,'shared/TLinkBitmapResources.h'),'utf8')).replaceAll('\r\n','\n');
+  const bitmapFixtures={'BitmapResourcesUnderTest.inc':bitmapHeader.replace('namespace TLinkBitmapResources {','namespace MeasuredBitmapResources {')
+    .replace('#include "TLinkBitmapResourceCore.h"','').replace('#include "TLinkCaptureOwnership.h"','')
+    .replace('static TLinkBitmapCore::Memo<CGColorSpaceRef> memo(&CGColorSpaceRelease);','auto &memo=*rgbMemo;')
+    .replace('return CGColorSpaceCreateDeviceRGB();','return fixtureRGB();').replace('return CreateData(owner);','return fixtureData(owner);')};
+  const bitmapAdapt=s=>s.replaceAll('TLinkBitmapResources::','MeasuredBitmapResources::').replaceAll('CGColorSpaceCreateDeviceRGB()','fixtureRGB()')
+    .replaceAll('CGColorSpaceRelease(','fixtureDropSpace(').replaceAll('CGBitmapContextCreate(','fixtureContext(')
+    .replaceAll('CGContextRelease','fixtureDropContext').replaceAll('CGContextDrawImage(','fixtureDraw(');
+  for(const current of [false,true]){
+    const label=current?'Current':'Before',part=(kind,name)=>current?bitmapPart(kind==='image'?bitmapImage:kind==='capture'?bitmapCapture:troll,kind,name):bitmapBefore(kind,name);
+    bitmapFixtures[label+'BitmapCapture.inc']=bitmapAdapt(part('capture','production')).replace('+ (CaptureOutcome *)runProductionCapture {','static BitmapOutcome *'+label+'ProductionCapture(){')
+      .replaceAll('CaptureOutcome','BitmapOutcome').replaceAll('[UIImage imageWithCGImage:','[BitmapFixtureImage imageWithCGImage:').replaceAll('SCCreateScreenShotCGImage()','fixtureScreen()')
+      .replaceAll('CGDataProviderCreateWithCFData(','fixtureProvider(').replaceAll('CGImageCreate(','fixtureImage(').replace('TLinkBitmapCore::Bytes::Allocate(byteCount)','fixtureStorage(byteCount)');
+    bitmapFixtures[label+'BitmapStream.inc']=bitmapAdapt(part('stream','copy')).replace('SCCopyCGImageWithCoreGraphics(',label+'StreamCopy(')
+      .replaceAll('CVPixelBufferLockBaseAddress(','fixtureLock(').replaceAll('CVPixelBufferUnlockBaseAddress(','fixtureUnlock(');
+    bitmapFixtures[label+'BitmapGray.inc']=bitmapAdapt(part('image','gray')).replace('zx_cvMatGrayFromCGImage(',label+'Gray(');
+    bitmapFixtures[label+'BitmapRender.inc']=bitmapAdapt(part('image','render')).replace('zx_renderBGRAFromCGImage(',label+'Render(');
+  }
+  const pipeline=bitmapPart(troll,'stream','pipeline');
+  bitmapFixtures['BitmapPipelineGuard.inc']=pipeline.slice(pipeline.indexOf('    auto unlockCapture='),pipeline.indexOf('    BOOL forceLegacy'))
+    .replaceAll('os_unfair_lock_unlock(','fixturePipelineUnlock(');
+  assert.ok(bitmapFixtures['BitmapPipelineGuard.inc'].includes('captureOwner'));
+  await Promise.all(Object.entries(bitmapFixtures).map(([name,value])=>writeFile(join(temp,name),value)));
   const windows = process.platform === "win32";
   const compiler = process.env.CXX || (windows ? "cl" : "clang++");
   const msvc = /^(cl|cl\.exe)$/i.test(basename(compiler));
@@ -63,7 +91,8 @@ try {
   if(process.platform==='darwin'){
     const owner=join(temp,'owner.o');run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
     const native=join(temp,'preparation');run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-I',temp,join(root,'test/capture-preparation-runtime-test.mm'),owner,'-o',native]);run(native,[]);
-  }else console.log('Capture preparation Foundation/ARC/sanitizer integration included for macOS CI; not executed on this host.');
+    const bitmap=join(temp,'bitmap');run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-framework','CoreVideo','-I',temp,join(root,'test/bitmap-resources-runtime-test.mm'),'-o',bitmap]);run(bitmap,[]);
+  }else console.log('Capture preparation/bitmap Foundation/ARC/sanitizer integration included for macOS CI; not executed on this host.');
 } finally {
   assert.equal(dirname(temp), tempRoot);
   assert.ok(basename(temp).startsWith("tlink-capture-safety-"));

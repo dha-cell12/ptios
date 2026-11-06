@@ -1,3 +1,4 @@
+#include "../../shared/TLinkBitmapResources.h"
 #import "CaptureCore.h"
 #import "StreamCaptureSource.h"
 
@@ -128,6 +129,7 @@ static CGImageRef copyImageDetachedFromIOSurface(CGImageRef source, NSMutableStr
     CaptureOutcome *outcome = [[CaptureOutcome alloc] init];
     outcome.result = CaptureResultFail;
     outcome.diagnostics = @"production_capture_failed";
+    @autoreleasepool {
 
     CGImageRef source = SCCreateScreenShotCGImage();
     if (!source) {
@@ -135,52 +137,57 @@ static CGImageRef copyImageDetachedFromIOSurface(CGImageRef source, NSMutableStr
         return outcome;
     }
 
+    TLinkCaptureOwnership::Scoped<CGImageRef,decltype(&CGImageRelease)> sourceOwner(source,&CGImageRelease);
     size_t width = CGImageGetWidth(source);
     size_t height = CGImageGetHeight(source);
     if (width == 0 || height == 0 || width > 20000 || height > 20000 ||
         width > SIZE_MAX / 4 || height > SIZE_MAX / (width * 4)) {
-        CGImageRelease(source);
+        sourceOwner.reset(NULL);
         outcome.diagnostics = @"production_capture_bad_dimensions";
         return outcome;
     }
 
     size_t bytesPerRow = width * 4;
     size_t byteCount = bytesPerRow * height;
-    uint8_t *pixels = (uint8_t *)calloc(1, byteCount);
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    auto storage=TLinkBitmapCore::Bytes::Allocate(byteCount);
+    uint8_t *pixels=storage?(uint8_t *)storage->data():nullptr;
+    CGColorSpaceRef colorSpace = TLinkBitmapResources::DeviceRGB();
     CGContextRef context = pixels && colorSpace
         ? CGBitmapContextCreate(pixels, width, height, 8, bytesPerRow, colorSpace,
                                 kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big)
         : NULL;
     if (!context) {
-        if (pixels) free(pixels);
-        if (colorSpace) CGColorSpaceRelease(colorSpace);
-        CGImageRelease(source);
+        sourceOwner.reset(NULL);
         outcome.diagnostics = @"production_capture_bitmap_context_failed";
         return outcome;
     }
 
+    TLinkCaptureOwnership::Scoped<CGContextRef,decltype(&CGContextRelease)> contextOwner(context,&CGContextRelease);
     CGContextSetBlendMode(context, kCGBlendModeCopy);
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), source);
-    CGContextRelease(context);
-    CGImageRelease(source);
+    contextOwner.reset(NULL);
+    sourceOwner.reset(NULL);
 
-    NSData *ownedPixels = [NSData dataWithBytesNoCopy:pixels
-                                               length:byteCount
-                                         freeWhenDone:YES];
+    NSData *ownedPixels = TLinkBitmapResources::Data(storage);
+    const uint8_t *publishedPixels=(const uint8_t *)ownedPixels.bytes;
+    if (!ownedPixels || ownedPixels.length!=byteCount || !publishedPixels) {
+        outcome.diagnostics = @"production_capture_detached_image_failed";
+        return outcome;
+    }
     CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)ownedPixels);
+    TLinkCaptureOwnership::Scoped<CGDataProviderRef,decltype(&CGDataProviderRelease)> providerOwner(provider,&CGDataProviderRelease);
     CGImageRef detached = provider
         ? CGImageCreate(width, height, 8, 32, bytesPerRow, colorSpace,
                         kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big,
                         provider, NULL, false, kCGRenderingIntentDefault)
         : NULL;
-    if (provider) CGDataProviderRelease(provider);
-    CGColorSpaceRelease(colorSpace);
+    providerOwner.reset(NULL);
     if (!detached) {
         outcome.diagnostics = @"production_capture_detached_image_failed";
         return outcome;
     }
 
+    TLinkCaptureOwnership::Scoped<CGImageRef,decltype(&CGImageRelease)> detachedOwner(detached,&CGImageRelease);
     const int steps = 8;
     int nonBlack = 0;
     uint32_t firstColor = 0;
@@ -190,7 +197,7 @@ static CGImageRef copyImageDetachedFromIOSurface(CGImageRef source, NSMutableStr
         for (int gx = 1; gx < steps; gx++) {
             size_t x = (size_t)((double)gx / steps * width);
             size_t y = (size_t)((double)gy / steps * height);
-            const uint8_t *pixel = pixels + y * bytesPerRow + x * 4;
+            const uint8_t *pixel = publishedPixels + y * bytesPerRow + x * 4;
             if (pixel[0] > 8 || pixel[1] > 8 || pixel[2] > 8) nonBlack++;
             uint32_t color = ((uint32_t)pixel[0] << 16) |
                              ((uint32_t)pixel[1] << 8) | pixel[2];
@@ -212,8 +219,9 @@ static CGImageRef copyImageDetachedFromIOSurface(CGImageRef source, NSMutableStr
     outcome.diagnostics = outcome.result == CaptureResultPass
         ? @"production_capture_ready"
         : @"production_capture_uniform_or_black";
-    CGImageRelease(detached);
+    detachedOwner.reset(NULL);
     return outcome;
+    }
 }
 
 + (CaptureOutcome *)runCaptureProbe {

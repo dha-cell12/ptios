@@ -1,3 +1,4 @@
+#include "../../shared/TLinkBitmapResources.h"
 #include "../../shared/TLinkCapturePreparation.h"
 #include "../../shared/TLinkCaptureOwnership.h"
 #import "StreamCaptureSource.h"
@@ -428,11 +429,15 @@ static BOOL SCCopyCGImageWithCoreGraphics(CGImageRef image, CVPixelBufferRef tar
 
     BOOL succeeded = NO;
     if (CVPixelBufferLockBaseAddress(target, 0) == kCVReturnSuccess) {
+        auto unlock=[](CVPixelBufferRef value){CVPixelBufferUnlockBaseAddress(value,0);};
+        TLinkCaptureOwnership::Scoped<CVPixelBufferRef,decltype(unlock)> targetOwner(target,unlock);
         void *baseAddress = CVPixelBufferGetBaseAddress(target);
         size_t width = CVPixelBufferGetWidth(target);
         size_t height = CVPixelBufferGetHeight(target);
         size_t bytesPerRow = CVPixelBufferGetBytesPerRow(target);
-        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        TLinkCapturePlan::Key geometry(width,height,bytesPerRow,bytesPerRow*height,true,false);
+        if (!TLinkCapturePlan::Valid(geometry)) return NO;
+        CGColorSpaceRef colorSpace = TLinkBitmapResources::DeviceRGB();
         CGContextRef context = colorSpace && baseAddress
             ? CGBitmapContextCreate(baseAddress,
                                     width,
@@ -443,12 +448,10 @@ static BOOL SCCopyCGImageWithCoreGraphics(CGImageRef image, CVPixelBufferRef tar
                                     kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst)
             : NULL;
         if (context) {
+            TLinkCaptureOwnership::Scoped<CGContextRef,decltype(&CGContextRelease)> contextOwner(context,&CGContextRelease);
             CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
-            CGContextRelease(context);
             succeeded = YES;
         }
-        if (colorSpace) CGColorSpaceRelease(colorSpace);
-        CVPixelBufferUnlockBaseAddress(target, 0);
     }
     return succeeded;
 }
@@ -459,11 +462,14 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
 
     uint64_t totalStartedUs = SCMonotonicMicroseconds();
     os_unfair_lock_lock(&sSCCaptureLock);
+    auto unlockCapture=[](decltype(&sSCCaptureLock) value){os_unfair_lock_unlock(value);};
+    TLinkCaptureOwnership::Scoped<decltype(&sSCCaptureLock),decltype(unlockCapture)> captureOwner(&sSCCaptureLock,unlockCapture);
 
     BOOL forceLegacy = [sSCRequestedMode isEqualToString:@"legacy"];
     if (forceLegacy) {
         uint64_t captureStartedUs = SCMonotonicMicroseconds();
         CGImageRef image = SCCreateScreenShotCGImage();
+        TLinkCaptureOwnership::Scoped<CGImageRef,decltype(&CGImageRelease)> imageOwner(image,&CGImageRelease);
         sSCLastCaptureUs = SCMonotonicMicroseconds() - captureStartedUs;
         if (image) {
             sSCCaptureWidth = (int)CGImageGetWidth(image);
@@ -472,7 +478,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         uint64_t scaleStartedUs = SCMonotonicMicroseconds();
         BOOL succeeded = image && SCCopyCGImageWithCoreGraphics(image, target);
         sSCLastScaleUs = SCMonotonicMicroseconds() - scaleStartedUs;
-        if (image) CGImageRelease(image);
+        imageOwner.reset(NULL);
         sSCCaptureCount++;
         if (succeeded) {
             sSCLegacyCount++;
@@ -485,7 +491,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         }
         sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
         SCRecordMetricsLocked(sSCLastCaptureUs, sSCLastScaleUs, sSCLastTotalUs);
-        os_unfair_lock_unlock(&sSCCaptureLock);
+        captureOwner.reset(nullptr);
         return succeeded;
     }
 
@@ -498,6 +504,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         // return while layer tiles still reference the previous surface epoch.
         uint64_t captureStartedUs = SCMonotonicMicroseconds();
         CGImageRef image = SCCreateScreenShotCGImage();
+        TLinkCaptureOwnership::Scoped<CGImageRef,decltype(&CGImageRelease)> imageOwner(image,&CGImageRelease);
         sSCLastCaptureUs = SCMonotonicMicroseconds() - captureStartedUs;
         if (image) {
             sSCCaptureWidth = (int)CGImageGetWidth(image);
@@ -506,7 +513,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         uint64_t scaleStartedUs = SCMonotonicMicroseconds();
         BOOL succeeded = image && SCCopyCGImageWithCoreGraphics(image, target);
         sSCLastScaleUs = SCMonotonicMicroseconds() - scaleStartedUs;
-        if (image) CGImageRelease(image);
+        imageOwner.reset(NULL);
         sSCCaptureCount++;
         if (succeeded) {
             sSCSafeCopyCount++;
@@ -520,7 +527,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         }
         sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
         SCRecordMetricsLocked(sSCLastCaptureUs, sSCLastScaleUs, sSCLastTotalUs);
-        os_unfair_lock_unlock(&sSCCaptureLock);
+        captureOwner.reset(nullptr);
         return succeeded;
     }
 
@@ -532,7 +539,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
         sSCLastResult = @"source_surface_unavailable";
         sSCActiveBackend = @"failed";
         sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
-        os_unfair_lock_unlock(&sSCCaptureLock);
+        captureOwner.reset(nullptr);
         return NO;
     }
 
@@ -600,8 +607,9 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
     if (!succeeded) {
         uint64_t fallbackStartedUs = SCMonotonicMicroseconds();
         CGImageRef retryImage = SCCreateScreenShotCGImage();
+        TLinkCaptureOwnership::Scoped<CGImageRef,decltype(&CGImageRelease)> retryOwner(retryImage,&CGImageRelease);
         succeeded = retryImage && SCCopyCGImageWithCoreGraphics(retryImage, target);
-        if (retryImage) CGImageRelease(retryImage);
+        retryOwner.reset(NULL);
         sSCLastScaleUs = SCMonotonicMicroseconds() - fallbackStartedUs;
         if (succeeded) {
             sSCFallbackCount++;
@@ -619,7 +627,7 @@ BOOL SCCaptureScreenIntoPixelBuffer(CVPixelBufferRef target)
     }
     sSCLastTotalUs = SCMonotonicMicroseconds() - totalStartedUs;
     SCRecordMetricsLocked(sSCLastCaptureUs, sSCLastScaleUs, sSCLastTotalUs);
-    os_unfair_lock_unlock(&sSCCaptureLock);
+    captureOwner.reset(nullptr);
     return succeeded;
 }
 

@@ -14,6 +14,7 @@
 #include <vector>
 #include "../shared/TLinkCapturePlan.h"
 #include "../shared/TLinkCaptureOwnership.h"
+#include "../shared/TLinkBitmapResourceCore.h"
 using std::isfinite;
 using CGFloat = double;
 struct Properties { size_t width = 1200, height = 800; };
@@ -138,6 +139,7 @@ static void CGContextRelease(Context *context) {
 #include "CaptureCoreUnderTest.inc"
 #include "TrollFreshAPIUnderTest.inc"
 #include "capture-plan-safety-fixture.inc"
+#include "bitmap-resource-safety-fixture.inc"
 static void assertEmpty() { assert(surfaces == 0 && colors == 0 && images == 0 && contexts == 0); }
 static void testGeometry() {
     TLinkCaptureGeometry g;
@@ -187,6 +189,7 @@ static void testFrame(Failure fail, bool rotate) {
 int main() {
     testGeometry();
     capturePlanCases();
+    bitmapResourceCases();
     for (bool rotate : {false, true}) {
         for (Failure fail : {None, SurfaceCreate, Lock, ImageCreate, ZeroWidth, ZeroHeight, NoColor, BadBits, BitmapCreate, RotatedCreate, Unlock}) testFrame(fail, rotate);
     }

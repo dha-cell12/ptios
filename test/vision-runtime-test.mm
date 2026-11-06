@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include "../shared/TLinkBitmapResources.h"
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreImage/CoreImage.h>
 #import <ImageIO/ImageIO.h>

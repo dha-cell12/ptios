@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import{readFileSync}from'node:fs';
 import{createHash}from'node:crypto';
+import{restoreBitmap}from'./bitmap-resources-baseline.mjs';
 const spec={
   "root": {
     "path": "pccontrol/Screen.xm",
@@ -64,6 +65,6 @@ const spec={
 };
 export function captureBefore(kind,part){return readFileSync(new URL('../../test/fixtures/capture-preparation-'+kind+'-'+part+'-before-d01a.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function capturePart(source,kind,part){const p=spec[kind].parts.find(p=>p.kind===part),a=source.indexOf(p.start),b=p.end?source.indexOf(p.end,a):source.length;assert.ok(a>=0&&b>a);return source.slice(a,b);}
-export function restoreCapturePreparation(source,kind){const p=spec[kind];for(const inc of p.includes){assert.equal(source.split(inc).length-1,1);source=source.replace(inc,'');}for(const part of p.parts){const body=capturePart(source,kind,part.kind);assert.equal(body,part.current);source=source.replace(body,captureBefore(kind,part.kind));}if(kind==='troll'){assert.ok(!source.includes('static int SCRoundUp('));source=source.replace('static void SCReleaseCaptureSurfacesLocked(',captureBefore('troll','round')+'static void SCReleaseCaptureSurfacesLocked(');}assert.equal(createHash('sha256').update(source).digest('hex'),p.hash,'complete preceding capture/model source');return source;}
+export function restoreCapturePreparation(source,kind){if(kind==='troll')source=restoreBitmap(source,'stream');const p=spec[kind];for(const inc of p.includes){assert.equal(source.split(inc).length-1,1);source=source.replace(inc,'');}for(const part of p.parts){const body=capturePart(source,kind,part.kind);assert.equal(body,part.current);source=source.replace(body,captureBefore(kind,part.kind));}if(kind==='troll'){assert.ok(!source.includes('static int SCRoundUp('));source=source.replace('static void SCReleaseCaptureSurfacesLocked(',captureBefore('troll','round')+'static void SCReleaseCaptureSurfacesLocked(');}assert.equal(createHash('sha256').update(source).digest('hex'),p.hash,'complete preceding capture/model source');return source;}
 const headerHashes={"TLinkCapturePlan.h": "4bf5293788a031bdee07562bed689260972edeba96c055dd29abc960203026a9", "TLinkCapturePreparation.h": "49ae657235341d3ac8df9004f0259133172d40d939032669fea1320155a7e5c6", "TLinkCaptureOwnership.h": "8772901fe60fc57a8f6a79607b6f7139150b26bd935949ba30fc45f3a7d4dc38"};
 export function checkCaptureHeader(name,source){assert.equal(createHash("sha256").update(source).digest("hex"),headerHashes[name],name+" complete checked capture helper");}

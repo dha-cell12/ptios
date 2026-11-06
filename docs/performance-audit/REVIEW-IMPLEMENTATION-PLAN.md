@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai D01b (07/11/2026): người dùng báo D01a build pass (`d5f08d35`). Gom bảy phần root/TrollStore/streaming: memo DeviceRGB; scoped renderer/context; frame screenshot/charge unwind; Vision provider/reader cleanup; shared RGBA owner qua NSData nil/copy/exception; CVPixelBuffer lock/geometry; capture CPU lock và source/retry image cleanup. Giữ fresh surface và pixel backend. 90 runner/521 source check pass Windows; native Apple/ARC/pixel mới chờ macOS CI. Chi tiết: IMPLEMENTATION-D01B.md.
+
 Cập nhật triển khai D01a (07/11/2026): người dùng báo C05ae build pass (`c9a54d5f`). Gom capture root/TrollStore: memo hardware-class có retry khi probe lỗi; bounded uname; cache bốn immutable property dictionary theo geometry/global/type; global→private fallback không sửa entry cũ; checked live dimensions/stride/allocation; chung ownership surface/image/context qua lỗi/unwind; pool preparation root. Vẫn tạo surface mới mỗi capture, không cache mù orientation/pixels. 90 runner/521 source check pass Windows; Foundation/ARC mới chờ macOS CI. Chi tiết: IMPLEMENTATION-D01A.md.
 
 Cập nhật triển khai C05ae (07/11/2026): người dùng báo C05ad build pass (`1adb11f3`). Gom toàn gói matcher: lazy plan cho identifier/role/text, dùng chung text plan cho label/value, tái dùng normalization/mode của selector immutable; mutable/custom giữ matcher cũ. Chặn bốn string field selector quá64 KiB trước admission/enqueue; pool bao cả snapshot/find để dọn temporary trước return, vẫn giữ selected row và full count/index/guard. 90 runner/521 source check pass Windows; native parity/counter/ownership mới chờ macOS CI. Chi tiết: IMPLEMENTATION-C05AE.md.
@@ -373,7 +375,7 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 
 ### Đợt 4: đo trước hoặc theo phạm vi
 
-- **D01 — P0-08/P1-22/P1-23:** D01a source gom device/properties preparation cache, live checked geometry và ownership root/TrollStore; chờ CI/device: IMPLEMENTATION-D01A.md. Benchmark target-size/gray trước đổi pixel backend; giữ fresh surfaces và kiểm tra orientation/keep-screen/màu/iPhone/iPad, không cache mù dimensions/orientation.
+- **D01 — P0-08/P1-22/P1-23:** D01a gom device/properties preparation; D01b gom color memo và bitmap/frame/provider/data/CV/CPU-lock ownership root/TrollStore/streaming; chờ native/device: IMPLEMENTATION-D01A.md, IMPLEMENTATION-D01B.md. Benchmark target-size/gray trước đổi pixel backend; giữ fresh surfaces và kiểm tra orientation/keep-screen/màu/iPhone/iPad, không cache mù dimensions/orientation.
 - **Loại khỏi kế hoạch theo yêu cầu người dùng:** P0-21/P1-65/P1-66/P2-25 thuộc TouchPOC sơ khai. Không phát triển hoặc tối ưu artifact này. Các file còn tên POC trong `stream-app/streamd` là code production TrollStore, vẫn thuộc phạm vi.
 - **D03 — các mục đo/điều kiện P2:** theo bảng dưới; không đổi listener/VM/hook lớn trước profile.
 
@@ -433,7 +435,7 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P1-17, P1-18 | Tối ưu | IPC response logging/copy; H264Stream.xm:748,899 relative pacing và pool-unavailable sleep sau capture. B03/B04. |
 | P1-19 | Sửa | Screen.xm:189–219 release Get-rule colorSpace và Create failure chưa kiểm tra. A03. |
 | P1-20, P1-21 | Tối ưu | Image.xm:999 lazy expiry; dòng 73,982 giới hạn 64 image nhưng không byte cap/TTL cleanup. Không gọi là unbounded frame leak. B02. |
-| P1-22 | Tối ưu từng phần | D01a source memo class quyết định root và cache bốn immutable property tuples cho root/TrollStore, live geometry/stride/ownership checked. Giữ fresh source surfaces vì reuse trước đã bị loại qua visual qualification. Native/device cần xác nhận. IMPLEMENTATION-D01A.md. |
+| P1-22 | Tối ưu từng phần | D01a memo model/property tuples; D01b memo DeviceRGB và gom bitmap/frame/Vision/data/CV/CPU-lock ownership trên root/TrollStore/streaming. Live geometry, per-call context và fresh source surface giữ nguyên. Native/device cần xác nhận. IMPLEMENTATION-D01A.md, IMPLEMENTATION-D01B.md. |
 | P1-23 | Đo | Image.xm:441 gray-only vẫn tạo BGRA để convert; direct-gray cần kiểm tra tốc độ/chất lượng. D01. |
 | P1-24 | Gộp | Image.xm:923–961 ROI clone/cvtColor trong store queue, cùng P0-09/B02. |
 | P1-25 | Tối ưu | TemplateMatch.xm:115–185,407 cache count-bounded, scale vector không byte cap. C01. |

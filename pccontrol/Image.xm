@@ -1,3 +1,4 @@
+#include "../shared/TLinkBitmapResources.h"
 #include "../shared/TLinkModernImagePolicy.h"
 #include "../shared/TLinkFrameVisionPolicy.h"
 #include <new>
@@ -261,10 +262,8 @@ static cv::Mat zx_cvMatGrayFromCGImage(CGImageRef img, NSError **error)
 
     cv::Mat rgba((int)rows, (int)cols, CV_8UC4);
     CGColorSpaceRef colorSpace = CGImageGetColorSpace(img);
-    BOOL createdColorSpace = false;
     if (!colorSpace) {
-        colorSpace = CGColorSpaceCreateDeviceRGB();
-        createdColorSpace = true;
+        colorSpace = TLinkBitmapResources::DeviceRGB();
     }
     CGContextRef ctx = CGBitmapContextCreate(rgba.data,
                                              cols,
@@ -273,17 +272,15 @@ static cv::Mat zx_cvMatGrayFromCGImage(CGImageRef img, NSError **error)
                                              rgba.step[0],
                                              colorSpace,
                                              kCGImageAlphaNoneSkipLast | kCGBitmapByteOrderDefault);
-    if (createdColorSpace) {
-        CGColorSpaceRelease(colorSpace);
-    }
     if (!ctx) {
         if (error) {
             *error = [NSError errorWithDomain:@"com.tlinkauto.tlinkautosp" code:999 userInfo:@{NSLocalizedDescriptionKey:@"-1;;Failed to create bitmap context.\r\n"}];
         }
         return cv::Mat();
     }
+    TLinkCaptureOwnership::Scoped<CGContextRef,decltype(&CGContextRelease)> contextOwner(ctx,&CGContextRelease);
     CGContextDrawImage(ctx, CGRectMake(0, 0, cols, rows), img);
-    CGContextRelease(ctx);
+    contextOwner.reset(NULL);
 
     cv::Mat gray;
     cv::cvtColor(rgba, gray, COLOR_RGBA2GRAY);
@@ -478,15 +475,16 @@ static bool zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,uint32
         return false;
     }
 
+    TLinkCaptureOwnership::Scoped<CGImageRef,decltype(&CGImageRelease)> screenOwner(screen,&CGImageRelease);
     size_t pixels = 0;
     if (!TLinkImagePixels(CGImageGetWidth(screen), CGImageGetHeight(screen), kMaxImagePixels, &pixels)) {
-        CGImageRelease(screen);
+        screenOwner.reset(NULL);
         if (error) *error = zx_frameError(@"1;;frame_pixel_limit\r\n");
         return false;
     }
     auto charge = zx_reservePayload(TLinkImageKind::Frame, pixels * ((needBGRA ? 4 : 0) + (needGray ? 1 : 0)));
     if (!charge) {
-        CGImageRelease(screen);
+        screenOwner.reset(NULL);
         if (error) *error = zx_frameError(@"1;;frame_memory_budget\r\n");
         return false;
     }
@@ -509,12 +507,12 @@ static bool zx_captureFrame(const TLinkNativeFrameCaptureRequest &request,uint32
     int w = 0, h = 0, bpr = 0;
     CFAbsoluteTime bgra0 = TLinkImageNowSeconds();
     if (!zx_renderBGRAFromCGImage(screen, needBGRA ? frame.bgra : tmpBGRA, &w, &h, &bpr)) {
-        CGImageRelease(screen);
+        screenOwner.reset(NULL);
         if (error) *error = zx_frameError(@"1;;bgra_render_failed\r\n");
         return false;
     }
     double bgraMs = (TLinkImageNowSeconds() - bgra0) * 1000.0;
-    CGImageRelease(screen);
+    screenOwner.reset(NULL);
     frame.width = w;
     frame.height = h;
     frame.bytesPerRow = bpr;
@@ -1341,15 +1339,15 @@ CGImageRef TLinkCreateVisionImageFromFrame(uint32_t frameId,CGRect region,NSStri
     CGDataProviderRef provider=CGDataProviderCreateWithData(holder.get(),frame->bgra.data(),
         size_t(frame->bytesPerRow)*frame->height,[](void *info,const void *,size_t){delete static_cast<ZXFrameRef *>(info);});
     if(!provider){if(error)*error=zx_frameError(@"-1;;vision_frame_provider_failed\r\n");return NULL;}
+    TLinkCaptureOwnership::Scoped<CGDataProviderRef,decltype(&CGDataProviderRelease)> providerOwner(provider,&CGDataProviderRelease);
     holder.release(); // Provider now owns the reader; failed creation below also releases it.
     CGImageRef image=NULL;
-    CGColorSpaceRef color=CGColorSpaceCreateDeviceRGB();
+    CGColorSpaceRef color=TLinkBitmapResources::DeviceRGB();
     if(color){
         image=CGImageCreate(frame->width,frame->height,8,32,frame->bytesPerRow,color,
             kCGBitmapByteOrder32Little|kCGImageAlphaPremultipliedFirst,provider,NULL,false,kCGRenderingIntentDefault);
-        CGColorSpaceRelease(color);
     }
-    CGDataProviderRelease(provider);
+    providerOwner.reset(NULL);
     if(!image){if(error)*error=zx_frameError(@"-1;;vision_frame_image_failed\r\n");return NULL;}
     if(TLinkNativeStopped()){CGImageRelease(image);if(error)*error=zx_frameError(@"-1;;vision_cancelled_or_timed_out\r\n");return NULL;}
     if(pixelRegion)*pixelRegion=CGRectMake(roi.x,roi.y,roi.width,roi.height);
@@ -1400,7 +1398,7 @@ static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, 
     int bytesPerRow = width * 4;
     out.assign((size_t)bytesPerRow * (size_t)height, 0);
 
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGColorSpaceRef colorSpace = TLinkBitmapResources::DeviceRGB();
     CGContextRef ctx = CGBitmapContextCreate(out.data(),
                                              width,
                                              height,
@@ -1408,13 +1406,13 @@ static bool zx_renderBGRAFromCGImage(CGImageRef img, std::vector<uint8_t> &out, 
                                              bytesPerRow,
                                              colorSpace,
                                              kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
-    CGColorSpaceRelease(colorSpace);
     if (!ctx) {
         out.clear();
         return false;
     }
+    TLinkCaptureOwnership::Scoped<CGContextRef,decltype(&CGContextRelease)> contextOwner(ctx,&CGContextRelease);
     CGContextDrawImage(ctx, CGRectMake(0, 0, width, height), img);
-    CGContextRelease(ctx);
+    contextOwner.reset(NULL);
     if (outW) *outW = width;
     if (outH) *outH = height;
     if (outBpr) *outBpr = bytesPerRow;
