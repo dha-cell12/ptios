@@ -19,7 +19,7 @@ static NSInteger jsonBudgetWriter(id object,NSOutputStream *stream,NSError *__au
     return written;
 }
 static NSUInteger budgetBufferLength(bool current){
-    return current?((TLinkAXJSONStream *)heldBudgetStream).bytes.length:
+    return current?((TLinkAXJSONStream *)heldBudgetStream).byteCount:
         ((BeforeOutputTLinkAXJSONStream *)heldBudgetStream).bytes.length;
 }
 static NSData *budgetWriterCall(bool current,id graph,BOOL *large,BOOL *stopped){

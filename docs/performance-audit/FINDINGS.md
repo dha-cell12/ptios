@@ -2285,6 +2285,8 @@ Implementation follow-up (2026-11-06, C05t): four UI codecs now use the actual J
 
 Implementation follow-up (2026-11-06, C05v): the JSON sink now projects each prefix through exact success-wire sizing and checks captured native remaining output before append, before immutable copy and after pool drain. Parent response bytes count, rejected chunks are not appended, and native OutputLimit stays sticky. This reserves no response bytes and retains final wire/sink checks. Portable 100k real-budget cases pass; actual/frozen buffer/copy/codec tests await macOS CI. Earlier output refusal may precede later validation errors; Foundation internal work/allocations, missing bindings and device qualification remain open. See `IMPLEMENTATION-C05V.md`.
 
+Implementation follow-up (2026-11-06, C05w): the JSON stream now owns a raw move-only buffer with requested capacity capped at786426 bytes, seals/moves it into an immutable NSData deallocator owner and removes the explicit NSMutableData copy. Close frees untransferred prefixes; quota/captured stop/output admission and four codec sources remain. Portable20k byte/move/seal/allocation-fault/unwind lifecycles pass; actual NSData/factory/lifetime and C05v codec comparisons await macOS CI. The cap excludes transient realloc overlap, Foundation/allocator/control-block overhead, upstream graphs and other representations; no device RSS/latency improvement is qualified. P1-60 remains partial. See `IMPLEMENTATION-C05W.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery

@@ -11,10 +11,11 @@
 #include "../shared/TLinkAXJSONOutput.mm"
 #include "BeforeStopJSONWriter.inc"
 #include "BeforeOutputJSONWriter.inc"
+#include "BeforeStorageJSONWriter.inc"
 enum class WireFault {Normal,Empty,Probe,ThrowNS,ThrowCPP};
 static WireFault jsonFault=WireFault::Normal,base64Fault=WireFault::Normal;
 static unsigned jsonCalls=0,base64Calls=0;
-static bool useBeforeOutputJSON=false;
+static bool useBeforeOutputJSON=false,useBeforeStorageJSON=false;
 static NSData *captured,*lastJSON;
 static NSDictionary *fixtureCapability,*fixtureForeground;
 static uint64_t sTLinkUITreeContextGeneration=7;
@@ -40,8 +41,8 @@ static NSData *fixtureBoundedJSONWithStop(id object,BOOL *tooLarge,BOOL *stopped
     if(stopped)*stopped=NO;
     if(tooLarge)*tooLarge=NO;
     if(jsonFault!=WireFault::Normal)return fixtureJSON(object);
-    ++jsonCalls;lastJSON=useBeforeOutputJSON?BeforeOutputTLinkAXBoundedJSONDataWithStop(object,tooLarge,stopped):
-        TLinkAXBoundedJSONDataWithStop(object,tooLarge,stopped);return lastJSON;
+    ++jsonCalls;lastJSON=useBeforeStorageJSON?BeforeStorageTLinkAXBoundedJSONDataWithStop(object,tooLarge,stopped):(useBeforeOutputJSON?BeforeOutputTLinkAXBoundedJSONDataWithStop(object,tooLarge,stopped):
+        TLinkAXBoundedJSONDataWithStop(object,tooLarge,stopped));return lastJSON;
 }
 static NSData *fixtureBeforeStopJSON(id object,BOOL *tooLarge){
     if(tooLarge)*tooLarge=NO;
@@ -100,7 +101,7 @@ static NSData *BeforeJSONStopTrollCapability(){int taskType=77;
     return nil;
 }
 static void reset(){
-    assert(!TLinkCurrentNativeBudget());useBeforeOutputJSON=false;jsonCalls=base64Calls=0;jsonFault=base64Fault=WireFault::Normal;captured=lastJSON=nil;
+    assert(!TLinkCurrentNativeBudget());useBeforeOutputJSON=useBeforeStorageJSON=false;jsonCalls=base64Calls=0;jsonFault=base64Fault=WireFault::Normal;captured=lastJSON=nil;
     fixtureCapability=@{@"ok":@YES,@"payload":@""};fixtureForeground=@{@"ok":@YES,@"bundle_id":@"fixture.bundle",@"pid":@123};
 }
 static NSData *call(bool root,bool capability,bool current,NSDictionary *value){
@@ -209,9 +210,10 @@ static void failureCases(){
 #include "ax-bounded-json-runtime-fixture.inc"
 #include "ax-json-stop-runtime-fixture.inc"
 #include "ax-json-budget-runtime-fixture.inc"
+#include "ax-json-buffer-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX wire Foundation: actual/frozen root/TrollStore result/capability codecs, real JSON/base64/formatter and native budget; AX/frontmost/notify controlled");
-    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();
+    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{
         reset();jsonFault=WireFault::Probe;
         errorReply(call(n%2!=0,n%3!=0,true,@{@"ok":@YES}),@"ui_response_too_large");assert(base64Calls==0);

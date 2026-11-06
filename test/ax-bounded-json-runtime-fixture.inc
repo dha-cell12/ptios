@@ -34,7 +34,7 @@ static void boundedWriterCases(){
                 catch(const std::runtime_error &){caught=mode==6;}}
             @catch(NSException *exception){caught=mode==5&&[exception.name isEqualToString:@"JSONWriterFixture"];}
             assert(caught==(mode==5||mode==6));assert(heldJSONStream.streamStatus==NSStreamStatusClosed);
-            assert(heldJSONStream.bytes.length==2&&heldJSONStream.acceptedBytes==2);
+            assert(heldJSONStream.byteCount==2&&heldJSONStream.acceptedBytes==2);
             if(mode==0)assert([result isEqualToData:[@"{}" dataUsingEncoding:NSUTF8StringEncoding]]&&!tooLarge);
             else assert(!result&&tooLarge==(mode==1||mode==8));
             if(tooLarge)assert(heldJSONStream.streamError.code==1);
@@ -45,13 +45,13 @@ static void boundedWriterCases(){
     @autoreleasepool{
         TLinkAXJSONStream *stream=[TLinkAXJSONStream new];const uint8_t one='x';
         assert(stream.streamStatus==NSStreamStatusNotOpen&&!stream.hasSpaceAvailable);
-        assert([stream write:&one maxLength:1]==-1&&stream.bytes.length==0);
+        assert([stream write:&one maxLength:1]==-1&&stream.byteCount==0);
         [stream close];[stream close];assert(stream.streamStatus==NSStreamStatusClosed);
         stream=[TLinkAXJSONStream new];[stream open];[stream open];assert([stream write:&one maxLength:0]==0);
         NSMutableData *data=[NSMutableData dataWithLength:TLinkAXJSONOutput::MaxJSONBytes];
         assert([stream write:(const uint8_t *)data.bytes maxLength:data.length]==(NSInteger)data.length);
-        assert(stream.hasSpaceAvailable&&stream.bytes.length==data.length);
-        assert([stream write:&one maxLength:1]==-1&&stream.limitExceeded&&stream.bytes.length==data.length);
+        assert(stream.hasSpaceAvailable&&stream.byteCount==data.length);
+        assert([stream write:&one maxLength:1]==-1&&stream.limitExceeded&&stream.byteCount==data.length);
         assert(!stream.hasSpaceAvailable);[stream close];[stream open];assert(stream.streamStatus==NSStreamStatusClosed);
     }
 }

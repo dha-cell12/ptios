@@ -2,9 +2,19 @@
 #include "TLinkAXJSONQuota.h"
 #include "TLinkAXJSONStop.h"
 #include "TLinkAXJSONBudget.h"
+#include "TLinkAXJSONBuffer.h"
+
+using TLinkAXJSONDataFactory = NSData *(*)(const std::shared_ptr<TLinkAXJSONOutput::Buffer> &);
+static NSData *TLinkAXJSONCreateData(const std::shared_ptr<TLinkAXJSONOutput::Buffer> &owner) {
+    std::shared_ptr<TLinkAXJSONOutput::Buffer> storage = owner;
+    if (!storage || !storage->size()) return nil;
+    return [[NSData alloc] initWithBytesNoCopy:const_cast<uint8_t *>(storage->data()) length:storage->size()
+        deallocator:^(void *bytes, NSUInteger length) { (void)bytes; (void)length; storage->release(); }];
+}
 
 @interface TLinkAXJSONStream : NSOutputStream {
-    NSMutableData *_bytes;
+    TLinkAXJSONOutput::Buffer _buffer;
+    size_t _byteCount;
     NSError *_failure;
     NSStreamStatus _state;
     TLinkAXJSONOutput::Quota _quota;
@@ -12,7 +22,8 @@
     BOOL _outputExceeded;
     __weak id<NSStreamDelegate> _streamDelegate;
 }
-@property(nonatomic,readonly) NSData *bytes;
+@property(nonatomic,readonly) size_t byteCount;
+-(NSData *)takeData:(TLinkAXJSONDataFactory)factory;
 @property(nonatomic,readonly) BOOL limitExceeded;
 @property(nonatomic,readonly) size_t acceptedBytes;
 @end
@@ -21,11 +32,11 @@
 // Internal synchronous sink; it never schedules asynchronous stream events.
 -(instancetype)init {
     self = [super init];
-    if (self) { _callerBudget = TLinkCurrentNativeBudget(); _bytes = [NSMutableData data]; _state = NSStreamStatusNotOpen; }
+    if (self) { _callerBudget = TLinkCurrentNativeBudget(); _state = NSStreamStatusNotOpen; }
     return self;
 }
 -(void)open { if (_state == NSStreamStatusNotOpen) _state = NSStreamStatusOpen; }
--(void)close { _state = NSStreamStatusClosed; }
+-(void)close { _state = NSStreamStatusClosed; _buffer.release(); }
 -(NSInteger)failWithCode:(NSInteger)code {
     _failure = [NSError errorWithDomain:@"TLinkAXJSONOutput" code:code userInfo:nil];
     _state = NSStreamStatusError;
@@ -40,8 +51,9 @@
         _outputExceeded = YES;
         return [self failWithCode:5];
     }
-    if (length) [_bytes appendBytes:buffer length:length];
-    if (!_bytes || _bytes.length != _quota.size()) return [self failWithCode:3];
+    if (!_buffer.append(buffer, length)) return [self failWithCode:6];
+    _byteCount = _buffer.size();
+    if (_byteCount != _quota.size()) return [self failWithCode:3];
     if (TLinkAXJSONOutput::ClassifyStop(_callerBudget).active) return [self failWithCode:4];
     return (NSInteger)length;
 }
@@ -50,7 +62,12 @@
 -(BOOL)hasSpaceAvailable { return _state == NSStreamStatusOpen && !TLinkAXJSONOutput::ClassifyStop(_callerBudget).active; }
 -(NSStreamStatus)streamStatus { return _state; }
 -(NSError *)streamError { return _failure; }
--(NSData *)bytes { return _bytes; }
+-(size_t)byteCount { return _byteCount; }
+-(NSData *)takeData:(TLinkAXJSONDataFactory)factory {
+    if (_state != NSStreamStatusOpen || !_buffer.seal()) return nil;
+    auto owner = std::make_shared<TLinkAXJSONOutput::Buffer>(std::move(_buffer));
+    return factory(owner);
+}
 -(BOOL)limitExceeded { return _quota.exceeded() || _outputExceeded; }
 -(size_t)acceptedBytes { return _quota.size(); }
 -(id<NSStreamDelegate>)delegate { return _streamDelegate; }
@@ -80,7 +97,7 @@ static bool TLinkAXJSONAdmitOutput(const TLinkNativeBudgetPtr &budget, size_t by
     }
     return !TLinkAXJSONReportStop(budget, tooLarge, stopped);
 }
-static NSData *TLinkAXJSONDataWithWriter(id object, BOOL *tooLarge, TLinkAXJSONWriter writer, BOOL *stopped = nullptr) {
+static NSData *TLinkAXJSONDataWithWriter(id object, BOOL *tooLarge, TLinkAXJSONWriter writer, BOOL *stopped = nullptr, TLinkAXJSONDataFactory factory = TLinkAXJSONCreateData) {
     if (tooLarge) *tooLarge = NO;
     if (stopped) *stopped = NO;
     const auto callerBudget = TLinkCurrentNativeBudget();
@@ -94,10 +111,11 @@ static NSData *TLinkAXJSONDataWithWriter(id object, BOOL *tooLarge, TLinkAXJSONW
         if (TLinkAXJSONReportStop(callerBudget, tooLarge, stopped)) return nil;
         if (stream.limitExceeded) { if (tooLarge) *tooLarge = YES; return nil; }
         if (written <= 0 || error || stream.streamStatus != NSStreamStatusOpen ||
-            stream.bytes.length != (NSUInteger)written || stream.acceptedBytes != (size_t)written) return nil;
+            stream.byteCount != (size_t)written || stream.acceptedBytes != (size_t)written) return nil;
         if (!TLinkAXJSONAdmitOutput(callerBudget, stream.acceptedBytes, tooLarge, stopped)) return nil;
-        NSData *result = [stream.bytes copy];
+        NSData *result = [stream takeData:factory];
         if (TLinkAXJSONReportStop(callerBudget, tooLarge, stopped)) return nil;
+        if (!result || result.length != stream.byteCount) return nil;
         return result;
     } @finally {
         [stream close];
