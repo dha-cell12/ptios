@@ -1,3 +1,4 @@
+#import "../../shared/TLinkAXJSONOutput.h"
 #include "../../shared/TLinkAXWireOutput.h"
 #include "../../shared/TLinkNativeBudget.h"
 #include "../../shared/TLinkOCRPolicy.h"
@@ -7651,8 +7652,11 @@ static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
             ? result[@"error"] : @"ui_operation_failed";
         return TLinkError(code);
     }
-    NSError *error = nil;
-    NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:&error];
+    BOOL jsonTooLarge = false;
+    NSData *json = TLinkAXBoundedJSONData(result, &jsonTooLarge);
+    if (jsonTooLarge) {
+        return TLinkError(@"ui_response_too_large");
+    }
     if (json.length == 0) return TLinkError(@"ui_result_json_failed");
     size_t wireBytes = 0;
     if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
@@ -7708,8 +7712,11 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"direct_foreground_focused_pid": @(sTLinkAXSpringBoardLastFocusedPid),
             @"direct_foreground_top_event_pid": @(sTLinkAXSpringBoardLastTopEventPid),
         };
-        NSError *jsonError = nil;
-        NSData *json = [NSJSONSerialization dataWithJSONObject:capability options:0 error:&jsonError];
+        BOOL jsonTooLarge = false;
+        NSData *json = TLinkAXBoundedJSONData(capability, &jsonTooLarge);
+        if (jsonTooLarge) {
+            return TLinkError(@"ui_response_too_large");
+        }
         if (json.length == 0) return TLinkError(@"ui_capability_json_failed");
         size_t wireBytes = 0;
         if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {

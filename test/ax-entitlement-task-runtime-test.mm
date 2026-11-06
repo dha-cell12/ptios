@@ -15,6 +15,7 @@
 #include "../shared/TLinkAXAdmission.h"
 #include "../shared/TLinkAXSnapshotOutput.h"
 #include "../shared/TLinkAXWireOutput.h"
+#include "../shared/TLinkAXJSONQuota.h"
 #include "AXCapabilityConstants.inc"
 
 static NSString *const TLinkAXBackendName=@"axruntime_numeric_v1";
@@ -133,8 +134,9 @@ static void goldenCases(){
                 providerValues=@[variants[n%8],variants[(n/3)%8],variants[(n/7)%8]];
                 NSDictionary *value=read(current);
                 if(current){
-                    NSMutableDictionary *withLimit=[expected mutableCopy];withLimit[@"max_pending_queries"]=@8;withLimit[@"max_snapshot_string_utf8_bytes"]=@65536;withLimit[@"max_hit_test_string_utf8_bytes"]=@65536;withLimit[@"hard_max_success_wire_bytes"]=@1048576;expected=withLimit;
+                    NSMutableDictionary *withLimit=[expected mutableCopy];withLimit[@"max_pending_queries"]=@8;withLimit[@"max_snapshot_string_utf8_bytes"]=@65536;withLimit[@"max_hit_test_string_utf8_bytes"]=@65536;withLimit[@"hard_max_success_wire_bytes"]=@1048576;withLimit[@"hard_max_json_bytes"]=@786426;expected=withLimit;
                     assert([value[@"max_pending_queries"] unsignedIntValue]==TLinkAXAdmission::MaxPending);
+                    assert([value[@"hard_max_json_bytes"] unsignedIntegerValue]==TLinkAXJSONOutput::MaxJSONBytes);
                     assert([value[@"hard_max_success_wire_bytes"] unsignedIntegerValue]==TLinkAXWireOutput::MaxSuccessWireBytes);
                     assert([value[@"max_hit_test_string_utf8_bytes"] unsignedIntegerValue]==TLinkAXSnapshotOutput::MaxStringUTF8Bytes);
                     assert([value[@"max_snapshot_string_utf8_bytes"] unsignedIntegerValue]==TLinkAXSnapshotOutput::MaxStringUTF8Bytes);

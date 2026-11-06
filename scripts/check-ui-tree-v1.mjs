@@ -60,6 +60,8 @@ assert.equal(fixture.limits.maxPendingQueries, 8);
 assert.equal(fixture.limits.maxSnapshotStringUTF8Bytes, 65536);
 assert.equal(fixture.limits.maxHitTestStringUTF8Bytes, 65536);
 assert.equal(fixture.limits.hardMaxSuccessWireBytes, 1048576);
+assert.equal(fixture.limits.hardMaxJSONBytes, 786426);
+assert.match(core, /"hard_max_json_bytes": @\(TLinkAXJSONOutput::MaxJSONBytes\)/);
 assert.match(core, /"hard_max_success_wire_bytes": @\(TLinkAXWireOutput::MaxSuccessWireBytes\)/);
 assert.match(core, /"max_hit_test_string_utf8_bytes": @\(TLinkAXSnapshotOutput::MaxStringUTF8Bytes\)/);
 assert.match(core, /"max_snapshot_string_utf8_bytes": @\(TLinkAXSnapshotOutput::MaxStringUTF8Bytes\)/);

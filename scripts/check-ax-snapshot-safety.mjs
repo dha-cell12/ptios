@@ -14,6 +14,7 @@ import {legacyAXParentAttributes} from './lib/ax-parent-attributes-baseline.mjs'
 import {legacyAXSnapshotOwner} from './lib/ax-snapshot-owner-baseline.mjs';
 import {axQueryRegion,legacyAXQueryStop} from './lib/ax-query-stop-baseline.mjs';
 import {axAdmissionState} from './lib/ax-admission-baseline.mjs';
+import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
 import {restoreAXWireRoute,wireRegion,wireLegacy,wireResponse,wireHandler,wireCapability} from './lib/ax-wire-baseline.mjs';
 import {legacyAXHitOutput} from './lib/ax-hit-output-baseline.mjs';
 import {legacyAXOutput} from './lib/ax-output-baseline.mjs';
@@ -25,7 +26,7 @@ const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(so
 const preceding=restoreAXAttributes(source);
 const [rootTask,trollTask]=await Promise.all(['pccontrol/Task.xm','stream-app/streamd/POCSocketServer.mm'].map(read));
 restoreAXWireRoute(rootTask,'root');restoreAXWireRoute(trollTask,'troll');
-const wireAdapt=s=>s.replaceAll(/\[NSJSONSerialization dataWithJSONObject:([^\n]+?) options:0 error:(?:nil|&error|&jsonError)\]/g,'fixtureJSON($1)')
+const wireAdapt=s=>s.replaceAll('TLinkAXBoundedJSONData(','fixtureBoundedJSON(').replaceAll(/\[NSJSONSerialization dataWithJSONObject:([^\n]+?) options:0 error:(?:nil|&error|&jsonError)\]/g,'fixtureJSON($1)')
     .replaceAll('[json base64EncodedStringWithOptions:0]','fixtureBase64(json)').replaceAll('CFAbsoluteTimeGetCurrent()','fixtureWireWall()')
     .replaceAll('    NSError *error = nil;\n','').replaceAll('        NSError *jsonError = nil;\n','');
 const wireFixtures={};
@@ -38,6 +39,12 @@ for(const [name,task] of [['root',rootTask],['troll',trollTask]]){
         wireFixtures[label+'Capability.inc']=wireAdapt(wireCapability(handler));
     }
 }
+for(const name of ['root','troll']){
+    const label='BeforeBounded'+(name==='root'?'Root':'Troll');
+    wireFixtures[label+'Response.inc']=wireAdapt(boundedJSONLegacy(name,'response')).replaceAll(name==='root'?'zx_uiTreeNotifyResult':'TLinkUITreeJSONResponse',label+'Response');
+    wireFixtures[label+'Capability.inc']=wireAdapt(wireCapability(boundedJSONLegacy(name,'handler')));
+}
+for(const makefile of ['pccontrol/Makefile','stream-app/streamd/Makefile'])assert.match(await read(makefile),/TLinkAXJSONOutput\.mm/);
 wireFixtures['WireTrollFormatter.inc']=wireRegion(trollTask,'static NSData *TLinkResponse(','static NSData *TLinkUnsupported(');
 const actual=axSnapshot(source);assert.doesNotMatch(actual,/CFAbsoluteTimeGetCurrent|NSDate \*deadline/);
 assert.doesNotMatch(axFind(source),/NSMutableArray|matches\b/);
@@ -73,7 +80,7 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: exact pre-base64 success wire gates in root/TrollStore result/capability routes and complete prior AX/task/server source.');
+console.log('AX snapshot source passed: bounded JSON stream in all four UI codecs, unchanged final wire admission and complete prior AX/task/server source.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

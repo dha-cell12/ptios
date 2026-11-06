@@ -20,6 +20,7 @@
     "maxSnapshotStringUTF8Bytes": 65536,
     "maxHitTestStringUTF8Bytes": 65536,
     "hardMaxSuccessWireBytes": 1048576,
+    "hardMaxJSONBytes": 786426,
     "defaultTimeoutMs": 1500,
     "hardTimeoutMs": 3000
   },

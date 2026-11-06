@@ -1,3 +1,4 @@
+#include "TLinkAXJSONQuota.h"
 #include "TLinkAXWireOutput.h"
 #include "TLinkNativeDispatch.h"
 #include "TLinkAXSymbolCache.h"
@@ -248,6 +249,7 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"max_snapshot_string_utf8_bytes": @(TLinkAXSnapshotOutput::MaxStringUTF8Bytes),
         @"max_hit_test_string_utf8_bytes": @(TLinkAXSnapshotOutput::MaxStringUTF8Bytes),
         @"hard_max_success_wire_bytes": @(TLinkAXWireOutput::MaxSuccessWireBytes),
+        @"hard_max_json_bytes": @(TLinkAXJSONOutput::MaxJSONBytes),
         @"default_timeout_ms": @1500,
     };
 }

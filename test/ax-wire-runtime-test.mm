@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkAXWireOutput.h"
+#include "../shared/TLinkAXJSONOutput.mm"
 enum class WireFault {Normal,Empty,Probe,ThrowNS,ThrowCPP};
 static WireFault jsonFault=WireFault::Normal,base64Fault=WireFault::Normal;
 static unsigned jsonCalls=0,base64Calls=0;
@@ -32,6 +33,11 @@ static NSData *fixtureJSON(id object){
     if(jsonFault==WireFault::Probe)return (NSData *)(id)[WireLengthProbe new];
     lastJSON=[NSJSONSerialization dataWithJSONObject:object options:0 error:NULL];return lastJSON;
 }
+static NSData *fixtureBoundedJSON(id object,BOOL *tooLarge){
+    if(tooLarge)*tooLarge=NO;
+    if(jsonFault!=WireFault::Normal)return fixtureJSON(object);
+    ++jsonCalls;lastJSON=TLinkAXBoundedJSONData(object,tooLarge);return lastJSON;
+}
 static NSString *fixtureBase64(NSData *data){
     ++base64Calls;
     if(base64Fault==WireFault::ThrowNS)[NSException raise:@"WireFixture" format:@"base64"];
@@ -51,6 +57,8 @@ static void notifyClient(UInt8 *bytes,CFWriteStreamRef stream){
 #include "LegacyRootResponse.inc"
 #include "CurrentTrollResponse.inc"
 #include "LegacyTrollResponse.inc"
+#include "BeforeBoundedRootResponse.inc"
+#include "BeforeBoundedTrollResponse.inc"
 static void CurrentRootCapability(CFWriteStreamRef stream){int taskType=77;
 #include "CurrentRootCapability.inc"
 }
@@ -63,6 +71,13 @@ static NSData *CurrentTrollCapability(){int taskType=77;
 }
 static NSData *LegacyTrollCapability(){int taskType=77;
 #include "LegacyTrollCapability.inc"
+    return nil;
+}
+static void BeforeBoundedRootCapability(CFWriteStreamRef stream){int taskType=77;
+#include "BeforeBoundedRootCapability.inc"
+}
+static NSData *BeforeBoundedTrollCapability(){int taskType=77;
+#include "BeforeBoundedTrollCapability.inc"
     return nil;
 }
 static void reset(){
@@ -116,7 +131,8 @@ static void boundaryCases(){
     for(bool root:{false,true})for(bool capability:{false,true})for(bool oversize:{false,true}){
         for(bool current:{false,true}){@autoreleasepool{
             reset();NSDictionary *graph=sizedGraph(root,capability,maxJSON+(oversize?1:0));
-            NSData *reply=call(root,capability,current,graph);assert(lastJSON.length==maxJSON+(oversize?1:0)&&jsonCalls==1);
+            NSData *reply=call(root,capability,current,graph);assert(jsonCalls==1);
+            if(current&&oversize)assert(!lastJSON);else assert(lastJSON.length==maxJSON+(oversize?1:0));
             if(current&&oversize){errorReply(reply,@"ui_response_too_large");assert(base64Calls==0);}
             else{
                 assert(base64Calls==1&&[line(reply) hasPrefix:@"0;;"]);
@@ -171,9 +187,10 @@ static void failureCases(){
     }
     reset();errorReply(call(false,false,true,(NSDictionary *)(id)@42),@"ui_result_invalid");assert(jsonCalls==0);
 }
+#include "ax-bounded-json-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX wire Foundation: actual/frozen root/TrollStore result/capability codecs, real JSON/base64/formatter and native budget; AX/frontmost/notify controlled");
-    goldenCases();boundaryCases();budgetCases();failureCases();
+    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{
         reset();jsonFault=WireFault::Probe;
         errorReply(call(n%2!=0,n%3!=0,true,@{@"ok":@YES}),@"ui_response_too_large");assert(base64Calls==0);

@@ -2279,6 +2279,8 @@ Implementation follow-up (2026-11-06, C05r): hit-test also admits its serialized
 
 Implementation follow-up (2026-11-06, C05s): both root/TrollStore result and capability codecs now admit exact success wire size before base64/final wire allocation. Hard cap 1048576 bytes, plus bound native remaining output allowance; Task 77 advertises hard_max_success_wire_bytes. Preserve JSON failure priority, ordinary JSON/base64/framing/error/fault behavior, complete handler/action/authority source and native sticky overflow/transport handling. Portable 100k exact plans pass; actual/frozen four-codec Foundation/native-budget cases await macOS CI. Initial JSON allocation, provider/root/metadata graphs, error lines, committed-effect delivery and device qualification remain open. See `IMPLEMENTATION-C05S.md`.
 
+Implementation follow-up (2026-11-06, C05t): four UI codecs now use the actual JSON stream writer with a 786426-byte application quota before each append, coherent success/count/error checks, immutable result copy, normal inner-pool retirement and finally close on NS/C++ unwind. Reject prefixes instead of returning truncated JSON, keep final wire/caller output gates and advertise hard_max_json_bytes. Portable 100k quota cases pass; real stream/codec/owner tests await macOS CI. Foundation temporary/capacity allocation and input graphs are not bounded by this logical sink limit; immutable copy/stream overhead is an explicit tradeoff. Early size failure can precede later invalid-graph diagnostics. See `IMPLEMENTATION-C05T.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery
