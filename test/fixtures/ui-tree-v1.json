@@ -19,6 +19,7 @@
     "maxPendingQueries": 8,
     "maxSnapshotStringUTF8Bytes": 65536,
     "maxHitTestStringUTF8Bytes": 65536,
+    "hardMaxSuccessWireBytes": 1048576,
     "defaultTimeoutMs": 1500,
     "hardTimeoutMs": 3000
   },

@@ -1,3 +1,4 @@
+#include "TLinkAXWireOutput.h"
 #include "TLinkNativeDispatch.h"
 #include "TLinkAXSymbolCache.h"
 #include "TLinkAXSnapshotWindow.h"
@@ -246,6 +247,7 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"max_pending_queries": @(TLinkAXAdmission::MaxPending),
         @"max_snapshot_string_utf8_bytes": @(TLinkAXSnapshotOutput::MaxStringUTF8Bytes),
         @"max_hit_test_string_utf8_bytes": @(TLinkAXSnapshotOutput::MaxStringUTF8Bytes),
+        @"hard_max_success_wire_bytes": @(TLinkAXWireOutput::MaxSuccessWireBytes),
         @"default_timeout_ms": @1500,
     };
 }

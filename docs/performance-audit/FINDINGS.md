@@ -2277,6 +2277,8 @@ Implementation follow-up (2026-11-06, C05q): accepted snapshot row label/value/i
 
 Implementation follow-up (2026-11-06, C05r): hit-test also admits its serialized label/value/identifier/role through the same 64-KiB UTF-8 cap and checked one-row output estimate before success, after root/hit release. The output block refuses oversize/insufficient output with ui_response_too_large/partial; a latched native OutputLimit retains the existing public cancellation translation. Provider/serializer/deadline/stop/authority behavior and NS/C++ unwind remain. Task 77 adds max_hit_test_string_utf8_bytes. Ordinary full graph/JSON, Unicode/budget/CF/lease/late-stop native cases await macOS CI. The estimate is conservative, including nil-element replies; provider/root/metadata/selector/final representation/device bounds remain open. See `IMPLEMENTATION-C05R.md`.
 
+Implementation follow-up (2026-11-06, C05s): both root/TrollStore result and capability codecs now admit exact success wire size before base64/final wire allocation. Hard cap 1048576 bytes, plus bound native remaining output allowance; Task 77 advertises hard_max_success_wire_bytes. Preserve JSON failure priority, ordinary JSON/base64/framing/error/fault behavior, complete handler/action/authority source and native sticky overflow/transport handling. Portable 100k exact plans pass; actual/frozen four-codec Foundation/native-budget cases await macOS CI. Initial JSON allocation, provider/root/metadata graphs, error lines, committed-effect delivery and device qualification remain open. See `IMPLEMENTATION-C05S.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery

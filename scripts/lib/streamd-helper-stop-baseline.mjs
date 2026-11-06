@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXWireRoute} from './ax-wire-baseline.mjs';
 const before=readFileSync(new URL('../../test/fixtures/streamd-privhelper-before-c06r.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function scriptHelperScope(source){const a=source.indexOf('// BEGIN script-bound direct helper stop scope.'),b=source.indexOf('// END script-bound direct helper stop scope.\n\n',a);assert.ok(a>=0&&b>a);return source.slice(a,b+'// END script-bound direct helper stop scope.\n\n'.length);}
 export function restoreStreamdHelperStop(source){
+    source=restoreAXWireRoute(source,'troll');
     const a=source.indexOf('static int TLinkRunPrivhelper(NSArray<NSString *> *arguments, int timeoutMs)'),b=source.indexOf('static int TLinkRunPrivhelperOpenBundle(',a);assert.ok(a>=0&&b>a);
     const scoped=source.replace(source.slice(a,b),before).replace(scriptHelperScope(source),'')
         .replace('static NSString *TLinkScriptRunTaskForSession(TLinkScriptSession *session, int taskType, NSString *body);\n','');

@@ -1,3 +1,5 @@
+#include "../shared/TLinkAXWireOutput.h"
+#include "../shared/TLinkNativeBudget.h"
 #include "../shared/TLinkGestureTiming.h"
 #include "../shared/TLinkC01Ingress.h"
 #include "Task.h"
@@ -2270,6 +2272,11 @@ static void zx_uiTreeNotifyResult(NSDictionary *result, CFWriteStreamRef stream)
         notifyClient((UInt8 *)"-1;;ui_result_json_failed\r\n", stream);
         return;
     }
+    size_t wireBytes = 0;
+    if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
+        notifyClient((UInt8 *)"-1;;ui_response_too_large\r\n", stream);
+        return;
+    }
     NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
     notifyClient((UInt8 *)[[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String], stream);
 }
@@ -2293,6 +2300,11 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
         if (json.length == 0) {
             notifyClient((UInt8 *)"-1;;ui_capability_json_failed\r\n", stream);
         } else {
+            size_t wireBytes = 0;
+            if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
+                notifyClient((UInt8 *)"-1;;ui_response_too_large\r\n", stream);
+                return;
+            }
             NSString *base64 = [json base64EncodedStringWithOptions:0] ?: @"";
             notifyClient((UInt8 *)[[NSString stringWithFormat:@"0;;%@\r\n", base64] UTF8String], stream);
         }

@@ -8,6 +8,7 @@ FOUNDATION_EXPORT NSString *const TLinkAXSnapshotSchema;
 FOUNDATION_EXPORT NSString *const TLinkAXBackendName;
 
 // Read-only AXRuntime capability and runtime state. This never returns UI text.
+// hard_max_success_wire_bytes describes the legacy UI-task response codec cap.
 FOUNDATION_EXPORT NSDictionary *TLinkAXCapabilitySnapshot(void);
 
 // Best-effort foreground application context: bundle_id, pid and source.

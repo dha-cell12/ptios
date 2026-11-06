@@ -1,3 +1,5 @@
+#include "../../shared/TLinkAXWireOutput.h"
+#include "../../shared/TLinkNativeBudget.h"
 #include "../../shared/TLinkOCRPolicy.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -7652,6 +7654,10 @@ static NSData *TLinkUITreeJSONResponse(NSDictionary *result)
     NSError *error = nil;
     NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:&error];
     if (json.length == 0) return TLinkError(@"ui_result_json_failed");
+    size_t wireBytes = 0;
+    if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
+        return TLinkError(@"ui_response_too_large");
+    }
     return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
 }
 
@@ -7704,9 +7710,12 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         };
         NSError *jsonError = nil;
         NSData *json = [NSJSONSerialization dataWithJSONObject:capability options:0 error:&jsonError];
-        return json.length > 0
-            ? TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"")
-            : TLinkError(@"ui_capability_json_failed");
+        if (json.length == 0) return TLinkError(@"ui_capability_json_failed");
+        size_t wireBytes = 0;
+        if (!TLinkAXWireOutput::SuccessSize(json.length, wireBytes) || !TLinkNativeOutputAllowed(wireBytes)) {
+            return TLinkError(@"ui_response_too_large");
+        }
+        return TLinkSuccess([json base64EncodedStringWithOptions:0] ?: @"");
     }
 
     NSString *decodeError = nil;
