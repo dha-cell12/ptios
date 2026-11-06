@@ -1,3 +1,5 @@
+#include "../shared/TLinkCapturePreparation.h"
+#include "../shared/TLinkCaptureOwnership.h"
 #include "../shared/TLinkCaptureLeasePOSIX.h"
 #include "../shared/TLinkImageStorage.h"
 #include "Screen.h"
@@ -98,42 +100,35 @@ static CGImageRef zx_captureRotatedImage(CGImageRef source)
     CGContextRef bitmap = CGBitmapContextCreate(NULL, height, width, 8, bytesPerRow,
                                                 colorSpace, kCGImageAlphaPremultipliedFirst);
     if (!bitmap) return NULL;
+    TLinkCaptureOwnership::Scoped<CGContextRef,decltype(&CGContextRelease)> bitmapOwner(bitmap,&CGContextRelease);
     const CGFloat radians = -90.0 * (M_PI / 180.0);
     CGContextTranslateCTM(bitmap, 0.5 * height, 0.5 * width);
     CGContextRotateCTM(bitmap, radians);
     CGContextTranslateCTM(bitmap, -0.5 * width, -0.5 * height);
     CGContextDrawImage(bitmap, CGRectMake(0, 0, (CGFloat)width, (CGFloat)height), source);
     CGImageRef rotated = CGBitmapContextCreateImage(bitmap);
-    CGContextRelease(bitmap);
     return rotated;
 }
 
+struct TLinkRootCaptureAPI {
+    using Surface=IOSurfaceRef;using Image=CGImageRef;
+    bool rotateIPad;
+    explicit TLinkRootCaptureAPI(bool rotate):rotateIPad(rotate){}
+    bool lock(Surface value){return IOSurfaceLock(value,0,NULL)==KERN_SUCCESS;}
+    bool unlock(Surface value){return IOSurfaceUnlock(value,0,NULL)==KERN_SUCCESS;}
+    void dropSurface(Surface value){CFRelease(value);}
+    void dropImage(Image value){CGImageRelease(value);}
+    void render(Surface value){CARenderServerRenderDisplay(0,CFSTR("LCD"),value,0,0);}
+    Image createImage(Surface value){return UICreateCGImageFromIOSurface(value);}
+    bool validImage(Image value){return CGImageGetWidth(value)>0&&CGImageGetHeight(value)>0;}
+    bool rotates()const{return rotateIPad;}
+    Image rotate(Image value){return zx_captureRotatedImage(value);}
+};
+
 static CGImageRef zx_captureSurfaceImage(CFDictionaryRef properties, bool rotateIPad)
 {
-    IOSurfaceRef surface = IOSurfaceCreate(properties);
-    if (!surface) return NULL;
-    if (IOSurfaceLock(surface, 0, NULL) != KERN_SUCCESS) {
-        CFRelease(surface);
-        return NULL;
-    }
-    CARenderServerRenderDisplay(0, CFSTR("LCD"), surface, 0, 0);
-    CGImageRef image = UICreateCGImageFromIOSurface(surface);
-    if (image && (CGImageGetWidth(image) == 0 || CGImageGetHeight(image) == 0)) {
-        CGImageRelease(image);
-        image = NULL;
-    }
-    if (image && rotateIPad) {
-        CGImageRef rotated = zx_captureRotatedImage(image);
-        CGImageRelease(image);
-        image = rotated;
-    }
-    // Unlock only successfully locked surfaces, and balance every owned reference on failure.
-    if (IOSurfaceUnlock(surface, 0, NULL) != KERN_SUCCESS && image) {
-        CGImageRelease(image);
-        image = NULL;
-    }
-    CFRelease(surface);
-    return image;
+    TLinkRootCaptureAPI api(rotateIPad);
+    return TLinkCaptureOwnership::Fresh(IOSurfaceCreate(properties),api);
 }
 // END capture ownership core.
 
@@ -239,23 +234,19 @@ OBJC_EXTERN UIImage *_UICreateScreenUIImage(void);
 
 static CGImageRef zx_captureScreenCGImageRef(void)
 {
-    UIScreen *screen = [UIScreen mainScreen];
-    CGSize screenSize = screen.bounds.size;
-    NSString *device = getDeviceName();
-    NSRange range = [device rangeOfString:@"^iPad[8-9]|iPad[1-9][0-9]+" options:NSRegularExpressionSearch];
-    const bool rotateIPad = range.location != NSNotFound;
-    TLinkCaptureGeometry geometry;
-    if (!zx_captureGeometry(screenSize.width, screenSize.height, screen.scale, rotateIPad, &geometry)) return NULL;
-    NSDictionary *properties = @{
-        @"IOSurfaceAllocSize": @(geometry.allocationSize),
-        @"IOSurfaceBytesPerElement": @4,
-        @"IOSurfaceBytesPerRow": @(geometry.bytesPerRow),
-        @"IOSurfaceHeight": @(geometry.height),
-        @"IOSurfaceWidth": @(geometry.width),
-        @"IOSurfaceIsGlobal": @YES,
-        @"IOSurfacePixelFormat": @1111970369,
-    };
-    return zx_captureSurfaceImage((__bridge CFDictionaryRef)properties, rotateIPad);
+    @autoreleasepool {
+        UIScreen *screen = [UIScreen mainScreen];
+        CGSize screenSize = screen.bounds.size;
+        static TLinkCapturePlan::BoolMemo deviceMemo;
+        const bool rotateIPad = TLinkCapturePreparation::RotateIPad(deviceMemo, []{return getDeviceName();});
+        TLinkCaptureGeometry geometry;
+        if (!zx_captureGeometry(screenSize.width, screenSize.height, screen.scale, rotateIPad, &geometry)) return NULL;
+        static TLinkCapturePreparation::Properties propertyMemo;
+        TLinkCapturePlan::Key key(geometry.width,geometry.height,geometry.bytesPerRow,geometry.allocationSize,true,false);
+        NSDictionary *properties=propertyMemo.get(key);
+        if (!properties) return NULL;
+        return zx_captureSurfaceImage((__bridge CFDictionaryRef)properties, rotateIPad);
+    }
 }
 
 + (BOOL)keepScreen:(NSError**)error

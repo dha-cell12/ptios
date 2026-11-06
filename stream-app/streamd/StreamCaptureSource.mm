@@ -1,3 +1,5 @@
+#include "../../shared/TLinkCapturePreparation.h"
+#include "../../shared/TLinkCaptureOwnership.h"
 #import "StreamCaptureSource.h"
 
 #import <Foundation/Foundation.h>
@@ -206,13 +208,6 @@ static NSDictionary *SCMetricSummaryLocked(const uint64_t *values)
     };
 }
 
-static int SCRoundUp(int value, int multiple)
-{
-    if (multiple <= 0) return value;
-    int rem = value % multiple;
-    return rem == 0 ? value : value + multiple - rem;
-}
-
 static void SCReleaseCaptureSurfacesLocked(void)
 {
     for (NSUInteger i = 0; i < kSCCaptureSurfacePoolSize; i++) {
@@ -237,42 +232,33 @@ static void SCReleaseCaptureSurfacesLocked(void)
 
 static BOOL SCDisplayPixelSize(int *outWidth, int *outHeight)
 {
-    CGFloat scale = [UIScreen mainScreen].scale;
-    CGSize bounds = [UIScreen mainScreen].bounds.size;
-    int rawWidth = (int)llround(bounds.width * scale);
-    int rawHeight = (int)llround(bounds.height * scale);
-    int width = MIN(rawWidth, rawHeight);
-    int height = MAX(rawWidth, rawHeight);
-    if (width <= 0 || height <= 0) return NO;
-    if (outWidth) *outWidth = width;
-    if (outHeight) *outHeight = height;
+    UIScreen *screen=[UIScreen mainScreen];
+    CGFloat scale=screen.scale;
+    CGSize bounds=screen.bounds.size;
+    int width=0,height=0;
+    if (!TLinkCapturePlan::Display(bounds.width,bounds.height,scale,width,height)) return NO;
+    if (outWidth) *outWidth=width;
+    if (outHeight) *outHeight=height;
     return YES;
 }
 
 static IOSurfaceRef SCCreateBGRAIOSurface(int width, int height)
 {
+    if (width<=0 || height<=0) return NULL;
     SCResolveSurfaceAcceleratorSymbols();
-    size_t minimumBytesPerRow = (size_t)width * 4;
-    size_t alignedBytesPerRow = sSCIOSurfaceAlignProperty
-        ? sSCIOSurfaceAlignProperty(CFSTR("IOSurfaceBytesPerRow"), minimumBytesPerRow)
-        : (size_t)SCRoundUp((int)minimumBytesPerRow, 128);
-    if (alignedBytesPerRow < minimumBytesPerRow) {
-        alignedBytesPerRow = (size_t)SCRoundUp((int)minimumBytesPerRow, 128);
-    }
-    size_t allocSize = alignedBytesPerRow * (size_t)height;
-    NSMutableDictionary *properties = [@{
-        @"IOSurfaceAllocSize": @(allocSize),
-        @"IOSurfaceBytesPerElement": @4,
-        @"IOSurfaceBytesPerRow": @(alignedBytesPerRow),
-        @"IOSurfaceWidth": @(width),
-        @"IOSurfaceHeight": @(height),
-        @"IOSurfacePixelFormat": @(1111970369), // 'BGRA'
-        @"IOSurfaceIsGlobal": @YES,
-    } mutableCopy];
-    IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+    const size_t minimumBytesPerRow=(size_t)width*4;
+    const size_t alignedBytesPerRow=sSCIOSurfaceAlignProperty
+        ? sSCIOSurfaceAlignProperty(CFSTR("IOSurfaceBytesPerRow"),minimumBytesPerRow) : 0;
+    TLinkCapturePlan::Key key;
+    if (!TLinkCapturePlan::Row(width,height,alignedBytesPerRow,key)) return NULL;
+    static TLinkCapturePreparation::Properties propertyMemo;
+    NSDictionary *properties=propertyMemo.get(key);
+    if (!properties) return NULL;
+    IOSurfaceRef surface=IOSurfaceCreate((__bridge CFDictionaryRef)properties);
     if (!surface) {
-        properties[@"IOSurfaceIsGlobal"] = @NO;
-        surface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+        key.global=false;
+        properties=propertyMemo.get(key);
+        if (properties) surface=IOSurfaceCreate((__bridge CFDictionaryRef)properties);
     }
     return surface;
 }
@@ -735,23 +721,26 @@ void SCResetCapturePipeline(void)
     os_unfair_lock_unlock(&sSCCaptureLock);
 }
 
+struct SCFreshCaptureAPI {
+    using Surface=IOSurfaceRef;using Image=CGImageRef;
+    bool lock(Surface value){return IOSurfaceLock(value,0,NULL)==KERN_SUCCESS;}
+    bool unlock(Surface value){return IOSurfaceUnlock(value,0,NULL)==KERN_SUCCESS;}
+    void dropSurface(Surface value){CFRelease(value);}
+    void dropImage(Image value){CGImageRelease(value);}
+    void render(Surface value){CARenderServerRenderDisplay(0,CFSTR("LCD"),value,0,0);}
+    Image createImage(Surface value){return UICreateCGImageFromIOSurface(value);}
+    bool validImage(Image value){return CGImageGetWidth(value)>0&&CGImageGetHeight(value)>0;}
+    bool rotates()const{return false;}
+    Image rotate(Image value){(void)value;return NULL;}
+};
+
 CGImageRef SCCreateScreenShotCGImage(void)
 {
     @autoreleasepool {
-        int width = 0;
-        int height = 0;
-        if (!SCDisplayPixelSize(&width, &height)) return NULL;
-
-        errno = 0;
-        IOSurfaceRef surface = SCCreateBGRAIOSurface(width, height);
-        if (!surface) return NULL;
-
-        CGImageRef image = NULL;
-        IOSurfaceLock(surface, 0, NULL);
-        CARenderServerRenderDisplay(0, CFSTR("LCD"), surface, 0, 0);
-        image = UICreateCGImageFromIOSurface(surface);
-        IOSurfaceUnlock(surface, 0, NULL);
-        CFRelease(surface);
-        return image; // retained by UICreateCGImageFromIOSurface
+        int width=0,height=0;
+        if (!SCDisplayPixelSize(&width,&height)) return NULL;
+        errno=0;
+        SCFreshCaptureAPI api;
+        return TLinkCaptureOwnership::Fresh(SCCreateBGRAIOSurface(width,height),api);
     }
 }

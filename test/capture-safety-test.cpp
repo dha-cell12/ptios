@@ -8,6 +8,12 @@
 #include <cmath>
 #include <limits>
 #include <initializer_list>
+#include <algorithm>
+#include <stdexcept>
+#include <thread>
+#include <vector>
+#include "../shared/TLinkCapturePlan.h"
+#include "../shared/TLinkCaptureOwnership.h"
 using std::isfinite;
 using CGFloat = double;
 struct Properties { size_t width = 1200, height = 800; };
@@ -29,6 +35,7 @@ enum Failure { None, SurfaceCreate, Lock, ImageCreate, ZeroWidth, ZeroHeight, No
 static Failure failure = None;
 static int surfaces = 0, colors = 0, images = 0, contexts = 0;
 static int locks = 0, unlocks = 0, renders = 0;
+static unsigned throwSite=0;
 static Properties captureProperties;
 static void releaseColor(Color *color) {
     if (!color) return;
@@ -68,9 +75,11 @@ static int IOSurfaceUnlock(Surface *surface, int options, void *seed) {
 static void CARenderServerRenderDisplay(int, const char *, Surface *surface, int, int) {
     assert(surface && surface->locked);
     ++renders;
+    if(throwSite==1)throw std::runtime_error("render");
 }
 static Image *UICreateCGImageFromIOSurface(Surface *surface) {
     assert(surface && surface->locked);
+    if(throwSite==2)throw std::runtime_error("image");
     if (failure == ImageCreate) return nullptr;
     Color *color = nullptr;
     if (failure != NoColor) { color = new Color; ++colors; }
@@ -96,6 +105,7 @@ static Context *CGBitmapContextCreate(void *data, size_t width, size_t height, s
 }
 static void CGContextTranslateCTM(Context *context, CGFloat x, CGFloat y) {
     assert(context && context->color->refs > 0);
+    if(throwSite==5)throw std::runtime_error("transform");
     if (context->transforms == 0) assert(x == 0.5 * captureProperties.height && y == 0.5 * captureProperties.width);
     else { assert(context->transforms == 2); assert(x == -0.5 * captureProperties.width && y == -0.5 * captureProperties.height); }
     ++context->transforms;
@@ -106,24 +116,28 @@ static void CGContextRotateCTM(Context *context, CGFloat radians) {
 }
 static void CGContextDrawImage(Context *context, Rect rect, Image *image) {
     assert(context && context->transforms == 3 && image && image->color == context->color);
+    if(throwSite==3)throw std::runtime_error("draw");
     assert(context->color->refs == 2); // Source still owns the borrowed color space.
     assert(rect.x == 0 && rect.y == 0 && rect.width == image->width && rect.height == image->height);
     context->drawn = true;
 }
 static Image *CGBitmapContextCreateImage(Context *context) {
     assert(context && context->drawn && context->color->refs == 2);
+    if(throwSite==4)throw std::runtime_error("rotated image");
     if (failure == RotatedCreate) return nullptr;
     ++context->color->refs;
     ++images;
     return new Image{context->width, context->height, 8, context->color, nullptr};
 }
 static void CGContextRelease(Context *context) {
-    assert(context && context->drawn);
+    assert(context && (context->drawn||throwSite==3||throwSite==5));
     releaseColor(context->color);
     --contexts;
     delete context;
 }
 #include "CaptureCoreUnderTest.inc"
+#include "TrollFreshAPIUnderTest.inc"
+#include "capture-plan-safety-fixture.inc"
 static void assertEmpty() { assert(surfaces == 0 && colors == 0 && images == 0 && contexts == 0); }
 static void testGeometry() {
     TLinkCaptureGeometry g;
@@ -172,11 +186,26 @@ static void testFrame(Failure fail, bool rotate) {
 }
 int main() {
     testGeometry();
+    capturePlanCases();
     for (bool rotate : {false, true}) {
         for (Failure fail : {None, SurfaceCreate, Lock, ImageCreate, ZeroWidth, ZeroHeight, NoColor, BadBits, BitmapCreate, RotatedCreate, Unlock}) testFrame(fail, rotate);
     }
     // Asymmetric, non-aligned dimensions catch reuse of the pre-rotation stride.
     captureProperties = {1201, 803};
     for (int i = 0; i < 10000; ++i) { testFrame(None, false); testFrame(None, true); }
+    for(unsigned site:{1U,2U,3U,4U,5U}){
+        failure=None;throwSite=site;bool caught=false;
+        try{CGImageRef image=zx_captureSurfaceImage(&captureProperties,true);if(image)CGImageRelease(image);}catch(const std::runtime_error &){caught=true;}
+        assert(caught);assertEmpty();
+    }
+    throwSite=0;
+    for(Failure fail:{None,SurfaceCreate,Lock,ImageCreate,ZeroWidth,ZeroHeight,Unlock}){
+        failure=fail;SCFreshCaptureAPI api;
+        CGImageRef image=TLinkCaptureOwnership::Fresh(IOSurfaceCreate(&captureProperties),api);
+        assert(bool(image)==(fail==None));if(image)CGImageRelease(image);assertEmpty();
+    }
+    for(unsigned site:{1U,2U}){failure=None;throwSite=site;SCFreshCaptureAPI api;bool caught=false;
+        try{TLinkCaptureOwnership::Fresh(IOSurfaceCreate(&captureProperties),api);}catch(const std::runtime_error &){caught=true;}assert(caught);assertEmpty();}
+    throwSite=0;
     std::puts("Capture safety passed: geometry, 22 fault/success paths, 20,000 frames; zero live test resources.");
 }

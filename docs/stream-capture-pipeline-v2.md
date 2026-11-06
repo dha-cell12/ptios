@@ -140,3 +140,9 @@ legacy frames must use the historical backend, auto frames must use the fresh
 snapshot backend, and both runs must have zero capture failures. Because both
 now use the same proven rendering primitive, this comparison is a regression
 check rather than evidence of an acceleration gain.
+
+## Capture preparation follow-up (D01a)
+
+Rootfull/roothide and production TrollStore reuse up to four immutable IOSurface property dictionaries per factory, keyed by live dimensions, stride, allocation, global flag and dimension-boxing variant. Every preferred-path capture still creates a fresh source surface. A prior failed global creation never suppresses the next global attempt; private fallback uses its own immutable dictionary. Geometry is reread and validated each call; stride/allocation arithmetic is checked before creation. Root caches only a successful hardware-class decision and scopes preparation temporaries. Shared ownership checks acquired lock/image/unlock state and cleans up reached unwind paths.
+
+This preserves the pixel backend and its existing qualification markers. D01a preparation/error behavior and Foundation/ARC execution still require macOS CI/device confirmation; its metadata caches do not imply that surface reuse, target-size capture or direct-gray rendering has become qualified. See performance-audit/IMPLEMENTATION-D01A.md.

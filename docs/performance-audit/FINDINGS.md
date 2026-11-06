@@ -1020,6 +1020,8 @@ Do not evict an object currently held by a ref-counted operation snapshot.
 
 ### [P1-22] Every capture repeats invariant device detection plus short-lived Foundation/IOSurface construction
 
+Implementation follow-up (2026-11-07, D01a): one package memoizes successful root model classification, bounds uname consumption, caches four immutable geometry/global/type property tuples per factory, checks TrollStore numeric/stride/allocation preparation, scopes root temporaries and shares checked fresh surface/image/context ownership. Global-first/private retry and per-frame fresh surface allocation remain. Portable actual-core fault/lifecycle,100k plans and concurrent memo tests pass; native property/regex/held-reader/error/ARC counters await macOS CI. Target-size, gray-only, UIKit/private/pixel/orientation and measured device bandwidth/latency remain open. Do not reinstate the visually rejected source-surface reuse. See `IMPLEMENTATION-D01A.md`.
+
 **Status:** CONFIRMED hot-path overhead  
 **Locations:** `pccontrol/Screen.xm:127-181`; `pccontrol/Common.xm:10-16`
 

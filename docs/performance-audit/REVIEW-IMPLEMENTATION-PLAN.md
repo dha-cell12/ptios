@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai D01a (07/11/2026): người dùng báo C05ae build pass (`c9a54d5f`). Gom capture root/TrollStore: memo hardware-class có retry khi probe lỗi; bounded uname; cache bốn immutable property dictionary theo geometry/global/type; global→private fallback không sửa entry cũ; checked live dimensions/stride/allocation; chung ownership surface/image/context qua lỗi/unwind; pool preparation root. Vẫn tạo surface mới mỗi capture, không cache mù orientation/pixels. 90 runner/521 source check pass Windows; Foundation/ARC mới chờ macOS CI. Chi tiết: IMPLEMENTATION-D01A.md.
+
 Cập nhật triển khai C05ae (07/11/2026): người dùng báo C05ad build pass (`1adb11f3`). Gom toàn gói matcher: lazy plan cho identifier/role/text, dùng chung text plan cho label/value, tái dùng normalization/mode của selector immutable; mutable/custom giữ matcher cũ. Chặn bốn string field selector quá64 KiB trước admission/enqueue; pool bao cả snapshot/find để dọn temporary trước return, vẫn giữ selected row và full count/index/guard. 90 runner/521 source check pass Windows; native parity/counter/ownership mới chờ macOS CI. Chi tiết: IMPLEMENTATION-C05AE.md.
 
 Cập nhật triển khai C05ad (07/11/2026): người dùng báo C05ac build pass (`16ea23c1`). Gom bảy phần của luồng AX vào một checkpoint: notify token finally; lock probe stop; entitlement late-value/task cleanup; capability stage/pool gates; SBS CF-copy cleanup và legacy NUL bound; direct AX PID fallback gates; captured budget xuyên public/SpringBoard wrappers. Giữ live provider/order/schema/target/action guard và symbol-cache policy. 90 runner/521 source check pass Windows, native mới chờ macOS CI. Chi tiết: IMPLEMENTATION-C05AD.md.
@@ -366,12 +368,12 @@ Có thể kéo P1-35 (ColorPicker release lỗi), P1-69 (notification mismatch),
 | C02 | P0-12, P0-13, P1-04, P1-05, P1-40, P1-41 | **Các checkpoint đến C02d12 và C02b56 đã build pass theo người dùng.** Batch hỗn hợp đã có entry trực tiếp; rawTask, cleanup tương thích và connectivity task chưa biết giữ RAW. Còn codec/copy metadata; P0-12 còn các kết quả start chưa thể xác minh và qualification; P1-40 còn metadata/invalidation đồng bộ sau cache C02c1; P1-41 còn qualification Foundation/device sau byte cap C02c2 và sink streaming C02c3. Giữ ordering, reconnect/dedupe và không lặp side effect. |
 | C03 | P1-42, P1-43, P1-44, P1-47, P1-48, P1-49, P1-50, P1-51, P1-53, P1-54, P1-56, P1-58, P2-16 | **C03a–C03ab đã build pass theo người dùng; device qualification còn mở.** Còn elapsed liên tiến trình, codec JSON, power-loss/index/orphan/event recovery, phần khóa/retention/status còn lại. Giữ text/base64 và chốt durability trước thay journal format. |
 | C04 | P0-19, P1-62, P1-63 | **C04a–C04k build pass theo người dùng; device qualification còn mở: IMPLEMENTATION-C04K.md.** Còn CF wait không preempt, legacy/direct callers, manager cancel/coalescing và private backend; capability khác. Chưa đóng qualification toàn đường gọi. |
-| C05 | P0-20, P1-59, P1-60, P1-61, P1-64, P2-22 | **C05a–ad và sửa fixture build pass; C05ae selector plan/input admission/find-pool batch đã triển khai source, chờ CI/device: IMPLEMENTATION-C05AE.md.** Root materialization, opaque RPC/preemption, whole-operation/transport bounds, capability value/notify và measured foreground work còn mở; giữ foreground safety guard. |
+| C05 | P0-20, P1-59, P1-60, P1-61, P1-64, P2-22 | **C05a–ae và sửa fixture build pass theo người dùng; device qualification còn mở: IMPLEMENTATION-C05AE.md.** Root materialization, opaque RPC/preemption, whole-operation/transport bounds, capability value/notify và measured foreground work còn mở; giữ foreground safety guard. |
 | C06 | P0-22, P0-23, P1-67, P1-68, P1-69, P1-70, P1-74, P1-75, P1-76, P1-77 | **C06a–ad build pass theo người dùng; device qualification còn mở: IMPLEMENTATION-C06AD.md.** Còn caller khác/end-to-end deadline, supervisor active cancellation/coalescing; BGTask per-subscriber cancel xuống HTTP và ensure đã thắng start permission; diagnostics IO còn lại; broker/async/private polling và full enumeration; duplicate keyboard delivery cần đo. Transaction lease/checkpoint cần crash recovery riêng. |
 
 ### Đợt 4: đo trước hoặc theo phạm vi
 
-- **D01 — P0-08/P1-22/P1-23:** benchmark target-resolution/reusable capture trước đổi private backend. Kiểm tra orientation, keep-screen, màu, iPhone/iPad. Cache device class là bước nhỏ tách được; không cache mù dimensions/orientation.
+- **D01 — P0-08/P1-22/P1-23:** D01a source gom device/properties preparation cache, live checked geometry và ownership root/TrollStore; chờ CI/device: IMPLEMENTATION-D01A.md. Benchmark target-size/gray trước đổi pixel backend; giữ fresh surfaces và kiểm tra orientation/keep-screen/màu/iPhone/iPad, không cache mù dimensions/orientation.
 - **Loại khỏi kế hoạch theo yêu cầu người dùng:** P0-21/P1-65/P1-66/P2-25 thuộc TouchPOC sơ khai. Không phát triển hoặc tối ưu artifact này. Các file còn tên POC trong `stream-app/streamd` là code production TrollStore, vẫn thuộc phạm vi.
 - **D03 — các mục đo/điều kiện P2:** theo bảng dưới; không đổi listener/VM/hook lớn trước profile.
 
@@ -431,7 +433,7 @@ Nguồn viết theo đường dẫn:dòng tại commit đánh giá. Trong các b
 | P1-17, P1-18 | Tối ưu | IPC response logging/copy; H264Stream.xm:748,899 relative pacing và pool-unavailable sleep sau capture. B03/B04. |
 | P1-19 | Sửa | Screen.xm:189–219 release Get-rule colorSpace và Create failure chưa kiểm tra. A03. |
 | P1-20, P1-21 | Tối ưu | Image.xm:999 lazy expiry; dòng 73,982 giới hạn 64 image nhưng không byte cap/TTL cleanup. Không gọi là unbounded frame leak. B02. |
-| P1-22 | Tối ưu / đo pool | Screen.xm:127 uname/regex/properties/surface mỗi capture. Cache invariant trước, thử surface pool sau. D01. |
+| P1-22 | Tối ưu từng phần | D01a source memo class quyết định root và cache bốn immutable property tuples cho root/TrollStore, live geometry/stride/ownership checked. Giữ fresh source surfaces vì reuse trước đã bị loại qua visual qualification. Native/device cần xác nhận. IMPLEMENTATION-D01A.md. |
 | P1-23 | Đo | Image.xm:441 gray-only vẫn tạo BGRA để convert; direct-gray cần kiểm tra tốc độ/chất lượng. D01. |
 | P1-24 | Gộp | Image.xm:923–961 ROI clone/cvtColor trong store queue, cùng P0-09/B02. |
 | P1-25 | Tối ưu | TemplateMatch.xm:115–185,407 cache count-bounded, scale vector không byte cap. C01. |

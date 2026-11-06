@@ -1,3 +1,4 @@
+#include "../shared/TLinkCapturePlan.h"
 #include "Common.h"
 #include "Config.h"
 #include "../shared/TLinkJailbreakPath.h"
@@ -9,11 +10,11 @@ Get device model name
 */
 NSString* getDeviceName()
 {
-    struct utsname systemInfo;
-    uname(&systemInfo);
-
-    return [NSString stringWithCString:systemInfo.machine
-                                encoding:NSUTF8StringEncoding];
+    struct utsname systemInfo = {};
+    if (uname(&systemInfo) != 0) return nil;
+    size_t length = TLinkCapturePlan::MachineLength(systemInfo.machine,sizeof(systemInfo.machine));
+    if (!length) return nil;
+    return [[NSString alloc] initWithBytes:systemInfo.machine length:length encoding:NSUTF8StringEncoding];
 }
 
 /*
