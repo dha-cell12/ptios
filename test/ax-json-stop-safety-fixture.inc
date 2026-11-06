@@ -1,4 +1,18 @@
 static void jsonStopPolicyCases(){
+    // Direct cleanup ignores caller cancellation/deadline. An ordinary child
+    // shares both and checks cancellation before its deadline; overflow wins.
+    for(unsigned cause=0;cause<3;++cause){
+        auto cancel=std::make_shared<TLinkNativeCancellation>();
+        if(cause!=1)cancel->cancel();
+        auto cleanup=std::make_shared<TLinkNativeBudget>(cancel,cause==0?0:TLinkNativeNowNs(),64,true);
+        auto child=std::make_shared<TLinkNativeBudget>(0,cleanup);
+        assert(cleanup->reason()==TLinkNativeStop::None);
+        assert(child->reason()==(cause==1?TLinkNativeStop::Deadline:TLinkNativeStop::Cancelled));
+        assert(TLinkAXJSONOutput::ClassifyStop(child).cancelled&&!TLinkAXJSONOutput::ClassifyStop(child).tooLarge);
+        assert(!cleanup->outputAllowed(65));
+        assert(cleanup->reason()==TLinkNativeStop::OutputLimit&&child->reason()==TLinkNativeStop::OutputLimit);
+        assert(TLinkAXJSONOutput::ClassifyStop(child).tooLarge);
+    }
     using namespace TLinkAXJSONOutput;
     assert(!ClassifyStop(TLinkNativeBudgetPtr{}).active);
     for(unsigned n=0;n<100000;++n){

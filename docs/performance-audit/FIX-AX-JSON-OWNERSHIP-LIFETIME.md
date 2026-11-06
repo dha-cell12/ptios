@@ -21,3 +21,5 @@ The runner embeds the last12000 stderr characters in its thrown failure, includi
 ## Validation
 
 Windows: all90 workflow runners and521 source checks, focused AX source/portable checks, JavaScript syntax, expanded diagnostic-macro preprocessing, runner failure-format injection, complete production HEAD identities, unique MRC declaration/definition and diff/UTF8/LF checks pass. Native Foundation/ARC/ASan/UBSan execution is unavailable on Windows and must be confirmed by macOS CI. The full log confirms the failure site; it supplies no individual counter values and does not itself prove the precise retained owner or a native pass after this fix.
+
+Subsequent user CI log (`c104e607`) confirms the complete JSON ownership group passed, including traced lifetime, sealed stream, factory modes0–6 and codec parity. Its next failure is a separate cleanup test's Cancelled/Deadline expectation; see `FIX-AX-CLEANUP-STOP-PRIORITY.md`.

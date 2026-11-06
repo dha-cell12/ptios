@@ -72,16 +72,22 @@ static void capabilityProviderFaultCases(){
     reset();
 }
 static void capabilityCleanupCases(){
-    for(bool root:{false,true})for(bool child:{false,true})for(bool current:{false,true}){@autoreleasepool{
-        reset();auto cancel=std::make_shared<TLinkNativeCancellation>();cancel->cancel();
-        auto cleanup=std::make_shared<TLinkNativeBudget>(cancel,TLinkNativeNowNs(),1024*1024,true);
+    for(bool root:{false,true})for(unsigned cause=0;cause<3;++cause)for(bool child:{false,true})for(bool current:{false,true}){@autoreleasepool{
+        reset();auto cancel=std::make_shared<TLinkNativeCancellation>();
+        if(cause!=1)cancel->cancel();
+        auto cleanup=std::make_shared<TLinkNativeBudget>(cancel,cause==0?0:TLinkNativeNowNs(),1024*1024,true);
         auto budget=child?std::make_shared<TLinkNativeBudget>(0,cleanup):cleanup;
+        const auto expected=!child?TLinkNativeStop::None:(cause==1?TLinkNativeStop::Deadline:TLinkNativeStop::Cancelled);
+        assert(budget->reason()==expected);
         TLinkNativeBudgetScope scope(budget);NSData *reply=capabilityPreflightCall(root,current);
         if(child)errorReply(reply,@"ui_cancelled_or_timed_out");else decoded(reply);
         const bool skips=current&&child;
         assert(capabilityCalls==(skips?0U:1U)&&foregroundCalls==(skips||root?0U:1U));
         assert(jsonCalls==(skips?0U:1U)&&base64Calls==(child?0U:1U));
-        assert(budget->reason()==(child?TLinkNativeStop::Deadline:TLinkNativeStop::None));
+        const auto actual=budget->reason();
+        if(actual!=expected)std::fprintf(stderr,"Task77 cleanup reason mismatch: root=%d cause=%u child=%d current=%d actual=%d expected=%d\n",
+            root,cause,child,current,(int)actual,(int)expected);
+        assert(actual==expected);
     }}
     reset();
 }
