@@ -26,6 +26,9 @@ void TLinkAXFixtureAttachOwner(NSMutableDictionary *row) {
 void TLinkAXFixtureAutoreleaseOwner(void) {
     [[[TLinkAXFixtureNodeOwner alloc] init] autorelease];
 }
+void TLinkAXFixtureHoldUntilPoolDrains(id value) {
+    assert(value);[[value retain] autorelease];
+}
 void TLinkAXFixtureResetOwners(void){assert(liveOwners==0);peakOwners=createdOwners=droppedOwners=0;}
 uint64_t TLinkAXFixtureLiveOwners(void){return liveOwners;}
 uint64_t TLinkAXFixturePeakOwners(void){return peakOwners;}

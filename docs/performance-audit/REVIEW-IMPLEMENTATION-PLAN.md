@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Sửa lỗi build sau C05ab (07/11/2026, baseline `bf9c4c2e`): full log xác nhận assertion retirement tại storageLifetimeCases dòng40 của fixture cũ. Sửa scope: drain caller pool bao cả đọc NSData.bytes trước khi yêu cầu owner hết lifetime; thêm retain/autorelease MRC tường minh và log phase/mode/condition/counters. Runner giữ stderr tail trong lỗi Node. Production writer/handler không đổi; macOS CI cần xác nhận bản vá. Chi tiết: FIX-AX-JSON-OWNERSHIP-LIFETIME.md.
+
 Cập nhật triển khai C05ab (07/11/2026): người dùng báo C05aa build pass (`316fe598`), yêu cầu gom nhiều việc hơn. Gói này xử lý toàn luồng Task78–81 root/TrollStore: stop qua foreground/query/context verification; chặn retry TrollStore trước/sau invalidate và retry context; chặn tap trước coordinate/action; bổ sung stop giữa các bước matcher và trước enqueue sau khi dựng options. Giữ context/completeness/action/authority guard, live graph/count/order và owned-touch backend. 90 runner/521 source check pass Windows; native full-handler/matcher mới chờ macOS CI. Một checkpoint cho toàn bộ gói. Chi tiết: IMPLEMENTATION-C05AB.md.
 
 Cập nhật triển khai C05aa (07/11/2026): người dùng báo C05z build pass (`657b9ab8`). Task77 giữ caller budget từ đầu nhánh, chặn trước/sau capability và sau foreground riêng của TrollStore; caller đã dừng không gọi provider/JSON. Giữ classification OutputLimit/cancel/deadline, cleanup/parent, live schema/probes/authority và các codec còn lại. 90 runner/521 source check pass Windows; native mới chờ macOS CI. Không ngắt private provider đã vào hoặc tạo binding còn thiếu; chưa đo device latency. Chi tiết: IMPLEMENTATION-C05AA.md.

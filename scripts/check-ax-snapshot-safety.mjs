@@ -134,7 +134,7 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
 console.log('AX snapshot source passed: complete Task78-81/retry/tap and matcher/enqueue cancellation package, full C05aa task/server/shared source restoration with guards/authority/codecs retained.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
-function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
+function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})${r.stderr?'\nCaptured stderr (last 12000 characters):\n'+r.stderr.slice(-12000):''}`);}
 try{
     const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
     const file=join(root,'test/ax-snapshot-window-safety-test.cpp'),binary=join(temp,windows?'core.exe':'core');

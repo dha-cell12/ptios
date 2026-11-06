@@ -6,6 +6,7 @@ extern "C" {
 #endif
 void TLinkAXFixtureAttachOwner(NSMutableDictionary *row);
 void TLinkAXFixtureAutoreleaseOwner(void);
+void TLinkAXFixtureHoldUntilPoolDrains(id value);
 void TLinkAXFixtureResetOwners(void);
 uint64_t TLinkAXFixtureLiveOwners(void);
 uint64_t TLinkAXFixturePeakOwners(void);
