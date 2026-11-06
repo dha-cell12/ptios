@@ -683,7 +683,9 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
                                                  NSDictionary *options)
 {
     if (pid <= 0) return TLinkAXError(@"ui_invalid_pid", @{@"pid": @(pid)});
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", nil);
     NSDictionary *lockState = TLinkAXLockState();
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", nil);
     BOOL allowLocked = [options[@"allow_locked"] boolValue];
     if (!allowLocked && [lockState[@"screen_off"] boolValue]) {
         return TLinkAXError(@"ui_screen_off", @{@"pid": @(pid), @"lock_state": lockState});
@@ -691,7 +693,9 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     if (!allowLocked && [lockState[@"locked"] boolValue]) {
         return TLinkAXError(@"ui_screen_locked", @{@"pid": @(pid), @"lock_state": lockState});
     }
-    if (!TLinkAXPrepare()) return TLinkAXError(@"ui_axruntime_unavailable", @{@"pid": @(pid)});
+    BOOL prepared = TLinkAXPrepare();
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", nil);
+    if (!prepared) return TLinkAXError(@"ui_axruntime_unavailable", @{@"pid": @(pid)});
 
     id maxElementsValue = options[@"max_elements"] ?: options[@"maxElements"];
     id maxScannedValue = options[@"max_scanned_elements"] ?: options[@"maxScannedElements"];
@@ -710,6 +714,7 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     CFTypeRef rawElements = NULL;
     NSArray *elements = nil;
     @try {
+        if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", nil);
         root = sTLinkAXCreateApp(pid);
         if (!root) return TLinkAXError(@"ui_ax_application_unavailable", @{@"pid": @(pid)});
         auto nativeBudget = TLinkCurrentNativeBudget();
@@ -728,6 +733,7 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
         if (error != 0 || !rawElements || CFGetTypeID(rawElements) != CFArrayGetTypeID()) {
             return TLinkAXError(@"ui_element_query_failed", @{@"pid": @(pid), @"ax_error": @(error)});
         }
+        if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
         elements = CFBridgingRelease(rawElements);
         rawElements = NULL;
     } @catch (__unused NSException *exception) {
@@ -738,6 +744,7 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
     }
 
     CGRect screen = [UIScreen mainScreen].bounds;
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     NSMutableArray *rows = [NSMutableArray arrayWithCapacity:MIN((NSUInteger)maxElements, elements.count)];
     NSUInteger scanned = 0;
     NSUInteger serializationFailures = 0;

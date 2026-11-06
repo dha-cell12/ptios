@@ -2242,6 +2242,8 @@ Implementation follow-up (2026-11-05, C05m): public snapshot/find now refuse obs
 
 Implementation follow-up (2026-11-05, C05n): snapshot/find/hit-test now share eight process-local synchronous call slots acquired before enqueue. Overflow returns ui_ax_busy with partial/retryable; leases remain charged through queue/work/return and retire once on exit/unwind. Task77 advertises max_pending_queries=8. Portable saturation/race/retirement cases pass; actual mixed-entry/held real-GCD/CF tests await macOS CI. This bounds admitted query count, not opaque preemption, transport/outside-quota work, retained results or device throughput. See `IMPLEMENTATION-C05N.md`.
 
+Implementation follow-up (2026-11-05, C05p): snapshot now checks caller stop before/after lock state, after preparation, before root creation, after valid query and after screen bounds. A stopped valid out-array retires in finally before ARC transfer/screen work. Internal invalid-PID and query-error priority, local-window start, ordinary outputs and action refusal remain unchanged. Controlled preflight/deadline/CF cases await macOS CI; opaque preemption, whole-operation/root/output/device bounds remain open. See `IMPLEMENTATION-C05P.md`.
+
 ---
 
 ### [P1-60] UI-tree responses have element-count limits but no explicit byte/string limit and are fully copied through JSON + base64 + legacy text

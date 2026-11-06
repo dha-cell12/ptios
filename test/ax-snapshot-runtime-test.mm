@@ -20,6 +20,8 @@ static unsigned sourceCount=4,serialized=0,creates=0,queries=0,rootRetains=0,roo
 static unsigned failEvery=0,cancelAt=0;
 static unsigned ownerFaultSite=0,ownerFaultKind=0,rawOutRetains=0;
 static bool queryMissing=false;
+static uint64_t preflightLockCost=0,preflightPrepareCost=0,preflightScreenCost=0;
+static unsigned preflightStopStage=0,preflightScreenReads=0,preflightOptionReads=0;
 static unsigned boundaryDispatches=0;
 static bool boundaryQueueStop=false,boundaryReturnStop=false;
 static bool locked=false,screenOff=false,prepared=true,rootMissing=false,queryError=false,wrongArray=false,throwQuery=false,throwNode=false,cancelled=false;
@@ -31,12 +33,18 @@ extern "C" void TLinkAXFixtureOwnerDidDrain(void){tick+=ownerDropCost;}
 static size_t outputCap=1024*1024;
 static NSDictionary *rootObject;
 static __weak NSArray *returnedArray;
-struct ParentBudget {double remainingSeconds(double maximum){return std::min(maximum,parentSeconds);}};
+struct ParentBudget {
+    uint64_t end=0;
+    double remainingSeconds(double maximum){
+        double remaining=std::min(maximum,parentSeconds);
+        return end?(tick>=end?0:std::min(remaining,static_cast<double>(end-tick)/1e9)):remaining;
+    }
+};
 static std::shared_ptr<ParentBudget> parent;
 static uint64_t fixtureNow(){return tick;}
 static CFAbsoluteTime fixtureWall(){return static_cast<double>(tick)/1e9+wallShift;}
 static double fixtureEpoch(){return 1700000000.0+wallShift;}
-static bool TLinkNativeStopped(){return cancelled;}
+static bool TLinkNativeStopped(){return cancelled||(parent&&parent->end&&tick>=parent->end);}
 static bool TLinkNativeOutputAllowed(size_t bytes){return bytes<=outputCap;}
 static std::shared_ptr<ParentBudget> TLinkCurrentNativeBudget(){return parent;}
 static void fixtureOwnerFault(unsigned site){
@@ -62,6 +70,7 @@ static int fixtureCopyAttribute(TLinkAXElementRef root,CFStringRef key,CFTypeRef
         NSMutableArray *values=[NSMutableArray array];for(unsigned n=0;n<sourceCount;++n)[values addObject:@(n)];
         returnedArray=values;
         if(!queryMissing){++rawOutRetains;*out=CFRetain((__bridge CFTypeRef)(wrongArray?(id)@42:values));}
+        if(preflightStopStage==4)cancelled=true;
         fixtureOwnerFault(4);
         if(throwQuery)[NSException raise:@"AXSnapshotFixture" format:@"query"];
         return queryError?9:0;
@@ -70,8 +79,8 @@ static int fixtureCopyAttribute(TLinkAXElementRef root,CFStringRef key,CFTypeRef
 static auto sTLinkAXCreateApp=&fixtureCreate;
 static auto sTLinkAXSetTimeout=&fixtureSetTimeout;
 static auto sTLinkAXCopyAttribute=&fixtureCopyAttribute;
-static NSDictionary *TLinkAXLockState(){++lockCalls;return @{@"locked":@(locked),@"screen_off":@(screenOff)};}
-static BOOL TLinkAXPrepare(){++prepareCalls;return prepared;}
+static NSDictionary *TLinkAXLockState(){++lockCalls;tick+=preflightLockCost;if(preflightStopStage==1)cancelled=true;return @{@"locked":@(locked),@"screen_off":@(screenOff)};}
+static BOOL TLinkAXPrepare(){++prepareCalls;tick+=preflightPrepareCost;if(preflightStopStage==2)cancelled=true;return prepared;}
 static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect screen,NSUInteger index,TLinkAXSnapshotWindow *window=nullptr){
     (void)window;
     assert(object&&screen.size.width==320);++serialized;tick+=nodeCost;wallShift+=nodeWallJump;
@@ -99,7 +108,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 @end
 @implementation FixtureScreen
 +(instancetype)mainScreen{static FixtureScreen *value;static dispatch_once_t once;dispatch_once(&once,^{value=[FixtureScreen new];});return value;}
--(CGRect)bounds{return CGRectMake(0,0,320,640);}
+-(CGRect)bounds{++preflightScreenReads;tick+=preflightScreenCost;if(preflightStopStage==5)cancelled=true;return CGRectMake(0,0,320,640);}
 -(CGFloat)scale{return 2;}
 @end
 #include "AXErrorUnderTest.inc"
@@ -110,6 +119,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 #include "AXSnapshotBeforeScan.inc"
 #include "AXSnapshotBeforeNodePool.inc"
 #include "AXSnapshotBeforeOwner.inc"
+#include "AXSnapshotBeforePreflight.inc"
 static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
 static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){
     assert(queue==dispatch_get_main_queue());++boundaryDispatches;
@@ -133,6 +143,7 @@ static void reset(){
     locked=screenOff=rootMissing=queryError=wrongArray=throwQuery=throwNode=cancelled=regressCreate=regressNode=failClockNode=false;prepared=true;
     forceHidden=forceNotClickable=false;
     ownerFaultSite=ownerFaultKind=rawOutRetains=0;queryMissing=false;
+    preflightLockCost=preflightPrepareCost=preflightScreenCost=0;preflightStopStage=preflightScreenReads=preflightOptionReads=0;
     boundaryDispatches=0;boundaryQueueStop=boundaryReturnStop=false;
     trackNodeOwners=throwNodeCPP=false;ownerDropCost=0;
     outputCap=1024*1024;parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
@@ -296,8 +307,9 @@ static void scanBudgetCases(){
 #include "ax-snapshot-owner-runtime-fixture.inc"
 #include "ax-query-stop-runtime-fixture.inc"
 #include "ax-find-pool-runtime-fixture.inc"
+#include "ax-preflight-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();preflightCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}

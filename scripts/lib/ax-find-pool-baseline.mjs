@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXPreflight} from './ax-preflight-baseline.mjs';
 export const legacyAXFindPool=readFileSync(new URL('../../test/fixtures/ax-find-pool-before-c05o.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function restoreAXFindPool(source){
+    source=restoreAXPreflight(source);
     const a=source.indexOf('static NSDictionary *TLinkAXFindInSnapshot('),b=source.indexOf('NSDictionary *TLinkAXFindElement(',a);assert.ok(a>=0&&b>a);
     const start=legacyAXFindPool.indexOf('        if (visibleOnly &&'),end=legacyAXFindPool.indexOf('    }\n    if (TLinkNativeStopped())',start);assert.ok(start>0&&end>start);
     const body=legacyAXFindPool.slice(start,end).split('\n').map(line=>line?'    '+line:line).join('\n');
