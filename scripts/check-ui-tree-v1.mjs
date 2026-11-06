@@ -57,6 +57,8 @@ assert.equal(fixture.incompletePolicy.waitGone, "retry_or_timeout");
 assert.equal(fixture.limits.defaultMaxScannedElements, 4096);
 assert.equal(fixture.limits.hardMaxScannedElements, 16384);
 assert.equal(fixture.limits.maxPendingQueries, 8);
+assert.equal(fixture.limits.maxSnapshotStringUTF8Bytes, 65536);
+assert.match(core, /"max_snapshot_string_utf8_bytes": @\(TLinkAXSnapshotOutput::MaxStringUTF8Bytes\)/);
 assert.match(core, /"max_pending_queries": @\(TLinkAXAdmission::MaxPending\)/);
 assert.match(core, /ui_ax_busy/);
 assert.match(core, /kTLinkAXDefaultMaxScannedElements = 4096/);

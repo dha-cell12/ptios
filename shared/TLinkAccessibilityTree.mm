@@ -2,6 +2,7 @@
 #include "TLinkAXSymbolCache.h"
 #include "TLinkAXSnapshotWindow.h"
 #include "TLinkAXAdmission.h"
+#include "TLinkAXSnapshotOutput.h"
 #import "TLinkAccessibilityTree.h"
 
 #import <UIKit/UIKit.h>
@@ -243,6 +244,7 @@ NSDictionary *TLinkAXCapabilitySnapshot(void)
         @"default_max_scanned_elements": @(kTLinkAXDefaultMaxScannedElements),
         @"hard_max_scanned_elements": @(kTLinkAXHardMaxScannedElements),
         @"max_pending_queries": @(TLinkAXAdmission::MaxPending),
+        @"max_snapshot_string_utf8_bytes": @(TLinkAXSnapshotOutput::MaxStringUTF8Bytes),
         @"default_timeout_ms": @1500,
     };
 }
@@ -775,13 +777,17 @@ static NSDictionary *TLinkAXCopySnapshotUnlocked(pid_t pid,
             size_t rowBytes = 768;
             for (NSString *key in @[@"label", @"value", @"identifier", @"role"]) {
                 NSString *text = node[key];
+                if (text.length > TLinkAXSnapshotOutput::MaxStringUTF8Bytes)
+                    return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
                 size_t bytes = [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-                if (!TLinkNativeOutputAllowed(bytes)) return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
-                rowBytes += 6 * bytes;
+                if (!TLinkNativeOutputAllowed(bytes) || !TLinkAXSnapshotOutput::AddString(bytes, rowBytes))
+                    return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
             }
-            estimatedJSONBytes += rowBytes;
-            if (!TLinkNativeOutputAllowed(32 * 1024 + 4 * ((estimatedJSONBytes + 2) / 3)))
+            size_t nextJSONBytes = 0, wireBytes = 0;
+            if (!TLinkAXSnapshotOutput::AppendRow(rowBytes, estimatedJSONBytes, nextJSONBytes, wireBytes) ||
+                !TLinkNativeOutputAllowed(wireBytes))
                 return TLinkAXError(@"ui_response_too_large", @{@"partial": @YES});
+            estimatedJSONBytes = nextJSONBytes;
             [rows addObject:node];
         }
     }

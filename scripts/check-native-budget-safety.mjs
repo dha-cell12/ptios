@@ -36,7 +36,9 @@ assert.match(tess, /@finally \{ tesseract.delegate = nil; tesseract.image = nil;
 assert.match(vision, /current&&current->stopped\(\)\)\[activeRequest cancel\]/);
 assert.match(vision, /@finally[\s\S]*dispatch_source_cancel\(monitor\);dispatch_sync\(monitorQueue/);
 assert.match(vision, /@synchronized\(self\)\{inProgress=false;\}/);
-assert.match(ax, /estimatedJSONBytes \+= rowBytes/);
+assert.match(ax, /TLinkAXSnapshotOutput::AppendRow\(rowBytes, estimatedJSONBytes, nextJSONBytes, wireBytes\)/);
+assert.match(ax, /!TLinkNativeOutputAllowed\(wireBytes\)/);
+assert.match(ax, /estimatedJSONBytes = nextJSONBytes;\s*\[rows addObject:node\]/);
 for (const source of [image, tess, ax]) {
   assert.match(source, /TLinkNativeDispatchSync\(/);
   assert.doesNotMatch(source, /dispatch_sync\((zx_imageQueue|zx_tessQueue|TLinkAXQueue)\(\)/);

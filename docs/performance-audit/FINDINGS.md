@@ -2273,6 +2273,8 @@ For structured local/in-process callers, avoid base64/legacy text when a typed r
 
 Implementation follow-up (2026-11-05, C05f): per-node autorelease pools reduce ordinary traversal temporary retention, including rejected nodes; they do not cap a node's arbitrary strings, accepted rows, the full root array or JSON/base64/wire copies. Existing output accounting remains unchanged. P1-60 remains partial; Foundation/ARC pool tests and device memory measurements are pending. See `IMPLEMENTATION-C05F.md`.
 
+Implementation follow-up (2026-11-06, C05q): accepted snapshot row label/value/identifier/role now have a 65,536-byte UTF-8 cap, with a UTF-16 length preflight before encoding-size work. Use checked arithmetic for the existing row/aggregate/JSON-base64 estimate; reject oversize/unrepresentable results with ui_response_too_large/partial, preserving action refusal and filtered-row priority. Task 77 advertises max_snapshot_string_utf8_bytes. Portable boundary/overflow tests pass; real Unicode/JSON/CF cases await macOS CI. Provider/root/standalone hit-test/metadata/selector/final representation bounds and device memory/performance remain open. See `IMPLEMENTATION-C05Q.md`.
+
 ---
 
 ### [P1-61] Every AX operation rebuilds lock-state plumbing; capability probes also repeat Security entitlement discovery

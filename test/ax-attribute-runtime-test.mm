@@ -13,6 +13,7 @@
 #include <thread>
 #include "../shared/TLinkAXSnapshotWindow.h"
 #include "../shared/TLinkAXAdmission.h"
+#include "../shared/TLinkAXSnapshotOutput.h"
 #include "AXAdmissionUnderTest.inc"
 using TLinkAXElementRef=CFTypeRef;
 // Distinct fixture trait bits. UIKit/private AX providers are controlled.

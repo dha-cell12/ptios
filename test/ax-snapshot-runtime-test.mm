@@ -6,9 +6,11 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include "../shared/TLinkAXSnapshotWindow.h"
 #include "../shared/TLinkAXAdmission.h"
+#include "../shared/TLinkAXSnapshotOutput.h"
 #include "AXAdmissionUnderTest.inc"
 #include "ax-node-pool-owner.h"
 using TLinkAXElementRef=CFTypeRef;
@@ -31,6 +33,8 @@ static bool trackNodeOwners=false,throwNodeCPP=false;
 static uint64_t ownerDropCost=0;
 extern "C" void TLinkAXFixtureOwnerDidDrain(void){tick+=ownerDropCost;}
 static size_t outputCap=1024*1024;
+static id outputTextValue=nil;
+static NSString *outputTextField=@"label";
 static NSDictionary *rootObject;
 static __weak NSArray *returnedArray;
 struct ParentBudget {
@@ -94,6 +98,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
     if(failEvery&&serialized%failEvery==0)return nil;
     NSDictionary *row=@{@"index":@(index),@"label":@"Ứng dụng 测试",@"value":@"value",@"identifier":@"id",@"role":@"element",
         @"intersects_screen":@(!forceHidden&&index%2==0),@"clickable":@(!forceNotClickable&&index%3!=0)};
+    if(outputTextValue){NSMutableDictionary *changed=[row mutableCopy];changed[outputTextField]=outputTextValue;return changed;}
     if(trackingRow){
         [trackingRow addEntriesFromDictionary:row];
         trackingRow[@"label"]=[NSMutableString stringWithFormat:@"node-%lu",(unsigned long)index];
@@ -120,6 +125,7 @@ static NSDictionary *TLinkAXSerializeElement(TLinkAXElementRef object,CGRect scr
 #include "AXSnapshotBeforeNodePool.inc"
 #include "AXSnapshotBeforeOwner.inc"
 #include "AXSnapshotBeforePreflight.inc"
+#include "AXSnapshotBeforeOutput.inc"
 static dispatch_queue_t TLinkAXQueue(){return dispatch_get_main_queue();}
 static void TLinkNativeDispatchSync(dispatch_queue_t queue,dispatch_block_t work){
     assert(queue==dispatch_get_main_queue());++boundaryDispatches;
@@ -146,7 +152,7 @@ static void reset(){
     preflightLockCost=preflightPrepareCost=preflightScreenCost=0;preflightStopStage=preflightScreenReads=preflightOptionReads=0;
     boundaryDispatches=0;boundaryQueueStop=boundaryReturnStop=false;
     trackNodeOwners=throwNodeCPP=false;ownerDropCost=0;
-    outputCap=1024*1024;parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
+    outputCap=1024*1024;outputTextValue=nil;outputTextField=@"label";parent.reset();rootObject=@{@"fixture-root":@YES};returnedArray=nil;
 }
 static NSDictionary *call(bool current,NSDictionary *options=@{},pid_t pid=123){
     return current?TLinkAXCopySnapshotUnlocked(pid,@"fixture.bundle",options):LegacyAXCopySnapshotUnlocked(pid,@"fixture.bundle",options);
@@ -308,8 +314,9 @@ static void scanBudgetCases(){
 #include "ax-query-stop-runtime-fixture.inc"
 #include "ax-find-pool-runtime-fixture.inc"
 #include "ax-preflight-runtime-fixture.inc"
+#include "ax-output-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();preflightCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();preflightCases();snapshotOutputCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}

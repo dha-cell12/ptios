@@ -17,6 +17,8 @@ FOUNDATION_EXPORT NSDictionary *TLinkAXCopyFrontmostContext(void);
 // on supported iOS builds does not expose stable parent/child relationships.
 // Snapshot/find/at share eight process-local running/queued call slots. Overflow
 // returns ui_ax_busy with partial/retryable; admitted operations stay serialized.
+// Snapshot/find row text is limited to 65536 UTF-8 bytes per field; oversize
+// returns ui_response_too_large/partial. This is not a provider or hit-test bound.
 FOUNDATION_EXPORT NSDictionary *TLinkAXCopySnapshot(pid_t pid,
                                                     NSString *bundleID,
                                                     NSDictionary * _Nullable options);

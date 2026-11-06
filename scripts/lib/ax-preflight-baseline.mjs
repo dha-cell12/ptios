@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXOutput} from './ax-output-baseline.mjs';
 export const legacyAXPreflight=readFileSync(new URL('../../test/fixtures/ax-preflight-before-c05p.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function restoreAXPreflight(source){
+    source=restoreAXOutput(source);
     const a=source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('),b=source.indexOf('NSDictionary *TLinkAXCopySnapshot(pid_t',a);assert.ok(a>=0&&b>a);
     const early='    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", nil);\n';
     const late='if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});\n';
