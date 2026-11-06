@@ -1,3 +1,4 @@
+#include "TLinkAXProcessPolicy.h"
 #include "TLinkAXJSONQuota.h"
 #include "TLinkAXWireOutput.h"
 #include "TLinkNativeDispatch.h"
@@ -305,12 +306,13 @@ static NSString *TLinkAXFrontmostBundleID(void)
 
 static NSString *TLinkAXBundleIDForExecutablePath(NSString *executablePath)
 {
-    if (executablePath.length == 0) return nil;
+    if (executablePath.length == 0 || TLinkNativeStopped()) return nil;
     NSRange appMarker = [executablePath rangeOfString:@".app/" options:NSBackwardsSearch];
     if (appMarker.location == NSNotFound) return nil;
     NSString *bundlePath = [executablePath substringToIndex:appMarker.location + @".app".length];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
         [bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+    if (TLinkNativeStopped()) return nil;
     NSString *bundleID = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]]
         ? info[@"CFBundleIdentifier"] : nil;
     return bundleID.length > 0 ? bundleID : nil;
@@ -318,28 +320,41 @@ static NSString *TLinkAXBundleIDForExecutablePath(NSString *executablePath)
 
 static pid_t TLinkAXPIDForBundleID(NSString *bundleID)
 {
-    if (bundleID.length == 0) return 0;
-    int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
-    size_t length = 0;
-    if (sysctl(mib, 3, NULL, &length, NULL, 0) != 0 || length == 0) return 0;
-    length += 64 * sizeof(struct kinfo_proc);
-    NSMutableData *data = [NSMutableData dataWithLength:length];
-    if (sysctl(mib, 3, data.mutableBytes, &length, NULL, 0) != 0) return 0;
-    int (*pidPath)(int, void *, uint32_t) =
-        (int (*)(int, void *, uint32_t))dlsym(RTLD_DEFAULT, "proc_pidpath");
-    if (!pidPath) return 0;
-    NSUInteger count = length / sizeof(struct kinfo_proc);
-    struct kinfo_proc *processes = (struct kinfo_proc *)data.mutableBytes;
-    for (NSUInteger index = 0; index < count; index++) {
-        pid_t pid = processes[index].kp_proc.p_pid;
-        if (pid <= 0) continue;
-        char path[4096] = {0};
-        if (pidPath(pid, path, sizeof(path)) <= 0) continue;
-        NSString *candidate = TLinkAXBundleIDForExecutablePath(
-            [NSString stringWithUTF8String:path] ?: @"");
-        if ([candidate isEqualToString:bundleID]) return pid;
+    if (bundleID.length == 0 || TLinkNativeStopped()) return 0;
+    @autoreleasepool {
+        int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
+        size_t length = 0, capacity = 0;
+        if (sysctl(mib, 3, NULL, &length, NULL, 0) != 0 ||
+            !TLinkAXProcessPolicy::Capacity(length, sizeof(struct kinfo_proc), capacity) || TLinkNativeStopped()) return 0;
+        __attribute__((objc_precise_lifetime)) NSMutableData *data = [NSMutableData dataWithLength:capacity];
+        if (!data || data.length != capacity || TLinkNativeStopped()) return 0;
+        void *bytes = data.mutableBytes;
+        if (!bytes || TLinkNativeStopped()) return 0;
+        length = capacity;
+        if (sysctl(mib, 3, bytes, &length, NULL, 0) != 0 || TLinkNativeStopped()) return 0;
+        size_t count = 0;
+        if (!TLinkAXProcessPolicy::Count(length, capacity, sizeof(struct kinfo_proc), count)) return 0;
+        int (*pidPath)(int, void *, uint32_t) =
+            (int (*)(int, void *, uint32_t))dlsym(RTLD_DEFAULT, "proc_pidpath");
+        if (!pidPath || TLinkNativeStopped()) return 0;
+        const struct kinfo_proc *processes = (const struct kinfo_proc *)bytes;
+        for (size_t index = 0; index < count; index++) {
+            if (TLinkNativeStopped()) return 0;
+            @autoreleasepool {
+                pid_t pid = processes[index].kp_proc.p_pid;
+                if (pid <= 0) continue;
+                char path[4096] = {0};
+                const int written = pidPath(pid, path, sizeof(path));
+                if (TLinkNativeStopped()) return 0;
+                if (!TLinkAXProcessPolicy::Path(path, sizeof(path), written)) continue;
+                NSString *candidate = TLinkAXBundleIDForExecutablePath(
+                    [NSString stringWithUTF8String:path] ?: @"");
+                if (TLinkNativeStopped()) return 0;
+                if ([candidate isEqualToString:bundleID]) return pid;
+            }
+        }
+        return 0;
     }
-    return 0;
 }
 
 static pid_t TLinkAXPIDFromSelector(id target, SEL selector)
@@ -362,18 +377,20 @@ static pid_t TLinkAXPIDFromSelector(id target, SEL selector)
 
 static NSDictionary *TLinkAXContextForPID(pid_t pid)
 {
-    if (pid <= 0 || pid == getpid()) return nil;
+    if (pid <= 0 || pid == getpid() || TLinkNativeStopped()) return nil;
     int (*pidPath)(int, void *, uint32_t) =
         (int (*)(int, void *, uint32_t))dlsym(RTLD_DEFAULT, "proc_pidpath");
-    if (!pidPath) return nil;
+    if (!pidPath || TLinkNativeStopped()) return nil;
     char path[4096] = {0};
-    if (pidPath(pid, path, sizeof(path)) <= 0) return nil;
+    const int written = pidPath(pid, path, sizeof(path));
+    if (TLinkNativeStopped() || !TLinkAXProcessPolicy::Path(path, sizeof(path), written)) return nil;
     NSString *executablePath = [NSString stringWithUTF8String:path] ?: @"";
     NSRange appMarker = [executablePath rangeOfString:@".app/" options:NSBackwardsSearch];
     if (appMarker.location == NSNotFound) return nil;
     NSString *bundlePath = [executablePath substringToIndex:appMarker.location + @".app".length];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
         [bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+    if (TLinkNativeStopped()) return nil;
     NSString *bundleID = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]]
         ? info[@"CFBundleIdentifier"] : @"";
     NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]]
@@ -456,6 +473,8 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
     // rootfull and roothide, where the daemon's remote AX PID query may be 0.
     if (![[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return nil;
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     Class springBoardClass = NSClassFromString(@"SpringBoard");
     SEL sharedSelector = NSSelectorFromString(@"sharedApplication");
     SEL foregroundSelector = NSSelectorFromString(@"_accessibilityFrontMostApplication");
@@ -465,6 +484,7 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
     __block id foregroundApp = nil;
     __block BOOL queryFailed = NO;
     void (^query)(void) = ^{
+        if (TLinkNativeStopped()) return;
         @try {
             id springBoard = ((id (*)(Class, SEL))objc_msgSend)(springBoardClass, sharedSelector);
             if (![springBoard respondsToSelector:foregroundSelector]) {
@@ -476,8 +496,12 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
             queryFailed = YES;
         }
     };
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if ([NSThread isMainThread]) query();
-    else dispatch_sync(dispatch_get_main_queue(), query);
+    else TLinkNativeDispatchSync(dispatch_get_main_queue(), query);
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (queryFailed) return TLinkAXError(@"ui_springboard_frontmost_query_failed", nil);
 
     // A nil result can also occur during an app transition. Do not mistake
@@ -488,16 +512,22 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
         ? ((id (*)(id, SEL))objc_msgSend)(foregroundApp, bundleSelector) : nil;
     if (![bundleID isKindOfClass:[NSString class]] || bundleID.length == 0)
         return TLinkAXError(@"ui_springboard_frontmost_bundle_unavailable", nil);
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     pid_t pid = TLinkAXPIDFromSelector(foregroundApp, NSSelectorFromString(@"pid"));
-    if (pid <= 0) pid = TLinkAXPIDFromSelector(foregroundApp, NSSelectorFromString(@"processIdentifier"));
+    if (pid <= 0 && !TLinkNativeStopped()) pid = TLinkAXPIDFromSelector(foregroundApp, NSSelectorFromString(@"processIdentifier"));
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (pid <= 0) {
         SEL processSelector = NSSelectorFromString(@"process");
         if ([foregroundApp respondsToSelector:processSelector]) {
             id process = ((id (*)(id, SEL))objc_msgSend)(foregroundApp, processSelector);
             pid = TLinkAXPIDFromSelector(process, NSSelectorFromString(@"processIdentifier"));
-            if (pid <= 0) pid = TLinkAXPIDFromSelector(process, NSSelectorFromString(@"pid"));
+            if (pid <= 0 && !TLinkNativeStopped()) pid = TLinkAXPIDFromSelector(process, NSSelectorFromString(@"pid"));
         }
     }
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (pid <= 0) {
         Class controllerClass = NSClassFromString(@"SBApplicationController");
         SEL sharedController = NSSelectorFromString(@"sharedInstance");
@@ -508,12 +538,16 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
                 id application = ((id (*)(id, SEL, id))objc_msgSend)(controller,
                                                                    applicationSelector, bundleID);
                 pid = TLinkAXPIDFromSelector(application, NSSelectorFromString(@"pid"));
-                if (pid <= 0) pid = TLinkAXPIDFromSelector(application,
+                if (pid <= 0 && !TLinkNativeStopped()) pid = TLinkAXPIDFromSelector(application,
                                                            NSSelectorFromString(@"processIdentifier"));
             }
         }
     }
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (pid <= 0) pid = TLinkAXPIDForBundleID(bundleID);
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (pid <= 0) return TLinkAXError(@"ui_springboard_frontmost_pid_unavailable",
                                        @{ @"bundle_id": bundleID });
     return @{
@@ -526,11 +560,19 @@ static NSDictionary *TLinkAXSpringBoardProcessContext(void)
 
 NSDictionary *TLinkAXCopyFrontmostContext(void)
 {
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     NSDictionary *inProcess = TLinkAXSpringBoardProcessContext();
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (inProcess) return inProcess;
     NSDictionary *direct = TLinkAXDirectFrontmostContext();
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (TLinkAXResultSucceeded(direct)) return direct;
     NSString *bundleID = TLinkAXFrontmostBundleID();
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (bundleID.length == 0) {
         return TLinkAXError(@"ui_frontmost_bundle_unavailable", @{
             @"direct_error": direct[@"error"] ?: @"unknown",
@@ -538,6 +580,8 @@ NSDictionary *TLinkAXCopyFrontmostContext(void)
         });
     }
     pid_t pid = TLinkAXPIDForBundleID(bundleID);
+    if (TLinkNativeStopped()) return TLinkAXError(TLinkCurrentNativeBudget() && TLinkCurrentNativeBudget()->reason() == TLinkNativeStop::OutputLimit
+        ? @"ui_response_too_large" : @"ui_cancelled_or_timed_out", nil);
     if (pid <= 0) {
         return TLinkAXError(@"ui_frontmost_pid_unavailable", @{
             @"bundle_id": bundleID,

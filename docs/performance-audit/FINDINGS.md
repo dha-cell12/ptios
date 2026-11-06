@@ -2250,6 +2250,8 @@ Implementation follow-up (2026-11-07, C05aa): Task77 root/TrollStore handlers no
 
 Implementation follow-up (2026-11-07, C05ab): one larger package adds captured stop boundaries across Task78–81 foreground/query/context verification/final encoding, TrollStore's single retry and Task81 coordinate/tap entry. Existing foreground/completeness/action/authority guards and touch ownership remain; a committed effect is never replayed. Shared find now refuses option-time stop before enqueue and skips downstream matcher methods after observed cancellation, retaining live full counts/index/order. Full actual/C05aa handlers/context helpers and matcher/wrapper regression fixtures await macOS CI; Windows source/portable suites pass. Opaque call/queue preemption, missing bindings, atomic publication and device gains remain open. See `IMPLEMENTATION-C05AB.md`.
 
+Implementation follow-up (2026-11-07, C05ac; also P1-64): foreground process fallback now checks table/slack arithmetic and returned storage geometry with a16-MiB requested-capacity cap, validates4096-byte PID path length/NUL before conversion, scopes table/per-process temporaries and checks stop through scan/provider fallbacks. SpringBoard main queries use the existing native budget bridge and keep live target/selector/controller/hidden-app guards. Portable100k boundary plans pass; new full actual/frozen process/main/public helper and controlled-scheduling fixtures await macOS CI. No value cache, main/opaque preemption, global memory bound or measured device gain is claimed. See `IMPLEMENTATION-C05AC.md`.
+
 ---
 
 ### [P1-60] UI-tree responses have element-count limits but no explicit byte/string limit and are fully copied through JSON + base64 + legacy text

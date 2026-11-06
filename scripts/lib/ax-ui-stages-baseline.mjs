@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXForegroundWork} from './ax-foreground-work-baseline.mjs';
 const tasks={
   "root": {
     "start": "static void zx_handleUITreeTask(",
@@ -139,4 +140,4 @@ function restore(source,p,legacy){
  const restored=source.slice(0,a)+legacy+source.slice(b);assert.equal(hash(restored),p.hash,'complete preceding C05aa source');return restored;
 }
 export function restoreUIStagesTask(source,name){return restore(source,tasks[name],uiStagesLegacy(name));}
-export function restoreUIStagesFind(source){return restore(source,find,legacyUIStagesFind);}
+export function restoreUIStagesFind(source){return restore(restoreAXForegroundWork(source),find,legacyUIStagesFind);}

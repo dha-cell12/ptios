@@ -20,6 +20,7 @@ import {wirePoolLegacy} from './lib/ax-wire-pool-baseline.mjs';
 import {wirePublishLegacy} from './lib/ax-wire-publish-baseline.mjs';
 import {capabilityPreflightLegacy} from './lib/ax-capability-preflight-baseline.mjs';
 import {uiStagesLegacy,legacyUIStagesFind} from './lib/ax-ui-stages-baseline.mjs';
+import {foregroundWorkLegacy,foregroundWorkRegion} from './lib/ax-foreground-work-baseline.mjs';
 import {legacyAXJSONBudgetWriter} from './lib/ax-json-budget-baseline.mjs';
 import {legacyAXJSONStopWriter,restoreAXJSONStopWriter,stopJSONLegacy} from './lib/ax-json-stop-baseline.mjs';
 import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
@@ -132,7 +133,23 @@ const fixtures={...wireFixtures,'AXSnapshotUnderTest.inc':adapt(actual),'AXSnaps
     'AXCompletenessUnderTest.inc':complete,
     'AXErrorUnderTest.inc':source.slice(source.indexOf('static NSDictionary *TLinkAXError('),source.indexOf('NSDictionary *TLinkAXCapabilitySnapshot(void)')),
     'AXBoundedIntegerUnderTest.inc':source.slice(source.indexOf('static NSInteger TLinkAXBoundedInteger('),source.indexOf('static NSDictionary *TLinkAXCopySnapshotUnlocked('))};
-console.log('AX snapshot source passed: complete Task78-81/retry/tap and matcher/enqueue cancellation package, full C05aa task/server/shared source restoration with guards/authority/codecs retained.');
+const processAdapt=s=>s.replaceAll('sysctl(','fixtureSysctl(').replaceAll('dlsym(','fixtureLookup(').replaceAll('getpid()','fixtureSelfPID()')
+    .replaceAll(/\[NSMutableData dataWithLength:(capacity|length)\]/g,'fixtureTableData($1)')
+    .replaceAll('[NSDictionary dictionaryWithContentsOfFile:','fixtureInfo(').replaceAll('[bundlePath stringByAppendingPathComponent:@"Info.plist"]];','[bundlePath stringByAppendingPathComponent:@"Info.plist"]);');
+for(const current of [false,true]){
+    let helpers=processAdapt(current?foregroundWorkRegion(source,'process'):foregroundWorkLegacy('process'));
+    for(const name of ['TLinkAXBundleIDForExecutablePath','TLinkAXPIDForBundleID','TLinkAXPIDFromSelector','TLinkAXContextForPID'])helpers=helpers.replaceAll(name,(current?'Current':'Before')+name);
+    fixtures[(current?'Current':'Before')+'AXProcess.inc']=helpers;
+    let bridge=current?foregroundWorkRegion(source,'springboard'):foregroundWorkLegacy('springboard');
+    bridge=bridge.replaceAll('[NSBundle mainBundle]','[FixtureBundle mainBundle]').replaceAll('[NSThread isMainThread]','fixtureMainThread()').replaceAll('NSClassFromString(','fixtureClass(').replaceAll('dispatch_sync(','fixtureDispatchSync(')
+        .replaceAll('TLinkAXPIDFromSelector',(current?'Current':'Before')+'TLinkAXPIDFromSelector').replaceAll('TLinkAXPIDForBundleID',(current?'Current':'Before')+'TLinkAXPIDForBundleID')
+        .replaceAll('TLinkAXSpringBoardProcessContext',(current?'Current':'Before')+'TLinkAXSpringBoardProcessContext');
+    fixtures[(current?'Current':'Before')+'AXSpringBoard.inc']=bridge;
+    fixtures[(current?'Current':'Before')+'AXPublicForeground.inc']=(current?foregroundWorkRegion(source,'public'):foregroundWorkLegacy('public'))
+        .replaceAll('TLinkAXSpringBoardProcessContext','fixtureInProcess').replaceAll('TLinkAXDirectFrontmostContext','fixtureDirect').replaceAll('TLinkAXFrontmostBundleID','fixtureBundleID').replaceAll('TLinkAXPIDForBundleID','fixturePID')
+        .replaceAll('TLinkAXCopyFrontmostContext',(current?'Current':'Before')+'TLinkAXCopyFrontmostContext');
+}
+console.log('AX snapshot source passed: bounded process/path fallback, scoped scan resources and budgeted main/foreground stages; complete preceding AX/task/server restoration with target/action guards retained.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-ax-snapshot-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})${r.stderr?'\nCaptured stderr (last 12000 characters):\n'+r.stderr.slice(-12000):''}`);}
 try{
@@ -147,5 +164,6 @@ try{
         const native=join(temp,'runtime');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-I',temp,join(root,'test/ax-snapshot-runtime-test.mm'),owner,'-o',native]);run(native,[]);
         const wire=join(temp,'wire');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-I',temp,join(root,'test/ax-wire-runtime-test.mm'),owner,'-o',wire]);run(wire,[]);
         const attributes=join(temp,'attributes');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','CoreGraphics','-I',temp,join(root,'test/ax-attribute-runtime-test.mm'),'-o',attributes]);run(attributes,[]);
+        const foreground=join(temp,'foreground');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/ax-foreground-work-runtime-test.mm'),owner,'-o',foreground]);run(foreground,[]);
     }else console.log('macOS actual/frozen AX snapshot Foundation/CF/ARC/sanitizer fixture included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-ax-snapshot-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
