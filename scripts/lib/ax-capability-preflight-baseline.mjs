@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreUIStagesTask} from './ax-ui-stages-baseline.mjs';
 const specs={
   "root": {
     "file": "pccontrol/Task.xm",
@@ -42,6 +43,7 @@ const specs={
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export function capabilityPreflightLegacy(name){return readFileSync(new URL('../../test/fixtures/ax-capability-preflight-'+name+'-handler-before-c05aa.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function restoreAXCapabilityPreflightRoute(source,name){
+    source=restoreUIStagesTask(source,name);
     const p=specs[name],first=source.indexOf(p.start),last=source.indexOf(p.end,first);assert.ok(first>=0&&last>first);
     const legacy=capabilityPreflightLegacy(name);let expected=legacy;
     for(const [before,after] of p.edits){assert.equal(expected.split(before).length-1,1);expected=expected.replace(before,after);}

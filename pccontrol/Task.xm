@@ -2384,14 +2384,25 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
     }
 
     NSString *decodeError = nil;
+    const auto uiBudget = TLinkCurrentNativeBudget();
     NSDictionary *request = zx_uiTreeRequest(eventData, taskType == TASK_UI_TREE_SNAPSHOT, &decodeError);
     if (!request) {
         notifyClient((UInt8 *)[[NSString stringWithFormat:@"-1;;%@\r\n", decodeError] UTF8String], stream);
         return;
     }
+    auto uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(uiStop), stream);
+        return;
+    }
     NSDictionary *context = TLinkAXCopyFrontmostContext();
     if (!TLinkAXResultSucceeded(context)) {
         zx_uiTreeNotifyResult(context, stream);
+        return;
+    }
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(uiStop), stream);
         return;
     }
     NSString *bundleID = context[@"bundle_id"];
@@ -2417,8 +2428,18 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
         notifyClient((UInt8 *)"-1;;ui_snapshot_incomplete\r\n", stream);
         return;
     }
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(uiStop), stream);
+        return;
+    }
     if (zx_uiTreeContextChanged(context)) {
         notifyClient((UInt8 *)"-1;;ui_context_changed\r\n", stream);
+        return;
+    }
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(uiStop), stream);
         return;
     }
     NSMutableDictionary *finalResult = [result mutableCopy];
@@ -2439,11 +2460,21 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
             notifyClient((UInt8 *)"-1;;ui_activation_point_invalid\r\n", stream);
             return;
         }
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(uiStop), stream);
+            return;
+        }
         NSDictionary *point = element[@"activation_point"];
         CGFloat pointScale = [UIScreen mainScreen].scale > 0.0 ? [UIScreen mainScreen].scale : 1.0;
         NSString *tap = [NSString stringWithFormat:@"%.3f;;%.3f;;50;;0",
                          [point[@"x"] doubleValue] * pointScale,
                          [point[@"y"] doubleValue] * pointScale];
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(uiStop), stream);
+            return;
+        }
         NSError *tapError = nil;
         if (!zx_handleNativeTap((UInt8 *)[tap UTF8String], &tapError)) {
             notifyClient((UInt8 *)"-1;;ui_tap_dispatch_failed\r\n", stream);
@@ -2451,6 +2482,11 @@ static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef
         }
         finalResult[@"schema"] = @"ui_tap_v1";
         finalResult[@"tapped"] = @(true);
+    }
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(uiStop), stream);
+        return;
     }
     zx_uiTreeNotifyResult(finalResult, stream);
 }

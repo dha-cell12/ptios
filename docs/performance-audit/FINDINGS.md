@@ -2248,6 +2248,8 @@ Implementation follow-up (2026-11-06, C05u): JSON encoding now checks a captured
 
 Implementation follow-up (2026-11-07, C05aa): Task77 root/TrollStore handlers now capture the caller at branch entry, refuse existing stop before/after capability retrieval and, for TrollStore, after the separate foreground lookup. A pre-stopped caller skips capability/foreground/JSON; cancellation observed after capability skips TrollStore foreground. Existing size/cancel/deadline, cleanup/parent and live diagnostic schema/order/authority remain. Source/portable checks pass; actual/C05z counted-provider, nested caller, reached-provider NS/C++ faults, cleanup and256 recovery-cycle tests await macOS CI. No private-provider preemption, value cache, absent caller binding or measured device gain is claimed. See `IMPLEMENTATION-C05AA.md`.
 
+Implementation follow-up (2026-11-07, C05ab): one larger package adds captured stop boundaries across Task78–81 foreground/query/context verification/final encoding, TrollStore's single retry and Task81 coordinate/tap entry. Existing foreground/completeness/action/authority guards and touch ownership remain; a committed effect is never replayed. Shared find now refuses option-time stop before enqueue and skips downstream matcher methods after observed cancellation, retaining live full counts/index/order. Full actual/C05aa handlers/context helpers and matcher/wrapper regression fixtures await macOS CI; Windows source/portable suites pass. Opaque call/queue preemption, missing bindings, atomic publication and device gains remain open. See `IMPLEMENTATION-C05AB.md`.
+
 ---
 
 ### [P1-60] UI-tree responses have element-count limits but no explicit byte/string limit and are fully copied through JSON + base64 + legacy text

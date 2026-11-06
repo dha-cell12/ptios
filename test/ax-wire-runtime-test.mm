@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
+#import <CoreGraphics/CoreGraphics.h>
+#include <dispatch/dispatch.h>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -72,6 +74,8 @@ static void applyWireEffect(unsigned stage){
     if(wireEffectKind==7)throw std::runtime_error("wire effect");
 }
 static NSDictionary *fixtureCapability,*fixtureForeground;
+static bool uiHandlerActive=false;
+static NSDictionary *uiHandlerForeground();
 static unsigned capabilityCalls=0,foregroundCalls=0,capabilityEffectSite=0,capabilityEffectKind=0,capabilityEffectCalls=0,capabilityFaultKind=0;
 static std::weak_ptr<TLinkNativeBudget> capabilityBudget;
 static std::shared_ptr<TLinkNativeCancellation> capabilityCancellation;
@@ -140,7 +144,7 @@ static NSString *fixtureWireFormat(NSString *base64){
 }
 static BOOL TLinkAXResultSucceeded(NSDictionary *value){return [value isKindOfClass:[NSDictionary class]]&&[value[@"ok"] boolValue];}
 static NSDictionary *TLinkAXCapabilitySnapshot(){++capabilityCalls;applyCapabilityEffect(1);return fixtureCapability;}
-static NSDictionary *TLinkUITreeFrontmostContext(){++foregroundCalls;applyCapabilityEffect(2);return fixtureForeground;}
+static NSDictionary *TLinkUITreeFrontmostContext(){if(uiHandlerActive)return uiHandlerForeground();++foregroundCalls;applyCapabilityEffect(2);return fixtureForeground;}
 static CFAbsoluteTime fixtureWireWall(){return 1000;}
 static void notifyClient(UInt8 *bytes,CFWriteStreamRef stream){
     ++wireNotifyCalls;observeWireTemporary(8);
@@ -226,6 +230,7 @@ static NSData *BeforeCapabilityPreflightTroll(){int taskType=77;
     return nil;
 }
 static void reset(){
+    uiHandlerActive=false;
     capabilityCalls=foregroundCalls=capabilityEffectSite=capabilityEffectKind=capabilityEffectCalls=capabilityFaultKind=0;capabilityBudget.reset();capabilityCancellation.reset();
     wireNotifyCalls=0;wirePublishChurn=false;
     wirePoolStages=wirePoolDrainAction=wirePoolActionCalls=wirePoolThrowKind=0;wirePoolBudget.reset();wirePoolCancellation.reset();
@@ -344,9 +349,10 @@ static void failureCases(){
 #include "ax-wire-pool-runtime-fixture.inc"
 #include "ax-wire-publish-runtime-fixture.inc"
 #include "ax-capability-preflight-runtime-fixture.inc"
+#include "ax-ui-stages-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX wire Foundation: actual/frozen root/TrollStore result/capability codecs, real JSON/base64/formatter and native budget; AX/frontmost/notify controlled");
-    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();wireLateAdmissionCases();wirePhasePoolCases();wirePublishPoolCases();capabilityPreflightCases();
+    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();wireLateAdmissionCases();wirePhasePoolCases();wirePublishPoolCases();capabilityPreflightCases();uiStagesCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{
         reset();jsonFault=WireFault::Probe;
         errorReply(call(n%2!=0,n%3!=0,true,@{@"ok":@YES}),@"ui_response_too_large");assert(base64Calls==0);

@@ -883,13 +883,18 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
             if (clickableOnly && ![element[@"clickable"] boolValue]) continue;
             if (identifier.length > 0 &&
                 !TLinkAXTextMatches(element[@"identifier"], identifier, mode, caseSensitive)) continue;
+            if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
             if (role.length > 0 &&
                 !TLinkAXTextMatches(element[@"role"], role, @"exact", caseSensitive)) continue;
+            if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
             if (text.length > 0) {
                 BOOL labelMatch = TLinkAXTextMatches(element[@"label"], text, mode, caseSensitive);
+                if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
                 BOOL valueMatch = TLinkAXTextMatches(element[@"value"], text, mode, caseSensitive);
+                if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
                 if (!labelMatch && !valueMatch) continue;
             }
+            if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
             if (matchCount == (NSUInteger)requestedIndex) selectedElement = element;
             ++matchCount;
         }
@@ -903,6 +908,7 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
     result[@"found"] = @(element != nil);
     result[@"match_count"] = @(matchCount);
     result[@"element"] = element ?: @{};
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     return result;
 }
 
@@ -925,6 +931,7 @@ NSDictionary *TLinkAXFindElement(pid_t pid, NSString *bundleID, NSDictionary *se
     options[@"max_scanned_elements"] = selector[@"max_scanned_elements"] ?: selector[@"maxScannedElements"] ?: @(kTLinkAXDefaultMaxScannedElements);
     options[@"timeout_ms"] = selector[@"timeout_ms"] ?: selector[@"timeoutMs"] ?: @1500;
     options[@"allow_locked"] = selector[@"allow_locked"] ?: selector[@"allowLocked"] ?: @NO;
+    if (TLinkNativeStopped()) return TLinkAXError(@"ui_cancelled_or_timed_out", @{@"partial": @YES});
     __block NSDictionary *result = nil;
     TLinkNativeDispatchSync(TLinkAXQueue(), ^{
         NSDictionary *snapshot = TLinkAXCopySnapshotUnlocked(pid, bundleID ?: @"", options);

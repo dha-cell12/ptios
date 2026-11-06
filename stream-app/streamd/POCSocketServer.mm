@@ -7786,15 +7786,31 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
     }
 
     NSString *decodeError = nil;
+    const auto uiBudget = TLinkCurrentNativeBudget();
     NSDictionary *request = TLinkUITreeDecodeBody(body, taskType == 78, &decodeError);
     if (!request) return TLinkError(decodeError);
+    auto uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+            ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+    }
     NSDictionary *context = TLinkUITreeFrontmostContext();
     if (![context[@"ok"] boolValue]) return TLinkError(context[@"error"] ?: @"ui_frontmost_unavailable");
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+            ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+    }
     NSString *bundleId = context[@"bundle_id"];
     pid_t pid = [context[@"pid"] intValue];
     NSDictionary *result = nil;
 
     for (int attempt = 0; attempt < 2; attempt++) {
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         if (taskType == 78) {
             result = TLinkAXCopySnapshot(pid, bundleId, request);
         } else if (taskType == 79 || taskType == 81) {
@@ -7817,11 +7833,26 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         if (TLinkAXResultSucceeded(result) || attempt > 0 ||
             ![resultError isEqualToString:@"ui_element_query_failed"]) break;
 
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         // The app may have changed between the context probe and the real
         // query. Drop the short cache, resolve once more, then retry safely.
         TLinkUITreeInvalidateCachedContext();
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         NSDictionary *retryContext = TLinkUITreeFrontmostContext();
         if (![retryContext[@"ok"] boolValue]) break;
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         context = retryContext;
         bundleId = context[@"bundle_id"];
         pid = [context[@"pid"] intValue];
@@ -7830,6 +7861,11 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
     if (!TLinkAXResultSucceeded(result)) return TLinkUITreeJSONResponse(result);
     if (taskType == 81 && !TLinkAXResultCompleteForAction(result)) {
         return TLinkError(@"ui_snapshot_incomplete");
+    }
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+            ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
     }
     BOOL changed = TLinkUITreeContextChanged(context);
     NSMutableDictionary *finalResult = [result mutableCopy];
@@ -7841,6 +7877,11 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         return TLinkUITreeJSONResponse(finalResult);
     }
 
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+            ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+    }
     if (taskType == 81) {
         NSDictionary *element = [finalResult[@"element"] isKindOfClass:[NSDictionary class]]
             ? finalResult[@"element"] : @{};
@@ -7853,18 +7894,33 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
         if (![element[@"activation_point_valid"] boolValue]) {
             return TLinkError(@"ui_activation_point_invalid");
         }
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         NSDictionary *point = [element[@"activation_point"] isKindOfClass:[NSDictionary class]]
             ? element[@"activation_point"] : @{};
         CGFloat pointScale = [UIScreen mainScreen].scale > 0.0 ? [UIScreen mainScreen].scale : 1.0;
         NSString *tapBody = [NSString stringWithFormat:@"%.3f;;%.3f;;50;;0",
                              [point[@"x"] doubleValue] * pointScale,
                              [point[@"y"] doubleValue] * pointScale];
+        uiStop = TLinkAXWireBudget::Stop(uiBudget);
+        if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         NSString *tapError = nil;
         if (!TLinkHandleNativeTap(tapBody, &tapError)) {
             return TLinkError(tapError ?: @"ui_tap_dispatch_failed");
         }
         finalResult[@"schema"] = @"ui_tap_v1";
         finalResult[@"tapped"] = @YES;
+    }
+    uiStop = TLinkAXWireBudget::Stop(uiBudget);
+    if (uiStop != TLinkAXWireBudget::Admission::Ready) {
+        return TLinkError(uiStop == TLinkAXWireBudget::Admission::Stopped
+            ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
     }
     return TLinkUITreeJSONResponse(finalResult);
 }

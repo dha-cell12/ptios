@@ -141,6 +141,7 @@ static void fixtureAppendMatch(NSMutableArray *matches,NSDictionary *element){++
 #include "AXFindLegacy.inc"
 #include "AXFindBeforeStop.inc"
 #include "AXFindBeforePool.inc"
+#include "AXFindBeforeStages.inc"
 #include "AXCompletenessUnderTest.inc"
 static void reset(){
     assert(TLinkAXAdmissionState().pending()==0);
@@ -315,8 +316,9 @@ static void scanBudgetCases(){
 #include "ax-find-pool-runtime-fixture.inc"
 #include "ax-preflight-runtime-fixture.inc"
 #include "ax-output-runtime-fixture.inc"
+#include "ax-ui-find-stages-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX snapshot Foundation: actual/frozen snapshot loop, real CF arrays/references and controlled AX/serializer/clock/screen/parent providers");
-    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();preflightCases();snapshotOutputCases();
+    parityCases();deadlineCases();cancellationAndLifetimeCases();scanBudgetCases();findCases();nodePoolCases();snapshotOwnerCases();queryStopCases();findPoolCases();preflightCases();snapshotOutputCases();findStageCases();
     std::puts("AX snapshot passed: 96 frozen rows/filters/output/count/metric cases, preflight/error/CF parity, root/parent remainder, clock/wall jumps, late final/empty partial action refusal, cancel/fault/output and 128 pool lifecycles. Attribute-group/device qualification pending.");
 }return 0;}
