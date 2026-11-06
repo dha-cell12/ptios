@@ -102,7 +102,7 @@ static void jsonStopCodecCases(){
             errorReply(reply,kind==2?@"ui_response_too_large":@"ui_cancelled_or_timed_out");assert(base64Calls==0);
             assert(current?!lastJSON:lastJSON!=nil);
         }else{decoded(reply);assert(base64Calls==1);}
-        assert(jsonCalls==1&&child->reason()==(kind==2?TLinkNativeStop::OutputLimit:(kind==1?TLinkNativeStop::Deadline:TLinkNativeStop::Cancelled)));
+        assert(jsonCalls==(current&&capability?0U:1U)&&child->reason()==(kind==2?TLinkNativeStop::OutputLimit:(kind==1?TLinkNativeStop::Deadline:TLinkNativeStop::Cancelled)));
     }}
     for(bool root:{false,true})for(bool capability:{false,true}){
         NSDictionary *expected=nil;

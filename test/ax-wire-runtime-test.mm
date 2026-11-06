@@ -72,6 +72,26 @@ static void applyWireEffect(unsigned stage){
     if(wireEffectKind==7)throw std::runtime_error("wire effect");
 }
 static NSDictionary *fixtureCapability,*fixtureForeground;
+static unsigned capabilityCalls=0,foregroundCalls=0,capabilityEffectSite=0,capabilityEffectKind=0,capabilityEffectCalls=0,capabilityFaultKind=0;
+static std::weak_ptr<TLinkNativeBudget> capabilityBudget;
+static std::shared_ptr<TLinkNativeCancellation> capabilityCancellation;
+static void applyCapabilityEffect(unsigned site){
+    if(site!=capabilityEffectSite)return;
+    ++capabilityEffectCalls;auto budget=capabilityBudget.lock();assert(budget&&capabilityCancellation);
+    if(capabilityEffectKind==0||capabilityEffectKind==3)capabilityCancellation->cancel();
+    if(capabilityEffectKind==1){
+        assert(budget->deadline());
+        std::this_thread::sleep_until(TLinkNativeClock::time_point(std::chrono::nanoseconds(budget->deadline())));
+        assert(budget->reason()==TLinkNativeStop::Deadline);
+    }
+    if(capabilityEffectKind==2)assert(!budget->outputAllowed(budget->outputLimit()+1));
+    if(capabilityEffectKind==3){
+        auto alternate=std::make_shared<TLinkNativeBudget>(std::make_shared<TLinkNativeCancellation>(),0,1024*1024);
+        wireLateScope.reset(new TLinkNativeBudgetScope(alternate));
+    }
+    if(capabilityFaultKind==1)[NSException raise:@"CapabilityPreflightFixture" format:@"provider"];
+    if(capabilityFaultKind==2)throw std::runtime_error("capability provider");
+}
 static uint64_t sTLinkUITreeContextGeneration=7;
 static BOOL sTLinkUITreeLegacyForegroundUnavailable=NO;
 static NSString *sTLinkAXSpringBoardState=@"ready",*sTLinkAXSpringBoardError=@"",*sTLinkAXSpringBoardDiagnostic=@"";
@@ -119,8 +139,8 @@ static NSString *fixtureWireFormat(NSString *base64){
     observeWireTemporary(2);return [NSString stringWithFormat:@"0;;%@\r\n",base64];
 }
 static BOOL TLinkAXResultSucceeded(NSDictionary *value){return [value isKindOfClass:[NSDictionary class]]&&[value[@"ok"] boolValue];}
-static NSDictionary *TLinkAXCapabilitySnapshot(){return fixtureCapability;}
-static NSDictionary *TLinkUITreeFrontmostContext(){return fixtureForeground;}
+static NSDictionary *TLinkAXCapabilitySnapshot(){++capabilityCalls;applyCapabilityEffect(1);return fixtureCapability;}
+static NSDictionary *TLinkUITreeFrontmostContext(){++foregroundCalls;applyCapabilityEffect(2);return fixtureForeground;}
 static CFAbsoluteTime fixtureWireWall(){return 1000;}
 static void notifyClient(UInt8 *bytes,CFWriteStreamRef stream){
     ++wireNotifyCalls;observeWireTemporary(8);
@@ -198,7 +218,15 @@ static NSData *BeforeWirePoolTrollCapability(){int taskType=77;
 static void BeforeWirePublishRootCapability(CFWriteStreamRef stream){int taskType=77;
 #include "BeforeWirePublishRootCapability.inc"
 }
+static void BeforeCapabilityPreflightRoot(CFWriteStreamRef stream){int taskType=77;
+#include "BeforeCapabilityPreflightRoot.inc"
+}
+static NSData *BeforeCapabilityPreflightTroll(){int taskType=77;
+#include "BeforeCapabilityPreflightTroll.inc"
+    return nil;
+}
 static void reset(){
+    capabilityCalls=foregroundCalls=capabilityEffectSite=capabilityEffectKind=capabilityEffectCalls=capabilityFaultKind=0;capabilityBudget.reset();capabilityCancellation.reset();
     wireNotifyCalls=0;wirePublishChurn=false;
     wirePoolStages=wirePoolDrainAction=wirePoolActionCalls=wirePoolThrowKind=0;wirePoolBudget.reset();wirePoolCancellation.reset();
     assert(!wireLateScope);wireEffectStage=wireEffectKind=wireEffectCalls=wireFinalCalls=0;wireEffectBudget.reset();wireEffectCancellation.reset();
@@ -315,9 +343,10 @@ static void failureCases(){
 #include "ax-wire-budget-runtime-fixture.inc"
 #include "ax-wire-pool-runtime-fixture.inc"
 #include "ax-wire-publish-runtime-fixture.inc"
+#include "ax-capability-preflight-runtime-fixture.inc"
 int main(){@autoreleasepool{
     std::puts("AX wire Foundation: actual/frozen root/TrollStore result/capability codecs, real JSON/base64/formatter and native budget; AX/frontmost/notify controlled");
-    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();wireLateAdmissionCases();wirePhasePoolCases();wirePublishPoolCases();
+    goldenCases();boundaryCases();budgetCases();failureCases();boundedJSONCases();jsonStopCases();jsonBudgetCases();jsonStorageCases();wireLateAdmissionCases();wirePhasePoolCases();wirePublishPoolCases();capabilityPreflightCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{
         reset();jsonFault=WireFault::Probe;
         errorReply(call(n%2!=0,n%3!=0,true,@{@"ok":@YES}),@"ui_response_too_large");assert(base64Calls==0);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreAXCapabilityPreflightRoute} from './ax-capability-preflight-baseline.mjs';
 const spec={
   "start": "static void zx_uiTreeNotifyResult(",
   "end": "static BOOL zx_uiTreeContextChanged(",
@@ -22,6 +23,7 @@ const spec={
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export function wirePublishLegacy(kind){return readFileSync(new URL('../../test/fixtures/ax-wire-publish-root-'+kind+'-before-c05z.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function restoreAXWirePublishRoute(source,name){
+    source=restoreAXCapabilityPreflightRoute(source,name);
     if(name==='troll'){assert.equal(hash(source),spec.trollHash,'complete unchanged C05y TrollStore server');return source;}
     assert.equal(name,'root');let restored=source;
     for(const [before,after] of spec.edits){assert.equal(restored.split(after).length-1,1,'only UTF8/check/synchronous notify pool');restored=restored.replace(after,before);}

@@ -2246,6 +2246,8 @@ Implementation follow-up (2026-11-05, C05p): snapshot now checks caller stop bef
 
 Implementation follow-up (2026-11-06, C05u): JSON encoding now checks a captured native caller budget before writer entry, through stream admission/writes and after writer/copy/pool. Reentrant TLS cannot substitute another caller; observed cancellation/deadline rejects data and four codecs select ui_cancelled_or_timed_out without base64. Read existing native OutputLimit/parent/cleanup semantics and preserve finally/exception behavior. Portable 100k real-budget classifications pass; actual/frozen writer/codec/lifetime tests await macOS CI. This does not create absent socket/session bindings, interrupt opaque Foundation work or provide atomic stop/publication. See `IMPLEMENTATION-C05U.md`.
 
+Implementation follow-up (2026-11-07, C05aa): Task77 root/TrollStore handlers now capture the caller at branch entry, refuse existing stop before/after capability retrieval and, for TrollStore, after the separate foreground lookup. A pre-stopped caller skips capability/foreground/JSON; cancellation observed after capability skips TrollStore foreground. Existing size/cancel/deadline, cleanup/parent and live diagnostic schema/order/authority remain. Source/portable checks pass; actual/C05z counted-provider, nested caller, reached-provider NS/C++ faults, cleanup and256 recovery-cycle tests await macOS CI. No private-provider preemption, value cache, absent caller binding or measured device gain is claimed. See `IMPLEMENTATION-C05AA.md`.
+
 ---
 
 ### [P1-60] UI-tree responses have element-count limits but no explicit byte/string limit and are fully copied through JSON + base64 + legacy text

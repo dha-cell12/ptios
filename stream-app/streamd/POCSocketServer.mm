@@ -7704,9 +7704,25 @@ static BOOL TLinkUITreeContextChanged(NSDictionary *before)
 static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
 {
     if (taskType == 77) {
+        const auto wireBudget = TLinkCurrentNativeBudget();
+        auto capabilityStop = TLinkAXWireBudget::Stop(wireBudget);
+        if (capabilityStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(capabilityStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         NSMutableDictionary *capability = [TLinkAXCapabilitySnapshot() mutableCopy];
+        capabilityStop = TLinkAXWireBudget::Stop(wireBudget);
+        if (capabilityStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(capabilityStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         CFAbsoluteTime resolveStarted = CFAbsoluteTimeGetCurrent();
         NSDictionary *foreground = TLinkUITreeFrontmostContext();
+        capabilityStop = TLinkAXWireBudget::Stop(wireBudget);
+        if (capabilityStop != TLinkAXWireBudget::Admission::Ready) {
+            return TLinkError(capabilityStop == TLinkAXWireBudget::Admission::Stopped
+                ? @"ui_cancelled_or_timed_out" : @"ui_response_too_large");
+        }
         NSInteger resolveDurationMs = (NSInteger)llround(
             (CFAbsoluteTimeGetCurrent() - resolveStarted) * 1000.0);
         capability[@"runtime"] = @"trollstore";
@@ -7735,7 +7751,6 @@ static NSData *TLinkHandleUITreeTask(int taskType, NSString *body)
             @"direct_foreground_focused_pid": @(sTLinkAXSpringBoardLastFocusedPid),
             @"direct_foreground_top_event_pid": @(sTLinkAXSpringBoardLastTopEventPid),
         };
-        const auto wireBudget = TLinkCurrentNativeBudget();
         BOOL jsonTooLarge = false, jsonStopped = false;
         NSData *json = TLinkAXBoundedJSONDataWithStop(capability, &jsonTooLarge, &jsonStopped);
         if (jsonStopped) {

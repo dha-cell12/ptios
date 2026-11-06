@@ -2324,11 +2324,21 @@ static BOOL zx_uiTreeContextChanged(NSDictionary *before)
 static void zx_handleUITreeTask(int taskType, UInt8 *eventData, CFWriteStreamRef stream)
 {
     if (taskType == TASK_UI_TREE_CAPABILITY) {
+        const auto wireBudget = TLinkCurrentNativeBudget();
+        auto capabilityStop = TLinkAXWireBudget::Stop(wireBudget);
+        if (capabilityStop != TLinkAXWireBudget::Admission::Ready) {
+            notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(capabilityStop), stream);
+            return;
+        }
         NSMutableDictionary *capability = [TLinkAXCapabilitySnapshot() mutableCopy];
+        capabilityStop = TLinkAXWireBudget::Stop(wireBudget);
+        if (capabilityStop != TLinkAXWireBudget::Admission::Ready) {
+            notifyClient((UInt8 *)TLinkAXWireBudget::FailureWire(capabilityStop), stream);
+            return;
+        }
         capability[@"runtime"] = @"rootfull";
         capability[@"service"] = @"springboard_script_bridge";
         capability[@"tasks"] = @[@77, @78, @79, @80, @81];
-        const auto wireBudget = TLinkCurrentNativeBudget();
         BOOL jsonTooLarge = false, jsonStopped = false;
         NSData *json = TLinkAXBoundedJSONDataWithStop(capability, &jsonTooLarge, &jsonStopped);
         if (jsonStopped) {
