@@ -21,6 +21,7 @@
 #include "../shared/TLinkRunElapsed.h"
 #include "../shared/TLinkASCIIPreparation.h"
 #include "../shared/TLinkTextTail.h"
+#include "../shared/TLinkHistoryRetirement.h"
 #include "ax-node-pool-owner.h"
 #include <mach/mach_time.h>
 namespace RealHistoryClock {
@@ -296,10 +297,25 @@ static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *
 #define flock historyFlock
 #define close historyClose
 #define TLinkEventChannelPublish historyPublish
+static bool historyIndexWorkOwners=false,historyRecoveryWorkOwners=false,historyCaptureDecode=false,historyDecodeImmutable=false;
+static NSArray *historyIndexDecodedRecords;
+static id historyDecodeIndex(NSData *data,NSJSONReadingOptions options){
+    if(historyIndexWorkOwners)TLinkAXFixtureAutoreleaseOwner();
+    id object=[NSJSONSerialization JSONObjectWithData:data options:historyDecodeImmutable?(NSJSONReadingOptions)0:options error:nil];
+    if(historyCaptureDecode)historyIndexDecodedRecords=[object isKindOfClass:[NSDictionary class]]?object[@"runs"]:nil;
+    return object;
+}
+static void historyIndexValidationOwner(){if(historyIndexWorkOwners)TLinkAXFixtureAutoreleaseOwner();}
+static void historyRecoveryValidationOwner(){if(historyRecoveryWorkOwners)TLinkAXFixtureAutoreleaseOwner();}
 namespace Current {
 static NSString *fixtureRoot;
 NSString *TLinkRunHistoryRootPath(void);
 #include "HistoryUnderTest.inc"
+}
+namespace BeforeIndexWork {
+static NSString *fixtureRoot;
+NSString *TLinkRunHistoryRootPath(void);
+#include "HistoryBeforeIndexWork.inc"
 }
 namespace BeforeWork {
 static NSString *fixtureRoot;
@@ -993,6 +1009,7 @@ static void historyCompactIndexCases(){
 #include "history-permission-runtime-fixture.inc"
 #include "history-elapsed-runtime-fixture.inc"
 #include "history-work-runtime-fixture.inc"
+#include "history-index-work-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     uint64_t clockSample=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(clockSample!=UINT64_MAX);
     for(unsigned n=0;n<32;++n){const uint64_t next=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(next>=clockSample&&next!=UINT64_MAX);clockSample=next;}
@@ -1115,6 +1132,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyConditionalPermissionCases();
     historyElapsedCases();
     historyWorkCases();
+    historyIndexWorkCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

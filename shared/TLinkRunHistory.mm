@@ -1,3 +1,4 @@
+#include "TLinkHistoryRetirement.h"
 #import "TLinkRunHistory.h"
 #include "TLinkASCIIPreparation.h"
 #include "TLinkTextTail.h"
@@ -377,6 +378,7 @@ static NSData *TLinkRunHistoryReadIndexData(BOOL *missing, NSString **code)
 // Read-only status never repairs metadata or rebuilds an index from artifacts.
 static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadCheckedIndex(NSString *operation)
 {
+    @autoreleasepool {
     BOOL missing = NO;
     NSString *code = nil;
     NSData *data = TLinkRunHistoryReadIndexData(&missing, &code);
@@ -392,22 +394,25 @@ static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadCheckedIndex(NSString 
     id records = valid ? object[@"runs"] : nil;
     valid = [schema isKindOfClass:[NSString class]] && [schema isEqualToString:TLinkRunHistorySchemaV1] &&
         [records isKindOfClass:[NSArray class]];
-    NSMutableSet<NSString *> *identities = [NSMutableSet set];
+    NSMutableSet<NSString *> *identities = [NSMutableSet setWithCapacity:valid ? MIN([(NSArray *)records count], kTLinkRunHistoryMaxRecords) : 0];
     if (valid) {
         for (id record in records) {
+            @autoreleasepool {
             id runId = [record isKindOfClass:[NSDictionary class]] ? record[@"run_id"] : nil;
             if (![runId isKindOfClass:[NSString class]] || [runId length] == 0 || [identities containsObject:runId]) {
                 valid = NO;
                 break;
             }
             [identities addObject:runId];
+            }
         }
     }
     if (!valid) {
         TLinkRunHistoryPersistenceFailure(operation, @"read", @"invalid_index");
         return nil;
     }
-    return [records mutableCopy];
+    return [records isKindOfClass:[NSMutableArray class]] ? records : [records mutableCopy];
+    }
 }
 
 // Repair only committed, retained metadata. Caller holds the monitor and flock.
@@ -454,11 +459,13 @@ static BOOL TLinkRunHistoryRepairJSON(NSDictionary *expected, NSString *path, NS
 static BOOL TLinkRunHistoryRecover(NSArray<NSDictionary *> *runs, NSString *operation)
 {
     if (sTLinkRunHistoryRecovered) return YES;
+    @autoreleasepool {
     // Preflight the whole repair set before touching any file. Never follow
     // persisted paths outside the exact per-ID locations or alias two IDs.
     BOOL valid = runs.count <= kTLinkRunHistoryMaxRecords;
-    NSMutableSet<NSString *> *paths = [NSMutableSet set];
+    NSMutableSet<NSString *> *paths = [NSMutableSet setWithCapacity:MIN(runs.count, kTLinkRunHistoryMaxRecords)];
     for (NSDictionary *record in runs) {
+        @autoreleasepool {
         NSString *runId = record[@"run_id"];
         NSString *name = [TLinkRunHistorySanitize(runId) stringByAppendingString:@".json"];
         NSString *recordPath = [TLinkRunHistoryRunsPath() stringByAppendingPathComponent:name];
@@ -473,6 +480,7 @@ static BOOL TLinkRunHistoryRecover(NSArray<NSDictionary *> *runs, NSString *oper
         }
         if (!valid) break;
         [paths addObject:recordPath];
+        }
     }
     if (!valid) { TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_invalid_index"); return NO; }
     for (NSString *directory in @[TLinkRunHistoryRootPath(), TLinkRunHistoryRunsPath(), TLinkRunHistoryEvidencePath()]) {
@@ -491,6 +499,7 @@ static BOOL TLinkRunHistoryRecover(NSArray<NSDictionary *> *runs, NSString *oper
     }
     sTLinkRunHistoryRecovered = YES;
     return YES;
+    }
 }
 
 // The held lock inode is also the intent marker: length 0 clean, 1 pending.
@@ -527,11 +536,10 @@ static BOOL TLinkRunHistoryPrepareRecovery(NSArray<NSDictionary *> *runs, NSStri
 
 static NSArray<NSDictionary *> *TLinkRunHistoryTrim(NSMutableArray<NSDictionary *> *runs)
 {
-    NSMutableArray<NSDictionary *> *retired = [NSMutableArray array];
-    while (runs.count > kTLinkRunHistoryMaxRecords) {
-        [retired addObject:runs.lastObject];
-        [runs removeLastObject];
-    }
+    const TLinkHistoryRetirementPlan plan(runs.count, kTLinkRunHistoryMaxRecords);
+    NSMutableArray<NSDictionary *> *retired = [NSMutableArray arrayWithCapacity:plan.hint];
+    for (size_t step = 0; step < plan.retired; ++step) [retired addObject:runs[plan.index(step)]];
+    if (plan.retired) [runs removeObjectsInRange:NSMakeRange(plan.keep, plan.retired)];
     return retired;
 }
 

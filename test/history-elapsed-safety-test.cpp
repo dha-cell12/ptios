@@ -4,7 +4,9 @@
 #include <deque>
 #include <string>
 #include "history-text-tail-safety-fixture.inc"
+#include "history-retirement-safety-fixture.inc"
 int main(){
+    historyRetirementPlans();
     historyTextTailCases();
     TLinkRunElapsed<4> clock;
     assert(clock.remember("root","run",10000,100));

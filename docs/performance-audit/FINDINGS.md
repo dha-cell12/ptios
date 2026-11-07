@@ -1678,6 +1678,8 @@ Delete oldest completed run logs only after the active run closes its writer. Ke
 
 ### [P1-51] Status task synchronously re-reads persistence files on every request
 
+C03aj preparation follow-up (2026-11-07): checked history reads now reuse the private parsed mutable runs array, retain immutable fallback and retire read/validation scratch before downstream formatting. Cold recovery gets validation pools; ordered retirement uses one tail-range erase with bounded initial hints. No index cache or skipped read/lock is introduced. Portable/source checks pass; full preceding native graph/transaction/lifetime and device qualification pending. Full index reads/rewrites remain. See `IMPLEMENTATION-C03AJ.md`.
+
 C03ae follow-up (2026-11-07): console preparation now searches backward for at most50 components while keeping full newline/redaction/empty-tail behavior. Console/JSON/public-operation and regex/line/status-row/prune pools scope unreturned temporaries; status avoids the intermediate selected-array copy. Existing file/read/commit/recovery/event order and complete status fields remain. Portable/source checks pass; Foundation/ARC/MRC and device qualification pending. Full index reads/rewrites remain. See `IMPLEMENTATION-C03AE.md`.
 
 **Status:** CONFIRMED  

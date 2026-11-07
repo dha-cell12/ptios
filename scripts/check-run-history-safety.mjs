@@ -1,3 +1,4 @@
+import {restoreHistoryIndexWork} from './lib/history-index-work-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,basename,join,resolve} from 'node:path';
@@ -10,8 +11,12 @@ import {restorePreparation} from './lib/preparation-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
-const [preparedHistory,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const [actualHistory,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
+const preparedHistory=restoreHistoryIndexWork(actualHistory);
 const beforeHistoryWork=restoreHistoryWork(preparedHistory);
+assert.match(actualHistory,/return \[records isKindOfClass:\[NSMutableArray class\]\] \? records : \[records mutableCopy\];/);
+assert.match(actualHistory,/TLinkHistoryRetirementPlan plan[\s\S]*removeObjectsInRange:NSMakeRange\(plan.keep, plan.retired\)/);
+console.log('History index work source passed: private decoded mutable-array reuse with fallback, scoped parsing/validation/recovery, bounded set hints and one ordered bulk trim; complete previous history retained.');
 const textTailCore=await read('shared/TLinkTextTail.h');
 assert.equal(createHash('sha256').update(textTailCore).digest('hex'),'766312034e273d968449d9bc9b49f65a4b7f2ccf125d07bf9cd910a7e9950665','complete bounded text-tail range planner');
 assert.match(preparedHistory,/TLinkTextTail<50>::Build[\s\S]*NSBackwardsSearch/);
@@ -271,19 +276,7 @@ console.log('History directory/lock source passed: real direct directories, regu
 console.log('History bounded index source passed: 32-MiB preallocation/read and encoded index cap, regular descriptor/ENOENT/chunk/EOF/finally policy and complete prior source.');
 console.log('History checked snapshot source passed: no unlocked read/fallback, fixed errors, read-only recovery state, caught read/format faults and complete frozen success/mutation source.');
 console.log('Run history source passed: compact index with unchanged artifact formatting and logical payloads, checked per-ID retirement and retained-reference protection, lock-inode pending marker coordinates warm owners, required-write recovery, fail-closed reads, checked commit/cleanup, diagnostics, finally and frozen record/status fields.');
-const coreRoot=resolve(tmpdir()),coreTemp=await mkdtemp(join(coreRoot,'tlink-history-elapsed-'));
-try{
-    const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
-    const binary=join(coreTemp,windows?'history-elapsed.exe':'history-elapsed'),file=join(root,'test/history-elapsed-safety-test.cpp');
-    const execute=(command,args)=>{const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);};
-    execute(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(coreTemp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',file,'-o',binary]);
-    execute(binary,[]);
-}finally{assert.equal(dirname(coreTemp),coreRoot);assert.ok(basename(coreTemp).startsWith('tlink-history-elapsed-'));await rm(coreTemp,{recursive:true,force:true});}
-if(process.platform!=='darwin'){
-    console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
-}else{
-    const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
-    const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
+const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
         .replace(monotonicFunction,'static uint64_t TLinkRunHistoryMonotonicMs(void) { return historyMonotonicNow(); }\n\n')
         .replace('sTLinkRunHistoryElapsed.remember(','historyRememberElapsedHook(sTLinkRunHistoryElapsed,')
         .replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;')
@@ -292,6 +285,9 @@ if(process.platform!=='darwin'){
         .replace('NSMutableDictionary *run = [source mutableCopy];','historyWorkOwner();\n                NSMutableDictionary *run = [source mutableCopy];')
         .replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:')
         .replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];')
+        .replace('[NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil]','historyDecodeIndex(data,NSJSONReadingMutableContainers)')
+        .replace('            id runId = [record isKindOfClass:', '            historyIndexValidationOwner();\n            id runId = [record isKindOfClass:')
+        .replace('        NSString *runId = record[@"run_id"];','        historyRecoveryValidationOwner();\n        NSString *runId = record[@"run_id"];')
         .replace('TLinkRunHistoryReadIndexData(&missing, &code)','historyReadBoundedData(&missing, &code, operation, TLinkRunHistoryReadIndexData)')
         .replace('open(TLinkRunHistoryIndexPath().fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)','historyIndexOpen(TLinkRunHistoryIndexPath().fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)')
         .replace('fstat(fd, &indexInfo)','historyIndexStat(fd, &indexInfo)')
@@ -318,9 +314,27 @@ if(process.platform!=='darwin'){
         .replace('![data writeToFile:path atomically:YES]','!historyWriteData(data,path)')
         .replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)')
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
+const adaptedCurrent=adapt(actualHistory),adaptedBeforeIndex=adapt(preparedHistory);
+for(const fixture of [adaptedCurrent,adaptedBeforeIndex]){
+    assert.equal((fixture.match(/historyDecodeIndex\(data,/g)||[]).length,1);
+    assert.equal((fixture.match(/historyIndexValidationOwner\(\)/g)||[]).length,1);
+    assert.equal((fixture.match(/historyRecoveryValidationOwner\(\)/g)||[]).length,1);
+}
+const coreRoot=resolve(tmpdir()),coreTemp=await mkdtemp(join(coreRoot,'tlink-history-elapsed-'));
+try{
+    const windows=process.platform==='win32',compiler=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl\.exe)$/i.test(basename(compiler));
+    const binary=join(coreTemp,windows?'history-elapsed.exe':'history-elapsed'),file=join(root,'test/history-elapsed-safety-test.cpp');
+    const execute=(command,args)=>{const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);};
+    execute(compiler,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(coreTemp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer',file,'-o',binary]);
+    execute(binary,[]);
+}finally{assert.equal(dirname(coreTemp),coreRoot);assert.ok(basename(coreTemp).startsWith('tlink-history-elapsed-'));await rm(coreTemp,{recursive:true,force:true});}
+if(process.platform!=='darwin'){
+    console.log('macOS actual/frozen history Foundation/POSIX/redaction/lock integration included in CI; not run on this host.');
+}else{
+    const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(preparedHistory)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adaptedCurrent),writeFile(join(temp,'HistoryBeforeIndexWork.inc'),adaptedBeforeIndex),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
         const binary=join(temp,'run-history-runtime'),owner=join(temp,'work-owner.o');
         run(process.env.CXX||'clang++',['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),owner,'-o',binary]);

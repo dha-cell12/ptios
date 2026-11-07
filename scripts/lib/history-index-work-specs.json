@@ -1,0 +1,24 @@
+{
+  "beforeHash": "56914732f5164cd728098a60c6d143b1ca4c9aa87261ccda69ec3080cd83fabb",
+  "currentHash": "75e94157849213b10041d343f008adf9680c367121c2a3365df2af6acc8cdc15",
+  "parts": [
+    {
+      "name": "reader",
+      "start": "static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadCheckedIndex(",
+      "end": "// Repair only committed, retained metadata.",
+      "currentHash": "2d7a9771e93fcdc7e82116e0ef5e54a8878566b91be85a80310203f1e48f3d4d"
+    },
+    {
+      "name": "recover",
+      "start": "static BOOL TLinkRunHistoryRecover(",
+      "end": "// The held lock inode is also the intent marker:",
+      "currentHash": "df9c2d84d3e0f575905390c72c549e1ce06fe348b7547e94da89c339c98d4af8"
+    },
+    {
+      "name": "trim",
+      "start": "static NSArray<NSDictionary *> *TLinkRunHistoryTrim(",
+      "end": "// Retirement owns only exact per-ID leaves,",
+      "currentHash": "3267a9023b7bba5b0a35a144dece6d5eab54626a4de53f9f44d124a013ceae35"
+    }
+  ]
+}

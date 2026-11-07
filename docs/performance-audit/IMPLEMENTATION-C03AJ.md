@@ -1,0 +1,30 @@
+# C03aj — History decoded index and ordered retirement package
+
+Date: 2026-11-07 (Asia/Bangkok). Baseline: `91da36ea`; user reported C03ai build passed and requested larger batches. Scope: shared history used by rootfull/roothide and production TrollStore. TouchPOC excluded. Extends C03/P1-48/P1-49/P1-51 preparation work; persistence/device qualification remains open.
+
+## Delivered together
+
+- Reuse the validated, freshly decoded mutable runs array instead of copying that top-level array again. The parser still requests mutable containers. Preserve a mutableCopy fallback for immutable arrays. This is a private per-read graph: no cache, shared published value or cross-request mutation is introduced. Begin/finish/status still own their graph after the read returns.
+- Scope checked-index read/parse/validation temporaries to a normal local pool, retaining the returned runs graph across return. Raw encoded data, the wrapper dictionary and validation scratch can retire before downstream transaction/status formatting. The caller still holds the process monitor and flock during the checked read and this cleanup.
+- Scope each record validation, retaining IDs in the existing duplicate set. Reserve at most50 entries initially; the set can still grow for an accepted larger index. Keep all original schema/identity/duplicate/error priority and the32-MiB descriptor/read/output boundary. This is a capacity hint, not a new quota.
+- Scope cold recovery and each record's path/schema preflight. Keep the warm recovered fast return before the new pool. Reserve at most50 path-set entries. Validation still finishes before any repair effect; exact paths, collision/evidence guards, read/repair/write behavior and recovered-state policy remain unchanged.
+- Plan retirement with checked subtraction, preserve last-to-first retired order and retain those exact objects, then remove the complete tail with one range mutation. The retired-array hint is at most the retention limit. A1000-record private array yields950 retired objects in the same order, with one range erase instead of950 removeLastObject calls. The existing post-index owned-artifact pruning remains unchanged.
+
+All begin/finish/snapshot, marker, error/diagnostic, file-lock, recovery repair, write, unlock, event and prune ordering outside these private helpers remains byte-for-byte unchanged. No new IO, retry, rollback, durability claim, retention quota or wire field is added. Allocation-failure timing and private partial-array mutation during a failed trim can differ: the new helper builds its retired list before erasing the tail. Required public writes/commit/error handling stay in their existing positions; no partial local graph is published as success.
+
+## Verification
+
+All **90 workflow runners** (36 source,54 safety) have passing Windows results. The full run identified a v1 source assertion tied to the former while loop; after updating it to assert the ordered plan/range mutation, that runner passed again. **521 source assertions** pass with16 artifact-only checks skipped. Focused history source/portable tests, JavaScript syntax, ten-file expanded assertion preprocessing and git diff --check pass. Apple native branches are skipped on this host.
+
+The actual portable retirement plan executes100,000 independent frozen pop-last oracles across varied counts/limits, comparing retained size, retired indices/order and bounded hints. Explicit empty/zero/large-limit/SIZE_MAX cases exercise subtraction and index boundaries without allocating huge arrays. Existing continuous elapsed and bounded tail suites remain active in the same executable.
+
+Freeze the complete previous checked reader, recovery and trim helpers. Reversing those three regions and the new include reproduces the exact complete HEAD history source before the entire historical guard chain runs. Public header, event channel, FileHandle, storage/console runtime and transaction functions are unchanged. Three native decoder/validation seams are checked on Windows for both current and immediately preceding complete-source extractions.
+
+Extend the existing Foundation/POSIX/ARC/ASan/UBSan history executable and its explicit MRC owner fixture; no new workflow or executable. Native expectations include:
+
+- An additional complete preceding-history namespace,64 begin/finish transactions crossing retention, seven status limits, normalized full replies/decoded index/events/write order compared with current history. Existing malformed/read/write/marker/recovery/cross-process/owned-prune tests use the current implementation.
+- Real mutable JSON parse identity reuse versus the preceding top-array copy; forced immutable Foundation parsing exercises the fallback. Returned graphs remain valid and mutable after caller-pool drainage. The parser's temporary fixture capture is disabled outside these cases; production has no such capture.
+- Checked-reader MRC peak2 versus33 for32 valid records, with zero current pending owners after return; recovery preflight peak1 versus32 on a final invalid record, no repair writes/events, balanced real descriptors/flock and caller-pool cleanup. These are controlled pending owners, not Foundation allocations or RSS. The existing public snapshot witness expectation falls from3 to2 because its read owner now retires inside the checked-read phase.
+- Actual/frozen trim comparisons through a Foundation-backed message probe at0/1/49/50/51/128/1000 records with equal remaining/retired objects, exact object identity/order, one range mutation versus per-record removals and no mutation for an empty retired tail.
+
+**New Apple compilation and native execution require macOS CI.** No real device CPU, Foundation allocation, RSS or IO-latency gain is measured. Exceptional pool exits are not promised independent cleanup; existing outer public catches/pools and resource finally blocks remain. Full index/evidence rewrites, storage/lock time, crash/power-loss recovery and device qualification stay open. One checkpoint covers the complete decoded-graph/validation/retirement package.

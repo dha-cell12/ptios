@@ -69,11 +69,12 @@ static void historyWorkLinePools(){
     }
     HISTORY_WORK_REQUIRE([held isEqual:expected]);
 }
-static NSDictionary *historyWorkFlow(bool modern){
+static NSDictionary *historyWorkFlow(bool modern,bool beforeIndex=false){
     HistoryBegin begin=modern?Current::TLinkRunHistoryBegin:BeforeWork::TLinkRunHistoryBegin;
     HistoryFinish finish=modern?Current::TLinkRunHistoryFinish:BeforeWork::TLinkRunHistoryFinish;
     HistorySnapshot snapshot=modern?Current::TLinkRunHistorySnapshot:BeforeWork::TLinkRunHistorySnapshot;
     NSString *root=modern?Current::fixtureRoot:BeforeWork::fixtureRoot;
+    if(beforeIndex){begin=BeforeIndexWork::TLinkRunHistoryBegin;finish=BeforeIndexWork::TLinkRunHistoryFinish;snapshot=BeforeIndexWork::TLinkRunHistorySnapshot;root=BeforeIndexWork::fixtureRoot;}
     historyUUIDs=900000;[historyEvents removeAllObjects];[historyWriteAttempts removeAllObjects];
     NSMutableArray *replies=[NSMutableArray array];
     for(unsigned n=0;n<64;++n){
@@ -145,7 +146,7 @@ static void historyWorkOperationPools(){
                 HISTORY_WORK_REQUIRE(held.count&&historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());
                 HISTORY_WORK_REQUIRE(TLinkAXFixtureCreatedOwners()>0);
                 HISTORY_WORK_REQUIRE(modern?TLinkAXFixtureLiveOwners()==0:TLinkAXFixtureLiveOwners()>0);
-                if(operation==2)HISTORY_WORK_REQUIRE(modern?TLinkAXFixturePeakOwners()==3:TLinkAXFixturePeakOwners()==52);
+                if(operation==2)HISTORY_WORK_REQUIRE(modern?TLinkAXFixturePeakOwners()==2:TLinkAXFixturePeakOwners()==52);
                 historyWorkTracking=false;
             }
             HISTORY_WORK_REQUIRE(held.count&&TLinkAXFixtureLiveOwners()==0);
