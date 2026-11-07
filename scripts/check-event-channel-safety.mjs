@@ -216,7 +216,14 @@ try {
  for(const current of [false,true]){
   const label=current?'Current':'Before';
   for(const [kind,name,symbol] of [['event','token','Token'],['event','integer','Integer'],['event','batch','Batch'],['history','sanitize','Sanitize']]){
-   const text=current?preparationPart(kind==='event'?currentEvent:prepHistory,kind,name):preparationBefore(kind,name);
+   let text=current?preparationPart(kind==='event'?currentEvent:prepHistory,kind,name):preparationBefore(kind,name);
+   if(current&&kind==='event'&&name==='token'){
+    // The historical token boundary also spans the later, unrelated JSON counter include.
+    const counterInclude='#include "TLinkEventJSONCounter.inc"\n\n';
+    assert.equal(text.split(counterInclude).length,2,'one counter include after the current token');
+    text=text.replace(counterInclude,'');
+    assert.equal(text,preparationPart(preparedEvent,kind,name),'standalone token retains the complete production function');
+   }
    prepFixtures[label+'Preparation'+symbol+'.inc']=rename(text,label+symbol);
   }
  }

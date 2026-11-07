@@ -9,6 +9,7 @@ All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor
 
 - Fix C03aj native fixture compilation: compare the two `NSDictionary` transaction graphs directly with `isEqual:`. The `items` field belongs only to `HistoryTrimProbe`; its separate retention comparisons remain intact. Production source and compiler warnings are unchanged.
 - Validation: history source/portable retirement, text-tail and elapsed checks, Run History v1 and diff whitespace checks pass on Windows. Foundation/ARC compilation and execution require macOS CI.
+- Fix event preparation fixture extraction: remove only the adjacent JSON counter include from the standalone current-token fragment, with exact equality against the restored token function. The production counter remains covered by the event runtime. Event source/extraction, portable preparation/ASCII/metadata/core, Event Channel v1, JavaScript syntax and diff whitespace checks pass on Windows; Apple Foundation compilation/execution requires macOS CI.
 
 ## Implementation checkpoint — 2026-10-17
 
