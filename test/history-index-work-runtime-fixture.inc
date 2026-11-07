@@ -87,7 +87,7 @@ static void historyIndexWorkCases(){
     Current::sTLinkRunHistoryRecovered=NO;BeforeIndexWork::sTLinkRunHistoryRecovered=NO;
     historyIndexWorkTrims();
     NSDictionary *old=historyWorkFlow(false,true),*now=historyWorkFlow(true);
-    assert([old->items isEqual:now->items]);
+    assert([old isEqual:now]);
     // Use one private root for exact path and real held-lock comparisons.
     BeforeIndexWork::fixtureRoot=Current::fixtureRoot;
     historyIndexWorkReaders();historyIndexWorkRecovery();

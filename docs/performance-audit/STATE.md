@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Build correction — 2026-11-08
+
+- Fix C03aj native fixture compilation: compare the two `NSDictionary` transaction graphs directly with `isEqual:`. The `items` field belongs only to `HistoryTrimProbe`; its separate retention comparisons remain intact. Production source and compiler warnings are unchanged.
+- Validation: history source/portable retirement, text-tail and elapsed checks, Run History v1 and diff whitespace checks pass on Windows. Foundation/ARC compilation and execution require macOS CI.
+
 ## Implementation checkpoint — 2026-10-17
 
 - User scope: exclude prototype TouchPOC / `poc-trollstore` findings P0-21, P1-65, P1-66, P2-25 from implementation. Do not optimize that artifact.
