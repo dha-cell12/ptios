@@ -257,16 +257,31 @@ static void publicCases(){
         cancellation.reset();
     }}
 }
-int main(){@autoreleasepool{
-    std::puts("AX foreground work: actual/frozen process/metadata/main/public helpers, real Foundation/CF/plist and controlled sysctl/path/private/queue providers");
-    processCases();metadataCases();bridgeCases();publicCases();
-    for(bool overflow:{false,true})for(unsigned stage:{8U,9U,10U,11U,12U,13U,14U}){@autoreleasepool{
-        if(stage<=10)bridgeReset();else publicReset();stopAt=stage;escapeCallerTLS=true;outputStop=overflow;
-        cancellation=std::make_shared<TLinkNativeCancellation>();auto budget=std::make_shared<TLinkNativeBudget>(cancellation,0,1024);caller=budget;
-        {TLinkNativeBudgetScope scope(budget);NSDictionary *value=stage<=10?bridge(true):CurrentTLinkAXCopyFrontmostContext();
-            assert([value[@"error"] isEqual:(overflow?@"ui_response_too_large":@"ui_cancelled_or_timed_out")]);assert(TLinkCurrentNativeBudget()!=budget);}
-        assert(!TLinkCurrentNativeBudget());
-    }}reset();
-    assert(!TLinkCurrentNativeBudget()&&TLinkAXFixtureLiveOwners()==0);
-    std::puts("AX foreground work passed: 128 process/public frozen comparisons, bounded allocation/path faults, scan cancellation, peak one vs256 temporary owners, real plist guards, actual native budget bridge under controlled main scheduling and fallback stop isolation. Real process/main-thread/device performance pending.");
-}return 0;}
+int main()
+{
+    @autoreleasepool {
+        std::puts("AX foreground work: actual/frozen process/metadata/main/public helpers, real Foundation/CF/plist and controlled sysctl/path/private/queue providers");
+        processCases();metadataCases();bridgeCases();publicCases();
+        for(bool overflow:{false,true}) {
+            for(unsigned stage:{8U,9U,10U,11U,12U,13U,14U}) {
+                @autoreleasepool {
+                    if(stage<=10)bridgeReset();else publicReset();
+                    stopAt=stage;escapeCallerTLS=true;outputStop=overflow;
+                    cancellation=std::make_shared<TLinkNativeCancellation>();
+                    auto budget=std::make_shared<TLinkNativeBudget>(cancellation,0,1024);caller=budget;
+                    {
+                        TLinkNativeBudgetScope scope(budget);
+                        NSDictionary *value=stage<=10?bridge(true):CurrentTLinkAXCopyFrontmostContext();
+                        assert([value[@"error"] isEqual:(overflow?@"ui_response_too_large":@"ui_cancelled_or_timed_out")]);
+                        assert(TLinkCurrentNativeBudget()!=budget);
+                    }
+                    assert(!TLinkCurrentNativeBudget());
+                }
+            }
+        }
+        reset();
+        assert(!TLinkCurrentNativeBudget()&&TLinkAXFixtureLiveOwners()==0);
+        std::puts("AX foreground work passed: 128 process/public frozen comparisons, bounded allocation/path faults, scan cancellation, peak one vs256 temporary owners, real plist guards, actual native budget bridge under controlled main scheduling and fallback stop isolation. Real process/main-thread/device performance pending.");
+    }
+    return 0;
+}
