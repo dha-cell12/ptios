@@ -1385,6 +1385,8 @@ The async queue has no byte/entry bound. A log-heavy script can enqueue faster t
 
 ### [P1-43] JS file readLine performs one read syscall per byte
 
+C03ag lifecycle follow-up (2026-11-07): shared FileHandle reuses its normalized valid mode, avoids normalizing canonical seek/tell, protects a newly opened fd until final initialization and safely initializes unopened objects. Nil/throwing construction retires the pending fd; seek/flush/close use operation pools. Existing chunk/rewind and complete replies remain. Portable/source checks pass; Foundation/fault/JSCore/device qualification pending. See `IMPLEMENTATION-C03AG.md`.
+
 Implementation follow-up (2026-11-07, C03ac): retain C03a's line chunk/rewind algorithm and extend the shared numeric/all reader with direct NSMutableData tail reads and checked byte progression. Add shared checked write progress, retained UTF8 write views and four operation pools across root/helper/production TrollStore. Portable actual-core/frozen oracle, boundary, fault and macro integration checks pass; Foundation/ARC/POSIX fixture additions and device performance remain pending. See `IMPLEMENTATION-C03AC.md`.
 
 **Status:** CONFIRMED  
@@ -1397,6 +1399,8 @@ A line up to the 512 KiB transfer limit can cause up to ~524,288 one-byte `read(
 ---
 
 ### [P1-44] File reads always build both UTF-8 text and base64 representations
+
+C03ag ownership follow-up (2026-11-07): extend the shared lifecycle with final descriptor handoff, safe unopened/nil initialization and seek/flush/close pools. Full dual read representations remain. Native held-result/constructor-fault coverage and device memory qualification pending; see `IMPLEMENTATION-C03AG.md`.
 
 C03ac ownership follow-up (2026-11-07): both representations and all response fields remain. Normal operation pools retire unreturned temporaries while returned text/base64 graphs remain owned. This does not remove the dual representation cost or establish a process RSS bound. Native held-result/MRC retirement and device qualification pending; see `IMPLEMENTATION-C03AC.md`.
 

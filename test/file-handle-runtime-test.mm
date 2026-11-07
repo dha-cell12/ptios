@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <cstring>
+#include <climits>
 #include "ax-node-pool-owner.h"
 void TLinkAXFixtureOwnerDidDrain(void){}
 static bool fileTrackPools=false;
@@ -35,13 +36,43 @@ static unsigned fileInterrupts=0;
 static off_t fileFaultAt=-1;
 static bool fileStatFails=false,fileRewindFails=false,fileProbeFails=false,fileOpening=false;
 static int fileInjected=-1,fileLastFD=-1;
+static unsigned fileLifecycleStage=0,fileLifecycleThrow=0,fileLifecycleCloses=0,fileLifecycleOpenCalls=0;
+static unsigned fileLifecycleFactoryFault=0,fileLifecycleInitFault=0;
+static int fileLifecycleLastFlags=0;
+static bool fileLifecyclePools=false;
+static bool fileLifecycleSeekFault=false,fileLifecycleSyncFault=false,fileLifecycleCloseFault=false;
+static bool fileLifecycleMeasure=false,fileLifecycleTextPools=false;
+static unsigned fileLifecycleNormalizations=0,fileLifecycleSeekNormalizations=0;
+static void fileLifecycleNormalizationProbe(){if(fileLifecycleMeasure)++fileLifecycleNormalizations;if(fileLifecycleTextPools)TLinkAXFixtureAutoreleaseOwner();}
+static void fileLifecycleSeekNormalizationProbe(){if(fileLifecycleMeasure)++fileLifecycleSeekNormalizations;}
+static void fileLifecycleRaise(unsigned kind){
+    if(kind==1)[NSException raise:@"FileLifecycleFixture" format:@"constructor"];
+    if(kind==2)throw std::runtime_error("constructor");
+}
+static bool fileLifecycleTrip(unsigned stage){
+    if(!fileOpening||fileLifecycleStage!=stage)return false;
+    fileLifecycleRaise(fileLifecycleThrow);return true;
+}
+static TLinkJSFileHandle *fileLifecycleConstruct(Class klass){
+    if(fileLifecycleFactoryFault==1)return nil;
+    if(fileLifecycleFactoryFault>1)fileLifecycleRaise(fileLifecycleFactoryFault-1);
+    return [[klass alloc] init];
+}
 static int fileTestOpen(const char *path,int flags,mode_t mode){
+    ++fileLifecycleOpenCalls;fileLifecycleLastFlags=flags;
     const int fd=fileInjected>=0 ? fileInjected : ::open(path,flags,mode);fileInjected=-1;
     if(fd>=0){assert(fileFDs.insert(fd).second);fileLastFD=fd;}return fd;
 }
-static int fileTestClose(int fd){assert(fileFDs.erase(fd)==1);if(fileLastFD==fd)fileLastFD=-1;return ::close(fd);}
-static int fileTestStat(int fd,struct stat *st){if(fileStatFails){errno=EIO;return -1;}return ::fstat(fd,st);}
+static int fileTestClose(int fd){assert(fileFDs.erase(fd)==1);++fileLifecycleCloses;if(fileLifecyclePools)TLinkAXFixtureAutoreleaseOwner();if(fileLastFD==fd)fileLastFD=-1;const int result=::close(fd);if(fileLifecycleCloseFault){errno=EIO;return -1;}return result;}
+static int fileTestStat(int fd,struct stat *st){if(fileLifecycleTrip(5)||fileStatFails){errno=EIO;return -1;}return ::fstat(fd,st);}
+static int fileTestParentStat(const char *path,struct stat *st){if(fileLifecycleTrip(1)){errno=EIO;return -1;}return ::stat(path,st);}
+static int fileTestParentOwner(int fd,uid_t uid,gid_t gid){if(fileLifecycleTrip(2)){errno=EACCES;return -1;}return ::fchown(fd,uid,gid);}
+static int fileTestParentMode(int fd,mode_t mode){if(fileLifecycleTrip(3)){errno=EACCES;return -1;}return ::fchmod(fd,mode);}
+static int fileTestSync(int fd){if(fileLifecyclePools)TLinkAXFixtureAutoreleaseOwner();if(fileLifecycleSyncFault){errno=EIO;return -1;}return ::fsync(fd);}
 static off_t fileTestSeek(int fd,off_t offset,int whence){
+    if(fileLifecyclePools)TLinkAXFixtureAutoreleaseOwner();
+    if(!fileOpening&&fileLifecycleSeekFault){errno=EIO;return -1;}
+    if(fileOpening&&((whence==SEEK_END&&fileLifecycleTrip(4))||(whence==SEEK_CUR&&offset==0&&fileLifecycleTrip(6)))){errno=EIO;return -1;}
     if(fileOpening&&fileProbeFails&&whence==SEEK_CUR&&offset==0){errno=ESPIPE;return -1;}
     if(whence==SEEK_CUR&&offset<0){++fileRewinds;if(fileRewindFails){errno=EIO;return -1;}}
     return ::lseek(fd,offset,whence);
@@ -74,7 +105,11 @@ static ssize_t fileTestWrite(int fd,const void *bytes,size_t count){
 #define write(fd,bytes,count) fileTestWrite(fd,bytes,count)
 #define lseek(fd,offset,whence) fileTestSeek(fd,offset,whence)
 #define fstat(fd,st) fileTestStat(fd,st)
-#include "../shared/TLinkJSFileHandle.mm"
+#define stat(path,st) fileTestParentStat(path,st)
+#define fchown(fd,uid,gid) fileTestParentOwner(fd,uid,gid)
+#define fchmod(fd,mode) fileTestParentMode(fd,mode)
+#define fsync(fd) fileTestSync(fd)
+#include "FileHandleLifecycleUnderTest.inc"
 #define TLinkJSFileHandle LegacyTLinkJSFileHandle
 #define TLinkJSFileModeIsValid LegacyTLinkJSFileModeIsValid
 #define TLinkJSFileModeWrites LegacyTLinkJSFileModeWrites
@@ -82,7 +117,7 @@ static ssize_t fileTestWrite(int fd,const void *bytes,size_t count){
 #define TLinkJSFileNormalizeMode LegacyTLinkJSFileNormalizeMode
 #define TLinkJSFileError LegacyTLinkJSFileError
 #define TLinkJSFileDataResult LegacyTLinkJSFileDataResult
-#include "fixtures/js-file-handle-legacy-v1.inc"
+#include "LegacyFileHandleLifecycle.inc"
 #undef TLinkJSFileDataResult
 #undef TLinkJSFileError
 #undef TLinkJSFileNormalizeMode
@@ -91,6 +126,10 @@ static ssize_t fileTestWrite(int fd,const void *bytes,size_t count){
 #undef TLinkJSFileModeIsValid
 #undef TLinkJSFileHandle
 #undef fstat
+#undef stat
+#undef fchown
+#undef fchmod
+#undef fsync
 #undef lseek
 #undef read
 #undef write
@@ -100,7 +139,15 @@ struct FileTrace {
     NSArray *results=nil;NSData *contents=nil;size_t reads=0;
     FileTrace(NSArray *values,NSData *bytes,size_t count):results(values),contents(bytes),reads(count){}
 };
-static void fileReset(){assert(fileFDs.empty());fileReads=fileRewinds=0;fileMaxRead=8192;fileInterrupts=0;fileFaultAt=-1;fileStatFails=fileRewindFails=fileProbeFails=fileOpening=false;fileInjected=fileLastFD=-1;fileTrackPools=false;fileIOThrow=fileWrites=fileWriteInterrupts=0;fileMaxWrite=SIZE_MAX;fileWriteFaultAt=-1;fileZeroWrite=fileWriteOverrun=fileReadOverrun=false;}
+static void fileReset(){
+    assert(fileFDs.empty());fileReads=fileRewinds=0;fileMaxRead=8192;fileInterrupts=0;fileFaultAt=-1;
+    fileStatFails=fileRewindFails=fileProbeFails=fileOpening=false;fileInjected=fileLastFD=-1;
+    fileTrackPools=false;fileIOThrow=fileWrites=fileWriteInterrupts=0;fileMaxWrite=SIZE_MAX;fileWriteFaultAt=-1;
+    fileZeroWrite=fileWriteOverrun=fileReadOverrun=false;
+    fileLifecycleStage=fileLifecycleThrow=fileLifecycleCloses=fileLifecycleOpenCalls=fileLifecycleFactoryFault=fileLifecycleInitFault=0;
+    fileLifecycleLastFlags=0;fileLifecyclePools=fileLifecycleSeekFault=fileLifecycleSyncFault=fileLifecycleCloseFault=false;
+    fileLifecycleMeasure=fileLifecycleTextPools=false;fileLifecycleNormalizations=fileLifecycleSeekNormalizations=0;
+}
 static TLinkJSFileHandle *fileOpen(bool legacy,NSString *path,NSString *mode,NSUInteger cap){
     NSString *error=nil;
     fileOpening=true;
@@ -135,6 +182,7 @@ static FileTrace filePipe(bool legacy){
     assert(fileFDs.empty());return {trace,nil,fileReads};
 }
 #include "file-handle-payload-runtime-fixture.inc"
+#include "file-lifecycle-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]],*path=[root stringByAppendingPathComponent:@"handle.bin"];
     puts("FileHandle Foundation: actual/frozen complete classes, POSIX descriptors and JSCore");fflush(stdout);
@@ -163,6 +211,7 @@ int main(int argc,char **argv){@autoreleasepool{
     }
     for(unsigned n=0;n<128;++n){@autoreleasepool{fileParity(path,[@"one\r\ntwo\nlast" dataUsingEncoding:NSUTF8StringEncoding],8);}}
     filePayloadRuntimeCases(path);
+    fileLifecycleRuntimeCases(root,path);
     assert(fileFDs.empty());assert([[NSFileManager defaultManager] removeItemAtPath:path error:nil]);
     puts("FileHandle Foundation passed: frozen full replies/mixed read-write-seek/tell/append/limits/CR/EOF, real UTF8/binary files, short/EINTR/EIO, stat fallback, real pipe, fresh external edits, rewind failure/recovery, JS bindings and 128 balanced lifecycles.");
 }}

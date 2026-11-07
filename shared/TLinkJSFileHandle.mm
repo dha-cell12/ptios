@@ -1,6 +1,7 @@
 #import "TLinkJSFileHandle.h"
 #include "TLinkJSFileLine.h"
 #include "TLinkJSFileIO.h"
+#include "TLinkJSFileOpen.h"
 #include "TLinkUTF8Data.h"
 
 #include <errno.h>
@@ -11,17 +12,18 @@
 
 static NSString *TLinkJSFileNormalizeMode(NSString *mode)
 {
+    @autoreleasepool {
     NSString *value = [[mode ?: @"r" lowercaseString]
         stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([value isEqualToString:@"r+b"]) return @"rb+";
     if ([value isEqualToString:@"w+b"]) return @"wb+";
     if ([value isEqualToString:@"a+b"]) return @"ab+";
     return value;
+    }
 }
 
-BOOL TLinkJSFileModeIsValid(NSString *mode)
+static BOOL TLinkJSFileNormalizedModeIsValid(NSString *value)
 {
-    NSString *value = TLinkJSFileNormalizeMode(mode);
     static NSSet<NSString *> *validModes;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -32,6 +34,11 @@ BOOL TLinkJSFileModeIsValid(NSString *mode)
         ]];
     });
     return [validModes containsObject:value];
+}
+
+BOOL TLinkJSFileModeIsValid(NSString *mode)
+{
+    return TLinkJSFileNormalizedModeIsValid(TLinkJSFileNormalizeMode(mode));
 }
 
 BOOL TLinkJSFileModeWrites(NSString *mode)
@@ -85,13 +92,16 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
                     error:(NSString **)error
 {
     NSString *normalizedMode = TLinkJSFileNormalizeMode(mode);
-    if (!TLinkJSFileModeIsValid(normalizedMode)) {
+    BOOL normalizedValid = normalizedMode && TLinkJSFileNormalizedModeIsValid(normalizedMode);
+    if (!normalizedValid && !TLinkJSFileModeIsValid(normalizedMode)) {
         if (error) *error = @"invalid_file_mode";
         return nil;
     }
 
     BOOL plus = [normalizedMode containsString:@"+"];
-    BOOL writing = TLinkJSFileModeWrites(normalizedMode);
+    BOOL writing = normalizedValid
+        ? ([normalizedMode hasPrefix:@"w"] || [normalizedMode hasPrefix:@"a"] || plus)
+        : TLinkJSFileModeWrites(normalizedMode);
     int flags = plus ? O_RDWR : (writing ? O_WRONLY : O_RDONLY);
     if ([normalizedMode hasPrefix:@"w"]) flags |= O_CREAT | O_TRUNC;
     if ([normalizedMode hasPrefix:@"a"]) flags |= O_CREAT | O_APPEND;
@@ -106,6 +116,8 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
         if (error) *error = [NSString stringWithFormat:@"file_open_failed errno=%d %s", errno, strerror(errno)];
         return nil;
     }
+    TLinkJSFileOpenOwner pending(fd);
+    @try {
     if (!existedBeforeOpen && writing) {
         struct stat parentStat;
         NSString *parent = [path stringByDeletingLastPathComponent];
@@ -116,13 +128,15 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
     }
     if ([normalizedMode hasPrefix:@"a"] && lseek(fd, 0, SEEK_END) < 0) {
         int seekError = errno;
-        close(fd);
         if (error) *error = [NSString stringWithFormat:@"file_seek_failed errno=%d %s", seekError, strerror(seekError)];
         return nil;
     }
 
     TLinkJSFileHandle *handle = [[self alloc] init];
-    handle->_fd = fd;
+    if (!handle) {
+        if (error) *error = [NSString stringWithFormat:@"file_open_failed errno=%d %s", ENOMEM, strerror(ENOMEM)];
+        return nil;
+    }
     handle->_readable = !writing || plus;
     handle->_writable = writing;
     handle->_maxTransferBytes = MAX((NSUInteger)1, maxTransferBytes);
@@ -132,7 +146,23 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
     handle.path = path ?: @"";
     handle.mode = normalizedMode;
     handle.closed = NO;
+    handle->_fd = pending.release();
     return handle;
+    } @finally {
+        pending.retire([](int value){::close(value);});
+    }
+}
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self) {
+        _fd = -1;
+        _closed = YES;
+        _path = @"";
+        _mode = @"r";
+    }
+    return self;
 }
 
 - (void)dealloc
@@ -254,19 +284,25 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
 
 - (NSDictionary *)seekWhence:(NSString *)whence offset:(long long)offset
 {
+    @autoreleasepool {
     @synchronized (self) {
         if (self.closed || _fd < 0) return [self closedError];
-        NSString *value = [[whence ?: @"set" lowercaseString]
-            stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         int origin = SEEK_SET;
-        if ([value isEqualToString:@"cur"] || [value isEqualToString:@"current"]) origin = SEEK_CUR;
-        else if ([value isEqualToString:@"end"]) origin = SEEK_END;
-        else if (![value isEqualToString:@"set"] && ![value isEqualToString:@"start"]) {
-            return TLinkJSFileError(@"file_seek_invalid_whence", self.path);
+        if ([whence isEqualToString:@"cur"] || [whence isEqualToString:@"current"]) origin = SEEK_CUR;
+        else if ([whence isEqualToString:@"end"]) origin = SEEK_END;
+        else if (![whence isEqualToString:@"set"] && ![whence isEqualToString:@"start"]) {
+            NSString *value = [[whence ?: @"set" lowercaseString]
+                stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if ([value isEqualToString:@"cur"] || [value isEqualToString:@"current"]) origin = SEEK_CUR;
+            else if ([value isEqualToString:@"end"]) origin = SEEK_END;
+            else if (![value isEqualToString:@"set"] && ![value isEqualToString:@"start"]) {
+                return TLinkJSFileError(@"file_seek_invalid_whence", self.path);
+            }
         }
         off_t result = lseek(_fd, (off_t)offset, origin);
         if (result < 0) return TLinkJSFileError([NSString stringWithFormat:@"file_seek_failed errno=%d %s", errno, strerror(errno)], self.path);
         return @{@"ok": @YES, @"offset": @((long long)result), @"path": self.path ?: @""};
+    }
     }
 }
 
@@ -277,16 +313,19 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
 
 - (NSDictionary *)flush
 {
+    @autoreleasepool {
     @synchronized (self) {
         if (self.closed || _fd < 0) return [self closedError];
         if (!_writable) return @{@"ok": @YES, @"path": self.path ?: @""};
         if (fsync(_fd) != 0) return TLinkJSFileError([NSString stringWithFormat:@"file_flush_failed errno=%d %s", errno, strerror(errno)], self.path);
         return @{@"ok": @YES, @"path": self.path ?: @""};
     }
+    }
 }
 
 - (NSDictionary *)close
 {
+    @autoreleasepool {
     @synchronized (self) {
         if (self.closed || _fd < 0) return @{@"ok": @YES, @"closed": @YES, @"alreadyClosed": @YES, @"path": self.path ?: @""};
         int fd = _fd;
@@ -295,6 +334,7 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
         int result = close(fd);
         if (result != 0) return TLinkJSFileError([NSString stringWithFormat:@"file_close_failed errno=%d %s", errno, strerror(errno)], self.path);
         return @{@"ok": @YES, @"closed": @YES, @"path": self.path ?: @""};
+    }
     }
 }
 

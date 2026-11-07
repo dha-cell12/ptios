@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "file-open-owner-safety-fixture.inc"
 struct Source {
     std::string bytes;size_t offset=0,reads=0,rewinds=0,maxRead=8192,fault=SIZE_MAX;unsigned interrupts=0;bool rewindFails=false;
     int64_t read(uint8_t *out,size_t size){
@@ -44,6 +45,7 @@ static void compare(Source source,size_t limit,bool regular=true){
 }
 #include "file-handle-payload-safety-fixture.inc"
 int main(){
+    fileOpenOwnerCases();
     payloadCases();
     for(const std::string &bytes:std::vector<std::string>{"","\n","\r\n","a\nnext","a\r","a\r\nnext","\r","\r\n\n",std::string("a\0b\nnext",8),std::string(20000,'x')+"\nrest"}){
         for(size_t limit:{size_t(1),size_t(2),size_t(3),size_t(128),size_t(129),size_t(8192),size_t(32768)}){

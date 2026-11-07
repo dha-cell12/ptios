@@ -6,10 +6,17 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {restoreVPNPrivateCaller} from './lib/vpn-private-stop-baseline.mjs';
+import {restoreFileLifecycle} from './lib/file-lifecycle-baseline.mjs';
 import {restoreFilePayload,checkFileIOHeader} from './lib/file-handle-payload-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
-const [payloadSource,header,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
+const [lifecycleSource,header,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
+const payloadSource=restoreFileLifecycle(lifecycleSource);
+const openOwner=await read('shared/TLinkJSFileOpen.h');
+assert.equal(createHash('sha256').update(openOwner).digest('hex'),'4ab1fe07e7b436cb8c57a1ac4ceba1109adda18b9278e2c4cd89983e19bd5187','complete descriptor handoff policy');
+assert.match(lifecycleSource,/TLinkJSFileOpenOwner pending\(fd\)[\s\S]*@try[\s\S]*handle->_fd = pending.release\(\)[\s\S]*@finally[\s\S]*pending.retire/);
+assert.match(lifecycleSource,/- \(instancetype\)init[\s\S]*_fd = -1;[\s\S]*_closed = YES;/);
+console.log('File lifecycle source passed: normalized mode reuse, canonical whence, nil/default init, late descriptor handoff/finally retirement and lifecycle pools; complete prior class retained.');
 const source=restoreFilePayload(payloadSource);
 checkFileIOHeader(await read('shared/TLinkJSFileIO.h'));
 assert.match(payloadSource,/TLinkJSFileIO::ReadInto[\s\S]*setLength:used\+amount[\s\S]*mutableBytes[\s\S]*setLength:input.bytes/);
@@ -63,6 +70,17 @@ for(const [path,start,end,legacyName,output,hash] of storageSpecs){
 }
 console.log('Storage writeText source passed: root/helper/TrollStore byte counts without bridge-owned NSData, complete original writer/path/error/gate source retained.');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-file-handle-safety.mjs'));
+const constructed=lifecycleSource.replace('[[self alloc] init]','fileLifecycleConstruct(self)')
+    .replace('    @autoreleasepool {\n    NSString *value = [[mode','    @autoreleasepool {\n    fileLifecycleNormalizationProbe();\n    NSString *value = [[mode')
+    .replace('            NSString *value = [[whence','            fileLifecycleSeekNormalizationProbe();\n            NSString *value = [[whence');
+const legacyLifecycle=frozen.replace('static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{','static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{\n    fileLifecycleNormalizationProbe();')
+    .replace('        NSString *value = [[whence','        fileLifecycleSeekNormalizationProbe();\n        NSString *value = [[whence');
+assert.notEqual(constructed,lifecycleSource);
+assert.equal((constructed.match(/fileLifecycleConstruct\(self\)/g)||[]).length,1);
+for(const fixture of [constructed,legacyLifecycle]){
+    assert.equal((fixture.match(/fileLifecycleNormalizationProbe\(\)/g)||[]).length,1);
+    assert.equal((fixture.match(/fileLifecycleSeekNormalizationProbe\(\)/g)||[]).length,1);
+}
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-file-handle-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
@@ -77,6 +95,8 @@ try{
     await writeFile(join(temp,'LegacyFileHandle.h'),legacyHeader);
     if(process.platform==='darwin'){
         const runtime=join(temp,'file-handle-runtime');
+        await writeFile(join(temp,'FileHandleLifecycleUnderTest.inc'),constructed);
+        await writeFile(join(temp,'LegacyFileHandleLifecycle.inc'),legacyLifecycle);
         const owner=join(temp,'pool-owner.o');
         run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','JavaScriptCore','-I',temp,'-I',join(root,'shared'),join(root,'test/file-handle-runtime-test.mm'),owner,'-o',runtime]);
