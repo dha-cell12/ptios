@@ -1,12 +1,14 @@
+import {restoreFileRepresentation,restoreFileRepresentationHeader} from './file-representation-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export const filePlanSpecs=JSON.parse(readFileSync(new URL('./file-plan-specs.json',import.meta.url),'utf8'));
 const frozen=name=>readFileSync(new URL('../../test/fixtures/file-plan-'+name+'-before-c03al.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
-export function restoreFilePlanHeader(source){assert.equal(hash(source),filePlanSpecs.header.currentHash);return frozen('header');}
+export function restoreFilePlanHeader(source){source=restoreFileRepresentationHeader(source);assert.equal(hash(source),filePlanSpecs.header.currentHash);return frozen('header');}
 export function checkFileModePlan(source){assert.equal(hash(source),filePlanSpecs.planHash,'complete immutable mode plan');}
 export function restoreFilePlan(source){
+    source=restoreFileRepresentation(source);
     if(!source.includes('// BEGIN prepared file mode.'))return source;
     assert.equal(hash(source),filePlanSpecs.implementation.currentHash,'complete C03al FileHandle');
     for(const [a,b] of [['// BEGIN prepared file mode.','static NSDictionary *TLinkJSFileError('],['// BEGIN prepared physical open declaration.','@property(nonatomic, readwrite) NSUInteger handleId;']]){

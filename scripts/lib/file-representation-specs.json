@@ -1,0 +1,35 @@
+{
+  "implementation": {
+    "beforeHash": "e4f334fc26a4f5498671610ec63ce130f1a4387dc9e0b5968a9fcdd79599f776",
+    "currentHash": "19f3aecef0ab73c7081ff8b397544ab71c9e1eb5ca24687183f195a2db35419e",
+    "parts": [
+      {
+        "name": "reads",
+        "start": "- (NSDictionary *)readRequest:(id)request\n",
+        "end": "- (NSDictionary *)writeData:",
+        "currentHash": "20e51fe24b52d28c189f95d24303698092c1cd42379b6db0387031bb16a9aa45"
+      }
+    ]
+  },
+  "header": {
+    "beforeHash": "ac7f948df6b08e46d0ab1e2639c6a81b89ce8ec39b0a8ca73e69ec56ac3b00a3",
+    "currentHash": "db1bc2bf3333886fb325a4eaafdfcd02b131858fc9a75cbdd3c6909bacbaad4d"
+  },
+  "insertions": [
+    {
+      "start": "// BEGIN selected file reads.",
+      "end": "@interface TLinkJSFileHandle () {",
+      "hash": "86b2133ba4801383b295cd484680ab8e56a9c43265d93a03c230d07c6113b797"
+    },
+    {
+      "start": "// BEGIN selected file read declarations.",
+      "end": "@property(nonatomic, readwrite) NSUInteger handleId;",
+      "hash": "e2aef697163388b7a597dfcb87164c09ce2d2b50cf5b8b32bcc0a720b90a88a2"
+    },
+    {
+      "start": "    // BEGIN selected file read bindings.",
+      "end": "    object[@\"readLine\"] =",
+      "hash": "61aaad59574dd30bc96f4d5cb9a1da9d35b84e349c08ab5457de6c444e0e3065"
+    }
+  ]
+}

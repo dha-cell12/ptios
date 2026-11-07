@@ -92,6 +92,34 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
     };
 }
 
+// BEGIN selected file reads.
+enum class TLinkJSFileRepresentation { Legacy, Text, Base64 };
+static NSDictionary *TLinkJSFileSelectedDataResult(NSData *data, BOOL eof, BOOL truncated,
+                                                  TLinkJSFileRepresentation representation)
+{
+    if (representation == TLinkJSFileRepresentation::Legacy) return TLinkJSFileDataResult(data, eof, truncated);
+    if (representation == TLinkJSFileRepresentation::Base64) {
+        return @{
+            @"ok": @YES,
+            @"base64": [data base64EncodedStringWithOptions:0] ?: @"",
+            @"bytes": @(data.length),
+            @"eof": @(eof),
+            @"truncated": @(truncated),
+            @"encoding": @"base64",
+        };
+    }
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return @{
+        @"ok": @YES,
+        @"data": text ?: @"",
+        @"bytes": @(data.length),
+        @"eof": @(eof),
+        @"truncated": @(truncated),
+        @"encoding": text ? @"utf8" : @"binary",
+    };
+}
+// END selected file reads.
+
 @interface TLinkJSFileHandle () {
     int _fd;
     BOOL _readable;
@@ -102,6 +130,10 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
 // BEGIN prepared physical open declaration.
 + (instancetype)openPath:(NSString *)path normalizedMode:(NSString *)normalizedMode flags:(int)flags writing:(BOOL)writing plus:(BOOL)plus handleId:(NSUInteger)handleId maxTransferBytes:(NSUInteger)maxTransferBytes error:(NSString **)error;
 // END prepared physical open declaration.
+// BEGIN selected file read declarations.
+- (NSDictionary *)readRequest:(id)request representation:(TLinkJSFileRepresentation)representation;
+- (NSDictionary *)readLineRepresentation:(TLinkJSFileRepresentation)representation;
+// END selected file read declarations.
 @property(nonatomic, readwrite) NSUInteger handleId;
 @property(nonatomic, copy, readwrite) NSString *path;
 @property(nonatomic, copy, readwrite) NSString *mode;
@@ -224,10 +256,28 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
 
 - (NSDictionary *)readRequest:(id)request
 {
+    return [self readRequest:request representation:TLinkJSFileRepresentation::Legacy];
+}
+
+- (NSDictionary *)readTextRequest:(id)request
+{
+    return [self readRequest:request representation:TLinkJSFileRepresentation::Text];
+}
+
+- (NSDictionary *)readBase64Request:(id)request
+{
+    return [self readRequest:request representation:TLinkJSFileRepresentation::Base64];
+}
+
+- (NSDictionary *)readRequest:(id)request representation:(TLinkJSFileRepresentation)representation
+{
     @autoreleasepool {
     if ([request isKindOfClass:[NSString class]]) {
         NSString *kind = [(NSString *)request lowercaseString];
-        if ([kind isEqualToString:@"*l"] || [kind isEqualToString:@"line"]) return [self readLine];
+        if ([kind isEqualToString:@"*l"] || [kind isEqualToString:@"line"]) {
+            if (representation == TLinkJSFileRepresentation::Legacy) return [self readLine];
+            return [self readLineRepresentation:representation];
+        }
     }
     @synchronized (self) {
         if (self.closed || _fd < 0) return [self closedError];
@@ -247,7 +297,7 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
             if (value > _maxTransferBytes) return TLinkJSFileError(@"file_read_exceeds_transfer_limit", self.path);
             requested = (NSUInteger)value;
         }
-        if (requested == 0) return TLinkJSFileDataResult([NSData data], NO, NO);
+        if (requested == 0) return TLinkJSFileSelectedDataResult([NSData data], NO, NO, representation);
 
         NSMutableData *data = [NSMutableData data];
         const int fd=_fd;
@@ -261,12 +311,17 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
         [data setLength:input.bytes];
         BOOL eof=input.eof;
         BOOL truncated = readAll && !eof && data.length == _maxTransferBytes;
-        return TLinkJSFileDataResult(data, eof, truncated);
+        return TLinkJSFileSelectedDataResult(data, eof, truncated, representation);
     }
     }
 }
 
 - (NSDictionary *)readLine
+{
+    return [self readLineRepresentation:TLinkJSFileRepresentation::Legacy];
+}
+
+- (NSDictionary *)readLineRepresentation:(TLinkJSFileRepresentation)representation
 {
     @autoreleasepool {
     @synchronized (self) {
@@ -286,8 +341,8 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
             if (bytes[data.length - 1] == '\r') [data setLength:data.length - 1];
         }
         BOOL truncated = !eof && data.length == _maxTransferBytes;
-        NSMutableDictionary *result = [TLinkJSFileDataResult(data, eof, truncated) mutableCopy];
-        result[@"line"] = result[@"data"] ?: @"";
+        NSMutableDictionary *result = [TLinkJSFileSelectedDataResult(data, eof, truncated, representation) mutableCopy];
+        if (representation != TLinkJSFileRepresentation::Base64) result[@"line"] = result[@"data"] ?: @"";
         return result;
     }
     }
@@ -403,6 +458,20 @@ JSValue *TLinkJSFileHandleCreateJSObject(JSContext *context,
         return [handle readRequest:value];
         }
     };
+    // BEGIN selected file read bindings.
+    object[@"readText"] = ^NSDictionary *(JSValue *request) {
+        @autoreleasepool {
+        id value = (!request || [request isUndefined] || [request isNull]) ? @"*a" : [request toObject];
+        return [handle readTextRequest:value];
+        }
+    };
+    object[@"readBase64"] = ^NSDictionary *(JSValue *request) {
+        @autoreleasepool {
+        id value = (!request || [request isUndefined] || [request isNull]) ? @"*a" : [request toObject];
+        return [handle readBase64Request:value];
+        }
+    };
+    // END selected file read bindings.
     object[@"readLine"] = ^NSDictionary *{ @autoreleasepool { return [handle readLine]; } };
     object[@"write"] = ^NSDictionary *(JSValue *value) { @autoreleasepool { return [handle writeText:[value toString] ?: @""]; } };
     object[@"writeBase64"] = ^NSDictionary *(NSString *base64) { @autoreleasepool { return [handle writeBase64:base64 ?: @""]; } };

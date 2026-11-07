@@ -21,6 +21,23 @@
 #include "ax-node-pool-owner.h"
 void TLinkAXFixtureOwnerDidDrain(void){}
 static bool fileTrackPools=false;
+static unsigned fileRepresentationDecodes=0,fileRepresentationEncodes=0;
+static unsigned fileRepresentationDecodeFault=0,fileRepresentationEncodeFault=0;
+static bool fileRepresentationPools=false;
+static void fileRepresentationCodecFault(unsigned fault){
+    if(fault==1)[NSException raise:@"FileRepresentationFixture" format:@"codec"];
+    if(fault==2)throw std::runtime_error("codec");
+}
+static NSString *fileRepresentationDecode(NSData *data){
+    ++fileRepresentationDecodes;if(fileRepresentationPools)TLinkAXFixtureAutoreleaseOwner();
+    fileRepresentationCodecFault(fileRepresentationDecodeFault);
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+static NSString *fileRepresentationEncode(NSData *data){
+    ++fileRepresentationEncodes;if(fileRepresentationPools)TLinkAXFixtureAutoreleaseOwner();
+    fileRepresentationCodecFault(fileRepresentationEncodeFault);
+    return [data base64EncodedStringWithOptions:0];
+}
 static unsigned fileIOThrow=0,fileWrites=0,fileWriteInterrupts=0;
 static size_t fileMaxWrite=SIZE_MAX;
 static off_t fileWriteFaultAt=-1;
@@ -185,6 +202,7 @@ static FileTrace filePipe(bool legacy){
 #include "file-lifecycle-runtime-fixture.inc"
 #include "file-plan-bindings-runtime-fixture.inc"
 #include "file-plan-runtime-fixture.inc"
+#include "file-representation-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]],*path=[root stringByAppendingPathComponent:@"handle.bin"];
     puts("FileHandle Foundation: actual/frozen complete classes, POSIX descriptors and JSCore");fflush(stdout);
@@ -215,6 +233,7 @@ int main(int argc,char **argv){@autoreleasepool{
     filePayloadRuntimeCases(path);
     fileLifecycleRuntimeCases(root,path);
     filePlanRuntimeCases(path);
+    fileRepresentationRuntimeCases(path);
     assert(fileFDs.empty());assert([[NSFileManager defaultManager] removeItemAtPath:path error:nil]);
     puts("FileHandle Foundation passed: frozen full replies/mixed read-write-seek/tell/append/limits/CR/EOF, real UTF8/binary files, short/EINTR/EIO, stat fallback, real pipe, fresh external edits, rewind failure/recovery, JS bindings and 128 balanced lifecycles.");
 }}

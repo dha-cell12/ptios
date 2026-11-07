@@ -29,6 +29,9 @@ NS_ASSUME_NONNULL_BEGIN
 #endif
 
 - (NSDictionary *)readRequest:(nullable id)request;
+// Explicit representations retain the read(request) byte/line/limit semantics.
+- (NSDictionary *)readTextRequest:(nullable id)request;
+- (NSDictionary *)readBase64Request:(nullable id)request;
 - (NSDictionary *)readLine;
 - (NSDictionary *)writeText:(NSString *)text;
 - (NSDictionary *)writeBase64:(NSString *)base64;

@@ -1404,6 +1404,8 @@ A line up to the 512 KiB transfer limit can cause up to ~524,288 one-byte `read(
 
 ### [P1-44] File reads always build both UTF-8 text and base64 representations
 
+C03am explicit-read follow-up (2026-11-08): shared rootfull/roothide/helper/production TrollStore handles expose `readText(request)` and `readBase64(request)` for full, byte-count and line reads. They reuse existing IO/position/error/transfer rules and skip the unrequested codec and field; legacy read/readLine retain the complete text/base64 graph. Exact preceding source/header restoration and Windows portable/source checks pass. Existing scripts need to opt in; new Foundation/POSIX/JSCore/fault/codec-call tests and device allocation/latency remain pending. See `IMPLEMENTATION-C03AM.md`.
+
 C03ag ownership follow-up (2026-11-07): extend the shared lifecycle with final descriptor handoff, safe unopened/nil initialization and seek/flush/close pools. Full dual read representations remain. Native held-result/constructor-fault coverage and device memory qualification pending; see `IMPLEMENTATION-C03AG.md`.
 
 C03ac ownership follow-up (2026-11-07): both representations and all response fields remain. Normal operation pools retire unreturned temporaries while returned text/base64 graphs remain owned. This does not remove the dual representation cost or establish a process RSS bound. Native held-result/MRC retirement and device qualification pending; see `IMPLEMENTATION-C03AC.md`.

@@ -1,3 +1,4 @@
+import {restoreFileRepresentation} from './lib/file-representation-baseline.mjs';
 import {restoreFilePlan,restoreFilePlanHeader,restoreFilePlanFrontend,checkFileModePlan,filePlanSpecs} from './lib/file-plan-baseline.mjs';
 import {restoreStorageOperations,storageOperationSpecs,storageOperationPart,storageOperationBefore} from './lib/storage-operations-baseline.mjs';
 import assert from 'node:assert/strict';
@@ -13,6 +14,7 @@ import {restoreFilePayload,checkFileIOHeader} from './lib/file-handle-payload-ba
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const [actualFileSource,currentHeader,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
+const beforeRepresentation=restoreFileRepresentation(actualFileSource);
 const lifecycleSource=restoreFilePlan(actualFileSource),header=restoreFilePlanHeader(currentHeader);
 checkFileModePlan(await read('shared/TLinkJSFileModePlan.h'));
 const beforeOpenPlan=await read('test/fixtures/file-plan-open-before-c03al.inc');
@@ -83,12 +85,17 @@ for(const [path,start,end,legacyName,output,hash] of storageSpecs){
 console.log('Storage writeText source passed: root/helper/TrollStore byte counts without bridge-owned NSData, complete original writer/path/error/gate source retained.');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-file-handle-safety.mjs'));
 const constructed=actualFileSource.replace('[[self alloc] init]','fileLifecycleConstruct(self)')
+    .replaceAll('[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]','fileRepresentationDecode(data)')
+    .replaceAll('[data base64EncodedStringWithOptions:0]','fileRepresentationEncode(data)')
     .replace('    @autoreleasepool {\n    NSString *value = [[mode','    @autoreleasepool {\n    fileLifecycleNormalizationProbe();\n    NSString *value = [[mode')
     .replace('            NSString *value = [[whence','            fileLifecycleSeekNormalizationProbe();\n            NSString *value = [[whence');
 const legacyLifecycle=frozen.replace('static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{','static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{\n    fileLifecycleNormalizationProbe();')
     .replace('        NSString *value = [[whence','        fileLifecycleSeekNormalizationProbe();\n        NSString *value = [[whence');
 assert.notEqual(constructed,actualFileSource);
 assert.equal((constructed.match(/fileLifecycleConstruct\(self\)/g)||[]).length,1);
+assert.equal((constructed.match(/fileRepresentationDecode\(data\)/g)||[]).length,2);
+assert.equal((constructed.match(/fileRepresentationEncode\(data\)/g)||[]).length,2);
+console.log('File explicit reads source passed: shared reader/line IO, legacy reply preservation, text-only/base64-only paths and complete previous class/header restoration.');
 for(const fixture of [constructed,legacyLifecycle]){
     assert.equal((fixture.match(/fileLifecycleNormalizationProbe\(\)/g)||[]).length,1);
     assert.equal((fixture.match(/fileLifecycleSeekNormalizationProbe\(\)/g)||[]).length,1);
@@ -110,7 +117,7 @@ for(const kind of ['root','helper','troll']){
     assert.equal((current.match(/TLinkJSFilePrepareMode\(openMode\)/g)||[]).length,1);
     assert.equal((current.match(/preparedMode:modePlan/g)||[]).length,1);
 }
-const bindings=actualFileSource.slice(actualFileSource.indexOf('JSValue *TLinkJSFileHandleCreateJSObject('));
+const bindings=beforeRepresentation.slice(beforeRepresentation.indexOf('JSValue *TLinkJSFileHandleCreateJSObject('));
 assert.equal((bindings.match(/@autoreleasepool/g)||[]).length,10);
 for(const [label,text] of [['Current',bindings],['Before',await read('test/fixtures/file-plan-bindings-before-c03al.inc')]]){
     const measured=text.replace('TLinkJSFileHandleCreateJSObject(',`Fixture${label}FileBindings(`).replace('[JSValue valueWithNewObjectInContext:context]','FixtureFileBindingObject(context)');

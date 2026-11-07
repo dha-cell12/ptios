@@ -91,12 +91,45 @@ file.flush();
 file.close();
 ```
 
-Handle methods are `read(request)`, `readLine()`, `write(text)`,
-`writeBase64(data)`, `seek(whence, offset)`, `tell()`, `flush()`, `isClosed()`,
-and `close()`. `read` accepts `*a`, `*l`, or a byte count and returns both UTF-8
-`data` and `base64`. Each script may keep at most 32 handles open and each
-read/write operation is limited to 512 KiB. Unclosed handles are closed after
-each script evaluation, including stop and exception paths.
+Handle methods are `read(request)`, `readLine()`, `readText(request)`,
+`readBase64(request)`, `write(text)`, `writeBase64(data)`, `seek(whence, offset)`,
+`tell()`, `flush()`, `isClosed()`, and `close()`. Each script may keep at most
+32 handles open and each read/write operation is limited to 512 KiB. Unclosed
+handles are closed after each script evaluation, including stop and exception paths.
+
+All three `read` methods accept `*a`/`all` (the default for omitted/null input),
+`*l`/`line`, or a byte count. They consume the same file bytes and share the
+same limits, EOF/truncation flags and errors. A byte count is not a character
+count; splitting a UTF-8 sequence can produce an undecodable text chunk.
+Line reads consume the newline, omit it from the result and strip a trailing CR.
+
+| Method | Successful payload fields | Encoding work |
+| --- | --- | --- |
+| `read(request)` / `readLine()` | `data`, `base64`, plus `line` for a line read | Both UTF-8 decoding and base64 encoding (existing behavior) |
+| `readText(request)` | `data`, plus `line` for a line read; no `base64` | UTF-8 decoding only |
+| `readBase64(request)` | `base64`; no `data` or `line` | Base64 encoding only |
+
+Successful results also contain `ok`, `bytes`, `eof`, `truncated` and
+`encoding`. Text uses `encoding: 'utf8'` on a successful decode; invalid UTF-8
+keeps the existing `data: ''` / `encoding: 'binary'` behavior. Base64 reads use
+`encoding: 'base64'` for every input, including an empty file. Choose base64
+when the original bytes must be preserved. `readLine()` remains the complete
+legacy result; use `readText('*l')` or `readBase64('*l')` to select one representation.
+
+```js
+const file = device.openFile('storage/example.txt', 'r');
+if (!file.ok) throw new Error(file.error);
+const line = file.readText('*l');
+if (line.ok) console.log(line.line);
+file.seek('set', 0);
+const bytes = file.readBase64(4096);
+if (bytes.ok) console.log(bytes.base64);
+file.close();
+```
+
+These two explicit methods are shared by rootfull/roothide, the helper and
+TrollStore. Existing scripts can keep using `read` unchanged; scripts that also
+support older builds can check `typeof file.readText === 'function'` before use.
 
 ## Clipboard image API
 
