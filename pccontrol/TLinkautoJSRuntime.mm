@@ -1818,11 +1818,12 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
     if (!context) return nil;
 
     NSString *openMode = mode.length > 0 ? mode : @"r";
-    if (!TLinkJSFileModeIsValid(openMode)) {
+    const auto modePlan=TLinkJSFilePrepareMode(openMode);
+    if (!modePlan.valid()) {
         return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"invalid_file_mode", @"mode": openMode}
                               inContext:context];
     }
-    BOOL writing = TLinkJSFileModeWrites(openMode);
+    BOOL writing = modePlan.writing();
     NSDictionary *resolved = [self resolvedOpenFilePath:path writing:writing];
     if (![resolved[@"ok"] boolValue]) return [JSValue valueWithObject:resolved inContext:context];
     NSString *resolvedPath = resolved[@"path"] ?: @"";
@@ -1838,7 +1839,7 @@ static NSDictionary *TLinkautoJSOCRResultByAddingDecodedError(NSDictionary *resu
 
     NSString *openError = nil;
     TLinkJSFileHandle *handle = [TLinkJSFileHandle openPath:resolvedPath
-                                                      mode:openMode
+                                                      preparedMode:modePlan
                                                   handleId:handleId
                                           maxTransferBytes:(NSUInteger)kTLinkautoJSMaxStorageFileBytes
                                                      error:&openError];

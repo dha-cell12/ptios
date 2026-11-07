@@ -183,6 +183,8 @@ static FileTrace filePipe(bool legacy){
 }
 #include "file-handle-payload-runtime-fixture.inc"
 #include "file-lifecycle-runtime-fixture.inc"
+#include "file-plan-bindings-runtime-fixture.inc"
+#include "file-plan-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]],*path=[root stringByAppendingPathComponent:@"handle.bin"];
     puts("FileHandle Foundation: actual/frozen complete classes, POSIX descriptors and JSCore");fflush(stdout);
@@ -212,6 +214,7 @@ int main(int argc,char **argv){@autoreleasepool{
     for(unsigned n=0;n<128;++n){@autoreleasepool{fileParity(path,[@"one\r\ntwo\nlast" dataUsingEncoding:NSUTF8StringEncoding],8);}}
     filePayloadRuntimeCases(path);
     fileLifecycleRuntimeCases(root,path);
+    filePlanRuntimeCases(path);
     assert(fileFDs.empty());assert([[NSFileManager defaultManager] removeItemAtPath:path error:nil]);
     puts("FileHandle Foundation passed: frozen full replies/mixed read-write-seek/tell/append/limits/CR/EOF, real UTF8/binary files, short/EINTR/EIO, stat fallback, real pipe, fresh external edits, rewind failure/recovery, JS bindings and 128 balanced lifecycles.");
 }}

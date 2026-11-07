@@ -2127,10 +2127,11 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         if (!strongSession) {
             return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"script_session_unavailable"} inContext:currentContext];
         }
-        if (!TLinkJSFileModeIsValid(openMode)) {
+        const auto modePlan=TLinkJSFilePrepareMode(openMode);
+        if (!modePlan.valid()) {
             return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"invalid_file_mode", @"mode": openMode} inContext:currentContext];
         }
-        BOOL writing = TLinkJSFileModeWrites(openMode);
+        BOOL writing = modePlan.writing();
         NSString *pathError = nil;
         NSString *path = TLinkScriptStoragePath(strongSession, relativePath, writing, &pathError);
         if (!path) {
@@ -2157,7 +2158,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         }
         NSString *openError = nil;
         TLinkJSFileHandle *handle = [TLinkJSFileHandle openPath:path
-                                                          mode:openMode
+                                                          preparedMode:modePlan
                                                       handleId:handleId
                                               maxTransferBytes:kTLinkScriptMaxFileTransferBytes
                                                          error:&openError];

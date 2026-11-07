@@ -47,6 +47,28 @@ BOOL TLinkJSFileModeWrites(NSString *mode)
     return [value hasPrefix:@"w"] || [value hasPrefix:@"a"] || [value containsString:@"+"];
 }
 
+// BEGIN prepared file mode.
+TLinkJSFileModePlan TLinkJSFilePrepareMode(NSString *mode)
+{
+    TLinkJSFileModePlan plan;
+    @autoreleasepool {
+        plan.mode_=[TLinkJSFileNormalizeMode(mode) copy];
+        plan.valid_=plan.mode_&&TLinkJSFileNormalizedModeIsValid(plan.mode_);
+        if(plan.valid_){
+        plan.plus_=[plan.mode_ containsString:@"+"];
+        plan.writing_=[plan.mode_ hasPrefix:@"w"]||[plan.mode_ hasPrefix:@"a"]||plan.plus_;
+        plan.flags_=plan.plus_?O_RDWR:(plan.writing_?O_WRONLY:O_RDONLY);
+        if([plan.mode_ hasPrefix:@"w"])plan.flags_|=O_CREAT|O_TRUNC;
+        if([plan.mode_ hasPrefix:@"a"])plan.flags_|=O_CREAT|O_APPEND;
+#ifdef O_NOFOLLOW
+        plan.flags_|=O_NOFOLLOW;
+#endif
+        }
+    }
+    return plan;
+}
+// END prepared file mode.
+
 static NSDictionary *TLinkJSFileError(NSString *error, NSString *path)
 {
     return @{
@@ -77,6 +99,9 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
     BOOL _lineReadChunked;
     NSUInteger _maxTransferBytes;
 }
+// BEGIN prepared physical open declaration.
++ (instancetype)openPath:(NSString *)path normalizedMode:(NSString *)normalizedMode flags:(int)flags writing:(BOOL)writing plus:(BOOL)plus handleId:(NSUInteger)handleId maxTransferBytes:(NSUInteger)maxTransferBytes error:(NSString **)error;
+// END prepared physical open declaration.
 @property(nonatomic, readwrite) NSUInteger handleId;
 @property(nonatomic, copy, readwrite) NSString *path;
 @property(nonatomic, copy, readwrite) NSString *mode;
@@ -109,6 +134,28 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
     flags |= O_NOFOLLOW;
 #endif
 
+    return [self openPath:path normalizedMode:normalizedMode flags:flags writing:writing plus:plus handleId:handleId maxTransferBytes:maxTransferBytes error:error];
+}
+
++ (instancetype)openPath:(NSString *)path
+             preparedMode:(const TLinkJSFileModePlan &)plan
+                 handleId:(NSUInteger)handleId
+         maxTransferBytes:(NSUInteger)maxTransferBytes
+                    error:(NSString **)error
+{
+    if(!plan.valid()){if(error)*error=@"invalid_file_mode";return nil;}
+    return [self openPath:path normalizedMode:plan.mode() flags:plan.flags() writing:plan.writing() plus:plan.plus() handleId:handleId maxTransferBytes:maxTransferBytes error:error];
+}
+
++ (instancetype)openPath:(NSString *)path
+             normalizedMode:(NSString *)normalizedMode
+                      flags:(int)flags
+                    writing:(BOOL)writing
+                       plus:(BOOL)plus
+                   handleId:(NSUInteger)handleId
+           maxTransferBytes:(NSUInteger)maxTransferBytes
+                      error:(NSString **)error
+{
     const char *filePath = [path fileSystemRepresentation];
     BOOL existedBeforeOpen = access(filePath, F_OK) == 0;
     int fd = open(filePath, flags, 0664);
@@ -344,28 +391,36 @@ JSValue *TLinkJSFileHandleCreateJSObject(JSContext *context,
                                          TLinkJSFileHandle *handle,
                                          void (^didClose)(NSUInteger handleId))
 {
+    @autoreleasepool {
     JSValue *object = [JSValue valueWithNewObjectInContext:context];
     object[@"ok"] = @YES;
     object[@"id"] = @(handle.handleId);
     object[@"path"] = handle.path ?: @"";
     object[@"mode"] = handle.mode ?: @"r";
     object[@"read"] = ^NSDictionary *(JSValue *request) {
+        @autoreleasepool {
         id value = (!request || [request isUndefined] || [request isNull]) ? @"*a" : [request toObject];
         return [handle readRequest:value];
+        }
     };
-    object[@"readLine"] = ^NSDictionary *{ return [handle readLine]; };
-    object[@"write"] = ^NSDictionary *(JSValue *value) { return [handle writeText:[value toString] ?: @""]; };
-    object[@"writeBase64"] = ^NSDictionary *(NSString *base64) { return [handle writeBase64:base64 ?: @""]; };
+    object[@"readLine"] = ^NSDictionary *{ @autoreleasepool { return [handle readLine]; } };
+    object[@"write"] = ^NSDictionary *(JSValue *value) { @autoreleasepool { return [handle writeText:[value toString] ?: @""]; } };
+    object[@"writeBase64"] = ^NSDictionary *(NSString *base64) { @autoreleasepool { return [handle writeBase64:base64 ?: @""]; } };
     object[@"seek"] = ^NSDictionary *(NSString *whence, double offset) {
+        @autoreleasepool {
         return [handle seekWhence:whence ?: @"set" offset:(long long)offset];
+        }
     };
-    object[@"tell"] = ^NSDictionary *{ return [handle tell]; };
-    object[@"flush"] = ^NSDictionary *{ return [handle flush]; };
-    object[@"isClosed"] = ^BOOL { return handle.isClosed; };
+    object[@"tell"] = ^NSDictionary *{ @autoreleasepool { return [handle tell]; } };
+    object[@"flush"] = ^NSDictionary *{ @autoreleasepool { return [handle flush]; } };
+    object[@"isClosed"] = ^BOOL { @autoreleasepool { return handle.isClosed; } };
     object[@"close"] = ^NSDictionary *{
+        @autoreleasepool {
         NSDictionary *result = [handle close];
         if (didClose) didClose(handle.handleId);
         return result;
+        }
     };
     return object;
+    }
 }

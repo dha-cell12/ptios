@@ -1,3 +1,4 @@
+import {restoreFilePlan,restoreFilePlanHeader,restoreFilePlanFrontend,checkFileModePlan,filePlanSpecs} from './lib/file-plan-baseline.mjs';
 import {restoreStorageOperations,storageOperationSpecs,storageOperationPart,storageOperationBefore} from './lib/storage-operations-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
@@ -11,7 +12,14 @@ import {restoreFileLifecycle} from './lib/file-lifecycle-baseline.mjs';
 import {restoreFilePayload,checkFileIOHeader} from './lib/file-handle-payload-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
-const [lifecycleSource,header,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
+const [actualFileSource,currentHeader,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
+const lifecycleSource=restoreFilePlan(actualFileSource),header=restoreFilePlanHeader(currentHeader);
+checkFileModePlan(await read('shared/TLinkJSFileModePlan.h'));
+const beforeOpenPlan=await read('test/fixtures/file-plan-open-before-c03al.inc');
+const physicalMarker='    const char *filePath = [path fileSystemRepresentation];';
+const commonStart=actualFileSource.indexOf('             normalizedMode:(NSString *)normalizedMode\n');
+assert.ok(commonStart>=0);
+assert.equal(actualFileSource.slice(actualFileSource.indexOf(physicalMarker,commonStart),actualFileSource.indexOf('- (instancetype)init',commonStart)),beforeOpenPlan.slice(beforeOpenPlan.indexOf(physicalMarker)),'complete physical open/metadata/constructor/descriptor retirement body unchanged');
 const payloadSource=restoreFileLifecycle(lifecycleSource);
 const openOwner=await read('shared/TLinkJSFileOpen.h');
 assert.equal(createHash('sha256').update(openOwner).digest('hex'),'4ab1fe07e7b436cb8c57a1ac4ceba1109adda18b9278e2c4cd89983e19bd5187','complete descriptor handoff policy');
@@ -74,12 +82,12 @@ for(const [path,start,end,legacyName,output,hash] of storageSpecs){
 }
 console.log('Storage writeText source passed: root/helper/TrollStore byte counts without bridge-owned NSData, complete original writer/path/error/gate source retained.');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-file-handle-safety.mjs'));
-const constructed=lifecycleSource.replace('[[self alloc] init]','fileLifecycleConstruct(self)')
+const constructed=actualFileSource.replace('[[self alloc] init]','fileLifecycleConstruct(self)')
     .replace('    @autoreleasepool {\n    NSString *value = [[mode','    @autoreleasepool {\n    fileLifecycleNormalizationProbe();\n    NSString *value = [[mode')
     .replace('            NSString *value = [[whence','            fileLifecycleSeekNormalizationProbe();\n            NSString *value = [[whence');
 const legacyLifecycle=frozen.replace('static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{','static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{\n    fileLifecycleNormalizationProbe();')
     .replace('        NSString *value = [[whence','        fileLifecycleSeekNormalizationProbe();\n        NSString *value = [[whence');
-assert.notEqual(constructed,lifecycleSource);
+assert.notEqual(constructed,actualFileSource);
 assert.equal((constructed.match(/fileLifecycleConstruct\(self\)/g)||[]).length,1);
 for(const fixture of [constructed,legacyLifecycle]){
     assert.equal((fixture.match(/fileLifecycleNormalizationProbe\(\)/g)||[]).length,1);
@@ -93,6 +101,30 @@ for(const [kind,spec] of Object.entries(storageOperationSpecs)){
     }
 }
 console.log('Storage operation source passed: twelve scoped routes, root parse/preparation boundaries, child NSError outside pools and exact preceding root/helper/TrollStore sources.');
+for(const kind of ['root','helper','troll']){
+    const spec=filePlanSpecs[kind],actual=await read(spec.file);restoreFilePlanFrontend(actual,kind,true);
+    const start=actual.indexOf(spec.start),end=actual.indexOf(spec.end,start+spec.start.length);
+    const current=actual.slice(start,end);
+    storageChunks.push([`FilePlan-${kind}.inc`,current]);
+    storageChunks.push([`FilePlanBefore-${kind}.inc`,await read('test/fixtures/file-plan-'+kind+'-before-c03al.inc')]);
+    assert.equal((current.match(/TLinkJSFilePrepareMode\(openMode\)/g)||[]).length,1);
+    assert.equal((current.match(/preparedMode:modePlan/g)||[]).length,1);
+}
+const bindings=actualFileSource.slice(actualFileSource.indexOf('JSValue *TLinkJSFileHandleCreateJSObject('));
+assert.equal((bindings.match(/@autoreleasepool/g)||[]).length,10);
+for(const [label,text] of [['Current',bindings],['Before',await read('test/fixtures/file-plan-bindings-before-c03al.inc')]]){
+    const measured=text.replace('TLinkJSFileHandleCreateJSObject(',`Fixture${label}FileBindings(`).replace('[JSValue valueWithNewObjectInContext:context]','FixtureFileBindingObject(context)');
+    assert.equal((measured.match(/FixtureFileBindingObject\(context\)/g)||[]).length,1);
+    storageChunks.push([`FilePlanBindings-${label}.inc`,measured]);
+}
+const constants=[];
+for(const kind of ['root','helper','troll']){
+    const text=await read(filePlanSpecs[kind].file);
+    const names=kind==='root'?['kTLinkautoJSMaxOpenFiles','kTLinkautoJSMaxStorageFileBytes']:kind==='helper'?['kTLinkJSHelperMaxOpenFiles','kTLinkJSHelperMaxStorageFileBytes']:['kTLinkScriptMaxOpenFiles','kTLinkScriptMaxFileTransferBytes'];
+    for(const name of names){const line=text.match(new RegExp('^static const [^\\n]+ '+name+' = [^\\n]+;','m'));assert.ok(line,name);constants.push(line[0]);}
+}
+storageChunks.push(['FilePlanConstants.inc',constants.join('\n')+'\n']);
+console.log('File mode/binding source passed: one owned prepared mode across three frontends, shared physical-open owner/error policy and nine callback/creation pools; complete previous class/header/frontends retained.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-file-handle-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{

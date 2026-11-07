@@ -1,6 +1,10 @@
 #import <Foundation/Foundation.h>
 #import <JavaScriptCore/JavaScriptCore.h>
 
+#ifdef __cplusplus
+#import "TLinkJSFileModePlan.h"
+#endif
+
 NS_ASSUME_NONNULL_BEGIN
 
 @interface TLinkJSFileHandle : NSObject
@@ -15,6 +19,14 @@ NS_ASSUME_NONNULL_BEGIN
                          handleId:(NSUInteger)handleId
                  maxTransferBytes:(NSUInteger)maxTransferBytes
                             error:(NSString * _Nullable * _Nullable)error;
+
+#ifdef __cplusplus
++ (nullable instancetype)openPath:(NSString *)path
+                     preparedMode:(const TLinkJSFileModePlan &)plan
+                         handleId:(NSUInteger)handleId
+                 maxTransferBytes:(NSUInteger)maxTransferBytes
+                            error:(NSString * _Nullable * _Nullable)error;
+#endif
 
 - (NSDictionary *)readRequest:(nullable id)request;
 - (NSDictionary *)readLine;

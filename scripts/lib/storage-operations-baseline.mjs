@@ -1,3 +1,4 @@
+import {restoreFilePlanFrontend} from './file-plan-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -8,6 +9,7 @@ export function storageOperationPart(source,part){const a=source.indexOf(part.st
 // Accept either complete known region so historical reversal chains can call
 // this after a preceding stage has already restored the storage package.
 export function restoreStorageOperations(source,kind,complete=false){
+    source=restoreFilePlanFrontend(source,kind);
     const spec=storageOperationSpecs[kind];
     if(complete)assert.equal(hash(source),spec.currentHash,'complete C03ai '+kind);
     for(const part of spec.parts){

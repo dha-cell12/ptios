@@ -1,0 +1,49 @@
+{
+  "header": {
+    "beforeHash": "99e683ede61da371c993d260a77bd6d6c0e538b641b8d0a2e7622690a956df33",
+    "currentHash": "ac7f948df6b08e46d0ab1e2639c6a81b89ce8ec39b0a8ca73e69ec56ac3b00a3"
+  },
+  "implementation": {
+    "beforeHash": "2b6f23c0701478c9e3aeab498774cae93627c2ccf96f653d5d61be9d0026e0ee",
+    "currentHash": "e4f334fc26a4f5498671610ec63ce130f1a4387dc9e0b5968a9fcdd79599f776",
+    "parts": [
+      {
+        "name": "open",
+        "start": "+ (instancetype)openPath:",
+        "end": "- (instancetype)init",
+        "currentHash": "37cc56bdee8efb69583ac4dc0bd22cc84801057f3848aff1a89564ba964a81f6"
+      },
+      {
+        "name": "bindings",
+        "start": "JSValue *TLinkJSFileHandleCreateJSObject(",
+        "end": null,
+        "currentHash": "a5990dbf3288a363d6b5fe1108c97f678f0e500d41ba781bcb4fca64f159560e"
+      }
+    ]
+  },
+  "root": {
+    "file": "pccontrol/TLinkautoJSRuntime.mm",
+    "start": "- (JSValue *)openFile:(NSString *)path mode:(NSString *)mode",
+    "end": "- (NSDictionary *)readJSON:",
+    "beforeHash": "0f699b36ed7d21fe9cb849c976fad680f1eb314d403242f60cee2256d687edb8",
+    "currentHash": "387da3f5f52a03a0cdeb00854895eb2bb35cb95231e1a685f38160b452341e01",
+    "partHash": "b1c366ee445d190040a31c3f5b28dfe45c9fa29705c502219f83e78b32333bfe"
+  },
+  "helper": {
+    "file": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+    "start": "- (JSValue *)openFileAtRelativePath:",
+    "end": "- (NSDictionary *)readJSONAtRelativePath:",
+    "beforeHash": "289edba46c8202d7a1d3c879d22771726b34792ab00068cf1ee87d3d8f20b1b9",
+    "currentHash": "a4fe7a6e0193e22fe90fcde82b60e8401f357d0d56a04735b8b3f24669e086b1",
+    "partHash": "be9701d577d5fc3e6235dc1b1b50d6783a34553333b1e8c739d0717d612adcea"
+  },
+  "troll": {
+    "file": "stream-app/streamd/POCSocketServer.mm",
+    "start": "    device[@\"openFile\"] =",
+    "end": "    device[@\"fileExists\"] =",
+    "beforeHash": "e2631530e694d8ef5a6b4431bbc188ecbe2c19eb9f2fd52c58c855eb65852dd7",
+    "currentHash": "1ab73bddbe0e931bfdb0bb57319f7ca1a8b000f75ec336837f4051193283585a",
+    "partHash": "562e9cb4b1ffe066ffda82af7f22779baaedce9116a17d2d9cc8fe0fbf0ddbd5"
+  },
+  "planHash": "6d49ddfb188fbcad40713f9ef96e0620cecb8c3acc28d79cf815f6e9c1045746"
+}

@@ -1387,6 +1387,8 @@ The async queue has no byte/entry bound. A log-heavy script can enqueue faster t
 
 ### [P1-43] JS file readLine performs one read syscall per byte
 
+C03al frontend follow-up (2026-11-07): all three FileHandle frontends now share a sealed immutable mode snapshot across path authority and kernel flags, eliminating two repeated normalizations and closing a mutable r→w+ reentrant path gap. Raw-mode API and complete physical fd/error body remain; all nine JS wrappers and object creation scope normal conversion temporaries. Portable/source checks pass; complete native frontend/JSCore/ownership and device qualification pending. See `IMPLEMENTATION-C03AL.md`.
+
 C03ag lifecycle follow-up (2026-11-07): shared FileHandle reuses its normalized valid mode, avoids normalizing canonical seek/tell, protects a newly opened fd until final initialization and safely initializes unopened objects. Nil/throwing construction retires the pending fd; seek/flush/close use operation pools. Existing chunk/rewind and complete replies remain. Portable/source checks pass; Foundation/fault/JSCore/device qualification pending. See `IMPLEMENTATION-C03AG.md`.
 
 Implementation follow-up (2026-11-07, C03ac): retain C03a's line chunk/rewind algorithm and extend the shared numeric/all reader with direct NSMutableData tail reads and checked byte progression. Add shared checked write progress, retained UTF8 write views and four operation pools across root/helper/production TrollStore. Portable actual-core/frozen oracle, boundary, fault and macro integration checks pass; Foundation/ARC/POSIX fixture additions and device performance remain pending. See `IMPLEMENTATION-C03AC.md`.

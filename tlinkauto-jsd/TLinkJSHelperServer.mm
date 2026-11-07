@@ -635,10 +635,11 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 {
     self.storageOpsCount++;
     NSString *openMode = mode.length > 0 ? mode : @"r";
-    if (!TLinkJSFileModeIsValid(openMode)) {
+    const auto modePlan=TLinkJSFilePrepareMode(openMode);
+    if (!modePlan.valid()) {
         return [JSValue valueWithObject:@{@"ok": @NO, @"error": @"invalid_file_mode", @"mode": openMode} inContext:context];
     }
-    BOOL writing = TLinkJSFileModeWrites(openMode);
+    BOOL writing = modePlan.writing();
     NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath
                                                           bundlePath:bundlePath
                                                              writing:writing
@@ -655,7 +656,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     }
     NSString *openError = nil;
     TLinkJSFileHandle *handle = [TLinkJSFileHandle openPath:path
-                                                      mode:openMode
+                                                      preparedMode:modePlan
                                                   handleId:handleId
                                           maxTransferBytes:(NSUInteger)kTLinkJSHelperMaxStorageFileBytes
                                                      error:&openError];
