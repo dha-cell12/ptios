@@ -1,6 +1,12 @@
 #import <Foundation/Foundation.h>
 #import <CommonCrypto/CommonDigest.h>
-#include "../shared/TLinkHelperRPCReplay.h"
+#include <memory>
+#include <string>
+static NSData *FixtureReplayData(const std::shared_ptr<const std::string> &owner);
+static id FixtureReplayParse(NSData *data);
+static NSData *FixtureReplayJSON(id result);
+#include "HelperReplayUnderTest.inc"
+#include "HelperReplayBefore.inc"
 #include <cassert>
 #include <algorithm>
 #include <cstdio>
@@ -8,6 +14,7 @@
 #include <cmath>
 using Cache=TLinkHelperRPCReplay;using D=Cache::Decision;
 static void errorIs(NSDictionary *reply,NSString *message){assert(![reply[@"ok"] boolValue]);assert([reply[@"error"] isEqualToString:message]);}
+#include "helper-replay-owner-runtime-fixture.inc"
 static void streamingFingerprintCases(){
     Cache::Digest actual,legacy;
     for(unsigned n=0;n<1500;++n){@autoreleasepool {
@@ -32,6 +39,7 @@ static void streamingFingerprintCases(){
 }
 int main(){@autoreleasepool {
     streamingFingerprintCases();
+    replayOwnerRuntimeCases();
     Cache cache;D decision;__block unsigned effects=0;
     NSDictionary *(^execute)(void)=^NSDictionary *{++effects;return @{@"ok":@(true),@"parts":@[@"0",@"42"],@"raw":@"0;;42\r\n"};};
     NSDictionary *first=TLinkHelperRPCDispatch(cache,@"one",@"tap",@[@1,@"x"],execute,decision);assert(decision==D::Execute&&effects==1);

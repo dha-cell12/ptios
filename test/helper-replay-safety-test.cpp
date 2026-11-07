@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <limits>
 #include <vector>
+#include "helper-replay-owner-safety-fixture.inc"
 struct DigestOracle {
     uint64_t hash=1469598103934665603ULL;size_t calls=0,failAt=0;
     static bool update(void *opaque,const uint8_t *bytes,size_t length){
@@ -39,6 +40,7 @@ static void digestFeedCases(){
 }
 int main(){
     digestFeedCases();
+    replayOwnerCases();
     using C=TLinkHelperRPCReplay;using D=C::Decision;C::Digest digest{};C::Limits limits;
     limits.replies=3;limits.bytes=12;limits.replyBytes=10;limits.identities=6;limits.identityBytes=300;
     C cache(limits);

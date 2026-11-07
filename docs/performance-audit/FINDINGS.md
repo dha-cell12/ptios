@@ -1359,6 +1359,8 @@ Start 30–60 second shell/gesture and worst-case template/OCR work, request sto
 
 ### [P1-41] Helper dedupe fingerprints whole argument JSON and can retain up to 256 complete RPC results
 
+C02c4 follow-up (2026-11-08): rootfull/roothide helper replay replies now have immutable shared owners, and NSData parsing views retain those owners across eviction/reset instead of explicitly copying the full payload. Identity bytes and lengths come from one owned encoding per field; existing byte fences and NUL handling remain. Nil/empty result encoding retires the identity unavailable without repeated effects. Complete previous decisions/quotas,100k portable comparisons,10k held-owner lifecycles and eight reader threads pass on Windows. New Foundation/reentry/fault tests and device cost remain pending; cache charges exclude caller-held retired snapshots, as they excluded copies, so this is not a process RSS cap. See `IMPLEMENTATION-C02C4.md`.
+
 **Status:** CONFIRMED  
 **Locations:** `TLinkautoJSRuntime.mm:129-136,1041-1076`
 
