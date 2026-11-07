@@ -1,3 +1,4 @@
+import {restoreConsoleVector,consoleVectorBefore} from './lib/console-vector-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,basename,join,resolve} from 'node:path';
@@ -6,7 +7,8 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
-const source=await read('pccontrol/jsruntime/TLinkJSRuntimeCore.mm');
+const actualSource=await read('pccontrol/jsruntime/TLinkJSRuntimeCore.mm');
+const source=restoreConsoleVector(actualSource);
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const methods=between(source,'- (void)prepareConsoleLogFiles {','- (NSDictionary *)bundleTextForRelativePath:');
 const append=methods.slice(methods.indexOf('- (void)appendConsoleLogWithLevel:'));
@@ -45,8 +47,22 @@ for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.y
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-console-log-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
-    await writeFile(join(temp,'ConsoleLogMethods.inc'),methods);
-    const helper=between(source,'static NSString *TLinkautoJSSanitizeFileComponent','struct TLinkConsoleLogEntry {');
+    const actualMethods=between(actualSource,'- (void)prepareConsoleLogFiles {','- (NSDictionary *)bundleTextForRelativePath:');
+    assert.equal([...actualMethods.matchAll(/::writev\(/g)].length,1);
+    assert.equal([...actualMethods.matchAll(/\[NSMutableData dataWithCapacity:total\]/g)].length,1);
+    assert.match(actualMethods,/count>1\)written=\[self appendConsoleVectorBatch/);
+    assert.match(actualMethods,/@finally \{\[handle closeFile\];\}/);
+    const measured=actualMethods.replace('::writev(','::ConsoleWriteVectors(').replace('[NSMutableData dataWithCapacity:total]','ConsoleJoinedData(total)');
+    assert.equal([...measured.matchAll(/::ConsoleWriteVectors\(/g)].length,1);
+    assert.equal([...measured.matchAll(/ConsoleJoinedData\(total\)/g)].length,1);
+    await writeFile(join(temp,'ConsoleLogMethods.inc'),measured);
+    const before=consoleVectorBefore().replace('- (uint64_t)writeConsoleBatch:','- (uint64_t)beforeWriteConsoleBatch:').replace('- (BOOL)emitConsoleSystemLog:','- (BOOL)beforeEmitConsoleSystemLog:').replace('[NSMutableData data]','ConsoleBeforeJoinedData()');
+    assert.equal([...before.matchAll(/ConsoleBeforeJoinedData\(\)/g)].length,1);
+    assert.equal([...before.matchAll(/beforeWriteConsoleBatch:/g)].length,1);
+    assert.equal([...before.matchAll(/beforeEmitConsoleSystemLog:/g)].length,1);
+    await writeFile(join(temp,'ConsoleLogBeforeVector.inc'),before);
+    const helper=between(actualSource,'static NSString *TLinkautoJSSanitizeFileComponent','struct TLinkConsoleLogEntry {').replace('return capacity;','return ConsoleVectorCapacity(capacity);');
+    assert.equal([...helper.matchAll(/ConsoleVectorCapacity\(capacity\)/g)].length,1);
     await writeFile(join(temp,'ConsoleLogHelpers.inc'),helper);
     await writeFile(join(temp,'ConsoleLogEntry.inc'),between(source,'struct TLinkConsoleLogEntry {','@interface TLinkJSRuntimeCore'));
     await writeFile(join(temp,'ConsoleLogCallback.inc'),callback);
@@ -58,7 +74,9 @@ try{
     run(binary,[]);
     if(process.platform==='darwin'){
         const runtime=join(temp,'console-log-runtime');
-        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','JavaScriptCore','-I',temp,join(root,'test/console-log-runtime-test.mm'),'-o',runtime]);
+        const owner=join(temp,'console-owner.o');
+        run(compiler,['-Wall','-Wextra','-Werror','-fno-objc-arc','-fsanitize=address,undefined','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
+        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','JavaScriptCore','-I',temp,join(root,'test/console-log-runtime-test.mm'),owner,'-o',runtime]);
         run(runtime,[temp]);
     }else console.log('macOS actual/frozen console formatter/queue/file/lifecycle integration is included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-console-log-'));await rm(temp,{recursive:true,force:true});}

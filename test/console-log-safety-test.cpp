@@ -4,7 +4,9 @@
 #include <cstdio>
 #include <thread>
 #include <vector>
+#include "console-vector-safety-fixture.inc"
 int main(){
+    consoleVectorCases();
     static_assert(TLinkConsoleLogMaxPending*TLinkConsoleLogLineBytes==1024*1024,"pending payload bound changed");
     static_assert(TLinkConsoleLogMaxPending*TLinkConsoleLogEntryBytes==2*1024*1024,"disk/system reservation bound changed");
     static_assert((TLinkConsoleLogMessageUnits+12+TLinkConsoleLogLevelUnits)*sizeof(uint16_t)<=TLinkConsoleLogSystemBytes,"system snapshot prefixes exceed their reservation");

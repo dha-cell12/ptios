@@ -1372,6 +1372,8 @@ For bridge results allowed up to ~1 MiB, the theoretical raw-payload retention a
 
 ### [P1-42] JS console logging has synchronous NSLog plus an unbounded async disk queue and two open/write/close cycles per line
 
+C03ah follow-up (2026-11-07): rootfull/roothide console already has bounded admission, batched disk writes and an asynchronous system sink from C03b/c/d. Existing-file multi-entry batches now avoid their joined buffer using retained spans and checked writev progress/OS capacity; missing-file atomic creation and rotation/no-replay policy remain. Per-sink pools shorten normal temporary lifetime. Portable/source checks pass; expanded Foundation/ARC and device qualification pending. Production TrollStore logging unchanged. See `IMPLEMENTATION-C03AH.md`. The original evidence below records the audit baseline.
+
 **Status:** CONFIRMED  
 **Location:** `pccontrol/jsruntime/TLinkJSRuntimeCore.mm:213-259` plus console block in `runScriptAtPath`
 

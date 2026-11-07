@@ -9,11 +9,19 @@
 #include <functional>
 #include <stdexcept>
 #include <cstdarg>
+#include <sys/uio.h>
+#include <unistd.h>
+#include <map>
+#include "../shared/TLinkConsoleLogVectorIO.h"
+#include "ax-node-pool-owner.h"
+extern "C" void TLinkAXFixtureOwnerDidDrain(void){}
+static size_t ConsoleVectorCapacity(size_t capacity);
 #include "ConsoleLogConstants.h"
 #include "ConsoleLogHelpers.inc"
 #include "ConsoleLogEntry.inc"
 static std::atomic<unsigned> consoleFault{0},consoleLive{0},consoleOpens{0},consoleWrites{0},consoleCloses{0},consoleStats{0};
 static std::atomic<unsigned> consoleSystemFault{0};
+static bool consoleTrackSystemOwners=false;
 static char consoleQueueKey;
 static std::mutex consoleSystemMutex;
 static NSMutableArray *consoleSystemRecords;
@@ -21,6 +29,7 @@ static dispatch_semaphore_t consoleSystemEntered,consoleSystemRelease;
 static void consoleWait(dispatch_semaphore_t semaphore);
 static void ConsoleCaptureLog(NSString *format,...) NS_FORMAT_FUNCTION(1,2);
 static void ConsoleCaptureLog(NSString *format,...){
+    if(consoleTrackSystemOwners)TLinkAXFixtureAutoreleaseOwner();
     va_list arguments;va_start(arguments,format);NSString *text;
     @try {text=[[NSString alloc] initWithFormat:format arguments:arguments];} @finally {va_end(arguments);}
     {
@@ -52,28 +61,45 @@ static NSArray *consoleTakeSystemRecords(){std::lock_guard<std::mutex> guard(con
 @implementation ConsoleLogClock
 + (NSDate *)date {return [NSDate dateWithTimeIntervalSince1970:1234567890];}
 @end
+static std::mutex consoleDescriptorMutex;
+static std::map<int,bool> consoleDescriptors;
+static unsigned consoleVectorMode=0,consoleVectorCalls=0;
+static size_t consoleVectorOverride=0,consoleJoinedCount=0,consoleBeforeJoinedCount=0;
+static std::vector<TLinkConsoleLogVectorIO::Span> consoleExpectedSpans;
 @interface ConsoleLogFileHandle : NSObject {
     NSFileHandle *_handle;BOOL _closed,_latest;
 }
 + (instancetype)fileHandleForWritingAtPath:(NSString *)path;
 - (unsigned long long)seekToEndOfFile;
+- (int)fileDescriptor;
 - (void)writeData:(NSData *)data;
 - (void)closeFile;
 @end
 @implementation ConsoleLogFileHandle
 + (instancetype)fileHandleForWritingAtPath:(NSString *)path {
     NSFileHandle *handle=[NSFileHandle fileHandleForWritingAtPath:path];if(!handle)return nil;
-    ConsoleLogFileHandle *result=[self new];result->_handle=handle;result->_latest=[path hasSuffix:@"/latest.log"];++consoleLive;++consoleOpens;return result;
+    ConsoleLogFileHandle *result=[self new];result->_handle=handle;result->_latest=[path hasSuffix:@"/latest.log"];++consoleLive;++consoleOpens;
+    {std::lock_guard<std::mutex> guard(consoleDescriptorMutex);assert(consoleDescriptors.emplace(handle.fileDescriptor,result->_latest).second);}
+    return result;
 }
+- (int)fileDescriptor {return consoleVectorMode==7?-1:_handle.fileDescriptor;}
 - (unsigned long long)seekToEndOfFile {if(consoleFault==1)[NSException raise:@"LogFixture" format:@"seek failed"];return [_handle seekToEndOfFile];}
 - (void)writeData:(NSData *)data {++consoleWrites;if(consoleFault==2)throw std::runtime_error("write failed");if(consoleFault==5&&_latest)[NSException raise:@"LogFixture" format:@"latest write failed"];[_handle writeData:data];}
 - (void)closeFile {
-    if(_closed)return;_closed=YES;[_handle closeFile];assert(consoleLive.fetch_sub(1)>0);++consoleCloses;
+    if(_closed)return;_closed=YES;
+    {std::lock_guard<std::mutex> guard(consoleDescriptorMutex);assert(consoleDescriptors.erase(_handle.fileDescriptor)==1);}
+    [_handle closeFile];assert(consoleLive.fetch_sub(1)>0);++consoleCloses;
     if(consoleFault==3)[NSException raise:@"LogFixture" format:@"close failed"];
     if(consoleFault==4)throw std::runtime_error("close failed");
 }
-- (void)dealloc {if(!_closed&&_handle){[_handle closeFile];assert(consoleLive.fetch_sub(1)>0);}}
+- (void)dealloc {
+    if(!_closed&&_handle){
+        {std::lock_guard<std::mutex> guard(consoleDescriptorMutex);assert(consoleDescriptors.erase(_handle.fileDescriptor)==1);}
+        [_handle closeFile];assert(consoleLive.fetch_sub(1)>0);
+    }
+}
 @end
+#include "console-vector-adapters.inc"
 @interface ConsoleMessageProbe : NSObject {
 @public std::function<void()> callback;
 }
@@ -92,6 +118,9 @@ static NSArray *consoleTakeSystemRecords(){std::lock_guard<std::mutex> guard(con
 - (BOOL)appendConsoleData:(NSData *)data toConsolePath:(NSString *)path;
 - (BOOL)writeConsoleData:(NSData *)data runPath:(NSString *)runPath latestPath:(NSString *)latestPath;
 - (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path;
+- (uint64_t)beforeWriteConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path;
+- (BOOL)appendConsoleVectorBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch begin:(size_t)begin count:(size_t)count toConsolePath:(NSString *)path;
+- (BOOL)beforeEmitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (void)drainConsoleLogs;
 - (void)beginConsoleLogging;
@@ -123,6 +152,7 @@ static NSArray *consoleTakeSystemRecords(){std::lock_guard<std::mutex> guard(con
 #define NSFileManager ConsoleLogFileManager
 #define NSLog ConsoleCaptureLog
 #include "ConsoleLogMethods.inc"
+#include "ConsoleLogBeforeVector.inc"
 - (void)installConsole:(JSContext *)context {
     __weak TLinkJSRuntimeCore *weakSelf=self;
 #include "ConsoleLogCallback.inc"
@@ -146,6 +176,7 @@ static NSArray *consoleTakeSystemRecords(){std::lock_guard<std::mutex> guard(con
 static void consoleWait(dispatch_semaphore_t semaphore){assert(dispatch_semaphore_wait(semaphore,dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC))==0);}
 static NSString *consoleText(NSString *path){return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]?:@"";}
 static TLinkJSRuntimeCore *consoleStart(NSString *root,NSString *run){TLinkJSRuntimeCore *logger=[TLinkJSRuntimeCore new];[logger configure:root run:run];[logger prepareConsoleLogFiles];[logger beginConsoleLogging];return logger;}
+#include "console-vector-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]];
     consoleSystemRecords=[NSMutableArray array];
@@ -179,7 +210,7 @@ int main(int argc,char **argv){@autoreleasepool{
     consoleOpens=0;consoleWrites=0;consoleCloses=0;consoleStats=0;[legacyBurst resumeWriter];[legacyBurst finishConsoleLogging];
     assert(consoleOpens==128&&consoleWrites==128&&consoleCloses==128&&consoleStats==128);
     consoleOpens=0;consoleWrites=0;consoleCloses=0;consoleStats=0;[batched resumeWriter];[batched finishConsoleLogging];
-    assert(consoleOpens==2&&consoleWrites==2&&consoleCloses==2&&consoleStats==4&&consoleLive==0);
+    assert(consoleOpens==2&&consoleWrites==2*((64+TLinkConsoleLogVectorCapacity()-1)/TLinkConsoleLogVectorCapacity())&&consoleCloses==2&&consoleStats==4&&consoleLive==0);
     assert([consoleText(legacyBurst.runPath) isEqual:consoleText(batched.runPath)]&&[consoleText(legacyBurst.latestPath) isEqual:consoleText(batched.latestPath)]);
     assert([[batched currentConsoleLogStats][@"accepted"] intValue]==64&&[[batched currentConsoleLogStats][@"pendingLines"] intValue]==0);
     // Both files plan their own rotations; threshold equality must keep the
@@ -313,7 +344,8 @@ int main(int argc,char **argv){@autoreleasepool{
         [logger beginConsoleLogging];[context evaluateScript:@"_tlinkautoLog('log','recovered-system')"];[logger finishConsoleLogging];
         assert([[logger currentConsoleLogStats][@"systemFailures"] intValue]==1&&[consoleText(logger.runPath) containsString:@"recovered-system"]&&consoleLive==0);consoleTakeSystemRecords();
     }
+    consoleVectorRuntimeCases(root);
     consoleSystemRecords=nil;
-    puts("Console logger Foundation passed: frozen bytes/independent rotations/missing files, 64-entry burst uses 4 metadata checks and 2 writes/opens/closes versus 128 each, no batch retry after NS/C++/post-write/one-path faults, held caps, early rejection, Unicode snapshots, late-run isolation, concurrent producers and zero live handles/charges. No real script or device syslog workload qualified.");
+    puts("Console logger Foundation passed: frozen bytes/independent rotations/missing files, 64-entry burst uses 4 metadata checks and 2 open/close pairs versus 128 each (writev calls follow host vector capacity), no batch retry after NS/C++/post-write/one-path faults, held caps, early rejection, Unicode snapshots, late-run isolation, concurrent producers and zero live handles/charges. No real script or device syslog workload qualified.");
     puts("Console system logging passed: actual/frozen JSCore hook/output parity, asynchronous held/blocked sink, shared 64-entry disk/system admission, immutable bounded Unicode snapshots, NS/C++ failure accounting/recovery and finish drain without replay. Device syslog qualification pending.");
 }}

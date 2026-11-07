@@ -7,6 +7,9 @@
 #include <math.h>
 #include "../../shared/TLinkConsoleLogBudget.h"
 #include "../../shared/TLinkConsoleLogBatch.h"
+#include "../../shared/TLinkConsoleLogVectorIO.h"
+#include <sys/uio.h>
+#include <unistd.h>
 
 typedef bool (*TLinkautoJSShouldTerminateCallback)(JSContextRef ctx, void *opaque);
 typedef void (*TLinkautoJSSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkautoJSShouldTerminateCallback callback, void *opaque);
@@ -85,6 +88,13 @@ static NSString *TLinkautoJSSanitizeFileComponent(NSString *value) {
     return [joined length] > 0 ? joined : @"script";
 }
 
+// BEGIN console vector capacity.
+static size_t TLinkConsoleLogVectorCapacity(void) {
+    static const size_t capacity=TLinkConsoleLogVectorIO::VectorLimit(sysconf(_SC_IOV_MAX));
+    return capacity;
+}
+// END console vector capacity.
+
 struct TLinkConsoleLogEntry {
     NSData *data;
     NSString *runPath,*latestPath,*runId,*systemLevel,*systemMessage;
@@ -120,6 +130,7 @@ struct TLinkConsoleLogEntry {
 - (void)prepareConsoleLogFiles;
 - (BOOL)appendConsoleData:(NSData *)data toConsolePath:(NSString *)path;
 - (BOOL)writeConsoleData:(NSData *)data runPath:(NSString *)runPath latestPath:(NSString *)latestPath;
+- (BOOL)appendConsoleVectorBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch begin:(size_t)begin count:(size_t)count toConsolePath:(NSString *)path;
 - (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path;
 - (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (void)drainConsoleLogs;
@@ -268,6 +279,38 @@ struct TLinkConsoleLogEntry {
     return runOK&&latestOK;
 }
 
+- (BOOL)appendConsoleVectorBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch begin:(size_t)begin count:(size_t)count toConsolePath:(NSString *)path {
+    if(![path isKindOfClass:[NSString class]]||!path.length||begin>batch.size()||!count||count>batch.size()-begin||count>TLinkConsoleLogVectorIO::MaxVectors)return NO;
+    std::array<TLinkConsoleLogVectorIO::Span,TLinkConsoleLogVectorIO::MaxVectors> spans{};
+    for(size_t n=0;n<count;++n){
+        NSData *data=batch[begin+n]->data;
+        spans[n]=TLinkConsoleLogVectorIO::Span((const uint8_t *)data.bytes,data.length);
+    }
+    size_t total=0;if(TLinkConsoleLogVectorIO::Validate(spans.data(),count,total))return NO;
+    NSDictionary *attrs=[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if([attrs[NSFileSize] unsignedLongLongValue]>kTLinkautoJSMaxConsoleLogBytes)
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    if(![[NSFileManager defaultManager] fileExistsAtPath:path]){
+        // Preserve the original atomic creation/replacement path. Only this
+        // fallback materializes the bounded complete group.
+        NSMutableData *joined=[NSMutableData dataWithCapacity:total];if(!joined)return NO;
+        for(size_t n=0;n<count;++n)[joined appendBytes:spans[n].bytes length:spans[n].length];
+        return [joined writeToFile:path atomically:YES];
+    }
+    NSFileHandle *handle=[NSFileHandle fileHandleForWritingAtPath:path];if(!handle)return NO;
+    @try {
+        [handle seekToEndOfFile];
+        const int fd=handle.fileDescriptor;if(fd<0)return NO;
+        const auto output=TLinkConsoleLogVectorIO::WriteAll(spans.data(),count,TLinkConsoleLogVectorCapacity(),
+            [fd](const TLinkConsoleLogVectorIO::Span *parts,size_t number)->int64_t {
+                std::array<struct iovec,TLinkConsoleLogVectorIO::MaxVectors> vectors{};
+                for(size_t n=0;n<number;++n){vectors[n].iov_base=const_cast<uint8_t *>(parts[n].bytes);vectors[n].iov_len=parts[n].length;}
+                return ::writev(fd,vectors.data(),(int)number);
+            });
+        return !output.error&&!output.zeroWrite;
+    } @finally {[handle closeFile];}
+}
+
 - (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path {
     if(![path isKindOfClass:[NSString class]]||!path.length)return TLinkConsoleLogBatchMask(0,batch.size());
     uint64_t failed=0;
@@ -281,13 +324,8 @@ struct TLinkConsoleLogEntry {
             // including its behavior when remove fails. Replan the next group.
             if(bytes<=kTLinkautoJSMaxConsoleLogBytes)
                 count=TLinkConsoleLogBatchCount(bytes,kTLinkautoJSMaxConsoleLogBytes,batch.size()-begin,[&batch,begin](size_t n){return batch[begin+n]->data.length;});
-            NSData *data=batch[begin]->data;
-            if(count>1){
-                NSMutableData *joined=[NSMutableData data];
-                for(size_t n=0;n<count;++n)[joined appendData:batch[begin+n]->data];
-                data=joined;
-            }
-            written=[self appendConsoleData:data toConsolePath:path];
+            if(count>1)written=[self appendConsoleVectorBatch:batch begin:begin count:count toConsolePath:path];
+            else written=[self appendConsoleData:batch[begin]->data toConsolePath:path];
         }catch(...) {}} @catch(__unused NSException *exception) {}
         }
         // A failed group is not replayed: it may already have written bytes.
@@ -298,11 +336,13 @@ struct TLinkConsoleLogEntry {
 }
 
 - (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry {
+    @autoreleasepool {
     @try {try {
         NSLog(@"com.tlinkauto.jsruntime[%@][%@]: %@",entry.runId?:@"",entry.systemLevel,entry.systemMessage);
         return YES;
     }catch(...) {}} @catch(__unused NSException *exception) {}
     return NO;
+    }
 }
 
 - (void)drainConsoleLogs {
