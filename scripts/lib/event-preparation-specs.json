@@ -1,0 +1,20 @@
+{
+  "beforeHash": "84c54ae312efeb448cd8a163ba36a0ab816d10c459756cfb51be6ebbf070e5e2",
+  "currentHash": "cf81faebd32c7f33cd39baa9cdb016d224c6139c626f76a3ed8c562e992bef00",
+  "parts": [
+    {
+      "name": "payload",
+      "start": "static NSDictionary *TLinkEventBoundedPayload(",
+      "end": "NSDictionary *TLinkEventChannelPublish(",
+      "currentHash": "9237649c5cf2c705aa0c9d62bf5941090f879a41e2364fc95b3ddb0754ff61cc"
+    },
+    {
+      "name": "batch",
+      "start": "static NSDictionary *TLinkEventBatchFromJournal(",
+      "end": "static NSDictionary *TLinkEventParseBody(",
+      "currentHash": "88f038652f758aa4512ad0f6115411cf5c0c4b842c4dcdb9bae25cf49943e8c9"
+    }
+  ],
+  "counterHash": "0bf16b6b4afcb38e7b69297b242911e5d9658e1d96e5b9410bad776c52f6bd52",
+  "coreHash": "50b036523514b9d6b64f2c0ab7e35d113a19721fe0a2edef831f0afc20692b60"
+}

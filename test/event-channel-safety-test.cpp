@@ -7,7 +7,9 @@
 #include <string>
 #include "ascii-preparation-safety-fixture.inc"
 #include "event-metadata-safety-fixture.inc"
+#include "event-preparation-safety-fixture.inc"
 int main() {
+    eventPreparationCases();
     asciiPreparationCases();
     eventMetadataCases();
     assert(!TLinkEventPollExpired(100, 99, 25));

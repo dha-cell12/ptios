@@ -1947,6 +1947,8 @@ Acceptance: capacity and idle I/O return to baseline immediately after disconnec
 
 ### [P1-54] Every event publication rewrites the complete 256-event journal under an exclusive file lock
 
+C03ak preparation follow-up (2026-11-07): coherent stream counting avoids the producer-owned full NSData used only to size payloads, preserves exact original_bytes and falls back to the preceding encoder on count/NS/C++ failures. Batch selection searches after cursor, reserves from the remaining tail and shortcuts wildcard filters while preserving cursor/gap/page graphs. Portable/source checks pass; native Foundation/device qualification pending. Publication still serializes and replaces the full journal under the existing flock. See `IMPLEMENTATION-C03AK.md`.
+
 C03af follow-up (2026-11-07): shared event preparation/reconcile now uses a typed seven-field/errno stamp, conditional validated permission repair, direct ASCII topic checks and record/write/waiter/entry temporary pools. Keep identity/probe/cache-clearing/schema/sequence/commit/notify and admission/cancel behavior. Source/portable checks pass; new Foundation/POSIX/GCD/ARC/MRC and device tests pending. Full journal rewriting and missing-file epoch/crash recovery remain open. See `IMPLEMENTATION-C03AF.md`.
 
 C03ad follow-up (2026-11-07): shared event token preparation, persisted journal uint64 validation, batch capacity and publish/status temporary lifetimes are optimized together. Public cursor parser/schema, transaction order/durability and full journal read/parse/rewrite remain. Portable/source checks pass; new Foundation/ARC/MRC tests and device allocation/latency require qualification. See `IMPLEMENTATION-C03AD.md`.

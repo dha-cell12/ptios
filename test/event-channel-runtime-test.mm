@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <stdexcept>
+#include <cmath>
 #include "../shared/TLinkEventChannel.h"
 #include <notify.h>
 #include "ax-node-pool-owner.h"
@@ -124,7 +125,13 @@ static BOOL FixtureEventWrite(NSData *data,NSString *path) {
     if(fixtureWriteFault==5)[NSException raise:@"EventFixture" format:@"post-write failed"];
     if(fixtureWriteFault==6)throw std::runtime_error("post-write failed");return result;
 }
+static BOOL FixtureEventEncodedSize(id object,NSUInteger *size);
+static NSInteger FixtureEventDefaultCountWrite(id object,NSOutputStream *stream,NSError *__autoreleasing *error);
+static NSData *FixtureEventFallbackPayloadData(id object);
+static NSData *FixtureEventLegacyPayloadData(id object);
 #include "EventChannelUnderTest.inc"
+#include "EventPayloadBefore.inc"
+#include "EventBatchBefore.inc"
 #include "EventMetadataBeforeHelpers.inc"
 static dispatch_queue_t socketQueue() { static dispatch_queue_t q = dispatch_queue_create("test.event-socket", DISPATCH_QUEUE_SERIAL); return q; }
 static dispatch_queue_t POCSocketQueue() { return socketQueue(); }
@@ -519,11 +526,13 @@ static void fixtureBoundedJournalCases() {
 #include "event-wire-runtime-fixture.inc"
 #include "event-preparation-pool-runtime-fixture.inc"
 #include "event-metadata-runtime-fixture.inc"
+#include "event-preparation-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
     fixturePreparationPoolCases();
     fixtureEventMetadataCases();
+    fixtureEventPreparationCases();
     fixtureEventEnvelopeCases();
     fixtureEventWireCases();
     fixtureValidatedLockCases();

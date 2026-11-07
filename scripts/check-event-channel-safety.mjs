@@ -1,3 +1,4 @@
+import {restoreEventPreparation,eventPreparationBefore,checkEventPreparationFiles} from './lib/event-preparation-baseline.mjs';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';
@@ -12,8 +13,13 @@ import {restoreHistoryWork} from './lib/history-work-baseline.mjs';
 import {restorePreparation,preparationPart,preparationBefore,checkPreparationCore} from './lib/preparation-baseline.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
-const [preparedEvent, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
+const [currentEvent, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
+const preparedEvent=restoreEventPreparation(currentEvent);
+checkEventPreparationFiles(await read('shared/TLinkEventPreparation.h'),await read('shared/TLinkEventJSONCounter.inc'));
 const beforeMetadata=restoreEventMetadata(preparedEvent);
+assert.match(currentEvent,/TLinkEventPreparation::FirstAfter[\s\S]*events.count-start/);
+assert.match(currentEvent,/TLinkEventJSONEncodedSize\(payload,&bytes\)/);
+console.log('Event preparation source passed: ordered cursor search/new-tail hints, wildcard shortcut, buffer-free JSON count with original encoder fallback and full preceding source.');
 const metadataCore=await read('shared/TLinkEventMetadata.h');
 assert.equal(createHash('sha256').update(metadataCore).digest('hex'),'91d154e0f3cdb9d1ee1c5fc5ced2c03f3a7b371046e78cf5e897a1e49347c763','complete C03af metadata core');
 assert.doesNotMatch(between(preparedEvent,'static TLinkEventMetadata::Stamp TLinkEventFileFingerprint(void)','static NSDictionary *TLinkEventLoadSnapshot('),/stringWithFormat|NSString/);
@@ -159,7 +165,7 @@ function run(command,args) {
  if (r.error) throw r.error; assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);
 }
 try {
- const fixture = preparedEvent.replace('@"/var/mobile/Library/TLinkauto/event-channel"',`(fixtureEventRootOverride ?: @${JSON.stringify(join(temp,'journal'))})`).replace('notify_post(kTLinkEventNotification)', 'FixtureNotifyPost(kTLinkEventNotification)').replace('notify_register_dispatch(', 'FixtureRegisterNotification(')
+ const fixture = currentEvent.replace('#include "TLinkEventJSONCounter.inc"','#include "EventCounterUnderTest.inc"').replace('TLinkEventJSONEncodedSize(payload,&bytes)','FixtureEventEncodedSize(payload,&bytes)').replace('[NSJSONSerialization dataWithJSONObject:payload options:0 error:nil]','FixtureEventFallbackPayloadData(payload)').replace('@"/var/mobile/Library/TLinkauto/event-channel"',`(fixtureEventRootOverride ?: @${JSON.stringify(join(temp,'journal'))})`).replace('notify_post(kTLinkEventNotification)', 'FixtureNotifyPost(kTLinkEventNotification)').replace('notify_register_dispatch(', 'FixtureRegisterNotification(')
   .replace('static BOOL TLinkEventJournalInteger(id value, uint64_t *result)\n{','static BOOL TLinkEventJournalInteger(id value, uint64_t *result)\n{\n    FixtureMetadataIntegerProbe();')
   .replace('static NSDictionary *TLinkEventParseBody(NSString *body, NSString **error)\n{','static NSDictionary *TLinkEventParseBody(NSString *body, NSString **error)\n{\n    FixtureMetadataParserProbe();')
   .replace('stat(TLinkEventJournalPath().fileSystemRepresentation, &info)','FixtureFingerprintStat(TLinkEventJournalPath().fileSystemRepresentation, &info)')
@@ -210,7 +216,7 @@ try {
  for(const current of [false,true]){
   const label=current?'Current':'Before';
   for(const [kind,name,symbol] of [['event','token','Token'],['event','integer','Integer'],['event','batch','Batch'],['history','sanitize','Sanitize']]){
-   const text=current?preparationPart(kind==='event'?preparedEvent:prepHistory,kind,name):preparationBefore(kind,name);
+   const text=current?preparationPart(kind==='event'?currentEvent:prepHistory,kind,name):preparationBefore(kind,name);
    prepFixtures[label+'Preparation'+symbol+'.inc']=rename(text,label+symbol);
   }
  }
@@ -232,6 +238,13 @@ try {
  const beforeSweep=between(oldWait,'static void TLinkEventSweep(BOOL forceRead)','static void TLinkEventRearm(void) {').replace('TLinkEventSweep(', 'FixtureBeforeSweep(').replaceAll('sTLinkEventFingerprint','fixtureBeforeFingerprint').replaceAll('TLinkEventFileFingerprint()', 'FixtureBeforeFingerprint()').replace('TLinkEventLoadSnapshot(YES,','FixtureBeforeLoadSnapshot(YES,');
  fixtures['EventMetadataBeforeHelpers.inc']=beforePermissions+beforeReader+beforeWriter+beforeParser+beforeFingerprint;
  fixtures['EventMetadataBeforeSweep.inc']=beforeSweep;
+ fixtures['EventCounterUnderTest.inc']=(await read('shared/TLinkEventJSONCounter.inc')).replace('[NSJSONSerialization writeJSONObject:object toStream:stream options:0 error:error]','FixtureEventDefaultCountWrite(object,stream,error)');
+ assert.equal((fixtures['EventCounterUnderTest.inc'].match(/FixtureEventDefaultCountWrite\(object,stream,error\)/g)||[]).length,1);
+ fixtures['EventPayloadBefore.inc']=eventPreparationBefore('payload').replace('TLinkEventBoundedPayload(', 'FixtureBeforeBoundedPayload(').replace('[NSJSONSerialization dataWithJSONObject:payload options:0 error:nil]','FixtureEventLegacyPayloadData(payload)');
+ fixtures['EventBatchBefore.inc']=eventPreparationBefore('batch').replace('TLinkEventBatchFromJournal(', 'FixtureBeforeEventBatch(');
+ assert.equal((fixture.match(/FixtureEventEncodedSize\(payload,&bytes\)/g)||[]).length,1);
+ assert.equal((fixture.match(/FixtureEventFallbackPayloadData\(payload\)/g)||[]).length,1);
+ assert.equal((fixtures['EventPayloadBefore.inc'].match(/FixtureEventLegacyPayloadData\(payload\)/g)||[]).length,1);
  for(const name of ['FixtureBeforeEnsureDirectory','FixtureBeforeAcquireFileLock','FixtureBeforeReadJournal','FixtureBeforeWriteJournal','FixtureBeforeParseBody','FixtureBeforeFingerprint'])assert.equal((fixtures['EventMetadataBeforeHelpers.inc'].match(new RegExp('\\b'+name+'\\(', 'g'))||[]).length,name==='FixtureBeforeEnsureDirectory'?2:1,name);
  assert.equal((fixture.match(/FixtureMetadataIntegerProbe\(\)/g)||[]).length,1);
  assert.equal((fixture.match(/FixtureMetadataParserProbe\(\)/g)||[]).length,1);

@@ -1,6 +1,7 @@
 #import "TLinkEventChannel.h"
 #include "TLinkASCIIPreparation.h"
 #include "TLinkEventMetadata.h"
+#include "TLinkEventPreparation.h"
 
 #include <atomic>
 #include <memory>
@@ -250,17 +251,27 @@ static NSString *TLinkEventToken(NSString *value, NSString *fallback)
     return [[NSString alloc] initWithCharacters:(const unichar *)token.values.data() length:token.count] ?: fallback;
 }
 
+#include "TLinkEventJSONCounter.inc"
+
 static NSDictionary *TLinkEventBoundedPayload(NSDictionary *payload)
 {
+    @autoreleasepool {
     if (![payload isKindOfClass:[NSDictionary class]] ||
         ![NSJSONSerialization isValidJSONObject:payload]) return @{};
-    NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-    if (data.length <= kTLinkEventPayloadMaxBytes) return payload;
+    NSUInteger bytes=0;
+    if(!TLinkEventJSONEncodedSize(payload,&bytes)){
+        // Preserve the preceding encoder/failure behavior if the stream path
+        // cannot establish a complete coherent byte count.
+        NSData *data=[NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+        bytes=data.length;
+    }
+    if (bytes <= kTLinkEventPayloadMaxBytes) return payload;
     return @{
         @"truncated": @true,
-        @"original_bytes": @(data.length),
+        @"original_bytes": @(bytes),
         @"reason": @"event_payload_limit",
     };
+    }
 }
 
 NSDictionary *TLinkEventChannelPublish(NSString *runtime,
@@ -321,10 +332,13 @@ static NSDictionary *TLinkEventBatchFromJournal(NSDictionary *journal, uint64_t 
     latest = latest > 0 ? latest - 1 : 0;
     uint64_t oldest = events.count > 0 ? [events.firstObject[@"sequence"] unsignedLongLongValue] : latest + 1;
     BOOL gap = (events.count > 0 && cursor > 0 && oldest > 0 && cursor < oldest - 1) || cursor > latest;
-    NSMutableArray *selected = [NSMutableArray arrayWithCapacity:MIN(maxEvents,MIN(events.count,kTLinkEventPollMaxEvents))];
+    const size_t start=cursor<oldest?0:TLinkEventPreparation::FirstAfter(events.count,cursor,[events](size_t index){return [events[index][@"sequence"] unsignedLongLongValue];});
+    NSMutableArray *selected = [NSMutableArray arrayWithCapacity:TLinkEventPreparation::Reserve(maxEvents,events.count-start,kTLinkEventPollMaxEvents)];
+    const BOOL allTopics=start<events.count&&(topics.count==0||[topics containsObject:@"*"]);
     TLinkEventBatchCursor scan(cursor, maxEvents);
-    for (NSDictionary *event in events) {
-        auto action = scan.scan([event[@"sequence"] unsignedLongLongValue], TLinkEventTopicMatches(event[@"topic"], topics));
+    for (NSUInteger index=start;index<events.count;++index) {
+        NSDictionary *event=events[index];
+        auto action = scan.scan([event[@"sequence"] unsignedLongLongValue], allTopics || TLinkEventTopicMatches(event[@"topic"], topics));
         if (action == TLinkEventBatchCursor::Stop) break;
         if (action == TLinkEventBatchCursor::Select) [selected addObject:event];
     }

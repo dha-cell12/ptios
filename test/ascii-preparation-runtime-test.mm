@@ -8,6 +8,7 @@
 #include <vector>
 #include "../shared/TLinkASCIIPreparation.h"
 #include "../shared/TLinkEventPollCore.h"
+#include "../shared/TLinkEventPreparation.h"
 static NSString *const TLinkEventChannelSchemaV1=@"event_channel_v1";
 static const NSUInteger kTLinkEventPollMaxEvents=32;
 #include "PreparationCursor.inc"
