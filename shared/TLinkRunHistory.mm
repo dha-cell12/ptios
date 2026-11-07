@@ -1,4 +1,5 @@
 #import "TLinkRunHistory.h"
+#include "TLinkASCIIPreparation.h"
 #import "TLinkEventChannel.h"
 #include "TLinkRunElapsed.h"
 #include <mach/mach_time.h>
@@ -107,14 +108,13 @@ static NSString *TLinkRunHistoryFileLockPath(void)
 static NSString *TLinkRunHistorySanitize(NSString *value)
 {
     NSString *source = [value isKindOfClass:[NSString class]] ? value : @"";
-    NSMutableString *safe = [NSMutableString stringWithCapacity:source.length];
-    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
-        @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."];
-    for (NSUInteger i = 0; i < source.length && safe.length < 96; i++) {
+    TLinkASCIIPreparation::Token<96,true,true> safe;
+    for (NSUInteger i = 0; i < source.length && safe.count < 96; i++) {
         unichar c = [source characterAtIndex:i];
-        [safe appendString:[allowed characterIsMember:c] ? [NSString stringWithCharacters:&c length:1] : @"_"];
+        safe.push(c);
     }
-    return safe.length > 0 ? safe : @"run";
+    if(!safe.count)return @"run";
+    return [[NSString alloc] initWithCharacters:(const unichar *)safe.values.data() length:safe.count] ?: @"run";
 }
 
 // Validate direct directories and the stable lock inode before index admission.

@@ -7,9 +7,11 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {beforeVPNTaskLane} from './lib/vpn-task-lane-baseline.mjs';
 import {restoreVPNPrivateCaller} from './lib/vpn-private-stop-baseline.mjs';
+import {restorePreparation,preparationPart,preparationBefore,checkPreparationCore} from './lib/preparation-baseline.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
-const [event, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
+const [preparedEvent, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
+const event=restorePreparation(preparedEvent,'event');checkPreparationCore(await read('shared/TLinkASCIIPreparation.h'));
 function between(s,a,b) { const start = s.indexOf(a), end = s.indexOf(b,start+a.length); assert.ok(start >= 0 && end > start,a); return s.slice(start,end); }
 const eventWire = await read('shared/TLinkEventWire.h');
 assert.match(eventWire,/base64EncodedDataWithOptions:0/);
@@ -148,7 +150,7 @@ function run(command,args) {
  if (r.error) throw r.error; assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);
 }
 try {
- const fixture = event.replace('@"/var/mobile/Library/TLinkauto/event-channel"',`(fixtureEventRootOverride ?: @${JSON.stringify(join(temp,'journal'))})`).replace('notify_post(kTLinkEventNotification)', 'FixtureNotifyPost(kTLinkEventNotification)').replace('notify_register_dispatch(', 'FixtureRegisterNotification(')
+ const fixture = preparedEvent.replace('@"/var/mobile/Library/TLinkauto/event-channel"',`(fixtureEventRootOverride ?: @${JSON.stringify(join(temp,'journal'))})`).replace('notify_post(kTLinkEventNotification)', 'FixtureNotifyPost(kTLinkEventNotification)').replace('notify_register_dispatch(', 'FixtureRegisterNotification(')
   .replace('TLinkEventReadJournalData(&missing, error)','FixtureEventReadData(&missing, error)')
   .replace('![data writeToFile:path atomically:YES]','!FixtureEventWrite(data, path)')
   .replace('flock(fd, operation)', 'FixtureEventFlock(fd, operation)')
@@ -182,6 +184,20 @@ try {
   'EventBodyUnderTest.inc': between(troll,'static NSString *TLinkBodyFromLine(', 'static NSArray<NSString *> *TLinkSplitBody('),
   'EventTrollSocketUnderTest.inc': between(troll,'// BEGIN TrollStore event socket adapter.', '// END TrollStore event socket adapter.'),
  };
+ const prepHistory=await read('shared/TLinkRunHistory.mm');restorePreparation(prepHistory,'history');
+ const rename=(text,name)=>text.replace(/TLinkEventToken\(/g,name+'(').replace(/TLinkRunHistorySanitize\(/g,name+'(').replace(/TLinkEventJournalInteger\(/g,name+'(').replace(/TLinkEventBatchFromJournal\(/g,name+'(');
+ const prepFixtures={
+  'PreparationCursor.inc':between(preparedEvent,'static BOOL TLinkEventParseUnsignedCursor(','NSString *TLinkEventChannelRootPath(void)'),
+  'PreparationTopic.inc':between(preparedEvent,'static BOOL TLinkEventTopicMatches(','static NSDictionary *TLinkEventBatchFromJournal('),
+ };
+ for(const current of [false,true]){
+  const label=current?'Current':'Before';
+  for(const [kind,name,symbol] of [['event','token','Token'],['event','integer','Integer'],['event','batch','Batch'],['history','sanitize','Sanitize']]){
+   const text=current?preparationPart(kind==='event'?preparedEvent:prepHistory,kind,name):preparationBefore(kind,name);
+   prepFixtures[label+'Preparation'+symbol+'.inc']=rename(text,label+symbol);
+  }
+ }
+ await Promise.all(Object.entries(prepFixtures).map(([name,value])=>writeFile(join(temp,name),value)));
  for (const [name,value] of Object.entries(fixtures)) await writeFile(join(temp,name),value);
  const windows = process.platform === 'win32', compiler = process.env.CXX || (windows ? 'cl' : 'clang++');
  const msvc = /^(cl|cl\.exe)$/i.test(basename(compiler));
@@ -190,10 +206,12 @@ try {
   : ['-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-omit-frame-pointer','-pthread',file,'-o',binary]);
  run(binary,[]);
  if (process.platform === 'darwin') {
-  const runtime = join(temp,'event-runtime');
+  const runtime = join(temp,'event-runtime'),owner=join(temp,'preparation-owner.o');
+  run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
   run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-fobjc-arc',
    '-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation',
-   '-I',temp,'-I',join(root,'shared'),join(root,'test/event-channel-runtime-test.mm'),'-o',runtime]);
+   '-I',temp,'-I',join(root,'shared'),join(root,'test/event-channel-runtime-test.mm'),owner,'-o',runtime]);
   run(runtime,[]);
+  const preparation=join(temp,'preparation');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/ascii-preparation-runtime-test.mm'),'-o',preparation]);run(preparation,[]);
  } else console.log('macOS actual journal/notification/async/cancellation and root/TrollStore/remote wire integration is wired to both workflows; not run on Windows.');
 } finally { assert.equal(dirname(temp),tempRoot); assert.ok(basename(temp).startsWith('tlink-event-')); await rm(temp,{recursive:true,force:true}); }

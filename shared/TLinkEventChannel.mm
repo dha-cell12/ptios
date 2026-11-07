@@ -1,4 +1,5 @@
 #import "TLinkEventChannel.h"
+#include "TLinkASCIIPreparation.h"
 
 #include <atomic>
 #include <memory>
@@ -177,11 +178,15 @@ static BOOL TLinkEventJournalInteger(id value, uint64_t *result)
     if (![value isKindOfClass:[NSNumber class]] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) return NO;
     NSString *text = [value stringValue];
     if (text.length == 0) return NO;
+    TLinkASCIIPreparation::Decimal digits;
     for (NSUInteger i = 0; i < text.length; i++) {
         unichar c = [text characterAtIndex:i];
-        if (c < '0' || c > '9') return NO;
+        if (!digits.push(c)) return NO;
     }
-    return TLinkEventParseUnsignedCursor(text, result);
+    if(!result)return NO;
+    errno=0;
+    if(digits.overflow()){errno=ERANGE;return NO;}
+    return digits.finish(*result);
 }
 
 static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
@@ -229,14 +234,13 @@ static BOOL TLinkEventWriteJournal(NSDictionary *journal)
 static NSString *TLinkEventToken(NSString *value, NSString *fallback)
 {
     NSString *source = [value isKindOfClass:[NSString class]] ? value.lowercaseString : @"";
-    NSMutableString *token = [NSMutableString string];
-    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
-        @"abcdefghijklmnopqrstuvwxyz0123456789._-"];
-    for (NSUInteger index = 0; index < source.length && token.length < 64; index++) {
+    TLinkASCIIPreparation::Token<64,false,false> token;
+    for (NSUInteger index = 0; index < source.length && token.count < 64; index++) {
         unichar c = [source characterAtIndex:index];
-        if ([allowed characterIsMember:c]) [token appendFormat:@"%C", c];
+        token.push(c);
     }
-    return token.length > 0 ? token : fallback;
+    if(!token.count)return fallback;
+    return [[NSString alloc] initWithCharacters:(const unichar *)token.values.data() length:token.count] ?: fallback;
 }
 
 static NSDictionary *TLinkEventBoundedPayload(NSDictionary *payload)
@@ -257,6 +261,7 @@ NSDictionary *TLinkEventChannelPublish(NSString *runtime,
                                        NSString *type,
                                        NSDictionary *payload)
 {
+    @autoreleasepool {
     @synchronized (TLinkEventProcessLock()) {
         int lockFd = TLinkEventAcquireFileLock(NO, NO);
         if (lockFd < 0) return @{@"state": @"error", @"error": @"event_journal_lock_failed"};
@@ -293,6 +298,7 @@ NSDictionary *TLinkEventChannelPublish(NSString *runtime,
         notify_post(kTLinkEventNotification); // Wake hint only, after the journal commit and unlock.
         return event;
     }
+    }
 }
 
 static BOOL TLinkEventTopicMatches(NSString *topic, NSSet<NSString *> *topics)
@@ -308,7 +314,7 @@ static NSDictionary *TLinkEventBatchFromJournal(NSDictionary *journal, uint64_t 
     latest = latest > 0 ? latest - 1 : 0;
     uint64_t oldest = events.count > 0 ? [events.firstObject[@"sequence"] unsignedLongLongValue] : latest + 1;
     BOOL gap = (events.count > 0 && cursor > 0 && oldest > 0 && cursor < oldest - 1) || cursor > latest;
-    NSMutableArray *selected = [NSMutableArray array];
+    NSMutableArray *selected = [NSMutableArray arrayWithCapacity:MIN(maxEvents,MIN(events.count,kTLinkEventPollMaxEvents))];
     TLinkEventBatchCursor scan(cursor, maxEvents);
     for (NSDictionary *event in events) {
         auto action = scan.scan([event[@"sequence"] unsignedLongLongValue], TLinkEventTopicMatches(event[@"topic"], topics));
@@ -580,6 +586,7 @@ NSDictionary *TLinkEventChannelPoll(uint64_t cursor, NSArray<NSString *> *topics
 // END event wait adapter.
 NSDictionary *TLinkEventChannelStatus(void)
 {
+    @autoreleasepool {
     NSString *readError = nil;
     NSDictionary *journal = TLinkEventLoadSnapshot(NO, NULL, &readError);
     NSDictionary *batch = journal ? TLinkEventBatchFromJournal(journal, UINT64_MAX, [NSSet set], 1, NO) : @{};
@@ -599,4 +606,5 @@ NSDictionary *TLinkEventChannelStatus(void)
         return [failed copy];
     }
     return status;
+    }
 }

@@ -1576,6 +1576,8 @@ Measure main-thread CPU, wakeups/s, timer fires/s, license checks/s, plist reads
 
 ### [P1-48] Run-history index embeds failure evidence and is fully read/parsed/re-written on every begin/finish
 
+C03ad follow-up (2026-11-07): shared run-name preparation now uses a bounded 96-unit buffer while preserving case/replacement/cutoff/path text. This removes explicit per-character NSString/append work; it does not remove index/evidence rewrite amplification. Portable parity passes; Foundation/device gains await qualification. See `IMPLEMENTATION-C03AD.md`.
+
 **Status:** CONFIRMED  
 **Locations:** `shared/TLinkRunHistory.mm:106-131,209-242,255-334`
 
@@ -1930,6 +1932,8 @@ Acceptance: capacity and idle I/O return to baseline immediately after disconnec
 ## P1 — S008 High Priority
 
 ### [P1-54] Every event publication rewrites the complete 256-event journal under an exclusive file lock
+
+C03ad follow-up (2026-11-07): shared event token preparation, persisted journal uint64 validation, batch capacity and publish/status temporary lifetimes are optimized together. Public cursor parser/schema, transaction order/durability and full journal read/parse/rewrite remain. Portable/source checks pass; new Foundation/ARC/MRC tests and device allocation/latency require qualification. See `IMPLEMENTATION-C03AD.md`.
 
 **Status:** CONFIRMED  
 **Location:** `shared/TLinkEventChannel.mm:122-190`

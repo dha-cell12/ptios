@@ -5,7 +5,9 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include "ascii-preparation-safety-fixture.inc"
 int main() {
+    asciiPreparationCases();
     assert(!TLinkEventPollExpired(100, 99, 25));
     assert(!TLinkEventPollExpired(100, 124, 25)); assert(TLinkEventPollExpired(100, 125, 25));
     assert(TLinkEventPollExpired(100, 100, 0));

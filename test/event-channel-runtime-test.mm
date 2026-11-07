@@ -19,6 +19,8 @@
 #include <stdexcept>
 #include "../shared/TLinkEventChannel.h"
 #include <notify.h>
+#include "ax-node-pool-owner.h"
+static thread_local bool fixtureTrackPreparationOwners=false;
 extern char **environ;
 static bool suppressNotify = false;
 static std::atomic<bool> ignoreNotifications{false};
@@ -38,6 +40,7 @@ static std::atomic<unsigned> fixtureReadFault{0},fixtureWriteFault{0};
 static std::atomic<bool> fixtureReaderLockDenied{false};
 static thread_local std::set<int> fixtureEventLocks;
 static thread_local std::set<int> fixtureEventFds;
+extern "C" void TLinkAXFixtureOwnerDidDrain(void){if(fixtureTrackPreparationOwners)assert(fixtureEventLocks.empty());}
 static std::atomic<unsigned> fixtureLiveEventFds{0},fixtureLockPermissions{0};
 static bool fixtureLockStatFault=false;
 static NSString *fixtureEventRootOverride;
@@ -97,6 +100,7 @@ static ssize_t FixtureJournalRead(int fd,void *bytes,size_t count) {
 static NSData *TLinkEventReadJournalData(BOOL *missing,NSString **error);
 static NSData *FixtureEventReadData(BOOL *missing,NSString **error) {
     assert(fixtureEventLocks.size()==1);++fixturePublishReads;
+    if(fixtureTrackPreparationOwners)TLinkAXFixtureAutoreleaseOwner();
     if(fixtureReadFault==4)[NSException raise:@"EventFixture" format:@"read failed"];
     if(fixtureReadFault==5)throw std::runtime_error("read failed");
     if(fixtureReadFault){*error=@"event_journal_read_failed";return nil;}
@@ -104,6 +108,7 @@ static NSData *FixtureEventReadData(BOOL *missing,NSString **error) {
 }
 static BOOL FixtureEventWrite(NSData *data,NSString *path) {
     assert(fixtureEventLocks.size()==1);++fixtureWrites;
+    if(fixtureTrackPreparationOwners)TLinkAXFixtureAutoreleaseOwner();
     if(fixtureWriteFault==1)return NO;
     if(fixtureWriteFault==2)[NSException raise:@"EventFixture" format:@"write failed"];
     if(fixtureWriteFault==3)throw std::runtime_error("write failed");
@@ -502,9 +507,11 @@ static void fixtureBoundedJournalCases() {
 }
 #include "event-envelope-runtime-fixture.inc"
 #include "event-wire-runtime-fixture.inc"
+#include "event-preparation-pool-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
+    fixturePreparationPoolCases();
     fixtureEventEnvelopeCases();
     fixtureEventWireCases();
     fixtureValidatedLockCases();

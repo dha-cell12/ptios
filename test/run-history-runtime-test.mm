@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <vector>
 #include "../shared/TLinkRunElapsed.h"
+#include "../shared/TLinkASCIIPreparation.h"
 #include <mach/mach_time.h>
 namespace RealHistoryClock {
 #include "HistoryClockUnderTest.inc"
