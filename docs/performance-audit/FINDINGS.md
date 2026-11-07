@@ -1937,6 +1937,8 @@ Acceptance: capacity and idle I/O return to baseline immediately after disconnec
 
 ### [P1-54] Every event publication rewrites the complete 256-event journal under an exclusive file lock
 
+C03af follow-up (2026-11-07): shared event preparation/reconcile now uses a typed seven-field/errno stamp, conditional validated permission repair, direct ASCII topic checks and record/write/waiter/entry temporary pools. Keep identity/probe/cache-clearing/schema/sequence/commit/notify and admission/cancel behavior. Source/portable checks pass; new Foundation/POSIX/GCD/ARC/MRC and device tests pending. Full journal rewriting and missing-file epoch/crash recovery remain open. See `IMPLEMENTATION-C03AF.md`.
+
 C03ad follow-up (2026-11-07): shared event token preparation, persisted journal uint64 validation, batch capacity and publish/status temporary lifetimes are optimized together. Public cursor parser/schema, transaction order/durability and full journal read/parse/rewrite remain. Portable/source checks pass; new Foundation/ARC/MRC tests and device allocation/latency require qualification. See `IMPLEMENTATION-C03AD.md`.
 
 **Status:** CONFIRMED  
@@ -2048,6 +2050,8 @@ Fix the architecture with generation-backed cached state + notification. If file
 ---
 
 ### [P1-58] Journal corruption/parse failure silently presents an empty new journal and can reset sequence on the next publish
+
+C03af follow-up (2026-11-07): shared event preparation/reconcile now uses a typed seven-field/errno stamp, conditional validated permission repair, direct ASCII topic checks and record/write/waiter/entry temporary pools. Keep identity/probe/cache-clearing/schema/sequence/commit/notify and admission/cancel behavior. Source/portable checks pass; new Foundation/POSIX/GCD/ARC/MRC and device tests pending. Full journal rewriting and missing-file epoch/crash recovery remain open. See `IMPLEMENTATION-C03AF.md`.
 
 **Status:** CONFIRMED robustness behavior  
 **Locations:** `shared/TLinkEventChannel.mm:105-120,159-190`

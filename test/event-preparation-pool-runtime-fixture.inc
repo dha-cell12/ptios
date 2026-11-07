@@ -17,6 +17,15 @@ static void fixturePreparationPoolCases(){
         fixtureTrackPreparationOwners=false;
     }
     assert([heldEvent[@"payload"][@"held"] isEqual:@"ảnh 😀"]&&[heldStatus[@"latest_cursor"] isEqual:heldEvent[@"sequence"]]);
+    // The encoding phase may now drain inside its held flock. Read/public
+    // witnesses still retire only after unlock.
+    @autoreleasepool{
+        TLinkAXFixtureResetOwners();fixtureTrackPreparationOwners=true;fixturePreparationReadOnly=true;
+        NSDictionary *readHeld=TLinkEventChannelPublish(@"fixture",@"script.run",@"updated",@{});
+        PREPARATION_REQUIRE(readHeld[@"sequence"]&&TLinkAXFixtureCreatedOwners()==1&&TLinkAXFixtureLiveOwners()==0);
+        PREPARATION_REQUIRE([TLinkEventChannelStatus()[@"state"] isEqual:@"implemented"]&&TLinkAXFixtureCreatedOwners()==2&&TLinkAXFixtureLiveOwners()==0);
+        fixtureTrackPreparationOwners=false;fixturePreparationReadOnly=false;
+    }
     for(bool reading:{false,true}){
         for(unsigned kind:{1U,2U}){
             @autoreleasepool{

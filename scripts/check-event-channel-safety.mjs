@@ -7,12 +7,20 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {beforeVPNTaskLane} from './lib/vpn-task-lane-baseline.mjs';
 import {restoreVPNPrivateCaller} from './lib/vpn-private-stop-baseline.mjs';
+import {restoreEventMetadata,eventMetadataPart} from './lib/event-metadata-baseline.mjs';
 import {restoreHistoryWork} from './lib/history-work-baseline.mjs';
 import {restorePreparation,preparationPart,preparationBefore,checkPreparationCore} from './lib/preparation-baseline.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const [preparedEvent, socket, troll, remote] = await Promise.all(['shared/TLinkEventChannel.mm','tlinkauto-binary/SocketServer.mm','stream-app/streamd/POCSocketServer.mm','stream-app/streamd/RemoteBridgeAgent.mm'].map(read));
-const event=restorePreparation(preparedEvent,'event');checkPreparationCore(await read('shared/TLinkASCIIPreparation.h'));
+const beforeMetadata=restoreEventMetadata(preparedEvent);
+const metadataCore=await read('shared/TLinkEventMetadata.h');
+assert.equal(createHash('sha256').update(metadataCore).digest('hex'),'91d154e0f3cdb9d1ee1c5fc5ced2c03f3a7b371046e78cf5e897a1e49347c763','complete C03af metadata core');
+assert.doesNotMatch(between(preparedEvent,'static TLinkEventMetadata::Stamp TLinkEventFileFingerprint(void)','static NSDictionary *TLinkEventLoadSnapshot('),/stringWithFormat|NSString/);
+assert.doesNotMatch(eventMetadataPart(preparedEvent,'parser'),/dataUsingEncoding|NSData/);
+console.log('Event metadata source passed: typed seven-field/errno stamp, conditional preflight permission repair, ASCII topic units, journal/write/begin/waiter pools and complete preceding event source.');
+
+const event=restorePreparation(beforeMetadata,'event');checkPreparationCore(await read('shared/TLinkASCIIPreparation.h'));
 function between(s,a,b) { const start = s.indexOf(a), end = s.indexOf(b,start+a.length); assert.ok(start >= 0 && end > start,a); return s.slice(start,end); }
 const eventWire = await read('shared/TLinkEventWire.h');
 assert.match(eventWire,/base64EncodedDataWithOptions:0/);
@@ -152,6 +160,14 @@ function run(command,args) {
 }
 try {
  const fixture = preparedEvent.replace('@"/var/mobile/Library/TLinkauto/event-channel"',`(fixtureEventRootOverride ?: @${JSON.stringify(join(temp,'journal'))})`).replace('notify_post(kTLinkEventNotification)', 'FixtureNotifyPost(kTLinkEventNotification)').replace('notify_register_dispatch(', 'FixtureRegisterNotification(')
+  .replace('static BOOL TLinkEventJournalInteger(id value, uint64_t *result)\n{','static BOOL TLinkEventJournalInteger(id value, uint64_t *result)\n{\n    FixtureMetadataIntegerProbe();')
+  .replace('static NSDictionary *TLinkEventParseBody(NSString *body, NSString **error)\n{','static NSDictionary *TLinkEventParseBody(NSString *body, NSString **error)\n{\n    FixtureMetadataParserProbe();')
+  .replace('stat(TLinkEventJournalPath().fileSystemRepresentation, &info)','FixtureFingerprintStat(TLinkEventJournalPath().fileSystemRepresentation, &info)')
+  .replaceAll('lstat(root.fileSystemRepresentation, &info)','FixtureEventPathStat(root.fileSystemRepresentation, &info)')
+  .replace('lstat(path.fileSystemRepresentation, &current)','FixtureEventPathStat(path.fileSystemRepresentation, &current)')
+  .replace('lstat(TLinkEventChannelRootPath().fileSystemRepresentation, &root)','FixtureEventPathStat(TLinkEventChannelRootPath().fileSystemRepresentation, &root)')
+  .replace('chmod(root.fileSystemRepresentation, 0750)','FixtureRootChmod(root.fileSystemRepresentation, 0750)')
+  .replace('lchown(root.fileSystemRepresentation, 501, 501)','FixtureRootChown(root.fileSystemRepresentation, 501, 501)')
   .replace('TLinkEventReadJournalData(&missing, error)','FixtureEventReadData(&missing, error)')
   .replace('![data writeToFile:path atomically:YES]','!FixtureEventWrite(data, path)')
   .replace('flock(fd, operation)', 'FixtureEventFlock(fd, operation)')
@@ -199,6 +215,28 @@ try {
   }
  }
  await Promise.all(Object.entries(prepFixtures).map(([name,value])=>writeFile(join(temp,name),value)));
+ const oldWait=eventMetadataPart(beforeMetadata,'wait');
+ const beforeFingerprint=between(oldWait,'static NSString *TLinkEventFileFingerprint(void)','static NSDictionary *TLinkEventLoadSnapshot(').replace('TLinkEventFileFingerprint(void)','FixtureBeforeFingerprint(void)').replace('stat(TLinkEventJournalPath().fileSystemRepresentation, &info)','FixtureFingerprintStat(TLinkEventJournalPath().fileSystemRepresentation, &info)');
+ const beforePermissions=eventMetadataPart(beforeMetadata,'permissions').replaceAll('TLinkEventEnsureDirectory(', 'FixtureBeforeEnsureDirectory(').replace('TLinkEventAcquireFileLock(', 'FixtureBeforeAcquireFileLock(')
+  .replaceAll('lstat(root.fileSystemRepresentation, &info)','FixtureEventPathStat(root.fileSystemRepresentation, &info)')
+  .replace('lstat(path.fileSystemRepresentation, &current)','FixtureEventPathStat(path.fileSystemRepresentation, &current)')
+  .replace('lstat(TLinkEventChannelRootPath().fileSystemRepresentation, &root)','FixtureEventPathStat(TLinkEventChannelRootPath().fileSystemRepresentation, &root)')
+  .replace('chmod(root.fileSystemRepresentation, 0750)','FixtureRootChmod(root.fileSystemRepresentation, 0750)')
+  .replace('lchown(root.fileSystemRepresentation, 501, 501)','FixtureRootChown(root.fileSystemRepresentation, 501, 501)')
+  .replace('open(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)','FixtureEventOpen(path.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0640)')
+  .replace('fstat(fd, &opened)','FixtureEventLockStat(fd, &opened)').replace('flock(fd, operation)','FixtureEventFlock(fd, operation)').replaceAll('flock(fd, LOCK_UN)','FixtureEventFlock(fd, LOCK_UN)').replaceAll('close(fd)','FixtureEventClose(fd)')
+  .replace('fchmod(fd, 0640)','FixtureEventFchmod(fd, 0640)').replace('fchown(fd, 501, 501)','FixtureEventFchown(fd, 501, 501)');
+ const beforeReader=eventMetadataPart(beforeMetadata,'reader').replace('TLinkEventReadJournal(', 'FixtureBeforeReadJournal(').replace('TLinkEventReadJournalData(&missing, error)','FixtureEventReadData(&missing, error)');
+ const beforeWriter=eventMetadataPart(beforeMetadata,'writer').replace('TLinkEventWriteJournal(', 'FixtureBeforeWriteJournal(').replace('![data writeToFile:path atomically:YES]','!FixtureEventWrite(data, path)');
+ const beforeParser=eventMetadataPart(beforeMetadata,'parser').replace('TLinkEventParseBody(', 'FixtureBeforeParseBody(');
+ const beforeSweep=between(oldWait,'static void TLinkEventSweep(BOOL forceRead)','static void TLinkEventRearm(void) {').replace('TLinkEventSweep(', 'FixtureBeforeSweep(').replaceAll('sTLinkEventFingerprint','fixtureBeforeFingerprint').replaceAll('TLinkEventFileFingerprint()', 'FixtureBeforeFingerprint()').replace('TLinkEventLoadSnapshot(YES,','FixtureBeforeLoadSnapshot(YES,');
+ fixtures['EventMetadataBeforeHelpers.inc']=beforePermissions+beforeReader+beforeWriter+beforeParser+beforeFingerprint;
+ fixtures['EventMetadataBeforeSweep.inc']=beforeSweep;
+ for(const name of ['FixtureBeforeEnsureDirectory','FixtureBeforeAcquireFileLock','FixtureBeforeReadJournal','FixtureBeforeWriteJournal','FixtureBeforeParseBody','FixtureBeforeFingerprint'])assert.equal((fixtures['EventMetadataBeforeHelpers.inc'].match(new RegExp('\\b'+name+'\\(', 'g'))||[]).length,name==='FixtureBeforeEnsureDirectory'?2:1,name);
+ assert.equal((fixture.match(/FixtureMetadataIntegerProbe\(\)/g)||[]).length,1);
+ assert.equal((fixture.match(/FixtureMetadataParserProbe\(\)/g)||[]).length,1);
+ assert.ok(beforeSweep.includes('FixtureBeforeLoadSnapshot(YES,')&&!beforeSweep.includes('@autoreleasepool'));
+
  for (const [name,value] of Object.entries(fixtures)) await writeFile(join(temp,name),value);
  const windows = process.platform === 'win32', compiler = process.env.CXX || (windows ? 'cl' : 'clang++');
  const msvc = /^(cl|cl\.exe)$/i.test(basename(compiler));

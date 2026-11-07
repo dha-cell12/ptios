@@ -1,5 +1,6 @@
 #import "TLinkEventChannel.h"
 #include "TLinkASCIIPreparation.h"
+#include "TLinkEventMetadata.h"
 
 #include <atomic>
 #include <memory>
@@ -89,8 +90,9 @@ static BOOL TLinkEventEnsureDirectory(void)
         if (lstat(root.fileSystemRepresentation, &info) != 0) return NO;
     }
     if (!S_ISDIR(info.st_mode)) return NO;
-    chmod(root.fileSystemRepresentation, 0750);
-    lchown(root.fileSystemRepresentation, 501, 501);
+    const TLinkEventMetadata::PermissionPlan repair(info.st_mode,info.st_uid,info.st_gid,0750,501,501);
+    if (repair.mode) chmod(root.fileSystemRepresentation, 0750);
+    if (repair.owner) lchown(root.fileSystemRepresentation, 501, 501);
     return YES;
 }
 
@@ -120,8 +122,9 @@ static int TLinkEventAcquireFileLock(BOOL reader, BOOL nonBlocking)
         return -1;
     }
     // Permissions target the validated descriptor, never a replacement pathname.
-    fchmod(fd, 0640);
-    fchown(fd, 501, 501);
+    const TLinkEventMetadata::PermissionPlan repair(current.st_mode,current.st_uid,current.st_gid,0640,501,501);
+    if (repair.mode) fchmod(fd, 0640);
+    if (repair.owner) fchown(fd, 501, 501);
     return fd;
 }
 
@@ -204,6 +207,7 @@ static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
         TLinkEventJournalInteger(object[@"next_sequence"], &next) && next > 0 &&
         [object[@"events"] isKindOfClass:[NSArray class]] && [object[@"events"] count] <= kTLinkEventJournalMaxEvents;
     if (valid) for (id event in object[@"events"]) {
+        @autoreleasepool {
         uint64_t sequence = 0, timestamp = 0;
         valid = [event isKindOfClass:[NSDictionary class]] && [event[@"schema"] isEqual:TLinkEventSchemaV1] &&
             TLinkEventJournalInteger(event[@"sequence"], &sequence) && sequence > 0 && sequence < next &&
@@ -214,6 +218,7 @@ static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
         }
         if (!valid) break;
         previous = sequence;
+        }
     }
     valid = valid && (!previous || previous == next - 1);
     if (!valid) { *error = @"event_journal_invalid"; return nil; }
@@ -222,6 +227,7 @@ static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
 
 static BOOL TLinkEventWriteJournal(NSDictionary *journal)
 {
+    @autoreleasepool {
     if (![NSJSONSerialization isValidJSONObject:journal]) return NO;
     NSData *data = [NSJSONSerialization dataWithJSONObject:journal options:0 error:nil];
     NSString *path = TLinkEventJournalPath();
@@ -229,6 +235,7 @@ static BOOL TLinkEventWriteJournal(NSDictionary *journal)
     chmod(path.fileSystemRepresentation, 0640);
     lchown(path.fileSystemRepresentation, 501, 501);
     return YES;
+    }
 }
 
 static NSString *TLinkEventToken(NSString *value, NSString *fallback)
@@ -372,8 +379,7 @@ static NSDictionary *TLinkEventParseBody(NSString *body, NSString **error)
         return @{};
     }
     for (NSString *topic in topics) {
-        NSData *bytes = [topic dataUsingEncoding:NSUTF8StringEncoding];
-        if (!TLinkEventTopicValid((const char *)bytes.bytes, bytes.length)) {
+        if (!TLinkEventMetadata::TopicValid(topic.length,[topic](size_t index){return [topic characterAtIndex:index];})) {
             if (error) *error = @"event_topic_invalid";
             return @{};
         }
@@ -389,7 +395,7 @@ static std::atomic<int> sTLinkEventAuthorizations{0};
 static NSMutableSet *sTLinkEventWaiters;
 static dispatch_source_t sTLinkEventTimer;
 static NSDictionary *sTLinkEventSnapshot;
-static NSString *sTLinkEventFingerprint;
+static TLinkEventMetadata::Stamp sTLinkEventFingerprint;
 static uint64_t sTLinkEventNextReconcile = 0;
 static int sTLinkEventNotifyToken = 0;
 @implementation TLinkEventPollRequest
@@ -426,20 +432,19 @@ static void TLinkEventComplete(TLinkEventPendingPoll *request, NSDictionary *bat
     TLinkEventPollCompletion callback = request->completion; request->completion = nil;
     if (request->lease->finish() && !request.isCancelled && callback) callback(request, batch, error);
 }
-static NSString *TLinkEventFileFingerprint(void) {
+static TLinkEventMetadata::Stamp TLinkEventFileFingerprint(void) {
     sTLinkEventMetadataChecks.fetch_add(1);
     struct stat info;
     if (stat(TLinkEventJournalPath().fileSystemRepresentation, &info) != 0)
-        return [NSString stringWithFormat:@"absent:%d", errno];
-    return [NSString stringWithFormat:@"%llu:%llu:%lld:%lld:%ld:%lld:%ld",
-        (unsigned long long)info.st_dev, (unsigned long long)info.st_ino, (long long)info.st_size,
-        (long long)info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec,
-        (long long)info.st_ctimespec.tv_sec, info.st_ctimespec.tv_nsec];
+        return TLinkEventMetadata::Stamp::Missing(errno);
+    return TLinkEventMetadata::Stamp::Present((uint64_t)info.st_dev,(uint64_t)info.st_ino,(int64_t)info.st_size,
+        (int64_t)info.st_mtimespec.tv_sec,(int64_t)info.st_mtimespec.tv_nsec,
+        (int64_t)info.st_ctimespec.tv_sec,(int64_t)info.st_ctimespec.tv_nsec);
 }
-static NSDictionary *TLinkEventLoadSnapshot(BOOL nonBlocking, NSString **fingerprint, NSString **error) {
+static NSDictionary *TLinkEventLoadSnapshot(BOOL nonBlocking, TLinkEventMetadata::Stamp *fingerprint, NSString **error) {
     int fd = -1;
     NSDictionary *journal = nil;
-    if (fingerprint) *fingerprint = nil;
+    if (fingerprint) *fingerprint = {};
     if (error) *error = nil;
     @try { try {
         fd = TLinkEventAcquireFileLock(YES, nonBlocking);
@@ -460,14 +465,15 @@ static void TLinkEventSweep(BOOL forceRead) {
     for (TLinkEventPendingPoll *request in sTLinkEventWaiters) if (request->authorized && !request.isCancelled) ready = YES;
     BOOL loaded = YES, changed = NO;
     NSString *readError = nil;
-    if (ready && (forceRead || !sTLinkEventSnapshot || ![TLinkEventFileFingerprint() isEqual:sTLinkEventFingerprint])) {
-        NSString *fingerprint = nil;
+    if (ready && (forceRead || !sTLinkEventSnapshot || TLinkEventFileFingerprint() != sTLinkEventFingerprint)) {
+        TLinkEventMetadata::Stamp fingerprint;
         NSDictionary *journal = TLinkEventLoadSnapshot(YES, &fingerprint, &readError); // Never park the owner on flock.
         loaded = journal != nil;
         if (loaded) { sTLinkEventSnapshot = journal; sTLinkEventFingerprint = fingerprint; changed = YES; }
-        else { sTLinkEventSnapshot = nil; sTLinkEventFingerprint = nil; }
+        else { sTLinkEventSnapshot = nil; sTLinkEventFingerprint = {}; }
     }
     for (TLinkEventPendingPoll *request in [sTLinkEventWaiters allObjects]) {
+        @autoreleasepool {
         if (request.isCancelled) { [sTLinkEventWaiters removeObject:request]; request->completion = nil; continue; }
         BOOL expired = TLinkEventPollExpired(request->started, now, request->authorized ? request->timeout : 5000);
         if (!request->authorized) {
@@ -484,6 +490,7 @@ static void TLinkEventSweep(BOOL forceRead) {
         NSDictionary *batch = TLinkEventBatchFromJournal(sTLinkEventSnapshot, request->cursor, request->topics, request->limit, expired);
         if ([batch[@"next_cursor"] unsignedLongLongValue] != request->cursor || [batch[@"events"] count] ||
             [batch[@"gap"] boolValue] || expired) TLinkEventComplete(request, batch, nil);
+        }
     }
     sTLinkEventNextReconcile = now + kTLinkEventReconcileMs;
     TLinkEventRearm();
@@ -491,7 +498,7 @@ static void TLinkEventSweep(BOOL forceRead) {
 static void TLinkEventRearm(void) {
     if (!sTLinkEventWaiters.count) {
         dispatch_source_set_timer(sTLinkEventTimer, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
-        sTLinkEventSnapshot = nil; sTLinkEventFingerprint = nil; sTLinkEventNextReconcile = 0; return;
+        sTLinkEventSnapshot = nil; sTLinkEventFingerprint = {}; sTLinkEventNextReconcile = 0; return;
     }
     uint64_t now = TLinkEventMonotonicMs();
     uint64_t delay = !sTLinkEventNextReconcile ? kTLinkEventReconcileMs :
@@ -522,6 +529,7 @@ static dispatch_queue_t TLinkEventOwnerQueue(void) {
     return queue;
 }
 TLinkEventPollRequest *TLinkEventChannelBeginPoll(NSString *body, TLinkEventPollAuthorization authorization, TLinkEventPollCompletion completion) {
+    @autoreleasepool {
     TLinkEventPendingPoll *request = [TLinkEventPendingPoll new];
     request->lease = std::make_shared<TLinkEventPollLease>(sTLinkEventActivePolls, kTLinkEventMaxConcurrentPolls);
     request->started = TLinkEventMonotonicMs(); request->completion = [completion copy];
@@ -560,6 +568,7 @@ TLinkEventPollRequest *TLinkEventChannelBeginPoll(NSString *body, TLinkEventPoll
         }
     });
     return request;
+    }
 }
 // Compatibility callers may block their own worker; TCP/JSON/remote adapters use BeginPoll.
 NSDictionary *TLinkEventChannelPollBody(NSString *body, NSString **error) {

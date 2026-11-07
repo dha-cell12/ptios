@@ -16,11 +16,17 @@
 #include <unistd.h>
 #include <cerrno>
 #include <set>
+#include <vector>
+#include <string>
 #include <stdexcept>
 #include "../shared/TLinkEventChannel.h"
 #include <notify.h>
 #include "ax-node-pool-owner.h"
 static thread_local bool fixtureTrackPreparationOwners=false;
+static thread_local bool fixturePreparationReadOnly=false;
+static thread_local bool fixtureMetadataIntegerOwners=false,fixtureMetadataParserOwners=false;
+static void FixtureMetadataIntegerProbe(){if(fixtureMetadataIntegerOwners)TLinkAXFixtureAutoreleaseOwner();}
+static void FixtureMetadataParserProbe(){if(fixtureMetadataParserOwners)TLinkAXFixtureAutoreleaseOwner();}
 extern char **environ;
 static bool suppressNotify = false;
 static std::atomic<bool> ignoreNotifications{false};
@@ -40,11 +46,12 @@ static std::atomic<unsigned> fixtureReadFault{0},fixtureWriteFault{0};
 static std::atomic<bool> fixtureReaderLockDenied{false};
 static thread_local std::set<int> fixtureEventLocks;
 static thread_local std::set<int> fixtureEventFds;
-extern "C" void TLinkAXFixtureOwnerDidDrain(void){if(fixtureTrackPreparationOwners)assert(fixtureEventLocks.empty());}
+extern "C" void TLinkAXFixtureOwnerDidDrain(void){if(fixtureTrackPreparationOwners&&fixturePreparationReadOnly)assert(fixtureEventLocks.empty());}
 static std::atomic<unsigned> fixtureLiveEventFds{0},fixtureLockPermissions{0};
 static bool fixtureLockStatFault=false;
 static NSString *fixtureEventRootOverride;
 static std::function<void()> fixtureAfterLock;
+#include "event-metadata-adapters-fixture.inc"
 static int FixtureEventOpen(const char *path,int flags,mode_t mode) {
     assert(flags==(O_CREAT|O_RDWR|O_NOFOLLOW|O_NONBLOCK)&&mode==0640);
     const int fd=::open(path,flags,mode);if(fd>=0){assert(fixtureEventFds.insert(fd).second);++fixtureLiveEventFds;}return fd;
@@ -52,8 +59,8 @@ static int FixtureEventOpen(const char *path,int flags,mode_t mode) {
 static int FixtureEventLockStat(int fd,struct stat *info) {
     assert(fixtureEventFds.count(fd));if(fixtureLockStatFault){errno=EIO;return -1;}return ::fstat(fd,info);
 }
-static int FixtureEventFchmod(int fd,mode_t mode) {assert(fixtureEventLocks.count(fd)&&mode==0640);++fixtureLockPermissions;return ::fchmod(fd,mode);}
-static int FixtureEventFchown(int fd,uid_t uid,gid_t gid) {assert(fixtureEventLocks.count(fd)&&uid==501&&gid==501);++fixtureLockPermissions;return ::fchown(fd,uid,gid);}
+static int FixtureEventFchmod(int fd,mode_t mode) {assert(fixtureEventLocks.count(fd)&&mode==0640);++fixtureLockPermissions;if(fixturePermissionsActive)return FixtureRepairPermission(1,false);return ::fchmod(fd,mode);}
+static int FixtureEventFchown(int fd,uid_t uid,gid_t gid) {assert(fixtureEventLocks.count(fd)&&uid==501&&gid==501);++fixtureLockPermissions;if(fixturePermissionsActive)return FixtureRepairPermission(1,true);return ::fchown(fd,uid,gid);}
 
 static uint32_t FixtureNotifyPost(const char *name) { assert(fixtureEventLocks.empty());++fixturePosts;return suppressNotify ? 0 : notify_post(name); }
 static int FixtureEventFlock(int fd,int operation) {
@@ -108,7 +115,7 @@ static NSData *FixtureEventReadData(BOOL *missing,NSString **error) {
 }
 static BOOL FixtureEventWrite(NSData *data,NSString *path) {
     assert(fixtureEventLocks.size()==1);++fixtureWrites;
-    if(fixtureTrackPreparationOwners)TLinkAXFixtureAutoreleaseOwner();
+    if(fixtureTrackPreparationOwners&&!fixturePreparationReadOnly)TLinkAXFixtureAutoreleaseOwner();
     if(fixtureWriteFault==1)return NO;
     if(fixtureWriteFault==2)[NSException raise:@"EventFixture" format:@"write failed"];
     if(fixtureWriteFault==3)throw std::runtime_error("write failed");
@@ -118,6 +125,7 @@ static BOOL FixtureEventWrite(NSData *data,NSString *path) {
     if(fixtureWriteFault==6)throw std::runtime_error("post-write failed");return result;
 }
 #include "EventChannelUnderTest.inc"
+#include "EventMetadataBeforeHelpers.inc"
 static dispatch_queue_t socketQueue() { static dispatch_queue_t q = dispatch_queue_create("test.event-socket", DISPATCH_QUEUE_SERIAL); return q; }
 static dispatch_queue_t POCSocketQueue() { return socketQueue(); }
 @interface ZXClientContext : NSObject
@@ -372,7 +380,7 @@ static void fixtureLockRejected(NSData *healthy,NSString *journalPath) {
     NSDictionary *reply=TLinkEventChannelPublish(@"fixture",@"script.run",@"updated",@{});
     assert([reply[@"state"] isEqual:@"error"]&&[reply[@"error"] isEqual:@"event_journal_lock_failed"]);
     NSDictionary *status=TLinkEventChannelStatus();assert([status[@"state"] isEqual:@"error"]&&[status[@"error"] isEqual:@"event_journal_unavailable"]);
-    NSString *fingerprint=@"stale",*error=nil;
+    TLinkEventMetadata::Stamp fingerprint=TLinkEventMetadata::Stamp::Missing(EIO);NSString *error=nil;
     assert(!TLinkEventLoadSnapshot(YES,&fingerprint,&error)&&!fingerprint&&[error isEqual:@"event_journal_unavailable"]);
     assert(fixturePublishReads==reads&&fixtureWrites==writes&&fixturePosts==posts&&fixtureLockPermissions==permissions);
     assert(!fixtureLiveEventFds&&fixtureEventLocks.empty()&&fixtureEventFds.empty()&&[healthy isEqual:[NSData dataWithContentsOfFile:journalPath]]);
@@ -384,8 +392,10 @@ static void fixtureValidatedLockCases() {
     NSData *healthy=[NSData dataWithContentsOfFile:journal];NSFileManager *fm=[NSFileManager defaultManager];assert(healthy);
     struct stat original;assert(::lstat(path.fileSystemRepresentation,&original)==0&&S_ISREG(original.st_mode)&&original.st_nlink==1);
     for(bool reader:{false,true})for(bool nonblocking:{false,true}){
+        struct stat before;assert(::lstat(path.fileSystemRepresentation,&before)==0);
+        const unsigned expectedRepairs=((before.st_mode&07777)!=0640)+(before.st_uid!=501||before.st_gid!=501);
         const unsigned permissions=fixtureLockPermissions.load();const int fd=TLinkEventAcquireFileLock(reader,nonblocking);assert(fd>=0);
-        struct stat info;assert(::fstat(fd,&info)==0&&info.st_ino==original.st_ino&&info.st_dev==original.st_dev&&fixtureLockPermissions==permissions+2);
+        struct stat info;assert(::fstat(fd,&info)==0&&info.st_ino==original.st_ino&&info.st_dev==original.st_dev&&fixtureLockPermissions==permissions+expectedRepairs);
         TLinkEventReleaseFileLock(fd);assert(!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureEventLocks.empty());
     }
     fixtureLockStatFault=true;fixtureLockRejected(healthy,journal);fixtureLockStatFault=false;
@@ -508,10 +518,12 @@ static void fixtureBoundedJournalCases() {
 #include "event-envelope-runtime-fixture.inc"
 #include "event-wire-runtime-fixture.inc"
 #include "event-preparation-pool-runtime-fixture.inc"
+#include "event-metadata-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
     fixturePreparationPoolCases();
+    fixtureEventMetadataCases();
     fixtureEventEnvelopeCases();
     fixtureEventWireCases();
     fixtureValidatedLockCases();
