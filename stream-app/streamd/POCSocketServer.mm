@@ -2093,6 +2093,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         }
     };
     device[@"readText"] = ^NSDictionary *(NSString *relativePath) {
+        @autoreleasepool {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, NO, &err);
         if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
@@ -2103,8 +2104,10 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
             return @{@"ok": @NO, @"error": message, @"path": path};
         }
         return @{@"ok": @YES, @"path": path, @"text": text};
+        }
     };
     device[@"writeText"] = ^NSDictionary *(NSString *relativePath, NSString *text) {
+        @autoreleasepool {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, YES, &err);
         if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
@@ -2115,6 +2118,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         BOOL ok = [safeText writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&writeErr];
         NSUInteger byteCount = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
         return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(byteCount)} : @{@"ok": @NO, @"path": path, @"error": writeErr.localizedDescription ?: @"write_failed"};
+        }
     };
     device[@"openFile"] = ^JSValue *(NSString *relativePath, NSString *mode) {
         JSContext *currentContext = [JSContext currentContext] ?: context;
@@ -2193,6 +2197,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         return @{@"ok": @NO, @"path": path, @"error": deleteErr.localizedDescription ?: @"delete_failed"};
     };
     device[@"readJSON"] = ^NSDictionary *(NSString *relativePath) {
+        @autoreleasepool {
         NSString *err = nil;
         NSString *path = TLinkScriptStoragePath(weakSession, relativePath, NO, &err);
         if (!path) return @{@"ok": @NO, @"error": err ?: @"storage_path_error", @"path": relativePath ?: @""};
@@ -2202,8 +2207,10 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
         if (!object) return @{@"ok": @NO, @"path": path, @"error": jsonErr.localizedDescription ?: @"json_parse_failed"};
         return @{@"ok": @YES, @"path": path, @"value": object};
+        }
     };
     device[@"writeJSON"] = ^NSDictionary *(NSString *relativePath, JSValue *value) {
+        @autoreleasepool {
         id object = [value toObject];
         if (!object || ![NSJSONSerialization isValidJSONObject:object]) {
             return @{@"ok": @NO, @"error": @"invalid_json_object"};
@@ -2218,6 +2225,7 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
         if (!data) return @{@"ok": @NO, @"path": path, @"error": jsonErr.localizedDescription ?: @"json_encode_failed"};
         BOOL ok = [data writeToFile:path atomically:YES];
         return ok ? @{@"ok": @YES, @"path": path, @"bytes": @(data.length)} : @{@"ok": @NO, @"path": path, @"error": @"write_json_failed"};
+        }
     };
 
     // XXTouch-compatible local VPN profile creation. Credentials never enter

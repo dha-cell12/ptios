@@ -7,6 +7,7 @@
 // UTF8String's temporary C buffer is deliberately not used for escaped NSData.
 static inline NSData *TLinkUTF8DataFromString(NSString *text)
 {
+    @autoreleasepool {
     if (![text isKindOfClass:[NSString class]]) return [text dataUsingEncoding:NSUTF8StringEncoding];
     NSString *snapshot = [text copy];
     if (!snapshot) return nil;
@@ -20,5 +21,6 @@ static inline NSData *TLinkUTF8DataFromString(NSString *text)
         // The immutable string owns the buffer. Keep it until the view is released.
         (void)[snapshot length];
     }];
+    }
 }
 #endif

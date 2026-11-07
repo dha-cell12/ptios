@@ -1439,6 +1439,8 @@ Payloads longer than 8192 characters are silently cut before parsing. Valid batc
 
 ### [P1-47] Synchronous JS storage helpers perform avoidable whole-buffer conversions
 
+C03ai lifetime follow-up (2026-11-07): scope twelve root/helper/production TrollStore Text/JSON routes plus shared immutable UTF8 view preparation. Root JSON keeps child context/NSError outside its parse/preparation pools; helper JSON retires preparation before delegated writing. Full replies/counts/path/authority/error order and original atomic writers remain. Portable/source checks pass; expanded Foundation/MRC/native and device qualification pending. Root/helper JSON→text conversion is still open. See `IMPLEMENTATION-C03AI.md`.
+
 Implementation follow-up (2026-11-07, C03ac): shared FileHandle writeText now uses the existing immutable CF UTF8 view with retained snapshot and original encoding fallback, covering root/helper/production TrollStore. Reads fill mutable storage directly and four payload methods scope normal temporaries. Preserve ordinary bytes/error ordering, complete text/base64 replies and frontend path/authority/operation policy. Borrow hit rate, Foundation allocation and device timing remain unmeasured; writeJSON and other conversions remain open. See `IMPLEMENTATION-C03AC.md`.
 
 **Status:** CONFIRMED  

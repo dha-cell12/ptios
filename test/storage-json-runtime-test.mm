@@ -8,6 +8,10 @@
 #include <cstring>
 #include <cstdint>
 #include <initializer_list>
+#include <stdexcept>
+#include "ax-node-pool-owner.h"
+extern "C" void TLinkAXFixtureOwnerDidDrain(void){}
+static bool jsonPointerOwner=false;
 static unsigned jsonPointerMode=0;
 static NSUInteger jsonPointerCalls=0,jsonFallbackCalls=0,jsonOwnerLive=0;
 static const char *jsonDirectPointer(CFStringRef string,CFStringEncoding encoding);
@@ -37,6 +41,7 @@ static const char *jsonDirectPointer(CFStringRef string,CFStringEncoding encodin
 - (void)dealloc {assert(jsonOwnerLive>0);--jsonOwnerLive;free(ownedBytes);}
 @end
 static const char *jsonDirectPointer(CFStringRef string,CFStringEncoding encoding){
+    if(jsonPointerOwner)TLinkAXFixtureAutoreleaseOwner();
     ++jsonPointerCalls;assert(encoding==kCFStringEncodingUTF8);
     if(jsonPointerMode==1)return NULL;
     NSString *object=(__bridge NSString *)string;
@@ -152,8 +157,17 @@ static void jsonViewCases(){
         assert(oldException&&[oldException isEqualToString:newException]);
     }
 }
-int main(){@autoreleasepool{
+#include "storage-operation-runtime-fixture.inc"
+int main(int argc,char **argv){@autoreleasepool{
+    assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]];
+    storageOperationCases(root);
     fputs("Storage readJSON Foundation: retained CF byte views, fallback, frozen root/helper parsing and child calls\n",stderr);
+    for(unsigned mode=0;mode<2;++mode){
+        TLinkAXFixtureResetOwners();jsonPointerOwner=true;jsonPointerMode=mode;
+        NSData *heldView=nil;
+        @autoreleasepool {heldView=TLinkUTF8DataFromString(@"held UTF8 ảnh");assert(TLinkAXFixtureLiveOwners()==0);}
+        assert([heldView isEqual:[@"held UTF8 ảnh" dataUsingEncoding:NSUTF8StringEncoding]]&&TLinkAXFixtureDroppedOwners()==1);jsonPointerOwner=false;heldView=nil;jsonPointerMode=0;
+    }
     jsonViewCases();
     const unichar invalid=0xd800;
     NSMutableArray *texts=[NSMutableArray arrayWithArray:@[@"",@"{}",@"[]",@"{\"name\":\"ảnh 测试 😀\"}",@"{\"nul\":\"a\\u0000b\"}",@"\ufeff{}",@"\ufeff\ufeff{}",@"{bad}",@"1",@"null",@"{}\0trailing"]];

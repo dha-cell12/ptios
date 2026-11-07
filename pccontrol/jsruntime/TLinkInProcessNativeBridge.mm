@@ -582,6 +582,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         return [TLinkJSNativeResponse responseWithValue:res];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodReadText]) {
+        @autoreleasepool {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSString *resolvedPath = nil;
         NSDictionary *resolved = [runtime bundleStoragePathForRelativePath:path createParent:NO];
@@ -598,8 +599,10 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSString *text = [NSString stringWithContentsOfFile:resolvedPath encoding:NSUTF8StringEncoding error:&err];
         if (!text) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to read file", @"path": resolvedPath ?: @"" }];
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": resolvedPath ?: @"", @"text": text }];
+        }
     }
     else if ([method isEqualToString:TLinkJSNativeMethodWriteText]) {
+        @autoreleasepool {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         NSString *text = [args count] > 1 ? [args objectAtIndex:1] : @"";
         NSString *resolvedPath = nil;
@@ -618,6 +621,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         BOOL ok = [safeText writeToFile:resolvedPath atomically:YES encoding:NSUTF8StringEncoding error:&err];
         if (!ok) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to write file", @"path": resolvedPath ?: @"" }];
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": resolvedPath ?: @"", @"bytes": @(bytes) }];
+        }
     }
     
     else if ([method isEqualToString:TLinkJSNativeMethodReadJSON]) {
@@ -625,6 +629,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         TLinkJSNativeRequest *subReq = [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodReadText arguments:@[path]];
         TLinkJSNativeResponse *subRes = [self executeRequest:subReq context:context error:error];
         if (!subRes.ok) return subRes;
+        @autoreleasepool {
         NSDictionary *textResult = subRes.value;
         if (![textResult[@"ok"] boolValue]) return [TLinkJSNativeResponse responseWithValue:textResult];
         NSData *data = TLinkUTF8DataFromString(textResult[@"text"]);
@@ -632,8 +637,11 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&err] : nil;
         if (!value) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" }];
         return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @YES, @"path": textResult[@"path"] ?: @"", @"value": value }];
+        }
     }
     else if ([method isEqualToString:TLinkJSNativeMethodWriteJSON]) {
+        TLinkJSNativeRequest *subReq = nil;
+        @autoreleasepool {
         NSString *path = [args count] > 0 ? [args objectAtIndex:0] : @"";
         id object = [args count] > 1 ? [args objectAtIndex:1] : nil;
         if ([object isKindOfClass:[NSNull class]]) object = nil;
@@ -645,7 +653,8 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         if (!data) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to encode JSON" }];
         if ([data length] > kTLinkautoJSMaxStorageFileBytes) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"JSON is too large" }];
         NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
-        TLinkJSNativeRequest *subReq = [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodWriteText arguments:@[path, text]];
+        subReq = [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodWriteText arguments:@[path, text]];
+        }
         return [self executeRequest:subReq context:context error:error];
     }
     else if ([method isEqualToString:TLinkJSNativeMethodFileExists]) {

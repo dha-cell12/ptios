@@ -584,6 +584,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)readTextAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    @autoreleasepool {
     self.storageOpsCount++;
     NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath writing:NO createParent:NO];
     if (![resolved[@"ok"] boolValue]) return resolved;
@@ -595,10 +596,12 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
     if (!text) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to read file", @"path": path ?: @"" };
     return @{ @"ok": @YES, @"path": path ?: @"", @"text": text ?: @"" };
+    }
 }
 
 - (NSDictionary *)writeText:(NSString *)text atRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    @autoreleasepool {
     self.storageOpsCount++;
     NSDictionary *resolved = [self bundleStoragePathForRelativePath:relativePath bundlePath:bundlePath writing:YES createParent:YES];
     if (![resolved[@"ok"] boolValue]) return resolved;
@@ -611,6 +614,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     BOOL ok = [safeText writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&err];
     if (!ok) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to write file", @"path": path ?: @"" };
     return @{ @"ok": @YES, @"path": path ?: @"", @"bytes": @(bytes) };
+    }
 }
 
 - (void)closeActiveFileHandles
@@ -676,6 +680,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
 
 - (NSDictionary *)readJSONAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    @autoreleasepool {
     self.storageOpsCount++;
     NSDictionary *textResult = [self readTextAtRelativePath:relativePath bundlePath:bundlePath];
     if (![textResult[@"ok"] boolValue]) return textResult;
@@ -684,11 +689,15 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&err] : nil;
     if (!value) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to parse JSON", @"path": textResult[@"path"] ?: @"" };
     return @{ @"ok": @YES, @"path": textResult[@"path"] ?: @"", @"value": value };
+    }
 }
 
 - (NSDictionary *)writeJSONValue:(id)value atRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
+    @autoreleasepool {
     self.storageOpsCount++;
+    NSString *text = nil;
+    @autoreleasepool {
     id object = [value isKindOfClass:[JSValue class]] ? [(JSValue *)value toObject] : value;
     if ([object isKindOfClass:[NSNull class]]) object = nil;
     if (!object || ![NSJSONSerialization isValidJSONObject:object]) return @{ @"ok": @NO, @"error": @"writeJSON(path, value) requires a JSON-serializable object or array" };
@@ -696,8 +705,10 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:&err];
     if (!data) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to encode JSON" };
     if ([data length] > kTLinkJSHelperMaxStorageFileBytes) return @{ @"ok": @NO, @"error": @"JSON is too large" };
-    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+    text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+    }
     return [self writeText:text atRelativePath:relativePath bundlePath:bundlePath];
+    }
 }
 
 - (NSDictionary *)fileExistsAtRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath

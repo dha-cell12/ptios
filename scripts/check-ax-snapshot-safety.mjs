@@ -1,3 +1,4 @@
+import {restoreStorageOperations} from './lib/storage-operations-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,basename,join,resolve} from 'node:path';
@@ -32,7 +33,10 @@ import {legacyAXOutput} from './lib/ax-output-baseline.mjs';
 import {legacyAXPreflight} from './lib/ax-preflight-baseline.mjs';
 import {legacyAXFindPool} from './lib/ax-find-pool-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
+const read=async p=>{
+    const text=(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
+    return p==='stream-app/streamd/POCSocketServer.mm'?restoreStorageOperations(text,'troll',true):text;
+};
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
 const selectorPlan=await read('shared/TLinkAXSelectorPlan.h');
 // This Objective-C++ fixture only compiles on macOS; catch its C++ keyword collision on every host.

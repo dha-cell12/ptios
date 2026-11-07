@@ -1,3 +1,4 @@
+import {restoreStorageOperations,storageOperationSpecs,storageOperationPart,storageOperationBefore} from './lib/storage-operations-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,basename,join,resolve} from 'node:path';
@@ -44,19 +45,22 @@ const readJSONSpecs=[
 ];
 const storageBeforeJSON=new Map();
 for(const [path,start,end,legacyName,output,include,hash] of readJSONSpecs){
-    const text=await read(path),chunk=between(text,start,end),legacy=(await read('test/fixtures/'+legacyName)).split('\n').slice(1).join('\n');
+    const current=await read(path),text=restoreStorageOperations(current,path.startsWith('pccontrol/')?'root':'helper',true),chunk=between(text,start,end),legacy=(await read('test/fixtures/'+legacyName)).split('\n').slice(1).join('\n');
     assert.equal(chunk.replace('TLinkUTF8DataFromString(textResult[@"text"])','[textResult[@"text"] dataUsingEncoding:NSUTF8StringEncoding]').trim(),legacy.trim());
     const previous=text.replace(include,'').replace(chunk,legacy);
     assert.equal(createHash('sha256').update(previous.trim()).digest('hex'),hash,'only readJSON data view/header changes complete user-passed C03z source at 54991dd3: '+path);
-    storageBeforeJSON.set(path,previous);storageChunks.push([output,chunk]);
+    storageBeforeJSON.set(path,previous);storageChunks.push([output,between(current,start,end)]);
 }
 const utf8View=await read('shared/TLinkUTF8Data.h');
+const previousUTF8=await read('test/fixtures/storage-utf8-before-c03ai.inc');
+assert.equal(utf8View.replace('    @autoreleasepool {\n','').replace('    }\n}\n#endif','}\n#endif'),previousUTF8,'only normal UTF8-view pool changes; complete ownership/encoding fallback retained');
 assert.match(utf8View,/snapshot = \[text copy\][\s\S]*CFStringGetCStringPtr[\s\S]*if \(!bytes\) return \[snapshot dataUsingEncoding:NSUTF8StringEncoding\]/);
 assert.match(utf8View,/initWithBytesNoCopy:[\s\S]*deallocator:[\s\S]*\[snapshot length\]/);
 assert.doesNotMatch(utf8View,/\[snapshot UTF8String\]|strlen|free\(/);
 console.log('Storage readJSON source passed: direct immutable CF UTF8 storage with retained owner, original encoder fallback and complete previous reader/policy source.');
 for(const [path,start,end,legacyName,output,hash] of storageSpecs){
-    const currentText=storageBeforeJSON.get(path)||await read(path);
+    const actual=await read(path);
+    const currentText=storageBeforeJSON.get(path)||restoreStorageOperations(actual,'troll',true);
     const text=path==='stream-app/streamd/POCSocketServer.mm'?restoreVPNPrivateCaller(currentText):currentText;
     const chunk=between(text,start,end),legacy=(await read('test/fixtures/'+legacyName)).split('\n').slice(1).join('\n');
     const restoredChunk=chunk.replace('NSUInteger bytes = [safeText lengthOfBytesUsingEncoding:NSUTF8StringEncoding];','NSData *data = [safeText dataUsingEncoding:NSUTF8StringEncoding];')
@@ -66,7 +70,7 @@ for(const [path,start,end,legacyName,output,hash] of storageSpecs){
     assert.equal(createHash('sha256').update(text.replace(chunk,legacy).trim()).digest('hex'),hash,'complete user-passed source at adaf252c: '+path);
     assert.match(chunk,/lengthOfBytesUsingEncoding:NSUTF8StringEncoding/);
     assert.doesNotMatch(chunk,/dataUsingEncoding:/);
-    storageChunks.push([output,chunk]);
+    storageChunks.push([output,between(actual,start,end)]);
 }
 console.log('Storage writeText source passed: root/helper/TrollStore byte counts without bridge-owned NSData, complete original writer/path/error/gate source retained.');
 for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.yml'])assert.ok((await read(path)).includes('node scripts/check-file-handle-safety.mjs'));
@@ -81,6 +85,14 @@ for(const fixture of [constructed,legacyLifecycle]){
     assert.equal((fixture.match(/fileLifecycleNormalizationProbe\(\)/g)||[]).length,1);
     assert.equal((fixture.match(/fileLifecycleSeekNormalizationProbe\(\)/g)||[]).length,1);
 }
+for(const [kind,spec] of Object.entries(storageOperationSpecs)){
+    const actual=await read(spec.file);restoreStorageOperations(actual,kind,true);
+    for(const part of spec.parts){
+        storageChunks.push([`StorageOperations-${kind}-${part.name}.inc`,storageOperationPart(actual,part)]);
+        storageChunks.push([`StorageOperationsBefore-${kind}-${part.name}.inc`,storageOperationBefore(part)]);
+    }
+}
+console.log('Storage operation source passed: twelve scoped routes, root parse/preparation boundaries, child NSError outside pools and exact preceding root/helper/TrollStore sources.');
 const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-file-handle-'));
 function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
 try{
@@ -93,6 +105,7 @@ try{
     assert.ok(legacyHeader.includes('@interface LegacyTLinkJSFileHandle : NSObject')&&legacyHeader.includes('JSValue *LegacyTLinkJSFileHandleCreateJSObject('));
     assert.doesNotMatch(legacyHeader,/LegacyLegacy/,'rename each complete legacy symbol once');
     await writeFile(join(temp,'LegacyFileHandle.h'),legacyHeader);
+    await Promise.all(storageChunks.map(([name,chunk])=>writeFile(join(temp,name),chunk)));
     if(process.platform==='darwin'){
         const runtime=join(temp,'file-handle-runtime');
         await writeFile(join(temp,'FileHandleLifecycleUnderTest.inc'),constructed);
@@ -101,12 +114,11 @@ try{
         run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','JavaScriptCore','-I',temp,'-I',join(root,'shared'),join(root,'test/file-handle-runtime-test.mm'),owner,'-o',runtime]);
         run(runtime,[temp]);
-        await Promise.all(storageChunks.map(([name,chunk])=>writeFile(join(temp,name),chunk)));
         const storageRuntime=join(temp,'storage-codec-runtime');
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/storage-codec-runtime-test.mm'),'-o',storageRuntime]);
         run(storageRuntime,[temp]);
         const jsonRuntime=join(temp,'storage-json-runtime');
-        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/storage-json-runtime-test.mm'),'-o',jsonRuntime]);
+        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/storage-json-runtime-test.mm'),owner,'-o',jsonRuntime]);
         run(jsonRuntime,[temp]);
     }else console.log('macOS actual/frozen FileHandle Foundation/POSIX/JSCore integration is included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-file-handle-'));await rm(temp,{recursive:true,force:true});}

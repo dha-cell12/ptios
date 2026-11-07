@@ -1,0 +1,107 @@
+{
+  "root": {
+    "file": "pccontrol/jsruntime/TLinkInProcessNativeBridge.mm",
+    "oldHash": "b058643d215c838b9613b457021aa4ef486eb6a54090d902ed2698f1b7073060",
+    "currentHash": "fe738c8aa8839c4e1b66f986d168584ec4df2269997eae185d8a4ebe598d1692",
+    "parts": [
+      {
+        "name": "ReadText",
+        "start": "    else if ([method isEqualToString:TLinkJSNativeMethodReadText])",
+        "end": "    else if ([method isEqualToString:TLinkJSNativeMethodWriteText])",
+        "frozen": "storage-operations-root-readtext-before-c03ai.inc",
+        "currentHash": "0bebbc9f11f9e53a93f2ec4ad2eff082426d8cb2de194788077d164b90e8aacb"
+      },
+      {
+        "name": "WriteText",
+        "start": "    else if ([method isEqualToString:TLinkJSNativeMethodWriteText])",
+        "end": "    else if ([method isEqualToString:TLinkJSNativeMethodReadJSON])",
+        "frozen": "storage-operations-root-writetext-before-c03ai.inc",
+        "currentHash": "d6a36de5f5a7a5eda260f72fa13e4b1da76bb24c8136c8be46535d68be098ccb"
+      },
+      {
+        "name": "ReadJSON",
+        "start": "    else if ([method isEqualToString:TLinkJSNativeMethodReadJSON])",
+        "end": "    else if ([method isEqualToString:TLinkJSNativeMethodWriteJSON])",
+        "frozen": "storage-operations-root-readjson-before-c03ai.inc",
+        "currentHash": "b38022e5acc9a1416d486dd39749549479747064658058ed74cb87bb8220ff9d"
+      },
+      {
+        "name": "WriteJSON",
+        "start": "    else if ([method isEqualToString:TLinkJSNativeMethodWriteJSON])",
+        "end": "    else if ([method isEqualToString:TLinkJSNativeMethodFileExists])",
+        "frozen": "storage-operations-root-writejson-before-c03ai.inc",
+        "currentHash": "53fc89e94677319d15e8e0f00eeca5beea7fe82dfa5b76f82bb861183592476d"
+      }
+    ]
+  },
+  "helper": {
+    "file": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+    "oldHash": "ca5e156dba530fc41af46d3900cac940ae1a63d5c76d7a7e80ffd04aad96223e",
+    "currentHash": "289edba46c8202d7a1d3c879d22771726b34792ab00068cf1ee87d3d8f20b1b9",
+    "parts": [
+      {
+        "name": "ReadText",
+        "start": "- (NSDictionary *)readTextAtRelativePath:",
+        "end": "- (NSDictionary *)writeText:",
+        "frozen": "storage-operations-helper-readtext-before-c03ai.inc",
+        "currentHash": "21c2802c8f42df43f788f4716e5c59bba97a934bcbc902c485d6d3bd75f01ad0"
+      },
+      {
+        "name": "WriteText",
+        "start": "- (NSDictionary *)writeText:",
+        "end": "- (void)closeActiveFileHandles",
+        "frozen": "storage-operations-helper-writetext-before-c03ai.inc",
+        "currentHash": "971232da5efcbac67efd500d2b0a576abd5d871312e89e24919dedc8b5bcdff4"
+      },
+      {
+        "name": "ReadJSON",
+        "start": "- (NSDictionary *)readJSONAtRelativePath:",
+        "end": "- (NSDictionary *)writeJSONValue:",
+        "frozen": "storage-operations-helper-readjson-before-c03ai.inc",
+        "currentHash": "e7847f17767e6ac0070b596c4b37bc5d0ef93064f42dbec3688dd01090a4e22d"
+      },
+      {
+        "name": "WriteJSON",
+        "start": "- (NSDictionary *)writeJSONValue:",
+        "end": "- (NSDictionary *)fileExistsAtRelativePath:",
+        "frozen": "storage-operations-helper-writejson-before-c03ai.inc",
+        "currentHash": "192cd2f8f31d0de35c65347b337552b27d45bbf84baed2cfc35eee13e3662d88"
+      }
+    ]
+  },
+  "troll": {
+    "file": "stream-app/streamd/POCSocketServer.mm",
+    "oldHash": "02e7928ade1eee8609c7b4b5ac55c9ef8f538e35258e375cd7bf5e0d7c87a8d4",
+    "currentHash": "e2631530e694d8ef5a6b4431bbc188ecbe2c19eb9f2fd52c58c855eb65852dd7",
+    "parts": [
+      {
+        "name": "ReadText",
+        "start": "    device[@\"readText\"] =",
+        "end": "    device[@\"writeText\"] =",
+        "frozen": "storage-operations-troll-readtext-before-c03ai.inc",
+        "currentHash": "cdea7f3f78acf88245dfc1481d3e34c57ff3baab19bf54d6124c1386f668483e"
+      },
+      {
+        "name": "WriteText",
+        "start": "    device[@\"writeText\"] =",
+        "end": "    device[@\"openFile\"] =",
+        "frozen": "storage-operations-troll-writetext-before-c03ai.inc",
+        "currentHash": "b5838336fdc104caf8cebe007d47796e72bfdfc70ef95e112cb8e03c63de56b6"
+      },
+      {
+        "name": "ReadJSON",
+        "start": "    device[@\"readJSON\"] =",
+        "end": "    device[@\"writeJSON\"] =",
+        "frozen": "storage-operations-troll-readjson-before-c03ai.inc",
+        "currentHash": "f091c88bbc92802ab9281a76edba9f742c99755bed608baba19f4dd612bca911"
+      },
+      {
+        "name": "WriteJSON",
+        "start": "    device[@\"writeJSON\"] =",
+        "end": "    // XXTouch-compatible local VPN profile creation.",
+        "frozen": "storage-operations-troll-writejson-before-c03ai.inc",
+        "currentHash": "335882e33f021c7034dfb8d56af082bd2c31d9f0976ace294688e525d74aee2a"
+      }
+    ]
+  }
+}
