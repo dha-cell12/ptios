@@ -2,6 +2,7 @@
 #import "../pccontrol/jsruntime/TLinkJSHelperProtocol.h"
 #import "../shared/TLinkJSFileHandle.h"
 #include "../shared/TLinkUTF8Data.h"
+#include "../shared/TLinkPreparedJSONText.inc"
 #include "../shared/TLinkHelperRPCIdentity.h"
 #include "../shared/TLinkHelperSocketIO.h"
 #include "../shared/TLinkHelperRequestDeadline.h"
@@ -706,7 +707,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:&err];
     if (!data) return @{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to encode JSON" };
     if ([data length] > kTLinkJSHelperMaxStorageFileBytes) return @{ @"ok": @NO, @"error": @"JSON is too large" };
-    text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+    text = [[TLinkPreparedJSONText alloc] initWithJSONData:data] ?: @"{}";
     }
     return [self writeText:text atRelativePath:relativePath bundlePath:bundlePath];
     }

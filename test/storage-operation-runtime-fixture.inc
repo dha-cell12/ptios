@@ -4,6 +4,7 @@ static const unsigned long long kTLinkautoJSMaxStorageFileBytes=512*1024;
 static const unsigned long long kTLinkJSHelperMaxStorageFileBytes=512*1024;
 static bool storageOperationOwners=false,storageOperationCheckPreparation=false;
 static unsigned storageOperationFault=0;
+static NSData *storagePreparedJSONData(NSData *data);
 static void storageOperationWitness(){if(storageOperationOwners)TLinkAXFixtureAutoreleaseOwner();}
 @interface StorageOperationJSON : NSObject
 + (BOOL)isValidJSONObject:(id)object;
@@ -12,7 +13,7 @@ static void storageOperationWitness(){if(storageOperationOwners)TLinkAXFixtureAu
 @end
 @implementation StorageOperationJSON
 + (BOOL)isValidJSONObject:(id)object {storageOperationWitness();return [NSJSONSerialization isValidJSONObject:object];}
-+ (NSData *)dataWithJSONObject:(id)object options:(NSJSONWritingOptions)options error:(NSError **)error {storageOperationWitness();return [NSJSONSerialization dataWithJSONObject:object options:options error:error];}
++ (NSData *)dataWithJSONObject:(id)object options:(NSJSONWritingOptions)options error:(NSError **)error {storageOperationWitness();return storagePreparedJSONData([NSJSONSerialization dataWithJSONObject:object options:options error:error]);}
 + (id)JSONObjectWithData:(NSData *)data options:(NSJSONReadingOptions)options error:(NSError **)error {storageOperationWitness();return [NSJSONSerialization JSONObjectWithData:data options:options error:error];}
 @end
 @interface StorageOperationJSValue : NSObject

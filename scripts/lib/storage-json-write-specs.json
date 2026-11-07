@@ -1,0 +1,21 @@
+{
+  "root": {
+    "file": "pccontrol/jsruntime/TLinkInProcessNativeBridge.mm",
+    "start": "    else if ([method isEqualToString:TLinkJSNativeMethodWriteJSON])",
+    "end": "    else if ([method isEqualToString:TLinkJSNativeMethodFileExists])",
+    "include": "#include \"../../shared/TLinkPreparedJSONText.inc\"\n",
+    "beforeHash": "fe738c8aa8839c4e1b66f986d168584ec4df2269997eae185d8a4ebe598d1692",
+    "currentHash": "86d2ffd6ddc8e040016c4bc8cf84a3615ca5567d5791df8493f875daa817ee0e",
+    "partHash": "857a32f943136cbf8744ab71d030da611ba9fbe4ef5cd8b694c174b2cd9bac4e"
+  },
+  "helper": {
+    "file": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+    "start": "- (NSDictionary *)writeJSONValue:",
+    "end": "- (NSDictionary *)fileExistsAtRelativePath:",
+    "include": "#include \"../shared/TLinkPreparedJSONText.inc\"\n",
+    "beforeHash": "a4fe7a6e0193e22fe90fcde82b60e8401f357d0d56a04735b8b3f24669e086b1",
+    "currentHash": "3f8d6c399edf406dbed7c27aae4c494b3cbd4ae0c35f53bb44a865bab21de62c",
+    "partHash": "2ea39ace4ab8f71e966aeae0d06c86c3516eea3e9df713e4282bd1de8d04be80"
+  },
+  "adapterHash": "d55883ff0094586537a12e0da7bfa2ec87f68826fc04d101eca07a879fdf0090"
+}

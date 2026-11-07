@@ -1,4 +1,5 @@
 import {restoreFileRepresentation} from './lib/file-representation-baseline.mjs';
+import {restoreStorageJSONWrites,storageJSONWriteSpecs,storageJSONWriteBefore,checkPreparedJSONText} from './lib/storage-json-write-baseline.mjs';
 import {restoreFilePlan,restoreFilePlanHeader,restoreFilePlanFrontend,checkFileModePlan,filePlanSpecs} from './lib/file-plan-baseline.mjs';
 import {restoreStorageOperations,storageOperationSpecs,storageOperationPart,storageOperationBefore} from './lib/storage-operations-baseline.mjs';
 import assert from 'node:assert/strict';
@@ -17,6 +18,7 @@ const [actualFileSource,currentHeader,frozen]=await Promise.all(['shared/TLinkJS
 const beforeRepresentation=restoreFileRepresentation(actualFileSource);
 const lifecycleSource=restoreFilePlan(actualFileSource),header=restoreFilePlanHeader(currentHeader);
 checkFileModePlan(await read('shared/TLinkJSFileModePlan.h'));
+checkPreparedJSONText(await read('shared/TLinkPreparedJSONText.inc'));
 const beforeOpenPlan=await read('test/fixtures/file-plan-open-before-c03al.inc');
 const physicalMarker='    const char *filePath = [path fileSystemRepresentation];';
 const commonStart=actualFileSource.indexOf('             normalizedMode:(NSString *)normalizedMode\n');
@@ -107,6 +109,13 @@ for(const [kind,spec] of Object.entries(storageOperationSpecs)){
         storageChunks.push([`StorageOperationsBefore-${kind}-${part.name}.inc`,storageOperationBefore(part)]);
     }
 }
+for(const kind of ['root','helper']){
+    const spec=storageJSONWriteSpecs[kind],actual=await read(spec.file);restoreStorageJSONWrites(actual,kind);
+    const current=storageOperationPart(actual,spec),before=storageJSONWriteBefore(kind);
+    assert.equal(current.replace('[[TLinkPreparedJSONText alloc] initWithJSONData:data]','[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]'),before,'only the prepared string constructor changes; recursive request/authority/count/error source retained');
+    storageChunks.push([`StorageJSONWriteBefore-${kind}.inc`,before]);
+}
+console.log('Storage JSON write source passed: immutable encoded bytes with NSString-compatible arguments, original recursive gates/path/error/count source, and complete preceding root/helper files.');
 console.log('Storage operation source passed: twelve scoped routes, root parse/preparation boundaries, child NSError outside pools and exact preceding root/helper/TrollStore sources.');
 for(const kind of ['root','helper','troll']){
     const spec=filePlanSpecs[kind],actual=await read(spec.file);restoreFilePlanFrontend(actual,kind,true);

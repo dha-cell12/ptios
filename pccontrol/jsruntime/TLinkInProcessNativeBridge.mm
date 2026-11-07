@@ -9,6 +9,7 @@
 #include "../../shared/TLinkNativeImageOpen.h"
 #include "../../shared/TLinkNativeImageCapture.h"
 #include "../../shared/TLinkUTF8Data.h"
+#include "../../shared/TLinkPreparedJSONText.inc"
 
 #ifndef TASK_IMAGE_OBJECT
 #define TASK_IMAGE_OBJECT 48
@@ -652,7 +653,7 @@ static NSDictionary *TLinkNativeFailure(NSString *code) {
         NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:&err];
         if (!data) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": err.localizedDescription ?: @"failed to encode JSON" }];
         if ([data length] > kTLinkautoJSMaxStorageFileBytes) return [TLinkJSNativeResponse responseWithValue:@{ @"ok": @NO, @"error": @"JSON is too large" }];
-        NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+        NSString *text = [[TLinkPreparedJSONText alloc] initWithJSONData:data] ?: @"{}";
         subReq = [[TLinkJSNativeRequest alloc] initWithMethod:TLinkJSNativeMethodWriteText arguments:@[path, text]];
         }
         return [self executeRequest:subReq context:context error:error];

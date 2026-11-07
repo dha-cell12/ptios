@@ -1,4 +1,5 @@
 import {restoreFileRepresentation,restoreFileRepresentationHeader} from './file-representation-baseline.mjs';
+import {restoreStorageJSONWrites} from './storage-json-write-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -21,6 +22,7 @@ export function restoreFilePlan(source){
     assert.equal(hash(source),filePlanSpecs.implementation.beforeHash,'complete C03ag class retained');return source;
 }
 export function restoreFilePlanFrontend(source,kind,complete=false){
+    source=restoreStorageJSONWrites(source,kind);
     const spec=filePlanSpecs[kind];
     if(!source.includes('TLinkJSFilePrepareMode(openMode)'))return source;
     if(complete)assert.equal(hash(source),spec.currentHash,'complete prepared '+kind);

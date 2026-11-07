@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <stdexcept>
+#include "../shared/TLinkPreparedJSONText.inc"
 #include "ax-node-pool-owner.h"
 extern "C" void TLinkAXFixtureOwnerDidDrain(void){}
 static bool jsonPointerOwner=false;
@@ -158,9 +159,11 @@ static void jsonViewCases(){
     }
 }
 #include "storage-operation-runtime-fixture.inc"
+#include "storage-json-write-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]];
     storageOperationCases(root);
+    storagePreparedJSONCases(root);
     fputs("Storage readJSON Foundation: retained CF byte views, fallback, frozen root/helper parsing and child calls\n",stderr);
     for(unsigned mode=0;mode<2;++mode){
         TLinkAXFixtureResetOwners();jsonPointerOwner=true;jsonPointerMode=mode;
