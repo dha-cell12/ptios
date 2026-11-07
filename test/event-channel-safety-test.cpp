@@ -8,8 +8,10 @@
 #include "ascii-preparation-safety-fixture.inc"
 #include "event-metadata-safety-fixture.inc"
 #include "event-preparation-safety-fixture.inc"
+#include "event-direct-wire-safety-fixture.inc"
 int main() {
     eventPreparationCases();
+    eventDirectWireCases();
     asciiPreparationCases();
     eventMetadataCases();
     assert(!TLinkEventPollExpired(100, 99, 25));

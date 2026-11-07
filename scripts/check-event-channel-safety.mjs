@@ -1,4 +1,5 @@
 import {restoreEventPreparation,eventPreparationBefore,checkEventPreparationFiles} from './lib/event-preparation-baseline.mjs';
+import {restoreEventDirectWire,checkEventWireEncoding} from './lib/event-direct-wire-baseline.mjs';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';
@@ -28,7 +29,12 @@ console.log('Event metadata source passed: typed seven-field/errno stamp, condit
 
 const event=restorePreparation(beforeMetadata,'event');checkPreparationCore(await read('shared/TLinkASCIIPreparation.h'));
 function between(s,a,b) { const start = s.indexOf(a), end = s.indexOf(b,start+a.length); assert.ok(start >= 0 && end > start,a); return s.slice(start,end); }
-const eventWire = await read('shared/TLinkEventWire.h');
+const actualEventWire = await read('shared/TLinkEventWire.h');
+const eventWire = restoreEventDirectWire(actualEventWire);
+checkEventWireEncoding(await read('shared/TLinkEventWireEncoding.h'));
+assert.doesNotMatch(actualEventWire,/base64Encoded|appendData:|appendBytes:/);
+assert.match(actualEventWire,/@autoreleasepool[\s\S]*TLinkEventWireEncoding::Size[\s\S]*dataWithLength:length[\s\S]*TLinkEventWireEncoding::Encode/);
+console.log('Direct event wire source passed: one final mutable buffer, checked base64/framing and normal JSON lifetime; exact preceding shared encoder retained.');
 assert.match(eventWire,/base64EncodedDataWithOptions:0/);
 assert.match(eventWire,/dataWithBytes:"0;;" length:3/);
 assert.match(eventWire,/appendBytes:"\\r\\n" length:2/);
@@ -193,7 +199,9 @@ try {
   .replaceAll('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)');
  const trollSyncFixture = (name,source) => `static NSData *${name}(int taskType,NSString *body) {\n${syncFixture(source)}    return nil;\n}\n`;
  const fixtures = {
-  'EventWireUnderTest.inc': eventWire.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)'),
+  'EventWireUnderTest.inc': actualEventWire.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)')
+   .replace('[NSMutableData dataWithLength:length]','FixtureEventWireBuffer(length)').replace('TLinkEventWireEncoding::Encode(','FixtureEventDirectEncode('),
+  'EventWireBeforeDirect.inc': eventWire.replace('TLinkEventLegacyBatchResponse(','FixtureBeforeDirectEventWire(').replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)'),
   'EventLegacyTrollBatchUnderTest.inc': frozenTrollEventEncoder.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)'),
   'EventSyncUnderTest.inc': syncFixture(rootSyncEncoder)+syncFixture(oldRootSyncEncoder).replace('zx_eventChannelResponse(', 'fixtureLegacyRootSyncResponse(')
    +trollSyncFixture('fixtureTrollSyncResponse',trollSyncEncoder)+trollSyncFixture('fixtureLegacyTrollSyncResponse',oldTrollSyncEncoder),
@@ -258,6 +266,7 @@ try {
  assert.ok(beforeSweep.includes('FixtureBeforeLoadSnapshot(YES,')&&!beforeSweep.includes('@autoreleasepool'));
 
  for (const [name,value] of Object.entries(fixtures)) await writeFile(join(temp,name),value);
+ for(const seam of ['FixtureEventWireBuffer\\(length\\)','FixtureEventDirectEncode\\('])assert.equal((fixtures['EventWireUnderTest.inc'].match(new RegExp(seam,'g'))||[]).length,1,seam);
  const windows = process.platform === 'win32', compiler = process.env.CXX || (windows ? 'cl' : 'clang++');
  const msvc = /^(cl|cl\.exe)$/i.test(basename(compiler));
  const binary = join(temp,windows ? 'event-core.exe' : 'event-core'), file = join(root,'test/event-channel-safety-test.cpp');

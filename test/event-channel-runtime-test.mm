@@ -23,6 +23,27 @@
 #include "../shared/TLinkEventChannel.h"
 #include <notify.h>
 #include "ax-node-pool-owner.h"
+#include "../shared/TLinkEventWireEncoding.h"
+static thread_local bool fixtureDirectWireTrack=false;
+static thread_local unsigned fixtureDirectWireFault=0,fixtureDirectWireAllocations=0,fixtureDirectWireEncodes=0;
+static __weak NSMutableData *fixtureDirectWireBuffer=nil;
+static NSMutableData *FixtureEventWireBuffer(NSUInteger length){
+    if(fixtureDirectWireTrack){TLinkAXFixtureAutoreleaseOwner();fixtureDirectWireBuffer=nil;}
+    ++fixtureDirectWireAllocations;
+    if(fixtureDirectWireFault==1)return nil;
+    if(fixtureDirectWireFault==3)[NSException raise:@"EventDirectWireFixture" format:@"buffer"];
+    if(fixtureDirectWireFault==4)throw std::runtime_error("buffer");
+    NSMutableData *data=[NSMutableData dataWithLength:fixtureDirectWireFault==2?length-1:length];
+    if(fixtureDirectWireTrack)fixtureDirectWireBuffer=data;
+    return data;
+}
+static bool FixtureEventDirectEncode(const uint8_t *input,size_t length,uint8_t *output,size_t capacity){
+    ++fixtureDirectWireEncodes;
+    if(fixtureDirectWireTrack)assert(output==fixtureDirectWireBuffer.mutableBytes&&capacity==fixtureDirectWireBuffer.length);
+    const bool encoded=TLinkEventWireEncoding::Encode(input,length,output,capacity);
+    if(fixtureDirectWireTrack&&!encoded&&output){for(size_t n=0;n<capacity;++n)assert(output[n]==0);}
+    return encoded;
+}
 static thread_local bool fixtureTrackPreparationOwners=false;
 static thread_local bool fixturePreparationReadOnly=false;
 static thread_local bool fixtureMetadataIntegerOwners=false,fixtureMetadataParserOwners=false;
@@ -164,6 +185,7 @@ static NSDictionary *FixtureEventLegacyJSON(NSData *legacy,NSNumber *requestId) 
     ++fixtureLegacyParses;return zx_jsonResponseFromLegacy(legacy,requestId);
 }
 static NSData *FixtureEventBatchJSON(NSDictionary *batch) {
+    if(fixtureDirectWireTrack)TLinkAXFixtureAutoreleaseOwner();
     ++fixtureBatchEncodes;
     if(fixtureBatchEncodeFault==1)return nil;
     if(fixtureBatchEncodeFault==2)return [NSData data];
@@ -173,6 +195,7 @@ static NSData *FixtureEventBatchJSON(NSDictionary *batch) {
 }
 #include "EventLegacyBatchUnderTest.inc"
 #include "EventLegacyTrollBatchUnderTest.inc"
+#include "EventWireBeforeDirect.inc"
 #include "EventWireUnderTest.inc"
 static NSDictionary *FixtureEventSyncPoll(NSString *body,NSString **error) {
     assert([body isEqual:@"fixture"]);++fixtureSyncPolls;*error=fixtureSyncError;return fixtureSyncBatch;
@@ -527,6 +550,7 @@ static void fixtureBoundedJournalCases() {
 #include "event-preparation-pool-runtime-fixture.inc"
 #include "event-metadata-runtime-fixture.inc"
 #include "event-preparation-runtime-fixture.inc"
+#include "event-direct-wire-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
@@ -535,6 +559,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     fixtureEventPreparationCases();
     fixtureEventEnvelopeCases();
     fixtureEventWireCases();
+    fixtureDirectEventWireCases();
     fixtureValidatedLockCases();
     fixtureCheckedPublicationCases();
     uint64_t one = publish(), unrelated = publish(@"other"), three = publish(), tail = publish(@"other");

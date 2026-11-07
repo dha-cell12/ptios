@@ -2023,6 +2023,8 @@ Measure actual worker/thread count before and after; exact stack/RSS cost is **I
 
 ### [P1-56] Task-95 response path performs base64/legacy reparse layering and can block the daemon's global socketQueue on a large synchronous write
 
+C03ap direct-buffer follow-up (2026-11-08): the shared legacy root/TrollStore/remote/synchronous event encoder now emits unwrapped base64 and framing directly into one explicitly sized mutable output buffer and scopes temporary JSON per call. It removes the intermediate base64 NSData and append copy; complete previous wire/source guards and100k independent/random plus exhaustive two-byte oracles pass on Windows. Existing JSON-v1, errors, authority/persistence and socket scheduling are unchanged. Native Foundation byte/fault/pool/large-response checks and device throughput remain pending; scalar encoder/zero-fill costs are unmeasured. See `IMPLEMENTATION-C03AP.md`.
+
 **Status:** CONFIRMED  
 **Locations:** `tlinkauto-binary/SocketServer.mm:74-84,118-149,660-675`
 
