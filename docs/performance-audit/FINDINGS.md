@@ -1385,6 +1385,8 @@ The async queue has no byte/entry bound. A log-heavy script can enqueue faster t
 
 ### [P1-43] JS file readLine performs one read syscall per byte
 
+Implementation follow-up (2026-11-07, C03ac): retain C03a's line chunk/rewind algorithm and extend the shared numeric/all reader with direct NSMutableData tail reads and checked byte progression. Add shared checked write progress, retained UTF8 write views and four operation pools across root/helper/production TrollStore. Portable actual-core/frozen oracle, boundary, fault and macro integration checks pass; Foundation/ARC/POSIX fixture additions and device performance remain pending. See `IMPLEMENTATION-C03AC.md`.
+
 **Status:** CONFIRMED  
 **Location:** `shared/TLinkJSFileHandle.mm:190-220`
 
@@ -1395,6 +1397,8 @@ A line up to the 512 KiB transfer limit can cause up to ~524,288 one-byte `read(
 ---
 
 ### [P1-44] File reads always build both UTF-8 text and base64 representations
+
+C03ac ownership follow-up (2026-11-07): both representations and all response fields remain. Normal operation pools retire unreturned temporaries while returned text/base64 graphs remain owned. This does not remove the dual representation cost or establish a process RSS bound. Native held-result/MRC retirement and device qualification pending; see `IMPLEMENTATION-C03AC.md`.
 
 **Status:** CONFIRMED  
 **Location:** `shared/TLinkJSFileHandle.mm:49-60,142-187`
@@ -1428,6 +1432,8 @@ Payloads longer than 8192 characters are silently cut before parsing. Valid batc
 ---
 
 ### [P1-47] Synchronous JS storage helpers perform avoidable whole-buffer conversions
+
+Implementation follow-up (2026-11-07, C03ac): shared FileHandle writeText now uses the existing immutable CF UTF8 view with retained snapshot and original encoding fallback, covering root/helper/production TrollStore. Reads fill mutable storage directly and four payload methods scope normal temporaries. Preserve ordinary bytes/error ordering, complete text/base64 replies and frontend path/authority/operation policy. Borrow hit rate, Foundation allocation and device timing remain unmeasured; writeJSON and other conversions remain open. See `IMPLEMENTATION-C03AC.md`.
 
 **Status:** CONFIRMED  
 **Location:** `TLinkInProcessNativeBridge.mm:456-522`

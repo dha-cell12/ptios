@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <JavaScriptCore/JavaScriptCore.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import "../shared/TLinkJSFileHandle.h"
 #import "LegacyFileHandle.h"
 #include "../shared/TLinkJSFileLine.h"
@@ -13,6 +14,21 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <stdexcept>
+#include <cstdlib>
+#include <cstring>
+#include "ax-node-pool-owner.h"
+void TLinkAXFixtureOwnerDidDrain(void){}
+static bool fileTrackPools=false;
+static unsigned fileIOThrow=0,fileWrites=0,fileWriteInterrupts=0;
+static size_t fileMaxWrite=SIZE_MAX;
+static off_t fileWriteFaultAt=-1;
+static bool fileZeroWrite=false,fileWriteOverrun=false;
+static bool fileReadOverrun=false;
+static const char *fileUTF8Pointer(CFStringRef string,CFStringEncoding encoding);
+#define CFStringGetCStringPtr fileUTF8Pointer
+#include "../shared/TLinkUTF8Data.h"
+#undef CFStringGetCStringPtr
 static std::set<int> fileFDs;
 static size_t fileReads=0,fileRewinds=0,fileMaxRead=8192;
 static unsigned fileInterrupts=0;
@@ -31,15 +47,31 @@ static off_t fileTestSeek(int fd,off_t offset,int whence){
     return ::lseek(fd,offset,whence);
 }
 static ssize_t fileTestRead(int fd,void *out,size_t count){
+    if(fileTrackPools)TLinkAXFixtureAutoreleaseOwner();
+    if(fileIOThrow==1)[NSException raise:@"FilePayloadFixture" format:@"read"];
+    if(fileIOThrow==2)throw std::runtime_error("read");
     ++fileReads;if(fileInterrupts){--fileInterrupts;errno=EINTR;return -1;}
+    if(fileReadOverrun)return ssize_t(count+1);
     count=std::min(count,fileMaxRead);
     if(fileFaultAt>=0){const off_t offset=::lseek(fd,0,SEEK_CUR);assert(offset>=0);
         if(offset>=fileFaultAt){errno=EIO;return -1;}count=std::min(count,size_t(fileFaultAt-offset));}
     return ::read(fd,out,count);
 }
+static ssize_t fileTestWrite(int fd,const void *bytes,size_t count){
+    ++fileWrites;if(fileTrackPools)TLinkAXFixtureAutoreleaseOwner();
+    if(fileWriteInterrupts){--fileWriteInterrupts;errno=EINTR;return -1;}
+    if(fileWriteOverrun)return ssize_t(count+1);
+    if(fileZeroWrite)return 0;
+    if(fileIOThrow==1)[NSException raise:@"FilePayloadFixture" format:@"write"];
+    if(fileIOThrow==2)throw std::runtime_error("write");
+    count=std::min(count,fileMaxWrite);
+    if(fileWriteFaultAt>=0){const off_t offset=::lseek(fd,0,SEEK_CUR);assert(offset>=0);if(offset>=fileWriteFaultAt){errno=EIO;return -1;}count=std::min(count,size_t(fileWriteFaultAt-offset));}
+    return ::write(fd,bytes,count);
+}
 #define open(path,flags,mode) fileTestOpen(path,flags,mode)
 #define close(fd) fileTestClose(fd)
 #define read(fd,bytes,count) fileTestRead(fd,bytes,count)
+#define write(fd,bytes,count) fileTestWrite(fd,bytes,count)
 #define lseek(fd,offset,whence) fileTestSeek(fd,offset,whence)
 #define fstat(fd,st) fileTestStat(fd,st)
 #include "../shared/TLinkJSFileHandle.mm"
@@ -61,13 +93,14 @@ static ssize_t fileTestRead(int fd,void *out,size_t count){
 #undef fstat
 #undef lseek
 #undef read
+#undef write
 #undef close
 #undef open
 struct FileTrace {
     NSArray *results=nil;NSData *contents=nil;size_t reads=0;
     FileTrace(NSArray *values,NSData *bytes,size_t count):results(values),contents(bytes),reads(count){}
 };
-static void fileReset(){assert(fileFDs.empty());fileReads=fileRewinds=0;fileMaxRead=8192;fileInterrupts=0;fileFaultAt=-1;fileStatFails=fileRewindFails=fileProbeFails=fileOpening=false;fileInjected=fileLastFD=-1;}
+static void fileReset(){assert(fileFDs.empty());fileReads=fileRewinds=0;fileMaxRead=8192;fileInterrupts=0;fileFaultAt=-1;fileStatFails=fileRewindFails=fileProbeFails=fileOpening=false;fileInjected=fileLastFD=-1;fileTrackPools=false;fileIOThrow=fileWrites=fileWriteInterrupts=0;fileMaxWrite=SIZE_MAX;fileWriteFaultAt=-1;fileZeroWrite=fileWriteOverrun=fileReadOverrun=false;}
 static TLinkJSFileHandle *fileOpen(bool legacy,NSString *path,NSString *mode,NSUInteger cap){
     NSString *error=nil;
     fileOpening=true;
@@ -101,6 +134,7 @@ static FileTrace filePipe(bool legacy){
     NSArray *trace=@[[handle readLine],[handle readRequest:@2],[handle readLine],[handle tell],[handle readLine],[handle close]];
     assert(fileFDs.empty());return {trace,nil,fileReads};
 }
+#include "file-handle-payload-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]],*path=[root stringByAppendingPathComponent:@"handle.bin"];
     puts("FileHandle Foundation: actual/frozen complete classes, POSIX descriptors and JSCore");fflush(stdout);
@@ -128,6 +162,7 @@ int main(int argc,char **argv){@autoreleasepool{
         [context evaluateScript:@"file.close()"];assert(!context.exception&&fileFDs.empty());context[@"file"]=nil;
     }
     for(unsigned n=0;n<128;++n){@autoreleasepool{fileParity(path,[@"one\r\ntwo\nlast" dataUsingEncoding:NSUTF8StringEncoding],8);}}
+    filePayloadRuntimeCases(path);
     assert(fileFDs.empty());assert([[NSFileManager defaultManager] removeItemAtPath:path error:nil]);
     puts("FileHandle Foundation passed: frozen full replies/mixed read-write-seek/tell/append/limits/CR/EOF, real UTF8/binary files, short/EINTR/EIO, stat fallback, real pipe, fresh external edits, rewind failure/recovery, JS bindings and 128 balanced lifecycles.");
 }}

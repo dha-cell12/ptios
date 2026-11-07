@@ -1,5 +1,7 @@
 #import "TLinkJSFileHandle.h"
 #include "TLinkJSFileLine.h"
+#include "TLinkJSFileIO.h"
+#include "TLinkUTF8Data.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -145,6 +147,7 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
 
 - (NSDictionary *)readRequest:(id)request
 {
+    @autoreleasepool {
     if ([request isKindOfClass:[NSString class]]) {
         NSString *kind = [(NSString *)request lowercaseString];
         if ([kind isEqualToString:@"*l"] || [kind isEqualToString:@"line"]) return [self readLine];
@@ -170,29 +173,25 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
         if (requested == 0) return TLinkJSFileDataResult([NSData data], NO, NO);
 
         NSMutableData *data = [NSMutableData data];
-        BOOL eof = NO;
-        while (data.length < requested) {
-            NSUInteger remaining = requested - data.length;
-            uint8_t buffer[8192];
-            size_t amount = MIN(sizeof(buffer), remaining);
-            ssize_t got = read(_fd, buffer, amount);
-            if (got == 0) {
-                eof = YES;
-                break;
-            }
-            if (got < 0) {
-                if (errno == EINTR) continue;
-                return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s", errno, strerror(errno)], self.path);
-            }
-            [data appendBytes:buffer length:(NSUInteger)got];
-        }
+        const int fd=_fd;
+        const auto input=TLinkJSFileIO::ReadInto(requested,
+            [data](size_t used,size_t amount)->uint8_t * {
+                [data setLength:used+amount];
+                uint8_t *base=(uint8_t *)data.mutableBytes;
+                return base?base+used:nullptr;
+            },[fd](uint8_t *bytes,size_t amount)->int64_t{return ::read(fd,bytes,amount);});
+        if(input.error)return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s",input.error,strerror(input.error)],self.path);
+        [data setLength:input.bytes];
+        BOOL eof=input.eof;
         BOOL truncated = readAll && !eof && data.length == _maxTransferBytes;
         return TLinkJSFileDataResult(data, eof, truncated);
+    }
     }
 }
 
 - (NSDictionary *)readLine
 {
+    @autoreleasepool {
     @synchronized (self) {
         if (self.closed || _fd < 0) return [self closedError];
         if (!_readable) return TLinkJSFileError(@"file_not_open_for_reading", self.path);
@@ -214,6 +213,7 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
         result[@"line"] = result[@"data"] ?: @"";
         return result;
     }
+    }
 }
 
 - (NSDictionary *)writeData:(NSData *)data
@@ -224,33 +224,31 @@ static NSDictionary *TLinkJSFileDataResult(NSData *data, BOOL eof, BOOL truncate
 
     const uint8_t *bytes = (const uint8_t *)data.bytes;
     NSUInteger remaining = data.length;
-    while (remaining > 0) {
-        ssize_t wrote = write(_fd, bytes, remaining);
-        if (wrote < 0) {
-            if (errno == EINTR) continue;
-            return TLinkJSFileError([NSString stringWithFormat:@"file_write_failed errno=%d %s", errno, strerror(errno)], self.path);
-        }
-        if (wrote == 0) return TLinkJSFileError(@"file_write_returned_zero", self.path);
-        bytes += wrote;
-        remaining -= (NSUInteger)wrote;
-    }
+    const int fd=_fd;
+    const auto output=TLinkJSFileIO::WriteAll(bytes,remaining,[fd](const uint8_t *buffer,size_t amount)->int64_t{return ::write(fd,buffer,amount);});
+    if(output.error)return TLinkJSFileError([NSString stringWithFormat:@"file_write_failed errno=%d %s",output.error,strerror(output.error)],self.path);
+    if(output.zeroWrite)return TLinkJSFileError(@"file_write_returned_zero",self.path);
     return @{@"ok": @YES, @"bytes": @(data.length), @"path": self.path ?: @""};
 }
 
 - (NSDictionary *)writeText:(NSString *)text
 {
+    @autoreleasepool {
     @synchronized (self) {
-        NSData *data = [(text ?: @"") dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+        NSData *data = TLinkUTF8DataFromString(text ?: @"") ?: [NSData data];
         return [self writeData:data];
+    }
     }
 }
 
 - (NSDictionary *)writeBase64:(NSString *)base64
 {
+    @autoreleasepool {
     @synchronized (self) {
         NSData *data = [[NSData alloc] initWithBase64EncodedString:base64 ?: @"" options:0];
         if (!data) return TLinkJSFileError(@"file_write_invalid_base64", self.path);
         return [self writeData:data];
+    }
     }
 }
 

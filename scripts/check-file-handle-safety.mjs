@@ -6,9 +6,15 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {restoreVPNPrivateCaller} from './lib/vpn-private-stop-baseline.mjs';
+import {restoreFilePayload,checkFileIOHeader} from './lib/file-handle-payload-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
-const [source,header,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
+const [payloadSource,header,frozen]=await Promise.all(['shared/TLinkJSFileHandle.mm','shared/TLinkJSFileHandle.h','test/fixtures/js-file-handle-legacy-v1.inc'].map(read));
+const source=restoreFilePayload(payloadSource);
+checkFileIOHeader(await read('shared/TLinkJSFileIO.h'));
+assert.match(payloadSource,/TLinkJSFileIO::ReadInto[\s\S]*setLength:used\+amount[\s\S]*mutableBytes[\s\S]*setLength:input.bytes/);
+assert.match(payloadSource,/TLinkJSFileIO::WriteAll/);
+assert.match(payloadSource,/TLinkUTF8DataFromString\(text \?: @""\)/);
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const old=frozen.slice(frozen.indexOf('\n')+1);
 const line=between(source,'- (NSDictionary *)readLine','- (NSDictionary *)writeData:');
@@ -71,7 +77,9 @@ try{
     await writeFile(join(temp,'LegacyFileHandle.h'),legacyHeader);
     if(process.platform==='darwin'){
         const runtime=join(temp,'file-handle-runtime');
-        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','JavaScriptCore','-I',temp,'-I',join(root,'shared'),join(root,'test/file-handle-runtime-test.mm'),'-o',runtime]);
+        const owner=join(temp,'pool-owner.o');
+        run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
+        run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','JavaScriptCore','-I',temp,'-I',join(root,'shared'),join(root,'test/file-handle-runtime-test.mm'),owner,'-o',runtime]);
         run(runtime,[temp]);
         await Promise.all(storageChunks.map(([name,chunk])=>writeFile(join(temp,name),chunk)));
         const storageRuntime=join(temp,'storage-codec-runtime');
