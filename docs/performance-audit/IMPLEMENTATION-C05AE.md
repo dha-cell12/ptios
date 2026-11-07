@@ -2,6 +2,8 @@
 
 Date: 2026-11-07 (Asia/Bangkok). Baseline: `1adb11f3`; user reported C05ad built successfully and requested a larger implementation package. Shared rootfull/roothide/production TrollStore AX; TouchPOC excluded. Continues P0-20/P1-59/P1-60.
 
+Follow-up C05af: retain the exact Foundation-class gate, use a guarded instance copy-identity witness for known mutable ancestry, and share lazy mode preparation within each find. The changes and pending native/device qualification are tracked in `IMPLEMENTATION-C05AF.md`; the implementation details below describe the preceding C05ae checkpoint.
+
 ## Complete matcher package
 
 - Create one lazy plan for identifier, one for role and one shared by label/value. For recognized immutable Foundation selector strings/modes, fold each expected field once and decode its match mode once. Continue normalizing each candidate and evaluating value even after label matches, retaining reached cancellation/fault behavior and complete traversal/count/index/row identity. Plans exist only for one find operation; no cached AX result, selector value or foreground context survives between requests.

@@ -2176,6 +2176,8 @@ See `BENCHMARK-S009.md` Probe A.
 
 ### [P0-20] UI find/tap materializes a full AX snapshot before matching, and `max_elements` bounds returned rows rather than scanned AX work
 
+C05af follow-up (2026-11-07): keep the exact Foundation-class whitelist, qualify known mutable ancestry only with a successful same-object copy witness, and share lazy per-find mode classification/decode across identifier/text. Refusal/errors retain live compatibility values; mutable/custom inputs are not frozen. Full count/index/row, admission and action guards remain. Portable mode/exception states pass; native ownership/sharing/full-graph checks and device gain remain pending. Root/snapshot materialization is still open. See `IMPLEMENTATION-C05AF.md`.
+
 Implementation follow-up (2026-11-07, C05ae; also P1-59/P1-60): complete find pipeline now uses lazy per-field immutable selector normalization/mode plans, shares text preparation across label/value, rejects observed selector fields above64 KiB before admission/enqueue and drains snapshot/find temporaries in one normal owner-block pool. Unknown/custom/mutable strings use the preceding matcher; every candidate/count/index/metadata/completeness/action guard remains. Native fixture expects3 versus4000 expected folds over1000 rows, exact graphs and held selected rows; Foundation execution/device gains remain pending. Full root/snapshot materialization and whole-operation bounds are not removed. See `IMPLEMENTATION-C05AE.md`.
 
 **Status:** CONFIRMED  

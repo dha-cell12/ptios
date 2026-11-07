@@ -1,6 +1,11 @@
 static NSUInteger selectorFolds,selectorExpectedFolds,selectorStopAt,selectorFaultAt;
 static unsigned selectorFaultKind;
-static unsigned selectorClassPolicy=0; // 0: actual classifier; 1: force fast in the immutable-only scenario; 2: compatibility only.
+static NSUInteger selectorClassChecks,selectorModeComparisons,selectorCopyCalls;
+static NSUInteger selectorModeFaultAt;
+static unsigned selectorModeFaultKind;
+static bool selectorTrackCopyOwners=false;
+static unsigned selectorClassPolicy=0; // 0: actual; 1: immutable-only fast; 2: compatibility; 3: registered immutable fields, actual mode.
+static NSArray *selectorForcedExpected;
 static NSArray *selectorExpected;
 // A non-Foundation expected string facade: it must keep the complete
 // compatibility dispatch and observe content changes between calls.
@@ -9,11 +14,13 @@ static NSArray *selectorExpected;
 @property(nonatomic) unsigned folds;
 -(NSUInteger)length;
 -(NSString *)lowercaseString;
+-(BOOL)isEqualToString:(NSString *)text;
 @end
 @implementation AXSelectorExpectedProbe
 -(BOOL)isKindOfClass:(Class)type{return type==[NSString class]||[super isKindOfClass:type];}
 -(NSUInteger)length{return self.value.length;}
 -(NSString *)lowercaseString{++self.folds;return [self.value lowercaseString];}
+-(BOOL)isEqualToString:(NSString *)text{return [self.value isEqualToString:text];}
 @end
 static NSString *fixtureSelectorFold(NSString *text){
     ++selectorFolds;for(NSString *expected in selectorExpected)if(text==expected){++selectorExpectedFolds;break;}
@@ -22,18 +29,34 @@ static NSString *fixtureSelectorFold(NSString *text){
     return [text lowercaseString];
 }
 static bool fixtureSelectorStableString(NSString *text);
+static NSString *fixtureSelectorCopy(NSString *text){++selectorCopyCalls;if(selectorTrackCopyOwners)TLinkAXFixtureAutoreleaseOwner();return [text copy];}
+static BOOL fixtureSelectorModeEquals(NSString *left,NSString *right){
+    ++selectorModeComparisons;
+    if(selectorModeComparisons==selectorModeFaultAt){if(selectorModeFaultKind==1)[NSException raise:@"AXModeFixture" format:@"mode"];if(selectorModeFaultKind==2)throw std::runtime_error("mode");}
+    return [left isEqualToString:right];
+}
 #include "AXSelectorPlanMeasured.inc"
 static bool fixtureSelectorStableString(NSString *text){
+    ++selectorClassChecks;
     if(selectorClassPolicy==0)return MeasuredAXSelectorPlan::StableString(text);
     if(selectorClassPolicy==2)return false;
+    if(selectorClassPolicy==3){
+        for(NSString *expected in selectorForcedExpected){
+            if(text==expected)return true;
+        }
+        return MeasuredAXSelectorPlan::StableString(text);
+    }
     // Policy 1 is used only by the all-immutable 1000-row matrix. This isolates
     // plan reuse from platform-specific Foundation class identities.
     return true;
 }
 #include "AXSelectorBeforePlan.inc"
+#include "AXSelectorBeforeShared.inc"
 #include "AXSelectorMeasured.inc"
-static void selectorReset(){queryBoundaryReset();selectorFolds=selectorExpectedFolds=selectorStopAt=selectorFaultAt=selectorFaultKind=selectorClassPolicy=0;selectorExpected=nil;}
+static void selectorReset(){queryBoundaryReset();selectorFolds=selectorExpectedFolds=selectorStopAt=selectorFaultAt=selectorFaultKind=selectorClassPolicy=0;selectorExpected=selectorForcedExpected=nil;selectorClassChecks=selectorModeComparisons=selectorCopyCalls=selectorModeFaultAt=selectorModeFaultKind=0;selectorTrackCopyOwners=false;}
+#include "ax-selector-sharing-runtime-fixture.inc"
 static void selectorPlanCases(){
+    selectorSharingCases();
     std::puts("AX selector plans: complete actual/frozen matcher and measured production plan; immutable fields versus mutable/custom fallback");
     NSMutableArray *rows=[NSMutableArray array];
     for(unsigned n=0;n<1000;++n)[rows addObject:@{@"index":@(n),@"identifier":@"ID",@"role":@"BUTTON",@"label":@"TARGET",@"value":@"TARGET VALUE",@"intersects_screen":@YES,@"clickable":@YES}];

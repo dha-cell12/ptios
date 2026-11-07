@@ -25,7 +25,9 @@ static bool near(double left,double right){return std::fabs(left-right)<1e-8;}
 #include "ax-wire-budget-safety-fixture.inc"
 #include "ax-process-policy-safety-fixture.inc"
 #include "ax-selector-policy-safety-fixture.inc"
+#include "ax-selector-mode-safety-fixture.inc"
 int main(){
+    selectorModeCases();
     outputBudgetCases();wireSizeCases();jsonQuotaCases();jsonStopPolicyCases();jsonOutputAdmissionCases();jsonBufferCases();wireBudgetAdmissionCases();processPolicyCases();selectorPolicyCases();
     for(unsigned n=0;n<100000;++n){
         const unsigned milliseconds=100+n%2901;

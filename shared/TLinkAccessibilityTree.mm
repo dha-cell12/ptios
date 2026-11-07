@@ -984,9 +984,10 @@ static NSDictionary *TLinkAXFindInSnapshot(NSDictionary *snapshot, NSDictionary 
     BOOL visibleOnly = visibleValue ? [visibleValue boolValue] : YES;
     BOOL clickableOnly = [clickableValue boolValue];
     NSInteger requestedIndex = TLinkAXBoundedInteger(selector[@"index"], 0, 0, 999);
-    TLinkAXSelectorPlan::Text identifierPlan(identifier, mode, caseSensitive);
-    TLinkAXSelectorPlan::Text rolePlan(role, @"exact", caseSensitive);
-    TLinkAXSelectorPlan::Text textPlan(text, mode, caseSensitive);
+    TLinkAXSelectorPlan::Mode sharedMode(mode),exactMode(@"exact");
+    TLinkAXSelectorPlan::Text identifierPlan(identifier, sharedMode, caseSensitive);
+    TLinkAXSelectorPlan::Text rolePlan(role, exactMode, caseSensitive);
+    TLinkAXSelectorPlan::Text textPlan(text, sharedMode, caseSensitive);
     NSUInteger matchCount = 0;
     NSDictionary *selectedElement = nil;
     for (NSDictionary *element in snapshot[@"elements"]) {

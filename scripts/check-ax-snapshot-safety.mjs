@@ -22,6 +22,7 @@ import {capabilityPreflightLegacy} from './lib/ax-capability-preflight-baseline.
 import {uiStagesLegacy,legacyUIStagesFind} from './lib/ax-ui-stages-baseline.mjs';
 import {foregroundWorkLegacy,foregroundWorkRegion} from './lib/ax-foreground-work-baseline.mjs';
 import {legacySelector,selectorRegion,checkSelectorHeaders} from './lib/ax-selector-baseline.mjs';
+import {selectorBeforeSharedMode,checkSelectorModeCore} from './lib/selector-mode-baseline.mjs';
 import {legacyAXJSONBudgetWriter} from './lib/ax-json-budget-baseline.mjs';
 import {legacyAXJSONStopWriter,restoreAXJSONStopWriter,stopJSONLegacy} from './lib/ax-json-stop-baseline.mjs';
 import {boundedJSONLegacy} from './lib/ax-bounded-json-baseline.mjs';
@@ -37,6 +38,7 @@ const selectorPlan=await read('shared/TLinkAXSelectorPlan.h');
 // This Objective-C++ fixture only compiles on macOS; catch its C++ keyword collision on every host.
 assert.doesNotMatch(await read('test/ax-selector-runtime-fixture.inc'),/\b(?:NSString|NSMutableString)\s*\*\s*mutable\b/,'AX selector fixture cannot use the C++ keyword mutable as a variable name');
 checkSelectorHeaders(selectorPlan,await read('shared/TLinkAXSelectorPolicy.h'));
+checkSelectorModeCore();
 const preceding=restoreAXAttributes(source);
 const [rootTask,trollTask]=await Promise.all(['pccontrol/Task.xm','stream-app/streamd/POCSocketServer.mm'].map(read));
 restoreAXWireRoute(rootTask,'root');restoreAXWireRoute(trollTask,'troll');
@@ -142,9 +144,14 @@ const selectorNames=s=>s.replaceAll('TLinkAXTextMatches','MeasuredAXTextMatches'
 const selectorFold=s=>s.replaceAll('[left lowercaseString]','fixtureSelectorFold(left)').replaceAll('[right lowercaseString]','fixtureSelectorFold(right)');
 fixtures['AXSelectorBeforePlan.inc']=selectorFold(legacySelector).replaceAll('TLinkAXTextMatches','BeforePlanAXTextMatches').replaceAll('TLinkAXFindInSnapshot','BeforePlanAXFindInSnapshot').replaceAll('TLinkAXFindElement','BeforePlanAXFindElement');
 fixtures['AXSelectorMeasured.inc']=selectorNames(selectorFold(selectorRegion(source))).replaceAll('TLinkAXSelectorPlan::','MeasuredAXSelectorPlan::');
+fixtures['AXSelectorBeforeShared.inc']=selectorFold(selectorBeforeSharedMode).replaceAll('TLinkAXTextMatches','BeforeSharedAXTextMatches').replaceAll('TLinkAXFindInSnapshot','BeforeSharedAXFindInSnapshot').replaceAll('TLinkAXFindElement','BeforeSharedAXFindElement').replaceAll('TLinkAXSelectorPlan::','MeasuredAXSelectorPlan::');
 fixtures['AXSelectorPlanMeasured.inc']=selectorPlan.replace('namespace TLinkAXSelectorPlan {','namespace MeasuredAXSelectorPlan {').replace('return [text lowercaseString];','return fixtureSelectorFold(text);').replace('#include "TLinkAXSelectorPolicy.h"','')
-    .replace('fast_ = StableString(expected_) && StableString(mode_);','fast_ = fixtureSelectorStableString(expected_) && fixtureSelectorStableString(mode_);');
-assert.match(fixtures['AXSelectorPlanMeasured.inc'],/fast_ = fixtureSelectorStableString\(expected_\) && fixtureSelectorStableString\(mode_\);/);
+    .replace('#include "TLinkAXSelectorMode.h"','').replace('NSString *snapshot = [text copy];','NSString *snapshot = fixtureSelectorCopy(text);')
+    .replace('return StableString(value_);','return fixtureSelectorStableString(value_);')
+    .replace('fast_ = StableString(expected_) && mode_->stable();','fast_ = fixtureSelectorStableString(expected_) && mode_->stable();')
+    .replace('[value_ isEqualToString:@"exact"]','fixtureSelectorModeEquals(value_,@"exact")').replace('[value_ isEqualToString:@"prefix"]','fixtureSelectorModeEquals(value_,@"prefix")');
+assert.match(fixtures['AXSelectorPlanMeasured.inc'],/fast_ = fixtureSelectorStableString\(expected_\) && mode_->stable\(\);/);
+assert.match(fixtures['AXSelectorPlanMeasured.inc'],/return fixtureSelectorStableString\(value_\)/);
 const processAdapt=s=>s.replaceAll('sysctl(','fixtureSysctl(').replaceAll('dlsym(','fixtureLookup(').replaceAll('getpid()','fixtureSelfPID()')
     .replaceAll(/\[NSMutableData dataWithLength:(capacity|length)\]/g,'fixtureTableData($1)')
     .replaceAll('[NSDictionary dictionaryWithContentsOfFile:','fixtureInfo(').replaceAll('[bundlePath stringByAppendingPathComponent:@"Info.plist"]];','[bundlePath stringByAppendingPathComponent:@"Info.plist"]);');

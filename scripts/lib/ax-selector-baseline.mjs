@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {restoreSelectorMode,selectorPlanBeforeCopy} from './selector-mode-baseline.mjs';
 const spec={
   "hash": "aa33cf19c33a6c278a296c94eba723207dc49595187c6ac726d7969cb7be65fb",
   "include": "#include \"TLinkAXSelectorPlan.h\"\n",
@@ -14,8 +15,9 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 export const legacySelector=readFileSync(new URL('../../test/fixtures/ax-selector-before-c05ae.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function selectorRegion(source){const a=source.indexOf(spec.start),b=source.indexOf(spec.end,a);assert.ok(a>=0&&b>a);return source.slice(a,b);}
 export function restoreAXSelector(source){
+ source=restoreSelectorMode(source);
  assert.equal(source.split(spec.include).length-1,1);source=source.replace(spec.include,'');
  const actual=selectorRegion(source);assert.equal(actual,spec.current,'only lazy immutable selector plans and pre-admission field sizes');source=source.replace(actual,legacySelector);
  assert.equal(hash(source),spec.hash,'complete preceding C05ad shared AX source');return source;
 }
-export function checkSelectorHeaders(plan,policy){assert.equal(hash(plan),spec.planHash);assert.equal(hash(policy),spec.policyHash);}
+export function checkSelectorHeaders(plan,policy){assert.equal(hash(plan),'b59fb2cb06a43cf85f57bb7ce708515a9b7c6d6d2ff81df2a233f426507741e5');assert.equal(hash(selectorPlanBeforeCopy),spec.planHash);assert.equal(hash(policy),spec.policyHash);}
