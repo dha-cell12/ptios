@@ -1,3 +1,4 @@
+import {restoreFileLineFill} from './file-line-fill-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -10,6 +11,7 @@ export function restoreFileRepresentationHeader(source){
     const previous=frozen('header');assert.equal(hash(previous),fileRepresentationSpecs.header.beforeHash);return previous;
 }
 export function restoreFileRepresentation(source){
+    source=restoreFileLineFill(source);
     if(!source.includes('// BEGIN selected file reads.'))return source;
     assert.equal(hash(source),fileRepresentationSpecs.implementation.currentHash,'complete explicit-read implementation');
     for(const part of fileRepresentationSpecs.insertions){

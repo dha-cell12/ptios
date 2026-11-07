@@ -24,6 +24,19 @@ static bool fileTrackPools=false;
 static unsigned fileRepresentationDecodes=0,fileRepresentationEncodes=0;
 static unsigned fileRepresentationDecodeFault=0,fileRepresentationEncodeFault=0;
 static bool fileRepresentationPools=false;
+static bool fileLineTrack=false;
+static unsigned fileLineGrows=0,fileLineGrowFault=0;
+static uint8_t *fileLineDestination=nullptr;
+static size_t fileLineOffered=0;
+static void fileLineGrowWitness(NSMutableData *data,size_t used,size_t count){
+    if(!fileLineTrack)return;
+    ++fileLineGrows;assert(data.length==used+count);
+    if(fileLineGrowFault&&fileLineGrows==2){
+        if(fileLineGrowFault==1)[NSException raise:@"FileLineGrowFixture" format:@"grow"];
+        throw std::runtime_error("grow");
+    }
+    fileLineDestination=(uint8_t *)data.mutableBytes+used;fileLineOffered=count;
+}
 static void fileRepresentationCodecFault(unsigned fault){
     if(fault==1)[NSException raise:@"FileRepresentationFixture" format:@"codec"];
     if(fault==2)throw std::runtime_error("codec");
@@ -95,6 +108,7 @@ static off_t fileTestSeek(int fd,off_t offset,int whence){
     return ::lseek(fd,offset,whence);
 }
 static ssize_t fileTestRead(int fd,void *out,size_t count){
+    if(fileLineTrack)assert(out==fileLineDestination&&count==fileLineOffered);
     if(fileTrackPools)TLinkAXFixtureAutoreleaseOwner();
     if(fileIOThrow==1)[NSException raise:@"FilePayloadFixture" format:@"read"];
     if(fileIOThrow==2)throw std::runtime_error("read");
@@ -127,6 +141,7 @@ static ssize_t fileTestWrite(int fd,const void *bytes,size_t count){
 #define fchmod(fd,mode) fileTestParentMode(fd,mode)
 #define fsync(fd) fileTestSync(fd)
 #include "FileHandleLifecycleUnderTest.inc"
+#include "PreviousLineFileHandle.inc"
 #define TLinkJSFileHandle LegacyTLinkJSFileHandle
 #define TLinkJSFileModeIsValid LegacyTLinkJSFileModeIsValid
 #define TLinkJSFileModeWrites LegacyTLinkJSFileModeWrites
@@ -172,6 +187,11 @@ static TLinkJSFileHandle *fileOpen(bool legacy,NSString *path,NSString *mode,NSU
     fileOpening=false;
     assert(handle&&!error);return (TLinkJSFileHandle *)handle;
 }
+static TLinkJSFileHandle *filePreviousLineOpen(NSString *path,NSString *mode,NSUInteger cap){
+    NSString *error=nil;fileOpening=true;
+    PreviousTLinkJSFileHandle *handle=[PreviousTLinkJSFileHandle openPath:path mode:mode handleId:1 maxTransferBytes:cap error:&error];
+    fileOpening=false;assert(handle&&!error);return (TLinkJSFileHandle *)handle;
+}
 static FileTrace fileSequence(bool legacy,NSString *path,NSData *bytes,NSUInteger cap,NSString *mode,unsigned scenario){
     fileReset();assert([bytes writeToFile:path atomically:YES]);fileStatFails=scenario==1;fileProbeFails=scenario==4;
     TLinkJSFileHandle *handle=fileOpen(legacy,path,mode,cap);if(scenario==2){fileMaxRead=7;fileInterrupts=3;}if(scenario==3)fileFaultAt=5;
@@ -203,6 +223,7 @@ static FileTrace filePipe(bool legacy){
 #include "file-plan-bindings-runtime-fixture.inc"
 #include "file-plan-runtime-fixture.inc"
 #include "file-representation-runtime-fixture.inc"
+#include "file-line-fill-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]],*path=[root stringByAppendingPathComponent:@"handle.bin"];
     puts("FileHandle Foundation: actual/frozen complete classes, POSIX descriptors and JSCore");fflush(stdout);
@@ -234,6 +255,7 @@ int main(int argc,char **argv){@autoreleasepool{
     fileLifecycleRuntimeCases(root,path);
     filePlanRuntimeCases(path);
     fileRepresentationRuntimeCases(path);
+    fileLineFillRuntimeCases(path);
     assert(fileFDs.empty());assert([[NSFileManager defaultManager] removeItemAtPath:path error:nil]);
     puts("FileHandle Foundation passed: frozen full replies/mixed read-write-seek/tell/append/limits/CR/EOF, real UTF8/binary files, short/EINTR/EIO, stat fallback, real pipe, fresh external edits, rewind failure/recovery, JS bindings and 128 balanced lifecycles.");
 }}

@@ -1,5 +1,6 @@
 #import "TLinkJSFileHandle.h"
 #include "TLinkJSFileLine.h"
+#include "TLinkJSFileLineInto.h"
 #include "TLinkJSFileIO.h"
 #include "TLinkJSFileOpen.h"
 #include "TLinkUTF8Data.h"
@@ -119,6 +120,30 @@ static NSDictionary *TLinkJSFileSelectedDataResult(NSData *data, BOOL eof, BOOL 
     };
 }
 // END selected file reads.
+
+// BEGIN direct file line result.
+static NSMutableDictionary *TLinkJSFileLineDataResult(NSData *data, BOOL eof, BOOL truncated,
+                                                     TLinkJSFileRepresentation representation)
+{
+    NSString *text = representation == TLinkJSFileRepresentation::Base64 ? nil : [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    NSString *encoded = representation == TLinkJSFileRepresentation::Text ? nil : ([data base64EncodedStringWithOptions:0] ?: @"");
+    if (representation == TLinkJSFileRepresentation::Base64) {
+        return [NSMutableDictionary dictionaryWithObjectsAndKeys:
+            @YES, @"ok", encoded, @"base64", @(data.length), @"bytes",
+            @(eof), @"eof", @(truncated), @"truncated", @"base64", @"encoding", nil];
+    }
+    NSString *value = text ?: @"";
+    NSString *encoding = text ? @"utf8" : @"binary";
+    if (representation == TLinkJSFileRepresentation::Text) {
+        return [NSMutableDictionary dictionaryWithObjectsAndKeys:
+            @YES, @"ok", value, @"data", value, @"line", @(data.length), @"bytes",
+            @(eof), @"eof", @(truncated), @"truncated", encoding, @"encoding", nil];
+    }
+    return [NSMutableDictionary dictionaryWithObjectsAndKeys:
+        @YES, @"ok", value, @"data", value, @"line", encoded, @"base64", @(data.length), @"bytes",
+        @(eof), @"eof", @(truncated), @"truncated", encoding, @"encoding", nil];
+}
+// END direct file line result.
 
 @interface TLinkJSFileHandle () {
     int _fd;
@@ -330,20 +355,23 @@ static NSDictionary *TLinkJSFileSelectedDataResult(NSData *data, BOOL eof, BOOL 
 
         NSMutableData *data = [NSMutableData data];
         const int fd = _fd;
-        const auto line = TLinkJSFileReadLine(_maxTransferBytes, _lineReadChunked,
+        const auto line = TLinkJSFileReadLineInto(_maxTransferBytes, _lineReadChunked,
+            [data](size_t used, size_t count)->uint8_t * {
+                [data setLength:used+count];
+                uint8_t *base=(uint8_t *)data.mutableBytes;
+                return base?base+used:nullptr;
+            },
             [fd](uint8_t *bytes, size_t count)->int64_t { return ::read(fd, bytes, count); },
-            [fd](size_t count)->bool { return ::lseek(fd, -static_cast<off_t>(count), SEEK_CUR) >= 0; },
-            [data](const uint8_t *bytes, size_t count) { [data appendBytes:bytes length:count]; });
+            [fd](size_t count)->bool { return ::lseek(fd, -static_cast<off_t>(count), SEEK_CUR) >= 0; });
         if (line.error) return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s", line.error, strerror(line.error)], self.path);
+        [data setLength:line.bytes];
         BOOL eof = line.eof;
         if (data.length > 0) {
             const uint8_t *bytes = (const uint8_t *)data.bytes;
             if (bytes[data.length - 1] == '\r') [data setLength:data.length - 1];
         }
         BOOL truncated = !eof && data.length == _maxTransferBytes;
-        NSMutableDictionary *result = [TLinkJSFileSelectedDataResult(data, eof, truncated, representation) mutableCopy];
-        if (representation != TLinkJSFileRepresentation::Base64) result[@"line"] = result[@"data"] ?: @"";
-        return result;
+        return TLinkJSFileLineDataResult(data, eof, truncated, representation);
     }
     }
 }

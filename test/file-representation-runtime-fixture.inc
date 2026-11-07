@@ -1,5 +1,6 @@
-// Compare new opt-in representations to projections of the complete frozen
-// reader. File bytes, offsets, read/rewind calls and errors stay authoritative.
+// Compare selected representations to projections of the complete immediately
+// preceding chunked reader. The original single-byte reader remains covered by
+// the separate full legacy API suite; its syscall counts intentionally differ.
 static NSDictionary *fileRepresentationProjection(NSDictionary *reply,unsigned representation){
     if(![reply[@"ok"] boolValue]||representation==0)return reply;
     NSMutableDictionary *result=[reply mutableCopy];
@@ -14,7 +15,8 @@ static NSDictionary *fileRepresentationRun(bool legacy,NSString *path,NSData *by
                                           NSUInteger cap,unsigned representation,unsigned scenario){
     fileReset();assert([bytes writeToFile:path atomically:YES]);
     fileStatFails=scenario==3;
-    TLinkJSFileHandle *handle=fileOpen(legacy,path,scenario==5?@"w":@"r",cap);
+    NSString *mode=scenario==5?@"w":@"r";
+    TLinkJSFileHandle *handle=legacy?filePreviousLineOpen(path,mode,cap):fileOpen(false,path,mode,cap);
     if(scenario==1){fileMaxRead=3;fileInterrupts=2;}
     if(scenario==2)fileFaultAt=2;
     if(scenario==4)fileRewindFails=true;

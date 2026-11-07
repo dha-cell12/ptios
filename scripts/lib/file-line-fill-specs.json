@@ -1,0 +1,12 @@
+{
+  "beforeHash": "19f3aecef0ab73c7081ff8b397544ab71c9e1eb5ca24687183f195a2db35419e",
+  "currentHash": "94c150acd4a1fa7bd85c51364ca8627ed5577a659ccd0ee5ba1e4106c0078d9a",
+  "include": "#include \"TLinkJSFileLineInto.h\"\n",
+  "start": "- (NSDictionary *)readLineRepresentation:",
+  "end": "- (NSDictionary *)writeData:",
+  "partHash": "e76e2a2cf25e42ffca19ba93f3d93920f3c6b0731e042b1c058f9db177c8a3af",
+  "formatterStart": "// BEGIN direct file line result.",
+  "formatterEnd": "@interface TLinkJSFileHandle () {",
+  "formatterHash": "fdbd512ac8b9147f62bfd1d784b41e55a32cf6c9c2737df964ff06be8c8c32ae",
+  "coreHash": "3bd0126b1559036353b35d50c8556f20f312326816ef963ec07766cebef28e76"
+}

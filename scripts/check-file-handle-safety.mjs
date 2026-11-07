@@ -1,4 +1,5 @@
 import {restoreFileRepresentation} from './lib/file-representation-baseline.mjs';
+import {restoreFileLineFill,checkFileLineFillCore} from './lib/file-line-fill-baseline.mjs';
 import {restoreStorageJSONWrites,storageJSONWriteSpecs,storageJSONWriteBefore,checkPreparedJSONText} from './lib/storage-json-write-baseline.mjs';
 import {restoreFilePlan,restoreFilePlanHeader,restoreFilePlanFrontend,checkFileModePlan,filePlanSpecs} from './lib/file-plan-baseline.mjs';
 import {restoreStorageOperations,storageOperationSpecs,storageOperationPart,storageOperationBefore} from './lib/storage-operations-baseline.mjs';
@@ -19,6 +20,8 @@ const beforeRepresentation=restoreFileRepresentation(actualFileSource);
 const lifecycleSource=restoreFilePlan(actualFileSource),header=restoreFilePlanHeader(currentHeader);
 checkFileModePlan(await read('shared/TLinkJSFileModePlan.h'));
 checkPreparedJSONText(await read('shared/TLinkPreparedJSONText.inc'));
+checkFileLineFillCore(await read('shared/TLinkJSFileLineInto.h'));
+const beforeLineFill=restoreFileLineFill(actualFileSource);
 const beforeOpenPlan=await read('test/fixtures/file-plan-open-before-c03al.inc');
 const physicalMarker='    const char *filePath = [path fileSystemRepresentation];';
 const commonStart=actualFileSource.indexOf('             normalizedMode:(NSString *)normalizedMode\n');
@@ -89,14 +92,17 @@ for(const path of ['.github/workflows/build.yml','.github/workflows/stream-app.y
 const constructed=actualFileSource.replace('[[self alloc] init]','fileLifecycleConstruct(self)')
     .replaceAll('[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]','fileRepresentationDecode(data)')
     .replaceAll('[data base64EncodedStringWithOptions:0]','fileRepresentationEncode(data)')
+    .replace('                [data setLength:used+count];','                [data setLength:used+count];\n                fileLineGrowWitness(data,used,count);')
     .replace('    @autoreleasepool {\n    NSString *value = [[mode','    @autoreleasepool {\n    fileLifecycleNormalizationProbe();\n    NSString *value = [[mode')
     .replace('            NSString *value = [[whence','            fileLifecycleSeekNormalizationProbe();\n            NSString *value = [[whence');
 const legacyLifecycle=frozen.replace('static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{','static NSString *TLinkJSFileNormalizeMode(NSString *mode)\n{\n    fileLifecycleNormalizationProbe();')
     .replace('        NSString *value = [[whence','        fileLifecycleSeekNormalizationProbe();\n        NSString *value = [[whence');
 assert.notEqual(constructed,actualFileSource);
 assert.equal((constructed.match(/fileLifecycleConstruct\(self\)/g)||[]).length,1);
-assert.equal((constructed.match(/fileRepresentationDecode\(data\)/g)||[]).length,2);
-assert.equal((constructed.match(/fileRepresentationEncode\(data\)/g)||[]).length,2);
+assert.equal((constructed.match(/fileRepresentationDecode\(data\)/g)||[]).length,3);
+assert.equal((constructed.match(/fileRepresentationEncode\(data\)/g)||[]).length,3);
+assert.equal((constructed.match(/fileLineGrowWitness\(data,used,count\)/g)||[]).length,1);
+console.log('File direct line source passed: retained chunk/rewind/error policy, direct NSMutableData destination and one mutable final result; complete preceding shared class restored.');
 console.log('File explicit reads source passed: shared reader/line IO, legacy reply preservation, text-only/base64-only paths and complete previous class/header restoration.');
 for(const fixture of [constructed,legacyLifecycle]){
     assert.equal((fixture.match(/fileLifecycleNormalizationProbe\(\)/g)||[]).length,1);
@@ -153,6 +159,15 @@ try{
     assert.ok(legacyHeader.includes('@interface LegacyTLinkJSFileHandle : NSObject')&&legacyHeader.includes('JSValue *LegacyTLinkJSFileHandleCreateJSObject('));
     assert.doesNotMatch(legacyHeader,/LegacyLegacy/,'rename each complete legacy symbol once');
     await writeFile(join(temp,'LegacyFileHandle.h'),legacyHeader);
+    const previousNames=['TLinkJSFileHandleCreateJSObject','TLinkJSFileHandle','TLinkJSFileModeIsValid','TLinkJSFileModeWrites','TLinkJSFileNormalizeMode','TLinkJSFileNormalizedModeIsValid','TLinkJSFileError','TLinkJSFileDataResult','TLinkJSFileSelectedDataResult','TLinkJSFileRepresentation'];
+    const previousRename=text=>text.replace(new RegExp(`\\b(${previousNames.join('|')})\\b`,'g'),name=>'Previous'+name);
+    const prepareStart=beforeLineFill.indexOf('// BEGIN prepared file mode.'),prepareEnd=beforeLineFill.indexOf('static NSDictionary *TLinkJSFileError(',prepareStart);
+    assert.ok(prepareStart>=0&&prepareEnd>prepareStart);
+    const previousClass=previousRename((beforeLineFill.slice(0,prepareStart)+beforeLineFill.slice(prepareEnd)).replace('#import "TLinkJSFileHandle.h"','#import "PreviousFileHandle.h"'));
+    assert.equal((previousClass.match(/@implementation PreviousTLinkJSFileHandle/g)||[]).length,1);
+    assert.doesNotMatch(previousClass,/TLinkJSFilePrepareMode\(NSString \*mode\)/,'reuse the unchanged shared mode factory instead of redefining its private friend');
+    await writeFile(join(temp,'PreviousFileHandle.h'),previousRename(currentHeader));
+    await writeFile(join(temp,'PreviousLineFileHandle.inc'),previousClass);
     await Promise.all(storageChunks.map(([name,chunk])=>writeFile(join(temp,name),chunk)));
     if(process.platform==='darwin'){
         const runtime=join(temp,'file-handle-runtime');
