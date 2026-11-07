@@ -1,5 +1,6 @@
 static NSUInteger selectorFolds,selectorExpectedFolds,selectorStopAt,selectorFaultAt;
 static unsigned selectorFaultKind;
+static unsigned selectorClassPolicy=0; // 0: actual classifier; 1: force fast in the immutable-only scenario; 2: compatibility only.
 static NSArray *selectorExpected;
 // A non-Foundation expected string facade: it must keep the complete
 // compatibility dispatch and observe content changes between calls.
@@ -20,22 +21,41 @@ static NSString *fixtureSelectorFold(NSString *text){
     if(selectorFolds==selectorFaultAt){if(selectorFaultKind==1)[NSException raise:@"AXSelectorFixture" format:@"fold"];if(selectorFaultKind==2)throw std::runtime_error("selector fold");}
     return [text lowercaseString];
 }
+static bool fixtureSelectorStableString(NSString *text);
 #include "AXSelectorPlanMeasured.inc"
+static bool fixtureSelectorStableString(NSString *text){
+    if(selectorClassPolicy==0)return MeasuredAXSelectorPlan::StableString(text);
+    if(selectorClassPolicy==2)return false;
+    // Policy 1 is used only by the all-immutable 1000-row matrix. This isolates
+    // plan reuse from platform-specific Foundation class identities.
+    return true;
+}
 #include "AXSelectorBeforePlan.inc"
 #include "AXSelectorMeasured.inc"
-static void selectorReset(){queryBoundaryReset();selectorFolds=selectorExpectedFolds=selectorStopAt=selectorFaultAt=selectorFaultKind=0;selectorExpected=nil;}
+static void selectorReset(){queryBoundaryReset();selectorFolds=selectorExpectedFolds=selectorStopAt=selectorFaultAt=selectorFaultKind=selectorClassPolicy=0;selectorExpected=nil;}
 static void selectorPlanCases(){
     std::puts("AX selector plans: complete actual/frozen matcher and measured production plan; immutable fields versus mutable/custom fallback");
     NSMutableArray *rows=[NSMutableArray array];
     for(unsigned n=0;n<1000;++n)[rows addObject:@{@"index":@(n),@"identifier":@"ID",@"role":@"BUTTON",@"label":@"TARGET",@"value":@"TARGET VALUE",@"intersects_screen":@YES,@"clickable":@YES}];
     NSDictionary *input=findInput(rows),*selector=@{@"identifier":@"id",@"role":@"button",@"text":@"target",@"index":@999};
-    NSDictionary *before=nil;
-    for(bool current:{false,true}){@autoreleasepool{
-        selectorReset();selectorExpected=@[selector[@"identifier"],selector[@"role"],selector[@"text"]];
-        NSDictionary *value=current?MeasuredAXFindInSnapshot(input,selector):BeforePlanAXFindInSnapshot(input,selector);
-        if(current){assert([value isEqual:before]);if(selectorExpectedFolds!=3||selectorFolds!=4003)std::fprintf(stderr,"AX selector folds: expected=%lu total=%lu; stable id=%d role=%d text=%d mode=%d\n",(unsigned long)selectorExpectedFolds,(unsigned long)selectorFolds,(int)MeasuredAXSelectorPlan::StableString(@"id"),(int)MeasuredAXSelectorPlan::StableString(@"button"),(int)MeasuredAXSelectorPlan::StableString(@"target"),(int)MeasuredAXSelectorPlan::StableString(@"contains"));assert(selectorExpectedFolds==3&&selectorFolds==4003);}else{before=value;assert(selectorExpectedFolds==4000&&selectorFolds==8000);}
-        assert([value[@"match_count"] unsignedIntegerValue]==1000&&value[@"element"]==rows[999]);
-    }}
+    for(unsigned policy=0;policy<3;++policy){
+        NSDictionary *before=nil;
+        for(bool current:{false,true}){@autoreleasepool{
+            selectorReset();selectorClassPolicy=policy;selectorExpected=@[selector[@"identifier"],selector[@"role"],selector[@"text"]];
+            const bool identifierFast=fixtureSelectorStableString(selector[@"identifier"])&&fixtureSelectorStableString(@"contains");
+            const bool roleFast=fixtureSelectorStableString(selector[@"role"])&&fixtureSelectorStableString(@"exact");
+            const bool textFast=fixtureSelectorStableString(selector[@"text"])&&fixtureSelectorStableString(@"contains");
+            const NSUInteger expected=current?((identifierFast?1U:1000U)+(roleFast?1U:1000U)+(textFast?1U:2000U)):4000U;
+            NSDictionary *value=current?MeasuredAXFindInSnapshot(input,selector):BeforePlanAXFindInSnapshot(input,selector);
+            if(current)assert([value isEqual:before]);else before=value;
+            if(selectorExpectedFolds!=expected||selectorFolds!=expected+4000U)std::fprintf(stderr,"AX selector folds: policy=%u gates=%d/%d/%d expected=%lu/%lu received=%lu/%lu\n",policy,(int)identifierFast,(int)roleFast,(int)textFast,(unsigned long)expected,(unsigned long)(expected+4000U),(unsigned long)selectorExpectedFolds,(unsigned long)selectorFolds);
+            assert(selectorExpectedFolds==expected&&selectorFolds==expected+4000U);
+            if(policy==1)assert(identifierFast&&roleFast&&textFast&&expected==(current?3U:4000U));
+            if(policy==2)assert(!identifierFast&&!roleFast&&!textFast&&expected==4000U);
+            assert([value[@"match_count"] unsignedIntegerValue]==1000&&value[@"element"]==rows[999]);
+            if(current)std::printf("AX selector fold path passed: policy=%u gates=%d/%d/%d expected=%lu total=%lu\n",policy,(int)identifierFast,(int)roleFast,(int)textFast,(unsigned long)selectorExpectedFolds,(unsigned long)selectorFolds);
+        }}
+    }
     for(unsigned n=0;n<128;++n){NSDictionary *expected=nil;
         for(bool current:{false,true}){@autoreleasepool{
             selectorReset();NSMutableString *text=[@"target" mutableCopy];
@@ -57,14 +77,17 @@ static void selectorPlanCases(){
         @catch(NSException *exception){caught=kind==1&&[exception.name isEqual:@"AXSelectorFixture"];}
         assert(caught);selectorReset();assert([MeasuredAXFindInSnapshot(input,selector)[@"match_count"] unsignedIntValue]==1000);
     }
-    @autoreleasepool{selectorReset();NSString *mutableText=[@"target" mutableCopy];
-        MeasuredAXSelectorPlan::Text plan(mutableText,@"exact",NO);assert(plan.accepts(@"TARGET",MeasuredAXTextMatches));
-        [(NSMutableString *)mutableText setString:@"other"];assert(plan.accepts(@"OTHER",MeasuredAXTextMatches));}
-    @autoreleasepool{selectorReset();AXSelectorExpectedProbe *probe=[AXSelectorExpectedProbe new];probe.value=@"target";
-        NSString *expected=(NSString *)(id)probe;assert(!MeasuredAXSelectorPlan::StableString(expected));
-        MeasuredAXSelectorPlan::Text plan(expected,@"exact",NO);assert(plan.accepts(@"TARGET",MeasuredAXTextMatches));
-        probe.value=@"other";assert(plan.accepts(@"OTHER",MeasuredAXTextMatches)&&probe.folds==2);}
-    selectorReset();std::puts("AX selector plans passed: 1000 full matches retain count/index/row identity; expected folds 3 vs4000, total4003 vs8000; lazy rejection, 128 mutable/mode/case graphs, reached cancel/faults and recovery. Foundation/device allocation/time pending.");
+    for(unsigned policy:{0U,2U}){
+        @autoreleasepool{selectorReset();selectorClassPolicy=policy;NSString *mutableText=[@"target" mutableCopy];
+            assert(!fixtureSelectorStableString(mutableText));
+            MeasuredAXSelectorPlan::Text plan(mutableText,@"exact",NO);assert(plan.accepts(@"TARGET",MeasuredAXTextMatches));
+            [(NSMutableString *)mutableText setString:@"other"];assert(plan.accepts(@"OTHER",MeasuredAXTextMatches));}
+        @autoreleasepool{selectorReset();selectorClassPolicy=policy;AXSelectorExpectedProbe *probe=[AXSelectorExpectedProbe new];probe.value=@"target";
+            NSString *expected=(NSString *)(id)probe;assert(!MeasuredAXSelectorPlan::StableString(expected)&&!fixtureSelectorStableString(expected));
+            MeasuredAXSelectorPlan::Text plan(expected,@"exact",NO);assert(plan.accepts(@"TARGET",MeasuredAXTextMatches));
+            probe.value=@"other";assert(plan.accepts(@"OTHER",MeasuredAXTextMatches)&&probe.folds==2);}
+    }
+    selectorReset();std::puts("AX selector plans passed: actual Foundation eligibility plus controlled fast/compatibility paths, 1000 frozen matches/count/index/row identity; controlled folds 3/4003 vs4000/8000, mutable/custom mutation fallback, lazy rejection, 128 mode/case graphs and cancel/fault recovery. Actual Foundation fast-path availability/device gains pending.");
 }
 @interface AXSelectorSizeProbe:NSObject
 @property(nonatomic) NSUInteger units;

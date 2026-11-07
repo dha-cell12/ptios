@@ -142,7 +142,9 @@ const selectorNames=s=>s.replaceAll('TLinkAXTextMatches','MeasuredAXTextMatches'
 const selectorFold=s=>s.replaceAll('[left lowercaseString]','fixtureSelectorFold(left)').replaceAll('[right lowercaseString]','fixtureSelectorFold(right)');
 fixtures['AXSelectorBeforePlan.inc']=selectorFold(legacySelector).replaceAll('TLinkAXTextMatches','BeforePlanAXTextMatches').replaceAll('TLinkAXFindInSnapshot','BeforePlanAXFindInSnapshot').replaceAll('TLinkAXFindElement','BeforePlanAXFindElement');
 fixtures['AXSelectorMeasured.inc']=selectorNames(selectorFold(selectorRegion(source))).replaceAll('TLinkAXSelectorPlan::','MeasuredAXSelectorPlan::');
-fixtures['AXSelectorPlanMeasured.inc']=selectorPlan.replace('namespace TLinkAXSelectorPlan {','namespace MeasuredAXSelectorPlan {').replace('return [text lowercaseString];','return fixtureSelectorFold(text);').replace('#include "TLinkAXSelectorPolicy.h"','');
+fixtures['AXSelectorPlanMeasured.inc']=selectorPlan.replace('namespace TLinkAXSelectorPlan {','namespace MeasuredAXSelectorPlan {').replace('return [text lowercaseString];','return fixtureSelectorFold(text);').replace('#include "TLinkAXSelectorPolicy.h"','')
+    .replace('fast_ = StableString(expected_) && StableString(mode_);','fast_ = fixtureSelectorStableString(expected_) && fixtureSelectorStableString(mode_);');
+assert.match(fixtures['AXSelectorPlanMeasured.inc'],/fast_ = fixtureSelectorStableString\(expected_\) && fixtureSelectorStableString\(mode_\);/);
 const processAdapt=s=>s.replaceAll('sysctl(','fixtureSysctl(').replaceAll('dlsym(','fixtureLookup(').replaceAll('getpid()','fixtureSelfPID()')
     .replaceAll(/\[NSMutableData dataWithLength:(capacity|length)\]/g,'fixtureTableData($1)')
     .replaceAll('[NSDictionary dictionaryWithContentsOfFile:','fixtureInfo(').replaceAll('[bundlePath stringByAppendingPathComponent:@"Info.plist"]];','[bundlePath stringByAppendingPathComponent:@"Info.plist"]);');
