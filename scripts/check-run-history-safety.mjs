@@ -5,12 +5,21 @@ import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {restoreHistoryWork} from './lib/history-work-baseline.mjs';
 import {restorePreparation} from './lib/preparation-baseline.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const [preparedHistory,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
-const elapsedCurrent=restorePreparation(preparedHistory,'history');
+const beforeHistoryWork=restoreHistoryWork(preparedHistory);
+const textTailCore=await read('shared/TLinkTextTail.h');
+assert.equal(createHash('sha256').update(textTailCore).digest('hex'),'766312034e273d968449d9bc9b49f65a4b7f2ccf125d07bf9cd910a7e9950665','complete bounded text-tail range planner');
+assert.match(preparedHistory,/TLinkTextTail<50>::Build[\s\S]*NSBackwardsSearch/);
+assert.doesNotMatch(between(preparedHistory,'static NSArray<NSString *> *TLinkRunHistoryTailFromConsoleFile(','static BOOL TLinkRunHistoryRemoveArtifact('),/componentsSeparatedByCharactersInSet/);
+assert.doesNotMatch(between(preparedHistory,'NSDictionary *TLinkRunHistorySnapshot(', '\n    }\n}'),/subarrayWithRange|\[runs copy\]/);
+console.log('History work source passed: bounded 50-range tail, no full console split/selected-array copy, scoped write/redaction/line/prune/public/status lifetimes and complete preceding source.');
+
+const elapsedCurrent=restorePreparation(beforeHistoryWork,'history');
 const elapsedBlock=between(elapsedCurrent,'// Process-local elapsed clocks','NSString *TLinkRunHistoryRootPath(void)');
 const monotonicFunction=between(elapsedCurrent,'static uint64_t TLinkRunHistoryMonotonicMs(void)','static TLinkRunElapsed<50>');
 assert.match(monotonicFunction,/mach_continuous_time\(\)[\s\S]*UINT64_MAX/);
@@ -278,6 +287,9 @@ if(process.platform!=='darwin'){
         .replace(monotonicFunction,'static uint64_t TLinkRunHistoryMonotonicMs(void) { return historyMonotonicNow(); }\n\n')
         .replace('sTLinkRunHistoryElapsed.remember(','historyRememberElapsedHook(sTLinkRunHistoryElapsed,')
         .replace('return @"/var/mobile/Library/TLinkauto/run-history";','return fixtureRoot;')
+        .replace('static void TLinkRunHistoryPruneArtifact(id rawPath, NSString *expected, NSSet<NSString *> *retained)\n{','static void TLinkRunHistoryPruneArtifact(id rawPath, NSString *expected, NSSet<NSString *> *retained)\n{\n    historyWorkOwner();')
+        .replaceAll('[regex stringByReplacingMatchesInString:text','[historyWorkRegex(regex) stringByReplacingMatchesInString:text')
+        .replace('NSMutableDictionary *run = [source mutableCopy];','historyWorkOwner();\n                NSMutableDictionary *run = [source mutableCopy];')
         .replaceAll('[NSRegularExpression regularExpressionWithPattern:','[HistoryRegexFactory regularExpressionWithPattern:')
         .replace('    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];','    historyIndexReadProbe();\n    NSData *data = [NSData dataWithContentsOfFile:TLinkRunHistoryIndexPath()];')
         .replace('TLinkRunHistoryReadIndexData(&missing, &code)','historyReadBoundedData(&missing, &code, operation, TLinkRunHistoryReadIndexData)')
@@ -308,9 +320,10 @@ if(process.platform!=='darwin'){
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(preparedHistory)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
-        const binary=join(temp,'run-history-runtime');
-        run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),'-o',binary]);
+        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adapt(preparedHistory)),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
+        const binary=join(temp,'run-history-runtime'),owner=join(temp,'work-owner.o');
+        run(process.env.CXX||'clang++',['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
+        run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),owner,'-o',binary]);
         run(binary,[temp]);
     }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-run-history-'));await rm(temp,{recursive:true,force:true});}
 }

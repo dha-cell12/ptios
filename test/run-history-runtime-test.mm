@@ -20,10 +20,16 @@
 #include <vector>
 #include "../shared/TLinkRunElapsed.h"
 #include "../shared/TLinkASCIIPreparation.h"
+#include "../shared/TLinkTextTail.h"
+#include "ax-node-pool-owner.h"
 #include <mach/mach_time.h>
 namespace RealHistoryClock {
 #include "HistoryClockUnderTest.inc"
 }
+static thread_local bool historyWorkTracking=false;
+extern "C" void TLinkAXFixtureOwnerDidDrain(void){}
+static void historyWorkOwner(){if(historyWorkTracking)TLinkAXFixtureAutoreleaseOwner();}
+static NSRegularExpression *historyWorkRegex(NSRegularExpression *regex){historyWorkOwner();return regex;}
 static NSString *historyTestRoot;
 static NSMutableArray *historyEvents;
 static std::mutex historyMutex;
@@ -47,6 +53,7 @@ static int historyConsoleStat(int fd,struct stat *info){
     return result;
 }
 static NSMutableData *historyConsoleBuffer(NSUInteger length){
+    historyWorkOwner();
     assert(length<=256*1024);++historyConsoleAllocations;
     if(historyConsoleFault==8)[NSException raise:@"HistoryFixture" format:@"console allocation failed"];
     if(historyConsoleFault==9)throw std::runtime_error("console allocation failed");
@@ -155,6 +162,7 @@ static unsigned historyCrashIndex=0;
 static NSMutableArray *historyWriteAttempts;
 static NSData *historyEncodedIndexOverride;
 static NSData *historyEncodeJSON(id object,NSString *path,NSJSONWritingOptions options){
+    historyWorkOwner();
     if([path.lastPathComponent isEqualToString:@"index.json"]&&historyEncodedIndexOverride)return historyEncodedIndexOverride;
     return [NSJSONSerialization dataWithJSONObject:object options:options error:nil];
 }
@@ -231,11 +239,12 @@ static BOOL historyWriteData(NSData *data,NSString *path){
     return written;
 }
 static void historyIndexReadProbe(){
+    historyWorkOwner();
     ++historyIndexReads;
     if(historyReadFault==1)[NSException raise:@"HistoryFixture" format:@"index read fault"];
     if(historyReadFault==2)throw std::runtime_error("index read fault");
 }
-static void historyStatusPreparationProbe(){if(historyStatusHook)historyStatusHook();}
+static void historyStatusPreparationProbe(){historyWorkOwner();if(historyStatusHook)historyStatusHook();}
 static NSData *historyReadBoundedData(BOOL *missing,NSString **code,NSString *operation,NSData *(*reader)(BOOL *,NSString **)){
     assert(historyLocks.size()==1);if(historyIndexLockHook)historyIndexLockHook();historyIndexReadProbe();
     if([operation isEqualToString:@"snapshot"]?historySnapshotReadFault:historyMutationReadFault){*code=@"read_failed";return nil;}
@@ -258,6 +267,7 @@ static int historyFlock(int fd,int operation){
 }
 static int historyClose(int fd){{std::lock_guard<std::mutex> guard(historyMutex);assert(!historyLocks.count(fd));}historyRecoveryFds.erase(fd);historyIndexFds.erase(fd);historyLockFds.erase(fd);historyConsoleFds.erase(fd);return ::close(fd);}
 static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *type,NSDictionary *payload){
+    historyWorkOwner();
     std::lock_guard<std::mutex> guard(historyMutex);assert(historyLocks.empty());
     NSDictionary *event=@{@"runtime":runtime,@"topic":topic,@"type":type,@"payload":payload};[historyEvents addObject:event];return event;
 }
@@ -291,6 +301,11 @@ static NSString *fixtureRoot;
 NSString *TLinkRunHistoryRootPath(void);
 #include "HistoryUnderTest.inc"
 }
+namespace BeforeWork {
+static NSString *fixtureRoot;
+NSString *TLinkRunHistoryRootPath(void);
+#include "HistoryBeforeWork.inc"
+}
 namespace Legacy {
 static NSString *fixtureRoot;
 #include "HistoryLegacy.inc"
@@ -307,7 +322,7 @@ static NSString *fixtureRoot;
 }
 @end
 @implementation HistoryProbe
-- (NSString *)description {if(callback)callback();return @"license_key=probe-secret";}
+- (NSString *)description {historyWorkOwner();if(callback)callback();return @"license_key=probe-secret";}
 @end
 static id historyNormalize(id value,NSString *root){
     if([value isKindOfClass:[NSString class]])return [value stringByReplacingOccurrencesOfString:root withString:@"$HISTORY"];
@@ -977,6 +992,7 @@ static void historyCompactIndexCases(){
 #include "history-console-tail-runtime-fixture.inc"
 #include "history-permission-runtime-fixture.inc"
 #include "history-elapsed-runtime-fixture.inc"
+#include "history-work-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     uint64_t clockSample=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(clockSample!=UINT64_MAX);
     for(unsigned n=0;n<32;++n){const uint64_t next=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(next>=clockSample&&next!=UINT64_MAX);clockSample=next;}
@@ -1098,6 +1114,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyConsoleTailCases();
     historyConditionalPermissionCases();
     historyElapsedCases();
+    historyWorkCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

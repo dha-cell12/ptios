@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {beforeVPNTaskLane} from './lib/vpn-task-lane-baseline.mjs';
 import {restoreVPNPrivateCaller} from './lib/vpn-private-stop-baseline.mjs';
+import {restoreHistoryWork} from './lib/history-work-baseline.mjs';
 import {restorePreparation,preparationPart,preparationBefore,checkPreparationCore} from './lib/preparation-baseline.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = async p => (await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
@@ -184,7 +185,7 @@ try {
   'EventBodyUnderTest.inc': between(troll,'static NSString *TLinkBodyFromLine(', 'static NSArray<NSString *> *TLinkSplitBody('),
   'EventTrollSocketUnderTest.inc': between(troll,'// BEGIN TrollStore event socket adapter.', '// END TrollStore event socket adapter.'),
  };
- const prepHistory=await read('shared/TLinkRunHistory.mm');restorePreparation(prepHistory,'history');
+ const prepHistory=restoreHistoryWork(await read('shared/TLinkRunHistory.mm'));restorePreparation(prepHistory,'history');
  const rename=(text,name)=>text.replace(/TLinkEventToken\(/g,name+'(').replace(/TLinkRunHistorySanitize\(/g,name+'(').replace(/TLinkEventJournalInteger\(/g,name+'(').replace(/TLinkEventBatchFromJournal\(/g,name+'(');
  const prepFixtures={
   'PreparationCursor.inc':between(preparedEvent,'static BOOL TLinkEventParseUnsignedCursor(','NSString *TLinkEventChannelRootPath(void)'),

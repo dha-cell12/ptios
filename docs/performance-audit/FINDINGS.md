@@ -1613,6 +1613,8 @@ Preserve the cross-process file lock or replace it with an equally strong transa
 
 ### [P1-49] Failed-run evidence preprocessing occurs while holding the cross-process history flock
 
+C03ae follow-up (2026-11-07): console preparation now searches backward for at most50 components while keeping full newline/redaction/empty-tail behavior. Console/JSON/public-operation and regex/line/status-row/prune pools scope unreturned temporaries; status avoids the intermediate selected-array copy. Existing file/read/commit/recovery/event order and complete status fields remain. Portable/source checks pass; Foundation/ARC/MRC and device qualification pending. Full index reads/rewrites remain. See `IMPLEMENTATION-C03AE.md`.
+
 **Status:** CONFIRMED  
 **Locations:** `shared/TLinkRunHistory.mm:134-185,255-334`
 
@@ -1667,6 +1669,8 @@ Delete oldest completed run logs only after the active run closes its writer. Ke
 ---
 
 ### [P1-51] Status task synchronously re-reads persistence files on every request
+
+C03ae follow-up (2026-11-07): console preparation now searches backward for at most50 components while keeping full newline/redaction/empty-tail behavior. Console/JSON/public-operation and regex/line/status-row/prune pools scope unreturned temporaries; status avoids the intermediate selected-array copy. Existing file/read/commit/recovery/event order and complete status fields remain. Portable/source checks pass; Foundation/ARC/MRC and device qualification pending. Full index reads/rewrites remain. See `IMPLEMENTATION-C03AE.md`.
 
 **Status:** CONFIRMED  
 **Locations:** `pccontrol/Task.xm:1502-1586`; `shared/TLinkRunHistory.mm:349-416`; `shared/TLinkEventChannel.mm:198+`

@@ -1,5 +1,6 @@
 #import "TLinkRunHistory.h"
 #include "TLinkASCIIPreparation.h"
+#include "TLinkTextTail.h"
 #import "TLinkEventChannel.h"
 #include "TLinkRunElapsed.h"
 #include <mach/mach_time.h>
@@ -187,6 +188,7 @@ static void TLinkRunHistoryReleaseFileLock(int fd)
 
 static BOOL TLinkRunHistoryWriteJSON(id object, NSString *path, NSJSONWritingOptions options = NSJSONWritingPrettyPrinted)
 {
+    @autoreleasepool {
     if (![NSJSONSerialization isValidJSONObject:object] || path.length == 0) return NO;
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:options error:nil];
     if (!data || ([path isEqualToString:TLinkRunHistoryIndexPath()] && data.length > kTLinkRunHistoryIndexMaxBytes) ||
@@ -194,6 +196,7 @@ static BOOL TLinkRunHistoryWriteJSON(id object, NSString *path, NSJSONWritingOpt
     chmod(path.fileSystemRepresentation, 0640);
     lchown(path.fileSystemRepresentation, 501, 501);
     return YES;
+    }
 }
 
 static BOOL TLinkRunHistoryWriteIndex(NSArray<NSDictionary *> *runs)
@@ -229,12 +232,14 @@ static NSString *TLinkRunHistoryRedactText(NSString *value)
     NSString *text = [value isKindOfClass:[NSString class]] ? value : @"";
     NSArray<NSRegularExpression *> *patterns = TLinkRunHistoryRedactionPatterns();
     for (NSUInteger index = 0; index < patterns.count; index++) {
+        @autoreleasepool {
         NSRegularExpression *regex = patterns[index];
         NSString *replacement = index == 0 ? @"$1=[REDACTED]" : @"Bearer [REDACTED]";
         text = [regex stringByReplacingMatchesInString:text
                                                 options:0
                                                   range:NSMakeRange(0, text.length)
                                            withTemplate:replacement];
+        }
     }
     return text;
 }
@@ -243,19 +248,37 @@ static NSArray<NSString *> *TLinkRunHistoryBoundedLogTail(NSArray<NSString *> *l
 {
     if (![lines isKindOfClass:[NSArray class]] || lines.count == 0) return @[];
     NSUInteger start = lines.count > kTLinkFailureLogTailMaxLines ? lines.count - kTLinkFailureLogTailMaxLines : 0;
-    NSMutableArray<NSString *> *tail = [NSMutableArray array];
+    NSMutableArray<NSString *> *tail = [NSMutableArray arrayWithCapacity:MIN(lines.count,kTLinkFailureLogTailMaxLines)];
     for (NSUInteger i = start; i < lines.count; i++) {
+        @autoreleasepool {
         id raw = lines[i];
         NSString *line = TLinkRunHistoryRedactText([raw isKindOfClass:[NSString class]] ? raw : [raw description]);
         if (line.length > kTLinkFailureLogLineMaxCharacters) line = [line substringToIndex:kTLinkFailureLogLineMaxCharacters];
         [tail addObject:line ?: @""];
+        }
     }
     while (tail.count > 0 && [tail.firstObject length] == 0) [tail removeObjectAtIndex:0];
     return tail;
 }
 
+static NSArray<NSString *> *TLinkRunHistoryTailFromText(NSString *text)
+{
+    NSCharacterSet *newlines = [NSCharacterSet newlineCharacterSet];
+    const auto plan = TLinkTextTail<50>::Build(text.length, [text,newlines](size_t end) {
+        NSRange found = [text rangeOfCharacterFromSet:newlines options:NSBackwardsSearch range:NSMakeRange(0,end)];
+        return found.location == NSNotFound ? SIZE_MAX : (size_t)found.location;
+    });
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithCapacity:plan.size()];
+    for (size_t i = 0; i < plan.size(); ++i) {
+        const auto range = plan[i];
+        [lines addObject:[text substringWithRange:NSMakeRange(range.start,range.length)]];
+    }
+    return TLinkRunHistoryBoundedLogTail(lines);
+}
+
 static NSArray<NSString *> *TLinkRunHistoryTailFromConsoleFile(NSString *path)
 {
+    @autoreleasepool {
     if (path.length == 0) return @[];
     int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) return @[];
@@ -275,11 +298,12 @@ static NSArray<NSString *> *TLinkRunHistoryTailFromConsoleFile(NSString *path)
             offset += (NSUInteger)got;
         }
         NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
-        return TLinkRunHistoryBoundedLogTail([text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]);
+        return TLinkRunHistoryTailFromText(text);
     } @catch (__unused NSException *exception) {
         return @[];
     } @finally {
         close(fd);
+    }
     }
 }
 
@@ -542,12 +566,15 @@ static void TLinkRunHistoryPrune(NSArray<NSDictionary *> *retired, NSArray<NSDic
     @try { try {
         NSMutableSet<NSString *> *retained = [NSMutableSet set];
         for (NSDictionary *record in runs) {
+            @autoreleasepool {
             NSDictionary *evidence = [record[@"failure_evidence"] isKindOfClass:[NSDictionary class]] ? record[@"failure_evidence"] : @{};
             for (id path in @[record[@"record_path"] ?: @"", evidence[@"metadata_path"] ?: @"", evidence[@"screenshot_path"] ?: @""]) {
                 if ([path isKindOfClass:[NSString class]] && [path length] > 0) [retained addObject:[path stringByStandardizingPath]];
             }
+            }
         }
         for (NSDictionary *oldest in retired) {
+            @autoreleasepool {
             @try { try {
                 NSString *runId = [oldest[@"run_id"] isKindOfClass:[NSString class]] ? oldest[@"run_id"] : @"";
                 if (runId.length == 0) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"path_not_owned"); continue; }
@@ -558,6 +585,7 @@ static void TLinkRunHistoryPrune(NSArray<NSDictionary *> *retired, NSArray<NSDic
                 TLinkRunHistoryPruneArtifact(evidence[@"screenshot_path"], [TLinkRunHistoryEvidencePath() stringByAppendingPathComponent:[name stringByAppendingString:@".png"]], retained);
             } catch (...) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); } }
             @catch (__unused NSException *exception) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); }
+            }
         }
     } catch (...) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); } }
     @catch (__unused NSException *exception) { TLinkRunHistoryPersistenceFailure(@"prune", @"artifacts", @"exception"); }
@@ -568,6 +596,7 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
                                    NSString *entryPath,
                                    NSDictionary *playSettings)
 {
+    @autoreleasepool {
     @synchronized (TLinkRunHistoryLock()) {
         TLinkRunHistoryEnsureDirectories();
         int lockFd = TLinkRunHistoryAcquireFileLock();
@@ -626,6 +655,7 @@ NSDictionary *TLinkRunHistoryBegin(NSString *runtime,
                                  });
         return record;
     }
+    }
 }
 
 NSDictionary *TLinkRunHistoryFinish(NSString *runId,
@@ -637,6 +667,7 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
                                     NSString *screenshotError,
                                     NSDictionary *extra)
 {
+    @autoreleasepool {
     if (runId.length == 0) return @{};
     @synchronized (TLinkRunHistoryLock()) {
         TLinkRunHistoryEnsureDirectories();
@@ -742,6 +773,7 @@ NSDictionary *TLinkRunHistoryFinish(NSString *runId,
                                  });
         return record;
     }
+    }
 }
 
 // Failed status counts/runs are unknown placeholders, never an empty-history acknowledgment.
@@ -768,6 +800,7 @@ static NSDictionary *TLinkRunHistorySnapshotFailure(NSString *code)
 
 NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
 {
+    @autoreleasepool {
     @synchronized (TLinkRunHistoryLock()) {
         NSString *stage = @"prepare";
         @try { try {
@@ -793,9 +826,11 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
             stage = @"format";
             // The decoded graph belongs to this call; formatting needs no file lock.
             NSUInteger bounded = limit == 0 ? kTLinkRunHistorySnapshotDefault : MIN(limit, kTLinkRunHistorySnapshotMax);
-            NSArray *selected = runs.count > bounded ? [runs subarrayWithRange:NSMakeRange(0, bounded)] : [runs copy];
-            NSMutableArray<NSDictionary *> *statusRuns = [NSMutableArray arrayWithCapacity:selected.count];
-            for (NSDictionary *source in selected) {
+            NSUInteger selectedCount = MIN(runs.count,bounded);
+            NSMutableArray<NSDictionary *> *statusRuns = [NSMutableArray arrayWithCapacity:selectedCount];
+            for (NSUInteger row = 0; row < selectedCount; ++row) {
+                @autoreleasepool {
+                NSDictionary *source = runs[row];
                 NSMutableDictionary *run = [source mutableCopy];
                 NSString *sourceError = [source[@"error"] isKindOfClass:[NSString class]] ? source[@"error"] : @"";
                 if (sourceError.length > kTLinkStatusErrorMaxCharacters) {
@@ -816,20 +851,23 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
                         ? sourceEvidence[@"log_tail"] : @[];
                     NSUInteger start = sourceTail.count > kTLinkStatusLogTailMaxLines
                         ? sourceTail.count - kTLinkStatusLogTailMaxLines : 0;
-                    NSMutableArray<NSString *> *tail = [NSMutableArray array];
+                    NSMutableArray<NSString *> *tail = [NSMutableArray arrayWithCapacity:sourceTail.count-start];
                     for (NSUInteger index = start; index < sourceTail.count; index++) {
+                        @autoreleasepool {
                         NSString *line = [sourceTail[index] isKindOfClass:[NSString class]]
                             ? sourceTail[index] : [sourceTail[index] description];
                         if (line.length > kTLinkStatusLogLineMaxCharacters) {
                             line = [line substringToIndex:kTLinkStatusLogLineMaxCharacters];
                         }
                         [tail addObject:line ?: @""];
+                        }
                     }
                     evidence[@"log_tail"] = tail;
                     evidence[@"status_log_tail_truncated"] = @(sourceTail.count > tail.count);
                     run[@"failure_evidence"] = evidence;
                 }
                 [statusRuns addObject:run];
+                }
             }
             NSUInteger failed = 0;
             for (NSDictionary *run in runs) {
@@ -857,5 +895,6 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
         @catch (__unused NSException *exception) {}
         TLinkRunHistoryPersistenceFailure(@"snapshot", stage, @"exception");
         return TLinkRunHistorySnapshotFailure(@"history_snapshot_exception");
+    }
     }
 }

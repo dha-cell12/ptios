@@ -3,7 +3,9 @@
 #include <cstdio>
 #include <deque>
 #include <string>
+#include "history-text-tail-safety-fixture.inc"
 int main(){
+    historyTextTailCases();
     TLinkRunElapsed<4> clock;
     assert(clock.remember("root","run",10000,100));
     assert(clock.duration("root","run",10000,20000,350)==250); // wall jumps forward
