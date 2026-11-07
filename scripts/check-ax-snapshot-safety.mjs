@@ -34,6 +34,8 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async p=>(await readFile(join(root,p),'utf8')).replaceAll('\r\n','\n');
 const source=await read('shared/TLinkAccessibilityTree.mm');restoreAXSnapshot(source);
 const selectorPlan=await read('shared/TLinkAXSelectorPlan.h');
+// This Objective-C++ fixture only compiles on macOS; catch its C++ keyword collision on every host.
+assert.doesNotMatch(await read('test/ax-selector-runtime-fixture.inc'),/\b(?:NSString|NSMutableString)\s*\*\s*mutable\b/,'AX selector fixture cannot use the C++ keyword mutable as a variable name');
 checkSelectorHeaders(selectorPlan,await read('shared/TLinkAXSelectorPolicy.h'));
 const preceding=restoreAXAttributes(source);
 const [rootTask,trollTask]=await Promise.all(['pccontrol/Task.xm','stream-app/streamd/POCSocketServer.mm'].map(read));

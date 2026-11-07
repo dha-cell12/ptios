@@ -57,9 +57,9 @@ static void selectorPlanCases(){
         @catch(NSException *exception){caught=kind==1&&[exception.name isEqual:@"AXSelectorFixture"];}
         assert(caught);selectorReset();assert([MeasuredAXFindInSnapshot(input,selector)[@"match_count"] unsignedIntValue]==1000);
     }
-    @autoreleasepool{selectorReset();NSString *mutable=[@"target" mutableCopy];
-        MeasuredAXSelectorPlan::Text plan(mutable,@"exact",NO);assert(plan.accepts(@"TARGET",MeasuredAXTextMatches));
-        [(NSMutableString *)mutable setString:@"other"];assert(plan.accepts(@"OTHER",MeasuredAXTextMatches));}
+    @autoreleasepool{selectorReset();NSString *mutableText=[@"target" mutableCopy];
+        MeasuredAXSelectorPlan::Text plan(mutableText,@"exact",NO);assert(plan.accepts(@"TARGET",MeasuredAXTextMatches));
+        [(NSMutableString *)mutableText setString:@"other"];assert(plan.accepts(@"OTHER",MeasuredAXTextMatches));}
     @autoreleasepool{selectorReset();AXSelectorExpectedProbe *probe=[AXSelectorExpectedProbe new];probe.value=@"target";
         NSString *expected=(NSString *)(id)probe;assert(!MeasuredAXSelectorPlan::StableString(expected));
         MeasuredAXSelectorPlan::Text plan(expected,@"exact",NO);assert(plan.accepts(@"TARGET",MeasuredAXTextMatches));
