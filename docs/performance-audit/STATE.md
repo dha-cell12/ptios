@@ -5,6 +5,12 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Build correction — prepared JSON invalid target (2026-11-08)
+
+- CI stopped at `storageOperationCases`: helper/backend 1, writeJSON, policy 2. That resolver fixture deliberately returns ok without a path. The prepared JSON string routed UTF8 writes through NSData even for nil targets, whereas the original path used NSString's writer. Select the original decoded NSString writer before IO for nil, empty and non-string targets; valid UTF8 paths retain the encoded-data route. There is no retry after a write failure or exception.
+- Keep all 252 strict complete storage-operation comparisons and improve bounded mismatch details. Tighten the missing-path data-writer expectation to zero and add 16 native NSString error/exception comparisons for nil/empty/NSNull/number targets, both atomic flags and UTF8/UTF16. Freeze the entire preceding adapter; exact source reversal preserves its original hash and every root/helper historical guard.
+- FileHandle/storage source and portable regression, five-file assertion macro preprocessing, JavaScript syntax and diff whitespace checks pass on Windows. The failing Foundation/ARC executable and the new native matrix require macOS CI to confirm.
+
 ## Implementation C03ar — 2026-11-08
 
 - User reported C03aq build passed (`d9a779f2`). Combine recovery codec work: one-pass 64-KiB exact-byte comparison avoids the full artifact buffer/parse when canonical bytes match; a mismatch reconstructs the verified prefix once and retains semantic JSON equality. Needed repairs reuse the initial encoded data through the unchanged checked atomic writer, avoiding a second encode.

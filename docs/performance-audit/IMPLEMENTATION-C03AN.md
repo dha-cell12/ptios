@@ -29,3 +29,11 @@ Extend the existing Foundation/POSIX/ARC/ASan/UBSan executable:
 - Real directory/missing-parent failure codes/descriptions and overwritten-file mode/owner/group effects are compared with NSString's writer, including read-only files and both atomic choices.
 
 **New Apple compilation and native execution require macOS CI.** The probe counts are controlled expectations, not device measurements. Full Foundation-internal allocation/IO behavior, adapter overhead and real-device qualification remain pending. P1-47 remains partial because one compatibility decode and the other synchronous storage operations remain.
+
+## CI correction — invalid destination compatibility (2026-11-08)
+
+CI reported a complete storage-operation parity failure for helper/backend 1, writeJSON, policy 2. This fixture returns `ok=YES` with no `path`; the adapter was still selecting NSData's UTF8 writer, while the complete predecessor selected NSString's writer. Dispatch nil, empty and non-string destinations to the original decoded NSString writer before any IO. Valid UTF8 paths keep the retained NSData path; non-UTF8 paths retain their existing NSString delegation. Never try another writer after failure/exception.
+
+Freeze the entire preceding adapter and reverse exactly the new selection to its original guarded hash, without changing frontend/gate/error/count source. Keep strict reply/trace/file/error comparisons, add bounded expected/actual details, tighten the nil-target encoded-data writer count to zero, and add 16 native direct comparisons across four invalid target shapes, two atomic choices and UTF8/UTF16. Existing valid-data identity, write faults, directory/missing-parent errors and metadata effects stay enabled.
+
+Windows source/portable FileHandle checks, five-file assertion macro preprocessing, JavaScript syntax and diff whitespace pass. This host cannot execute Foundation/ARC; corrected native parity and the new invalid-target matrix await macOS CI. No Apple build success is claimed.

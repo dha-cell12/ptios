@@ -182,7 +182,7 @@ static void storageOperationCases(NSString *root){
                             NSDictionary *expected=storageOperationRun(backend,YES,path,method,input,policy);
                             assert([body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
                             NSDictionary *actual=storageOperationRun(backend,NO,path,method,input,policy);
-                            if(![expected isEqual:actual])fprintf(stderr,"Storage operation parity: backend=%u method=%s policy=%u\n",backend,method.UTF8String,policy);
+                            if(![expected isEqual:actual])fprintf(stderr,"Storage operation parity: backend=%u method=%s policy=%u input=%.512s\nexpected=%.4096s\nactual=%.4096s\n",backend,method.UTF8String,policy,[[input description] UTF8String]?:"<unencodable>",[[expected description] UTF8String]?:"<unencodable>",[[actual description] UTF8String]?:"<unencodable>");
                             assert([expected isEqual:actual]);++comparisons;
                         }
                     }

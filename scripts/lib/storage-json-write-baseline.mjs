@@ -4,7 +4,14 @@ import {createHash} from 'node:crypto';
 const hash=text=>createHash('sha256').update(text).digest('hex');
 export const storageJSONWriteSpecs=JSON.parse(readFileSync(new URL('./storage-json-write-specs.json',import.meta.url),'utf8'));
 export const storageJSONWriteBefore=kind=>readFileSync(new URL('../../test/fixtures/storage-json-write-'+kind+'-before-c03an.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
-export function checkPreparedJSONText(source){assert.equal(hash(source),storageJSONWriteSpecs.adapterHash,'complete immutable prepared JSON string/bytes adapter');}
+export function checkPreparedJSONText(source){
+    const before=readFileSync(new URL('../../test/fixtures/prepared-json-before-path-error-fix.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
+    assert.equal(hash(before),storageJSONWriteSpecs.adapterHash,'complete preceding prepared JSON adapter');
+    const oldWriter='    if (encoding != NSUTF8StringEncoding) return [_decodedJSON writeToFile:path atomically:atomic encoding:encoding error:error];';
+    const newWriter="    // Preserve the original string writer's validation before any IO begins.\n    if (encoding != NSUTF8StringEncoding || ![path isKindOfClass:[NSString class]] || path.length == 0)\n        return [_decodedJSON writeToFile:path atomically:atomic encoding:encoding error:error];";
+    assert.equal(source.split(newWriter).length-1,1,'one pre-write compatibility selection');
+    assert.equal(source.replace(newWriter,oldWriter),before,'only invalid-target writer selection changes; no post-write retry');
+}
 export function restoreStorageJSONWrites(source,kind){
     const spec=storageJSONWriteSpecs[kind];
     if(!spec||!source.includes(spec.include))return source;

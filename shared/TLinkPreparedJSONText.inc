@@ -41,7 +41,9 @@
 }
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomic encoding:(NSStringEncoding)encoding error:(NSError **)error
 {
-    if (encoding != NSUTF8StringEncoding) return [_decodedJSON writeToFile:path atomically:atomic encoding:encoding error:error];
+    // Preserve the original string writer's validation before any IO begins.
+    if (encoding != NSUTF8StringEncoding || ![path isKindOfClass:[NSString class]] || path.length == 0)
+        return [_decodedJSON writeToFile:path atomically:atomic encoding:encoding error:error];
     return [_encodedJSON writeToFile:path options:(atomic ? NSDataWritingAtomic : (NSDataWritingOptions)0) error:error];
 }
 @end

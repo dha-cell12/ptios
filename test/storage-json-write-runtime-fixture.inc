@@ -57,6 +57,37 @@ static NSDictionary *storagePreparedJSONRun(unsigned backend,bool before,NSStrin
     @catch(NSException *caught){exception=caught.name;}
     return @{@"reply":reply?:@{},@"trace":[runtime.trace copy],@"ops":@(runtime.storageOpsCount),@"bytes":[NSData dataWithContentsOfFile:path]?:[NSData data],@"exception":exception,@"error":error?(id)@{@"domain":error.domain,@"code":@(error.code)}:(id)[NSNull null]};
 }
+static NSDictionary *preparedJSONTargetResult(NSString *text,NSString *target,BOOL atomic,NSStringEncoding encoding){
+    NSError *error=nil;BOOL ok=NO;NSString *exception=@"",*reason=@"";
+    @try {ok=[text writeToFile:target atomically:atomic encoding:encoding error:&error];}
+    @catch(NSException *caught){exception=[caught.name copy]?:@"";reason=[caught.reason copy]?:@"";}
+    return @{@"ok":@(ok),@"hasError":@(error!=nil),@"domain":error.domain?:@"",@"code":@(error.code),
+             @"description":error.localizedDescription?:@"",@"exception":exception,@"reason":reason};
+}
+static void storagePreparedJSONInvalidTargetCases(){
+    const NSStringEncoding encodings[]={NSUTF8StringEncoding,NSUTF16StringEncoding};
+    unsigned comparisons=0;
+    for(unsigned kind=0;kind<4;++kind){
+        for(BOOL atomic:{NO,YES}){
+            for(NSStringEncoding encoding:encodings){
+                @autoreleasepool {
+                    id target=kind==0?nil:(kind==1?(id)@"":(kind==2?(id)[NSNull null]:(id)@42));
+                    PreparedJSONData *bytes=[[PreparedJSONData alloc] initWithBacking:[@"[\"ảnh\"]" dataUsingEncoding:NSUTF8StringEncoding]];
+                    NSString *old=[[NSString alloc] initWithData:bytes encoding:NSUTF8StringEncoding];
+                    NSString *now=[[TLinkPreparedJSONText alloc] initWithJSONData:bytes];bytes=nil;
+                    preparedJSONWrites=0;preparedJSONWrittenBytes=nil;
+                    NSDictionary *expected=preparedJSONTargetResult(old,(NSString *)target,atomic,encoding);
+                    NSDictionary *actual=preparedJSONTargetResult(now,(NSString *)target,atomic,encoding);
+                    if(![expected isEqual:actual])fprintf(stderr,"Prepared JSON target parity: kind=%u atomic=%d encoding=%lu\nexpected=%s\nactual=%s\n",kind,(int)atomic,(unsigned long)encoding,[[expected description] UTF8String],[[actual description] UTF8String]);
+                    assert([expected isEqual:actual]&&preparedJSONWrites==0&&!preparedJSONWrittenBytes);++comparisons;
+                }
+                assert(preparedJSONLive==0);
+            }
+        }
+    }
+    assert(comparisons==16);
+    puts("Prepared JSON invalid targets: 16 exact NSString error/exception comparisons for nil/empty/NSNull/number paths, atomic/non-atomic and UTF8/UTF16; no encoded-data writer call or retry.");
+}
 static void storagePreparedJSONRouteCases(NSString *path){
     unsigned comparisons=0;
     for(unsigned backend=0;backend<2;++backend){
@@ -70,7 +101,7 @@ static void storagePreparedJSONRouteCases(NSString *path){
                     assert([old isEqual:now]);
                     const bool accepted=[now[@"reply"][@"ok"] boolValue]&&policy==0&&[NSJSONSerialization isValidJSONObject:object];
                     if(policy!=2)assert(preparedJSONWrites==(accepted?1U:0U));
-                    else assert(preparedJSONWrites<=1);
+                    else assert(preparedJSONWrites==0);
                     if(accepted){assert(preparedJSONOptions==NSDataWritingAtomic&&[preparedJSONWrittenBytes isEqual:now[@"bytes"]]);}
                     preparedJSONCapture=false;preparedJSONWrittenBytes=nil;++comparisons;
                 }
@@ -192,6 +223,7 @@ static void storagePreparedJSONStringCases(NSString *root){
 }
 static void storagePreparedJSONCases(NSString *root){
     puts("Prepared JSON Foundation: actual NSString adapter and frozen root/helper recursive writes with retained encoded NSData");fflush(stdout);
+    storagePreparedJSONInvalidTargetCases();
     storagePreparedJSONRouteCases([root stringByAppendingPathComponent:@"prepared-route.json"]);
     storagePreparedJSONStringCases(root);
     assert(!preparedJSONCapture&&!preparedJSONFault&&!preparedJSONLive);
