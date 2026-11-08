@@ -1,3 +1,5 @@
+import {checkPersistenceJSON} from './lib/persistence-json-baseline.mjs';
+checkPersistenceJSON();
 import {restoreEventPreparation,eventPreparationBefore,checkEventPreparationFiles} from './lib/event-preparation-baseline.mjs';
 import {restoreEventDirectWire,checkEventWireEncoding} from './lib/event-direct-wire-baseline.mjs';
 import assert from 'node:assert/strict';
@@ -278,7 +280,7 @@ try {
   run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
   run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-fobjc-arc',
    '-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation',
-   '-I',temp,'-I',join(root,'shared'),join(root,'test/event-channel-runtime-test.mm'),owner,'-o',runtime]);
+   '-I',temp,'-I',join(root,'shared'),join(root,'test/event-channel-runtime-test.mm'),join(root,'shared/TLinkPersistenceJSON.mm'),owner,'-o',runtime]);
   run(runtime,[]);
   const preparation=join(temp,'preparation');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/ascii-preparation-runtime-test.mm'),'-o',preparation]);run(preparation,[]);
  } else console.log('macOS actual journal/notification/async/cancellation and root/TrollStore/remote wire integration is wired to both workflows; not run on Windows.');

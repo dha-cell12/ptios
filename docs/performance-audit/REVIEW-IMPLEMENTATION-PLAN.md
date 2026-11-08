@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C03aq (08/11/2026): người dùng báo C02c4 build pass (`b509e33b`). Gom event journal 4 MiB và history index 32 MiB qua JSON stream có quota, từ chối trước khi append quá hạn mức, kiểm tra count/error/state và giải phóng prefix lỗi. Giữ ghi atomic, ACK/recovery/notify và encoder record/evidence. Source/portable Windows pass; JSON/fault/lifetime Foundation mới chờ CI macOS. Không coi đây là giới hạn RSS hoặc bỏ whole-file rewrite. Chi tiết: IMPLEMENTATION-C03AQ.md.
+
 Cập nhật triển khai C02c4 (08/11/2026): người dùng báo C03ap build pass (`713cbb74`). Gom replay helper root/roothide: payload shared immutable qua eviction/reset, NSData view giữ owner thay copy payload, identity bytes/length từ một lần encode; nil/empty serialization retire ID không lặp effect. Giữ SHA/policy/FIFO/quota/response. 90 runner/521 source check Windows pass; native Foundation/reentry/fault mới chờ CI macOS. Chi tiết: IMPLEMENTATION-C02C4.md.
 
 Cập nhật triển khai C03ap (08/11/2026): người dùng báo C03ao build pass (`1d0e30da`). Gom event legacy wire chung root/TrollStore/remote và wrapper sync: base64 trực tiếp vào buffer cuối với checked size/padding/framing, bỏ NSData base64 trung gian và scope JSON tạm. Giữ JSON-v1, error, frame policy, authority/journal/socket source. 100k oracle + toàn bộ hai byte và 90 runner/521 source check Windows pass; native Foundation exact bytes/fault/pool mới chờ CI macOS. Chi tiết: IMPLEMENTATION-C03AP.md.

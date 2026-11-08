@@ -1594,6 +1594,8 @@ Measure main-thread CPU, wakeups/s, timer fires/s, license checks/s, plist reads
 
 ### [P1-48] Run-history index embeds failure evidence and is fully read/parsed/re-written on every begin/finish
 
+C03aq follow-up (2026-11-08): event journal (4 MiB) and history index (32 MiB) serialization now enforce their existing size limits before the owned output stream appends an overflowing chunk. Complete writer result checks and finally cleanup refuse partial data without reaching the unchanged atomic write. History record/evidence encoders, commit/recovery/notification policy and full-file rewrite remain. This bounds accepted buffer bytes, not Foundation allocations/RSS/CPU or lock/IO duration. Source/100k portable quota checks pass on Windows; Foundation JSON/fault/lifetime and device qualification pending. See `IMPLEMENTATION-C03AQ.md`.
+
 C03ad follow-up (2026-11-07): shared run-name preparation now uses a bounded 96-unit buffer while preserving case/replacement/cutoff/path text. This removes explicit per-character NSString/append work; it does not remove index/evidence rewrite amplification. Portable parity passes; Foundation/device gains await qualification. See `IMPLEMENTATION-C03AD.md`.
 
 **Status:** CONFIRMED  
@@ -1956,6 +1958,8 @@ Acceptance: capacity and idle I/O return to baseline immediately after disconnec
 ## P1 — S008 High Priority
 
 ### [P1-54] Every event publication rewrites the complete 256-event journal under an exclusive file lock
+
+C03aq follow-up (2026-11-08): event journal (4 MiB) and history index (32 MiB) serialization now enforce their existing size limits before the owned output stream appends an overflowing chunk. Complete writer result checks and finally cleanup refuse partial data without reaching the unchanged atomic write. History record/evidence encoders, commit/recovery/notification policy and full-file rewrite remain. This bounds accepted buffer bytes, not Foundation allocations/RSS/CPU or lock/IO duration. Source/100k portable quota checks pass on Windows; Foundation JSON/fault/lifetime and device qualification pending. See `IMPLEMENTATION-C03AQ.md`.
 
 C03ak preparation follow-up (2026-11-07): coherent stream counting avoids the producer-owned full NSData used only to size payloads, preserves exact original_bytes and falls back to the preceding encoder on count/NS/C++ failures. Batch selection searches after cursor, reserves from the remaining tail and shortcuts wildcard filters while preserving cursor/gap/page graphs. Portable/source checks pass; native Foundation/device qualification pending. Publication still serializes and replaces the full journal under the existing flock. See `IMPLEMENTATION-C03AK.md`.
 

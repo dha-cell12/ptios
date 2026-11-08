@@ -1,0 +1,43 @@
+{
+  "history": {
+    "file": "shared/TLinkRunHistory.mm",
+    "start": "static BOOL TLinkRunHistoryWriteJSON(",
+    "end": "static BOOL TLinkRunHistoryWriteIndex(",
+    "include": "#include \"TLinkPersistenceJSON.h\"\n",
+    "beforeHash": "75e94157849213b10041d343f008adf9680c367121c2a3365df2af6acc8cdc15",
+    "currentHash": "b1de0145ee522c4eec911df387b615af00971a6b023ed545758520d9d23e751c",
+    "partHash": "cb2850d8bc0d8a200b3e672c9cd510c39feb4a5d4f6a0250d14489d5b2e5402b"
+  },
+  "event": {
+    "file": "shared/TLinkEventChannel.mm",
+    "start": "static BOOL TLinkEventWriteJournal(",
+    "end": "static NSString *TLinkEventToken(",
+    "include": "#include \"TLinkPersistenceJSON.h\"\n",
+    "beforeHash": "cf81faebd32c7f33cd39baa9cdb016d224c6139c626f76a3ed8c562e992bef00",
+    "currentHash": "5006b1b7f4375e339307f64eafd7158cb6bc6eb431b8e111356e68b0216c9b88",
+    "partHash": "edef95bba3b1db56fb574124e4766744fb327ec9bc06090c677bea7cb9abed01"
+  },
+  "quotaHash": "f2a21520737e38d7c89d9255e07ad03b165d5ae3f6281a03a94912650aefe031",
+  "headerHash": "d7fca22bfe44791bfa593ac3b7a59cfcac4eb8736d339e86da6eb75267faefa6",
+  "implementationHash": "f12598021289dabd0a5e94c3cff4a3c4c06270796f869df48f2687d6febf04d2",
+  "makefiles": {
+    "pccontrol/Makefile": {
+      "currentHash": "b073444e42ab4f89270274e7ef8d9f2ed95b7ce3d4e95c9dafc3bcbfcd588951",
+      "beforeHash": "9389f2d7e6a681394446076a8879e2f45029d55c7464e590a8110e2c74557272",
+      "token": " ../shared/TLinkPersistenceJSON.mm",
+      "count": 1
+    },
+    "tlinkauto-binary/Makefile": {
+      "currentHash": "bde3f30b635b88a5e8a67761a8f24391f26451fda4e26eff1b2b1db7966e8099",
+      "beforeHash": "75686df2a500e5167d498c2a3c88303ef112845b09cf65227251915db9823dae",
+      "token": " ../shared/TLinkPersistenceJSON.mm",
+      "count": 2
+    },
+    "stream-app/streamd/Makefile": {
+      "currentHash": "40e1a601de1d93171fc8ef7b2b547f588bc5dd8abb7974a883af04110b5898ea",
+      "beforeHash": "6c03113744c74caf9faf356f1614a17cbb8df958c54ecbcaebddc031e5d675db",
+      "token": " ../../shared/TLinkPersistenceJSON.mm",
+      "count": 1
+    }
+  }
+}

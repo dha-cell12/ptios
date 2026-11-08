@@ -5,7 +5,9 @@
 #include <string>
 #include "history-text-tail-safety-fixture.inc"
 #include "history-retirement-safety-fixture.inc"
+#include "persistence-json-safety-fixture.inc"
 int main(){
+    persistenceJSONQuotaCases();
     historyRetirementPlans();
     historyTextTailCases();
     TLinkRunElapsed<4> clock;

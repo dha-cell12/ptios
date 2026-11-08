@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include "PersistenceJSONUnderTest.inc"
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -166,6 +167,11 @@ static NSData *historyEncodeJSON(id object,NSString *path,NSJSONWritingOptions o
     historyWorkOwner();
     if([path.lastPathComponent isEqualToString:@"index.json"]&&historyEncodedIndexOverride)return historyEncodedIndexOverride;
     return [NSJSONSerialization dataWithJSONObject:object options:options error:nil];
+}
+static NSData *historyEncodeJSONBounded(id object,NSString *path,NSJSONWritingOptions options,NSUInteger limit){
+    historyWorkOwner();
+    if([path.lastPathComponent isEqualToString:@"index.json"]&&historyEncodedIndexOverride)return historyEncodedIndexOverride;
+    return TLinkPersistenceJSONData(object,options,limit);
 }
 static unsigned historyPruneFault=0;
 static NSString *historyPruneTarget;
@@ -1010,6 +1016,7 @@ static void historyCompactIndexCases(){
 #include "history-elapsed-runtime-fixture.inc"
 #include "history-work-runtime-fixture.inc"
 #include "history-index-work-runtime-fixture.inc"
+#include "persistence-json-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     uint64_t clockSample=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(clockSample!=UINT64_MAX);
     for(unsigned n=0;n<32;++n){const uint64_t next=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(next>=clockSample&&next!=UINT64_MAX);clockSample=next;}
@@ -1133,6 +1140,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyElapsedCases();
     historyWorkCases();
     historyIndexWorkCases();
+    PersistenceJSONFixture::cases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

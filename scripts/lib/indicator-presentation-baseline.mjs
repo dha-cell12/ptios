@@ -1,3 +1,4 @@
+import {restorePersistenceJSONMakefile} from './persistence-json-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -5,6 +6,7 @@ const hash=source=>createHash('sha256').update(source).digest('hex');
 export function indicatorBefore(){return readFileSync(new URL('../../test/fixtures/indicator-window-before-a02b.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');}
 export function indicatorWindow(source){const start=source.indexOf('// BEGIN indicator presentation.');assert.ok(start>=0);return source.slice(start);}
 export function checkIndicatorPresentation(source,helper,makefile){
+    makefile=restorePersistenceJSONMakefile(makefile,'pccontrol/Makefile');
     assert.equal(hash(source),'b3fb50e274d8f694b63905cc83230d6741c21d6b570b0720569cb9fe45e7c8c5','complete current indicator source');
     assert.equal(hash(helper),'7c3fe4fdf3ab0836152cb7ae021c813f631c194f2a1297842baf61684a2d8063','complete presentation core');
     let previous=source.replace(indicatorWindow(source),indicatorBefore());

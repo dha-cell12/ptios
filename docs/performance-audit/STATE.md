@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03aq — 2026-11-08
+
+- User reported C02c4 build passed (`b509e33b`). Implement shared quota-bound JSON persistence for event journals (4 MiB) and history indexes (32 MiB), across production root/roothide/TrollStore targets. Reject before accepting an oversized chunk, validate complete writer results, detach accepted buffers and retire rejected prefixes in finally. Keep atomic writes, file policy, ACK/recovery/notifications and ordinary record/evidence encoders.
+- All 90 workflow runners (36 source / 54 safety portable subsets) pass on Windows, including the corrected indicator Makefile reversal; 521 workflow source assertions and six-file assertion-macro checks pass. Complete production helper, real JSON and native fault/lifetime coverage are wired into the existing macOS sanitizer executables. Foundation internal allocations, full-file rewrites and device performance remain unqualified. Details: `IMPLEMENTATION-C03AQ.md`.
+
 ## Build correction — 2026-11-08
 
 - Fix C03aj native fixture compilation: compare the two `NSDictionary` transaction graphs directly with `isEqual:`. The `items` field belongs only to `HistoryTrimProbe`; its separate retention comparisons remain intact. Production source and compiler warnings are unchanged.

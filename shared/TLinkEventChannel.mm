@@ -1,3 +1,4 @@
+#include "TLinkPersistenceJSON.h"
 #import "TLinkEventChannel.h"
 #include "TLinkASCIIPreparation.h"
 #include "TLinkEventMetadata.h"
@@ -230,7 +231,7 @@ static BOOL TLinkEventWriteJournal(NSDictionary *journal)
 {
     @autoreleasepool {
     if (![NSJSONSerialization isValidJSONObject:journal]) return NO;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:journal options:0 error:nil];
+    NSData *data = TLinkPersistenceJSONData(journal,0,kTLinkEventJournalMaxBytes);
     NSString *path = TLinkEventJournalPath();
     if (!data || data.length > kTLinkEventJournalMaxBytes || ![data writeToFile:path atomically:YES]) return NO;
     chmod(path.fileSystemRepresentation, 0640);

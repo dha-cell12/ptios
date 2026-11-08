@@ -1,3 +1,5 @@
+import {checkPersistenceJSON} from './lib/persistence-json-baseline.mjs';
+checkPersistenceJSON();
 import {restoreHistoryIndexWork} from './lib/history-index-work-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
@@ -298,6 +300,7 @@ const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
         .replace('[NSMutableData dataWithLength:(NSUInteger)indexInfo.st_size]','historyIndexBuffer((NSUInteger)indexInfo.st_size,kTLinkRunHistoryIndexMaxBytes)')
         .replace('read(fd, (uint8_t *)indexData.mutableBytes + offset, count)','historyIndexRead(fd, (uint8_t *)indexData.mutableBytes + offset, count)')
         .replace('read(fd, &extra, 1)','historyIndexRead(fd, &extra, 1)')
+        .replace('TLinkPersistenceJSONData(object,options,kTLinkRunHistoryIndexMaxBytes)','historyEncodeJSONBounded(object,path,options,kTLinkRunHistoryIndexMaxBytes)')
         .replace('[NSJSONSerialization dataWithJSONObject:object options:options error:nil]','historyEncodeJSON(object,path,options)')
         .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)','historyRecoveryOpen(path.fileSystemRepresentation, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)')
         .replace('fstat(fd, &info)','historyRecoveryStat(fd, &info)')
@@ -334,10 +337,10 @@ if(process.platform!=='darwin'){
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'HistoryUnderTest.inc'),adaptedCurrent),writeFile(join(temp,'HistoryBeforeIndexWork.inc'),adaptedBeforeIndex),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
+        await Promise.all([writeFile(join(temp,'PersistenceJSONUnderTest.inc'),await read('shared/TLinkPersistenceJSON.mm')),writeFile(join(temp,'HistoryUnderTest.inc'),adaptedCurrent),writeFile(join(temp,'HistoryBeforeIndexWork.inc'),adaptedBeforeIndex),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
         const binary=join(temp,'run-history-runtime'),owner=join(temp,'work-owner.o');
         run(process.env.CXX||'clang++',['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
-        run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,join(root,'test/run-history-runtime-test.mm'),owner,'-o',binary]);
+        run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,'-I',join(root,'shared'),join(root,'test/run-history-runtime-test.mm'),owner,'-o',binary]);
         run(binary,[temp]);
     }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-run-history-'));await rm(temp,{recursive:true,force:true});}
 }

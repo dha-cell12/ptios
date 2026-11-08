@@ -1,3 +1,4 @@
+import {restorePersistenceJSON} from './persistence-json-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -9,6 +10,7 @@ export function checkEventPreparationFiles(core,counter){
 }
 export const eventPreparationBefore=name=>readFileSync(new URL('../../test/fixtures/event-preparation-'+name+'-before-c03ak.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function restoreEventPreparation(source){
+    source=restorePersistenceJSON(source,'event');
     if(!source.includes('#include "TLinkEventPreparation.h"'))return source;
     assert.equal(hash(source),spec.currentHash,'complete C03ak event source');
     source=source.replace('#include "TLinkEventPreparation.h"\n','').replace('#include "TLinkEventJSONCounter.inc"\n\n','');
