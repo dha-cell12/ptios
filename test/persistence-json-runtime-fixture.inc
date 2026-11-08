@@ -1,4 +1,9 @@
 // Compiled with the complete production implementation at global scope.
+// Fault injection widens the buffer contract only at this test call site.
+// Keep production NSOutputStream's nonnull API and its defensive checks intact.
+@protocol TLinkPersistenceJSONFaultWriter <NSObject>
+- (NSInteger)write:(const uint8_t * _Nullable)bytes maxLength:(NSUInteger)length;
+@end
 namespace PersistenceJSONFixture {
 enum class Mode {Good,Error,Zero,Negative,Mismatch,IgnoredRefusal,Closed,ThrowNS,ThrowCPP};
 static Mode mode=Mode::Good;
@@ -55,8 +60,9 @@ static void cases(){
     mode=Mode::Good;assert(!TLinkPersistenceJSONWithWriter(@[],0,1,writer));held=nil;
     mode=Mode::IgnoredRefusal;assert(!TLinkPersistenceJSONWithWriter(@[],0,1,writer));held=nil;
     TLinkPersistenceJSONStream *invalid=[[TLinkPersistenceJSONStream alloc] initWithLimit:16];[invalid open];
-    assert([invalid write:nullptr maxLength:0]==0&&invalid.byteCount==0);
-    assert([invalid write:nullptr maxLength:1]==-1&&invalid.failed&&invalid.byteCount==0);[invalid close];
+    id<TLinkPersistenceJSONFaultWriter> faultWriter=(id<TLinkPersistenceJSONFaultWriter>)invalid;
+    assert([faultWriter write:nullptr maxLength:0]==0&&invalid.byteCount==0);
+    assert([faultWriter write:nullptr maxLength:1]==-1&&invalid.failed&&invalid.byteCount==0);[invalid close];
     // Both production quotas refuse a whole incoming chunk before copying it.
     for(NSUInteger cap:{(NSUInteger)(4U*1024U*1024U),(NSUInteger)(32U*1024U*1024U)}){
         TLinkPersistenceJSONStream *stream=[[TLinkPersistenceJSONStream alloc] initWithLimit:cap];[stream open];

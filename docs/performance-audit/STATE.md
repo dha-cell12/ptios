@@ -5,6 +5,12 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Build correction — persistence JSON null fault calls (2026-11-08)
+
+- CI rejects the two direct `write:nullptr` test messages because the inherited NSOutputStream buffer parameter is nonnull and `-Werror` is active. Production stream behavior is unchanged. Use a test-only protocol with a nullable buffer at these intentional fault-injection call sites, retaining normal Objective-C dispatch to the actual stream implementation.
+- Keep both original assertions: null plus zero length is accepted without charging bytes; null plus nonzero length fails with no bytes accepted. Keep the SDK/production nonnull API, strict warnings and sanitizers. No diagnostic suppression or replacement stub is introduced.
+- History source/portable regression, two-file assertion macro preprocessing and diff whitespace checks pass on Windows. The corrected Foundation/ARC fixture still requires macOS CI to compile and execute.
+
 ## Build correction — prepared JSON invalid target (2026-11-08)
 
 - CI stopped at `storageOperationCases`: helper/backend 1, writeJSON, policy 2. That resolver fixture deliberately returns ok without a path. The prepared JSON string routed UTF8 writes through NSData even for nil targets, whereas the original path used NSString's writer. Select the original decoded NSString writer before IO for nil, empty and non-string targets; valid UTF8 paths retain the encoded-data route. There is no retry after a write failure or exception.
