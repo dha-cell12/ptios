@@ -1,3 +1,4 @@
+#include "TLinkOwnedReadBuffer.h"
 #include "TLinkHistoryRecoveryCompare.h"
 #include "TLinkPersistenceJSON.h"
 #include "TLinkHistoryRetirement.h"
@@ -361,14 +362,16 @@ static NSData *TLinkRunHistoryReadIndexData(BOOL *missing, NSString **code)
         if ((uint64_t)indexInfo.st_size > kTLinkRunHistoryIndexMaxBytes) {
             *code = @"index_too_large"; return nil;
         }
-        NSMutableData *indexData = [NSMutableData dataWithLength:(NSUInteger)indexInfo.st_size];
+        TLinkOwnedReadBuffer *indexData = [[TLinkOwnedReadBuffer alloc] initWithLength:(NSUInteger)indexInfo.st_size];
         if (!indexData) { *code = @"read_failed"; return nil; }
+        uint8_t *indexBytes = (uint8_t *)indexData.mutableBytes;
+        if (indexData.length && !indexBytes) { *code = @"read_failed"; return nil; }
         NSUInteger offset = 0;
         while (offset < indexData.length) {
             size_t count = MIN(indexData.length - offset, (NSUInteger)65536);
-            ssize_t got = read(fd, (uint8_t *)indexData.mutableBytes + offset, count);
+            ssize_t got = read(fd, indexBytes + offset, count);
             if (got < 0 && errno == EINTR) continue;
-            if (got <= 0) { *code = @"read_failed"; return nil; }
+            if (got <= 0 || (size_t)got > count || ![indexData commitBytes:(NSUInteger)got]) { *code = @"read_failed"; return nil; }
             offset += (NSUInteger)got;
         }
         // Cooperating atomic replacements leave this opened inode stable.
@@ -379,7 +382,9 @@ static NSData *TLinkRunHistoryReadIndexData(BOOL *missing, NSString **code)
             *code = got > 0 && indexData.length == kTLinkRunHistoryIndexMaxBytes ? @"index_too_large" : @"read_failed";
             return nil;
         }
-        return indexData;
+        NSData *result = [indexData takeData];
+        if (!result) *code = @"read_failed";
+        return result;
     } @finally { close(fd); }
 }
 
@@ -444,7 +449,7 @@ static BOOL TLinkRunHistoryRepairJSON(NSDictionary *expected, NSString *path, NS
             // Different sizes already prove a mismatch. Never read an arbitrary
             // artifact's full length; cap reads at the authoritative JSON size.
             if ((uint64_t)info.st_size == encoded.length) {
-                NSMutableData *data = nil;
+                TLinkOwnedReadBuffer *data = nil;
                 const auto comparison = TLinkHistoryRecoveryCompare::Compare(
                     (const uint8_t *)encoded.bytes, encoded.length,
                     [fd](uint8_t *bytes, size_t count) {
@@ -452,7 +457,7 @@ static BOOL TLinkRunHistoryRepairJSON(NSDictionary *expected, NSString *path, NS
                         return TLinkHistoryRecoveryCompare::Read(got, got < 0 ? errno : 0);
                     },
                     [&data](size_t length) -> uint8_t * {
-                        data = [NSMutableData dataWithLength:length];
+                        data = [[TLinkOwnedReadBuffer alloc] initWithLength:length];
                         return (uint8_t *)data.mutableBytes;
                     });
                 if (comparison == TLinkHistoryRecoveryCompare::Result::Exact) return YES;
@@ -460,7 +465,12 @@ static BOOL TLinkRunHistoryRepairJSON(NSDictionary *expected, NSString *path, NS
                     TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed");
                     return NO;
                 }
-                id stored = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                if (![data commitBytes:data.length]) {
+                    TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed"); return NO;
+                }
+                NSData *storedData = [data takeData];
+                if (!storedData) { TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed"); return NO; }
+                id stored = [NSJSONSerialization JSONObjectWithData:storedData options:0 error:nil];
                 if ([stored isEqual:expected]) return YES;
             }
         } @finally { close(fd); }

@@ -1,3 +1,4 @@
+#import "TLinkOwnedReadBuffer.h"
 #import "TLinkPersistenceJSON.h"
 #include "TLinkPersistenceJSONQuota.h"
 #include "TLinkPersistenceJSONBuffer.h"
@@ -94,3 +95,47 @@ static NSData *TLinkPersistenceJSONWithWriter(id object,NSJSONWritingOptions opt
 NSData *TLinkPersistenceJSONData(id object,NSJSONWritingOptions options,NSUInteger limit){
     return TLinkPersistenceJSONWithWriter(object,options,limit,TLinkPersistenceJSONWrite);
 }
+
+// BEGIN owned file read buffer.
+static NSData *TLinkOwnedReadCreateData(const std::shared_ptr<TLinkPersistenceJSONStorage::Buffer> &owner){
+    if(owner&&owner->size()==0)return [NSData data];
+    return TLinkPersistenceJSONCreateData(owner);
+}
+@interface TLinkOwnedReadBuffer ()
+- (instancetype)initWithLength:(NSUInteger)length allocator:(TLinkPersistenceJSONStorage::Allocator)allocator;
+- (NSData *)takeData:(TLinkPersistenceJSONDataFactory)factory;
+@end
+@implementation TLinkOwnedReadBuffer {
+    TLinkPersistenceJSONStorage::Buffer _storage;
+    NSUInteger _length,_committed;
+    BOOL _failed,_finished;
+}
+- (instancetype)initWithLength:(NSUInteger)length {
+    return [self initWithLength:length allocator:TLinkPersistenceJSONStorage::Allocator()];
+}
+- (instancetype)initWithLength:(NSUInteger)length allocator:(TLinkPersistenceJSONStorage::Allocator)allocator {
+    self=[super init];
+    if(self){
+        _length=length;_committed=0;_failed=_finished=NO;
+        _storage=TLinkPersistenceJSONStorage::Buffer(length,allocator);
+        if(!_storage.reserveForRead(length))return nil;
+    }
+    return self;
+}
+- (NSUInteger)length {return _length;}
+- (NSUInteger)committedLength {return _committed;}
+- (void *)mutableBytes {return !_failed&&!_finished?_storage.writableData():nullptr;}
+- (BOOL)commitBytes:(NSUInteger)length {
+    if(_failed||_finished)return NO;
+    if(!_storage.commitRead(length)){_failed=YES;return NO;}
+    _committed=_storage.size();return YES;
+}
+- (NSData *)takeData {return [self takeData:TLinkOwnedReadCreateData];}
+- (NSData *)takeData:(TLinkPersistenceJSONDataFactory)factory {
+    if(!factory||_failed||_finished||_committed!=_length||!_storage.seal())return nil;
+    auto owner=std::make_shared<TLinkPersistenceJSONStorage::Buffer>(std::move(_storage));
+    _finished=YES;
+    NSData *result=factory(owner);
+    return result&&result.length==_length?result:nil;
+}
+@end

@@ -56,6 +56,26 @@ public:
         if(count)std::memcpy(bytes_+size_,bytes,count);
         size_=required;return true;
     }
+    // Reserve storage without initializing it; no bytes become visible in size().
+    bool reserveForRead(std::size_t count){
+        if(error_!=Error::None)return false;
+        if(sealed_||size_){error_=Error::Invalid;return false;}
+        if(count>limit_){error_=Error::Limit;return false;}
+        if(!allocator_.resize||!allocator_.destroy){error_=Error::Invalid;return false;}
+        if(count>capacity_){
+            void *next=allocator_.resize(allocator_.context,bytes_,count);
+            if(!next){error_=Error::Allocation;return false;}
+            bytes_=static_cast<uint8_t *>(next);capacity_=count;
+        }
+        return true;
+    }
+    uint8_t *writableData(){return !sealed_&&error_==Error::None?bytes_:nullptr;}
+    bool commitRead(std::size_t count){
+        if(error_!=Error::None)return false;
+        if(sealed_){error_=Error::Sealed;return false;}
+        if(count>capacity_-size_){error_=Error::Limit;return false;}
+        size_+=count;return true;
+    }
     bool seal(){if(sealed_||error_!=Error::None)return false;sealed_=true;return true;}
     void release() noexcept {
         if(bytes_)allocator_.destroy(allocator_.context,bytes_);

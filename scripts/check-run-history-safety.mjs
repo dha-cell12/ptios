@@ -1,3 +1,4 @@
+import {restoreOwnedReadSource} from './lib/owned-read-buffer-baseline.mjs';
 import {persistenceJSONBeforeStorage} from './lib/persistence-json-storage-baseline.mjs';
 import {restoreHistoryRecoveryCodec,checkHistoryRecoveryCompare} from './lib/history-recovery-codec-baseline.mjs';
 import {checkPersistenceJSON} from './lib/persistence-json-baseline.mjs';
@@ -20,7 +21,8 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const between=(text,a,b)=>{const x=text.indexOf(a),y=text.indexOf(b,x+a.length);assert.ok(x>=0&&y>x,a);return text.slice(x,y);};
 const [actualHistory,frozen,commitFrozen]=await Promise.all(['shared/TLinkRunHistory.mm','test/fixtures/run-history-legacy-v1.inc','test/fixtures/run-history-commit-legacy-v1.inc'].map(read));
-const beforeRecoveryCodec=restoreHistoryRecoveryCodec(actualHistory);
+const beforeOwnedRead=restoreOwnedReadSource(actualHistory,'history');
+const beforeRecoveryCodec=restoreHistoryRecoveryCodec(beforeOwnedRead);
 checkHistoryRecoveryCompare(await read('shared/TLinkHistoryRecoveryCompare.h'));
 console.log('History recovery codec source passed: one-pass exact/fallback comparison, pre-encoded repair writes and complete preceding writer/recovery source.');
 const preparedHistory=restoreHistoryIndexWork(actualHistory);
@@ -307,6 +309,8 @@ const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
         .replace('[NSMutableData dataWithLength:(NSUInteger)(consoleInfo.st_size - start)]','historyConsoleBuffer((NSUInteger)(consoleInfo.st_size - start))')
         .replace('pread(fd, (uint8_t *)data.mutableBytes + offset, count, start + (off_t)offset)','historyConsoleRead(fd, (uint8_t *)data.mutableBytes + offset, count, start + (off_t)offset)')
         .replace('[NSMutableData dataWithLength:(NSUInteger)indexInfo.st_size]','historyIndexBuffer((NSUInteger)indexInfo.st_size,kTLinkRunHistoryIndexMaxBytes)')
+        .replace('[[TLinkOwnedReadBuffer alloc] initWithLength:(NSUInteger)indexInfo.st_size]','historyIndexOwnedBuffer((NSUInteger)indexInfo.st_size,kTLinkRunHistoryIndexMaxBytes)')
+        .replace('read(fd, indexBytes + offset, count)','historyIndexRead(fd, indexBytes + offset, count)')
         .replace('read(fd, (uint8_t *)indexData.mutableBytes + offset, count)','historyIndexRead(fd, (uint8_t *)indexData.mutableBytes + offset, count)')
         .replace('read(fd, &extra, 1)','historyIndexRead(fd, &extra, 1)')
         .replace('TLinkPersistenceJSONData(object,options,kTLinkRunHistoryIndexMaxBytes)','historyEncodeJSONBounded(object,path,options,kTLinkRunHistoryIndexMaxBytes)')
@@ -315,6 +319,8 @@ const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
         .replace('fstat(fd, &info)','historyRecoveryStat(fd, &info)')
         .replace('read(fd, bytes, count)','historyRecoveryRead(fd, bytes, count)')
         .replace('[NSMutableData dataWithLength:length]','historyRecoveryBuffer(length)')
+        .replace('[[TLinkOwnedReadBuffer alloc] initWithLength:length]','historyRecoveryOwnedBuffer(length)')
+        .replace('[NSJSONSerialization JSONObjectWithData:storedData options:0 error:nil]','historyRecoveryDecode(storedData)')
         .replace('[NSMutableData dataWithLength:encoded.length]','historyRecoveryBuffer(encoded.length)')
         .replace('[NSJSONSerialization dataWithJSONObject:expected options:NSJSONWritingPrettyPrinted error:nil]','historyRecoveryEncode(expected)')
         .replace('[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]','historyRecoveryDecode(data)')
@@ -332,7 +338,7 @@ const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
         .replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)')
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
 const adaptedCurrent=adapt(actualHistory),adaptedBeforeIndex=adapt(preparedHistory);
-for(const hook of ['historyRecoveryRead(fd, bytes, count)','historyRecoveryBuffer(length)','historyRecoveryEncode(expected)','historyRecoveryDecode(data)']){
+for(const hook of ['historyRecoveryRead(fd, bytes, count)','historyRecoveryOwnedBuffer(length)','historyRecoveryEncode(expected)','historyRecoveryDecode(storedData)']){
     assert.equal(adaptedCurrent.split(hook).length-1,1,'one current recovery hook: '+hook);
 }
 for(const fixture of [adaptedCurrent,adaptedBeforeIndex]){
@@ -354,7 +360,7 @@ if(process.platform!=='darwin'){
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
-        await Promise.all([writeFile(join(temp,'PersistenceJSONBeforeStorage.inc'),previousJSON),writeFile(join(temp,'PersistenceJSONUnderTest.inc'),await read('shared/TLinkPersistenceJSON.mm')),writeFile(join(temp,'HistoryBeforeRecoveryCodec.inc'),adapt(beforeRecoveryCodec)),writeFile(join(temp,'HistoryUnderTest.inc'),adaptedCurrent),writeFile(join(temp,'HistoryBeforeIndexWork.inc'),adaptedBeforeIndex),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
+        await Promise.all([writeFile(join(temp,'PersistenceJSONBeforeStorage.inc'),previousJSON),writeFile(join(temp,'PersistenceJSONUnderTest.inc'),await read('shared/TLinkPersistenceJSON.mm')),writeFile(join(temp,'HistoryBeforeOwnedRead.inc'),adapt(beforeOwnedRead)),writeFile(join(temp,'HistoryBeforeRecoveryCodec.inc'),adapt(beforeRecoveryCodec)),writeFile(join(temp,'HistoryUnderTest.inc'),adaptedCurrent),writeFile(join(temp,'HistoryBeforeIndexWork.inc'),adaptedBeforeIndex),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
         const binary=join(temp,'run-history-runtime'),owner=join(temp,'work-owner.o');
         const lockProbe=join(temp,'history-lock-probe');
         run(process.env.CXX||'clang++',['-std=c++11','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer',join(root,'test/history-lock-probe.cpp'),'-o',lockProbe]);

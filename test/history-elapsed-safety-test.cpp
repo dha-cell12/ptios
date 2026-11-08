@@ -8,7 +8,9 @@
 #include "persistence-json-safety-fixture.inc"
 #include "history-recovery-compare-safety-fixture.inc"
 #include "persistence-json-buffer-safety-fixture.inc"
+#include "owned-read-buffer-safety-fixture.inc"
 int main(){
+    ownedReadBufferCases();
     persistenceJSONBufferCases();
     historyRecoveryCompareCases();
     persistenceJSONQuotaCases();

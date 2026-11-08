@@ -1,0 +1,47 @@
+{
+  "files": {
+    "core": {
+      "file": "shared/TLinkPersistenceJSONBuffer.h",
+      "beforeHash": "ac4d7e2092aceb0f8b667a20950e28522405fadcd89dd2d7ef46bd8ea2f150b7",
+      "currentHash": "48e55e1b05c7072f9b09e66f83d0bc023d294da81e171458ac0fefed9c8988dc"
+    },
+    "module": {
+      "file": "shared/TLinkPersistenceJSON.mm",
+      "beforeHash": "73593bae4d5de2f0cc32b971c73069f339d5e57d6789331f2f4cbc694352b8e6",
+      "currentHash": "8b583882b018f9a3ae42c6ea8dea30ce3af4f01bb2deff411dfd4a7fec349504"
+    }
+  },
+  "sources": {
+    "history": {
+      "beforeHash": "aefe2061272ea8b9254b28425800a8eec6f7791e7d14065d36677f52f419e710",
+      "currentHash": "86454e59c9afb142657b1bb028bd4e9ac15c1780697fe0ce5afae65d3e7d0c44",
+      "parts": [
+        {
+          "name": "index",
+          "start": "static NSData *TLinkRunHistoryReadIndexData(",
+          "end": "// All persisted reads distinguish",
+          "currentHash": "31465e47df6e8f77f065a870dfed581ed6b4a26538f8454c87bc28bf4e99f2d1"
+        },
+        {
+          "name": "repair",
+          "start": "static BOOL TLinkRunHistoryRepairJSON(",
+          "end": "static BOOL TLinkRunHistoryRecover(",
+          "currentHash": "e57aa0ad2353431d67967dee39fcde9ceb5e6bb2ec2847b3952f1384c19185f5"
+        }
+      ]
+    },
+    "event": {
+      "beforeHash": "5006b1b7f4375e339307f64eafd7158cb6bc6eb431b8e111356e68b0216c9b88",
+      "currentHash": "d697eb18d64dda5cc440399e18950d9d1b07ce3341ca491ecb6d2ea6a256a79c",
+      "parts": [
+        {
+          "name": "journal",
+          "start": "static NSData *TLinkEventReadJournalData(",
+          "end": "// Checked reads must never",
+          "currentHash": "29c265194460e0abd46ac5519fc378f428f2bad73ba90e4ab44f14835d80a2eb"
+        }
+      ]
+    }
+  },
+  "headerHash": "183db612caadf749a08d8e8698a674d124b0a105f3f8ce637128375e58dc8ae5"
+}

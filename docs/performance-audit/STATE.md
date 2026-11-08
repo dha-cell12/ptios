@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03at — 2026-11-09
+
+- User reported C03as build passed (`d92471b9`). Combine direct owned reads for history index, recovery fallback and event journal: reserve without explicit zero-fill, commit only produced bytes and publish immutable NSData only after complete read/EOF validation. Keep fresh reads, 32/4-MiB admission and authoritative recovery size, parser/lock/IO/error/ACK policy.
+- All 90 workflow runners (36 source / 54 safety portable subsets), 521 workflow source assertions, eleven-file assertion macro preprocessing, JavaScript syntax and diff whitespace checks pass on Windows, including 100k new poisoned-memory commit/content oracles and prior storage/lifecycle suites. Add 132 complete old/current native reader comparisons plus allocation/factory/partial-publication/caller-pool ownership cases in existing sanitizer executables. Native/dependency paths for event/history/socket use the already linked module; no new implementation target. Foundation/OS zeroing, object overhead, aggregate memory and device latency remain unmeasured. Details: `IMPLEMENTATION-C03AT.md`.
+
 ## Implementation C03as — 2026-11-09
 
 - User reported the corrected C03ar/C03aq build passed (`5270db98`). Combine capacity-bounded raw JSON storage, sealed immutable NSData ownership handoff, factory-length coherence and failed-prefix cleanup for shared event/history persistence. Keep 4/32-MiB limits, public helper/caller APIs and atomic/permission/lock/marker/ACK/event source.

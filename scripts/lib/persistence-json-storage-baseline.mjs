@@ -1,3 +1,4 @@
+import {restoreOwnedReadFile,checkOwnedReadHeader} from './owned-read-buffer-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -8,6 +9,7 @@ export function persistenceJSONBeforeStorage(){
     assert.equal(hash(before),spec.beforeHash,'complete preceding JSON stream');return before;
 }
 export function restorePersistenceJSONStorage(source){
+    source=restoreOwnedReadFile(source,'module');
     assert.equal(hash(source),spec.currentHash,'complete owned persistence stream');return persistenceJSONBeforeStorage();
 }
-export function checkPersistenceJSONStorage(core){assert.equal(hash(core),spec.coreHash,'complete bounded JSON storage core');}
+export function checkPersistenceJSONStorage(core){checkOwnedReadHeader();assert.equal(hash(restoreOwnedReadFile(core,'core')),spec.coreHash,'complete bounded JSON storage core');}

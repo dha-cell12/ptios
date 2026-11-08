@@ -1,3 +1,4 @@
+import {ownedReadBefore} from './lib/owned-read-buffer-baseline.mjs';
 import {checkPersistenceJSON} from './lib/persistence-json-baseline.mjs';
 checkPersistenceJSON();
 import {restoreEventPreparation,eventPreparationBefore,checkEventPreparationFiles} from './lib/event-preparation-baseline.mjs';
@@ -193,14 +194,25 @@ try {
   .replace('fchown(fd, 501, 501)','FixtureEventFchown(fd, 501, 501)')
   .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)','FixtureJournalOpen(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)')
   .replace('fstat(fd, &info)','FixtureJournalStat(fd, &info)')
+  .replace('[[TLinkOwnedReadBuffer alloc] initWithLength:(NSUInteger)info.st_size]','FixtureJournalOwnedBuffer((NSUInteger)info.st_size, kTLinkEventJournalMaxBytes)')
+  .replace('read(fd, dataBytes + offset, count)','FixtureJournalRead(fd, dataBytes + offset, count)')
   .replace('[NSMutableData dataWithLength:(NSUInteger)info.st_size]','FixtureJournalBuffer((NSUInteger)info.st_size, kTLinkEventJournalMaxBytes)')
   .replace('read(fd, (uint8_t *)data.mutableBytes + offset, count)','FixtureJournalRead(fd, (uint8_t *)data.mutableBytes + offset, count)')
   .replace('read(fd, &extra, 1)','FixtureJournalRead(fd, &extra, 1)');
  assert.notEqual(fixture,event);
+ const beforeOwnedRead=ownedReadBefore('event','journal').replace('static NSData *TLinkEventReadJournalData(','static NSData *FixtureBeforeOwnedJournalData(')
+  .replace('open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)','FixtureJournalOpen(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)')
+  .replace('fstat(fd, &info)','FixtureJournalStat(fd, &info)')
+  .replace('[NSMutableData dataWithLength:(NSUInteger)info.st_size]','FixtureJournalBuffer((NSUInteger)info.st_size, kTLinkEventJournalMaxBytes)')
+  .replace('read(fd, (uint8_t *)data.mutableBytes + offset, count)','FixtureJournalRead(fd, (uint8_t *)data.mutableBytes + offset, count)')
+  .replace('read(fd, &extra, 1)','FixtureJournalRead(fd, &extra, 1)')
+  .replace('close(fd)','FixtureEventClose(fd)');
+ assert.equal((beforeOwnedRead.match(/static NSData \*FixtureBeforeOwnedJournalData/g)||[]).length,1,'one complete preceding journal reader');
  const syncFixture = source => source.replaceAll('TLinkEventChannelPollBody(body,', 'FixtureEventSyncPoll(body,')
   .replaceAll('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)');
  const trollSyncFixture = (name,source) => `static NSData *${name}(int taskType,NSString *body) {\n${syncFixture(source)}    return nil;\n}\n`;
  const fixtures = {
+  'EventReadBeforeOwned.inc': beforeOwnedRead,
   'EventWireUnderTest.inc': actualEventWire.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)')
    .replace('[NSMutableData dataWithLength:length]','FixtureEventWireBuffer(length)').replace('TLinkEventWireEncoding::Encode(','FixtureEventDirectEncode('),
   'EventWireBeforeDirect.inc': eventWire.replace('TLinkEventLegacyBatchResponse(','FixtureBeforeDirectEventWire(').replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)'),

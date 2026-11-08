@@ -1,3 +1,4 @@
+import {restoreOwnedReadSource} from './owned-read-buffer-baseline.mjs';
 import {restorePersistenceJSONStorage,checkPersistenceJSONStorage} from './persistence-json-storage-baseline.mjs';
 import {restoreHistoryRecoveryCodec} from './history-recovery-codec-baseline.mjs';
 import assert from 'node:assert/strict';
@@ -7,6 +8,7 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 const read=p=>readFileSync(new URL('../../'+p,import.meta.url),'utf8').replaceAll('\r\n','\n');
 const specs=JSON.parse(readFileSync(new URL('./persistence-json-specs.json',import.meta.url),'utf8'));
 export function restorePersistenceJSON(source,kind){
+    source=restoreOwnedReadSource(source,kind);
     if(kind==='history')source=restoreHistoryRecoveryCodec(source);
     const spec=specs[kind];
     if(!source.includes(spec.include.trimEnd()))return source;

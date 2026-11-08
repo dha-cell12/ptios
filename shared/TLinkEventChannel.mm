@@ -1,3 +1,4 @@
+#include "TLinkOwnedReadBuffer.h"
 #include "TLinkPersistenceJSON.h"
 #import "TLinkEventChannel.h"
 #include "TLinkASCIIPreparation.h"
@@ -155,14 +156,16 @@ static NSData *TLinkEventReadJournalData(BOOL *missing, NSString **error)
         if ((uint64_t)info.st_size > kTLinkEventJournalMaxBytes) {
             *error = @"event_journal_too_large"; return nil;
         }
-        NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)info.st_size];
+        TLinkOwnedReadBuffer *data = [[TLinkOwnedReadBuffer alloc] initWithLength:(NSUInteger)info.st_size];
         if (!data) { *error = @"event_journal_read_failed"; return nil; }
+        uint8_t *dataBytes = (uint8_t *)data.mutableBytes;
+        if (data.length && !dataBytes) { *error = @"event_journal_read_failed"; return nil; }
         NSUInteger offset = 0;
         while (offset < data.length) {
             size_t count = MIN(data.length - offset, (NSUInteger)65536);
-            ssize_t got = read(fd, (uint8_t *)data.mutableBytes + offset, count);
+            ssize_t got = read(fd, dataBytes + offset, count);
             if (got < 0 && errno == EINTR) continue;
-            if (got <= 0) { *error = @"event_journal_read_failed"; return nil; }
+            if (got <= 0 || (size_t)got > count || ![data commitBytes:(NSUInteger)got]) { *error = @"event_journal_read_failed"; return nil; }
             offset += (NSUInteger)got;
         }
         // Atomic cooperating writers leave this opened inode stable. Refuse observed growth.
@@ -173,7 +176,9 @@ static NSData *TLinkEventReadJournalData(BOOL *missing, NSString **error)
             *error = got > 0 && data.length == kTLinkEventJournalMaxBytes ? @"event_journal_too_large" : @"event_journal_read_failed";
             return nil;
         }
-        return data;
+        NSData *result = [data takeData];
+        if (!result) *error = @"event_journal_read_failed";
+        return result;
     } @finally { close(fd); }
 }
 

@@ -1594,6 +1594,8 @@ Measure main-thread CPU, wakeups/s, timer fires/s, license checks/s, plist reads
 
 ### [P1-48] Run-history index embeds failure evidence and is fully read/parsed/re-written on every begin/finish
 
+C03at follow-up (2026-11-09): index/event reads and the recovery mismatch buffer now reserve raw storage without explicit zero-fill, commit only produced bytes and seal into immutable NSData after complete read/EOF checks. Admission, fresh reads, schema/authority/lock/ACK/source remain; incomplete/failing publication refuses output. All90 Windows runners and 100k new poisoned-memory direct-fill oracles pass. Native132 complete predecessor/current readers plus factory/lifetime checks await macOS CI. Full read/parse/rewrite, OS/Foundation memory costs, added small-object overhead and device performance remain open. See `IMPLEMENTATION-C03AT.md`.
+
 C03as follow-up (2026-11-09): persistence JSON now caps raw buffer capacity/allocation requests at its existing 4-MiB/32-MiB writer quota, seals bytes into an owned immutable NSData and retires rejected prefixes without publishing partial output. Factory length/NS/C++ failure and actual output ownership are checked while preserving caller/atomic/ACK/recovery source. 100k portable content/capacity oracles and 80k owner lifecycles pass; full preceding/current Foundation and real NSData/factory/lifetime checks await macOS CI. Foundation allocations, allocator rounding/realloc overlap, retained concurrent outputs and device RSS/latency remain outside the claim. See `IMPLEMENTATION-C03AS.md`.
 
 C03ar follow-up (2026-11-08): history recovery compares same-size canonical artifacts in 64-KiB chunks before allocating a second full buffer/JSON graph. First mismatch reconstructs only the already verified prefix, then retains the original semantic decode/equality path, so formatting-only differences are not rewritten. Necessary repairs reuse the initial encoded NSData through the checked atomic writer instead of encoding again. Existing private decoded-graph, path/lock/marker/ACK/event and full-rewrite contracts remain; noncanonical fallback and authoritative pretty encoding/RSS/device costs are unqualified. Source/100k portable engine checks pass; native current/C03aq file/fault/count parity awaits macOS CI. See `IMPLEMENTATION-C03AR.md`.
@@ -1693,6 +1695,8 @@ Delete oldest completed run logs only after the active run closes its writer. Ke
 ---
 
 ### [P1-51] Status task synchronously re-reads persistence files on every request
+
+C03at follow-up (2026-11-09): index/event reads and the recovery mismatch buffer now reserve raw storage without explicit zero-fill, commit only produced bytes and seal into immutable NSData after complete read/EOF checks. Admission, fresh reads, schema/authority/lock/ACK/source remain; incomplete/failing publication refuses output. All90 Windows runners and 100k new poisoned-memory direct-fill oracles pass. Native132 complete predecessor/current readers plus factory/lifetime checks await macOS CI. Full read/parse/rewrite, OS/Foundation memory costs, added small-object overhead and device performance remain open. See `IMPLEMENTATION-C03AT.md`.
 
 C03aj preparation follow-up (2026-11-07): checked history reads now reuse the private parsed mutable runs array, retain immutable fallback and retire read/validation scratch before downstream formatting. Cold recovery gets validation pools; ordered retirement uses one tail-range erase with bounded initial hints. No index cache or skipped read/lock is introduced. Portable/source checks pass; full preceding native graph/transaction/lifetime and device qualification pending. Full index reads/rewrites remain. See `IMPLEMENTATION-C03AJ.md`.
 
@@ -1964,6 +1968,8 @@ Acceptance: capacity and idle I/O return to baseline immediately after disconnec
 ## P1 — S008 High Priority
 
 ### [P1-54] Every event publication rewrites the complete 256-event journal under an exclusive file lock
+
+C03at follow-up (2026-11-09): index/event reads and the recovery mismatch buffer now reserve raw storage without explicit zero-fill, commit only produced bytes and seal into immutable NSData after complete read/EOF checks. Admission, fresh reads, schema/authority/lock/ACK/source remain; incomplete/failing publication refuses output. All90 Windows runners and 100k new poisoned-memory direct-fill oracles pass. Native132 complete predecessor/current readers plus factory/lifetime checks await macOS CI. Full read/parse/rewrite, OS/Foundation memory costs, added small-object overhead and device performance remain open. See `IMPLEMENTATION-C03AT.md`.
 
 C03as follow-up (2026-11-09): persistence JSON now caps raw buffer capacity/allocation requests at its existing 4-MiB/32-MiB writer quota, seals bytes into an owned immutable NSData and retires rejected prefixes without publishing partial output. Factory length/NS/C++ failure and actual output ownership are checked while preserving caller/atomic/ACK/recovery source. 100k portable content/capacity oracles and 80k owner lifecycles pass; full preceding/current Foundation and real NSData/factory/lifetime checks await macOS CI. Foundation allocations, allocator rounding/realloc overlap, retained concurrent outputs and device RSS/latency remain outside the claim. See `IMPLEMENTATION-C03AS.md`.
 

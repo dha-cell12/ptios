@@ -148,6 +148,9 @@ static int historyIndexStat(int fd,struct stat *info){
 static NSMutableData *historyIndexBuffer(NSUInteger length,NSUInteger limit){
     assert(length<=limit);++historyIndexAllocations;return [NSMutableData dataWithLength:length];
 }
+static TLinkOwnedReadBuffer *historyIndexOwnedBuffer(NSUInteger length,NSUInteger limit){
+    assert(length<=limit);++historyIndexAllocations;return [[TLinkOwnedReadBuffer alloc] initWithLength:length];
+}
 static ssize_t historyIndexRead(int fd,void *bytes,size_t count){
     assert(historyIndexFds.count(fd)&&count>0&&count<=65536);++historyIndexReadCalls;
     if(historyIndexReadFault==1){historyIndexReadFault=6;errno=EINTR;return -1;}
@@ -198,6 +201,13 @@ static NSMutableData *historyRecoveryBuffer(NSUInteger length){
     if(historyRecoveryBufferFault==2)[NSException raise:@"HistoryFixture" format:@"recovery buffer failed"];
     if(historyRecoveryBufferFault==3)throw std::runtime_error("recovery buffer failed");
     return [NSMutableData dataWithLength:length];
+}
+static TLinkOwnedReadBuffer *historyRecoveryOwnedBuffer(NSUInteger length){
+    ++historyRecoveryBuffers;
+    if(historyRecoveryBufferFault==1)return nil;
+    if(historyRecoveryBufferFault==2)[NSException raise:@"HistoryFixture" format:@"recovery buffer failed"];
+    if(historyRecoveryBufferFault==3)throw std::runtime_error("recovery buffer failed");
+    return [[TLinkOwnedReadBuffer alloc] initWithLength:length];
 }
 static unsigned historyPruneFault=0;
 static NSString *historyPruneTarget;
@@ -344,6 +354,11 @@ namespace Current {
 static NSString *fixtureRoot;
 NSString *TLinkRunHistoryRootPath(void);
 #include "HistoryUnderTest.inc"
+}
+namespace BeforeOwnedRead {
+static NSString *fixtureRoot;
+NSString *TLinkRunHistoryRootPath(void);
+#include "HistoryBeforeOwnedRead.inc"
 }
 namespace BeforeRecoveryCodec {
 static NSString *fixtureRoot;
@@ -1071,7 +1086,9 @@ static void historyCompactIndexCases(){
 #include "history-index-work-runtime-fixture.inc"
 #include "persistence-json-runtime-fixture.inc"
 #include "persistence-json-storage-runtime-fixture.inc"
+#include "owned-read-buffer-runtime-fixture.inc"
 #include "history-recovery-codec-runtime-fixture.inc"
+#include "owned-read-history-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     const std::string ownExecutable(argv[0]);const size_t slash=ownExecutable.find_last_of('/');
     assert(slash!=std::string::npos);historyLockProbeExecutable=ownExecutable.substr(0,slash+1)+"history-lock-probe";
@@ -1200,6 +1217,8 @@ int main(int argc,char **argv){@autoreleasepool{
     historyRecoveryCodecCases();
     PersistenceJSONFixture::cases();
     PersistenceStorageNativeFixture::cases();
+    OwnedReadNativeFixture::cases();
+    historyOwnedReadCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

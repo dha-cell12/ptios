@@ -15,7 +15,7 @@ struct Trace {
         if(trace.throwNext){trace.throwNext=false;throw std::runtime_error("resize");}
         if(trace.requests==trace.failRequest)return nullptr;
         void *next=std::malloc(size);if(!next)return nullptr;
-        ++trace.allocations;
+        ++trace.allocations;std::memset(next,0xa5,size);
         if(bytes){
             const auto old=trace.blocks.find(bytes);assert(old!=trace.blocks.end());
             std::memcpy(next,bytes,old->second<size?old->second:size);

@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "../shared/TLinkOwnedReadBuffer.h"
 #import <CoreFoundation/CoreFoundation.h>
 #include <dispatch/dispatch.h>
 #include <arpa/inet.h>
@@ -115,6 +116,9 @@ static int FixtureJournalStat(int fd,struct stat *info) {
 static NSMutableData *FixtureJournalBuffer(NSUInteger length,NSUInteger limit) {
     assert(length<=limit);++fixtureJournalAllocations;return [NSMutableData dataWithLength:length];
 }
+static TLinkOwnedReadBuffer *FixtureJournalOwnedBuffer(NSUInteger length,NSUInteger limit) {
+    assert(length<=limit);++fixtureJournalAllocations;return [[TLinkOwnedReadBuffer alloc] initWithLength:length];
+}
 static ssize_t FixtureJournalRead(int fd,void *bytes,size_t count) {
     assert(fixtureJournalFds.count(fd)&&count>0&&count<=65536);++fixtureJournalReads;
     if(fixtureJournalReadFault==1){fixtureJournalReadFault=6;errno=EINTR;return -1;}
@@ -151,6 +155,7 @@ static NSInteger FixtureEventDefaultCountWrite(id object,NSOutputStream *stream,
 static NSData *FixtureEventFallbackPayloadData(id object);
 static NSData *FixtureEventLegacyPayloadData(id object);
 #include "EventChannelUnderTest.inc"
+#include "EventReadBeforeOwned.inc"
 #include "EventPayloadBefore.inc"
 #include "EventBatchBefore.inc"
 #include "EventMetadataBeforeHelpers.inc"
@@ -551,6 +556,7 @@ static void fixtureBoundedJournalCases() {
 #include "event-metadata-runtime-fixture.inc"
 #include "event-preparation-runtime-fixture.inc"
 #include "event-direct-wire-runtime-fixture.inc"
+#include "owned-read-event-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
@@ -570,6 +576,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     error = nil; (void)TLinkEventChannelPollBody(@"18446744073709551616;;0;;8;;*",&error); assert([error isEqual:@"event_request_invalid"]);
     fixtureCheckedReadCases(tail);
     fixtureBoundedJournalCases();
+    fixtureOwnedJournalReadCases();
     fputs("Event runtime: quiet wait, cross-process notification and lost-hint reconciliation\n",stderr);
     dispatch_semaphore_t delivered = dispatch_semaphore_create(0);
     __block NSDictionary *received = nil;
