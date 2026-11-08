@@ -24,3 +24,9 @@ This bounds the logical bytes accepted by the producer-owned output buffer. It d
 The Foundation fixture directly passed nullptr to NSOutputStream's nonnull buffer parameter, so Clang stopped under `-Werror,-Wnonnull` before running the test. Route only the two intentional invalid-input calls through a test-only protocol declaring that parameter nullable. The receiver is the same real production stream and dispatch remains an ordinary Objective-C message. Production source/header, SDK contract, warnings, sanitizer flags, zero-length acceptance and nonzero-length rejection assertions remain unchanged.
 
 Focused history source/portable regression, two-file assertion argument preprocessing and diff whitespace pass on Windows. This is not Apple type checking; corrected Foundation/ARC compilation and runtime execution await macOS CI.
+
+### Follow-up — complete fixture pointer annotations
+
+The first protocol correction exposed `-Wnullability-completeness` at five unannotated pointer positions elsewhere in the same include. Explicitly mark held stream state nullable, the unused object parameter nullable, the live stream parameter nonnull, and the NSError out-parameter as a nullable object behind a nonnull autoreleasing pointer. The intentional null-buffer calls and their original assertions remain; production sources and strict build flags are unchanged.
+
+History source/portable regression, assertion macro preprocessing and diff whitespace pass on Windows. Foundation/ARC compilation and execution still require macOS CI.

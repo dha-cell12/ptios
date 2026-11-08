@@ -7,8 +7,9 @@
 namespace PersistenceJSONFixture {
 enum class Mode {Good,Error,Zero,Negative,Mismatch,IgnoredRefusal,Closed,ThrowNS,ThrowCPP};
 static Mode mode=Mode::Good;
-static NSOutputStream *held;
-static NSInteger writer(id object,NSOutputStream *stream,NSJSONWritingOptions options,NSError *__autoreleasing *error){
+static NSOutputStream * _Nullable held;
+static NSInteger writer(id _Nullable object,NSOutputStream * _Nonnull stream,NSJSONWritingOptions options,
+                        NSError * _Nullable __autoreleasing * _Nonnull error){
     (void)object;(void)options;held=stream;
     const uint8_t bytes[]={'[',']'};
     const NSInteger written=[stream write:bytes maxLength:sizeof(bytes)];

@@ -5,6 +5,12 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Build correction — persistence fixture nullability completeness (2026-11-08)
+
+- The preceding null-fault protocol introduced an explicit nullable declaration in the fixture, enabling Clang's per-file completeness checks. Annotate all five reported pointer positions: nullable retained stream, nullable unused object, nonnull live stream, nullable NSError value and nonnull autoreleasing out-pointer.
+- Keep the test-only nullable fault protocol, both null-buffer assertions and the complete production implementation unchanged. No warning/sanitizer flag or assertion is removed.
+- History source/portable checks, two-file assertion argument preprocessing and diff whitespace checks pass on Windows. The corrected Foundation/ARC file still needs macOS CI compilation/execution; macro preprocessing is not Apple type checking.
+
 ## Build correction — persistence JSON null fault calls (2026-11-08)
 
 - CI rejects the two direct `write:nullptr` test messages because the inherited NSOutputStream buffer parameter is nonnull and `-Werror` is active. Production stream behavior is unchanged. Use a test-only protocol with a nullable buffer at these intentional fault-injection call sites, retaining normal Objective-C dispatch to the actual stream implementation.
