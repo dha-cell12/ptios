@@ -5,6 +5,12 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Build correction — independent history lock probe (2026-11-08)
+
+- CI stopped inside historyChildCanLock's combined wait/exit assertion. Its fork child collapsed open/unexpected-flock failures to exit 2 and did not identify wait/signal failures. Replace this fixture probe with a separately compiled POSIX executable launched through posix_spawn, avoiding reuse of the Foundation/ASan parent runtime. Child close actions retire every inherited held-lock descriptor before exec; the probe opens its own nonblocking/no-follow description.
+- Preserve every shared/exclusive admission assertion and the 32 paired-reader lifecycles. Retry only EINTR for open/flock; classify only EWOULDBLOCK/EAGAIN as contention. Keep all other child exits fatal, now with syscall stage/errno and parent wait/exit/signal diagnostics. Add native preflight for idle shared/exclusive admission and explicit missing-file failure. Sanitizers, warning flags and the 120-second runtime deadline remain enabled.
+- History source/portable regression, three-file assertion macro preprocessing, JavaScript syntax and diff whitespace checks pass on Windows. Actual POSIX probe and Foundation integration still require macOS CI. Production history/locking source is unchanged; the supplied log alone does not distinguish which child failure caused the earlier assertion.
+
 ## Build correction — persistence fixture nullability completeness (2026-11-08)
 
 - The preceding null-fault protocol introduced an explicit nullable declaration in the fixture, enabling Clang's per-file completeness checks. Annotate all five reported pointer positions: nullable retained stream, nullable unused object, nonnull live stream, nullable NSError value and nonnull autoreleasing out-pointer.

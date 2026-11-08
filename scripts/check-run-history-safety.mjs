@@ -351,6 +351,15 @@ if(process.platform!=='darwin'){
     try{
         await Promise.all([writeFile(join(temp,'PersistenceJSONUnderTest.inc'),await read('shared/TLinkPersistenceJSON.mm')),writeFile(join(temp,'HistoryBeforeRecoveryCodec.inc'),adapt(beforeRecoveryCodec)),writeFile(join(temp,'HistoryUnderTest.inc'),adaptedCurrent),writeFile(join(temp,'HistoryBeforeIndexWork.inc'),adaptedBeforeIndex),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
         const binary=join(temp,'run-history-runtime'),owner=join(temp,'work-owner.o');
+        const lockProbe=join(temp,'history-lock-probe');
+        run(process.env.CXX||'clang++',['-std=c++11','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer',join(root,'test/history-lock-probe.cpp'),'-o',lockProbe]);
+        const probeFile=join(temp,'probe-preflight.lock');await writeFile(probeFile,'');
+        run(lockProbe,[probeFile,'shared']);run(lockProbe,[probeFile,'exclusive']);
+        const missingProbe=spawnSync(lockProbe,[join(temp,'missing-probe.lock'),'exclusive'],{cwd:root,encoding:'utf8',timeout:10000});
+        if(missingProbe.error)throw missingProbe.error;
+        assert.equal(missingProbe.status,2,'missing probe file is an open error, never contention; signal='+missingProbe.signal+' stderr='+missingProbe.stderr);
+        assert.match(missingProbe.stderr,/stage=open errno=/);
+        console.log('History lock probe preflight passed: independent shared/exclusive admission and explicit missing-file error.');
         run(process.env.CXX||'clang++',['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
         run(process.env.CXX||'clang++',['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-I',temp,'-I',join(root,'shared'),join(root,'test/run-history-runtime-test.mm'),owner,'-o',binary]);
         run(binary,[temp]);

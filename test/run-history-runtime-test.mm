@@ -17,6 +17,7 @@
 #include <functional>
 #include <mutex>
 #include <set>
+#include <string>
 #include <stdexcept>
 #include <vector>
 #include "../shared/TLinkRunElapsed.h"
@@ -34,6 +35,7 @@ extern "C" void TLinkAXFixtureOwnerDidDrain(void){}
 static void historyWorkOwner(){if(historyWorkTracking)TLinkAXFixtureAutoreleaseOwner();}
 static NSRegularExpression *historyWorkRegex(NSRegularExpression *regex){historyWorkOwner();return regex;}
 static NSString *historyTestRoot;
+static std::string historyLockProbeExecutable;
 static NSMutableArray *historyEvents;
 static std::mutex historyMutex;
 static std::set<int> historyLocks;
@@ -413,13 +415,34 @@ static NSData *historyTransactions(bool modern,NSString *console,NSString *scree
     assert([[NSFileManager defaultManager] contentsOfDirectoryAtPath:[root stringByAppendingPathComponent:@"runs"] error:nil].count==50);
     return historyCanonical(results,root);
 }
-// Only POSIX calls in the child: no Foundation/Objective-C after fork.
+// A separately exec'd POSIX peer avoids reusing Foundation/ASan fork state.
 static bool historyChildCanLock(NSString *path,int operation=LOCK_EX){
-    const char *name=path.fileSystemRepresentation;std::vector<int> inherited;
+    assert(operation==LOCK_EX||operation==LOCK_SH);
+    const char *raw=path.fileSystemRepresentation;assert(raw);
+    const std::string name(raw);std::vector<int> inherited;
     {std::lock_guard<std::mutex> guard(historyMutex);inherited.assign(historyLocks.begin(),historyLocks.end());}
-    const pid_t child=::fork();assert(child>=0);
-    if(!child){for(int fd:inherited)::close(fd);const int fd=::open(name,O_RDWR);if(fd<0)::_exit(2);const int result=::flock(fd,operation|LOCK_NB);const int saved=errno;if(!result)::flock(fd,LOCK_UN);::close(fd);::_exit(!result?0:((saved==EWOULDBLOCK||saved==EAGAIN)?1:2));}
-    int status=0;pid_t waited;do{waited=::waitpid(child,&status,0);}while(waited<0&&errno==EINTR);assert(waited==child&&WIFEXITED(status)&&WEXITSTATUS(status)!=2);return WEXITSTATUS(status)==0;
+    assert(!historyLockProbeExecutable.empty());
+    const char *mode=operation==LOCK_SH?"shared":"exclusive";
+    char *args[]={const_cast<char *>(historyLockProbeExecutable.c_str()),const_cast<char *>(name.c_str()),const_cast<char *>(mode),nullptr};
+    posix_spawn_file_actions_t actions;
+    int setup=::posix_spawn_file_actions_init(&actions);
+    if(setup)fprintf(stderr,"History lock probe: stage=actions-init error=%d (%s)\n",setup,strerror(setup));
+    assert(setup==0);
+    for(int fd:inherited){setup=::posix_spawn_file_actions_addclose(&actions,fd);if(setup)break;}
+    pid_t child=0;
+    const int spawned=setup ? setup : ::posix_spawn(&child,historyLockProbeExecutable.c_str(),&actions,nullptr,args,environ);
+    const int destroyed=::posix_spawn_file_actions_destroy(&actions);
+    if(spawned)fprintf(stderr,"History lock probe: stage=%s error=%d (%s) mode=%s path=%s executable=%s\n",setup?"actions-close":"spawn",spawned,strerror(spawned),mode,name.c_str(),historyLockProbeExecutable.c_str());
+    assert(spawned==0&&child>0);
+    int status=0;pid_t waited;
+    do{waited=::waitpid(child,&status,0);}while(waited<0&&errno==EINTR);
+    const int waitError=waited<0?errno:0;
+    const int exitCode=WIFEXITED(status)?WEXITSTATUS(status):-1;
+    const int signal=WIFSIGNALED(status)?WTERMSIG(status):0;
+    if(waited!=child||(exitCode!=0&&exitCode!=1)||destroyed)
+        fprintf(stderr,"History lock probe failed: waited=%ld pid=%ld wait_errno=%d status=%d exit=%d signal=%d actions_destroy=%d mode=%s path=%s\n",(long)waited,(long)child,waitError,status,exitCode,signal,destroyed,mode,name.c_str());
+    assert(waited==child&&WIFEXITED(status)&&(exitCode==0||exitCode==1)&&destroyed==0);
+    return exitCode==0;
 }
 static NSDictionary *historyDiagnostics(){return Current::TLinkRunHistorySnapshot(0)[@"persistence_diagnostics"];}
 static void historyCommitCases(NSString *console,NSString *screenshot){
@@ -1048,6 +1071,8 @@ static void historyCompactIndexCases(){
 #include "persistence-json-runtime-fixture.inc"
 #include "history-recovery-codec-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
+    const std::string ownExecutable(argv[0]);const size_t slash=ownExecutable.find_last_of('/');
+    assert(slash!=std::string::npos);historyLockProbeExecutable=ownExecutable.substr(0,slash+1)+"history-lock-probe";
     uint64_t clockSample=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(clockSample!=UINT64_MAX);
     for(unsigned n=0;n<32;++n){const uint64_t next=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(next>=clockSample&&next!=UINT64_MAX);clockSample=next;}
     assert(argc==2||argc==3||argc==5||argc==6);historyTestRoot=[NSString stringWithUTF8String:argv[1]];historyEvents=[NSMutableArray array];historyWriteAttempts=[NSMutableArray array];historyPruneAttempts=[NSMutableArray array];
