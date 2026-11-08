@@ -1,5 +1,6 @@
 #import "LicenseLifecycleCoordinator.h"
 #import "LicenseManager.h"
+#import <CoreFoundation/CoreFoundation.h>
 #if defined(TLINK_LICENSE_ROOTFULL_RUNTIME)
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -101,6 +102,11 @@ static NSString *SCLicenseRequestDaemonReload(void)
 // END background refresh subscriber.
 
 @interface SCLicenseLifecycleCoordinator ()
+// BEGIN synchronous diagnostics batch.
+@property(nonatomic, assign) BOOL diagnosticsBatchActive;
+@property(nonatomic, strong) NSDictionary *diagnosticsBatchState;
+- (void)performDiagnosticsBatch:(dispatch_block_t)changes;
+// END synchronous diagnostics batch.
 @property(nonatomic, strong) SCLicenseManager *manager;
 @property(nonatomic, assign, getter=isRequestInFlight) BOOL requestInFlight;
 @property(nonatomic, copy) NSString *operationKind;
@@ -184,9 +190,12 @@ static NSString *SCLicenseRequestDaemonReload(void)
 
 - (NSDictionary *)diagnostics
 {
-    NSMutableDictionary *state = [[NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath] mutableCopy];
-    if (!state) state = [NSMutableDictionary dictionary];
+    NSMutableDictionary *state = nil;
     @synchronized (self) {
+        state = self.diagnosticsBatchActive && self.diagnosticsBatchState
+            ? [self.diagnosticsBatchState mutableCopy]
+            : [[NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath] mutableCopy];
+        if (!state) state = [NSMutableDictionary dictionary];
         state[@"request_in_flight"] = @(self.requestInFlight);
         state[@"operation"] = self.operationKind ?: @"none";
         state[@"ui_snapshot_ready"] = @(self.uiLicenseSnapshot != nil &&
@@ -317,12 +326,18 @@ static NSString *SCLicenseRequestDaemonReload(void)
 {
     if (values.count == 0 && event.count == 0 && !mutation) return;
     @synchronized (self) {
-        NSString *directory = [kTLinkLicenseLifecycleDiagnosticsPath stringByDeletingLastPathComponent];
-        [[NSFileManager defaultManager] createDirectoryAtPath:directory
-                                  withIntermediateDirectories:YES
-                                                   attributes:nil
-                                                        error:nil];
-        NSMutableDictionary *state = [[NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath] mutableCopy];
+        BOOL continuing = self.diagnosticsBatchActive && self.diagnosticsBatchState != nil;
+        if (!continuing) {
+            NSString *directory = [kTLinkLicenseLifecycleDiagnosticsPath stringByDeletingLastPathComponent];
+            [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:nil];
+        }
+        // Stage each mutation independently: a throwing mutation cannot publish
+        // a partial change along with an earlier successful batched update.
+        NSMutableDictionary *state = continuing ? [self.diagnosticsBatchState mutableCopy]
+            : [[NSDictionary dictionaryWithContentsOfFile:kTLinkLicenseLifecycleDiagnosticsPath] mutableCopy];
         if (!state) state = [NSMutableDictionary dictionary];
         if (mutation) mutation(state);
         if (event.count > 0) {
@@ -338,9 +353,44 @@ static NSString *SCLicenseRequestDaemonReload(void)
         if (values.count > 0) [state addEntriesFromDictionary:values];
         state[@"mode"] = @"foreground_bg_single_flight_backoff_v1";
         state[@"updated_at_ms"] = @([self nowMilliseconds]);
-        [state writeToFile:kTLinkLicenseLifecycleDiagnosticsPath atomically:YES];
+        if (self.diagnosticsBatchActive) {
+            // Match the preceding per-call persistence snapshot: callers and
+            // diagnostics readers cannot mutate values already staged for IO.
+            if ([NSPropertyListSerialization propertyList:state isValidForFormat:NSPropertyListXMLFormat_v1_0]) {
+                NSDictionary *snapshot = CFBridgingRelease(CFPropertyListCreateDeepCopy(kCFAllocatorDefault,
+                    (__bridge CFPropertyListRef)state, kCFPropertyListImmutable));
+                if (snapshot) self.diagnosticsBatchState = snapshot;
+            }
+        } else [state writeToFile:kTLinkLicenseLifecycleDiagnosticsPath atomically:YES];
     }
 }
+
+// BEGIN synchronous diagnostics batch implementation.
+- (void)performDiagnosticsBatch:(dispatch_block_t)changes
+{
+    if (!changes) return;
+    @autoreleasepool {
+    @synchronized (self) {
+        if (self.diagnosticsBatchActive) { changes(); return; }
+        self.diagnosticsBatchActive = YES;
+        @try {
+            changes();
+        } @finally {
+            NSDictionary *state = self.diagnosticsBatchState;
+            // Detach before the writer, including its nil/NO/NS/C++ outcomes.
+            self.diagnosticsBatchState = nil;
+            self.diagnosticsBatchActive = NO;
+            // Auxiliary flush failures cannot replace a primary exception or
+            // turn an already completed terminal operation into a replay.
+            @try {
+                try { if (state) [state writeToFile:kTLinkLicenseLifecycleDiagnosticsPath atomically:YES]; }
+                catch (...) {}
+            } @catch (NSException *exception) { (void)exception; }
+        }
+    }
+    }
+}
+// END synchronous diagnostics batch implementation.
 
 - (void)updateDiagnostics:(NSDictionary *)values
 {
@@ -669,39 +719,44 @@ static NSString *SCLicenseRequestDaemonReload(void)
                                 NSNumber *updatedLicenseExpires = updatedStatus[@"license_expires_at"];
                                 if (!updatedLicenseExpires) updatedLicenseExpires = licenseExpires;
                                 NSTimeInterval extendedSeconds = [leaseAfter doubleValue] - [leaseBefore doubleValue];
-                                [self updateDiagnostics:@{
-                                    @"last_success_at_ms": @([self nowMilliseconds]),
-                                    @"last_result": @"success",
-                                    @"last_error": @"",
-                                    @"consecutive_failures": @0,
-                                    @"next_attempt_at_ms": @0,
-                                    @"last_lease_before_expires_at": leaseBefore,
-                                    @"last_lease_after_expires_at": leaseAfter,
-                                    @"last_license_expires_at": updatedLicenseExpires,
-                                    @"last_refresh_extended_seconds": @(extendedSeconds),
-                                } refreshHistoryEvent:@{
-                                    @"at_ms": @([self nowMilliseconds]),
-                                    @"trigger": trigger ?: @"unknown",
-                                    @"result": @"success",
-                                    @"lease_before_expires_at": leaseBefore,
-                                    @"lease_after_expires_at": leaseAfter,
-                                    @"license_expires_at": updatedLicenseExpires,
-                                    @"extended_seconds": @(extendedSeconds),
+                                [self performDiagnosticsBatch:^{
+                                    [self updateDiagnostics:@{
+                                        @"last_success_at_ms": @([self nowMilliseconds]),
+                                        @"last_result": @"success",
+                                        @"last_error": @"",
+                                        @"consecutive_failures": @0,
+                                        @"next_attempt_at_ms": @0,
+                                        @"last_lease_before_expires_at": leaseBefore,
+                                        @"last_lease_after_expires_at": leaseAfter,
+                                        @"last_license_expires_at": updatedLicenseExpires,
+                                        @"last_refresh_extended_seconds": @(extendedSeconds),
+                                    } refreshHistoryEvent:@{
+                                        @"at_ms": @([self nowMilliseconds]),
+                                        @"trigger": trigger ?: @"unknown",
+                                        @"result": @"success",
+                                        @"lease_before_expires_at": leaseBefore,
+                                        @"lease_after_expires_at": leaseAfter,
+                                        @"license_expires_at": updatedLicenseExpires,
+                                        @"extended_seconds": @(extendedSeconds),
+                                    }];
+                                    [self publishLicenseChange:@"refresh"];
+                                    [self finishRefresh:identity success:success message:message];
                                 }];
-                                [self publishLicenseChange:@"refresh"];
                             } else {
-                                [self recordRefreshFailure:message trigger:trigger historyEvent:@{
-                                    @"at_ms": @([self nowMilliseconds]),
-                                    @"trigger": trigger ?: @"unknown",
-                                    @"result": @"failed",
-                                    @"lease_before_expires_at": leaseBefore,
-                                    @"lease_after_expires_at": leaseBefore,
-                                    @"license_expires_at": licenseExpires,
-                                    @"extended_seconds": @0,
-                                    @"error": message ?: @"license_refresh_failed",
+                                [self performDiagnosticsBatch:^{
+                                    [self recordRefreshFailure:message trigger:trigger historyEvent:@{
+                                        @"at_ms": @([self nowMilliseconds]),
+                                        @"trigger": trigger ?: @"unknown",
+                                        @"result": @"failed",
+                                        @"lease_before_expires_at": leaseBefore,
+                                        @"lease_after_expires_at": leaseBefore,
+                                        @"license_expires_at": licenseExpires,
+                                        @"extended_seconds": @0,
+                                        @"error": message ?: @"license_refresh_failed",
+                                    }];
+                                    [self finishRefresh:identity success:success message:message];
                                 }];
                             }
-                            [self finishRefresh:identity success:success message:message];
                         } catch (...) {
                             [self failRefreshException:identity ownsResult:YES];
                         }
@@ -804,13 +859,15 @@ static NSString *SCLicenseRequestDaemonReload(void)
         return;
     }
     [self.manager activateLicenseKey:licenseKey intent:intent completion:^(BOOL success, NSString *message) {
-        [self updateDiagnostics:@{
-            @"last_activation_at_ms": @([self nowMilliseconds]),
-            @"last_activation_result": success ? @"success" : @"failed",
-            @"last_activation_error": success ? @"" : (message ?: @"license_activation_failed"),
+        [self performDiagnosticsBatch:^{
+            [self updateDiagnostics:@{
+                @"last_activation_at_ms": @([self nowMilliseconds]),
+                @"last_activation_result": success ? @"success" : @"failed",
+                @"last_activation_error": success ? @"" : (message ?: @"license_activation_failed"),
+            }];
+            if (success) [self publishLicenseChange:@"activation"];
+            [self finishOperation:@"activate" success:success message:message completion:completion];
         }];
-        if (success) [self publishLicenseChange:@"activation"];
-        [self finishOperation:@"activate" success:success message:message completion:completion];
     }];
 }
 
@@ -826,13 +883,15 @@ static NSString *SCLicenseRequestDaemonReload(void)
         return;
     }
     [self.manager deactivateLeaseWithCompletion:^(BOOL success, NSString *message) {
-        [self updateDiagnostics:@{
-            @"last_deactivation_at_ms": @([self nowMilliseconds]),
-            @"last_deactivation_result": success ? @"success" : @"failed",
-            @"last_deactivation_error": success ? @"" : (message ?: @"license_deactivation_failed"),
+        [self performDiagnosticsBatch:^{
+            [self updateDiagnostics:@{
+                @"last_deactivation_at_ms": @([self nowMilliseconds]),
+                @"last_deactivation_result": success ? @"success" : @"failed",
+                @"last_deactivation_error": success ? @"" : (message ?: @"license_deactivation_failed"),
+            }];
+            if (success) [self publishLicenseChange:@"deactivation"];
+            [self finishOperation:@"deactivate" success:success message:message completion:completion];
         }];
-        if (success) [self publishLicenseChange:@"deactivation"];
-        [self finishOperation:@"deactivate" success:success message:message completion:completion];
     }];
 }
 

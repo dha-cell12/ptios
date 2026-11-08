@@ -3149,6 +3149,8 @@ See `BENCHMARK-S011.md` Probe H.
 
 ### [P1-77] License lifecycle diagnostics repeatedly read and atomically rewrite the whole plist during one logical refresh
 
+C06ae follow-up (2026-11-09): shared app refresh/activation/deactivation result groups now use one fresh diagnostic plist read and one final atomic write, with immutable per-mutation snapshots, nested ownership, staged getter and finally detachment. Begin/attempt and independent UI/reload updates remain separate. Flush failures cannot replay completed manager/UI/reload effects; pending diagnostics are discarded. External file visibility and crash/failure granularity follow the group. Windows workflow/source checks pass; native48 complete predecessor comparisons plus snapshot/fault/nested/concurrent writer cases await macOS CI. Monitor/clone/IO costs and device qualification remain unmeasured. See `IMPLEMENTATION-C06AE.md`.
+
 **Status:** CONFIRMED persistence amplification  
 **Locations:** `stream-app/app/LicenseLifecycleCoordinator.mm:128-145,216-268,279-365,402-499`
 

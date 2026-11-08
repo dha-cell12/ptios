@@ -12,12 +12,30 @@
 #include <stdlib.h>
 #import "../stream-app/app/LicenseLifecycleCoordinator.h"
 #import "LegacyLifecycle.h"
+#import "BeforeBatchLifecycle.h"
 #import "../stream-app/app/LicenseManager.h"
-static NSString *currentPath,*legacyPath;
-static std::atomic<unsigned> currentDiagnosticReads{0},legacyDiagnosticReads{0};
+static NSString *currentPath,*legacyPath,*beforeBatchPath;
+static std::atomic<unsigned> currentDiagnosticReads{0},legacyDiagnosticReads{0},beforeBatchDiagnosticReads{0};
+static std::atomic<unsigned> currentDiagnosticWrites{0},legacyDiagnosticWrites{0},beforeBatchDiagnosticWrites{0};
+static unsigned batchReadFault=0,batchWriteFault=0;
 static NSDictionary *fixtureReadDiagnostics(NSString *path){
-    if([path isEqualToString:currentPath])++currentDiagnosticReads;else{assert([path isEqualToString:legacyPath]);++legacyDiagnosticReads;}
+    if([path isEqualToString:currentPath]){
+        ++currentDiagnosticReads;
+        if(batchReadFault==1)[NSException raise:@"DiagnosticsBatch" format:@"read"];
+        if(batchReadFault==2)throw std::runtime_error("read");
+    }else if([path isEqualToString:beforeBatchPath])++beforeBatchDiagnosticReads;
+    else{assert([path isEqualToString:legacyPath]);++legacyDiagnosticReads;}
     return [NSDictionary dictionaryWithContentsOfFile:path];
+}
+static BOOL fixtureWriteDiagnostics(NSDictionary *state,NSString *path){
+    if([path isEqualToString:currentPath]){
+        ++currentDiagnosticWrites;
+        if(batchWriteFault==1)return NO;
+        if(batchWriteFault==2)[NSException raise:@"DiagnosticsBatch" format:@"write"];
+        if(batchWriteFault==3)throw std::runtime_error("write");
+    }else if([path isEqualToString:beforeBatchPath])++beforeBatchDiagnosticWrites;
+    else{assert([path isEqualToString:legacyPath]);++legacyDiagnosticWrites;}
+    return [state writeToFile:path atomically:YES];
 }
 static std::atomic<unsigned> performanceReads{0};
 static NSDictionary *TLinkLicensePerformanceDictionary(){++performanceReads;return @{};}
@@ -34,6 +52,7 @@ static uint32_t fixtureRandom(uint32_t upper){assert(upper==4001);return 2000;}
 #define arc4random_uniform fixtureRandom
 #include "LifecycleUnderTest.inc"
 #include "LifecycleLegacy.inc"
+#include "LifecycleBeforeBatch.inc"
 #undef arc4random_uniform
 
 @interface FixtureManager:SCLicenseManager
@@ -477,12 +496,14 @@ static void subscriptionLifetimeAndFaultCases(){
         }
     }
 }
+#include "license-diagnostics-batch-runtime-fixture.inc"
 int main(){@autoreleasepool{
     setvbuf(stdout,nullptr,_IONBF,0);
     NSString *directory=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"tlink-lifecycle-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
     assert([[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nullptr]);
-    currentPath=[directory stringByAppendingPathComponent:@"current.plist"];legacyPath=[directory stringByAppendingPathComponent:@"legacy.plist"];
+    currentPath=[directory stringByAppendingPathComponent:@"current.plist"];legacyPath=[directory stringByAppendingPathComponent:@"legacy.plist"];beforeBatchPath=[directory stringByAppendingPathComponent:@"before-batch.plist"];
     puts("License lifecycle Foundation: complete current/frozen coordinator, real plist IO and controlled manager/authority publication");
+    diagnosticsBatchCases();
     failureDiagnosticsCases();parityCases();puts("License lifecycle: coalesced decisions and late manual force");
     coalescingCases();puts("License lifecycle: stale/duplicate results and busy operation gates");
     staleAndBusyCases();puts("License lifecycle: NS/C++ provider/result faults and ownership recovery");
@@ -491,5 +512,5 @@ int main(){@autoreleasepool{
     subscriptionOwnerCases();subscriptionIntegrationCases();subscriptionLifetimeAndFaultCases();
     for(unsigned n=0;n<128;++n){@autoreleasepool{(void)scenario(NO,0,YES,n%2);}}
     pump();assert([[NSFileManager defaultManager] removeItemAtPath:directory error:nullptr]);
-    puts("License lifecycle passed: 24 frozen decision/result graphs, 5-to-3 attempt and 1-to-1 skip diagnostic transactions, 65-caller single decisions, manual force during policy/backoff, stale results/new-flight protection, busy/NS/C++/inline result recovery, exact 20-entry history, concurrent append, 200 subscriber cancel/delivery races, capture release/reentry, held-monitor/queued-main cancellation, shared-flight survival, admission unwind and 128 lifecycles. HTTP cancellation, signed persistence and device performance remain unqualified.");
+    puts("License lifecycle passed: 24 frozen decision/result graphs, unchanged attempt/skip diagnostic mutation counts, 65-caller single decisions, manual force during policy/backoff, stale results/new-flight protection, busy/NS/C++/inline result recovery, exact 20-entry history, concurrent append, 200 subscriber cancel/delivery races, capture release/reentry, held-monitor/queued-main cancellation, shared-flight survival, admission unwind and 128 lifecycles. HTTP cancellation, signed persistence and device performance remain unqualified.");
 }return 0;}
