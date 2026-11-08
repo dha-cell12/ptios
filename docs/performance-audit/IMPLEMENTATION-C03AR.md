@@ -1,0 +1,23 @@
+# C03ar — Recovery JSON comparison and pre-encoded repair writes
+
+Date: 2026-11-08 (Asia/Bangkok). Baseline: `d9a779f2`; user reported C03aq build passed and requested a larger batch. Scope: P1-48/P1-49/P1-53, production shared history recovery on rootfull/roothide/TrollStore. TouchPOC is excluded.
+
+## Combined implementation
+
+1. Compare an existing same-size artifact with the already encoded authoritative JSON using a single 64-KiB scratch buffer. Exact byte matches need neither a full file-sized NSData nor a second decoded JSON graph.
+2. On the first differing chunk, allocate the original full fallback buffer once. Its earlier prefix is already verified, so reconstruct it from the authoritative bytes and copy the current chunk, then read the remainder directly into the fallback. No second read, seek or extra provider call is needed. Retain the original semantic JSON comparison: same-size files with different whitespace/key order but equal graphs are accepted without rewriting.
+3. Reuse the initial encoded authoritative JSON when a missing/different artifact needs repair. Split out the unchanged checked atomic data writer, and use it for both ordinary JSON writes and recovery. A repair performs one encoding instead of two; existing ordinary record/evidence/index encoding options and the bounded index writer stay in place.
+4. Keep the whole preceding writer/recovery source frozen, restore it exactly before all earlier guards, and extend the existing portable/native history executables. No new workflow or binary is introduced.
+
+Recovery operates on private freshly decoded index graphs under the existing monitor/flock, after complete retained-path preflight. Exact canonical bytes therefore represent the authoritative graph. This does not cache results across operations, broaden writable paths, change the schema, skip file identity checks or change startup/marker/ACK/event policy. Existing size mismatch behavior still repairs without payload reads, even if the file contains equivalent JSON with a different byte length. Atomic replacement and chmod/lchown remain in one private writer.
+
+The reader keeps the existing 64-KiB maximum request size, short-read/EINTR handling, full expected-length admission and finally-close behavior. Nil lazy-buffer allocation is now an explicit read-failed refusal; it cannot reach the writer. NS/C++ provider exceptions propagate through the existing cleanup/caller handling. A synthetic over-return is also refused before inspecting the chunk. Cooperating writers must still obey the flock protocol; no new arbitrary-writer race or power-loss guarantee is claimed.
+
+These are conditional fast paths. A late byte mismatch needs a full fallback buffer and copies its verified prefix; noncanonical formatting can keep the old parse cost. The authoritative pretty JSON still exists, can exceed compact index size, and has no new byte quota here. Stack scratch, Foundation internals, aggregate RSS, IO duration and device latency remain unqualified. The complete index/journal rewrite architecture is unchanged.
+
+## Verification
+
+- Guard the entire new comparison core, both changed writer/recovery regions and full old/current history hashes. Reverse only the new include and regions to the complete user-passed C03aq source, retaining every historical check.
+- Actual portable compare engine: 100k independent exact/mismatch/short/EINTR oracle cases, first/middle/last mismatch across three chunks, exact reconstructed bytes, one lazy allocation versus none, zero/EOF/error/over-return/null-allocation refusal and provider exceptions.
+- Existing Foundation/ARC/ASan/UBSan history executable adds the complete C03aq implementation as an oracle. New expectations cover 192 old/current canonical/format-equivalent/changed/size-mismatch/missing/malformed cases, Unicode/NUL/numeric boundaries, no exact-file buffer/decode, one versus two repair encodes and writer identity of the original NSData. Real multi-chunk files, late mismatch, EINTR/short reads, nil/NS/C++ allocation refusal and subsequent recovery check file bytes and balanced FDs/locks. Existing public transaction/recovery/crash/fault tests continue against the new source.
+- All 90 workflow runners (36 source / 54 safety portable subsets), 521 workflow source assertions, six-file assertion macro preprocessing, JavaScript syntax and diff whitespace checks pass on Windows. Sixteen artifact-only workflow assertions are skipped. The final pool placement preserves the ordinary writer pool without adding a nested pool on every warm write; focused history source/portable checks pass after that adjustment. New Foundation/ARC/sanitizer execution and Apple builds require macOS CI; device allocation/RSS/latency is unmeasured.

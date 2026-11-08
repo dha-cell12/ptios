@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03ar — 2026-11-08
+
+- User reported C03aq build passed (`d9a779f2`). Combine recovery codec work: one-pass 64-KiB exact-byte comparison avoids the full artifact buffer/parse when canonical bytes match; a mismatch reconstructs the verified prefix once and retains semantic JSON equality. Needed repairs reuse the initial encoded data through the unchanged checked atomic writer, avoiding a second encode.
+- All 90 workflow runners (36 source / 54 safety portable subsets), 521 workflow source assertions, six-file assertion macro preprocessing, JavaScript syntax and diff whitespace checks pass on Windows. Complete current/C03aq native parity, real files, encoder/buffer/decode counts, original-data identity and allocation/unwind/FD cleanup cases are wired into the existing macOS history sanitizer executable. Noncanonical fallback, pretty-JSON memory, full index rewriting and device performance remain open. Details: `IMPLEMENTATION-C03AR.md`.
+
 ## Implementation C03aq — 2026-11-08
 
 - User reported C02c4 build passed (`b509e33b`). Implement shared quota-bound JSON persistence for event journals (4 MiB) and history indexes (32 MiB), across production root/roothide/TrollStore targets. Reject before accepting an oversized chunk, validate complete writer results, detach accepted buffers and retire rejected prefixes in finally. Keep atomic writes, file policy, ACK/recovery/notifications and ordinary record/evidence encoders.

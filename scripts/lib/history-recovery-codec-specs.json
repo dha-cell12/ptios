@@ -1,0 +1,21 @@
+{
+  "beforeHash": "b1de0145ee522c4eec911df387b615af00971a6b023ed545758520d9d23e751c",
+  "currentHash": "aefe2061272ea8b9254b28425800a8eec6f7791e7d14065d36677f52f419e710",
+  "coreHash": "a7b7ee8671533329409b71b90c7f58af7ae52072b8c75587464bb3c96bed8d96",
+  "parts": [
+    {
+      "name": "writer",
+      "start": "static BOOL TLinkRunHistoryWriteJSONData(NSData *data, NSString *path)",
+      "end": "static BOOL TLinkRunHistoryWriteIndex(",
+      "beforeStart": "static BOOL TLinkRunHistoryWriteJSON(",
+      "currentHash": "d0635c8de577557fcd80277536381eff0c754481dbbb87f4430ae8208cddee66"
+    },
+    {
+      "name": "repair",
+      "start": "static BOOL TLinkRunHistoryRepairJSON(NSDictionary *expected, NSString *path, NSString *operation)",
+      "end": "static BOOL TLinkRunHistoryRecover(",
+      "beforeStart": "static BOOL TLinkRunHistoryRepairJSON(",
+      "currentHash": "e1b3df7680e2904c81e195cc0f72b3162d559a74ab7583debf72ffb58d75c1cd"
+    }
+  ]
+}

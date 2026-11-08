@@ -1,3 +1,4 @@
+#include "TLinkHistoryRecoveryCompare.h"
 #include "TLinkPersistenceJSON.h"
 #include "TLinkHistoryRetirement.h"
 #import "TLinkRunHistory.h"
@@ -188,6 +189,15 @@ static void TLinkRunHistoryReleaseFileLock(int fd)
     close(fd);
 }
 
+static BOOL TLinkRunHistoryWriteJSONData(NSData *data, NSString *path)
+{
+    if (!data || ([path isEqualToString:TLinkRunHistoryIndexPath()] && data.length > kTLinkRunHistoryIndexMaxBytes) ||
+        ![data writeToFile:path atomically:YES]) return NO;
+    chmod(path.fileSystemRepresentation, 0640);
+    lchown(path.fileSystemRepresentation, 501, 501);
+    return YES;
+}
+
 static BOOL TLinkRunHistoryWriteJSON(id object, NSString *path, NSJSONWritingOptions options = NSJSONWritingPrettyPrinted)
 {
     @autoreleasepool {
@@ -195,11 +205,7 @@ static BOOL TLinkRunHistoryWriteJSON(id object, NSString *path, NSJSONWritingOpt
     NSData *data = [path isEqualToString:TLinkRunHistoryIndexPath()]
         ? TLinkPersistenceJSONData(object,options,kTLinkRunHistoryIndexMaxBytes)
         : [NSJSONSerialization dataWithJSONObject:object options:options error:nil];
-    if (!data || ([path isEqualToString:TLinkRunHistoryIndexPath()] && data.length > kTLinkRunHistoryIndexMaxBytes) ||
-        ![data writeToFile:path atomically:YES]) return NO;
-    chmod(path.fileSystemRepresentation, 0640);
-    lchown(path.fileSystemRepresentation, 501, 501);
-    return YES;
+    return TLinkRunHistoryWriteJSONData(data, path);
     }
 }
 
@@ -438,21 +444,33 @@ static BOOL TLinkRunHistoryRepairJSON(NSDictionary *expected, NSString *path, NS
             // Different sizes already prove a mismatch. Never read an arbitrary
             // artifact's full length; cap reads at the authoritative JSON size.
             if ((uint64_t)info.st_size == encoded.length) {
-                NSMutableData *data = [NSMutableData dataWithLength:encoded.length];
-                NSUInteger offset = 0;
-                while (offset < data.length) {
-                    size_t count = MIN(data.length - offset, (NSUInteger)65536);
-                    ssize_t got = read(fd, (uint8_t *)data.mutableBytes + offset, count);
-                    if (got < 0 && errno == EINTR) continue;
-                    if (got <= 0) { TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed"); return NO; }
-                    offset += (NSUInteger)got;
+                NSMutableData *data = nil;
+                const auto comparison = TLinkHistoryRecoveryCompare::Compare(
+                    (const uint8_t *)encoded.bytes, encoded.length,
+                    [fd](uint8_t *bytes, size_t count) {
+                        const ssize_t got = read(fd, bytes, count);
+                        return TLinkHistoryRecoveryCompare::Read(got, got < 0 ? errno : 0);
+                    },
+                    [&data](size_t length) -> uint8_t * {
+                        data = [NSMutableData dataWithLength:length];
+                        return (uint8_t *)data.mutableBytes;
+                    });
+                if (comparison == TLinkHistoryRecoveryCompare::Result::Exact) return YES;
+                if (comparison != TLinkHistoryRecoveryCompare::Result::Different) {
+                    TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_read_failed");
+                    return NO;
                 }
                 id stored = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
                 if ([stored isEqual:expected]) return YES;
             }
         } @finally { close(fd); }
     }
-    if (!TLinkRunHistoryWriteJSON(expected, path)) {
+    BOOL repaired = NO;
+    @autoreleasepool {
+        if ([NSJSONSerialization isValidJSONObject:expected] && path.length > 0)
+            repaired = TLinkRunHistoryWriteJSONData(encoded, path);
+    }
+    if (!repaired) {
         TLinkRunHistoryPersistenceFailure(operation, @"recovery", @"recovery_write_failed");
         return NO;
     }

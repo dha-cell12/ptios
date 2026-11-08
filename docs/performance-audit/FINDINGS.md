@@ -1594,6 +1594,8 @@ Measure main-thread CPU, wakeups/s, timer fires/s, license checks/s, plist reads
 
 ### [P1-48] Run-history index embeds failure evidence and is fully read/parsed/re-written on every begin/finish
 
+C03ar follow-up (2026-11-08): history recovery compares same-size canonical artifacts in 64-KiB chunks before allocating a second full buffer/JSON graph. First mismatch reconstructs only the already verified prefix, then retains the original semantic decode/equality path, so formatting-only differences are not rewritten. Necessary repairs reuse the initial encoded NSData through the checked atomic writer instead of encoding again. Existing private decoded-graph, path/lock/marker/ACK/event and full-rewrite contracts remain; noncanonical fallback and authoritative pretty encoding/RSS/device costs are unqualified. Source/100k portable engine checks pass; native current/C03aq file/fault/count parity awaits macOS CI. See `IMPLEMENTATION-C03AR.md`.
+
 C03aq follow-up (2026-11-08): event journal (4 MiB) and history index (32 MiB) serialization now enforce their existing size limits before the owned output stream appends an overflowing chunk. Complete writer result checks and finally cleanup refuse partial data without reaching the unchanged atomic write. History record/evidence encoders, commit/recovery/notification policy and full-file rewrite remain. This bounds accepted buffer bytes, not Foundation allocations/RSS/CPU or lock/IO duration. Source/100k portable quota checks pass on Windows; Foundation JSON/fault/lifetime and device qualification pending. See `IMPLEMENTATION-C03AQ.md`.
 
 C03ad follow-up (2026-11-07): shared run-name preparation now uses a bounded 96-unit buffer while preserving case/replacement/cutoff/path text. This removes explicit per-character NSString/append work; it does not remove index/evidence rewrite amplification. Portable parity passes; Foundation/device gains await qualification. See `IMPLEMENTATION-C03AD.md`.
@@ -1743,6 +1745,8 @@ Issue concurrent updates to distinct names from 2/8/32 clients for 10k rounds. V
 ---
 
 ### [P1-53] Run-history persistence failures are largely ignored, allowing in-memory/event state to claim success after disk failure
+
+C03ar follow-up (2026-11-08): history recovery compares same-size canonical artifacts in 64-KiB chunks before allocating a second full buffer/JSON graph. First mismatch reconstructs only the already verified prefix, then retains the original semantic decode/equality path, so formatting-only differences are not rewritten. Necessary repairs reuse the initial encoded NSData through the checked atomic writer instead of encoding again. Existing private decoded-graph, path/lock/marker/ACK/event and full-rewrite contracts remain; noncanonical fallback and authoritative pretty encoding/RSS/device costs are unqualified. Source/100k portable engine checks pass; native current/C03aq file/fault/count parity awaits macOS CI. See `IMPLEMENTATION-C03AR.md`.
 
 **Status:** CONFIRMED  
 **Locations:** `shared/TLinkRunHistory.mm:115-131,237-250,317-344`

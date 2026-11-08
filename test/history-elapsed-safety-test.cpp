@@ -6,7 +6,9 @@
 #include "history-text-tail-safety-fixture.inc"
 #include "history-retirement-safety-fixture.inc"
 #include "persistence-json-safety-fixture.inc"
+#include "history-recovery-compare-safety-fixture.inc"
 int main(){
+    historyRecoveryCompareCases();
     persistenceJSONQuotaCases();
     historyRetirementPlans();
     historyTextTailCases();

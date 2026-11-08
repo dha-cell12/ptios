@@ -23,6 +23,7 @@
 #include "../shared/TLinkASCIIPreparation.h"
 #include "../shared/TLinkTextTail.h"
 #include "../shared/TLinkHistoryRetirement.h"
+#include "../shared/TLinkHistoryRecoveryCompare.h"
 #include "ax-node-pool-owner.h"
 #include <mach/mach_time.h>
 namespace RealHistoryClock {
@@ -163,15 +164,37 @@ static unsigned historyWriteFault=0;
 static unsigned historyCrashIndex=0;
 static NSMutableArray *historyWriteAttempts;
 static NSData *historyEncodedIndexOverride;
+static size_t historyRecoveryEncodes=0,historyRecoveryDecodes=0,historyRecoveryBuffers=0;
+static const void *historyRecoveryFirstEncoding=nullptr;
+static bool historyRecoveryWriteUsedFirst=false;
+static unsigned historyRecoveryBufferFault=0;
+static NSData *historyRecoveryNoteEncoding(NSData *data){
+    if(++historyRecoveryEncodes==1)historyRecoveryFirstEncoding=(__bridge const void *)data;
+    return data;
+}
 static NSData *historyEncodeJSON(id object,NSString *path,NSJSONWritingOptions options){
     historyWorkOwner();
     if([path.lastPathComponent isEqualToString:@"index.json"]&&historyEncodedIndexOverride)return historyEncodedIndexOverride;
-    return [NSJSONSerialization dataWithJSONObject:object options:options error:nil];
+    return historyRecoveryNoteEncoding([NSJSONSerialization dataWithJSONObject:object options:options error:nil]);
 }
 static NSData *historyEncodeJSONBounded(id object,NSString *path,NSJSONWritingOptions options,NSUInteger limit){
     historyWorkOwner();
     if([path.lastPathComponent isEqualToString:@"index.json"]&&historyEncodedIndexOverride)return historyEncodedIndexOverride;
     return TLinkPersistenceJSONData(object,options,limit);
+}
+static NSData *historyRecoveryEncode(id expected){
+    return historyRecoveryNoteEncoding([NSJSONSerialization dataWithJSONObject:expected options:NSJSONWritingPrettyPrinted error:nil]);
+}
+static id historyRecoveryDecode(NSData *data){
+    ++historyRecoveryDecodes;
+    return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+}
+static NSMutableData *historyRecoveryBuffer(NSUInteger length){
+    ++historyRecoveryBuffers;
+    if(historyRecoveryBufferFault==1)return nil;
+    if(historyRecoveryBufferFault==2)[NSException raise:@"HistoryFixture" format:@"recovery buffer failed"];
+    if(historyRecoveryBufferFault==3)throw std::runtime_error("recovery buffer failed");
+    return [NSMutableData dataWithLength:length];
 }
 static unsigned historyPruneFault=0;
 static NSString *historyPruneTarget;
@@ -230,6 +253,7 @@ static int historyUnlinkArtifact(const char *name){
     if(inject&&historyPruneFault==5){errno=EIO;return -1;}return result;
 }
 static BOOL historyWriteData(NSData *data,NSString *path){
+    historyRecoveryWriteUsedFirst=(__bridge const void *)data==historyRecoveryFirstEncoding;
     NSString *stage=[path.lastPathComponent isEqualToString:@"index.json"]?@"index":([path containsString:@"/evidence/"]?@"evidence":@"record");
     [historyWriteAttempts addObject:stage];
     if([stage isEqualToString:@"index"]&&historyCrashIndex==1)::_exit(81);
@@ -317,6 +341,11 @@ namespace Current {
 static NSString *fixtureRoot;
 NSString *TLinkRunHistoryRootPath(void);
 #include "HistoryUnderTest.inc"
+}
+namespace BeforeRecoveryCodec {
+static NSString *fixtureRoot;
+NSString *TLinkRunHistoryRootPath(void);
+#include "HistoryBeforeRecoveryCodec.inc"
 }
 namespace BeforeIndexWork {
 static NSString *fixtureRoot;
@@ -1017,6 +1046,7 @@ static void historyCompactIndexCases(){
 #include "history-work-runtime-fixture.inc"
 #include "history-index-work-runtime-fixture.inc"
 #include "persistence-json-runtime-fixture.inc"
+#include "history-recovery-codec-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     uint64_t clockSample=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(clockSample!=UINT64_MAX);
     for(unsigned n=0;n<32;++n){const uint64_t next=RealHistoryClock::TLinkRunHistoryMonotonicMs();assert(next>=clockSample&&next!=UINT64_MAX);clockSample=next;}
@@ -1140,6 +1170,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyElapsedCases();
     historyWorkCases();
     historyIndexWorkCases();
+    historyRecoveryCodecCases();
     PersistenceJSONFixture::cases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
