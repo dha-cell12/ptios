@@ -30,3 +30,9 @@ Focused history source/portable regression, two-file assertion argument preproce
 The first protocol correction exposed `-Wnullability-completeness` at five unannotated pointer positions elsewhere in the same include. Explicitly mark held stream state nullable, the unused object parameter nullable, the live stream parameter nonnull, and the NSError out-parameter as a nullable object behind a nonnull autoreleasing pointer. The intentional null-buffer calls and their original assertions remain; production sources and strict build flags are unchanged.
 
 History source/portable regression, assertion macro preprocessing and diff whitespace pass on Windows. Foundation/ARC compilation and execution still require macOS CI.
+
+### Follow-up — socket runtime link dependency
+
+The separate socket runtime fixture compiles the real Event Channel as SocketEventFixture.mm. Add the C03aq implementation shared/TLinkPersistenceJSON.mm to that executable's compile/link source list to resolve TLinkPersistenceJSONData. Keep it before the explicit objective-c++ language selector used for SocketResponder.xm. The ordinary Event runner already links this implementation; the history runner includes its complete generated implementation. Production Makefile lists retain their guarded dependency.
+
+Socket source/portable output checks (100k clean lifecycles), JavaScript syntax and diff whitespace pass on Windows. Actual arm64 Foundation/CoreFoundation linking and runtime integration require macOS CI; no substitute implementation or warning/sanitizer relaxation is used.

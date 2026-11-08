@@ -5,6 +5,12 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Build correction — socket fixture persistence JSON linkage (2026-11-08)
+
+- The socket runtime compiles the actual Event Channel in SocketEventFixture.mm. Since C03aq that source calls TLinkPersistenceJSONData, but this runner did not link its implementation. Add shared/TLinkPersistenceJSON.mm once to the same native compile/link command, before the explicit language selector for SocketResponder.xm.
+- Audit the other direct Event/history fixture builders: Event Channel already links the implementation and history includes the complete generated implementation. Production target lists remain unchanged and already contain the dependency.
+- Socket source/portable regression (including 100k output lifecycles), JavaScript syntax and diff whitespace checks pass on Windows. The arm64 Foundation/CF socket executable still needs macOS CI to verify linking/execution. No stub or warning/sanitizer change is introduced.
+
 ## Build correction — independent history lock probe (2026-11-08)
 
 - CI stopped inside historyChildCanLock's combined wait/exit assertion. Its fork child collapsed open/unexpected-flock failures to exit 2 and did not identify wait/signal failures. Replace this fixture probe with a separately compiled POSIX executable launched through posix_spawn, avoiding reuse of the Foundation/ASan parent runtime. Child close actions retire every inherited held-lock descriptor before exec; the probe opens its own nonblocking/no-follow description.

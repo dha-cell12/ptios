@@ -60,7 +60,7 @@ try {
   await writeFile(eventFile,eventSource.replace('@"/var/mobile/Library/TLinkauto/event-channel"',`@${JSON.stringify(join(temp,'event-journal'))}`));
   run(compiler, ['-std=c++11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-deprecated-declarations', '-fobjc-arc',
    '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-framework', 'Foundation', '-framework', 'CoreFoundation',
-   '-I', temp, '-I', join(root,'shared'), eventFile, join(root, 'test/socket-transport-runtime-test.mm'), '-x', 'objective-c++', join(root, 'pccontrol/SocketResponder.xm'), '-o', runtime]);
+   '-I', temp, '-I', join(root,'shared'), eventFile, join(root,'shared/TLinkPersistenceJSON.mm'), join(root, 'test/socket-transport-runtime-test.mm'), '-x', 'objective-c++', join(root, 'pccontrol/SocketResponder.xm'), '-o', runtime]);
   run(runtime, []);
  } else console.log('macOS actual socket parser/output/work/read/accept and CF IPC callback integration added to root CI; not run on this host.');
 } finally { assert.equal(dirname(temp), tempRoot); assert.ok(basename(temp).startsWith('tlink-socket-')); await rm(temp, { recursive: true, force: true }); }
