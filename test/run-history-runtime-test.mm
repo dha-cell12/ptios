@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "PersistenceJSONUnderTest.inc"
+#include "PersistenceJSONBeforeStorage.inc"
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -1069,6 +1070,7 @@ static void historyCompactIndexCases(){
 #include "history-work-runtime-fixture.inc"
 #include "history-index-work-runtime-fixture.inc"
 #include "persistence-json-runtime-fixture.inc"
+#include "persistence-json-storage-runtime-fixture.inc"
 #include "history-recovery-codec-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     const std::string ownExecutable(argv[0]);const size_t slash=ownExecutable.find_last_of('/');
@@ -1197,6 +1199,7 @@ int main(int argc,char **argv){@autoreleasepool{
     historyIndexWorkCases();
     historyRecoveryCodecCases();
     PersistenceJSONFixture::cases();
+    PersistenceStorageNativeFixture::cases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

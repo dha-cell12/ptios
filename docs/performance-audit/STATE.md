@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03as — 2026-11-09
+
+- User reported the corrected C03ar/C03aq build passed (`5270db98`). Combine capacity-bounded raw JSON storage, sealed immutable NSData ownership handoff, factory-length coherence and failed-prefix cleanup for shared event/history persistence. Keep 4/32-MiB limits, public helper/caller APIs and atomic/permission/lock/marker/ACK/event source.
+- All 90 workflow runners (36 source / 54 safety portable subsets), 521 source assertions, eight-file assertion macro preprocessing, JavaScript syntax and diff whitespace checks pass on Windows. New storage coverage includes 100k content/capacity cases plus 8 x 10k isolated owner lifecycles. Complete C03aq/current native comparison, real JSON/NSData, copied/refused/short/NS/C++ factories, allocation failures and detached output lifetime are wired into the existing history sanitizer executable. All three native consumers and four production target dependencies were reviewed. Requested capacity is bounded; allocator/Foundation/transient/global RSS and full file rewriting remain unqualified. Details: `IMPLEMENTATION-C03AS.md`.
+
 ## Build correction — socket fixture persistence JSON linkage (2026-11-08)
 
 - The socket runtime compiles the actual Event Channel in SocketEventFixture.mm. Since C03aq that source calls TLinkPersistenceJSONData, but this runner did not link its implementation. Add shared/TLinkPersistenceJSON.mm once to the same native compile/link command, before the explicit language selector for SocketResponder.xm.

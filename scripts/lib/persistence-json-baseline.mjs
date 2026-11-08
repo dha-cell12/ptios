@@ -1,3 +1,4 @@
+import {restorePersistenceJSONStorage,checkPersistenceJSONStorage} from './persistence-json-storage-baseline.mjs';
 import {restoreHistoryRecoveryCodec} from './history-recovery-codec-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -25,7 +26,8 @@ export function restorePersistenceJSONMakefile(source,file){
 }
 export function checkPersistenceJSON(){
     for(const [file,key] of [['TLinkPersistenceJSONQuota.h','quotaHash'],['TLinkPersistenceJSON.h','headerHash'],['TLinkPersistenceJSON.mm','implementationHash']])
-        assert.equal(hash(read('shared/'+file)),specs[key],file+' complete source');
+        assert.equal(hash(file==='TLinkPersistenceJSON.mm'?restorePersistenceJSONStorage(read('shared/'+file)):read('shared/'+file)),specs[key],file+' complete source');
+    checkPersistenceJSONStorage(read('shared/TLinkPersistenceJSONBuffer.h'));
     for(const [file,targets] of [['pccontrol/Makefile',['pccontrol']],['tlinkauto-binary/Makefile',['tlinkautod','tlinkautob']],['stream-app/streamd/Makefile',['streamd']]]){
         const source=read(file);restorePersistenceJSONMakefile(source,file);
         for(const target of targets){

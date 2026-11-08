@@ -51,7 +51,7 @@ static void cases(){
         assert(nsThrown==(test==Mode::ThrowNS)&&cppThrown==(test==Mode::ThrowCPP));
         assert((result!=nil)==(test==Mode::Good));assert(held.streamStatus==NSStreamStatusClosed);
         // Rejected prefixes are retired even if an encoder retains the stream.
-        assert([held valueForKey:@"_data"]==nil);
+        assert([(TLinkPersistenceJSONStream *)held retainedCapacity]==0);
         if(result){
             NSData *snapshot=[result copy];const uint8_t extra='x';
             [held open];assert([held write:&extra maxLength:1]==-1);assert([result isEqual:snapshot]);
@@ -69,7 +69,7 @@ static void cases(){
         TLinkPersistenceJSONStream *stream=[[TLinkPersistenceJSONStream alloc] initWithLimit:cap];[stream open];
         const uint8_t byte='x';assert([stream write:&byte maxLength:1]==1);
         assert([stream write:&byte maxLength:cap]==-1&&stream.byteCount==1&&stream.failed);
-        assert(![stream takeData]);[stream close];assert([stream valueForKey:@"_data"]==nil);
+        assert(![stream takeData]);[stream close];assert(stream.retainedCapacity==0);
     }
     NSData *survivor=nil;
     @autoreleasepool {survivor=TLinkPersistenceJSONData(@[@"Unicode 测试",@42],NSJSONWritingSortedKeys,4096);}

@@ -7,7 +7,9 @@
 #include "history-retirement-safety-fixture.inc"
 #include "persistence-json-safety-fixture.inc"
 #include "history-recovery-compare-safety-fixture.inc"
+#include "persistence-json-buffer-safety-fixture.inc"
 int main(){
+    persistenceJSONBufferCases();
     historyRecoveryCompareCases();
     persistenceJSONQuotaCases();
     historyRetirementPlans();
