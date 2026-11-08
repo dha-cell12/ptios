@@ -1,0 +1,29 @@
+# C03au — Complete FileHandle raw read storage package
+
+Date: 2026-11-09 (Asia/Bangkok). Baseline: `f72b0222`; user reported C03at built successfully and requested a larger batch. Scope: P1-43/P1-44/P1-47, the shared production rootfull/roothide/helper/TrollStore FileHandle. TouchPOC is excluded.
+
+## Complete read path
+
+Bundle numeric and all-byte reads, plus direct line reads, through one operation-local raw buffer. This applies automatically to all ten entry/request combinations: read/readText/readBase64 with numeric, all and line requests, plus readLine. All three frontend bindings use the same complete shared class. No public method, frontend, mode/path/license policy or Makefile changes.
+
+The existing ReadInto and ReadLineInto loops remain byte-for-byte unchanged. They still choose the same 8192-byte numeric chunks, 1/128/8192-byte regular-line progression and single-byte nonregular fallback; retry EINTR, reject over-returns, rewind unused line tails and preserve physical file position. The existing closed/readable/request/transfer gates run before storage creation. Numeric zero requests retain the original empty-data path.
+
+Replace NSMutableData setLength/mutableBytes/trim at each grow with a pure C++ raw destination owner. Capacity grows geometrically, never above the existing per-call transfer limit; reuse earlier capacity for short reads and EINTR retries. The allocation is not explicitly zero-initialized and only the successful core's final byte count is committed/sealed. Line CR removal adjusts that count before publication, including a CR and LF split between chunks. No unfinished/error prefix is handed to a formatter.
+
+A private NSData no-copy initializer captures a shared immutable sealed owner. Both text/base64 formatters retain their complete previous source, including selected-codec behavior, mutable line dictionaries, data/line identity and decode-before-base64 errors. The owner supports a formatter or NSString retaining the NSData beyond the call's pool. Empty output needs no retained raw allocation. Validate the factory's full length; nil/short results produce the existing file_read_failed errno=ENOMEM envelope after consumed IO, with no retry or cursor rollback. Allocation, read, rewind, factory and codec exceptions unwind ownership; opaque operations are not made cancellable.
+
+## Capacity and costs
+
+Reuse the existing header-only C03at raw allocation core; there is no dependency on the persistence Objective-C implementation and no new linker/framework requirement. This matters for tlinkauto-jsd, which compiles FileHandle without TLinkPersistenceJSON.mm. The new wrapper owns uncommitted read destinations and seals only trusted counts from the unchanged IO core. It is private, local to one synchronized operation and not thread safe. Published owners are immutable.
+
+Controlled full 512-KiB numeric transfer: 64 identical read/destination requests, seven raw allocation-growth calls. This is an allocator-call expectation, not a count of Foundation's old physical allocations or a device benchmark. The change removes explicit per-chunk Foundation length/zero-fill and final trim operations and performs no explicit payload copy during the handoff. realloc can still move/copy allocations, the OS can zero pages, and NSData may choose to copy internally. The shared control block and NSData wrapper add overhead; a retained output can retain geometric capacity/slack. Small-file allocation, aggregate/transient memory, decode/base64/JSC costs, repeated EINTR/blocking IO and device CPU/RSS/latency remain unqualified. No universal memory reduction is claimed.
+
+## Regression and compatibility
+
+Freeze the entire exact preceding shared class and both complete reader regions. A guarded structural reversal removes only the added helper/includes and restores the two regions, recovering the full preceding class and all historical mode/lifecycle/representation/line/IO baselines. The public header, both IO cores, raw allocation core, three frontend sources and three target Makefiles match HEAD. Existing regression cases remain enabled.
+
+Portable coverage adds 100k independent preceding/current content/EOF/truncation/cursor/read/rewind comparisons across numeric, regular and nonregular lines, using an allocator that moves and poisons every growth. Include empty/CR/chunk/512-KiB edges, partial/EINTR/EIO/rewind failures, SIZE_MAX arithmetic refusal, allocation failure and throw, sealed/moved ownership and zero final tracked blocks. Preserve all previous fd/line/payload/representation tests.
+
+The existing macOS Foundation/POSIX/JSCore/ARC/ASan/UBSan executable gains a complete immediate-predecessor class and 600 full reply/position/syscall/rewind comparisons: all ten entry variants, three caps, empty/Unicode/NUL/CR/multiple-chunk/over-limit files, short/EINTR/EIO and over-returns. Add 50 factory nil/short/NS/C++/copy outcomes through real public reads, consumed-position/no-replay checks, default/copied/refused/failing NSData factories, detached data across caller pools and final weak-owner retirement. Existing direct-destination witnesses now inspect raw pointers rather than the replaced NSMutableData implementation. Native compilation/execution and iOS device qualification require macOS CI; these are expectations, not Windows native results.
+
+Validation: all90 workflow runners (36 source /54 safety portable subsets),521 workflow source assertions (16 artifact-only skipped), final focused FileHandle rerun, exact preceding-class and ten unchanged header/core/frontend/target identities, six-file assertion argument preprocessing, JavaScript syntax and git diff --check pass on Windows. Assertion preprocessing checks macro argument boundaries; it does not type-check Foundation. macOS native branches and device measurements remain pending.

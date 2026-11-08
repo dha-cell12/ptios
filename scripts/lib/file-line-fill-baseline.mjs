@@ -1,3 +1,4 @@
+import {restoreFileReadStorage} from './file-read-storage-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -5,6 +6,7 @@ const hash=text=>createHash('sha256').update(text).digest('hex');
 export const fileLineFillSpecs=JSON.parse(readFileSync(new URL('./file-line-fill-specs.json',import.meta.url),'utf8'));
 export function checkFileLineFillCore(source){assert.equal(hash(source),fileLineFillSpecs.coreHash,'complete direct line destination core');}
 export function restoreFileLineFill(source){
+    source=restoreFileReadStorage(source);
     const spec=fileLineFillSpecs;
     if(!source.includes(spec.include))return source;
     assert.equal(hash(source),spec.currentHash,'complete direct line implementation');

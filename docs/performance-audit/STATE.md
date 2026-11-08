@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03au — 2026-11-09
+
+- User reported C03at build passed (`f72b0222`) and requested a larger batch. Bundle all shared FileHandle numeric/all/line storage across read/readText/readBase64/readLine and root/helper/production TrollStore. Replace per-chunk NSMutableData length/zero-fill/trim with bounded geometric raw destinations, then seal the exact successful count into an owned immutable NSData. Keep complete IO cores, position/rewind/CR/EOF/limits, chosen/full codecs, mutable line replies and all public/frontend/authority/open/write source.
+- Portable 100k frozen content/count/cursor/EOF/IO/allocator comparisons pass; controlled 512-KiB read keeps64 read requests with7 raw capacity growths. Add600 native complete immediate-predecessor comparisons,50 actual public factory outcomes and detached/copy/fault/caller-pool owner checks within the existing executable. All90 workflow runners (36 source,54 safety portable subsets),521 workflow source assertions (16 artifact-only skipped), final focused FileHandle rerun, exact preceding-class/core/frontend/target identities, six-file assertion macro preprocessing, JavaScript syntax and diff whitespace pass on Windows. Apple native execution and device performance remain pending; allocator/OS/Foundation copies, extra control-block/NSData overhead and retained capacity/slack are not device memory bounds. No new module/framework/target dependency; TouchPOC unchanged. Details: `IMPLEMENTATION-C03AU.md`.
+
 ## Implementation C03at — 2026-11-09
 
 - User reported C03as build passed (`d92471b9`). Combine direct owned reads for history index, recovery fallback and event journal: reserve without explicit zero-fill, commit only produced bytes and publish immutable NSData only after complete read/EOF validation. Keep fresh reads, 32/4-MiB admission and authoritative recovery size, parser/lock/IO/error/ACK policy.

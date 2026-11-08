@@ -1,0 +1,17 @@
+{
+  "include": "#include \"TLinkJSFileReadStorage.h\"\n#include <memory>\n",
+  "helper": "// BEGIN owned file read storage.\nusing TLinkJSFileReadDataFactory=NSData *(*)(const std::shared_ptr<TLinkJSFileReadStorage::Buffer> &);\nstatic NSData *TLinkJSFileReadCreateData(const std::shared_ptr<TLinkJSFileReadStorage::Buffer> &owner)\n{\n    if(!owner||!owner->size())return [NSData data];\n    const auto held=owner;\n    return [[NSData alloc] initWithBytesNoCopy:const_cast<uint8_t *>(owner->data()) length:owner->size()\n        deallocator:^(void *bytes,NSUInteger length){(void)bytes;(void)length;(void)held->size();}];\n}\nstatic NSData *TLinkJSFileReadFinish(TLinkJSFileReadStorage::Buffer &&storage,NSUInteger produced,\n                                    TLinkJSFileReadDataFactory factory=TLinkJSFileReadCreateData)\n{\n    if(!factory||!storage.seal(produced))return nil;\n    auto owner=std::make_shared<TLinkJSFileReadStorage::Buffer>(std::move(storage));\n    NSData *data=factory(owner);\n    return data&&data.length==produced?data:nil;\n}\n// END owned file read storage.\n\n",
+  "beforeHash": "94c150acd4a1fa7bd85c51364ca8627ed5577a659ccd0ee5ba1e4106c0078d9a",
+  "currentHash": "dcb4ea1d59962cc900341acdf76ce947b69acac5880baf4432cea0e41fd6f398",
+  "coreHash": "367bcca3f7baefeacca0ceaeff31808518c9765f93d83c10cf7403c137e43fbc",
+  "parts": [
+    {
+      "name": "read",
+      "current": "        TLinkJSFileReadStorage::Buffer storage(requested);\n        const int fd=_fd;\n        const auto input=TLinkJSFileIO::ReadInto(requested,\n            [&storage](size_t used,size_t amount)->uint8_t * { return storage.destination(used,amount); },\n            [fd](uint8_t *bytes,size_t amount)->int64_t{return ::read(fd,bytes,amount);});\n        if(input.error)return TLinkJSFileError([NSString stringWithFormat:@\"file_read_failed errno=%d %s\",input.error,strerror(input.error)],self.path);\n        NSData *data=TLinkJSFileReadFinish(std::move(storage),input.bytes);\n        if(!data)return TLinkJSFileError([NSString stringWithFormat:@\"file_read_failed errno=%d %s\",ENOMEM,strerror(ENOMEM)],self.path);\n"
+    },
+    {
+      "name": "line",
+      "current": "        TLinkJSFileReadStorage::Buffer storage(_maxTransferBytes);\n        const int fd = _fd;\n        const auto line = TLinkJSFileReadLineInto(_maxTransferBytes, _lineReadChunked,\n            [&storage](size_t used,size_t count)->uint8_t * { return storage.destination(used,count); },\n            [fd](uint8_t *bytes, size_t count)->int64_t { return ::read(fd, bytes, count); },\n            [fd](size_t count)->bool { return ::lseek(fd, -static_cast<off_t>(count), SEEK_CUR) >= 0; });\n        if (line.error) return TLinkJSFileError([NSString stringWithFormat:@\"file_read_failed errno=%d %s\", line.error, strerror(line.error)], self.path);\n        NSUInteger produced=line.bytes;\n        if(produced&&storage.data()[produced-1]=='\\r')--produced;\n        NSData *data=TLinkJSFileReadFinish(std::move(storage),produced);\n        if(!data)return TLinkJSFileError([NSString stringWithFormat:@\"file_read_failed errno=%d %s\",ENOMEM,strerror(ENOMEM)],self.path);\n        BOOL eof = line.eof;\n"
+    }
+  ]
+}

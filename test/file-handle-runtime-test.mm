@@ -18,6 +18,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <memory>
+#include <map>
+#include "../shared/TLinkJSFileReadStorage.h"
 #include "ax-node-pool-owner.h"
 void TLinkAXFixtureOwnerDidDrain(void){}
 static bool fileTrackPools=false;
@@ -28,14 +31,31 @@ static bool fileLineTrack=false;
 static unsigned fileLineGrows=0,fileLineGrowFault=0;
 static uint8_t *fileLineDestination=nullptr;
 static size_t fileLineOffered=0;
-static void fileLineGrowWitness(NSMutableData *data,size_t used,size_t count){
+static void fileRawGrowWitness(uint8_t *bytes,size_t count){
     if(!fileLineTrack)return;
-    ++fileLineGrows;assert(data.length==used+count);
+    ++fileLineGrows;assert(bytes);
     if(fileLineGrowFault&&fileLineGrows==2){
         if(fileLineGrowFault==1)[NSException raise:@"FileLineGrowFixture" format:@"grow"];
         throw std::runtime_error("grow");
     }
-    fileLineDestination=(uint8_t *)data.mutableBytes+used;fileLineOffered=count;
+    fileLineDestination=bytes;fileLineOffered=count;
+}
+static bool fileRawTrack=false;
+static std::weak_ptr<TLinkJSFileReadStorage::Buffer> fileRawOwner;
+static unsigned fileRawFactories=0,fileRawFactoryFault=0;
+static void fileReadOwnerWitness(const std::shared_ptr<TLinkJSFileReadStorage::Buffer> &owner){
+    if(fileRawTrack){assert(owner&&owner->size()<=owner->capacity());fileRawOwner=owner;}
+}
+static NSData *fileReadDataFactory(NSData *(*factory)(const std::shared_ptr<TLinkJSFileReadStorage::Buffer> &),
+                                  const std::shared_ptr<TLinkJSFileReadStorage::Buffer> &owner){
+    if(!fileRawTrack)return factory(owner);
+    ++fileRawFactories;
+    if(fileRawFactoryFault==1)return nil;
+    if(fileRawFactoryFault==2)return [NSData data];
+    if(fileRawFactoryFault==3)[NSException raise:@"FileReadStorageFixture" format:@"factory"];
+    if(fileRawFactoryFault==4)throw std::runtime_error("factory");
+    if(fileRawFactoryFault==5)return [NSData dataWithBytes:owner->data() length:owner->size()];
+    return factory(owner);
 }
 static void fileRepresentationCodecFault(unsigned fault){
     if(fault==1)[NSException raise:@"FileRepresentationFixture" format:@"codec"];
@@ -142,6 +162,7 @@ static ssize_t fileTestWrite(int fd,const void *bytes,size_t count){
 #define fsync(fd) fileTestSync(fd)
 #include "FileHandleLifecycleUnderTest.inc"
 #include "PreviousLineFileHandle.inc"
+#include "BeforeReadStorageFileHandle.inc"
 #define TLinkJSFileHandle LegacyTLinkJSFileHandle
 #define TLinkJSFileModeIsValid LegacyTLinkJSFileModeIsValid
 #define TLinkJSFileModeWrites LegacyTLinkJSFileModeWrites
@@ -224,6 +245,7 @@ static FileTrace filePipe(bool legacy){
 #include "file-plan-runtime-fixture.inc"
 #include "file-representation-runtime-fixture.inc"
 #include "file-line-fill-runtime-fixture.inc"
+#include "file-read-storage-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]],*path=[root stringByAppendingPathComponent:@"handle.bin"];
     puts("FileHandle Foundation: actual/frozen complete classes, POSIX descriptors and JSCore");fflush(stdout);
@@ -256,6 +278,7 @@ int main(int argc,char **argv){@autoreleasepool{
     filePlanRuntimeCases(path);
     fileRepresentationRuntimeCases(path);
     fileLineFillRuntimeCases(path);
+    fileReadStorageRuntimeCases(path);
     assert(fileFDs.empty());assert([[NSFileManager defaultManager] removeItemAtPath:path error:nil]);
     puts("FileHandle Foundation passed: frozen full replies/mixed read-write-seek/tell/append/limits/CR/EOF, real UTF8/binary files, short/EINTR/EIO, stat fallback, real pipe, fresh external edits, rewind failure/recovery, JS bindings and 128 balanced lifecycles.");
 }}

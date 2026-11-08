@@ -45,10 +45,12 @@ static void compare(Source source,size_t limit,bool regular=true){
 }
 #include "file-handle-payload-safety-fixture.inc"
 #include "file-line-fill-safety-fixture.inc"
+#include "file-read-storage-safety-fixture.inc"
 int main(){
     fileOpenOwnerCases();
     payloadCases();
     fileLineFillCases();
+    FileReadStorageFixture::cases();
     for(const std::string &bytes:std::vector<std::string>{"","\n","\r\n","a\nnext","a\r","a\r\nnext","\r","\r\n\n",std::string("a\0b\nnext",8),std::string(20000,'x')+"\nrest"}){
         for(size_t limit:{size_t(1),size_t(2),size_t(3),size_t(128),size_t(129),size_t(8192),size_t(32768)}){
             Source source;source.bytes=bytes;compare(source,limit);compare(source,limit,false);

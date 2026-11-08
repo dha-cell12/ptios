@@ -1389,6 +1389,8 @@ The async queue has no byte/entry bound. A log-heavy script can enqueue faster t
 
 ### [P1-43] JS file readLine performs one read syscall per byte
 
+C03au raw-read follow-up (2026-11-09): all ten shared FileHandle numeric/all/line entries across root/helper/production TrollStore use geometric raw destinations without explicit per-chunk zero-fill/length/trim. Seal the successful count into owned immutable NSData; preserve complete IO cores, cursor/read/rewind/CR/EOF/limits, full or selected codecs and mutable line fields. Portable100k frozen IO/content oracles pass; native600 complete preceding/current comparisons plus50 public factory outcomes and detached ownership await macOS CI. Allocator/OS/Foundation behavior, added wrapper/control-block costs, retained capacity/slack and device performance remain unqualified. See `IMPLEMENTATION-C03AU.md`.
+
 C03ao direct-line follow-up (2026-11-08; also P1-44): all shared line entries now read into the owned NSMutableData tail and construct the final mutable legacy/text/base64 dictionary directly. Preserve chunk sizes, descriptor rewind, exact positions/EOF/CR/limits, output fields and decode-before-base64 failures. Portable100k moving-buffer/frozen chunk oracles and Windows workflow checks pass; native preceding/current classes, actual destination pointers, mutable field identity and fault recovery need macOS CI. Ordinary calls no longer perform the explicit staging append or intermediate result copy; allocation-failure timing can move before a read, and device CPU/RSS gains remain unmeasured. See `IMPLEMENTATION-C03AO.md`.
 
 C03al frontend follow-up (2026-11-07): all three FileHandle frontends now share a sealed immutable mode snapshot across path authority and kernel flags, eliminating two repeated normalizations and closing a mutable r→w+ reentrant path gap. Raw-mode API and complete physical fd/error body remain; all nine JS wrappers and object creation scope normal conversion temporaries. Portable/source checks pass; complete native frontend/JSCore/ownership and device qualification pending. See `IMPLEMENTATION-C03AL.md`.
@@ -1407,6 +1409,8 @@ A line up to the 512 KiB transfer limit can cause up to ~524,288 one-byte `read(
 ---
 
 ### [P1-44] File reads always build both UTF-8 text and base64 representations
+
+C03au raw-read follow-up (2026-11-09): all ten shared FileHandle numeric/all/line entries across root/helper/production TrollStore use geometric raw destinations without explicit per-chunk zero-fill/length/trim. Seal the successful count into owned immutable NSData; preserve complete IO cores, cursor/read/rewind/CR/EOF/limits, full or selected codecs and mutable line fields. Portable100k frozen IO/content oracles pass; native600 complete preceding/current comparisons plus50 public factory outcomes and detached ownership await macOS CI. Allocator/OS/Foundation behavior, added wrapper/control-block costs, retained capacity/slack and device performance remain unqualified. See `IMPLEMENTATION-C03AU.md`.
 
 C03am explicit-read follow-up (2026-11-08): shared rootfull/roothide/helper/production TrollStore handles expose `readText(request)` and `readBase64(request)` for full, byte-count and line reads. They reuse existing IO/position/error/transfer rules and skip the unrequested codec and field; legacy read/readLine retain the complete text/base64 graph. Exact preceding source/header restoration and Windows portable/source checks pass. Existing scripts need to opt in; new Foundation/POSIX/JSCore/fault/codec-call tests and device allocation/latency remain pending. See `IMPLEMENTATION-C03AM.md`.
 
@@ -1446,6 +1450,8 @@ Payloads longer than 8192 characters are silently cut before parsing. Valid batc
 ---
 
 ### [P1-47] Synchronous JS storage helpers perform avoidable whole-buffer conversions
+
+C03au raw-read follow-up (2026-11-09): all ten shared FileHandle numeric/all/line entries across root/helper/production TrollStore use geometric raw destinations without explicit per-chunk zero-fill/length/trim. Seal the successful count into owned immutable NSData; preserve complete IO cores, cursor/read/rewind/CR/EOF/limits, full or selected codecs and mutable line fields. Portable100k frozen IO/content oracles pass; native600 complete preceding/current comparisons plus50 public factory outcomes and detached ownership await macOS CI. Allocator/OS/Foundation behavior, added wrapper/control-block costs, retained capacity/slack and device performance remain unqualified. See `IMPLEMENTATION-C03AU.md`.
 
 C03an JSON write follow-up (2026-11-08): root/helper writeJSON retains an immutable encoded NSData snapshot in an NSString-compatible adapter. The existing writeText child gates/path/count/error/limit source stays intact; UTF8 writing uses the retained bytes instead of requiring another string encoding, and other encodings/BOM normalization retain the backing NSString path. TrollStore already writes serializer NSData directly and remains unchanged. Source/portable Windows checks pass; exact previous routes, string/data lifetime, real writer metadata/error parity and actual child-fault tests await macOS Foundation/ARC. One decoded string and one small adapter remain; no device allocation/latency gain measured. See `IMPLEMENTATION-C03AN.md`.
 

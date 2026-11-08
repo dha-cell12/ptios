@@ -2,6 +2,8 @@
 #include "TLinkJSFileLine.h"
 #include "TLinkJSFileLineInto.h"
 #include "TLinkJSFileIO.h"
+#include "TLinkJSFileReadStorage.h"
+#include <memory>
 #include "TLinkJSFileOpen.h"
 #include "TLinkUTF8Data.h"
 
@@ -10,6 +12,25 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+// BEGIN owned file read storage.
+using TLinkJSFileReadDataFactory=NSData *(*)(const std::shared_ptr<TLinkJSFileReadStorage::Buffer> &);
+static NSData *TLinkJSFileReadCreateData(const std::shared_ptr<TLinkJSFileReadStorage::Buffer> &owner)
+{
+    if(!owner||!owner->size())return [NSData data];
+    const auto held=owner;
+    return [[NSData alloc] initWithBytesNoCopy:const_cast<uint8_t *>(owner->data()) length:owner->size()
+        deallocator:^(void *bytes,NSUInteger length){(void)bytes;(void)length;(void)held->size();}];
+}
+static NSData *TLinkJSFileReadFinish(TLinkJSFileReadStorage::Buffer &&storage,NSUInteger produced,
+                                    TLinkJSFileReadDataFactory factory=TLinkJSFileReadCreateData)
+{
+    if(!factory||!storage.seal(produced))return nil;
+    auto owner=std::make_shared<TLinkJSFileReadStorage::Buffer>(std::move(storage));
+    NSData *data=factory(owner);
+    return data&&data.length==produced?data:nil;
+}
+// END owned file read storage.
 
 static NSString *TLinkJSFileNormalizeMode(NSString *mode)
 {
@@ -324,16 +345,14 @@ static NSMutableDictionary *TLinkJSFileLineDataResult(NSData *data, BOOL eof, BO
         }
         if (requested == 0) return TLinkJSFileSelectedDataResult([NSData data], NO, NO, representation);
 
-        NSMutableData *data = [NSMutableData data];
+        TLinkJSFileReadStorage::Buffer storage(requested);
         const int fd=_fd;
         const auto input=TLinkJSFileIO::ReadInto(requested,
-            [data](size_t used,size_t amount)->uint8_t * {
-                [data setLength:used+amount];
-                uint8_t *base=(uint8_t *)data.mutableBytes;
-                return base?base+used:nullptr;
-            },[fd](uint8_t *bytes,size_t amount)->int64_t{return ::read(fd,bytes,amount);});
+            [&storage](size_t used,size_t amount)->uint8_t * { return storage.destination(used,amount); },
+            [fd](uint8_t *bytes,size_t amount)->int64_t{return ::read(fd,bytes,amount);});
         if(input.error)return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s",input.error,strerror(input.error)],self.path);
-        [data setLength:input.bytes];
+        NSData *data=TLinkJSFileReadFinish(std::move(storage),input.bytes);
+        if(!data)return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s",ENOMEM,strerror(ENOMEM)],self.path);
         BOOL eof=input.eof;
         BOOL truncated = readAll && !eof && data.length == _maxTransferBytes;
         return TLinkJSFileSelectedDataResult(data, eof, truncated, representation);
@@ -353,23 +372,18 @@ static NSMutableDictionary *TLinkJSFileLineDataResult(NSData *data, BOOL eof, BO
         if (self.closed || _fd < 0) return [self closedError];
         if (!_readable) return TLinkJSFileError(@"file_not_open_for_reading", self.path);
 
-        NSMutableData *data = [NSMutableData data];
+        TLinkJSFileReadStorage::Buffer storage(_maxTransferBytes);
         const int fd = _fd;
         const auto line = TLinkJSFileReadLineInto(_maxTransferBytes, _lineReadChunked,
-            [data](size_t used, size_t count)->uint8_t * {
-                [data setLength:used+count];
-                uint8_t *base=(uint8_t *)data.mutableBytes;
-                return base?base+used:nullptr;
-            },
+            [&storage](size_t used,size_t count)->uint8_t * { return storage.destination(used,count); },
             [fd](uint8_t *bytes, size_t count)->int64_t { return ::read(fd, bytes, count); },
             [fd](size_t count)->bool { return ::lseek(fd, -static_cast<off_t>(count), SEEK_CUR) >= 0; });
         if (line.error) return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s", line.error, strerror(line.error)], self.path);
-        [data setLength:line.bytes];
+        NSUInteger produced=line.bytes;
+        if(produced&&storage.data()[produced-1]=='\r')--produced;
+        NSData *data=TLinkJSFileReadFinish(std::move(storage),produced);
+        if(!data)return TLinkJSFileError([NSString stringWithFormat:@"file_read_failed errno=%d %s",ENOMEM,strerror(ENOMEM)],self.path);
         BOOL eof = line.eof;
-        if (data.length > 0) {
-            const uint8_t *bytes = (const uint8_t *)data.bytes;
-            if (bytes[data.length - 1] == '\r') [data setLength:data.length - 1];
-        }
         BOOL truncated = !eof && data.length == _maxTransferBytes;
         return TLinkJSFileLineDataResult(data, eof, truncated, representation);
     }
