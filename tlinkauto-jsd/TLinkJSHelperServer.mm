@@ -37,6 +37,7 @@ static const unsigned long long kTLinkJSHelperMaxStorageFileBytes = 512 * 1024;
 static const unsigned long long kTLinkJSHelperMaxConsoleLogBytes = 512 * 1024;
 static const NSUInteger kTLinkJSHelperMaxOpenFiles = 32;
 static const double kTLinkJSHelperWatchdogInterval = 0.1;
+#include "../shared/TLinkHelperConsoleAsync.inc"
 
 typedef bool (*TLinkJSHelperShouldTerminateCallback)(JSContextRef ctx, void *opaque);
 typedef void (*TLinkJSHelperSetExecutionTimeLimitFn)(JSContextGroupRef group, double limit, TLinkJSHelperShouldTerminateCallback callback, void *opaque);
@@ -824,16 +825,20 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         // Synchronous helper log writes, including terminal summaries, finish
         // before this scoped owner marks the final (possibly rotated) inode.
         TLinkConsoleLogRetention::Completion completedLog(logPath.fileSystemRepresentation);
+        auto consoleOwner=TLinkHelperConsoleAsync::Create(logPath,latestPath);
+        TLinkHelperConsoleAsync::CloseScope consoleClose(consoleOwner,&completedLog);
 
         NSError *readError = nil;
         NSString *script = [NSString stringWithContentsOfFile:scriptPath encoding:NSUTF8StringEncoding error:&readError];
         if (!script) {
             NSString *err = readError.localizedDescription ?: @"failed to read script";
+            if(consoleOwner)consoleOwner->close();
             [self finishSessionId:sessionId state:kTLinkJSHelperStateFailed reason:@"read_script_failed" errorText:err logPath:logPath latestPath:latestPath];
             return;
         }
 
         if (![self markRunningSessionId:sessionId logPath:logPath latestPath:latestPath]) {
+            if(consoleOwner)consoleOwner->close();
             [self finishSessionId:sessionId state:kTLinkJSHelperStateCancelled reason:@"cancelled" errorText:nil logPath:logPath latestPath:latestPath];return;
         }
         [self startLicenseHeartbeatForSessionId:sessionId];
@@ -852,7 +857,8 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             [weakSelf interruptibleSleepMs:ms context:[JSContext currentContext]];
         };
         ctx[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
-            TLinkHelperConsoleEmit((id<TLinkHelperConsoleFileSink>)weakSelf,runId,level,message,logPath,latestPath);
+            if(consoleOwner)consoleOwner->submit(runId,level,message);
+            else TLinkHelperConsoleEmit((id<TLinkHelperConsoleFileSink>)weakSelf,runId,level,message,logPath,latestPath);
         };
         ctx[@"_tlinkautoLoadBundleText"] = ^NSDictionary *(NSString *relativePath) {
             return [weakSelf bundleTextForRelativePath:relativePath bundlePath:bundlePath];
@@ -869,6 +875,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
                 @"runId": runId ?: @"",
                 @"consoleLogPath": logPath ?: @"",
                 @"consoleLatestLogPath": latestPath ?: @"",
+                @"consoleLog": TLinkHelperConsoleAsync::Diagnostics(consoleOwner),
                 @"nativeAPIs": @NO,
                 @"nativeRPC": @YES,
                 @"storageLocal": @YES,
@@ -1021,6 +1028,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         }
         NSString *state=ctx.exception?kTLinkJSHelperStateFailed:kTLinkJSHelperStateCompleted;
         NSString *reason=ctx.exception?@"failed":@"normal";
+        if(consoleOwner)consoleOwner->close();
         [self finishSessionId:sessionId state:state reason:reason errorText:ctx.exception?[ctx.exception toString]:nil logPath:logPath latestPath:latestPath];
     }
 }

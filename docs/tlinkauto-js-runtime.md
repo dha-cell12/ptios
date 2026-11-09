@@ -192,6 +192,10 @@ Completed root-core/helper logs use best-effort retention of up to50 newest fitt
 
 Helper JavaScript console messages now retain at most4096 UTF16 units, with64-unit level/run metadata and surrogate-pair-safe prefixes. File lines are encoded once for run/latest and capped at16KiB; each file and the system sink handles its own faults without replaying a partial prefix. Oversized text uses a prefix without a suffix. Structured terminal summaries/status/error reporting retain their existing behavior and are outside this message policy.
 
+Ordinary helper console file/system output runs asynchronously on a shared serial queue. At most64 records can be retained across all runs, including preparation and active output. Full queues drop new logs before formatting. Each run closes admission and drains published work before its terminal summary; late callbacks cannot append afterward. Ordinary completed bytes keep their formats, while intermediate output timing changes. If the asynchronous owner cannot be created, the bounded synchronous logger remains available. Terminal drain can still wait on filesystem/system logging.
+
+`device.runtimeInfo().consoleLog` reports `mode: "async_bounded_batch_v1"` with per-run `accepted`, `dropped`, `truncated`, `writeFailures`, `systemFailures`, `pending` and `peakPending`. Accepted counts publication, not confirmed delivery; dropped includes refused/abandoned records, and pending includes preparing/consuming records. Construction fallback reports only `mode: "sync_bounded_fallback_v1"`. See [C03az helper queue policy](performance-audit/IMPLEMENTATION-C03AZ.md).
+
 ## Safe demos
 
 Safe demos intended for repeated validation:

@@ -9,20 +9,23 @@ struct TLinkHelperConsoleLine {
     NSString *run=nil,*level=nil,*message=nil;
     NSData *data=nil;
     bool ready=false;
+    bool truncated=false;
 };
-static NSString *TLinkHelperConsolePrefix(id value,NSString *fallback,size_t limit){
+static NSString *TLinkHelperConsolePrefix(id value,NSString *fallback,size_t limit,bool *truncated=nullptr){
     NSString *text=value ? ([value isKindOfClass:[NSString class]] ? value : [value description]) : fallback;
     text=text ?: @"";
-    const size_t count=TLinkConsoleLogPrefix(text.length,limit,[text](size_t n){return [text characterAtIndex:n];});
+    const size_t length=text.length;
+    const size_t count=TLinkConsoleLogPrefix(length,limit,[text](size_t n){return [text characterAtIndex:n];});
+    if(truncated&&count<length)*truncated=true;
     return [[text substringToIndex:count] copy];
 }
 static TLinkHelperConsoleLine TLinkHelperConsolePrepare(NSString *run,NSString *level,NSString *message){
     TLinkHelperConsoleLine result;
     @autoreleasepool {
         @try {try {
-            result.run=TLinkHelperConsolePrefix(run,@"",TLinkConsoleLogLevelUnits);
-            result.level=TLinkHelperConsolePrefix(level,@"log",TLinkConsoleLogLevelUnits);
-            result.message=TLinkHelperConsolePrefix(message,@"",TLinkConsoleLogMessageUnits);
+            result.run=TLinkHelperConsolePrefix(run,@"",TLinkConsoleLogLevelUnits,&result.truncated);
+            result.level=TLinkHelperConsolePrefix(level,@"log",TLinkConsoleLogLevelUnits,&result.truncated);
+            result.message=TLinkHelperConsolePrefix(message,@"",TLinkConsoleLogMessageUnits,&result.truncated);
             result.ready=true;
             @try {try {
                 NSString *line=[NSString stringWithFormat:@"[%@][%@][%@] %@\n",[NSDate date],result.run,result.level,result.message];

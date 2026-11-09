@@ -1,4 +1,5 @@
 import {restoreHelperConsole,helperConsoleSpecs,helperConsoleBeforeHook,helperConsoleBeforeWriter} from './lib/helper-console-baseline.mjs';
+import {restoreHelperConsoleMetadata} from './lib/helper-console-async-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,basename,join,resolve} from 'node:path';
@@ -8,7 +9,7 @@ import {spawnSync} from 'node:child_process';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const read=async path=>(await readFile(join(root,path),'utf8')).replaceAll('\r\n','\n');
 const source=await read(helperConsoleSpecs.file);restoreHelperConsole(source);
-const moduleSource=await read('shared/TLinkHelperConsoleLog.inc');
+const moduleSource=restoreHelperConsoleMetadata(await read('shared/TLinkHelperConsoleLog.inc'));
 assert.match(moduleSource,/TLinkConsoleLogPrefix[\s\S]*substringToIndex:count[\s\S]*copy/);
 assert.equal((moduleSource.match(/dataUsingEncoding:/g)||[]).length,1);
 assert.equal((moduleSource.match(/appendPreparedConsoleData:line.data/g)||[]).length,2);

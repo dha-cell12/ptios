@@ -4,6 +4,8 @@ Ngày: 16/10/2026 (Asia/Bangkok). Commit đối chiếu: `18e6e67c7250e172da02df
 
 ## Kết luận
 
+Cập nhật triển khai C03az (09/11/2026): người dùng báo C03ay build pass (`4e5d0862`). Gom logging helper async:64 bản ghi toàn process, admission trước formatter, một drain ticket mỗi run, system sink riêng và writev/group giữ đúng rotation512KiB. Drain trước summary/proof, từ chối callback/producer muộn, rollback khi enqueue lỗi và runtimeInfo counters. Portable100k/10k/80k,90 runner và521 source check Windows pass; native JSCore/GCD/POSIX/fault/lifetime chờ CI macOS. Fallback lúc không tạo được owner vẫn synchronous có giới hạn; chưa đo thiết bị hay chặn thời gian opaque IO. Chi tiết: IMPLEMENTATION-C03AZ.md.
+
 Cập nhật triển khai C03ay (09/11/2026): người dùng báo C03ax build pass (`1907f200`). Gom quota25MiB/50 completed log với logging helper có giới hạn4096/64 UTF16 units, encode một lần cho hai file và cô lập lỗi từng sink. Giữ output thường, rotation/weak hook/authority; oversized output thay đổi theo policy. Portable100k byte/count và90 runner/521 source check Windows pass;80 đối chiếu native cùng POSIX quota/fault/lifetime chờ CI. Chi tiết: IMPLEMENTATION-C03AY.md.
 
 Cập nhật triển khai C03ax (09/11/2026): người dùng báo build mới nhất pass (`5531db13`). Gom retention log root/roothide core + helper: chỉ đánh dấu sau khi ghi xong, proof device/inode, giữ50 file hoàn tất mới nhất theo mtime; khóa/revalidate rồi unlink đúng leaf. Giữ active/latest/legacy chưa có proof; quét quá4096 mục thì không xóa. Portable100k và90 runner/521 source check Windows pass; native xattr/flock/process/cleanup chờ CI. Chi tiết: IMPLEMENTATION-C03AX.md.

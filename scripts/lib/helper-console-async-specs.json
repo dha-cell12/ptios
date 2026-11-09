@@ -1,0 +1,37 @@
+{
+  "file": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+  "currentHash": "4218edf390ec6fb9420c92c9e85ba68cac18fb0f5289e2bf1d5c510892a5a036",
+  "beforeHash": "bf21993c5eb48cfec235e9cc2f2c767762eb0d8ff8dfdf7ccff03f9a57f99d40",
+  "parts": [
+    {
+      "before": "static const double kTLinkJSHelperWatchdogInterval = 0.1;\n",
+      "current": "static const double kTLinkJSHelperWatchdogInterval = 0.1;\n#include \"../shared/TLinkHelperConsoleAsync.inc\"\n"
+    },
+    {
+      "before": "        TLinkConsoleLogRetention::Completion completedLog(logPath.fileSystemRepresentation);\n",
+      "current": "        TLinkConsoleLogRetention::Completion completedLog(logPath.fileSystemRepresentation);\n        auto consoleOwner=TLinkHelperConsoleAsync::Create(logPath,latestPath);\n        TLinkHelperConsoleAsync::CloseScope consoleClose(consoleOwner,&completedLog);\n"
+    },
+    {
+      "before": "            NSString *err = readError.localizedDescription ?: @\"failed to read script\";\n",
+      "current": "            NSString *err = readError.localizedDescription ?: @\"failed to read script\";\n            if(consoleOwner)consoleOwner->close();\n"
+    },
+    {
+      "before": "        if (![self markRunningSessionId:sessionId logPath:logPath latestPath:latestPath]) {\n",
+      "current": "        if (![self markRunningSessionId:sessionId logPath:logPath latestPath:latestPath]) {\n            if(consoleOwner)consoleOwner->close();\n"
+    },
+    {
+      "before": "        ctx[@\"_tlinkautoLog\"] = ^(NSString *level, NSString *message) {\n            TLinkHelperConsoleEmit((id<TLinkHelperConsoleFileSink>)weakSelf,runId,level,message,logPath,latestPath);\n",
+      "current": "        ctx[@\"_tlinkautoLog\"] = ^(NSString *level, NSString *message) {\n            if(consoleOwner)consoleOwner->submit(runId,level,message);\n            else TLinkHelperConsoleEmit((id<TLinkHelperConsoleFileSink>)weakSelf,runId,level,message,logPath,latestPath);\n"
+    },
+    {
+      "before": "                @\"consoleLatestLogPath\": latestPath ?: @\"\",\n",
+      "current": "                @\"consoleLatestLogPath\": latestPath ?: @\"\",\n                @\"consoleLog\": TLinkHelperConsoleAsync::Diagnostics(consoleOwner),\n"
+    },
+    {
+      "before": "        NSString *reason=ctx.exception?@\"failed\":@\"normal\";\n",
+      "current": "        NSString *reason=ctx.exception?@\"failed\":@\"normal\";\n        if(consoleOwner)consoleOwner->close();\n"
+    }
+  ],
+  "moduleBeforeHash": "cf5470d02aad898e3feb5017dec1173bfbde35fb8f34b6fe524b3bc79d62a154",
+  "moduleCurrentHash": "691dc62545b2578101033c971ca50846effd72a29845b9bd04fde9b2e6ee7109"
+}

@@ -85,3 +85,4 @@ try{
 await import('./check-production-log-safety.mjs');
 await import('./check-console-retention-safety.mjs');
 await import('./check-helper-console-safety.mjs');
+await import('./check-helper-console-async-safety.mjs');

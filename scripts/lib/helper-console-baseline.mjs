@@ -1,3 +1,4 @@
+import {restoreHelperConsoleAsync} from './helper-console-async-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -8,6 +9,7 @@ export const helperConsoleBeforeHook=frozen('callback'),helperConsoleBeforeWrite
 assert.equal(hash(helperConsoleBeforeHook),helperConsoleSpecs.beforeHookHash);
 assert.equal(hash(helperConsoleBeforeWriter),helperConsoleSpecs.beforeWriterHash);
 export function restoreHelperConsole(source){
+    source=restoreHelperConsoleAsync(source);
     const spec=helperConsoleSpecs;if(!source.includes(spec.include))return source;
     assert.equal(hash(source),spec.currentHash,'complete bounded helper console source');
     for(const text of [spec.include,spec.writer,spec.hook])assert.equal(source.split(text).length,2);

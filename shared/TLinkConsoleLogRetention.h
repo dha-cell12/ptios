@@ -162,9 +162,11 @@ inline Result Complete(const char *path) noexcept {
 }
 class Completion {
     std::string path_;
+    bool enabled_=true;
 public:
     explicit Completion(const char *path) noexcept {try {if(path)path_=path;}catch(...) {}}
-    ~Completion() noexcept {Complete(path_.c_str());}
+    void cancel() noexcept {enabled_=false;}
+    ~Completion() noexcept {if(enabled_)Complete(path_.c_str());}
     Completion(const Completion &)=delete;Completion &operator=(const Completion &)=delete;
 };
 }

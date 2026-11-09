@@ -117,6 +117,9 @@ int main(int argc,char **argv){
     const auto alias=base+"/alias";assert(::mkdir(alias.c_str(),0700)==0);assert(::symlink(directory.c_str(),(alias+"/_logs").c_str())==0);
     assert(!Complete((alias+"/_logs/"+nameFor(1)).c_str()).marked);
     const auto outside=alias+"/"+nameFor(99);create(outside);assert(!Complete(outside.c_str()).marked&&exists(outside));
+    const auto cancelled=directory+"/"+nameFor(9999);create(cancelled);
+    {Completion incomplete(cancelled.c_str());incomplete.cancel();}
+    {Detail::FD fd(::open(cancelled.c_str(),O_RDONLY));struct stat info;assert(fd.get()>=0&&::fstat(fd.get(),&info)==0&&!Detail::Marked(fd.get(),info));}
     assert(!Complete(nullptr).marked&&!Complete("/tmp/not-a-log").marked);
     assert(fdCount()==descriptors);
     puts("Console retention POSIX passed: real xattr terminal ownership, 50 newest completed files, active/legacy/latest preservation, incomplete-scan refusal, symlink/FIFO/directory/hardlink/foreign-marker refusal, locks/replacements/appends, eight process cleaners and 128 normal/throwing scope lifecycles; zero final fixture FDs. Installed logs are untouched.");
