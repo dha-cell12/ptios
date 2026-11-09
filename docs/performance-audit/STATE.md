@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## C03aw production logger fixture lookup correction — 2026-11-09
+
+- macOS CI rejected the predecessor backend's unqualified `POCLogWriteData(data,POCLogFilePath())`: global Foundation pointer argument types brought the current global overload into C++ argument-dependent lookup alongside the namespace-local old writer. Qualify this single generated call as `BeforeLogBatch::POCLogWriteData`; retain the exact frozen backend, production source and all native compiler/sanitizer settings.
+- Add a portable compiled C++ lookup probe using the actual generated call expression with global argument types and both writer candidates. It reproduced the same ambiguous-call compiler failure before the correction and selects the predecessor after it. Focused production logger source/extraction, lookup compile/run,100k grouping,10k rollback,8k concurrent drain and100k ring/limit checks pass on Windows, with JavaScript syntax and diff whitespace. Full Foundation/GCD/POSIX/JSCore/ARC/ASan/UBSan execution remains pending macOS CI.
+
 ## C03au FileHandle fixture build correction — 2026-11-09
 
 - macOS CI at C03aw reported missing `BeforeReadStorageTLinkJSFileHandle.h`. The C03au predecessor-class symbol rename also changed the original quoted import before its filename replacement, while the emitted header was named `BeforeReadStorageFileHandle.h`. Replace the import before symbol renaming, matching the existing preceding-line fixture strategy.

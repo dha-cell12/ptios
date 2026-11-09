@@ -21,12 +21,29 @@ assert.equal((backend.match(/FixtureLogEnqueue\(/g)||[]).length,1);
 let preceding=productionLogBatchBefore.replaceAll(/^#include[^\n]*\n/gm,'').replace('return queue;','return FixtureLogQueue(queue);').replace('dispatch_async(queue,','FixtureLogEnqueue(queue,')
     .replace('NSLog(@"[poc-touch] %s",msg)','FixtureSystemLog(@"[poc-touch] %s",msg)').replace('[df stringFromDate:[NSDate date]]','FixtureLogStamp()');
 for(const [a,b] of [['::open(','FixtureLogOpen('],['::flock(','FixtureLogFlock('],['::fstat(','FixtureLogStat('],['::ftruncate(','FixtureLogTruncate('],['::write(','FixtureLogWrite('],['::close(','FixtureLogClose(']]){assert.equal(preceding.split(a).length,2,a);preceding=preceding.replace(a,b);}
+const oldWriteCall='POCLogWriteData(data,POCLogFilePath())';
+assert.equal(preceding.split(oldWriteCall).length,2,'one preceding file-writer call to qualify');
+preceding=preceding.replace(oldWriteCall,'BeforeLogBatch::'+oldWriteCall);
 preceding='namespace BeforeLogBatch {\n'+preceding+'\n}\n';
 assert.doesNotMatch(preceding,/^#include/m);
+const precedingWriteCalls=preceding.match(/\b(?:BeforeLogBatch::)?POCLogWriteData\(data,POCLogFilePath\(\)\)/g)||[];
+assert.equal(precedingWriteCalls.length,1,'one actual preceding backend file-writer call');
+// Global Foundation argument types can add the current global writer through
+// C++ ADL. Compile the actual generated call with both overload candidates on
+// every host, without requiring Foundation, and verify it selects the old one.
+const lookupFixture=`struct NSData {}; struct NSString {};
+static int POCLogWriteData(NSData *,NSString *){return 1;}
+namespace BeforeLogBatch {
+static int POCLogWriteData(NSData *,NSString *){return 2;}
+static NSString *POCLogFilePath(){return nullptr;}
+static int invoke(){NSData *data=nullptr;return ${precedingWriteCalls[0]};}
+}
+int main(){return POCLogWriteData(nullptr,nullptr)==1&&BeforeLogBatch::invoke()==2?0:1;}
+`;
 const legacy=(await read('test/fixtures/production-log-before-c03av.inc')).replace('void POCLogf(','void FixtureLegacyLogf(').replace('NSLog(@"[poc-touch] %s", msg)','FixtureSystemLog(@"[poc-touch] %s", msg)').replace('[df stringFromDate:[NSDate date]]','FixtureLogStamp()');
 const append=between(files.server,'static void TLinkScriptAppendLog(','static BOOL TLinkScriptStopRequested(');
 const oldAppend=between(oldServer,'static void TLinkScriptAppendLog(','static BOOL TLinkScriptStopRequested(').replaceAll('TLinkScriptSession','LegacyScriptSession').replace('TLinkScriptAppendLog(','LegacyScriptAppendLog(').replace('POCLogf(','FixtureLegacyLogf(');
-const fragments=[['ProductionLogAPI.h','extern "C" {\n'+api+'\n}\n'],['ProductionLogUnderTest.inc',backend],['ProductionLogBeforeBatch.inc',preceding],['ProductionLogLegacy.inc',legacy],['ScriptLogAppend.inc',append],['ScriptLogAppendLegacy.inc',oldAppend]];
+const fragments=[['ProductionLogAPI.h','extern "C" {\n'+api+'\n}\n'],['ProductionLogUnderTest.inc',backend],['ProductionLogBeforeBatch.inc',preceding],['ProductionLogLookup.cpp',lookupFixture],['ProductionLogLegacy.inc',legacy],['ScriptLogAppend.inc',append],['ScriptLogAppendLegacy.inc',oldAppend]];
 const properties=between(files.server,'@interface TLinkScriptSession : NSObject','@implementation TLinkScriptSession');
 fragments.push(['ScriptLogSession.inc',properties+'@implementation TLinkScriptSession\n@end\n']);
 fragments.push(['ScriptLogLegacySession.inc',properties.replaceAll('TLinkScriptSession','LegacyScriptSession').replace('TLinkScriptLogBuffer *logs','NSMutableArray<NSString *> *logs')+'@implementation LegacyScriptSession\n@end\n']);
@@ -51,6 +68,9 @@ function run(cmd,args){const r=spawnSync(cmd,args,{cwd:root,encoding:'utf8',time
 try{
     await Promise.all(fragments.map(([name,text])=>writeFile(join(temp,name),text)));
     const windows=process.platform==='win32',cxx=process.env.CXX||(windows?'cl':'clang++'),msvc=/^(cl|cl.exe)$/i.test(basename(cxx));
+    const lookup=join(temp,windows?'lookup.exe':'lookup'),lookupSource=join(temp,'ProductionLogLookup.cpp');
+    run(cxx,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',lookupSource,`/Fe${lookup}`,`/Fo${join(temp,'lookup.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror',lookupSource,'-o',lookup]);run(lookup,[]);
+    console.log('Production log fixture lookup passed: actual preceding writer call remains isolated from the current global overload.');
     const binary=join(temp,windows?'core.exe':'core'),file=join(root,'test/script-log-safety-test.cpp');
     run(cxx,msvc?['/nologo','/std:c++14','/W4','/WX','/EHsc',file,`/Fe${binary}`,`/Fo${join(temp,'core.obj')}`]:['-std=c++14','-Wall','-Wextra','-Werror','-pthread','-fsanitize=address,undefined',file,'-o',binary]);run(binary,[]);
     if(process.platform==='darwin'){
