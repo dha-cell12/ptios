@@ -5,9 +5,11 @@ on:
     branches: ["main", "newjs"]
   pull_request:
     branches: ["main", "newjs"]
+  workflow_dispatch:
 
 jobs:
   build:
+    name: Build ${{ matrix.package_runtime }} / ${{ matrix.license_mode }}
     runs-on: macos-latest
     strategy:
       fail-fast: false

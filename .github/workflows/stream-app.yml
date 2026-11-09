@@ -110,6 +110,7 @@ permissions:
 
 jobs:
   build:
+    name: Build TrollStore / ${{ matrix.license_mode }}
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -196,15 +197,7 @@ jobs:
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
       - name: Download iOS SDKs
-        run: |
-          set -euo pipefail
-          cd "$THEOS/sdks"
-          curl -fsSL https://github.com/theos/sdks/archive/refs/heads/master.zip -o sdks.zip
-          unzip -q sdks.zip
-          mv sdks-master/*.sdk . || true
-          rm -rf sdks-master sdks.zip
-          test -n "$(find . -maxdepth 1 -name '*.sdk' -type d | head -n1)"
-          ls -1
+        run: bash scripts/setup-theos-sdks.sh
 
       - name: Sanity check StreamControl sources
         run: |
