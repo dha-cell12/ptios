@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## C06ae diagnostics snapshot correction — 2026-11-09
+
+- macOS CI failed full persisted snapshot parity at `batchSnapshotCases`. The staged CF deep copy can narrow an unsigned number: a real Apple Windows CoreFoundation probe turned UINT64_MAX into -1 and reproduced12/20 final graph mismatches across five unsigned boundaries/four dates. Replace staging with an owned immutable in-memory XML encode/decode snapshot, preserving the preceding write/read scalar normalization and caller mutation isolation. Retain one final file flush, existing fault/cleanup policy and exact historical source reversals. Temporary encoded data drains in a local pool; codec work remains per mutation plus final serialization, so no CPU gain is claimed.
+- Expand the native fixture to20 complete staged/persisted graph comparisons with explicit unsigned/mutable-input checks and full mismatch traces. Corrected XML snapshots match all20 CoreFoundation probe cases. Focused lifecycle/UI snapshot/daemon reload/reload transport/background-task runners, existing100k reload core, complete baseline/source guards, three-file assertion macro preprocessing and diff whitespace pass on Windows. Full Objective-C Foundation/GCD/ARC/ASan/UBSan execution and device qualification remain pending macOS CI. Details: `IMPLEMENTATION-C06AE.md`.
+
 ## C03aw production logger fixture lookup correction — 2026-11-09
 
 - macOS CI rejected the predecessor backend's unqualified `POCLogWriteData(data,POCLogFilePath())`: global Foundation pointer argument types brought the current global overload into C++ argument-dependent lookup alongside the namespace-local old writer. Qualify this single generated call as `BeforeLogBatch::POCLogWriteData`; retain the exact frozen backend, production source and all native compiler/sanitizer settings.

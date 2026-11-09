@@ -108,19 +108,39 @@ static void batchBasicCases(){
     assert([state[@"external"] intValue]==9&&[state[@"after"] intValue]==3&&!state[@"first"]);
 }
 static void batchSnapshotCases(){
-    NSDictionary *expected=nil;
-    for(bool before:{true,false}){
-        batchPrepare(before);id value=batchCoordinator(before);
-        NSMutableString *text=[@"ảnh 测试" mutableCopy];NSMutableData *bytes=[NSMutableData dataWithBytes:"a\0b" length:3];
-        NSMutableDictionary *nested=[@{@"text":text} mutableCopy];
-        dispatch_block_t body=^{
-            [value updateDiagnostics:@{@"nested":@[nested],@"bytes":bytes,@"unsigned":@(UINT64_MAX),@"date":[NSDate dateWithTimeIntervalSince1970:1.25]}];
-            [text setString:@"changed"];nested[@"extra"]=@YES;[bytes appendBytes:"c" length:1];
-            [value updateDiagnostics:@{@"terminal":@YES}];
-        };
-        if(before)body();else [value performDiagnosticsBatch:body];
-        NSDictionary *state=[NSDictionary dictionaryWithContentsOfFile:batchPath(before)];
-        if(before)expected=state;else assert([expected isEqual:state]);
+    for(NSNumber *number in @[@0,@(INT64_MAX),@(UINT64_C(1)<<63),@(UINT64_MAX-1),@(UINT64_MAX)]){
+        for(NSNumber *seconds in @[@1.25,@(-1.25),@0.0,@1700000000.875]){
+            NSDictionary *expected=nil;
+            for(bool before:{true,false}){
+                @autoreleasepool {
+                    batchPrepare(before);id value=batchCoordinator(before);
+                    NSMutableString *text=[@"ảnh 测试" mutableCopy];NSMutableData *bytes=[NSMutableData dataWithBytes:"a\0b" length:3];
+                    NSMutableDictionary *nested=[@{@"text":text} mutableCopy];
+                    __block NSDictionary *visible=nil;
+                    dispatch_block_t body=^{
+                        [value updateDiagnostics:@{@"nested":@[nested],@"bytes":bytes,@"unsigned":number,
+                            @"signed":@(-9LL),@"real":@0.12345678901234567,@"date":[NSDate dateWithTimeIntervalSince1970:seconds.doubleValue]}];
+                        NSMutableDictionary *snapshot=[[value diagnostics] mutableCopy];[snapshot removeObjectForKey:@"path"];visible=snapshot;
+                        [text setString:@"changed"];nested[@"extra"]=@YES;[bytes appendBytes:"c" length:1];
+                        [value updateDiagnostics:@{@"terminal":@YES}];
+                    };
+                    if(before)body();else [value performDiagnosticsBatch:body];
+                    NSDictionary *state=[NSDictionary dictionaryWithContentsOfFile:batchPath(before)];
+                    assert(state&&visible);
+                    NSDictionary *trace=@{@"visible":visible,@"file":state};
+                    if(before)expected=trace;
+                    else {
+                        const bool matches=[expected isEqual:trace];
+                        if(!matches)fprintf(stderr,"Diagnostics snapshot mismatch: unsigned=%s date=%s expected=%.8192s actual=%.8192s\n",
+                            number.description.UTF8String,seconds.description.UTF8String,expected.description.UTF8String,trace.description.UTF8String);
+                        assert(matches);
+                    }
+                    assert([state[@"unsigned"] unsignedLongLongValue]==number.unsignedLongLongValue);
+                    assert([state[@"nested"][0][@"text"] isEqual:@"ảnh 测试"]&&![state[@"nested"][0] objectForKey:@"extra"]&&[state[@"bytes"] length]==3);
+                    if(!before)assert(![value diagnosticsBatchActive]&&![value diagnosticsBatchState]);
+                }
+            }
+        }
     }
 }
 static void batchFaultCases(){
@@ -214,5 +234,5 @@ static void batchConcurrentCases(){
 static void diagnosticsBatchCases(){
     puts("License diagnostics batches: complete actual/preceding terminal flows, real plist reads/writes and synchronous owner cleanup");
     batchBasicCases();batchSnapshotCases();batchFaultCases();batchTerminalWriteFaultCases();batchConcurrentCases();
-    puts("License diagnostics batch passed: 48 complete refresh/activation/deactivation success/failure comparisons, four-to-two success and three-to-two failure plist reads/writes, nested/history/visible state, fresh external replacements, isolated throwing mutations, read/write NO/NS/C++ recovery, nine committed-effect write failures without replay and concurrent writer serialization. HTTP, signed persistence, UI and reload effects are controlled; device performance remains unqualified.");
+    puts("License diagnostics batch passed: 48 complete refresh/activation/deactivation success/failure comparisons, four-to-two success and three-to-two failure plist reads/writes, 20 full staged/persisted unsigned/date/mutable snapshots, nested/history/visible state, fresh external replacements, isolated throwing mutations, read/write NO/NS/C++ recovery, nine committed-effect write failures without replay and concurrent writer serialization. HTTP, signed persistence, UI and reload effects are controlled; device performance remains unqualified.");
 }

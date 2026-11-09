@@ -354,12 +354,16 @@ static NSString *SCLicenseRequestDaemonReload(void)
         state[@"mode"] = @"foreground_bg_single_flight_backoff_v1";
         state[@"updated_at_ms"] = @([self nowMilliseconds]);
         if (self.diagnosticsBatchActive) {
-            // Match the preceding per-call persistence snapshot: callers and
-            // diagnostics readers cannot mutate values already staged for IO.
+            // Match the preceding XML write/read snapshot, including unsigned
+            // numbers and date normalization. CF deep copy can narrow numbers.
+            @autoreleasepool {
             if ([NSPropertyListSerialization propertyList:state isValidForFormat:NSPropertyListXMLFormat_v1_0]) {
-                NSDictionary *snapshot = CFBridgingRelease(CFPropertyListCreateDeepCopy(kCFAllocatorDefault,
-                    (__bridge CFPropertyListRef)state, kCFPropertyListImmutable));
-                if (snapshot) self.diagnosticsBatchState = snapshot;
+                NSData *encoded = [NSPropertyListSerialization dataWithPropertyList:state
+                    format:NSPropertyListXMLFormat_v1_0 options:0 error:nil];
+                NSDictionary *snapshot = encoded ? [NSPropertyListSerialization propertyListWithData:encoded
+                    options:NSPropertyListImmutable format:NULL error:nil] : nil;
+                if ([snapshot isKindOfClass:[NSDictionary class]]) self.diagnosticsBatchState = snapshot;
+            }
             }
         } else [state writeToFile:kTLinkLicenseLifecycleDiagnosticsPath atomically:YES];
     }
