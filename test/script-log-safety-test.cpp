@@ -4,7 +4,9 @@
 #include <deque>
 #include <cassert>
 #include <cstdio>
+#include "production-log-batch-safety-fixture.inc"
 int main(){
+    ProductionLogBatchFixture::cases();
     TLinkScriptLogPolicy::Ring ring;std::array<uint64_t,200> slots{};std::deque<uint64_t> old;
     uint32_t state=0x391cef85;
     const auto next=[&](){state^=state<<13;state^=state>>17;state^=state<<5;return state;};

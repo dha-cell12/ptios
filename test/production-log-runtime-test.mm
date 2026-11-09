@@ -15,13 +15,16 @@
 #include <atomic>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
+#include "../shared/TLinkJSFileIO.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include "ProductionLogAPI.h"
 static NSString *logPath;
 static NSMutableArray *queued,*messages;
 static unsigned enqueueMode=0,sinkFault=0,ioFault=0,writeInterrupts=0;
-static size_t maxWrite=SIZE_MAX;
+static size_t maxWrite=SIZE_MAX,vectorLimitOverride=0;
+static size_t ioOpens=0,ioCloses=0,ioStats=0,ioVectors=0;
 static off_t failAfter=-1;
 static std::set<int> descriptors;
 static dispatch_semaphore_t sinkEntered,sinkRelease;
@@ -43,9 +46,9 @@ static void FixtureSystemLog(NSString *format,...){
     va_list args;va_start(args,format);NSString *text=[[NSString alloc] initWithFormat:format arguments:args];va_end(args);
     @synchronized(messages){[messages addObject:text?:@""];}
 }
-static int FixtureLogOpen(const char *path,int flags,mode_t mode){if(ioFault==1){errno=EACCES;return -1;}int fd=::open(path,flags,mode);if(fd>=0)assert(descriptors.insert(fd).second);return fd;}
+static int FixtureLogOpen(const char *path,int flags,mode_t mode){++ioOpens;if(ioFault==1){errno=EACCES;return -1;}int fd=::open(path,flags,mode);if(fd>=0)assert(descriptors.insert(fd).second);return fd;}
 static int FixtureLogFlock(int fd,int op){if(ioFault==2){errno=EWOULDBLOCK;return -1;}return ::flock(fd,op);}
-static int FixtureLogStat(int fd,struct stat *info){if(ioFault==3){errno=EIO;return -1;}return ::fstat(fd,info);}
+static int FixtureLogStat(int fd,struct stat *info){++ioStats;if(ioFault==3){errno=EIO;return -1;}return ::fstat(fd,info);}
 static int FixtureLogTruncate(int fd,off_t length){if(ioFault==4){errno=EIO;return -1;}return ::ftruncate(fd,length);}
 static int64_t FixtureLogWrite(int fd,const uint8_t *bytes,size_t count){
     if(writeInterrupts){--writeInterrupts;errno=EINTR;return -1;}
@@ -54,9 +57,18 @@ static int64_t FixtureLogWrite(int fd,const uint8_t *bytes,size_t count){
     if(failAfter>=0){const off_t size=::lseek(fd,0,SEEK_END);if(size>=failAfter){errno=EIO;return -1;}count=std::min(count,size_t(failAfter-size));}
     return ::write(fd,bytes,count);
 }
-static int FixtureLogClose(int fd){assert(descriptors.erase(fd)==1);const int result=::close(fd);if(ioFault==7){errno=EIO;return -1;}return result;}
+static int FixtureLogClose(int fd){++ioCloses;assert(descriptors.erase(fd)==1);const int result=::close(fd);if(ioFault==7){errno=EIO;return -1;}return result;}
+static size_t FixtureLogVectorLimit(size_t value){return vectorLimitOverride?std::min(vectorLimitOverride,value):value;}
+static int64_t FixtureLogWriteVectors(int fd,const struct iovec *parts,int count){
+    ++ioVectors;
+    if(maxWrite==SIZE_MAX&&!writeInterrupts&&!ioFault&&failAfter<0)return ::writev(fd,parts,count);
+    std::vector<uint8_t> bytes;
+    for(int i=0;i<count;++i){const uint8_t *p=(const uint8_t *)parts[i].iov_base;bytes.insert(bytes.end(),p,p+parts[i].iov_len);}
+    return FixtureLogWrite(fd,bytes.data(),bytes.size());
+}
 #include "ProductionLogUnderTest.inc"
 #include "ProductionLogLegacy.inc"
+#include "ProductionLogBeforeBatch.inc"
 #include "../stream-app/streamd/TLinkScriptLogBuffer.inc"
 @class TLinkJSFileHandle;
 #include "ScriptLogSession.inc"
@@ -86,6 +98,7 @@ static void drain(){@autoreleasepool {
     }
 }}
 static void resetFile(){assert(descriptors.empty());[[NSFileManager defaultManager] removeItemAtPath:logPath error:nil];[messages removeAllObjects];}
+#include "production-log-batch-runtime-fixture.inc"
 static void healthyCases(NSString *root){
     NSString *current=[root stringByAppendingPathComponent:@"current.log"],*before=[root stringByAppendingPathComponent:@"before.log"];
     for(NSString *text in @[@"",@"ASCII %s",@"ảnh 测试 😀",@"a\0b",[@"x" stringByPaddingToLength:3000 withString:@"x" startingAtIndex:0]]){
@@ -170,7 +183,7 @@ int main(int argc,char **argv){@autoreleasepool {
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]];queued=[NSMutableArray array];messages=[NSMutableArray array];
     sinkEntered=dispatch_semaphore_create(0);sinkRelease=dispatch_semaphore_create(0);
     puts("Production logs Foundation: actual/frozen raw formatter, real queue/file guards and session retention");
-    healthyCases(root);writerCases();queueCases();scriptCases();
+    healthyCases(root);writerCases();queueCases();scriptCases();batchRuntimeCases();
     assert(POCLogGetStatistics().pending==0&&descriptors.empty());
     puts("Production logs passed: frozen formatted system/file bytes, partial/EINTR/fault/close cleanup, exact file rotation, symlink/hardlink/FIFO refusal, 64/65 held admission, enqueue/system faults, real blocked-backend independence, 450 FIFO/tail/status/clear comparisons, large-text cap, actual JS hooks and owner retirement. Device latency/IO durability remain unqualified.");
 }}

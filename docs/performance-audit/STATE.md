@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03aw — 2026-11-09
+
+- User reported C03av built successfully (`ab4bc751`) and requested larger batches. Group common production TrollStore backend file IO: weak registered snapshots, per-record formatter pools, one descriptor/flock/stat/close per batch, exact reset-boundary partitioning and host-clipped writev without joining payloads. Keep64 admitted block/payload lifetimes, raw formatting, status/script ring, HID, root logger and target source. No extra dispatch job/scheduled flag or link dependency.
+- All90 Windows workflow runners (36 source,54 safety portable subsets) and521 source assertions pass;16 artifact-only checks require CI outputs. Final seven-file assertion macro preprocessing, JavaScript syntax, exact frozen backend/unchanged production identities and diff whitespace checks pass. New portable100k sequential/grouped content oracles,10k rollback and8k concurrent exactly-once drains pass. Add36 complete C03av/current native comparisons, controlled64-to1 descriptor operations, real healthy writev, short/fault/reset parity and conservative no-replay/recovery/discard/retained-block checks. Prepared output adds up to1MiB of logical payload; faults retire uncertain/later file records, and output timing/file-observation granularity changes. Apple execution/device performance remain pending. Details: `IMPLEMENTATION-C03AW.md`.
+
 ## Implementation C03av — 2026-11-09
 
 - User reported C06ae built successfully (`8f388a72`) and requested a larger batch. Bundle production TrollStore script log ring200,4096-unit bounded message snapshots, status20/evidence50/clear readers, three JS pools, additive diagnostics and common POCLogf async backend. The process owner admits64 formatted1024-byte payloads, isolates system/file faults and caps the debug file at1MiB using checked regular/single-link/nonblocking descriptor writes. Preserve ordinary output, all other status/task/HID/authority/body source and root logger; TouchPOC excluded.

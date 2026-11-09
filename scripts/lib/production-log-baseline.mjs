@@ -1,3 +1,4 @@
+import {restoreProductionLogBackend} from './production-log-batch-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -15,6 +16,8 @@ export function restoreProductionLog(source,kind='server'){
 }
 export function checkProductionLogHelpers(){
     for(const [path,expected] of Object.entries(productionLogSpecs.helpers)){
-        assert.equal(hash(readFileSync(new URL('../../'+path,import.meta.url),'utf8').replaceAll('\r\n','\n')),expected,path);
+        let source=readFileSync(new URL('../../'+path,import.meta.url),'utf8').replaceAll('\r\n','\n');
+        if(path.endsWith('TLinkProductionLog.inc'))source=restoreProductionLogBackend(source);
+        assert.equal(hash(source),expected,path);
     }
 }
