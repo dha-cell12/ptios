@@ -10,6 +10,21 @@
 
 namespace TLinkConsoleLogRetention {
 static const std::size_t KeepCompleted=50,ScanLimit=4096;
+static const uint64_t KeepCompletedBytes=25ULL*1024*1024;
+// Select newest fitting records, skipping individual oversize files without
+// discarding smaller older records solely because of that outlier.
+class Budget {
+    std::size_t limit_,count_=0;
+    uint64_t limitBytes_,bytes_=0;
+public:
+    Budget(std::size_t count,uint64_t bytes):limit_(count),limitBytes_(bytes){}
+    bool retain(uint64_t size){
+        if(count_>=limit_||size>limitBytes_-bytes_)return false;
+        ++count_;bytes_+=size;return true;
+    }
+    std::size_t count()const{return count_;}
+    uint64_t bytes()const{return bytes_;}
+};
 // Only generated UUID run logs, never latest, arbitrary names or nested paths.
 inline bool RunName(const std::string &name){
     if(name.size()!=40&&name.size()!=47)return false;
@@ -40,7 +55,7 @@ inline void NewestFirst(std::vector<Candidate> &rows){
         return a.name<b.name;
     });
 }
-struct Result {bool marked=false,incomplete=false;std::size_t scanned=0,eligible=0,removed=0,busy=0,refused=0,errors=0;};
+struct Result {bool marked=false,incomplete=false;std::size_t scanned=0,eligible=0,removed=0,busy=0,refused=0,errors=0,plannedKeep=0;uint64_t plannedBytes=0;};
 }
 
 #if defined(__APPLE__)
@@ -90,7 +105,7 @@ inline void Retire(int directory,const Candidate &candidate,Result &result){
     if(::unlinkat(directory,candidate.name.c_str(),0)==0)++result.removed;else ++result.errors;
 }
 }
-inline Result Sweep(int directory,std::size_t keep=KeepCompleted,std::size_t scanLimit=ScanLimit){
+inline Result Sweep(int directory,std::size_t keep=KeepCompleted,std::size_t scanLimit=ScanLimit,uint64_t maxBytes=KeepCompletedBytes){
     Result result;struct stat root;
     if(::fstat(directory,&root)!=0||!S_ISDIR(root.st_mode)){++result.errors;return result;}
     // A fresh open description gives each sweep its own enumeration offset.
@@ -115,7 +130,9 @@ inline Result Sweep(int directory,std::size_t keep=KeepCompleted,std::size_t sca
     // Incomplete discovery never chooses victims from a partial ordering.
     if(result.incomplete)return result;
     NewestFirst(candidates);
-    for(std::size_t n=std::min(keep,candidates.size());n<candidates.size();++n)Detail::Retire(directory,candidates[n],result);
+    Budget budget(keep,maxBytes);
+    for(const auto &candidate:candidates)if(!budget.retain(candidate.identity.size))Detail::Retire(directory,candidate,result);
+    result.plannedKeep=budget.count();result.plannedBytes=budget.bytes();
     return result;
 }
 // Call only after every accepted log write is drained. Active logs carry no

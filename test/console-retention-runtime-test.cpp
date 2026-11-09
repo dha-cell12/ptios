@@ -92,10 +92,28 @@ static void lifetimeCases(const std::string &directory){
         Detail::FD fd(::open(path.c_str(),O_RDONLY));struct stat info;assert(fd.get()>=0&&::fstat(fd.get(),&info)==0&&Detail::Marked(fd.get(),info));
     }
 }
+static void byteBudgetCases(const std::string &directory){
+    assert(::mkdir(directory.c_str(),0700)==0);Detail::FD dir(::open(directory.c_str(),O_RDONLY|O_DIRECTORY));assert(dir.get()>=0);
+    const uint64_t mib=1024*1024;
+    for(unsigned n=0;n<4;++n){
+        const auto path=directory+"/"+nameFor(n);create(path);
+        {Detail::FD file(::open(path.c_str(),O_WRONLY));assert(file.get()>=0&&::ftruncate(file.get(),8*mib)==0);}
+        struct timespec times[2]={{100+(time_t)n,0},{100+(time_t)n,0}};assert(::utimensat(AT_FDCWD,path.c_str(),times,0)==0);mark(path);
+    }
+    auto result=Sweep(dir.get());assert(result.removed==1&&result.plannedKeep==3&&result.plannedBytes==24*mib&&!exists(directory+"/"+nameFor(0)));
+    const auto huge=directory+"/"+nameFor(100),small=directory+"/"+nameFor(101);
+    create(huge);{Detail::FD file(::open(huge.c_str(),O_WRONLY));assert(file.get()>=0&&::ftruncate(file.get(),26*mib)==0);}mark(huge);
+    create(small);{Detail::FD file(::open(small.c_str(),O_WRONLY));assert(file.get()>=0&&::ftruncate(file.get(),mib/2)==0);}
+    struct timespec old[2]={{1,0},{1,0}};assert(::utimensat(AT_FDCWD,small.c_str(),old,0)==0);mark(small);
+    result=Sweep(dir.get());assert(result.removed==1&&!exists(huge)&&exists(small)&&result.plannedKeep==4&&result.plannedBytes==24*mib+mib/2);
+    result=Sweep(dir.get(),KeepCompleted,ScanLimit,mib/2);assert(result.removed==3&&result.plannedKeep==1&&result.plannedBytes==mib/2&&exists(small));
+    const auto empty=directory+"/"+nameFor(102);create(empty,"");mark(empty);
+    result=Sweep(dir.get(),KeepCompleted,ScanLimit,0);assert(result.removed==1&&result.plannedKeep==1&&result.plannedBytes==0&&exists(empty));
+}
 int main(int argc,char **argv){
     assert(argc==2);const unsigned descriptors=fdCount();const std::string base=argv[1],directory=base+"/_logs";
     assert(::mkdir(directory.c_str(),0700)==0);
-    completedCases(directory);refusalCases(directory);lifetimeCases(directory);concurrencyCases(base+"/parallel");
+    completedCases(directory);refusalCases(directory);lifetimeCases(directory);concurrencyCases(base+"/parallel");byteBudgetCases(base+"/quota");
     const auto alias=base+"/alias";assert(::mkdir(alias.c_str(),0700)==0);assert(::symlink(directory.c_str(),(alias+"/_logs").c_str())==0);
     assert(!Complete((alias+"/_logs/"+nameFor(1)).c_str()).marked);
     const auto outside=alias+"/"+nameFor(99);create(outside);assert(!Complete(outside.c_str()).marked&&exists(outside));

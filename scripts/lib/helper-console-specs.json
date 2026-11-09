@@ -1,0 +1,10 @@
+{
+  "file": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+  "currentHash": "bf21993c5eb48cfec235e9cc2f2c767762eb0d8ff8dfdf7ccff03f9a57f99d40",
+  "beforeHash": "5daa79b7697adeffe37add033ee3e4ed599926159e73caf7d4b83736ecebb884",
+  "include": "#include \"../shared/TLinkHelperConsoleLog.inc\"\n",
+  "writer": "// BEGIN prepared helper console writer.\n- (void)appendPreparedConsoleData:(NSData *)data toPath:(NSString *)path\n{\n    if (![data isKindOfClass:[NSData class]] || data.length>TLinkConsoleLogLineBytes ||\n        ![path isKindOfClass:[NSString class]] || path.length==0) return;\n    NSDictionary *attrs=[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];\n    if ([attrs[NSFileSize] unsignedLongLongValue]>kTLinkJSHelperMaxConsoleLogBytes)\n        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];\n    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {[data writeToFile:path atomically:YES];return;}\n    NSFileHandle *handle=[NSFileHandle fileHandleForWritingAtPath:path];if(!handle)return;\n    @try {[handle seekToEndOfFile];[handle writeData:data];} @finally {[handle closeFile];}\n}\n// END prepared helper console writer.\n\n",
+  "hook": "        ctx[@\"_tlinkautoLog\"] = ^(NSString *level, NSString *message) {\n            TLinkHelperConsoleEmit((id<TLinkHelperConsoleFileSink>)weakSelf,runId,level,message,logPath,latestPath);\n        };\n",
+  "beforeHookHash": "49720c82d4f3f7536acea83749af66b42ae1a095005c1c5485a54ce212d8db69",
+  "beforeWriterHash": "9517dcb09a3ca7550a79a0cc720cdedc6417df0b5e0e9787218dd76f266e5532"
+}

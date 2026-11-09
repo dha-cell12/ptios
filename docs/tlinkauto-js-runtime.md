@@ -188,7 +188,9 @@ Helper logs are written under the bundle `_logs` directory:
 
 Phase 5 appends a structured summary at the end of helper runs with state, exit reason, duration, RPC counts, blocked RPC counts, and storage operation counts.
 
-Completed root-core/helper logs use best-effort retention of the 50 most recently modified marked run files per bundle and effective user. Logs become eligible only after their writes finish; `latest` and active logs remain separate. Earlier unmarked logs are not automatically migrated. Filesystem/ownership refusals and directories exceeding the 4096-entry scan cap defer cleanup, so this is not a global disk-byte limit. Older run-history console paths can refer to retired logs; saved failure evidence remains separate. See [C03ax retention policy](performance-audit/IMPLEMENTATION-C03AX.md).
+Completed root-core/helper logs use best-effort retention of up to50 newest fitting marked run files and25MiB of logical file bytes per bundle/effective user. An oversized completed log can be retired; smaller older files can still fit. Logs become eligible only after their writes finish; `latest` and active logs remain separate. Earlier unmarked logs are not automatically migrated. Filesystem/ownership refusals and directories exceeding the4096-entry scan cap defer cleanup, so this is not a global disk-byte limit. Older run-history console paths can refer to retired logs; saved failure evidence remains separate. See [C03ay retention/logging policy](performance-audit/IMPLEMENTATION-C03AY.md).
+
+Helper JavaScript console messages now retain at most4096 UTF16 units, with64-unit level/run metadata and surrogate-pair-safe prefixes. File lines are encoded once for run/latest and capped at16KiB; each file and the system sink handles its own faults without replaying a partial prefix. Oversized text uses a prefix without a suffix. Structured terminal summaries/status/error reporting retain their existing behavior and are outside this message policy.
 
 ## Safe demos
 

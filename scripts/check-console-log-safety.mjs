@@ -84,3 +84,4 @@ try{
 // Production TrollStore logger/retention shares this workflow checkpoint.
 await import('./check-production-log-safety.mjs');
 await import('./check-console-retention-safety.mjs');
+await import('./check-helper-console-safety.mjs');

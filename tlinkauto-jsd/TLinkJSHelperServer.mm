@@ -13,6 +13,7 @@
 #include "../shared/TLinkHelperConnection.h"
 #include "../shared/TLinkHelperStartReceipt.h"
 #include "../shared/TLinkConsoleLogRetention.h"
+#include "../shared/TLinkHelperConsoleLog.inc"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -533,6 +534,20 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
     }
 }
 
+// BEGIN prepared helper console writer.
+- (void)appendPreparedConsoleData:(NSData *)data toPath:(NSString *)path
+{
+    if (![data isKindOfClass:[NSData class]] || data.length>TLinkConsoleLogLineBytes ||
+        ![path isKindOfClass:[NSString class]] || path.length==0) return;
+    NSDictionary *attrs=[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if ([attrs[NSFileSize] unsignedLongLongValue]>kTLinkJSHelperMaxConsoleLogBytes)
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {[data writeToFile:path atomically:YES];return;}
+    NSFileHandle *handle=[NSFileHandle fileHandleForWritingAtPath:path];if(!handle)return;
+    @try {[handle seekToEndOfFile];[handle writeData:data];} @finally {[handle closeFile];}
+}
+// END prepared helper console writer.
+
 - (NSDictionary *)bundleTextForRelativePath:(NSString *)relativePath bundlePath:(NSString *)bundlePath
 {
     NSString *root = [[bundlePath stringByStandardizingPath] stringByResolvingSymlinksInPath];
@@ -837,10 +852,7 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
             [weakSelf interruptibleSleepMs:ms context:[JSContext currentContext]];
         };
         ctx[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
-            NSString *line = [NSString stringWithFormat:@"[%@][%@][%@] %@\n", [NSDate date], runId ?: @"", level ?: @"log", message ?: @""];
-            [weakSelf appendLine:line toPath:logPath];
-            [weakSelf appendLine:line toPath:latestPath];
-            NSLog(@"tlinkauto-jsd[%@][%@]: %@", runId ?: @"", level ?: @"log", message ?: @"");
+            TLinkHelperConsoleEmit((id<TLinkHelperConsoleFileSink>)weakSelf,runId,level,message,logPath,latestPath);
         };
         ctx[@"_tlinkautoLoadBundleText"] = ^NSDictionary *(NSString *relativePath) {
             return [weakSelf bundleTextForRelativePath:relativePath bundlePath:bundlePath];
