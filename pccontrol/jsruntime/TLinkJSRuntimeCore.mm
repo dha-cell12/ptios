@@ -8,6 +8,7 @@
 #include "../../shared/TLinkConsoleLogBudget.h"
 #include "../../shared/TLinkConsoleLogBatch.h"
 #include "../../shared/TLinkConsoleLogVectorIO.h"
+#include "../../shared/TLinkConsoleLogRetention.h"
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -750,6 +751,8 @@ struct TLinkConsoleLogEntry {
         _manifest = nil;
         
         [self finishConsoleLogging];
+        // Accepted disk/system work is drained before this run becomes eligible.
+        TLinkConsoleLogRetention::Complete(_consoleLogPath.fileSystemRepresentation);
         
         _running = NO;
     }

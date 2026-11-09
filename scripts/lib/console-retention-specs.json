@@ -1,0 +1,20 @@
+{
+  "core": {
+    "file": "pccontrol/jsruntime/TLinkJSRuntimeCore.mm",
+    "remove": [
+      "#include \"../../shared/TLinkConsoleLogRetention.h\"\n",
+      "        // Accepted disk/system work is drained before this run becomes eligible.\n        TLinkConsoleLogRetention::Complete(_consoleLogPath.fileSystemRepresentation);\n"
+    ],
+    "currentHash": "bb3b1bb1ba04b12b541c5e0518b3ad85f009e02cc30b3a1aad5667b4bef0cd9a",
+    "beforeHash": "71014cf14c2a46cd6ad1cf8c48fcfea3dd2d008e3fe61b6694c6d068162c5ffd"
+  },
+  "helper": {
+    "file": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+    "remove": [
+      "#include \"../shared/TLinkConsoleLogRetention.h\"\n",
+      "        // Synchronous helper log writes, including terminal summaries, finish\n        // before this scoped owner marks the final (possibly rotated) inode.\n        TLinkConsoleLogRetention::Completion completedLog(logPath.fileSystemRepresentation);\n"
+    ],
+    "currentHash": "5daa79b7697adeffe37add033ee3e4ed599926159e73caf7d4b83736ecebb884",
+    "beforeHash": "3f8d6c399edf406dbed7c27aae4c494b3cbd4ae0c35f53bb44a865bab21de62c"
+  }
+}

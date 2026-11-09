@@ -1682,6 +1682,8 @@ Then acquire the history lock only for read-modify-write/prune of history state.
 
 ### [P1-50] Per-run JavaScript console logs have no run-count/byte retention and are not pruned with run history
 
+C03ax follow-up (2026-11-09): production root/roothide core and helper now mark final log inodes only after writes finish and target50 newest marked completed UUID logs per directory/effective UID. Device/inode proof, no-follow descriptors, single-link/owner/mode checks, bounded4096-entry complete discovery and locked metadata/path revalidation restrict nonrecursive cleanup. Latest, active, unmarked legacy/orphans and foreign/unsafe files remain; count is best effort under faults/concurrency. Global bytes/age, legacy migration/alternate runtime and history-path coordination remain open. Portable100k and workflow/source checks pass on Windows; real xattr/flock/multiprocess/device coverage awaits macOS CI. See `IMPLEMENTATION-C03AX.md`. The original finding below describes the pre-retention baseline.
+
 **Status:** CONFIRMED  
 **Locations:** `pccontrol/jsruntime/TLinkJSRuntimeCore.mm:194-210`; `pccontrol/TLinkautoJSRuntime.mm:650-659`; `shared/TLinkRunHistory.mm:188-205`
 

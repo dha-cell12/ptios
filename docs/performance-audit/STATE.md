@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03ax — 2026-11-09
+
+- User reported the latest build passed (`5531db13`) and requested larger packages. Bundle terminal log retention for the production root/roothide core and helper: mark only after accepted writes finish, bind completion proof to device/inode, admit only exact UUID leaves in `_logs`, and retain50 newest eligible completed files per directory/effective UID. Revalidate locked descriptors/path/size/times/proof before nonrecursive unlink. Preserve active/unmarked/latest/foreign/unsafe files; abort cleanup on incomplete4096-entry discovery. Helper completion setup/cleanup is best effort across normal return/C++ unwind. No public API, output codec, history/lease/authority or build target changes.
+- Portable100k name/order/proof/identity cases pass; add real macOS xattr/POSIX/flock eight-process cleanup, 100-file retention,128 scope lifecycles and unsafe-path/proof/metadata/refusal coverage. All90 Windows runner results and521 source assertions pass (16 artifact-only skipped), with JavaScript syntax and five-file macro checks; the initial console executable-unlink EPERM was resolved by bounded cleanup retry and a passing focused rerun. Native Apple execution/device timing remain pending. This is a best-effort completed-file count target, not a global byte/time/RSS bound; unmarked legacy/orphans, alternate legacy runtime, unsupported/failed marking and directories over the scan cap remain open. Details: `IMPLEMENTATION-C03AX.md`.
+
 ## C06ae lifecycle fixture flush-order correction — 2026-11-09
 
 - User macOS CI passed all48 terminal and20 snapshot batch comparisons, then failed the older inline-result fault case's direct plist read. That provider executes its inline callback on the decision queue; terminal completion is enqueued on main before the outer batch flush returns. Receiving the callback is not a barrier for an unlocked private-file read. The public diagnostics getter remains serialized by the coordinator monitor.

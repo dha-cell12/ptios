@@ -1,4 +1,5 @@
 import {restoreProductionLog} from './production-log-baseline.mjs';
+import {restoreConsoleRetention} from './console-retention-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -14,6 +15,7 @@ export function checkPreparedJSONText(source){
     assert.equal(source.replace(newWriter,oldWriter),before,'only invalid-target writer selection changes; no post-write retry');
 }
 export function restoreStorageJSONWrites(source,kind){
+    if(kind==='helper')source=restoreConsoleRetention(source,'helper');
     if(kind==='troll')source=restoreProductionLog(source);
     const spec=storageJSONWriteSpecs[kind];
     if(!spec||!source.includes(spec.include))return source;

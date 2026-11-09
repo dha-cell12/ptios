@@ -79,7 +79,8 @@ try{
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','JavaScriptCore','-I',temp,join(root,'test/console-log-runtime-test.mm'),owner,'-o',runtime]);
         run(runtime,[temp]);
     }else console.log('macOS actual/frozen console formatter/queue/file/lifecycle integration is included in CI; not run on this host.');
-}finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-console-log-'));await rm(temp,{recursive:true,force:true});}
+}finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-console-log-'));await rm(temp,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 
 // Production TrollStore logger/retention shares this workflow checkpoint.
 await import('./check-production-log-safety.mjs');
+await import('./check-console-retention-safety.mjs');

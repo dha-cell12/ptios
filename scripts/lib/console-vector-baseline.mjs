@@ -1,9 +1,11 @@
+import {restoreConsoleRetention} from './console-retention-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export const consoleVectorBefore=()=>readFileSync(new URL('../../test/fixtures/console-vector-before-c03ah.inc',import.meta.url),'utf8').replaceAll('\r\n','\n');
 export function restoreConsoleVector(source){
+    source=restoreConsoleRetention(source,'core');
     assert.equal(hash(source),'71014cf14c2a46cd6ad1cf8c48fcfea3dd2d008e3fe61b6694c6d068162c5ffd','complete C03ah runtime core');
     source=source.replace('#include "../../shared/TLinkConsoleLogVectorIO.h"\n#include <sys/uio.h>\n#include <unistd.h>\n','');
     const h=source.indexOf('// BEGIN console vector capacity.'),e=source.indexOf('struct TLinkConsoleLogEntry {',h);assert.ok(h>=0&&e>h);source=source.slice(0,h)+source.slice(e);

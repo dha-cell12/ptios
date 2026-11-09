@@ -12,6 +12,7 @@
 #include "../shared/TLinkHelperWaitPeer.h"
 #include "../shared/TLinkHelperConnection.h"
 #include "../shared/TLinkHelperStartReceipt.h"
+#include "../shared/TLinkConsoleLogRetention.h"
 #import "../shared/TLinkRootfullLicensePolicy.h"
 #import <JavaScriptCore/JavaScriptCore.h>
 
@@ -805,6 +806,9 @@ static int TLinkJSHelperTouchIndicatorAction(NSString *action) {
         NSString *header = [NSString stringWithFormat:@"[%@] helper run %@ started\n", [NSDate date], runId];
         [header writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
         [header writeToFile:latestPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        // Synchronous helper log writes, including terminal summaries, finish
+        // before this scoped owner marks the final (possibly rotated) inode.
+        TLinkConsoleLogRetention::Completion completedLog(logPath.fileSystemRepresentation);
 
         NSError *readError = nil;
         NSString *script = [NSString stringWithContentsOfFile:scriptPath encoding:NSUTF8StringEncoding error:&readError];
