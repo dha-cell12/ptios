@@ -5,7 +5,7 @@ import {restoreStorageJSONWrites,storageJSONWriteSpecs,storageJSONWriteBefore,ch
 import {restoreFilePlan,restoreFilePlanHeader,restoreFilePlanFrontend,checkFileModePlan,filePlanSpecs} from './lib/file-plan-baseline.mjs';
 import {restoreStorageOperations,storageOperationSpecs,storageOperationPart,storageOperationBefore} from './lib/storage-operations-baseline.mjs';
 import assert from 'node:assert/strict';
-import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
+import {access,readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {dirname,basename,join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
@@ -178,17 +178,29 @@ try{
     await writeFile(join(temp,'PreviousLineFileHandle.inc'),previousClass);
     const storageNames=[...previousNames,'TLinkJSFileLineDataResult'];
     const storageRename=text=>text.replace(new RegExp(`\\b(${storageNames.join('|')})\\b`,'g'),name=>'BeforeReadStorage'+name);
-    const oldStorageClass=storageRename(beforeReadStorage.replace(beforeReadStorage.slice(beforeReadStorage.indexOf('// BEGIN prepared file mode.'),beforeReadStorage.indexOf('static NSDictionary *TLinkJSFileError(')),''))
-        .replace('#import "TLinkJSFileHandle.h"','#import "BeforeReadStorageFileHandle.h"');
+    const oldStorageClass=storageRename(beforeReadStorage.replace(beforeReadStorage.slice(beforeReadStorage.indexOf('// BEGIN prepared file mode.'),beforeReadStorage.indexOf('static NSDictionary *TLinkJSFileError(')),'')
+        .replace('#import "TLinkJSFileHandle.h"','#import "BeforeReadStorageFileHandle.h"'));
     assert.equal((oldStorageClass.match(/@implementation BeforeReadStorageTLinkJSFileHandle/g)||[]).length,1);
     assert.doesNotMatch(oldStorageClass,/TLinkJSFilePrepareMode\(NSString \*mode\)/);
     await writeFile(join(temp,'BeforeReadStorageFileHandle.h'),storageRename(currentHeader));
     await writeFile(join(temp,'BeforeReadStorageFileHandle.inc'),oldStorageClass);
     await Promise.all(storageChunks.map(([name,chunk])=>writeFile(join(temp,name),chunk)));
+    await writeFile(join(temp,'FileHandleLifecycleUnderTest.inc'),constructed);
+    await writeFile(join(temp,'LegacyFileHandleLifecycle.inc'),legacyLifecycle);
+    // Resolve native fixture dependencies on every host, even when Apple
+    // compilation is unavailable. Symbol renaming must not rename filenames.
+    for(const name of ['LegacyFileHandle.h','PreviousFileHandle.h','BeforeReadStorageFileHandle.h',
+        'FileHandleLifecycleUnderTest.inc','LegacyFileHandleLifecycle.inc','PreviousLineFileHandle.inc','BeforeReadStorageFileHandle.inc']){
+        const text=await readFile(join(temp,name),'utf8');
+        for(const [,dependency] of text.matchAll(/^#(?:import|include)\s+"([^"]+)"/gm)){
+            const candidates=[join(temp,dependency),join(root,'shared',dependency)];
+            const found=await Promise.allSettled(candidates.map(path=>access(path)));
+            assert.ok(found.some(result=>result.status==='fulfilled'),`${name}: missing quoted dependency "${dependency}"`);
+        }
+    }
+    console.log('FileHandle fixture dependencies passed: current and three historical classes/headers resolve before native compilation.');
     if(process.platform==='darwin'){
         const runtime=join(temp,'file-handle-runtime');
-        await writeFile(join(temp,'FileHandleLifecycleUnderTest.inc'),constructed);
-        await writeFile(join(temp,'LegacyFileHandleLifecycle.inc'),legacyLifecycle);
         const owner=join(temp,'pool-owner.o');
         run(compiler,['-x','objective-c','-Wall','-Wextra','-Werror','-fno-objc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-c',join(root,'test/ax-node-pool-owner.m'),'-o',owner]);
         run(compiler,['-std=c++14','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-framework','JavaScriptCore','-I',temp,'-I',join(root,'shared'),join(root,'test/file-handle-runtime-test.mm'),owner,'-o',runtime]);

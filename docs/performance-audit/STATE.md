@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## C03au FileHandle fixture build correction — 2026-11-09
+
+- macOS CI at C03aw reported missing `BeforeReadStorageTLinkJSFileHandle.h`. The C03au predecessor-class symbol rename also changed the original quoted import before its filename replacement, while the emitted header was named `BeforeReadStorageFileHandle.h`. Replace the import before symbol renaming, matching the existing preceding-line fixture strategy.
+- Generate all four current/historical class fixtures on every host and validate their seven class/header files' direct quoted dependencies against the actual temporary/shared include directories before Apple compilation. The new check first reproduced the exact missing-header failure on Windows, then passed after the correction. Complete FileHandle source/extraction and portable owner/payload/direct-line/raw-storage/line suites, JavaScript syntax and diff whitespace pass. Production source, frozen implementations and compiler/sanitizer settings are unchanged. Corrected macOS Foundation/ARC/ASan/UBSan execution remains pending CI.
+
 ## Implementation C03aw — 2026-11-09
 
 - User reported C03av built successfully (`ab4bc751`) and requested larger batches. Group common production TrollStore backend file IO: weak registered snapshots, per-record formatter pools, one descriptor/flock/stat/close per batch, exact reset-boundary partitioning and host-clipped writev without joining payloads. Keep64 admitted block/payload lifetimes, raw formatting, status/script ring, HID, root logger and target source. No extra dispatch job/scheduled flag or link dependency.
