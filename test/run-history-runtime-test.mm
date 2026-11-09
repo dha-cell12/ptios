@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 #include <functional>
 #include <mutex>
 #include <set>
@@ -335,6 +336,25 @@ static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *
 @end
 #define NSDate HistoryClock
 #define NSUUID HistoryUUID
+static bool historyMemoEnabled=false;
+static unsigned historyMemoCopyFault=0;
+static std::atomic<unsigned> historyMemoDecodes{0};
+static bool historyMemoCopyProbe(size_t depth){
+    if(depth!=0)return false;
+    if(historyMemoCopyFault==1)return true;
+    if(historyMemoCopyFault==2)[NSException raise:@"HistoryMemoFixture" format:@"copy"];
+    if(historyMemoCopyFault==3)throw std::runtime_error("copy");
+    return false;
+}
+#include "HistoryStatusMemoUnderTest.inc"
+static bool historyMemoLookup(NSData *data,TLinkHistoryStatusMemo::Read &read){
+    if(!historyMemoEnabled){TLinkHistoryStatusMemo::Clear();return false;}
+    return TLinkHistoryStatusMemo::Lookup(data,read);
+}
+static void historyMemoOffer(NSData *data,NSUInteger limit,NSArray *rows,NSUInteger total,NSUInteger failed){
+    if(!historyMemoEnabled){TLinkHistoryStatusMemo::Clear();return;}
+    TLinkHistoryStatusMemo::Offer(data,limit,rows,total,failed);
+}
 #define chmod historyChmod
 #define lchown historyChown
 #define flock historyFlock
@@ -343,6 +363,7 @@ static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *
 static bool historyIndexWorkOwners=false,historyRecoveryWorkOwners=false,historyCaptureDecode=false,historyDecodeImmutable=false;
 static NSArray *historyIndexDecodedRecords;
 static id historyDecodeIndex(NSData *data,NSJSONReadingOptions options){
+    ++historyMemoDecodes;
     if(historyIndexWorkOwners)TLinkAXFixtureAutoreleaseOwner();
     id object=[NSJSONSerialization JSONObjectWithData:data options:historyDecodeImmutable?(NSJSONReadingOptions)0:options error:nil];
     if(historyCaptureDecode)historyIndexDecodedRecords=[object isKindOfClass:[NSDictionary class]]?object[@"runs"]:nil;
@@ -354,6 +375,7 @@ namespace Current {
 static NSString *fixtureRoot;
 NSString *TLinkRunHistoryRootPath(void);
 #include "HistoryUnderTest.inc"
+#include "HistoryStatusSnapshotBefore.inc"
 }
 namespace BeforeOwnedRead {
 static NSString *fixtureRoot;
@@ -1084,6 +1106,7 @@ static void historyCompactIndexCases(){
 #include "history-elapsed-runtime-fixture.inc"
 #include "history-work-runtime-fixture.inc"
 #include "history-index-work-runtime-fixture.inc"
+#include "history-status-memo-runtime-fixture.inc"
 #include "persistence-json-runtime-fixture.inc"
 #include "persistence-json-storage-runtime-fixture.inc"
 #include "owned-read-buffer-runtime-fixture.inc"
@@ -1219,6 +1242,7 @@ int main(int argc,char **argv){@autoreleasepool{
     PersistenceStorageNativeFixture::cases();
     OwnedReadNativeFixture::cases();
     historyOwnedReadCases();
+    historyStatusMemoCases();
     assert(historyLocks.empty()&&historyIndexFds.empty()&&historyLockFds.empty());historyEvents=nil;historyWriteAttempts=nil;historyPruneAttempts=nil;
     puts("History Foundation passed: two cold regex builds across 8 callers, 1000 frozen redaction cases, 75 full transactions/runtime with exact records/evidence/index/events/status/retention, real child flock probe before versus during preparation, NS/C++ preparation unwind and recovery. Only private temporary files; chmod/chown and event publication controlled. Device qualification pending.");
     puts("History snapshot Foundation passed: flock released before status construction, one private decoded index across a cooperating write, next-call freshness and caller isolation, NS/C++ read/format unwind/recovery, explicit lock-denial/malformed-index errors and exact frozen healthy status fields. Local serialization retained; device qualification pending.");

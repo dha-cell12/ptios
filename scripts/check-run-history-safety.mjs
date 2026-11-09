@@ -334,6 +334,8 @@ const adapt=text=>text.replace(/^#(?:import|include).*\n/gm,'')
         .replace('ftruncate(lockFd, pending ? 1 : 0)','historyMarkerTruncate(lockFd, pending ? 1 : 0)')
         .replace('read(fd, (uint8_t *)data.mutableBytes + offset, count)','historyRecoveryRead(fd, (uint8_t *)data.mutableBytes + offset, count)')
         .replace('        NSUInteger bounded = limit == 0','        historyStatusPreparationProbe();\n        NSUInteger bounded = limit == 0')
+        .replace('TLinkHistoryStatusMemo::Lookup(data,*status)','historyMemoLookup(data,*status)')
+        .replace('TLinkHistoryStatusMemo::Offer(memo.bytes,bounded,statusRuns,total,failed)','historyMemoOffer(memo.bytes,bounded,statusRuns,total,failed)')
         .replace('![data writeToFile:path atomically:YES]','!historyWriteData(data,path)')
         .replace('[[NSFileManager defaultManager] removeItemAtPath:standard error:nil]','historyRemoveArtifact(standard)')
         .replace('unlink(path.fileSystemRepresentation)','historyUnlinkArtifact(path.fileSystemRepresentation)');
@@ -360,6 +362,9 @@ if(process.platform!=='darwin'){
     const tempRoot=resolve(tmpdir()),temp=await mkdtemp(join(tempRoot,'tlink-run-history-'));
     function run(command,args){const r=spawnSync(command,args,{cwd:root,encoding:'utf8',timeout:120000});if(r.stdout)process.stdout.write(r.stdout);if(r.stderr)process.stderr.write(r.stderr);if(r.error)throw r.error;assert.equal(r.status,0,`${command} failed (signal=${r.signal})`);}
     try{
+        const memo=(await read('shared/TLinkHistoryStatusMemo.inc')).replace('if(!budget.node(depth))return nil;','if(historyMemoCopyProbe(depth)||!budget.node(depth))return nil;');
+        await writeFile(join(temp,'HistoryStatusMemoUnderTest.inc'),memo);
+        await writeFile(join(temp,'HistoryStatusSnapshotBefore.inc'),(await read('test/fixtures/history-status-snapshot-before-c03bd.inc')).replace('NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)','static NSDictionary *TLinkRunHistoryBeforeStatusMemo(NSUInteger limit)'));
         await Promise.all([writeFile(join(temp,'PersistenceJSONBeforeStorage.inc'),previousJSON),writeFile(join(temp,'PersistenceJSONUnderTest.inc'),await read('shared/TLinkPersistenceJSON.mm')),writeFile(join(temp,'HistoryBeforeOwnedRead.inc'),adapt(beforeOwnedRead)),writeFile(join(temp,'HistoryBeforeRecoveryCodec.inc'),adapt(beforeRecoveryCodec)),writeFile(join(temp,'HistoryUnderTest.inc'),adaptedCurrent),writeFile(join(temp,'HistoryBeforeIndexWork.inc'),adaptedBeforeIndex),writeFile(join(temp,'HistoryLegacy.inc'),adapt(old)),writeFile(join(temp,'HistoryBeforeWork.inc'),adapt(beforeHistoryWork)),writeFile(join(temp,'HistoryClockUnderTest.inc'),monotonicFunction)]);
         const binary=join(temp,'run-history-runtime'),owner=join(temp,'work-owner.o');
         const lockProbe=join(temp,'history-lock-probe');
@@ -376,3 +381,4 @@ if(process.platform!=='darwin'){
         run(binary,[temp]);
     }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-run-history-'));await rm(temp,{recursive:true,force:true});}
 }
+await import('./check-history-status-memo-safety.mjs');

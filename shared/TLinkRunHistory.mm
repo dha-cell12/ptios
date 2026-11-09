@@ -3,6 +3,7 @@
 #include "TLinkPersistenceJSON.h"
 #include "TLinkHistoryRetirement.h"
 #import "TLinkRunHistory.h"
+#include "TLinkHistoryStatusMemo.inc"
 #include "TLinkASCIIPreparation.h"
 #include "TLinkTextTail.h"
 #import "TLinkEventChannel.h"
@@ -390,16 +391,22 @@ static NSData *TLinkRunHistoryReadIndexData(BOOL *missing, NSString **code)
 
 // All persisted reads distinguish a first run from unreadable or damaged history.
 // Read-only status never repairs metadata or rebuilds an index from artifacts.
-static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadCheckedIndex(NSString *operation)
+static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadCheckedIndex(NSString *operation, TLinkHistoryStatusMemo::Read *status = nullptr)
 {
     @autoreleasepool {
     BOOL missing = NO;
     NSString *code = nil;
     NSData *data = TLinkRunHistoryReadIndexData(&missing, &code);
     if (!data) {
+        if(status)TLinkHistoryStatusMemo::Clear();
         if (missing) return [NSMutableArray array];
         TLinkRunHistoryPersistenceFailure(operation, @"read", code ?: @"read_failed");
         return nil;
+    }
+    if(status){
+        // Only snapshot supplies this context; a hit already owns its projection.
+        if(TLinkHistoryStatusMemo::Lookup(data,*status))return status->rows;
+        status->bytes=data.length<=TLinkHistoryStatusMemo::ByteLimit?data:nil;
     }
     id object = data.length > 0
         ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil] : nil;
@@ -422,6 +429,7 @@ static NSMutableArray<NSDictionary *> *TLinkRunHistoryReadCheckedIndex(NSString 
         }
     }
     if (!valid) {
+        if(status)TLinkHistoryStatusMemo::Clear();
         TLinkRunHistoryPersistenceFailure(operation, @"read", @"invalid_index");
         return nil;
     }
@@ -847,13 +855,15 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
             stage = @"lock";
             int lockFd = TLinkRunHistoryAcquireFileLock(YES);
             if (lockFd < 0) {
+                TLinkHistoryStatusMemo::Clear();
                 TLinkRunHistoryPersistenceFailure(@"snapshot", stage, @"history_lock_failed");
                 return TLinkRunHistorySnapshotFailure(@"history_snapshot_lock_failed");
             }
             stage = @"read";
+            TLinkHistoryStatusMemo::Read memo(limit == 0 ? kTLinkRunHistorySnapshotDefault : MIN(limit, kTLinkRunHistorySnapshotMax));
             NSMutableArray<NSDictionary *> *runs = nil;
             @try {
-                runs = TLinkRunHistoryReadCheckedIndex(@"snapshot");
+                runs = TLinkRunHistoryReadCheckedIndex(@"snapshot",&memo);
             } @finally {
                 TLinkRunHistoryReleaseFileLock(lockFd);
             }
@@ -865,8 +875,11 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
             stage = @"format";
             // The decoded graph belongs to this call; formatting needs no file lock.
             NSUInteger bounded = limit == 0 ? kTLinkRunHistorySnapshotDefault : MIN(limit, kTLinkRunHistorySnapshotMax);
+            NSMutableArray<NSDictionary *> *statusRuns=memo.rows;
+            NSUInteger total=memo.hit?memo.total:runs.count,failed=memo.hit?memo.failed:0;
+            if(!memo.hit){
             NSUInteger selectedCount = MIN(runs.count,bounded);
-            NSMutableArray<NSDictionary *> *statusRuns = [NSMutableArray arrayWithCapacity:selectedCount];
+            statusRuns = [NSMutableArray arrayWithCapacity:selectedCount];
             for (NSUInteger row = 0; row < selectedCount; ++row) {
                 @autoreleasepool {
                 NSDictionary *source = runs[row];
@@ -908,11 +921,13 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
                 [statusRuns addObject:run];
                 }
             }
-            NSUInteger failed = 0;
             for (NSDictionary *run in runs) {
                 NSString *state = run[@"state"];
                 if ([state isEqualToString:@"failed"] || [state isEqualToString:@"license_revoked"]) failed++;
             }
+                TLinkHistoryStatusMemo::Offer(memo.bytes,bounded,statusRuns,total,failed);
+            }
+            memo.bytes=nil;
             NSDictionary *snapshot = @{
                 @"schema": TLinkRunHistorySchemaV1,
                 @"state": @"implemented",
@@ -925,13 +940,14 @@ NSDictionary *TLinkRunHistorySnapshot(NSUInteger limit)
                 @"status_log_line_max_characters": @(kTLinkStatusLogLineMaxCharacters),
                 @"status_error_max_characters": @(kTLinkStatusErrorMaxCharacters),
                 @"failure_console_read_max_bytes": @(kTLinkFailureConsoleLogMaxBytes),
-                @"total_count": @(runs.count),
+                @"total_count": @(total),
                 @"failed_count": @(failed),
                 @"runs": statusRuns,
             };
             return snapshot;
         } catch (...) {} }
         @catch (__unused NSException *exception) {}
+        TLinkHistoryStatusMemo::Clear();
         TLinkRunHistoryPersistenceFailure(@"snapshot", stage, @"exception");
         return TLinkRunHistorySnapshotFailure(@"history_snapshot_exception");
     }

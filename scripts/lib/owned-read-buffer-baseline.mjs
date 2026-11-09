@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {restoreEventStatusCache} from './event-status-cache-baseline.mjs';
+import {restoreHistoryStatusMemo} from './history-status-memo-baseline.mjs';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const hash=s=>createHash('sha256').update(s).digest('hex');
@@ -22,6 +23,7 @@ export function restoreOwnedReadFile(source,kind){
 export function checkOwnedReadHeader(){assert.equal(hash(read('shared/TLinkOwnedReadBuffer.h')),spec.headerHash,'complete committed read-buffer interface');}
 export function ownedReadBefore(kind,name){return read('test/fixtures/owned-read-'+kind+'-'+name+'-before-c03at.inc');}
 export function restoreOwnedReadSource(source,kind){
+    if(kind==='history')source=restoreHistoryStatusMemo(source);
     if(kind==='event')source=restoreEventStatusCache(source);
     if(!source.includes('#include "TLinkOwnedReadBuffer.h"'))return source;
     const part=spec.sources[kind];assert.equal(hash(source),part.currentHash,'complete C03at '+kind);

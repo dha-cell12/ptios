@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03bd — 2026-11-10
+
+- User reported C03bc built successfully (`e8a8a50d`) and requested larger packages. Bundle shared history status: exact fresh-byte/normalized-limit projection memo, deep frozen/private ownership and detached mutable results, fresh diagnostics/root metadata and bounded node/text/depth preparation. Keep checked fresh IO/shared locks; errors clear memo, auxiliary copy failures and over-budget inputs use the preceding path. Begin/finish/recovery/authority/schema/ACK bodies remain; TouchPOC excluded.
+- All90 Windows workflow runners and521 source assertions pass (16 artifact-only skipped), with100k independent quota oracles, complete source reversal, six-file macro and syntax checks. Actual native memo/frozen graph/129 fresh reads-one decode, nested mutation, fresh diagnostics, NS/C++/nil copy/read/lock/type errors and exact uint64/UTF16 ownership await macOS CI. Memo limits2MiB bytes/4096 nodes/128Ki UTF16 units/depth32 govern eligibility only; IO, cold-copy/lock costs and process RSS/device gains remain unqualified. Details: `IMPLEMENTATION-C03BD.md`.
+
 ## Implementation C03bc — 2026-11-10
 
 - User reported C03bb built successfully (`33adcbea`) and requested larger packages. Bundle shared Event status CPU/allocation work: exact fresh-byte cursor memo (one<=2-MiB copy, no retained graph), complete shared validator, direct scalar status without pagination batch and loader scratch pool. Every request retains checked fresh IO/shared-lock admission; missing/corrupt/read/lock failures clear memo, allocation failure preserves validated uncached success and larger valid journals bypass memo. Publication/poll/history/authority/schema stay unchanged; TouchPOC excluded.

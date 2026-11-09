@@ -7,6 +7,15 @@ Every successfully persisted history begin receives a UUID `run_id` under
 runs in `run_history`; task `97` publishes the capability contract. Existing
 task `19/20/60` response shapes remain compatible.
 
+Status still performs a fresh checked index read under the shared lock. When all
+bytes and the normalized requested limit match a previously successful snapshot,
+it can reuse a bounded private projection, returning a separate deep mutable copy.
+Diagnostics and root metadata are rebuilt each time. Memo limits affect caching
+only; larger/complex histories retain their existing replies and uncached path.
+Read/lock/schema failures clear the memo rather than returning old rows. This does
+not remove filesystem IO or change begin/finish persistence and recovery. See
+[C03bd status preparation](performance-audit/IMPLEMENTATION-C03BD.md).
+
 ## Contract
 
 History records use `run_history_v1` and include runtime, script bundle/entry,
