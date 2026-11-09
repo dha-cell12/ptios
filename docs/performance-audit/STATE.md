@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03bb — 2026-11-09
+
+- User reported C03ba built successfully (`05851c52`) and requested larger packages. Bundle root console publication rollback, one owned drain ticket, job tokens independent of runs, abandoned-job retirement outside the unfair lock, terminal forced drain and payload-before-permit field ordering. Allocation/enqueue failures cannot strand newly published entries; stale copied blocks cannot consume/drop newer jobs. Keep ordinary formatter/vector/file/system/authority/cancellation/retention bodies; helper/TrollStore/TouchPOC unchanged.
+- Portable100k token/rollback/stale/MAX and80k concurrent exactly-once publications pass. All90 Windows workflow runners and521 source assertions pass (16 artifact-only skipped), with complete preceding-runtime/constructor restoration, six-file macro and syntax checks. Extend existing native runtime with first/joining allocation failures, NS/C++ enqueue before/after copy, discard/retained/abandoned batches, same/cross-run stale callbacks, terminal drain and128 controlled actual-entry ARC retirements. Apple execution/device performance remain pending; opaque IO/barrier faults/reentrant finish and durability remain outside this package. Details: `IMPLEMENTATION-C03BB.md`.
+
 ## Implementation C03ba — 2026-11-09
 
 - User reported C03az built successfully (`5915bc37`) and requested larger packages. Bundle root/helper console producers: shared4097-unit assembled prefix with native surrogate lookahead, no normal map/full join, all admitted argument conversions/late faults preserved, exotic serializer coercion fallback and empty/short-string direct fast paths. Add advisory native preflight for expensive calls, accounting full-queue drops before conversion; final native admission/closure remains authoritative. Backend, authority, module loader and terminal/status bodies remain unchanged; TouchPOC excluded.

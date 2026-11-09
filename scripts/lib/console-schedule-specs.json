@@ -1,0 +1,52 @@
+{
+  "file": "pccontrol/jsruntime/TLinkJSRuntimeCore.mm",
+  "currentHash": "4f1664f02b0c522801d0c620e0a7e613d81523474bb05a1cb5320a98fd3a514d",
+  "beforeHash": "fc814245da656aead2d19175b69a7e1aaf29878a5b427176d062d235a6837b37",
+  "parts": [
+    {
+      "name": "include",
+      "before": "#include \"../../shared/TLinkJSConsolePrelude.h\"\n",
+      "current": "#include \"../../shared/TLinkJSConsolePrelude.h\"\n#include \"../../shared/TLinkConsoleDrainTicket.inc\"\n"
+    },
+    {
+      "name": "entry",
+      "before": "struct TLinkConsoleLogEntry {\n    NSData *data;\n    NSString *runPath,*latestPath,*runId,*systemLevel,*systemMessage;\n    std::shared_ptr<TLinkConsoleLogPermit> permit;\n    TLinkConsoleLogEntry(NSData *value,NSString *run,NSString *latest,NSString *identifier,NSString *level,NSString *message,std::shared_ptr<TLinkConsoleLogPermit> charge)\n        :data(value),runPath(run),latestPath(latest),runId(identifier),systemLevel(level),systemMessage(message),permit(std::move(charge)){}\n};\n\n",
+      "current": "struct TLinkConsoleLogEntry {\n    // Payload references must retire before the admission permit.\n    std::shared_ptr<TLinkConsoleLogPermit> permit;\n    NSData *data;\n    NSString *runPath,*latestPath,*runId,*systemLevel,*systemMessage;\n    TLinkConsoleLogEntry(NSData *value,NSString *run,NSString *latest,NSString *identifier,NSString *level,NSString *message,std::shared_ptr<TLinkConsoleLogPermit> charge)\n        :permit(std::move(charge)),data(value),runPath(run),latestPath(latest),runId(identifier),systemLevel(level),systemMessage(message){}\n};\n\n"
+    },
+    {
+      "name": "protocol",
+      "before": "@interface TLinkJSRuntimeCore () {",
+      "current": "@interface TLinkJSRuntimeCore () <TLinkConsoleDrainOwner> {"
+    },
+    {
+      "name": "schedule",
+      "before": "    BOOL _logDrainScheduled;",
+      "current": "    TLinkConsoleDrainSchedule _logSchedule;"
+    },
+    {
+      "name": "methods",
+      "before": "- (void)drainConsoleLogs;",
+      "current": "- (void)drainConsoleLogs;\n- (void)drainConsoleLogsForToken:(uint64_t)token;\n- (void)abandonConsoleLogsForToken:(uint64_t)token;"
+    },
+    {
+      "name": "drain",
+      "before": "- (void)drainConsoleLogs {\n    for(;;){\n        std::vector<std::shared_ptr<TLinkConsoleLogEntry>> batch;\n        os_unfair_lock_lock(&_logStateLock);\n        if(_logPending.empty()){\n            _logDrainScheduled=NO;\n            os_unfair_lock_unlock(&_logStateLock);\n            return;\n        }\n        batch.swap(_logPending);\n        os_unfair_lock_unlock(&_logStateLock);\n        @autoreleasepool {\n            uint64_t failed=TLinkConsoleLogBatchMask(0,batch.size());\n            @try {try {\n                for(const auto &entry:batch)if(![self emitConsoleSystemLog:*entry])_logBudget->systemFailed();\n                const uint64_t runFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->runPath];\n                const uint64_t latestFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->latestPath];\n                failed=runFailed|latestFailed;\n            }catch(...) {}} @catch(__unused NSException *exception) {}\n            @finally {\n                for(size_t n=0;n<batch.size();++n){\n                    if(failed&(uint64_t(1)<<n))_logBudget->failed();\n                    auto permit=std::move(batch[n]->permit);\n                    batch[n].reset(); // Retire the payload before reopening its slot.\n                    permit->finish();\n                }\n            }\n        }\n    }\n}\n\n",
+      "current": "- (void)abandonConsoleLogsForToken:(uint64_t)token {\n    std::vector<std::shared_ptr<TLinkConsoleLogEntry>> retired;\n    os_unfair_lock_lock(&_logStateLock);\n    if(_logSchedule.retire(token))retired.swap(_logPending);\n    os_unfair_lock_unlock(&_logStateLock);\n    // Destructors and budget callbacks may reenter the logger.\n    for(auto &entry:retired){_logBudget->dropped();entry.reset();}\n}\n\n- (void)drainConsoleLogs {\n    os_unfair_lock_lock(&_logStateLock);\n    const uint64_t token=_logSchedule.current();\n    os_unfair_lock_unlock(&_logStateLock);\n    if(token)[self drainConsoleLogsForToken:token];\n}\n\n- (void)drainConsoleLogsForToken:(uint64_t)token {\n    for(;;){\n        std::vector<std::shared_ptr<TLinkConsoleLogEntry>> batch;\n        os_unfair_lock_lock(&_logStateLock);\n        if(!_logSchedule.matches(token)){os_unfair_lock_unlock(&_logStateLock);return;}\n        if(_logPending.empty()){\n            _logSchedule.retire(token);\n            os_unfair_lock_unlock(&_logStateLock);\n            return;\n        }\n        batch.swap(_logPending);\n        os_unfair_lock_unlock(&_logStateLock);\n        @autoreleasepool {\n            uint64_t failed=TLinkConsoleLogBatchMask(0,batch.size());\n            @try {try {\n                for(const auto &entry:batch)if(![self emitConsoleSystemLog:*entry])_logBudget->systemFailed();\n                const uint64_t runFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->runPath];\n                const uint64_t latestFailed=[self writeConsoleBatch:batch toConsolePath:batch.front()->latestPath];\n                failed=runFailed|latestFailed;\n            }catch(...) {}} @catch(__unused NSException *exception) {}\n            @finally {\n                for(size_t n=0;n<batch.size();++n){\n                    if(failed&(uint64_t(1)<<n))_logBudget->failed();\n                    auto permit=std::move(batch[n]->permit);\n                    batch[n].reset(); // Retire the payload before reopening its slot.\n                    permit->finish();\n                }\n            }\n        }\n    }\n}\n\n"
+    },
+    {
+      "name": "finish",
+      "before": "    dispatch_sync(_logQueue, ^{\n        const auto stats=_logBudget->snapshot();",
+      "current": "    dispatch_sync(_logQueue, ^{\n        // Settle published work even if a copied enqueue block never ran.\n        [self drainConsoleLogs];\n        const auto stats=_logBudget->snapshot();"
+    },
+    {
+      "name": "publication",
+      "before": "        auto entry=std::make_shared<TLinkConsoleLogEntry>(data,runPath,latestPath,runId,systemLevel,systemMessage,permit);\n        os_unfair_lock_lock(&_logStateLock);\n        @try {\n            // Publish under the same lock that closes admission before drain.\n            if(!_acceptingLogs||generation!=_logGeneration){_logBudget->dropped();return;}\n            _logPending.push_back(entry);\n            _logBudget->accepted(truncated);\n            if(!_logDrainScheduled){\n                _logDrainScheduled=YES;\n                dispatch_async(_logQueue, ^{[self drainConsoleLogs];});\n            }\n        } @finally {os_unfair_lock_unlock(&_logStateLock);}\n",
+      "current": "        auto entry=std::make_shared<TLinkConsoleLogEntry>(data,runPath,latestPath,runId,systemLevel,systemMessage,permit);\n        // The ticket outlives publication unlock, including enqueue unwind.\n        std::shared_ptr<TLinkConsoleDrainTicket> ticket;\n        TLinkConsoleDrainSchedule::Lease lease{0,false};\n        BOOL inserted=NO,committed=NO;\n        os_unfair_lock_lock(&_logStateLock);\n        @try {\n            if(!_acceptingLogs||generation!=_logGeneration){_logBudget->dropped();return;}\n            lease=_logSchedule.prepare();\n            if(!lease){_acceptingLogs=NO;_logBudget->dropped();return;}\n            if(lease.starts)ticket=std::make_shared<TLinkConsoleDrainTicket>(self,lease.token);\n            _logPending.push_back(entry);inserted=YES;\n            if(lease.starts){\n                dispatch_async(_logQueue, ^{ticket->run();});\n                if(ticket.use_count()==1){_logBudget->dropped();return;}\n            }\n            _logBudget->accepted(truncated);committed=YES;\n        } @finally {\n            if(!committed){if(inserted)_logPending.pop_back();_logSchedule.rollback(lease);}\n            os_unfair_lock_unlock(&_logStateLock);\n        }\n"
+    },
+    {
+      "name": "initialization",
+      "before": "        _logBudget = std::make_shared<TLinkConsoleLogBudget>();\n        _logDrainScheduled = NO;\n",
+      "current": "        _logBudget = std::make_shared<TLinkConsoleLogBudget>();\n"
+    }
+  ]
+}

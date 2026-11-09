@@ -198,6 +198,8 @@ Ordinary helper console file/system output runs asynchronously on a shared seria
 
 Root/helper console formatting now keeps only a4097-unit assembled prefix on the normal JSON/string path; native still retains4096 units with surrogate-pair-safe truncation. Every admitted argument conversion still runs, including later throws. Object/multi-argument/large-string calls can be refused before conversion when the logger is full or closed, so avoid relying on side effects in logging-only `toJSON`/`toString` methods. Argument expressions still execute before the call. Empty calls and one short string use the original single native submission. Individual object serialization and unusual overridden serializers can still allocate larger temporary values. See [C03ba producer policy](performance-audit/IMPLEMENTATION-C03BA.md).
 
+Root console scheduling now rolls back failed publication and retires pending records if their queued job is discarded. A stale copied job cannot affect a later job/run. Finish drains published work before lifetime totals and retention; uncertain file writes are never replayed. Dropped counters include abandoned admitted logs, so accepted and dropped are not disjoint delivery totals. See [C03bb queue ownership](performance-audit/IMPLEMENTATION-C03BB.md).
+
 ## Safe demos
 
 Safe demos intended for repeated validation:

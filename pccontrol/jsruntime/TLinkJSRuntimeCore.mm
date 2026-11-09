@@ -10,6 +10,7 @@
 #include "../../shared/TLinkConsoleLogVectorIO.h"
 #include "../../shared/TLinkConsoleLogRetention.h"
 #include "../../shared/TLinkJSConsolePrelude.h"
+#include "../../shared/TLinkConsoleDrainTicket.inc"
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -98,14 +99,15 @@ static size_t TLinkConsoleLogVectorCapacity(void) {
 // END console vector capacity.
 
 struct TLinkConsoleLogEntry {
+    // Payload references must retire before the admission permit.
+    std::shared_ptr<TLinkConsoleLogPermit> permit;
     NSData *data;
     NSString *runPath,*latestPath,*runId,*systemLevel,*systemMessage;
-    std::shared_ptr<TLinkConsoleLogPermit> permit;
     TLinkConsoleLogEntry(NSData *value,NSString *run,NSString *latest,NSString *identifier,NSString *level,NSString *message,std::shared_ptr<TLinkConsoleLogPermit> charge)
-        :data(value),runPath(run),latestPath(latest),runId(identifier),systemLevel(level),systemMessage(message),permit(std::move(charge)){}
+        :permit(std::move(charge)),data(value),runPath(run),latestPath(latest),runId(identifier),systemLevel(level),systemMessage(message){}
 };
 
-@interface TLinkJSRuntimeCore () {
+@interface TLinkJSRuntimeCore () <TLinkConsoleDrainOwner> {
     TLinkautoJSCancelState *_cancelState;
     NSCondition *_sleepCondition;
     BOOL _running;
@@ -126,7 +128,7 @@ struct TLinkConsoleLogEntry {
     uint64_t _logGeneration;
     std::shared_ptr<TLinkConsoleLogBudget> _logBudget; // Old formatters stay charged across run changes.
     std::vector<std::shared_ptr<TLinkConsoleLogEntry>> _logPending;
-    BOOL _logDrainScheduled;
+    TLinkConsoleDrainSchedule _logSchedule;
 }
 
 - (void)prepareConsoleLogFiles;
@@ -136,6 +138,8 @@ struct TLinkConsoleLogEntry {
 - (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path;
 - (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (void)drainConsoleLogs;
+- (void)drainConsoleLogsForToken:(uint64_t)token;
+- (void)abandonConsoleLogsForToken:(uint64_t)token;
 - (BOOL)canAcceptConsoleLog;
 - (void)beginConsoleLogging;
 - (void)finishConsoleLogging;
@@ -164,7 +168,6 @@ struct TLinkConsoleLogEntry {
         _acceptingLogs = NO;
         _logGeneration = 0;
         _logBudget = std::make_shared<TLinkConsoleLogBudget>();
-        _logDrainScheduled = NO;
     }
     return self;
 }
@@ -348,12 +351,29 @@ struct TLinkConsoleLogEntry {
     }
 }
 
+- (void)abandonConsoleLogsForToken:(uint64_t)token {
+    std::vector<std::shared_ptr<TLinkConsoleLogEntry>> retired;
+    os_unfair_lock_lock(&_logStateLock);
+    if(_logSchedule.retire(token))retired.swap(_logPending);
+    os_unfair_lock_unlock(&_logStateLock);
+    // Destructors and budget callbacks may reenter the logger.
+    for(auto &entry:retired){_logBudget->dropped();entry.reset();}
+}
+
 - (void)drainConsoleLogs {
+    os_unfair_lock_lock(&_logStateLock);
+    const uint64_t token=_logSchedule.current();
+    os_unfair_lock_unlock(&_logStateLock);
+    if(token)[self drainConsoleLogsForToken:token];
+}
+
+- (void)drainConsoleLogsForToken:(uint64_t)token {
     for(;;){
         std::vector<std::shared_ptr<TLinkConsoleLogEntry>> batch;
         os_unfair_lock_lock(&_logStateLock);
+        if(!_logSchedule.matches(token)){os_unfair_lock_unlock(&_logStateLock);return;}
         if(_logPending.empty()){
-            _logDrainScheduled=NO;
+            _logSchedule.retire(token);
             os_unfair_lock_unlock(&_logStateLock);
             return;
         }
@@ -409,6 +429,8 @@ struct TLinkConsoleLogEntry {
     NSString *runId=_runId,*runPath=_consoleLogPath,*latestPath=_consoleLatestLogPath;
     os_unfair_lock_unlock(&_logStateLock);
     dispatch_sync(_logQueue, ^{
+        // Settle published work even if a copied enqueue block never ran.
+        [self drainConsoleLogs];
         const auto stats=_logBudget->snapshot();
         if(stats.dropped||stats.truncated||stats.writeFailures||stats.systemFailures){
             @autoreleasepool {
@@ -449,17 +471,26 @@ struct TLinkConsoleLogEntry {
         NSData *data=[line dataUsingEncoding:NSUTF8StringEncoding];
         if(!data||data.length>TLinkConsoleLogLineBytes){_logBudget->dropped();return;}
         auto entry=std::make_shared<TLinkConsoleLogEntry>(data,runPath,latestPath,runId,systemLevel,systemMessage,permit);
+        // The ticket outlives publication unlock, including enqueue unwind.
+        std::shared_ptr<TLinkConsoleDrainTicket> ticket;
+        TLinkConsoleDrainSchedule::Lease lease{0,false};
+        BOOL inserted=NO,committed=NO;
         os_unfair_lock_lock(&_logStateLock);
         @try {
-            // Publish under the same lock that closes admission before drain.
             if(!_acceptingLogs||generation!=_logGeneration){_logBudget->dropped();return;}
-            _logPending.push_back(entry);
-            _logBudget->accepted(truncated);
-            if(!_logDrainScheduled){
-                _logDrainScheduled=YES;
-                dispatch_async(_logQueue, ^{[self drainConsoleLogs];});
+            lease=_logSchedule.prepare();
+            if(!lease){_acceptingLogs=NO;_logBudget->dropped();return;}
+            if(lease.starts)ticket=std::make_shared<TLinkConsoleDrainTicket>(self,lease.token);
+            _logPending.push_back(entry);inserted=YES;
+            if(lease.starts){
+                dispatch_async(_logQueue, ^{ticket->run();});
+                if(ticket.use_count()==1){_logBudget->dropped();return;}
             }
-        } @finally {os_unfair_lock_unlock(&_logStateLock);}
+            _logBudget->accepted(truncated);committed=YES;
+        } @finally {
+            if(!committed){if(inserted)_logPending.pop_back();_logSchedule.rollback(lease);}
+            os_unfair_lock_unlock(&_logStateLock);
+        }
     }catch(...) {_logBudget->dropped();}} @catch(__unused NSException *exception) {_logBudget->dropped();}
     }
 }

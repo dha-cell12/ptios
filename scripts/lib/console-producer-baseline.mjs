@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import {restoreConsoleSchedule} from './console-schedule-baseline.mjs';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 export const consoleProducerSpecs=JSON.parse(readFileSync(new URL('./console-producer-specs.json',import.meta.url),'utf8'));
 export function restoreConsoleProducer(source,kind){
+    if(kind==='core')source=restoreConsoleSchedule(source);
     const spec=consoleProducerSpecs[kind];assert.ok(spec,kind);
     if(hash(source)===spec.beforeHash)return source;
     const marker=kind==='owner'?'    bool maySubmit() noexcept {':'TLinkJSConsolePrelude.h';

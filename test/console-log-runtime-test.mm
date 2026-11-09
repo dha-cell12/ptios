@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
+#include <new>
 #include <cstdarg>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -19,7 +20,27 @@ static size_t ConsoleVectorCapacity(size_t capacity);
 #include "ConsoleLogConstants.h"
 #include "ConsoleLogHelpers.inc"
 #include "ConsoleLogEntry.inc"
+#include "../shared/TLinkConsoleDrainTicket.inc"
 static std::atomic<unsigned> consoleFault{0},consoleLive{0},consoleOpens{0},consoleWrites{0},consoleCloses{0},consoleStats{0};
+static unsigned consoleEnqueueFault=0;
+static bool consolePublicationFault=false;
+static NSMutableArray *consoleRetainedJobs;
+static void ConsolePublish(std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &pending,const std::shared_ptr<TLinkConsoleLogEntry> &entry){
+    if(consolePublicationFault)throw std::bad_alloc();
+    pending.push_back(entry);
+}
+static void ConsoleEnqueue(dispatch_queue_t queue,dispatch_block_t block){
+    if(consoleEnqueueFault==1)[NSException raise:@"ConsoleEnqueue" format:@"before copy"];
+    if(consoleEnqueueFault==2)throw std::runtime_error("before copy");
+    if(consoleEnqueueFault==3)return;
+    if(consoleEnqueueFault>=4){
+        [consoleRetainedJobs addObject:[block copy]];
+        if(consoleEnqueueFault==5)[NSException raise:@"ConsoleEnqueue" format:@"after copy"];
+        if(consoleEnqueueFault==6)throw std::runtime_error("after copy");
+        return;
+    }
+    dispatch_async(queue,block);
+}
 static std::atomic<unsigned> consoleSystemFault{0};
 static bool consoleTrackSystemOwners=false;
 static char consoleQueueKey;
@@ -108,11 +129,11 @@ static std::vector<TLinkConsoleLogVectorIO::Span> consoleExpectedSpans;
 @implementation ConsoleMessageProbe
 - (NSString *)description {++self.calls;if(callback)callback();return @"late-log";}
 @end
-@interface TLinkJSRuntimeCore : NSObject {
+@interface TLinkJSRuntimeCore : NSObject<TLinkConsoleDrainOwner> {
     NSString *_bundlePath,*_runId,*_consoleLogPath,*_consoleLatestLogPath;
     dispatch_queue_t _logQueue;os_unfair_lock _logStateLock;BOOL _acceptingLogs;
     uint64_t _logGeneration;std::shared_ptr<TLinkConsoleLogBudget> _logBudget;
-    std::vector<std::shared_ptr<TLinkConsoleLogEntry>> _logPending;BOOL _logDrainScheduled;
+    std::vector<std::shared_ptr<TLinkConsoleLogEntry>> _logPending;TLinkConsoleDrainSchedule _logSchedule;
 }
 - (void)prepareConsoleLogFiles;
 - (BOOL)appendConsoleData:(NSData *)data toConsolePath:(NSString *)path;
@@ -123,6 +144,8 @@ static std::vector<TLinkConsoleLogVectorIO::Span> consoleExpectedSpans;
 - (BOOL)beforeEmitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (void)drainConsoleLogs;
+- (void)drainConsoleLogsForToken:(uint64_t)token;
+- (void)abandonConsoleLogsForToken:(uint64_t)token;
 - (void)beginConsoleLogging;
 - (void)finishConsoleLogging;
 - (NSDictionary *)currentConsoleLogStats;
@@ -177,6 +200,7 @@ static void consoleWait(dispatch_semaphore_t semaphore){assert(dispatch_semaphor
 static NSString *consoleText(NSString *path){return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]?:@"";}
 static TLinkJSRuntimeCore *consoleStart(NSString *root,NSString *run){TLinkJSRuntimeCore *logger=[TLinkJSRuntimeCore new];[logger configure:root run:run];[logger prepareConsoleLogFiles];[logger beginConsoleLogging];return logger;}
 #include "console-vector-runtime-fixture.inc"
+#include "console-schedule-runtime-fixture.inc"
 int main(int argc,char **argv){@autoreleasepool{
     assert(argc==2);NSString *root=[NSString stringWithUTF8String:argv[1]];
     consoleSystemRecords=[NSMutableArray array];
@@ -345,6 +369,7 @@ int main(int argc,char **argv){@autoreleasepool{
         assert([[logger currentConsoleLogStats][@"systemFailures"] intValue]==1&&[consoleText(logger.runPath) containsString:@"recovered-system"]&&consoleLive==0);consoleTakeSystemRecords();
     }
     consoleVectorRuntimeCases(root);
+    consoleScheduleRuntimeCases(root);
     consoleSystemRecords=nil;
     puts("Console logger Foundation passed: frozen bytes/independent rotations/missing files, 64-entry burst uses 4 metadata checks and 2 open/close pairs versus 128 each (writev calls follow host vector capacity), no batch retry after NS/C++/post-write/one-path faults, held caps, early rejection, Unicode snapshots, late-run isolation, concurrent producers and zero live handles/charges. No real script or device syslog workload qualified.");
     puts("Console system logging passed: actual/frozen JSCore hook/output parity, asynchronous held/blocked sink, shared 64-entry disk/system admission, immutable bounded Unicode snapshots, NS/C++ failure accounting/recovery and finish drain without replay. Device syslog qualification pending.");

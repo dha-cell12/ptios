@@ -52,7 +52,7 @@ try{
     assert.equal([...actualMethods.matchAll(/\[NSMutableData dataWithCapacity:total\]/g)].length,1);
     assert.match(actualMethods,/count>1\)written=\[self appendConsoleVectorBatch/);
     assert.match(actualMethods,/@finally \{\[handle closeFile\];\}/);
-    const measured=actualMethods.replace('::writev(','::ConsoleWriteVectors(').replace('[NSMutableData dataWithCapacity:total]','ConsoleJoinedData(total)');
+    const measured=actualMethods.replace('::writev(','::ConsoleWriteVectors(').replace('[NSMutableData dataWithCapacity:total]','ConsoleJoinedData(total)').replace('dispatch_async(_logQueue,','ConsoleEnqueue(_logQueue,').replace('_logPending.push_back(entry);','ConsolePublish(_logPending,entry);');
     assert.equal([...measured.matchAll(/::ConsoleWriteVectors\(/g)].length,1);
     assert.equal([...measured.matchAll(/ConsoleJoinedData\(total\)/g)].length,1);
     await writeFile(join(temp,'ConsoleLogMethods.inc'),measured);
@@ -64,7 +64,7 @@ try{
     const helper=between(actualSource,'static NSString *TLinkautoJSSanitizeFileComponent','struct TLinkConsoleLogEntry {').replace('return capacity;','return ConsoleVectorCapacity(capacity);');
     assert.equal([...helper.matchAll(/ConsoleVectorCapacity\(capacity\)/g)].length,1);
     await writeFile(join(temp,'ConsoleLogHelpers.inc'),helper);
-    await writeFile(join(temp,'ConsoleLogEntry.inc'),between(source,'struct TLinkConsoleLogEntry {','@interface TLinkJSRuntimeCore'));
+    await writeFile(join(temp,'ConsoleLogEntry.inc'),between(actualSource,'struct TLinkConsoleLogEntry {','@interface TLinkJSRuntimeCore'));
     await writeFile(join(temp,'ConsoleLogCallback.inc'),callback);
     const constant=source.match(/^static const unsigned long long kTLinkautoJSMaxConsoleLogBytes = 512 \* 1024;$/m);assert.ok(constant);
     await writeFile(join(temp,'ConsoleLogConstants.h'),constant[0]);
@@ -87,3 +87,4 @@ await import('./check-console-retention-safety.mjs');
 await import('./check-helper-console-safety.mjs');
 await import('./check-helper-console-async-safety.mjs');
 await import('./check-console-producer-safety.mjs');
+await import('./check-console-schedule-safety.mjs');
