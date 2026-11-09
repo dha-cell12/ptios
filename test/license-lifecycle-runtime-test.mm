@@ -17,6 +17,8 @@
 static NSString *currentPath,*legacyPath,*beforeBatchPath;
 static std::atomic<unsigned> currentDiagnosticReads{0},legacyDiagnosticReads{0},beforeBatchDiagnosticReads{0};
 static std::atomic<unsigned> currentDiagnosticWrites{0},legacyDiagnosticWrites{0},beforeBatchDiagnosticWrites{0};
+static std::atomic<unsigned> heldDiagnosticWrite{0};
+static dispatch_semaphore_t diagnosticWriteEntered,diagnosticWriteRelease;
 static unsigned batchReadFault=0,batchWriteFault=0;
 static NSDictionary *fixtureReadDiagnostics(NSString *path){
     if([path isEqualToString:currentPath]){
@@ -29,7 +31,11 @@ static NSDictionary *fixtureReadDiagnostics(NSString *path){
 }
 static BOOL fixtureWriteDiagnostics(NSDictionary *state,NSString *path){
     if([path isEqualToString:currentPath]){
-        ++currentDiagnosticWrites;
+        const unsigned ordinal=++currentDiagnosticWrites;
+        if(ordinal==heldDiagnosticWrite.load()){
+            dispatch_semaphore_signal(diagnosticWriteEntered);
+            assert(dispatch_semaphore_wait(diagnosticWriteRelease,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))==0);
+        }
         if(batchWriteFault==1)return NO;
         if(batchWriteFault==2)[NSException raise:@"DiagnosticsBatch" format:@"write"];
         if(batchWriteFault==3)throw std::runtime_error("write");
@@ -98,7 +104,11 @@ static void waitSemaphore(dispatch_semaphore_t value){assert(dispatch_semaphore_
     @synchronized(self){++_requests;_reply=[completion copy];}
     if(_requestFault==1)[NSException raise:@"Lifecycle" format:@"request"];
     if(_requestFault==2)throw std::runtime_error("request");
-    if(_requestFault==3){completion(YES,@"inline-success");[NSException raise:@"Lifecycle" format:@"after result"];}
+    if(_requestFault==3||_requestFault==6){
+        completion(YES,@"inline-success");
+        if(_requestFault==3)[NSException raise:@"Lifecycle" format:@"after result"];
+        throw std::runtime_error("after inline result");
+    }
     if(_requestFault==4||_requestFault==5){
         _resultWorker=dispatch_group_create();dispatch_group_async(_resultWorker,dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0),^{@autoreleasepool{completion(YES,@"async-success");}});
         waitSemaphore(_entered);
@@ -306,10 +316,44 @@ static void faultCases(){
             }
         }
     }
-    @autoreleasepool{
-        prepare(NO,NO);FixtureManager *manager=managerFor(0);manager.requestFault=3;id<FixtureLifecycle> value=coordinator(NO,manager);auto result=std::make_shared<Reply>();
-        [value refreshForTrigger:@"inline" force:YES completion:completionFor(result)];await([&]{return result->calls.load()==1;});
-        assert(result->success&&![(NSObject *)value valueForKey:@"refreshOperationIdentity"]&&[fileState(NO)[@"last_result"] isEqualToString:@"success"]);manager.reply=nil;
+    for(int fault:{3,6}){
+        @autoreleasepool{
+            prepare(NO,NO);FixtureManager *manager=managerFor(0);manager.requestFault=fault;
+            CurrentLifecycle *value=(CurrentLifecycle *)coordinator(NO,manager);auto result=std::make_shared<Reply>();
+            const unsigned writes=currentDiagnosticWrites.load();
+            diagnosticWriteEntered=dispatch_semaphore_create(0);diagnosticWriteRelease=dispatch_semaphore_create(0);
+            heldDiagnosticWrite=writes+2; // Initial attempt, then the terminal batch flush.
+            [value refreshForTrigger:@"inline" force:YES completion:completionFor(result)];
+            waitSemaphore(diagnosticWriteEntered);
+            NSDictionary *beforeFlush=fileState(NO);
+            assert([beforeFlush[@"request_in_flight"] boolValue]&&![beforeFlush[@"last_result"] isEqualToString:@"success"]);
+            await([&]{return result->calls.load()==1;});
+            // Completion is enqueued inside the batch. A direct private-file
+            // read can still see the attempt until the owner finishes its flush.
+            assert(result->success&&[beforeFlush isEqual:fileState(NO)]);
+            struct DiagnosticRead {NSDictionary *state=nil;std::atomic<bool> finished{false};};
+            auto publicRead=std::make_shared<DiagnosticRead>();
+            dispatch_semaphore_t readStarted=dispatch_semaphore_create(0);
+            std::thread reader([value,publicRead,readStarted]{@autoreleasepool{
+                dispatch_semaphore_signal(readStarted);
+                publicRead->state=[value diagnostics];publicRead->finished=true;
+            }});
+            waitSemaphore(readStarted);assert(!publicRead->finished.load());
+            dispatch_semaphore_signal(diagnosticWriteRelease);
+            [value drainRefreshDecisions];reader.join();heldDiagnosticWrite=0;
+            diagnosticWriteEntered=nil;diagnosticWriteRelease=nil;
+            NSDictionary *state=fileState(NO);
+            const bool complete=result->success&&!value.refreshOperationIdentity&&[state[@"last_result"] isEqualToString:@"success"];
+            if(!complete)fprintf(stderr,"Inline result/flush mismatch: fault=%d calls=%u success=%d identity=%p state=%.8192s\n",
+                fault,result->calls.load(),result->success,(__bridge void *)value.refreshOperationIdentity,state.description.UTF8String);
+            assert(complete);
+            assert(publicRead->finished.load()&&[publicRead->state[@"last_result"] isEqualToString:@"success"]);
+            assert(!value.requestInFlight&&!value.diagnosticsBatchActive&&!value.diagnosticsBatchState);
+            assert(currentDiagnosticWrites.load()==writes+2&&value.transactions==3&&manager.requests==1&&manager.localReads==2&&value.published.count==1);
+            manager.reply(NO,@"late-after-inline-throw");
+            pump();assert(result->calls.load()==1&&[state isEqual:fileState(NO)]&&currentDiagnosticWrites.load()==writes+2);
+            manager.reply=nil;
+        }
     }
     for(int fault=4;fault<=5;++fault){
         @autoreleasepool{

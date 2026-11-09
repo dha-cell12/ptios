@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## C06ae lifecycle fixture flush-order correction — 2026-11-09
+
+- User macOS CI passed all48 terminal and20 snapshot batch comparisons, then failed the older inline-result fault case's direct plist read. That provider executes its inline callback on the decision queue; terminal completion is enqueued on main before the outer batch flush returns. Receiving the callback is not a barrier for an unlocked private-file read. The public diagnostics getter remains serialized by the coordinator monitor.
+- Keep the original success/identity/final persisted-state assertions, but evaluate final state after draining the decision owner. Add a deterministic held-final-write case for both inline-success-then-NS and inline-success-then-C++ exceptions: completion can arrive while the attempt file is unchanged, a public getter cannot finish behind the held monitor and returns success after release, exact two writes/three mutations/one publication remain, and a late losing result cannot replay persistence or callbacks. Production and baseline source are unchanged. Lifecycle/background source/extraction, three-file assertion macro preprocessing and diff whitespace pass on Windows; expanded Foundation/GCD/ARC/sanitizer runtime awaits macOS CI.
+
 ## C06ae diagnostics snapshot correction — 2026-11-09
 
 - macOS CI failed full persisted snapshot parity at `batchSnapshotCases`. The staged CF deep copy can narrow an unsigned number: a real Apple Windows CoreFoundation probe turned UINT64_MAX into -1 and reproduced12/20 final graph mismatches across five unsigned boundaries/four dates. Replace staging with an owned immutable in-memory XML encode/decode snapshot, preserving the preceding write/read scalar normalization and caller mutation isolation. Retain one final file flush, existing fault/cleanup policy and exact historical source reversals. Temporary encoded data drains in a local pool; codec work remains per mutation plus final serialization, so no CPU gain is claimed.
