@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03bc — 2026-11-10
+
+- User reported C03bb built successfully (`33adcbea`) and requested larger packages. Bundle shared Event status CPU/allocation work: exact fresh-byte cursor memo (one<=2-MiB copy, no retained graph), complete shared validator, direct scalar status without pagination batch and loader scratch pool. Every request retains checked fresh IO/shared-lock admission; missing/corrupt/read/lock failures clear memo, allocation failure preserves validated uncached success and larger valid journals bypass memo. Publication/poll/history/authority/schema stay unchanged; TouchPOC excluded.
+- Portable100k ownership/mutation/clear,300k allocation-free hits,2-MiB/MAX boundaries and80k concurrent stores pass. All90 Windows runner results and521 source assertions pass (16 artifact-only skipped); the sole initial failure was an overly broad new source assertion, corrected with a passing complete Event rerun. Source restoration, five-file macros, native dependency extraction and syntax pass. Native frozen status/129 fresh reads-one decode/replacement/errors/unsafe types/allocator/large-journal tests await macOS CI. No IO-saving/RSS/device-gain claim; quiet status gains versus cold-copy cost require measurement. Details: `IMPLEMENTATION-C03BC.md`.
+
 ## Implementation C03bb — 2026-11-09
 
 - User reported C03ba built successfully (`05851c52`) and requested larger packages. Bundle root console publication rollback, one owned drain ticket, job tokens independent of runs, abandoned-job retirement outside the unfair lock, terminal forced drain and payload-before-permit field ordering. Allocation/enqueue failures cannot strand newly published entries; stale copied blocks cannot consume/drop newer jobs. Keep ordinary formatter/vector/file/system/authority/cancellation/retention bodies; helper/TrollStore/TouchPOC unchanged.

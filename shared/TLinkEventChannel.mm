@@ -4,6 +4,7 @@
 #include "TLinkASCIIPreparation.h"
 #include "TLinkEventMetadata.h"
 #include "TLinkEventPreparation.h"
+#include "TLinkEventStatusCache.h"
 
 #include <atomic>
 #include <memory>
@@ -199,15 +200,8 @@ static BOOL TLinkEventJournalInteger(id value, uint64_t *result)
     return digits.finish(*result);
 }
 
-static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
+static NSMutableDictionary *TLinkEventDecodeJournal(NSData *data, NSString **error)
 {
-    sTLinkEventJournalReads.fetch_add(1);
-    BOOL missing = NO;
-    NSData *data = TLinkEventReadJournalData(&missing, error);
-    if (!data) {
-        if (missing) return [@{@"schema": TLinkEventChannelSchemaV1, @"next_sequence": @1, @"events": @[]} mutableCopy];
-        return nil;
-    }
     id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     uint64_t next = 0, previous = 0;
     BOOL valid = [object isKindOfClass:[NSDictionary class]] && [object[@"schema"] isEqual:TLinkEventChannelSchemaV1] &&
@@ -230,6 +224,18 @@ static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
     valid = valid && (!previous || previous == next - 1);
     if (!valid) { *error = @"event_journal_invalid"; return nil; }
     return [object mutableCopy];
+}
+
+static NSMutableDictionary *TLinkEventReadJournal(NSString **error)
+{
+    sTLinkEventJournalReads.fetch_add(1);
+    BOOL missing = NO;
+    NSData *data = TLinkEventReadJournalData(&missing, error);
+    if (!data) {
+        if (missing) return [@{@"schema": TLinkEventChannelSchemaV1, @"next_sequence": @1, @"events": @[]} mutableCopy];
+        return nil;
+    }
+    return TLinkEventDecodeJournal(data,error);
 }
 
 static BOOL TLinkEventWriteJournal(NSDictionary *journal)
@@ -613,23 +619,54 @@ NSDictionary *TLinkEventChannelPoll(uint64_t cursor, NSArray<NSString *> *topics
     return TLinkEventChannelPollBody(body, NULL);
 }
 // END event wait adapter.
+// Status keeps only exact validated bytes and a scalar; every call still reads.
+static TLinkEventStatusCache &TLinkEventStatusMemo(void){
+    static TLinkEventStatusCache cache;return cache;
+}
+static BOOL TLinkEventLoadStatusCursor(uint64_t *latest, NSString **error){
+    @autoreleasepool {
+    NSString *__autoreleasing ignored=nil;if(!error)error=&ignored;
+    int fd=-1;BOOL succeeded=NO;
+    if(error)*error=nil;
+    @try {try {
+        fd=TLinkEventAcquireFileLock(YES,NO);
+        if(fd<0){if(error)*error=@"event_journal_unavailable";return NO;}
+        sTLinkEventJournalReads.fetch_add(1);
+        BOOL missing=NO;
+        NSData *data=TLinkEventReadJournalData(&missing, error);
+        if(!data){
+            if(!missing)return NO;
+            TLinkEventStatusMemo().clear();*latest=0;succeeded=YES;return YES;
+        }
+        if(TLinkEventStatusMemo().lookup((const uint8_t *)data.bytes,data.length,*latest)){succeeded=YES;return YES;}
+        NSDictionary *journal=TLinkEventDecodeJournal(data,error);if(!journal)return NO;
+        *latest=[journal[@"next_sequence"] unsignedLongLongValue]-1;
+        // Allocation refusal only disables memoization; the validated read wins.
+        TLinkEventStatusMemo().store((const uint8_t *)data.bytes,data.length,*latest);
+        succeeded=YES;return YES;
+    }catch(...) {if(error)*error=@"event_journal_exception";}}
+    @catch(NSException *exception){(void)exception;if(error)*error=@"event_journal_exception";}
+    @finally {if(!succeeded)TLinkEventStatusMemo().clear();TLinkEventReleaseFileLock(fd);}
+    return NO;
+    }
+}
 NSDictionary *TLinkEventChannelStatus(void)
 {
     @autoreleasepool {
     NSString *readError = nil;
-    NSDictionary *journal = TLinkEventLoadSnapshot(NO, NULL, &readError);
-    NSDictionary *batch = journal ? TLinkEventBatchFromJournal(journal, UINT64_MAX, [NSSet set], 1, NO) : @{};
+    uint64_t latest=0;
+    const BOOL loaded=TLinkEventLoadStatusCursor(&latest,&readError);
     NSDictionary *status = @{
-        @"schema": TLinkEventChannelSchemaV1, @"state": journal ? @"implemented" : @"error", @"transport": @"task95_long_poll_v1",
+        @"schema": TLinkEventChannelSchemaV1, @"state": loaded ? @"implemented" : @"error", @"transport": @"task95_long_poll_v1",
         @"journal_max_events": @(kTLinkEventJournalMaxEvents), @"poll_timeout_max_ms": @(kTLinkEventPollMaxTimeoutMs),
         @"poll_max_events": @(kTLinkEventPollMaxEvents), @"max_concurrent_polls": @(kTLinkEventMaxConcurrentPolls),
-        @"latest_cursor": batch[@"latest_cursor"] ?: @0, @"active_polls": @(sTLinkEventActivePolls.load()),
+        @"latest_cursor": @(latest), @"active_polls": @(sTLinkEventActivePolls.load()),
         @"active_authorizations": @(sTLinkEventAuthorizations.load()), @"authorization_timeout_ms": @5000,
         @"journal_read_count": @(sTLinkEventJournalReads.load()), @"metadata_check_count": @(sTLinkEventMetadataChecks.load()),
         @"wait_strategy": @"darwin_notify_async_v1", @"reconcile_interval_ms": @(kTLinkEventReconcileMs),
         @"root_path": TLinkEventChannelRootPath(),
     };
-    if (!journal) {
+    if (!loaded) {
         NSMutableDictionary *failed = [status mutableCopy];
         failed[@"error"] = readError ?: @"event_journal_unavailable";
         return [failed copy];

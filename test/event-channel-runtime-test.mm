@@ -20,6 +20,8 @@
 #include <vector>
 #include <string>
 #include <stdexcept>
+#include <new>
+#include "../shared/TLinkEventStatusCache.h"
 #include <cmath>
 #include "../shared/TLinkEventChannel.h"
 #include <notify.h>
@@ -131,6 +133,19 @@ static ssize_t FixtureJournalRead(int fd,void *bytes,size_t count) {
     if(got>0)fixtureJournalBytes+=(uint64_t)got;return got;
 }
 static NSData *TLinkEventReadJournalData(BOOL *missing,NSString **error);
+static std::atomic<unsigned> fixtureStatusDecodes{0};
+static unsigned fixtureStatusDecodeFault=0,fixtureStatusAllocationFault=0;
+static id FixtureEventStatusDecode(NSData *data){
+    ++fixtureStatusDecodes;
+    if(fixtureStatusDecodeFault==1)[NSException raise:@"EventStatusFixture" format:@"decode"];
+    if(fixtureStatusDecodeFault==2)throw std::runtime_error("decode");
+    return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+}
+static TLinkEventStatusCache::Bytes FixtureStatusAllocate(size_t size){
+    if(fixtureStatusAllocationFault==1)return {};
+    if(fixtureStatusAllocationFault==2)throw std::bad_alloc();
+    return TLinkEventStatusCache::NewBytes(size);
+}
 static NSData *FixtureEventReadData(BOOL *missing,NSString **error) {
     assert(fixtureEventLocks.size()==1);++fixturePublishReads;
     if(fixtureTrackPreparationOwners)TLinkAXFixtureAutoreleaseOwner();
@@ -155,6 +170,7 @@ static NSInteger FixtureEventDefaultCountWrite(id object,NSOutputStream *stream,
 static NSData *FixtureEventFallbackPayloadData(id object);
 static NSData *FixtureEventLegacyPayloadData(id object);
 #include "EventChannelUnderTest.inc"
+#include "EventStatusBefore.inc"
 #include "EventReadBeforeOwned.inc"
 #include "EventPayloadBefore.inc"
 #include "EventBatchBefore.inc"
@@ -557,6 +573,7 @@ static void fixtureBoundedJournalCases() {
 #include "event-preparation-runtime-fixture.inc"
 #include "event-direct-wire-runtime-fixture.inc"
 #include "owned-read-event-runtime-fixture.inc"
+#include "event-status-cache-runtime-fixture.inc"
 int main(int argc, char **argv) { @autoreleasepool {
     (void)kZXLegacyMaxBufferSize;
     if (argc > 1) { suppressNotify = strcmp(argv[1],"quiet") == 0; assert(publish()); return 0; }
@@ -691,6 +708,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     for (unsigned n = 0; n < 260; ++n) publish(); batch = poll(1); assert([batch[@"gap"] boolValue] && [batch[@"events"] count] == 8);
     waitFor([] { return sTLinkEventAuthorizations == 0; });
     dispatch_sync(TLinkEventOwnerQueue(), ^{ assert(!sTLinkEventWaiters.count); dispatch_source_cancel(sTLinkEventTimer); notify_cancel(sTLinkEventNotifyToken); });
+    fixtureEventStatusMemoCases();
     assert(!fixtureLiveEventFds&&fixtureEventFds.empty()&&fixtureEventLocks.empty()&&!fixtureLiveJournalFds&&fixtureJournalFds.empty());
     puts("Event Foundation passed: real journal/locks, cross-process and missed notifications, quiet/idle I/O, eight cancellations, blocked authorization, deadlines, pagination/gap and root/TrollStore/remote wire adapters.");
 } }

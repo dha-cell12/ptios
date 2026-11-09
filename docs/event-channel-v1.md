@@ -35,6 +35,13 @@ cho lifecycle, downgrade/recovery và self-healing.
 
 ## Capability task 97
 
+Status vẫn khóa và đọc journal mới qua các kiểm tra file hiện có. Khi toàn bộ
+bytes khớp chính xác lần đã validate, runtime có thể dùng lại cursor để bỏ parse
+JSON và dựng batch không cần thiết. Memo chỉ giữ một bản bytes tối đa 2 MiB và
+cursor; lỗi đọc/file/JSON xóa memo, journal lớn hơn ngưỡng vẫn được validate như
+cũ. Cơ chế này không thay đổi cursor/schema, không bỏ IO và không phục hồi journal
+hỏng từ dữ liệu cũ. Xem [C03bc](performance-audit/IMPLEMENTATION-C03BC.md).
+
 ```text
 eventChannelState=implemented
 eventChannelVersion=1

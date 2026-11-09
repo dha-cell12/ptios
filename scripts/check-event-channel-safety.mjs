@@ -4,6 +4,7 @@ checkPersistenceJSON();
 import {restoreEventPreparation,eventPreparationBefore,checkEventPreparationFiles} from './lib/event-preparation-baseline.mjs';
 import {restoreEventDirectWire,checkEventWireEncoding} from './lib/event-direct-wire-baseline.mjs';
 import assert from 'node:assert/strict';
+import {restoreEventStatusCache} from './lib/event-status-cache-baseline.mjs';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -183,7 +184,9 @@ try {
   .replace('lstat(TLinkEventChannelRootPath().fileSystemRepresentation, &root)','FixtureEventPathStat(TLinkEventChannelRootPath().fileSystemRepresentation, &root)')
   .replace('chmod(root.fileSystemRepresentation, 0750)','FixtureRootChmod(root.fileSystemRepresentation, 0750)')
   .replace('lchown(root.fileSystemRepresentation, 501, 501)','FixtureRootChown(root.fileSystemRepresentation, 501, 501)')
-  .replace('TLinkEventReadJournalData(&missing, error)','FixtureEventReadData(&missing, error)')
+  .replaceAll('TLinkEventReadJournalData(&missing, error)','FixtureEventReadData(&missing, error)')
+  .replace('[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]','FixtureEventStatusDecode(data)')
+  .replace('static TLinkEventStatusCache cache;','static TLinkEventStatusCache cache(TLinkEventStatusCache::Limit,FixtureStatusAllocate);')
   .replace('![data writeToFile:path atomically:YES]','!FixtureEventWrite(data, path)')
   .replace('flock(fd, operation)', 'FixtureEventFlock(fd, operation)')
   .replaceAll('flock(fd, LOCK_UN)', 'FixtureEventFlock(fd, LOCK_UN)')
@@ -212,6 +215,7 @@ try {
   .replaceAll('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)');
  const trollSyncFixture = (name,source) => `static NSData *${name}(int taskType,NSString *body) {\n${syncFixture(source)}    return nil;\n}\n`;
  const fixtures = {
+  'EventStatusBefore.inc': (await read('test/fixtures/event-status-status-before-c03bc.inc')).replace('NSDictionary *TLinkEventChannelStatus(void)','static NSDictionary *FixtureBeforeEventStatus(void)'),
   'EventReadBeforeOwned.inc': beforeOwnedRead,
   'EventWireUnderTest.inc': actualEventWire.replace('[NSJSONSerialization dataWithJSONObject:batch options:0 error:nil]','FixtureEventBatchJSON(batch)')
    .replace('[NSMutableData dataWithLength:length]','FixtureEventWireBuffer(length)').replace('TLinkEventWireEncoding::Encode(','FixtureEventDirectEncode('),
@@ -235,10 +239,11 @@ try {
   'PreparationCursor.inc':between(preparedEvent,'static BOOL TLinkEventParseUnsignedCursor(','NSString *TLinkEventChannelRootPath(void)'),
   'PreparationTopic.inc':between(preparedEvent,'static BOOL TLinkEventTopicMatches(','static NSDictionary *TLinkEventBatchFromJournal('),
  };
+ const currentPreparationEvent=restoreEventStatusCache(currentEvent);
  for(const current of [false,true]){
   const label=current?'Current':'Before';
   for(const [kind,name,symbol] of [['event','token','Token'],['event','integer','Integer'],['event','batch','Batch'],['history','sanitize','Sanitize']]){
-   let text=current?preparationPart(kind==='event'?currentEvent:prepHistory,kind,name):preparationBefore(kind,name);
+   let text=current?preparationPart(kind==='event'?currentPreparationEvent:prepHistory,kind,name):preparationBefore(kind,name);
    if(current&&kind==='event'&&name==='token'){
     // The historical token boundary also spans the later, unrelated JSON counter include.
     const counterInclude='#include "TLinkEventJSONCounter.inc"\n\n';
@@ -297,3 +302,4 @@ try {
   const preparation=join(temp,'preparation');run(compiler,['-std=c++11','-Wall','-Wextra','-Werror','-fobjc-arc','-g','-fsanitize=address,undefined','-fno-omit-frame-pointer','-framework','Foundation','-framework','CoreFoundation','-I',temp,join(root,'test/ascii-preparation-runtime-test.mm'),'-o',preparation]);run(preparation,[]);
  } else console.log('macOS actual journal/notification/async/cancellation and root/TrollStore/remote wire integration is wired to both workflows; not run on Windows.');
 } finally { assert.equal(dirname(temp),tempRoot); assert.ok(basename(temp).startsWith('tlink-event-')); await rm(temp,{recursive:true,force:true}); }
+await import('./check-event-status-cache-safety.mjs');
