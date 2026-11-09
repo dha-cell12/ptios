@@ -1,3 +1,4 @@
+import {restoreProductionLog} from './production-log-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -139,5 +140,5 @@ function restore(source,p,legacy){
  assert.equal(source.slice(a,b),expected,'only cooperative stage cancellation, all reached errors/guards/authority/action/query source retained');
  const restored=source.slice(0,a)+legacy+source.slice(b);assert.equal(hash(restored),p.hash,'complete preceding C05aa source');return restored;
 }
-export function restoreUIStagesTask(source,name){return restore(source,tasks[name],uiStagesLegacy(name));}
+export function restoreUIStagesTask(source,name){if(name==='troll')source=restoreProductionLog(source);return restore(source,tasks[name],uiStagesLegacy(name));}
 export function restoreUIStagesFind(source){return restore(restoreAXForegroundWork(source),find,legacyUIStagesFind);}

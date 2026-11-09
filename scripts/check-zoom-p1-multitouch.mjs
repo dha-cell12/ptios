@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (path) => readFile(resolve(root, path), "utf8");
+const read = async (path) => (await readFile(resolve(root, path), "utf8")).replaceAll("\r\n", "\n");
 const fixture = JSON.parse(await read("test/fixtures/zoom-p1-contract-v1.json"));
 
 assert.equal(fixture.phase, 1);

@@ -80,3 +80,6 @@ try{
         run(runtime,[temp]);
     }else console.log('macOS actual/frozen console formatter/queue/file/lifecycle integration is included in CI; not run on this host.');
 }finally{assert.equal(dirname(temp),tempRoot);assert.ok(basename(temp).startsWith('tlink-console-log-'));await rm(temp,{recursive:true,force:true});}
+
+// Production TrollStore logger/retention shares this workflow checkpoint.
+await import('./check-production-log-safety.mjs');

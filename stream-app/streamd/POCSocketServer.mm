@@ -614,6 +614,7 @@ static NSDictionary *TLinkTapMacroStatusDictionary(void)
     }
 }
 
+@class TLinkScriptLogBuffer;
 @interface TLinkScriptSession : NSObject
 @property(nonatomic, copy) NSString *sessionId;
 @property(nonatomic, copy) NSString *bundlePath;
@@ -632,7 +633,7 @@ static NSDictionary *TLinkTapMacroStatusDictionary(void)
 @property(nonatomic, assign) uint64_t lastLicenseCheckAtMs;
 @property(nonatomic, copy) NSString *licenseRevocationError;
 @property(nonatomic, copy) NSString *historyRunId;
-@property(nonatomic, strong) NSMutableArray<NSString *> *logs;
+@property(nonatomic, strong) TLinkScriptLogBuffer *logs;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, TLinkJSFileHandle *> *fileHandles;
 @property(nonatomic, assign) NSUInteger nextFileHandleId;
 @end
@@ -862,18 +863,30 @@ static NSString *TLinkScriptDefaultScreenshotPath(TLinkScriptSession *session)
     return [folder stringByAppendingPathComponent:[NSString stringWithFormat:@"screenshot_%llu.png", (unsigned long long)TLinkNowMs()]];
 }
 
+#include "TLinkScriptLogBuffer.inc"
 static void TLinkScriptAppendLog(TLinkScriptSession *session, NSString *line)
 {
     if (!session || line.length == 0) return;
-    NSString *entry = [NSString stringWithFormat:@"%llu %@", TLinkNowMs(), line];
-    @synchronized (session) {
-        if (!session.logs) session.logs = [NSMutableArray array];
-        [session.logs addObject:entry];
-        while (session.logs.count > 200) {
-            [session.logs removeObjectAtIndex:0];
+    @autoreleasepool {
+    @try {try {
+        const NSUInteger count=TLinkConsoleLogPrefix(line.length,TLinkScriptLogPolicy::MessageUnits,
+            [line](size_t index){return [line characterAtIndex:index];});
+        const BOOL truncated=count<line.length;
+        NSString *text=[[line substringToIndex:count] copy];
+        if(truncated)text=[text stringByAppendingString:@" [truncated]"];
+        if(!text){TLinkScriptLogFailed();return;}
+        NSString *entry=[NSString stringWithFormat:@"%llu %@",TLinkNowMs(),text];
+        if(!entry){TLinkScriptLogFailed();return;}
+        NSString *identifier=nil;
+        @synchronized (session) {
+            if(!session.logs)session.logs=[TLinkScriptLogBuffer new];
+            if(!session.logs){TLinkScriptLogFailed();return;}
+            [session.logs append:entry truncated:truncated];identifier=session.sessionId;
         }
+        POCLogf("script[%s]: %s",[identifier UTF8String],[text UTF8String]);
+    }catch(...) {TLinkScriptLogFailed();}}
+    @catch(NSException *exception){(void)exception;TLinkScriptLogFailed();}
     }
-    POCLogf("script[%s]: %s", [session.sessionId UTF8String], [line UTF8String]);
 }
 
 static BOOL TLinkScriptStopRequested(TLinkScriptSession *session)
@@ -950,10 +963,7 @@ static void TLinkScriptMarkTerminal(TLinkScriptSession *session, NSString *state
         session.state = state ?: @"finished";
         session.endedAtMs = TLinkNowMs();
         session.lastError = error ?: @"";
-        NSUInteger start = session.logs.count > 50 ? session.logs.count - 50 : 0;
-        logTail = session.logs.count > 0
-            ? [session.logs subarrayWithRange:NSMakeRange(start, session.logs.count - start)]
-            : @[];
+        logTail = [session.logs tail:50] ?: @[];
         runId = session.historyRunId ?: @"";
     }
     if (error.length > 0) {
@@ -1225,18 +1235,24 @@ static void TLinkConfigureScriptContext(JSContext *context, TLinkScriptSession *
     __weak TLinkScriptSession *weakSession = session;
     JSValue *console = [JSValue valueWithNewObjectInContext:context];
     console[@"log"] = ^(JSValue *value) {
-        TLinkScriptSession *strongSession = weakSession;
-        TLinkScriptAppendLog(strongSession, [value toString] ?: @"");
+        @autoreleasepool {
+            TLinkScriptSession *strongSession = weakSession;
+            TLinkScriptAppendLog(strongSession, [value toString] ?: @"");
+        }
     };
     console[@"error"] = ^(JSValue *value) {
-        TLinkScriptSession *strongSession = weakSession;
-        TLinkScriptAppendLog(strongSession, [NSString stringWithFormat:@"ERROR %@", [value toString] ?: @""]);
+        @autoreleasepool {
+            TLinkScriptSession *strongSession = weakSession;
+            TLinkScriptAppendLog(strongSession, [NSString stringWithFormat:@"ERROR %@", [value toString] ?: @""]);
+        }
     };
     context[@"console"] = console;
 
     JSValue *device = [JSValue valueWithNewObjectInContext:context];
     device[@"log"] = ^(JSValue *value) {
-        TLinkScriptAppendLog(weakSession, [value toString] ?: @"");
+        @autoreleasepool {
+            TLinkScriptAppendLog(weakSession, [value toString] ?: @"");
+        }
     };
     device[@"toast"] = ^NSDictionary *(JSValue *message, JSValue *options) {
         NSString *text = [message toString] ?: @"";
@@ -2382,12 +2398,12 @@ static NSDictionary *TLinkScriptStatusDictionary(void)
             @"last_error": sTLinkLastScriptError ?: @"",
             @"last_error_ts": @(sTLinkLastScriptErrorTs),
             @"log_tail": @[],
+            @"log_diagnostics": TLinkScriptLogDiagnostics(nil),
         };
     }
     @synchronized (session) {
         BOOL active = TLinkScriptIsActive(session);
-        NSUInteger start = session.logs.count > 20 ? session.logs.count - 20 : 0;
-        NSArray *tail = session.logs.count > 0 ? [session.logs subarrayWithRange:NSMakeRange(start, session.logs.count - start)] : @[];
+        NSArray *tail = [session.logs tail:20] ?: @[];
         return @{
             @"is_playing": @(active),
             @"bundle_path": kTLinkScriptsRootPath,
@@ -2409,6 +2425,7 @@ static NSDictionary *TLinkScriptStatusDictionary(void)
             @"last_license_check_at_ms": @(session.lastLicenseCheckAtMs),
             @"last_error_ts": @(sTLinkLastScriptErrorTs),
             @"log_tail": tail,
+            @"log_diagnostics": TLinkScriptLogDiagnostics(session.logs),
         };
     }
 }
@@ -2532,7 +2549,7 @@ static NSData *TLinkHandlePlayScript(NSString *body)
     session.licenseRevoked = NO;
     session.lastLicenseCheckAtMs = TLinkNowMs();
     session.licenseRevocationError = @"";
-    session.logs = [NSMutableArray array];
+    session.logs = [TLinkScriptLogBuffer new];
     session.fileHandles = [NSMutableDictionary dictionary];
     session.nextFileHandleId = 1;
     NSDictionary *historyRecord = TLinkRunHistoryBegin(@"trollstore",

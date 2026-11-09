@@ -1,3 +1,4 @@
+import {restoreProductionLog} from './production-log-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -13,6 +14,7 @@ export function checkPreparedJSONText(source){
     assert.equal(source.replace(newWriter,oldWriter),before,'only invalid-target writer selection changes; no post-write retry');
 }
 export function restoreStorageJSONWrites(source,kind){
+    if(kind==='troll')source=restoreProductionLog(source);
     const spec=storageJSONWriteSpecs[kind];
     if(!spec||!source.includes(spec.include))return source;
     assert.equal(hash(source),spec.currentHash,'complete prepared JSON '+kind);

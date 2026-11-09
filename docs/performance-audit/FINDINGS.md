@@ -1374,6 +1374,8 @@ For bridge results allowed up to ~1 MiB, the theoretical raw-payload retention a
 
 ### [P1-42] JS console logging has synchronous NSLog plus an unbounded async disk queue and two open/write/close cycles per line
 
+C03av follow-up (2026-11-09): production TrollStore script logs now use200 circular slots and4096-unit message snapshots, preserving status20/evidence50/clear ordering. Common POCLogf uses one asynchronous64-entry process owner, the existing1024-byte raw format, independent system/file failure accounting and a checked1-MiB debug-file reset/write policy. Status adds count/truncate/drop/failure diagnostics; three JS hooks scope temporaries. Portable100k FIFO/limit/permit tests pass. Actual/frozen native formatter/ring/status/clear, queue/IO/JSCore/lifetime matrices await macOS CI. Oversize/backend-drop/rotation/late-output behavior is intentional; per-run _logs retention and device performance remain open. See `IMPLEMENTATION-C03AV.md`.
+
 C03ah follow-up (2026-11-07): rootfull/roothide console already has bounded admission, batched disk writes and an asynchronous system sink from C03b/c/d. Existing-file multi-entry batches now avoid their joined buffer using retained spans and checked writev progress/OS capacity; missing-file atomic creation and rotation/no-replay policy remain. Per-sink pools shorten normal temporary lifetime. Portable/source checks pass; expanded Foundation/ARC and device qualification pending. Production TrollStore logging unchanged. See `IMPLEMENTATION-C03AH.md`. The original evidence below records the audit baseline.
 
 **Status:** CONFIRMED  

@@ -1,0 +1,95 @@
+{
+  "files": {
+    "header": {
+      "file": "stream-app/streamd/TouchInjector.h",
+      "beforeHash": "7758b4b44473f0ffaae6cd61a307316ac732221f7306703a6d50413e1ed403ec",
+      "currentHash": "58545b4f470f583e76134d31e8c7be9531920f0c575131554fb83236cb65c21b",
+      "parts": [
+        {
+          "name": "api",
+          "before": "// One-time setup: read screen size, kick off senderID acquisition.\n",
+          "current": "// BEGIN bounded production log API.\ntypedef struct { uint64_t accepted,dropped,truncated,systemFailures,fileFailures; size_t pending; } POCLogStatistics;\nPOCLogStatistics POCLogGetStatistics(void);\n// END bounded production log API.\n\n// One-time setup: read screen size, kick off senderID acquisition.\n"
+        },
+        {
+          "name": "comment",
+          "before": "// Shared logger: mirrors to NSLog and appends to Documents/poc_touch.log.",
+          "current": "// Shared logger: bounded asynchronous NSLog + capped Documents/poc_touch.log."
+        },
+        {
+          "name": "c-types",
+          "before": "#include <mach/mach_time.h>\n",
+          "current": "#include <mach/mach_time.h>\n#include <stddef.h>\n#include <stdint.h>\n"
+        }
+      ]
+    },
+    "injector": {
+      "file": "stream-app/streamd/TouchInjector.mm",
+      "beforeHash": "46bb1b1aef8f3bb858b364fbc76a675671fa01f51b2c47fc94702b7aa7477adf",
+      "currentHash": "7f15e46783a5f46ea9a67fec8b7f25375d74ea4ad45d03773ce3699ab254f2c7",
+      "parts": [
+        {
+          "name": "logger",
+          "before": "void POCLogf(const char *fmt, ...)\n{\n    char msg[1024];\n    va_list args;\n    va_start(args, fmt);\n    vsnprintf(msg, sizeof(msg), fmt, args);\n    va_end(args);\n\n    NSLog(@\"[poc-touch] %s\", msg);\n\n    @autoreleasepool {\n        NSString *path = POCLogFilePath();\n        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {\n            [[NSData data] writeToFile:path atomically:YES];\n        }\n        static NSDateFormatter *df = nil;\n        static dispatch_once_t once;\n        dispatch_once(&once, ^{\n            df = [[NSDateFormatter alloc] init];\n            df.locale = [NSLocale localeWithLocaleIdentifier:@\"en_US_POSIX\"];\n            df.dateFormat = @\"yyyy-MM-dd HH:mm:ss.SSS\";\n        });\n        NSString *line = [NSString stringWithFormat:@\"%@ %s\\n\", [df stringFromDate:[NSDate date]], msg];\n        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];\n        if (!data) return;\n        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];\n        if (!fh) return;\n        @try {\n            [fh seekToEndOfFile];\n            [fh writeData:data];\n        } @catch (__unused NSException *e) {}\n        @try { [fh closeFile]; } @catch (__unused NSException *e) {}\n    }\n}\n\n",
+          "current": "#include \"TLinkProductionLog.inc\"\n\n"
+        }
+      ]
+    },
+    "server": {
+      "file": "stream-app/streamd/POCSocketServer.mm",
+      "beforeHash": "1ab73bddbe0e931bfdb0bb57319f7ca1a8b000f75ec336837f4051193283585a",
+      "currentHash": "e06a85e6118f05c0b16c7384bcff0cb8c62568d5dae2484b8b44acfe872ba0eb",
+      "parts": [
+        {
+          "name": "forward",
+          "before": "@interface TLinkScriptSession : NSObject",
+          "current": "@class TLinkScriptLogBuffer;\n@interface TLinkScriptSession : NSObject"
+        },
+        {
+          "name": "property",
+          "before": "@property(nonatomic, strong) NSMutableArray<NSString *> *logs;",
+          "current": "@property(nonatomic, strong) TLinkScriptLogBuffer *logs;"
+        },
+        {
+          "name": "append",
+          "before": "static void TLinkScriptAppendLog(TLinkScriptSession *session, NSString *line)\n{\n    if (!session || line.length == 0) return;\n    NSString *entry = [NSString stringWithFormat:@\"%llu %@\", TLinkNowMs(), line];\n    @synchronized (session) {\n        if (!session.logs) session.logs = [NSMutableArray array];\n        [session.logs addObject:entry];\n        while (session.logs.count > 200) {\n            [session.logs removeObjectAtIndex:0];\n        }\n    }\n    POCLogf(\"script[%s]: %s\", [session.sessionId UTF8String], [line UTF8String]);\n}\n\n",
+          "current": "#include \"TLinkScriptLogBuffer.inc\"\nstatic void TLinkScriptAppendLog(TLinkScriptSession *session, NSString *line)\n{\n    if (!session || line.length == 0) return;\n    @autoreleasepool {\n    @try {try {\n        const NSUInteger count=TLinkConsoleLogPrefix(line.length,TLinkScriptLogPolicy::MessageUnits,\n            [line](size_t index){return [line characterAtIndex:index];});\n        const BOOL truncated=count<line.length;\n        NSString *text=[[line substringToIndex:count] copy];\n        if(truncated)text=[text stringByAppendingString:@\" [truncated]\"];\n        if(!text){TLinkScriptLogFailed();return;}\n        NSString *entry=[NSString stringWithFormat:@\"%llu %@\",TLinkNowMs(),text];\n        if(!entry){TLinkScriptLogFailed();return;}\n        NSString *identifier=nil;\n        @synchronized (session) {\n            if(!session.logs)session.logs=[TLinkScriptLogBuffer new];\n            if(!session.logs){TLinkScriptLogFailed();return;}\n            [session.logs append:entry truncated:truncated];identifier=session.sessionId;\n        }\n        POCLogf(\"script[%s]: %s\",[identifier UTF8String],[text UTF8String]);\n    }catch(...) {TLinkScriptLogFailed();}}\n    @catch(NSException *exception){(void)exception;TLinkScriptLogFailed();}\n    }\n}\n\n"
+        },
+        {
+          "name": "terminal",
+          "before": "        NSUInteger start = session.logs.count > 50 ? session.logs.count - 50 : 0;\n        logTail = session.logs.count > 0\n            ? [session.logs subarrayWithRange:NSMakeRange(start, session.logs.count - start)]\n            : @[];\n",
+          "current": "        logTail = [session.logs tail:50] ?: @[];\n"
+        },
+        {
+          "name": "status",
+          "before": "static NSDictionary *TLinkScriptStatusDictionary(void)\n{\n    TLinkScriptSession *session = sTLinkScriptSession;\n    if (!session) {\n        return @{\n            @\"is_playing\": @(NO),\n            @\"bundle_path\": kTLinkScriptsRootPath,\n            @\"session_id\": @\"\",\n            @\"state\": @\"idle\",\n            @\"last_error\": sTLinkLastScriptError ?: @\"\",\n            @\"last_error_ts\": @(sTLinkLastScriptErrorTs),\n            @\"log_tail\": @[],\n        };\n    }\n    @synchronized (session) {\n        BOOL active = TLinkScriptIsActive(session);\n        NSUInteger start = session.logs.count > 20 ? session.logs.count - 20 : 0;\n        NSArray *tail = session.logs.count > 0 ? [session.logs subarrayWithRange:NSMakeRange(start, session.logs.count - start)] : @[];\n        return @{\n            @\"is_playing\": @(active),\n            @\"bundle_path\": kTLinkScriptsRootPath,\n            @\"session_id\": session.sessionId ?: @\"\",\n            @\"state\": session.state ?: @\"idle\",\n            @\"entry_path\": session.entryPath ?: @\"\",\n            @\"started_at_ms\": @(session.startedAtMs),\n            @\"ended_at_ms\": @(session.endedAtMs),\n            @\"current_run\": @(session.currentRun),\n            @\"total_runs\": @(session.totalRuns),\n            @\"play_settings\": @{\n                @\"repeat_times\": @(session.repeatTimes),\n                @\"interval\": @(session.intervalSeconds),\n                @\"speed\": @(session.speed),\n            },\n            @\"last_error\": session.lastError.length > 0 ? session.lastError : (sTLinkLastScriptError ?: @\"\"),\n            @\"license_revoked\": @(session.licenseRevoked),\n            @\"license_revocation_error\": session.licenseRevocationError ?: @\"\",\n            @\"last_license_check_at_ms\": @(session.lastLicenseCheckAtMs),\n            @\"last_error_ts\": @(sTLinkLastScriptErrorTs),\n            @\"log_tail\": tail,\n        };\n    }\n}\n",
+          "current": "static NSDictionary *TLinkScriptStatusDictionary(void)\n{\n    TLinkScriptSession *session = sTLinkScriptSession;\n    if (!session) {\n        return @{\n            @\"is_playing\": @(NO),\n            @\"bundle_path\": kTLinkScriptsRootPath,\n            @\"session_id\": @\"\",\n            @\"state\": @\"idle\",\n            @\"last_error\": sTLinkLastScriptError ?: @\"\",\n            @\"last_error_ts\": @(sTLinkLastScriptErrorTs),\n            @\"log_tail\": @[],\n            @\"log_diagnostics\": TLinkScriptLogDiagnostics(nil),\n        };\n    }\n    @synchronized (session) {\n        BOOL active = TLinkScriptIsActive(session);\n        NSArray *tail = [session.logs tail:20] ?: @[];\n        return @{\n            @\"is_playing\": @(active),\n            @\"bundle_path\": kTLinkScriptsRootPath,\n            @\"session_id\": session.sessionId ?: @\"\",\n            @\"state\": session.state ?: @\"idle\",\n            @\"entry_path\": session.entryPath ?: @\"\",\n            @\"started_at_ms\": @(session.startedAtMs),\n            @\"ended_at_ms\": @(session.endedAtMs),\n            @\"current_run\": @(session.currentRun),\n            @\"total_runs\": @(session.totalRuns),\n            @\"play_settings\": @{\n                @\"repeat_times\": @(session.repeatTimes),\n                @\"interval\": @(session.intervalSeconds),\n                @\"speed\": @(session.speed),\n            },\n            @\"last_error\": session.lastError.length > 0 ? session.lastError : (sTLinkLastScriptError ?: @\"\"),\n            @\"license_revoked\": @(session.licenseRevoked),\n            @\"license_revocation_error\": session.licenseRevocationError ?: @\"\",\n            @\"last_license_check_at_ms\": @(session.lastLicenseCheckAtMs),\n            @\"last_error_ts\": @(sTLinkLastScriptErrorTs),\n            @\"log_tail\": tail,\n            @\"log_diagnostics\": TLinkScriptLogDiagnostics(session.logs),\n        };\n    }\n}\n"
+        },
+        {
+          "name": "start",
+          "before": "    session.logs = [NSMutableArray array];",
+          "current": "    session.logs = [TLinkScriptLogBuffer new];"
+        },
+        {
+          "name": "console-log",
+          "before": "    console[@\"log\"] = ^(JSValue *value) {\n        TLinkScriptSession *strongSession = weakSession;\n        TLinkScriptAppendLog(strongSession, [value toString] ?: @\"\");\n    };",
+          "current": "    console[@\"log\"] = ^(JSValue *value) {\n        @autoreleasepool {\n            TLinkScriptSession *strongSession = weakSession;\n            TLinkScriptAppendLog(strongSession, [value toString] ?: @\"\");\n        }\n    };"
+        },
+        {
+          "name": "console-error",
+          "before": "    console[@\"error\"] = ^(JSValue *value) {\n        TLinkScriptSession *strongSession = weakSession;\n        TLinkScriptAppendLog(strongSession, [NSString stringWithFormat:@\"ERROR %@\", [value toString] ?: @\"\"]);\n    };",
+          "current": "    console[@\"error\"] = ^(JSValue *value) {\n        @autoreleasepool {\n            TLinkScriptSession *strongSession = weakSession;\n            TLinkScriptAppendLog(strongSession, [NSString stringWithFormat:@\"ERROR %@\", [value toString] ?: @\"\"]);\n        }\n    };"
+        },
+        {
+          "name": "device-log",
+          "before": "    device[@\"log\"] = ^(JSValue *value) {\n        TLinkScriptAppendLog(weakSession, [value toString] ?: @\"\");\n    };",
+          "current": "    device[@\"log\"] = ^(JSValue *value) {\n        @autoreleasepool {\n            TLinkScriptAppendLog(weakSession, [value toString] ?: @\"\");\n        }\n    };"
+        }
+      ]
+    }
+  },
+  "helpers": {
+    "shared/TLinkScriptLogPolicy.h": "77f7d3dd9b0c29894dc4b356e3974134aaba4bb58d4fadf6acd5408a0b055dc5",
+    "stream-app/streamd/TLinkScriptLogBuffer.inc": "689944570f1a832f9eaf912213c1dad5f93c3911e6d8871c04940a6aa5be69bd",
+    "stream-app/streamd/TLinkProductionLog.inc": "69653c7bd4d0fc89d0c22e2f0fe1d11b08260d6f23b142e2331b83b3ea29e7bd"
+  }
+}

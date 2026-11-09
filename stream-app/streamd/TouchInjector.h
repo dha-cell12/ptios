@@ -8,6 +8,8 @@
 #include "headers/IOHIDEventSystem.h"
 
 #include <mach/mach_time.h>
+#include <stddef.h>
+#include <stdint.h>
 #include "../../shared/TLinkTouchPayload.h"
 
 // Touch event types (match legacy TLinkauto wire protocol).
@@ -23,8 +25,13 @@ static const int POC_TOUCH_DATA_LEN = 13;
 extern "C" {
 #endif
 
-// Shared logger: mirrors to NSLog and appends to Documents/poc_touch.log.
+// Shared logger: bounded asynchronous NSLog + capped Documents/poc_touch.log.
 void POCLogf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+// BEGIN bounded production log API.
+typedef struct { uint64_t accepted,dropped,truncated,systemFailures,fileFailures; size_t pending; } POCLogStatistics;
+POCLogStatistics POCLogGetStatistics(void);
+// END bounded production log API.
 
 // One-time setup: read screen size, kick off senderID acquisition.
 void POCTouchInit(void);
