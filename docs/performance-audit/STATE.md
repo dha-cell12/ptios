@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03ba — 2026-11-09
+
+- User reported C03az built successfully (`5915bc37`) and requested larger packages. Bundle root/helper console producers: shared4097-unit assembled prefix with native surrogate lookahead, no normal map/full join, all admitted argument conversions/late faults preserved, exotic serializer coercion fallback and empty/short-string direct fast paths. Add advisory native preflight for expensive calls, accounting full-queue drops before conversion; final native admission/closure remains authoritative. Backend, authority, module loader and terminal/status bodies remain unchanged; TouchPOC excluded.
+- Actual shared JavaScript passes10k frozen root/helper comparisons,8-MiB aggregate-to4097 transfer, Unicode/late-throw/exotic-order and1000 refusal/recovery tests. All90 Windows workflow runners and521 source assertions pass (16 artifact-only skipped), with complete source reversal, five-file macro and syntax checks. Actual root/helper JSCore/gate/global queue/file/weak lifetime fixture awaits macOS CI. Individual stringify, exotic suffix fallback, VM backing/GC and added expensive-path crossing/device timing remain unqualified. Details: `IMPLEMENTATION-C03BA.md`.
+
 ## Implementation C03az — 2026-11-09
 
 - User reported C03ay built successfully (`4e5d0862`) and requested larger packages. Bundle production helper async console: process-wide64 retained records, pre-format admission, one transactional drain ticket per run, bounded immutable producer payloads, independent deferred system sinks and exact root-derived512-KiB vector/group policy. Close published work before all terminal summaries and completion proof, refuse late producers/callbacks, recover enqueue/barrier faults without replay and expose per-run runtimeInfo counters. Retain bounded synchronous construction fallback and public transport/authority/summary policy; TouchPOC excluded.

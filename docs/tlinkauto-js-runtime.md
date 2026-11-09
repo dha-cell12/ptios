@@ -196,6 +196,8 @@ Ordinary helper console file/system output runs asynchronously on a shared seria
 
 `device.runtimeInfo().consoleLog` reports `mode: "async_bounded_batch_v1"` with per-run `accepted`, `dropped`, `truncated`, `writeFailures`, `systemFailures`, `pending` and `peakPending`. Accepted counts publication, not confirmed delivery; dropped includes refused/abandoned records, and pending includes preparing/consuming records. Construction fallback reports only `mode: "sync_bounded_fallback_v1"`. See [C03az helper queue policy](performance-audit/IMPLEMENTATION-C03AZ.md).
 
+Root/helper console formatting now keeps only a4097-unit assembled prefix on the normal JSON/string path; native still retains4096 units with surrogate-pair-safe truncation. Every admitted argument conversion still runs, including later throws. Object/multi-argument/large-string calls can be refused before conversion when the logger is full or closed, so avoid relying on side effects in logging-only `toJSON`/`toString` methods. Argument expressions still execute before the call. Empty calls and one short string use the original single native submission. Individual object serialization and unusual overridden serializers can still allocate larger temporary values. See [C03ba producer policy](performance-audit/IMPLEMENTATION-C03BA.md).
+
 ## Safe demos
 
 Safe demos intended for repeated validation:

@@ -1,0 +1,68 @@
+{
+  "core": {
+    "file": "pccontrol/jsruntime/TLinkJSRuntimeCore.mm",
+    "beforeHash": "bb3b1bb1ba04b12b541c5e0518b3ad85f009e02cc30b3a1aad5667b4bef0cd9a",
+    "currentHash": "fc814245da656aead2d19175b69a7e1aaf29878a5b427176d062d235a6837b37",
+    "parts": [
+      {
+        "name": "include",
+        "before": "#include \"../../shared/TLinkConsoleLogRetention.h\"\n",
+        "current": "#include \"../../shared/TLinkConsoleLogRetention.h\"\n#include \"../../shared/TLinkJSConsolePrelude.h\"\n"
+      },
+      {
+        "name": "declaration",
+        "before": "- (void)beginConsoleLogging;",
+        "current": "- (BOOL)canAcceptConsoleLog;\n- (void)beginConsoleLogging;"
+      },
+      {
+        "name": "gate",
+        "before": "- (void)beginConsoleLogging {",
+        "current": "- (BOOL)canAcceptConsoleLog {\n    os_unfair_lock_lock(&_logStateLock);\n    const BOOL accepting=_acceptingLogs;\n    os_unfair_lock_unlock(&_logStateLock);\n    if(!accepting)return NO;\n    if(_logBudget->snapshot().pending<TLinkConsoleLogMaxPending)return YES;\n    _logBudget->dropped();return NO;\n}\n\n- (void)beginConsoleLogging {"
+      },
+      {
+        "name": "hook",
+        "before": "    context[@\"_tlinkautoLoadBundleText\"] =",
+        "current": "    context[@\"_tlinkautoLogCanAccept\"] = ^BOOL {\n        TLinkJSRuntimeCore *strongSelf = weakSelf;\n        return strongSelf ? [strongSelf canAcceptConsoleLog] : NO;\n    };\n    context[@\"_tlinkautoLoadBundleText\"] ="
+      },
+      {
+        "name": "prelude",
+        "before": "    NSString *consolePrelude =\n        @\"(function(){\\n\"\n         \"  function fmt(args){ return Array.prototype.map.call(args, function(v){\\n\"\n         \"    try { if (typeof v === 'string') return v; return JSON.stringify(v); }\\n\"\n         \"    catch(e) { return String(v); }\\n\"\n         \"  }).join(' '); }\\n\"\n         \"  this.console = {\\n\"\n         \"    log: function(){ _tlinkautoLog('log', fmt(arguments)); },\\n\"\n         \"    info: function(){ _tlinkautoLog('info', fmt(arguments)); },\\n\"\n         \"    warn: function(){ _tlinkautoLog('warn', fmt(arguments)); },\\n\"\n         \"    error: function(){ _tlinkautoLog('error', fmt(arguments)); }\\n\"\n         \"  };\\n\"\n         \"})();\";\n",
+        "current": "    NSString *consolePrelude = TLinkJSConsolePrelude();\n"
+      }
+    ]
+  },
+  "helper": {
+    "file": "tlinkauto-jsd/TLinkJSHelperServer.mm",
+    "beforeHash": "4218edf390ec6fb9420c92c9e85ba68cac18fb0f5289e2bf1d5c510892a5a036",
+    "currentHash": "09806397347679e3d02544f26b0ad74eb0594a8d85844239d8a4728aba860935",
+    "parts": [
+      {
+        "name": "include",
+        "before": "#include \"../shared/TLinkHelperConsoleAsync.inc\"\n",
+        "current": "#include \"../shared/TLinkHelperConsoleAsync.inc\"\n#include \"../shared/TLinkJSConsolePrelude.h\"\n"
+      },
+      {
+        "name": "hook",
+        "before": "        ctx[@\"_tlinkautoLoadBundleText\"] =",
+        "current": "        ctx[@\"_tlinkautoLogCanAccept\"] = ^BOOL {\n            return consoleOwner ? consoleOwner->maySubmit() : YES;\n        };\n        ctx[@\"_tlinkautoLoadBundleText\"] ="
+      },
+      {
+        "name": "prelude",
+        "before": "        NSString *consolePrelude = @\"(function(){function fmt(args){return Array.prototype.map.call(args,function(v){try{if(typeof v==='string')return v;return JSON.stringify(v);}catch(e){return String(v);}}).join(' ');}this.console={log:function(){_tlinkautoLog('log',fmt(arguments));},info:function(){_tlinkautoLog('info',fmt(arguments));},warn:function(){_tlinkautoLog('warn',fmt(arguments));},error:function(){_tlinkautoLog('error',fmt(arguments));}};})();\";\n",
+        "current": "        NSString *consolePrelude = TLinkJSConsolePrelude();\n"
+      }
+    ]
+  },
+  "owner": {
+    "file": "shared/TLinkHelperConsoleAsync.inc",
+    "beforeHash": "6b0b3f4197c609e0aec81ae6738143d186b7eadd2214bbf1cd4dd5ba101af904",
+    "currentHash": "ecc7278da0c2286292cd645ce698a2343ad502c0e1cf3b672ae7b60c173876c9",
+    "parts": [
+      {
+        "name": "gate",
+        "before": "    bool valid()const{return queue_&&sink_&&path_&&latest_;}\n",
+        "current": "    bool valid()const{return queue_&&sink_&&path_&&latest_;}\n    bool maySubmit() noexcept {\n        @try {try {\n            if(!state_.snapshot().accepting){budget_->dropped();return false;}\n            if(budget_->snapshot().pending>=TLinkConsoleLogMaxPending||global_->snapshot().pending>=TLinkConsoleLogMaxPending){budget_->dropped();return false;}\n            return true;\n        }catch(...) {}} @catch(NSException *exception){(void)exception;}\n        return false;\n    }\n"
+      }
+    ]
+  }
+}

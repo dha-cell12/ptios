@@ -77,6 +77,14 @@ public:
     Owner(NSString *path,NSString *latest,dispatch_queue_t queue)
         :budget_(std::make_shared<TLinkConsoleLogBudget>()),global_(GlobalBudget()),path_([path copy]),latest_([latest copy]),sink_([TLinkHelperConsoleBatchSink new]),queue_(queue){}
     bool valid()const{return queue_&&sink_&&path_&&latest_;}
+    bool maySubmit() noexcept {
+        @try {try {
+            if(!state_.snapshot().accepting){budget_->dropped();return false;}
+            if(budget_->snapshot().pending>=TLinkConsoleLogMaxPending||global_->snapshot().pending>=TLinkConsoleLogMaxPending){budget_->dropped();return false;}
+            return true;
+        }catch(...) {}} @catch(NSException *exception){(void)exception;}
+        return false;
+    }
     void submit(NSString *run,NSString *level,NSString *message) noexcept {
         @autoreleasepool {
         @try {try {

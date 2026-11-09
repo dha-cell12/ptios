@@ -9,6 +9,7 @@
 #include "../../shared/TLinkConsoleLogBatch.h"
 #include "../../shared/TLinkConsoleLogVectorIO.h"
 #include "../../shared/TLinkConsoleLogRetention.h"
+#include "../../shared/TLinkJSConsolePrelude.h"
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -135,6 +136,7 @@ struct TLinkConsoleLogEntry {
 - (uint64_t)writeConsoleBatch:(const std::vector<std::shared_ptr<TLinkConsoleLogEntry>> &)batch toConsolePath:(NSString *)path;
 - (BOOL)emitConsoleSystemLog:(const TLinkConsoleLogEntry &)entry;
 - (void)drainConsoleLogs;
+- (BOOL)canAcceptConsoleLog;
 - (void)beginConsoleLogging;
 - (void)finishConsoleLogging;
 - (void)appendConsoleLogWithLevel:(NSString *)level message:(NSString *)message;
@@ -377,6 +379,15 @@ struct TLinkConsoleLogEntry {
     }
 }
 
+- (BOOL)canAcceptConsoleLog {
+    os_unfair_lock_lock(&_logStateLock);
+    const BOOL accepting=_acceptingLogs;
+    os_unfair_lock_unlock(&_logStateLock);
+    if(!accepting)return NO;
+    if(_logBudget->snapshot().pending<TLinkConsoleLogMaxPending)return YES;
+    _logBudget->dropped();return NO;
+}
+
 - (void)beginConsoleLogging {
     os_unfair_lock_lock(&_logStateLock);
     if(_logGeneration!=UINT64_MAX){++_logGeneration;_acceptingLogs=YES;}
@@ -577,23 +588,15 @@ struct TLinkConsoleLogEntry {
     context[@"_tlinkautoLog"] = ^(NSString *level, NSString *message) {
         logBlock(level, message);
     };
+    context[@"_tlinkautoLogCanAccept"] = ^BOOL {
+        TLinkJSRuntimeCore *strongSelf = weakSelf;
+        return strongSelf ? [strongSelf canAcceptConsoleLog] : NO;
+    };
     context[@"_tlinkautoLoadBundleText"] = ^NSDictionary *(NSString *relativePath) {
         TLinkJSRuntimeCore *strongSelf = weakSelf;
         return strongSelf ? [strongSelf bundleTextForRelativePath:relativePath] : @{ @"ok": @NO, @"error": @"runtime missing" };
     };
-    NSString *consolePrelude =
-        @"(function(){\n"
-         "  function fmt(args){ return Array.prototype.map.call(args, function(v){\n"
-         "    try { if (typeof v === 'string') return v; return JSON.stringify(v); }\n"
-         "    catch(e) { return String(v); }\n"
-         "  }).join(' '); }\n"
-         "  this.console = {\n"
-         "    log: function(){ _tlinkautoLog('log', fmt(arguments)); },\n"
-         "    info: function(){ _tlinkautoLog('info', fmt(arguments)); },\n"
-         "    warn: function(){ _tlinkautoLog('warn', fmt(arguments)); },\n"
-         "    error: function(){ _tlinkautoLog('error', fmt(arguments)); }\n"
-         "  };\n"
-         "})();";
+    NSString *consolePrelude = TLinkJSConsolePrelude();
     NSString *modulePrelude =
         @"(function(){\n"
          "  var cache = Object.create(null);\n"
