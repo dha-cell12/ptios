@@ -109,95 +109,14 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build TrollStore / ${{ matrix.license_mode }}
+  validate:
+    name: Validate TrollStore sources and native safety
     runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        license_mode: [observe, enforced]
-    env:
-      THEOS: ${{ github.workspace }}/theos
-      APP_NAME: StreamControl
-      APP_BUNDLE: StreamControl.app
-      TIPA_PATH: stream-app/packages/StreamControl.tipa
-      TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
-      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
-      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID != '' && vars.TLINK_LICENSE_KEY_ID || 'tlinkauto-test-2026-01' }}
-      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'NxW-xzbPbNT583WwRPQOvkLaLh09hOT0JGNomDjGKtw' }}
-      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'f5JiZrT7FN6WXbmbBmEynMKfirb44i4S6ljQhsvVGGM' }}
-      TLINK_LICENSE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && 'true' || 'false' }}
-      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
-
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Validate public license build inputs
-        run: |
-          set -euo pipefail
-          case "$TLINK_LICENSE_MODE" in
-            observe|enforced) ;;
-            *) echo "Unknown license mode: $TLINK_LICENSE_MODE"; exit 1 ;;
-          esac
-          case "$TLINK_LICENSE_ENDPOINT" in
-            https://*) ;;
-            *) echo "License endpoint must use HTTPS"; exit 1 ;;
-          esac
-          ! printf '%s' "$TLINK_LICENSE_ENDPOINT" | grep -Eqi 'REPLACE_|localhost|127\.0\.0\.1'
-          ! printf '%s' "$TLINK_LICENSE_KEY_ID" | grep -Eqi 'REPLACE_'
-          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_X" | grep -Eq '^[A-Za-z0-9_-]{43}$'
-          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_Y" | grep -Eq '^[A-Za-z0-9_-]{43}$'
-          if [ "$TLINK_LICENSE_ENFORCEMENT" = "true" ]; then
-            test "$TLINK_LICENSE_FORCE_ENFORCEMENT" = "1"
-          else
-            test "$TLINK_LICENSE_FORCE_ENFORCEMENT" = "0"
-          fi
-
-      - name: Configure public license verifier
-        run: |
-          set -euo pipefail
-          PLIST="stream-app/app/LicenseConfig.plist"
-          if [ -n "${TLINK_LICENSE_ENDPOINT:-}" ]; then
-            /usr/libexec/PlistBuddy -c "Set :LicenseEndpoint $TLINK_LICENSE_ENDPOINT" "$PLIST"
-          fi
-          if [ -n "${TLINK_LICENSE_KEY_ID:-}" ]; then
-            /usr/libexec/PlistBuddy -c "Set :LicenseKeyID $TLINK_LICENSE_KEY_ID" "$PLIST"
-          fi
-          if [ -n "${TLINK_LICENSE_PUBLIC_KEY_X:-}" ]; then
-            /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyX $TLINK_LICENSE_PUBLIC_KEY_X" "$PLIST"
-          fi
-          if [ -n "${TLINK_LICENSE_PUBLIC_KEY_Y:-}" ]; then
-            /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyY $TLINK_LICENSE_PUBLIC_KEY_Y" "$PLIST"
-          fi
-          if [ "${TLINK_LICENSE_ENFORCEMENT:-false}" = "true" ]; then
-            /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled true" "$PLIST"
-          else
-            /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled false" "$PLIST"
-          fi
-          plutil -lint "$PLIST"
-
-      - name: Verify public license key against Worker
-        run: |
-          node scripts/check-license-public-key.mjs \
-            --endpoint "$TLINK_LICENSE_ENDPOINT" \
-            --keyId "$TLINK_LICENSE_KEY_ID" \
-            --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
-            --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y"
-
-      - name: Install dependencies
-        run: |
-          set -euxo pipefail
-          brew install ldid xz
-
-      - name: Set up Theos
-        run: |
-          set -euo pipefail
-          git clone --quiet --recursive https://github.com/theos/theos.git "$THEOS"
-          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
-
-      - name: Download iOS SDKs
-        run: bash scripts/setup-theos-sdks.sh
 
       - name: Sanity check StreamControl sources
         run: |
@@ -983,6 +902,97 @@ jobs:
           grep -q 'confirmDeleteEntryAtIndexPath' stream-app/app/ScriptsViewController.mm
           grep -q 'trailingSwipeActionsConfigurationForRowAtIndexPath' stream-app/app/ScriptsViewController.mm
           grep -q 'requestTask:20' stream-app/app/ScriptsViewController.mm
+
+  build:
+    needs: validate
+    name: Build TrollStore / ${{ matrix.license_mode }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        license_mode: [observe, enforced]
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      APP_NAME: StreamControl
+      APP_BUNDLE: StreamControl.app
+      TIPA_PATH: stream-app/packages/StreamControl.tipa
+      TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
+      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
+      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID != '' && vars.TLINK_LICENSE_KEY_ID || 'tlinkauto-test-2026-01' }}
+      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'NxW-xzbPbNT583WwRPQOvkLaLh09hOT0JGNomDjGKtw' }}
+      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'f5JiZrT7FN6WXbmbBmEynMKfirb44i4S6ljQhsvVGGM' }}
+      TLINK_LICENSE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && 'true' || 'false' }}
+      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate public license build inputs
+        run: |
+          set -euo pipefail
+          case "$TLINK_LICENSE_MODE" in
+            observe|enforced) ;;
+            *) echo "Unknown license mode: $TLINK_LICENSE_MODE"; exit 1 ;;
+          esac
+          case "$TLINK_LICENSE_ENDPOINT" in
+            https://*) ;;
+            *) echo "License endpoint must use HTTPS"; exit 1 ;;
+          esac
+          ! printf '%s' "$TLINK_LICENSE_ENDPOINT" | grep -Eqi 'REPLACE_|localhost|127\.0\.0\.1'
+          ! printf '%s' "$TLINK_LICENSE_KEY_ID" | grep -Eqi 'REPLACE_'
+          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_X" | grep -Eq '^[A-Za-z0-9_-]{43}$'
+          printf '%s' "$TLINK_LICENSE_PUBLIC_KEY_Y" | grep -Eq '^[A-Za-z0-9_-]{43}$'
+          if [ "$TLINK_LICENSE_ENFORCEMENT" = "true" ]; then
+            test "$TLINK_LICENSE_FORCE_ENFORCEMENT" = "1"
+          else
+            test "$TLINK_LICENSE_FORCE_ENFORCEMENT" = "0"
+          fi
+
+      - name: Configure public license verifier
+        run: |
+          set -euo pipefail
+          PLIST="stream-app/app/LicenseConfig.plist"
+          if [ -n "${TLINK_LICENSE_ENDPOINT:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicenseEndpoint $TLINK_LICENSE_ENDPOINT" "$PLIST"
+          fi
+          if [ -n "${TLINK_LICENSE_KEY_ID:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicenseKeyID $TLINK_LICENSE_KEY_ID" "$PLIST"
+          fi
+          if [ -n "${TLINK_LICENSE_PUBLIC_KEY_X:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyX $TLINK_LICENSE_PUBLIC_KEY_X" "$PLIST"
+          fi
+          if [ -n "${TLINK_LICENSE_PUBLIC_KEY_Y:-}" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicensePublicKeyY $TLINK_LICENSE_PUBLIC_KEY_Y" "$PLIST"
+          fi
+          if [ "${TLINK_LICENSE_ENFORCEMENT:-false}" = "true" ]; then
+            /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled true" "$PLIST"
+          else
+            /usr/libexec/PlistBuddy -c "Set :LicenseEnforcementEnabled false" "$PLIST"
+          fi
+          plutil -lint "$PLIST"
+
+      - name: Verify public license key against Worker
+        run: |
+          node scripts/check-license-public-key.mjs \
+            --endpoint "$TLINK_LICENSE_ENDPOINT" \
+            --keyId "$TLINK_LICENSE_KEY_ID" \
+            --publicKeyX "$TLINK_LICENSE_PUBLIC_KEY_X" \
+            --publicKeyY "$TLINK_LICENSE_PUBLIC_KEY_Y"
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          brew install ldid xz
+
+      - name: Set up Theos
+        run: |
+          set -euo pipefail
+          git clone --quiet --recursive https://github.com/theos/theos.git "$THEOS"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Download iOS SDKs
+        run: bash scripts/setup-theos-sdks.sh
 
       - name: Build and package TrollStore .tipa
         working-directory: stream-app

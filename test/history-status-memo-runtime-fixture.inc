@@ -23,6 +23,26 @@ static void historyStatusMemoCases(){
         assert([before isEqual:now]&&[now[@"total_count"] unsignedIntegerValue]==32&&[now[@"failed_count"] unsignedIntegerValue]==11);
         const unsigned warm=historyMemoDecodes.load();Current::TLinkRunHistorySnapshot(limit);assert(historyMemoDecodes==warm);
     }
+    // Once the complete 32-row graph is retained, alternating request sizes
+    // must neither decode again nor deep-copy the rows outside the request.
+    const unsigned mixedDecodes=historyMemoDecodes.load();const size_t mixedReads=historyIndexReads;
+    for(unsigned round=0;round<32;++round){
+        for(NSUInteger limit:{NSUInteger(1),NSUInteger(20),NSUInteger(0),NSUInteger(50),NSUInteger(1000)}){
+            NSDictionary *before=Current::TLinkRunHistoryBeforeStatusMemo(limit);
+            const unsigned afterOracle=historyMemoDecodes.load();
+            NSDictionary *now=Current::TLinkRunHistorySnapshot(limit);assert([before isEqual:now]);
+            assert(historyMemoDecodes==afterOracle);
+        }
+    }
+    assert(historyMemoDecodes==mixedDecodes+160&&historyIndexReads==mixedReads+320);
+    historyMemoCopyNodes=0;Current::TLinkRunHistorySnapshot(1);const size_t oneRowNodes=historyMemoCopyNodes;
+    historyMemoCopyNodes=0;Current::TLinkRunHistorySnapshot(50);assert(oneRowNodes>0&&historyMemoCopyNodes>oneRowNodes);
+    // A partial projection cannot satisfy a larger request until that request
+    // has performed its own fresh read/decode/projection.
+    TLinkHistoryStatusMemo::Clear();Current::TLinkRunHistorySnapshot(1);const unsigned partialDecodes=historyMemoDecodes.load();
+    Current::TLinkRunHistorySnapshot(20);assert(historyMemoDecodes==partialDecodes+1);
+    Current::TLinkRunHistorySnapshot(1);assert(historyMemoDecodes==partialDecodes+1);
+    Current::TLinkRunHistorySnapshot(50);assert(historyMemoDecodes==partialDecodes+2);
     const unsigned stable=historyMemoDecodes.load();assert([bytes writeToFile:path atomically:YES]);Current::TLinkRunHistorySnapshot(1000);assert(historyMemoDecodes==stable);
     Current::TLinkRunHistoryPersistenceFailure(@"memo-test",@"probe",@"fresh_diagnostics");
     NSDictionary *fresh=Current::TLinkRunHistorySnapshot(1000);assert([fresh[@"persistence_diagnostics"][@"last_failure"][@"code"] isEqual:@"fresh_diagnostics"]);
@@ -68,6 +88,10 @@ static void historyStatusMemoCases(){
     NSData *original=[NSData dataWithBytes:"key" length:3];TLinkHistoryStatusMemo::Read held(20);assert(TLinkHistoryStatusMemo::Lookup(original,held));
     assert([held.rows[0][@"wide"] unsignedLongLongValue]==UINT64_MAX&&std::signbit([held.rows[0][@"zero"] doubleValue])&&[held.rows[0][@"text"] isEqual:@"original"]&&[held.rows[0][@"unpaired"] characterAtIndex:0]==unit&&[held.rows[0][@"nested"] count]==1);
     held.rows[0][@"nested"][0]=@9;TLinkHistoryStatusMemo::Read again(20);assert(TLinkHistoryStatusMemo::Lookup(original,again)&&[again.rows[0][@"nested"][0] intValue]==1);
+    TLinkHistoryStatusMemo::Read larger(50);assert(TLinkHistoryStatusMemo::Lookup(original,larger)&&larger.rows.count==1);
+    TLinkHistoryStatusMemo::Offer(original,20,@[],1,0);assert(!TLinkHistoryStatusMemo::Snapshot());
+    TLinkHistoryStatusMemo::Offer(original,20,@[],0,0);TLinkHistoryStatusMemo::Read empty(50);
+    assert(TLinkHistoryStatusMemo::Lookup(original,empty)&&empty.rows.count==0&&empty.total==0&&empty.failed==0);
     TLinkHistoryStatusMemo::Clear();historyMemoEnabled=false;historyMemoCopyFault=0;
     assert(historyLocks.empty()&&historyIndexFds.empty()&&Current::sTLinkRunHistoryRecovered==savedRecovered);
     Current::fixtureRoot=savedRoot;Current::sTLinkRunHistoryPersistenceFailures=savedFailures;Current::sTLinkRunHistoryLastPersistenceFailure=savedLast;

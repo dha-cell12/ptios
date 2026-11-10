@@ -1,5 +1,15 @@
 #pragma once
 #include <cstddef>
+// A retained newest-first prefix answers any request it completely covers.
+// Avoid arithmetic on limits: SIZE_MAX remains a valid oversized request.
+inline bool TLinkHistoryProjectionSelection(std::size_t total,std::size_t available,
+    std::size_t requested,std::size_t &selected){
+    selected=0;
+    if(!requested||available>total)return false;
+    const std::size_t needed=requested<total?requested:total;
+    if(needed>available)return false;
+    selected=needed;return true;
+}
 class TLinkHistoryProjectionBudget {
     std::size_t nodes_=0,units_=0;
     bool valid_=true;

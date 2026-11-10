@@ -8,31 +8,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build ${{ matrix.package_runtime }} / ${{ matrix.license_mode }}
+  validate:
+    name: Validate root contracts and native safety
     runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package_runtime: [rootfull, roothide]
-        license_mode: [observe, enforced]
-    env:
-      THEOS: ${{ github.workspace }}/theos
-      TLINK_PACKAGE_RUNTIME: ${{ matrix.package_runtime }}
-      TLINK_ROOTHIDE_RUNTIME: ${{ matrix.package_runtime == 'roothide' && '1' || '0' }}
-      TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
-      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
-      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
-      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID != '' && vars.TLINK_LICENSE_KEY_ID || 'tlinkauto-test-2026-01' }}
-      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'NxW-xzbPbNT583WwRPQOvkLaLh09hOT0JGNomDjGKtw' }}
-      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'f5JiZrT7FN6WXbmbBmEynMKfirb44i4S6ljQhsvVGGM' }}
-      TLINK_LICENSE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && 'true' || 'false' }}
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Validate license and package contracts
         run: |
+          set -euo pipefail
           node scripts/check-rootfull-license-phase0.mjs
           node scripts/check-rootfull-license-phase1.mjs
           node scripts/check-rootfull-license-phase2.mjs
@@ -116,6 +103,30 @@ jobs:
           node scripts/check-vpn-p4-on-demand.mjs
           node scripts/check-vpn-p5-background-agent.mjs
           node scripts/check-roothide-build.mjs
+
+  build:
+    needs: validate
+    name: Build ${{ matrix.package_runtime }} / ${{ matrix.license_mode }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package_runtime: [rootfull, roothide]
+        license_mode: [observe, enforced]
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      TLINK_PACKAGE_RUNTIME: ${{ matrix.package_runtime }}
+      TLINK_ROOTHIDE_RUNTIME: ${{ matrix.package_runtime == 'roothide' && '1' || '0' }}
+      TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
+      TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
+      TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
+      TLINK_LICENSE_KEY_ID: ${{ vars.TLINK_LICENSE_KEY_ID != '' && vars.TLINK_LICENSE_KEY_ID || 'tlinkauto-test-2026-01' }}
+      TLINK_LICENSE_PUBLIC_KEY_X: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_X != '' && vars.TLINK_LICENSE_PUBLIC_KEY_X || 'NxW-xzbPbNT583WwRPQOvkLaLh09hOT0JGNomDjGKtw' }}
+      TLINK_LICENSE_PUBLIC_KEY_Y: ${{ vars.TLINK_LICENSE_PUBLIC_KEY_Y != '' && vars.TLINK_LICENSE_PUBLIC_KEY_Y || 'f5JiZrT7FN6WXbmbBmEynMKfirb44i4S6ljQhsvVGGM' }}
+      TLINK_LICENSE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && 'true' || 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Validate public license build inputs
         run: |

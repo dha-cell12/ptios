@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Implementation C03be — 2026-11-10
+
+- User reported the latest build passed (`adbe6b16`) and requested larger batches with less build waiting. Bundle mixed-limit Run History status memo reuse, prefix-before-deep-copy selection and auxiliary count validation; complete smaller histories answer larger limits, while incomplete projections miss. Keep fresh checked IO, exact bytes, fresh diagnostics, detached mutable results, all quotas and transaction/authority/ACK bodies. TouchPOC excluded.
+- Both workflows move their complete common validation blocks into one required non-matrix job per workflow, preserving every source/native check and its order. Across six packaging variants, direct shared Node invocations decrease482→158 (324 avoided); all four root and two TrollStore compile/artifact checks remain. Queue/service capacity and measured wall time remain separate. All90 Windows workflow runners have passing results (36 source/54 safety portable subsets), plus521 source assertions (16 artifact-only skipped), official actionlint, five changed-file assertion macro checks, JavaScript syntax and complete validation/build-block preservation. The initial FileHandle runner failed only while unlinking its Windows executable (EPERM); its complete focused rerun passed without source changes. Mixed-limit Foundation/POSIX/ARC/sanitizer execution and device gains await macOS CI. Details: `IMPLEMENTATION-C03BE.md`.
+
 ## Implementation C03bd — 2026-11-10
 
 - User reported C03bc built successfully (`e8a8a50d`) and requested larger packages. Bundle shared history status: exact fresh-byte/normalized-limit projection memo, deep frozen/private ownership and detached mutable results, fresh diagnostics/root metadata and bounded node/text/depth preparation. Keep checked fresh IO/shared locks; errors clear memo, auxiliary copy failures and over-budget inputs use the preceding path. Begin/finish/recovery/authority/schema/ACK bodies remain; TouchPOC excluded.

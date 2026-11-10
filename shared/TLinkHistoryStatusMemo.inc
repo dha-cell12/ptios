@@ -63,9 +63,13 @@ static bool Lookup(NSData *data,Read &read) noexcept {
     @autoreleasepool {@try {try {
         read.hit=false;read.rows=nil;read.total=read.failed=0;
         if(!data.length||data.length>ByteLimit){Clear();return false;}
-        auto value=Snapshot();if(!value||value->limit!=read.limit||![value->bytes isEqualToData:data])return false;
+        auto value=Snapshot();if(!value||![value->bytes isEqualToData:data])return false;
+        size_t selected=0;
+        if(!TLinkHistoryProjectionSelection(value->total,value->rows.count,read.limit,selected))return false;
+        // Select before deep copying: unrequested rows are never traversed.
+        NSArray *prefix=selected==value->rows.count?value->rows:[value->rows subarrayWithRange:NSMakeRange(0,selected)];
         TLinkHistoryProjectionBudget budget;
-        id rows=CopyGraph(value->rows,true,budget);if(!rows){Clear();return false;}
+        id rows=CopyGraph(prefix,true,budget);if(!rows){Clear();return false;}
         if(![rows isKindOfClass:[NSMutableArray class]]){Clear();return false;}
         read.rows=rows;read.total=value->total;read.failed=value->failed;read.hit=true;return true;
     }catch(...) {Clear();}} @catch(NSException *exception){(void)exception;Clear();}}
@@ -73,7 +77,7 @@ static bool Lookup(NSData *data,Read &read) noexcept {
 }
 static void Offer(NSData *data,NSUInteger limit,NSArray *rows,NSUInteger total,NSUInteger failed) noexcept {
     @autoreleasepool {@try {try {
-        if(!data.length||data.length>ByteLimit){Clear();return;}
+        if(!data.length||data.length>ByteLimit||!limit||rows.count!=std::min(limit,total)||failed>total){Clear();return;}
         TLinkHistoryProjectionBudget budget;
         id projection=CopyGraph(rows,false,budget);if(![projection isKindOfClass:[NSArray class]]){Clear();return;}
         NSData *bytes=[data copy];if(!bytes||bytes.length!=data.length){Clear();return;}

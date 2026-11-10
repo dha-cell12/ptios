@@ -339,7 +339,9 @@ static NSDictionary *historyPublish(NSString *runtime,NSString *topic,NSString *
 static bool historyMemoEnabled=false;
 static unsigned historyMemoCopyFault=0;
 static std::atomic<unsigned> historyMemoDecodes{0};
+static size_t historyMemoCopyNodes=0;
 static bool historyMemoCopyProbe(size_t depth){
+    ++historyMemoCopyNodes;
     if(depth!=0)return false;
     if(historyMemoCopyFault==1)return true;
     if(historyMemoCopyFault==2)[NSException raise:@"HistoryMemoFixture" format:@"copy"];

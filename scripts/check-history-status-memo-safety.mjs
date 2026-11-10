@@ -18,7 +18,9 @@ assert.match(snapshot,/@"persistence_diagnostics"[\s\S]*sTLinkRunHistoryPersiste
 assert.match(snapshot,/TLinkHistoryStatusMemo::Clear\(\);\s*TLinkRunHistoryPersistenceFailure\(@"snapshot", stage, @"exception"\)/);
 const module=await read('shared/TLinkHistoryStatusMemo.inc');
 assert.doesNotMatch(module,/NSJSONSerialization|NSPropertyListSerialization|CFPropertyListCreateDeepCopy/);
-assert.match(module,/limit!=read.limit[\s\S]*isEqualToData:data[\s\S]*CopyGraph\(value->rows,true/);
+assert.match(module,/isEqualToData:data[\s\S]*TLinkHistoryProjectionSelection[\s\S]*subarrayWithRange[\s\S]*CopyGraph\(prefix,true/);
+assert.doesNotMatch(module,/limit!=read.limit/);
+assert.match(module,/rows.count!=std::min\(limit,total\)\|\|failed>total/);
 assert.match(module,/CopyGraph\(rows,false[\s\S]*\[data copy\]/);
 assert.match(module,/retired.swap\(Stored\(\)\)[\s\S]*Stored\(\)=std::move\(value\);\}[\s\S]*retirement happens after/);
 const runner=await read('scripts/check-run-history-safety.mjs'),fixture=await read('test/run-history-runtime-test.mm');
