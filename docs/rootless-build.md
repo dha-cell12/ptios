@@ -55,3 +55,9 @@ Kiểm tra staging trên Windows bao gồm bốn daemon, đường dẫn cài đ
 CI macOS bổ sung đánh giá Makefile cho cả sáu runtime/mode và bốn nhánh Foundation path helper: rootful, rootless app fallback, rootless SDK và RootHide SDK. Local Windows không thay thế được compile/link iOS, code signing, deb packaging hoặc kiểm tra cài trên thiết bị. Các bước này cần lần chạy GitHub Actions và thiết bị rootless thực tế.
 
 37 kiểm tra source/build, staging rootless, POSIX install sandbox và actionlint đã pass local. Validator production cũng được chạy với sáu bộ filesystem/marker/config giả lập cho ba runtime × hai license mode, cùng ca thiếu marker rootless, launchd chưa có prefix, sai shell và secret nằm ngoài `/var/jb`. Chỉ adapter plutil/ldid được kiểm soát trong các fixture này; chữ ký và Mach-O thật vẫn phải qua validator trong CI.
+
+### Sửa chuỗi baseline Makefile — 14/11/2026
+
+CI dừng tại `complete C03aq pccontrol/Makefile` vì bước thêm cờ rootless chưa được khôi phục trước khi đối chiếu baseline persistence/indicator cũ. `rootless-makefile-baseline.mjs` kiểm tra hash đầy đủ của sáu Makefile hiện tại, gỡ đúng dòng mặc định/cờ rootless với số lượng đã chốt rồi đối chiếu hash đầy đủ của bản trước (`b3ee3280`). Sau đó các gate C03aq, indicator, Event và History tiếp tục chạy với hash lịch sử nguyên vẹn. Makefile production và các biến thể build không đổi.
+
+Kiểm tra rootless bổ sung 24 trường hợp từ chối sửa ngoài phạm vi, thiếu/thừa cờ và thay license default. Toàn bộ 91 runner local đã pass trên Windows (37 source/build, 54 safety portable subsets), gồm indicator gây lỗi, Event, History và rootless artifact fixtures. Chuỗi persistence cũng từ chối sửa nguồn ngoài phạm vi; kiểm tra cú pháp JavaScript và whitespace đều pass. Compile/sign/package iOS thật vẫn cần CI.

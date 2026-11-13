@@ -5,6 +5,11 @@ Checkpoint: **S011**
 Last completed scope: license verifier generation/cache control plane + signed rootfull authority + StreamControl license refresh/background lifecycle.
 All intentionally in-scope rows in `COVERAGE.md` are now first-pass DONE; vendor/decompiled/reference trees remain explicitly excluded unless a measured live path requires them.
 
+## Rootless Makefile baseline compatibility correction — 2026-11-14
+
+- User CI rejected `pccontrol/Makefile` hash82dd7d5f… against C03aq b073444e… after the rootless addition (workspace `9f046ea8`). Rootless added one default and one/two compile flags to six Makefiles; stripping exactly those additions reproduces the complete user-passed `b3ee3280` files. Add an independent current/prior full-hash adapter before persistence/indicator historical restoration. Keep all old hashes, JSON linkage checks, production Makefiles, runtime code and build variants unchanged.
+- All91 workflow runners pass on Windows (37 source/build,54 safety portable subsets), including the reported indicator failure, Event, History and rootless artifact fixtures. The six exact Makefile reversals and24 negative controls for unrelated edits, missing/duplicate rootless flags and changed license defaults pass. Direct persistence-chain tamper refusals, JavaScript syntax and diff whitespace also pass. Production Makefiles and historical persistence/indicator hash records equal HEAD. Native Apple/iOS execution remains a CI requirement. Details: `../rootless-build.md`.
+
 ## Implementation C03be — 2026-11-10
 
 - User reported the latest build passed (`adbe6b16`) and requested larger batches with less build waiting. Bundle mixed-limit Run History status memo reuse, prefix-before-deep-copy selection and auxiliary count validation; complete smaller histories answer larger limits, while incomplete projections miss. Keep fresh checked IO, exact bytes, fresh diagnostics, detached mutable results, all quotas and transaction/authority/ACK bodies. TouchPOC excluded.

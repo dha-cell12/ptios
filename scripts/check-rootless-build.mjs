@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { prepareRootlessStage, rootlessDaemons } from "./prepare-rootless-stage.mjs";
 import { checkRootlessArtifacts } from "../test/rootless-artifact-validation-test.mjs";
+import { restoreRootlessMakefile } from "./lib/rootless-makefile-baseline.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = async file => (await readFile(join(root, file), "utf8")).replaceAll("\r\n", "\n");
@@ -25,7 +26,18 @@ for (const directory of ["appdelegate", "pccontrol", "tlinkauto-binary", "tlinka
   const source = await read(`${directory}/Makefile`);
   assert.match(source, /TLINK_ROOTLESS_RUNTIME \?= 0/);
   assert.match(source, /-DTLINK_ROOTLESS_RUNTIME=\$\(TLINK_ROOTLESS_RUNTIME\)/);
+  const file = `${directory}/Makefile`, previous = restoreRootlessMakefile(source, file);
+  assert.doesNotMatch(previous, /TLINK_ROOTLESS_RUNTIME/);
+  assert.equal(restoreRootlessMakefile(previous, file), previous, "preceding fixtures remain compatible");
+  for (const changed of [source + "\n# unrelated edit\n",
+    source.replace(" -DTLINK_ROOTLESS_RUNTIME=$(TLINK_ROOTLESS_RUNTIME)", ""),
+    source.replace("TLINK_LICENSE_FORCE_ENFORCEMENT ?= 0", "TLINK_LICENSE_FORCE_ENFORCEMENT ?= 1"),
+    source.replace("TLINK_ROOTLESS_RUNTIME ?= 0\n", "TLINK_ROOTLESS_RUNTIME ?= 0\nTLINK_ROOTLESS_RUNTIME ?= 0\n")]) {
+    assert.notEqual(changed, source);
+    assert.throws(() => restoreRootlessMakefile(changed, file), /complete rootless/);
+  }
 }
+console.log("Rootless Makefile baseline passed: six complete current/prior hashes, exact flag reversal and 24 unrelated/missing/duplicate/license-edit refusals; historical persistence/indicator hashes unchanged.");
 const validator = await read("scripts/validate-rootfull-license-phase6-artifact.mjs");
 assert.match(validator, /const payloadRoot = runtime === "rootless" \? join\(rootfs, "var\/jb"\) : rootfs/);
 assert.match(validator, /rootless_var_jb_v1/);

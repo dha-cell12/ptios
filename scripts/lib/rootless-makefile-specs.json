@@ -1,0 +1,32 @@
+{
+  "pccontrol/Makefile": {
+    "currentHash": "82dd7d5f4a897dc9d361531c95ce8a195f4b1016f05f1cfb7a992af8cbfebfd5",
+    "beforeHash": "b073444e42ab4f89270274e7ef8d9f2ed95b7ce3d4e95c9dafc3bcbfcd588951",
+    "flagCount": 1
+  },
+  "tlinkauto-binary/Makefile": {
+    "currentHash": "af256fc5cc968e0f53fcd70e52554b7741fe901f9e1fc87beef2c3ac5c057e33",
+    "beforeHash": "bde3f30b635b88a5e8a67761a8f24391f26451fda4e26eff1b2b1db7966e8099",
+    "flagCount": 2
+  },
+  "appdelegate/Makefile": {
+    "currentHash": "98ba6d0da74fc62c5e3e0283a926f9ecb25b210a2ee28a411dd0526a8f1d8c4b",
+    "beforeHash": "022edbc2b6bf5842e8d4378c2fde195144ec83d96f885a3d0374095170417e64",
+    "flagCount": 1
+  },
+  "license-authority/Makefile": {
+    "currentHash": "1ab27f56b63686ed72f29074ffc4a556c646ef3c8121daf3cc850eed1c612a26",
+    "beforeHash": "e79ffa46d7a2c0c8ae7575f67deab62172c1898f2ea9d03b184bca5648be5768",
+    "flagCount": 1
+  },
+  "vpn-broker/Makefile": {
+    "currentHash": "0e22e2e026fb1d3dfbf2df264a73a524dfa4dc00f8a73896939f18d636953cb6",
+    "beforeHash": "1e5bf579dae137e2c191d1c241652e947d713d854b3935a2fcdac7ab9038384a",
+    "flagCount": 1
+  },
+  "tlinkauto-jsd/Makefile": {
+    "currentHash": "c337679081c38af22803f9e4e9a186144942168603d035444070d16ae6b861c3",
+    "beforeHash": "c6ffc0191bc6ca85dae8207b9ff2256c61f7d05fe2b4525f5ceb32b8f9f7cc73",
+    "flagCount": 1
+  }
+}

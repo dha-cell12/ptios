@@ -1,6 +1,7 @@
 import {restoreOwnedReadSource} from './owned-read-buffer-baseline.mjs';
 import {restorePersistenceJSONStorage,checkPersistenceJSONStorage} from './persistence-json-storage-baseline.mjs';
 import {restoreHistoryRecoveryCodec} from './history-recovery-codec-baseline.mjs';
+import {restoreRootlessMakefile} from './rootless-makefile-baseline.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -19,6 +20,7 @@ export function restorePersistenceJSON(source,kind){
     assert.equal(hash(source),spec.beforeHash,'complete preceding '+kind);return source;
 }
 export function restorePersistenceJSONMakefile(source,file){
+    source=restoreRootlessMakefile(source,file);
     if(!source.includes('TLinkPersistenceJSON.mm'))return source;
     const spec=specs.makefiles[file];assert.ok(spec,file);
     assert.equal(hash(source),spec.currentHash,'complete C03aq '+file);
