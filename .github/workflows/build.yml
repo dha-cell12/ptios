@@ -103,6 +103,7 @@ jobs:
           node scripts/check-vpn-p4-on-demand.mjs
           node scripts/check-vpn-p5-background-agent.mjs
           node scripts/check-roothide-build.mjs
+          node scripts/check-rootless-build.mjs
 
   build:
     needs: validate
@@ -111,12 +112,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package_runtime: [rootfull, roothide]
+        package_runtime: [rootfull, roothide, rootless]
         license_mode: [observe, enforced]
     env:
       THEOS: ${{ github.workspace }}/theos
       TLINK_PACKAGE_RUNTIME: ${{ matrix.package_runtime }}
       TLINK_ROOTHIDE_RUNTIME: ${{ matrix.package_runtime == 'roothide' && '1' || '0' }}
+      TLINK_ROOTLESS_RUNTIME: ${{ matrix.package_runtime == 'rootless' && '1' || '0' }}
       TLINK_LICENSE_MODE: ${{ matrix.license_mode }}
       TLINK_LICENSE_FORCE_ENFORCEMENT: ${{ matrix.license_mode == 'enforced' && '1' || '0' }}
       TLINK_LICENSE_ENDPOINT: ${{ vars.TLINK_LICENSE_ENDPOINT != '' && vars.TLINK_LICENSE_ENDPOINT || 'https://tlinkauto-license.tlinkauto.workers.dev' }}
@@ -205,6 +207,8 @@ jobs:
             XCODE_RUNTIME_SETTINGS=(ARCHS=arm64 ONLY_ACTIVE_ARCH=YES IPHONEOS_DEPLOYMENT_TARGET=15.0)
             APP_ENTITLEMENTS="layout/entitlements-roothide.plist"
             SHORTCUT_ENTITLEMENTS="layout/shortcut-entitlements-roothide.plist"
+          elif [ "$TLINK_PACKAGE_RUNTIME" = "rootless" ]; then
+            XCODE_RUNTIME_SETTINGS=(ARCHS=arm64 ONLY_ACTIVE_ARCH=YES IPHONEOS_DEPLOYMENT_TARGET=15.0)
           fi
           xcodebuild \
             -project TLinkauto/TLinkauto.xcodeproj \
@@ -212,7 +216,7 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             SYMROOT="$PWD/build" \
-            GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) TLINK_LICENSE_FORCE_ENFORCEMENT=${TLINK_LICENSE_FORCE_ENFORCEMENT} TLINK_LICENSE_ROOTFULL_RUNTIME=1 TLINK_ROOTHIDE_RUNTIME=${TLINK_ROOTHIDE_RUNTIME}" \
+            GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) TLINK_LICENSE_FORCE_ENFORCEMENT=${TLINK_LICENSE_FORCE_ENFORCEMENT} TLINK_LICENSE_ROOTFULL_RUNTIME=1 TLINK_ROOTHIDE_RUNTIME=${TLINK_ROOTHIDE_RUNTIME} TLINK_ROOTLESS_RUNTIME=${TLINK_ROOTLESS_RUNTIME}" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -267,12 +271,17 @@ jobs:
           EXPECTED_ARCH="iphoneos-arm"
           if [ "$TLINK_PACKAGE_RUNTIME" = "roothide" ]; then
             EXPECTED_ARCH="iphoneos-arm64e"
+          elif [ "$TLINK_PACKAGE_RUNTIME" = "rootless" ]; then
+            EXPECTED_ARCH="iphoneos-arm64"
           fi
           test "$(dpkg-deb -f "$DEB_PATH" Architecture)" = "$EXPECTED_ARCH"
           ROOTFS="$RUNNER_TEMP/${TLINK_PACKAGE_RUNTIME}-${TLINK_LICENSE_MODE}"
           rm -rf "$ROOTFS"
           mkdir -p "$ROOTFS"
           dpkg-deb -x "$DEB_PATH" "$ROOTFS"
+          if [ "$TLINK_PACKAGE_RUNTIME" = "rootless" ]; then
+            dpkg-deb -e "$DEB_PATH" "$ROOTFS/DEBIAN"
+          fi
           node scripts/validate-rootfull-license-phase6-artifact.mjs \
             --rootfs "$ROOTFS" \
             --runtime "$TLINK_PACKAGE_RUNTIME" \

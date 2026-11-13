@@ -1,6 +1,5 @@
-# Rootful remains the default. Roothide builds use RootHide's Theos package
-# scheme, the arm64e Debian architecture, and the iOS 15 minimum supported by
-# the current RootHide bootstrap.
+# Rootful remains the default. Rootless uses the standard /var/jb scheme;
+# Roothide uses RootHide's separate bootstrap scheme and Debian architecture.
 TLINK_PACKAGE_RUNTIME ?= rootfull
 ifeq ($(TLINK_PACKAGE_RUNTIME),roothide)
 export THEOS_PACKAGE_SCHEME = roothide
@@ -9,15 +8,26 @@ export ARCHS = arm64
 export TARGET = iphone:clang:latest:15.0
 export IPHONEOS_DEPLOYMENT_TARGET = 15.0
 TLINK_ROOTHIDE_RUNTIME := 1
+TLINK_ROOTLESS_RUNTIME := 0
+else ifeq ($(TLINK_PACKAGE_RUNTIME),rootless)
+export THEOS_PACKAGE_SCHEME = rootless
+export DEB_ARCH = iphoneos-arm64
+export ARCHS = arm64
+export TARGET = iphone:clang:latest:15.0
+export IPHONEOS_DEPLOYMENT_TARGET = 15.0
+TLINK_ROOTHIDE_RUNTIME := 0
+TLINK_ROOTLESS_RUNTIME := 1
 else ifeq ($(TLINK_PACKAGE_RUNTIME),rootfull)
 export ARCHS = arm64e arm64
 export TARGET = iphone:clang:latest:14.0
 TLINK_ROOTHIDE_RUNTIME := 0
+TLINK_ROOTLESS_RUNTIME := 0
 else
-$(error TLINK_PACKAGE_RUNTIME must be rootfull or roothide)
+$(error TLINK_PACKAGE_RUNTIME must be rootfull, roothide or rootless)
 endif
 export TLINK_PACKAGE_RUNTIME
 export TLINK_ROOTHIDE_RUNTIME
+export TLINK_ROOTLESS_RUNTIME
 
 TLINK_LICENSE_MODE ?= observe
 ifeq ($(TLINK_LICENSE_MODE),enforced)
@@ -38,6 +48,8 @@ include $(THEOS)/makefiles/aggregate.mk
 before-package::
 ifeq ($(TLINK_PACKAGE_RUNTIME),roothide)
 	node "$(THEOS_PROJECT_DIR)/scripts/prepare-roothide-stage.mjs" --rootfs "$(THEOS_STAGING_DIR)"
+else ifeq ($(TLINK_PACKAGE_RUNTIME),rootless)
+	node "$(THEOS_PROJECT_DIR)/scripts/prepare-rootless-stage.mjs" --rootfs "$(THEOS_STAGING_DIR)"
 endif
 
 after-install::

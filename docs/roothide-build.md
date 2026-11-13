@@ -1,25 +1,28 @@
 # Build và cài đặt TLinkauto cho Roothide
 
-Repository tạo hai loại gói độc lập từ cùng mã nguồn:
+Repository tạo ba loại gói độc lập từ cùng mã nguồn:
 
 - `rootfull`: gói hiện tại, kiến trúc Debian `iphoneos-arm`.
+- `rootless`: gói `/var/jb` chuẩn, kiến trúc Debian `iphoneos-arm64`; xem [hướng dẫn rootless](rootless-build.md).
 - `roothide`: gói cho RootHide Bootstrap, kiến trúc Debian `iphoneos-arm64e`, iOS 15 trở lên.
 
-Hai gói dùng cùng package id `com.tlinkauto.ioscontrol`, vì vậy chỉ cài một loại tại một thời điểm. Không cài đè gói Roothide lên một jailbreak rootful đang hoạt động hoặc ngược lại.
+Ba gói dùng cùng package id `com.tlinkauto.ioscontrol`, vì vậy chỉ cài một loại phù hợp với jailbreak tại một thời điểm.
 
 ## Build bằng GitHub Actions
 
-Workflow `.github/workflows/build.yml` tự tạo bốn artifact:
+Workflow `.github/workflows/build.yml` tự tạo sáu artifact:
 
 - `TLinkauto-rootfull-deb-observe`
 - `TLinkauto-rootfull-deb-enforced`
 - `TLinkauto-roothide-deb-observe`
 - `TLinkauto-roothide-deb-enforced`
+- `TLinkauto-rootless-deb-observe`
+- `TLinkauto-rootless-deb-enforced`
 
 Các biến public-key license vẫn dùng chung với bản rootful. Bản `enforced` chặn khi license không hợp lệ; bản `observe` chỉ ghi nhận để thử nghiệm.
 
 1. Push branch lên GitHub hoặc chạy workflow **Build** thủ công theo cơ chế hiện có của repository.
-2. Chờ đủ bốn job hoàn tất.
+2. Chờ kiểm tra chung và các job package hoàn tất.
 3. Tải artifact có tên `TLinkauto-roothide-deb-enforced` để phát hành, hoặc `observe` để test.
 4. Kiểm tra file JSON manifest đi kèm có `package_runtime` bằng `roothide`.
 

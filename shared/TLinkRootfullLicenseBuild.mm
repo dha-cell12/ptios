@@ -4,6 +4,11 @@
 #define TLINK_LICENSE_FORCE_ENFORCEMENT 0
 #endif
 
+#if defined(TLINK_ROOTLESS_RUNTIME) && TLINK_ROOTLESS_RUNTIME
+extern "C" __attribute__((used, visibility("default")))
+const char TLinkRootlessPackageMarker[] = "rootless_var_jb_v1";
+#endif
+
 #if TLINK_LICENSE_FORCE_ENFORCEMENT
 extern "C" __attribute__((used, visibility("default")))
 const char TLinkRootfullLicenseBuildMarker[] = "rootfull_enforced_compile_time_v1";

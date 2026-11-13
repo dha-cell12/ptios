@@ -4,11 +4,12 @@ include $(THEOS)/makefiles/common.mk
 
 TLINK_LICENSE_FORCE_ENFORCEMENT ?= 0
 TLINK_ROOTHIDE_RUNTIME ?= 0
+TLINK_ROOTLESS_RUNTIME ?= 0
 
 TWEAK_NAME = appdelegate
 
 appdelegate_FILES = Tweak.xm UIKeyboard.xm ../shared/TLinkRootfullLicenseBuild.mm
-appdelegate_CFLAGS = -Wno-error -Wno-module-import-in-extern-c -fobjc-arc -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_ROOTHIDE_RUNTIME=$(TLINK_ROOTHIDE_RUNTIME)
+appdelegate_CFLAGS = -Wno-error -Wno-module-import-in-extern-c -fobjc-arc -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_ROOTHIDE_RUNTIME=$(TLINK_ROOTHIDE_RUNTIME) -DTLINK_ROOTLESS_RUNTIME=$(TLINK_ROOTLESS_RUNTIME)
 
 appdelegate_ARCHS = $(ARCHS)
 appdelegate_FRAMEWORKS = UIKit

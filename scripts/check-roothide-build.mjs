@@ -44,7 +44,7 @@ assert.match(makefile, /DEB_ARCH = iphoneos-arm64e/);
 assert.match(makefile, /TARGET = iphone:clang:latest:15\.0/);
 assert.match(makefile, /IPHONEOS_DEPLOYMENT_TARGET = 15\.0/);
 assert.match(makefile, /prepare-roothide-stage\.mjs" --rootfs/);
-assert.match(workflow, /package_runtime: \[rootfull, roothide\]/);
+assert.match(workflow, /package_runtime: \[rootfull, roothide, rootless\]/);
 assert.match(workflow, /github\.com\/roothide\/theos\.git/);
 assert.match(workflow, /TLINK_ROOTHIDE_RUNTIME/);
 assert.match(workflow, /EXPECTED_ARCH="iphoneos-arm64e"/);

@@ -71,7 +71,9 @@ const mode = args.mode;
 const runtime = args.runtime || "rootfull";
 const output = resolve(args.output || `${runtime}-license-phase6-${mode}.json`);
 assert.ok(mode === "observe" || mode === "enforced", "mode must be observe or enforced");
-assert.ok(runtime === "rootfull" || runtime === "roothide", "runtime must be rootfull or roothide");
+assert.ok(["rootfull", "roothide", "rootless"].includes(runtime), "runtime must be rootfull, roothide or rootless");
+// Resolve packaged files below the scheme prefix, but scan the complete archive.
+const payloadRoot = runtime === "rootless" ? join(rootfs, "var/jb") : rootfs;
 
 const rootfullMarker = `rootfull_${mode}_compile_time_v1`;
 const wrongRootfullMarker = mode === "enforced"
@@ -147,8 +149,10 @@ const evidence = {
 
 const hashes = {};
 for (const relative of binaries) {
-  const bytes = await readFile(join(rootfs, relative));
+  const bytes = await readFile(join(payloadRoot, relative));
   const content = bytes.toString("latin1");
+  assert.equal(content.includes("rootless_var_jb_v1"), runtime === "rootless",
+    `${relative} has the wrong rootless compile mode`);
   assert.ok(content.includes(rootfullMarker), `${relative} lacks ${rootfullMarker}`);
   assert.ok(!content.includes(wrongRootfullMarker), `${relative} contains ${wrongRootfullMarker}`);
   if (verifierModeBinaries.has(relative)) {
@@ -172,14 +176,14 @@ for (const relative of binaries) {
   hashes[relative] = createHash("sha256").update(bytes).digest("hex");
 }
 
-const app = join(rootfs, "Applications/TLinkauto.app");
+const app = join(payloadRoot, "Applications/TLinkauto.app");
 const allowVPNMarker = "com.apple.developer.networking.vpn.api";
 const sharedKeychainGroup = "com.tlinkauto.tlinkauto";
 for (const relative of [
   "Applications/TLinkauto.app/TLinkauto",
   "usr/libexec/tlinkauto-vpnd",
 ]) {
-  const entitlements = signedEntitlements(join(rootfs, relative));
+  const entitlements = signedEntitlements(join(payloadRoot, relative));
   assert.ok(
     entitlements.includes(allowVPNMarker) &&
       entitlements.includes("allow-vpn"),
@@ -192,7 +196,7 @@ for (const relative of [
   );
 }
 const authorityEntitlements = signedEntitlements(
-  join(rootfs, "usr/libexec/tlinkauto-licensed"),
+  join(payloadRoot, "usr/libexec/tlinkauto-licensed"),
 );
 assert.ok(
   authorityEntitlements.includes("keychain-access-groups") &&
@@ -211,7 +215,7 @@ for (const relative of [
   "usr/libexec/tlinkauto-vpnd",
   "Library/MobileSubstrate/DynamicLibraries/pccontrol.dylib",
 ]) {
-  const content = await readFile(join(rootfs, relative), "latin1");
+  const content = await readFile(join(payloadRoot, relative), "latin1");
   assert.ok(
     content.includes("license_authority_signature_invalid") &&
       content.includes("rootfull_license_authority_client_v1"),
@@ -219,7 +223,7 @@ for (const relative of [
   );
 }
 const shortcutEntitlements = signedEntitlements(
-  join(rootfs,
+  join(payloadRoot,
     "Applications/TLinkauto.app/PlugIns/shortcutext.appex/shortcutext"),
 );
 assert.ok(
@@ -235,7 +239,7 @@ if (runtime === "roothide") {
     "com.apple.private.security.storage.AppDataContainers",
   ];
   for (const relative of binaries) {
-    const entitlements = signedEntitlements(join(rootfs, relative));
+    const entitlements = signedEntitlements(join(payloadRoot, relative));
     for (const key of roothideEntitlementKeys) {
       assert.ok(entitlements.includes(key), `${relative} is missing Roothide entitlement ${key}`);
     }
@@ -247,11 +251,31 @@ if (runtime === "roothide") {
     "Library/LaunchDaemons/com.tlinkauto.license-authority.plist",
     "Library/LaunchDaemons/com.tlinkauto.vpn-broker.plist",
   ]) {
-    const launchd = await readFile(join(rootfs, relative), "utf8");
+    const launchd = await readFile(join(payloadRoot, relative), "utf8");
     assert.ok(
       launchd.includes("/rootfs/var/mobile/Library/TLinkauto/"),
       `${relative} does not target the shared rootfs data directory`,
     );
+  }
+}
+
+if (runtime === "rootless") {
+  for (const [label, executable] of [
+    ["tlinkautod", "usr/bin/tlinkautod"],
+    ["js-helper", "usr/libexec/tlinkauto-jsd"],
+    ["license-authority", "usr/libexec/tlinkauto-licensed"],
+    ["vpn-broker", "usr/libexec/tlinkauto-vpnd"],
+  ]) {
+    const path = join(payloadRoot, `Library/LaunchDaemons/com.tlinkauto.${label}.plist`);
+    const xml = plistXML(path) || await readFile(path, "utf8");
+    assert.ok(xml.includes(`<string>/var/jb/${executable}</string>`), `${label} has an unprefixed executable`);
+    assert.ok(xml.includes("/var/mobile/Library/TLinkauto/"), `${label} has no shared writable log path`);
+    assert.ok(!xml.includes("/var/jb/var/mobile/"), `${label} logs must not use the packaged defaults directory`);
+  }
+  for (const name of ["preinst", "postinst"]) {
+    const script = await readFile(join(rootfs, "DEBIAN", name), "utf8");
+    assert.ok(script.startsWith("#!/var/jb/bin/sh\n"), `${name} does not use the rootless shell`);
+    assert.ok(script.includes("TLINK_PACKAGE_RUNTIME=rootless"), `${name} lacks the rootless package marker`);
   }
 }
 
@@ -346,4 +370,4 @@ const manifest = {
   secret_scan: "passed",
 };
 await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-console.log(`rootfull phase 6 artifact OK: ${mode}, manifest ${output}`);
+console.log(`${runtime} phase 6 artifact OK: ${mode}, manifest ${output}`);

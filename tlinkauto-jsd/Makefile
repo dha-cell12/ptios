@@ -2,11 +2,12 @@ include $(THEOS)/makefiles/common.mk
 
 TLINK_LICENSE_FORCE_ENFORCEMENT ?= 0
 TLINK_ROOTHIDE_RUNTIME ?= 0
+TLINK_ROOTLESS_RUNTIME ?= 0
 
 TOOL_NAME = tlinkauto-jsd
 tlinkauto-jsd_ARCHS = $(ARCHS)
 tlinkauto-jsd_FILES = main.mm TLinkJSHelperServer.mm ../pccontrol/jsruntime/TLinkJSHelperProtocol.mm ../shared/TLinkJSFileHandle.mm ../shared/TLinkRootfullLicenseBuild.mm ../shared/TLinkLicenseVerifier.mm ../shared/TLinkLicenseAuthorityClient.mm ../shared/TLinkRootfullLicensePolicy.mm
-tlinkauto-jsd_CFLAGS = -fobjc-arc -Wno-error -O2 -s -DNDEBUG -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1 -DTLINK_LICENSE_AUTHORITY_CLIENT=1 -DTLINK_ROOTHIDE_RUNTIME=$(TLINK_ROOTHIDE_RUNTIME)
+tlinkauto-jsd_CFLAGS = -fobjc-arc -Wno-error -O2 -s -DNDEBUG -DTLINK_LICENSE_FORCE_ENFORCEMENT=$(TLINK_LICENSE_FORCE_ENFORCEMENT) -DTLINK_LICENSE_ROOTFULL_RUNTIME=1 -DTLINK_LICENSE_AUTHORITY_CLIENT=1 -DTLINK_ROOTHIDE_RUNTIME=$(TLINK_ROOTHIDE_RUNTIME) -DTLINK_ROOTLESS_RUNTIME=$(TLINK_ROOTLESS_RUNTIME)
 tlinkauto-jsd_CCFLAGS = -std=c++14
 tlinkauto-jsd_FRAMEWORKS = Foundation JavaScriptCore Security CoreFoundation
 tlinkauto-jsd_INSTALL_PATH = /usr/libexec
